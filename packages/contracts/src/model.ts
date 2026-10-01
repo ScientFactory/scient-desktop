@@ -180,6 +180,13 @@ export const PREFERRED_DEFAULT_ANTIGRAVITY_MODELS: ReadonlyArray<string> = [
 export const DEFAULT_TEXT_GENERATION_MODEL = "gpt-6-luna";
 /** Keep the official Antigravity session's current model. Never send this ID to ACP. */
 export const ANTIGRAVITY_DEFAULT_MODEL = "antigravity-default";
+/**
+ * Keep the model Droid starts a session with (its default, which Droid's
+ * discovery marks `isDefault`). Never sent to Droid as a model id. Only text
+ * generation uses it: conversation defaults come from the shared automatic
+ * model policy, which resolves this marker to that same reported default.
+ */
+export const DROID_DEFAULT_MODEL = "droid-default";
 export const DEFAULT_TEXT_GENERATION_REASONING_EFFORT = "low";
 
 export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
@@ -201,6 +208,8 @@ export const DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
   [CURSOR_DRIVER_KIND]: "composer-2",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  // Droid's catalog varies per account and build; use the model Droid starts with.
+  [DROID_DRIVER_KIND]: DROID_DEFAULT_MODEL,
 };
 
 // Droid ships no static default model: its ACP catalog is authoritative and

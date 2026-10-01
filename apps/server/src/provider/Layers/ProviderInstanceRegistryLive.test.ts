@@ -162,6 +162,7 @@ const makeDroidConfig = (overrides: Partial<DroidSettings>): DroidSettings => ({
   enabled: false,
   binaryPath: "droid",
   customModels: [],
+  cloudSessionSync: true,
   ...overrides,
 });
 

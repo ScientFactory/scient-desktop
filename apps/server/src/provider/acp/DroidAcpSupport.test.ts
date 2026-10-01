@@ -1,6 +1,14 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
-import type { ModelReasoningMetadata } from "@t3tools/contracts";
+import * as Exit from "effect/Exit";
+import { ChildProcessSpawner } from "effect/unstable/process";
+import * as Redacted from "effect/Redacted";
+import * as EffectAcpErrors from "effect-acp/errors";
+import { DROID_DEFAULT_MODEL, type ModelReasoningMetadata } from "@t3tools/contracts";
+import type { CustomModelReasoning } from "../../customModelCapabilities.ts";
+import { makeDroidKeyBroker } from "../droid/DroidKeyBroker.ts";
 import {
   getProviderOptionDescriptors,
   getProviderOptionCurrentLabel,
@@ -12,11 +20,15 @@ import {
   buildDroidAcpSpawnInput,
   buildDroidCapabilitiesFromEfforts,
   buildDroidModelsFromConfigOptions,
+  discoverDroidModels,
   droidAccountCapabilitiesFromInitializeResult,
   droidCostMultiplierLabel,
+  droidReplacedDefaultNotice,
+  makeDroidCredentialRedactor,
   findDroidAutonomyOption,
   findSelectDroidConfigOption,
   hasDroidApiKeyEnvironment,
+  makeDroidAcpRuntime,
   requestedDroidEffortFromSelection,
   resolveAdvertisedDroidAuthMethodId,
   resolveDroidAuthMethodId,
@@ -110,6 +122,30 @@ describe("resolveDroidCliBinaryPath", () => {
       });
     }),
   );
+  it.effect("applies the configured level after a switch even without a saved preference", () =>
+    Effect.gen(function* () {
+      // Droid keeps the previous model's effort across a model switch.
+      const { runtime, calls } = makeRuntime();
+      yield* applyDroidModelAndEffort({
+        runtime: {
+          ...runtime,
+          getReasoningMetadata: () => ({
+            status: "known" as const,
+            supported: true,
+            levels: ["high" as const],
+            defaultLevel: "high" as const,
+          }),
+          getDefaultReasoningLevel: () => undefined,
+        },
+        requestedModel: "gpt-5.6-sol",
+        requestedEffort: undefined,
+      });
+      expect(calls).toEqual([
+        { op: "setModel", arg: "gpt-5.6-sol" },
+        { op: "setConfigOption", arg: { configId: "reasoning_effort", value: "high" } },
+      ]);
+    }),
+  );
   it("changes only the default badge, not Droid's available efforts", () => {
     const metadata: ModelReasoningMetadata = {
       status: "known",
@@ -138,6 +174,34 @@ describe("resolveDroidCliBinaryPath", () => {
     expect(resolveDroidCliBinaryPath("   ")).toBe("droid");
     expect(resolveDroidCliBinaryPath(undefined)).toBe("droid");
   });
+});
+
+describe("makeDroidAcpRuntime", () => {
+  it.effect(
+    "refuses a runtime without tools before starting Droid: it has no hook to enforce it",
+    () =>
+      Effect.gen(function* () {
+        let spawned = 0;
+        const exit = yield* makeDroidAcpRuntime({
+          droidSettings: { binaryPath: "droid" },
+          childProcessSpawner: ChildProcessSpawner.make(() =>
+            Effect.sync(() => void spawned++).pipe(Effect.andThen(Effect.die("spawned Droid"))),
+          ),
+          cwd: process.cwd(),
+          clientInfo: { name: "test", version: "0" },
+          modelTools: "disabled",
+        }).pipe(
+          Effect.flatMap((runtime) => runtime.start()),
+          Effect.scoped,
+          Effect.exit,
+        );
+        expect(spawned).toBe(0);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(Exit.isFailure(exit) && String(exit.cause)).toContain(
+          "cannot run Droid without tools in this process",
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
 
 describe("buildDroidAcpSpawnInput", () => {
@@ -355,31 +419,36 @@ describe("composer capability + effort extraction", () => {
       }),
     ]);
   });
-  it("labels unknown choices as runtime only and drops unsupported controls", () => {
-    const efforts = [{ value: "high", label: "High", isDefault: true }];
-    expect(buildDroidCapabilitiesFromEfforts(efforts, null).optionDescriptors).toEqual([
-      expect.objectContaining({
-        id: "reasoningEffort",
-        label: "Reasoning",
-        type: "select",
-        strictSelection: true,
-        options: [{ id: "high", label: "High", isDefault: true }],
-      }),
-    ]);
-    expect(
-      buildDroidCapabilitiesFromEfforts(efforts, { ...known, supported: false, levels: [] })
-        .optionDescriptors,
-    ).toEqual([
-      expect.objectContaining({
-        strictSelection: true,
-        emptySelectionLabel: "Reasoning",
-        options: [],
-      }),
-    ]);
+  it("offers no reasoning choice for a managed model whose overlay configures no effort", () => {
+    // Droid 0.213.0 and 0.230.0 advertise off/low/medium/high/none for such a
+    // model, report `none` after every write and send no reasoning parameter.
+    const efforts = ["off", "low", "medium", "high", "none"].map((value) => ({
+      value,
+      label: value,
+    }));
+    for (const metadata of [
+      null,
+      { ...known, status: "unknown", supported: null, levels: [] },
+      { ...known, status: "unknown", supported: true, levels: ["low", "high"] },
+      { ...known, supported: false, levels: [] },
+      { ...known, supported: true, levels: [] },
+    ] satisfies ReadonlyArray<CustomModelReasoning | null>) {
+      expect(buildDroidCapabilitiesFromEfforts(efforts, metadata).optionDescriptors).toEqual([
+        expect.objectContaining({
+          strictSelection: true,
+          concreteReasoning: true,
+          emptySelectionLabel: "Reasoning",
+          options: [],
+        }),
+      ]);
+    }
   });
   it("does not dispatch stale efforts when a managed model has no reasoning choices", () => {
     for (const metadata of [null, { ...known, supported: false, levels: [] }]) {
-      const caps = buildDroidCapabilitiesFromEfforts([], metadata);
+      const caps = buildDroidCapabilitiesFromEfforts(
+        [{ value: "medium", label: "Medium", isDefault: true }],
+        metadata,
+      );
       const selections = [{ id: "reasoningEffort", value: "high" }];
       const descriptors = getProviderOptionDescriptors({ caps, selections });
       expect(getProviderOptionCurrentLabel(descriptors[0])).toBe("Reasoning");
@@ -394,41 +463,35 @@ describe("composer capability + effort extraction", () => {
     }
     expect(buildDroidCapabilitiesFromEfforts([]).optionDescriptors).toEqual([]);
   });
-  it.effect("keeps manual and budget-only unknown metadata as runtime-only controls", () =>
+  it.effect("never writes an effort for a managed model whose overlay configures none", () =>
     Effect.gen(function* () {
-      for (const source of ["manual", "provider"] as const) {
-        const metadata: ModelReasoningMetadata = {
+      for (const metadata of [
+        null,
+        {
           ...known,
-          status: "unknown",
-          source,
+          status: "unknown" as const,
+          source: "manual" as const,
           supported: true,
           levels: [],
-          mode: "budget",
-        };
-        expect(
-          buildDroidCapabilitiesFromEfforts(
-            [{ value: "high", label: "High", isDefault: true }],
-            metadata,
-          ).optionDescriptors,
-        ).toEqual([
-          expect.objectContaining({
-            id: "reasoningEffort",
-            label: "Reasoning",
-            type: "select",
-            strictSelection: true,
-            concreteReasoning: true,
-            options: [{ id: "high", label: "High", isDefault: true }],
-          }),
-        ]);
-        const { runtime } = makeRuntime();
-        for (const requestedEffort of [undefined, "high"]) {
+          mode: "budget" as const,
+        },
+        { ...known, status: "unknown" as const, supported: null, levels: [] },
+        { ...known, supported: false, levels: [] },
+      ]) {
+        const { runtime, calls } = makeRuntime();
+        // A stale saved choice or an older client still sends a level.
+        for (const requestedEffort of [undefined, "high", "none", "off"]) {
           yield* applyDroidModelAndEffort({
-            runtime: { ...runtime, getReasoningMetadata: () => metadata },
-            requestedModel: undefined,
+            runtime: {
+              ...runtime,
+              getReasoningMetadata: () => metadata,
+              getDefaultReasoningLevel: () => "high",
+            },
+            requestedModel: "gpt-5.6-sol",
             requestedEffort,
           });
         }
-        expect(metadata.supported).toBe(true);
+        expect(calls.filter((call) => call.op !== "setModel")).toEqual([]);
       }
     }),
   );
@@ -449,9 +512,18 @@ describe("composer capability + effort extraction", () => {
       expect(result._tag).toBe("Failure");
     }),
   );
-  it.effect("rejects explicit and inherited conflicts without remapping Droid sentinels", () =>
+  it.effect("rejects explicit conflicts and replaces an inherited sentinel", () =>
     Effect.gen(function* () {
-      for (const requestedEffort of [undefined, "none", "max"]) {
+      const inherited = makeRuntime();
+      yield* applyDroidModelAndEffort({
+        runtime: { ...inherited.runtime, getReasoningMetadata: () => known },
+        requestedModel: undefined,
+        requestedEffort: undefined,
+      });
+      expect(inherited.calls).toEqual([
+        { op: "setConfigOption", arg: { configId: "reasoning_effort", value: "high" } },
+      ]);
+      for (const requestedEffort of ["none", "max"]) {
         const { runtime, calls } = makeRuntime();
         const result = yield* Effect.exit(
           applyDroidModelAndEffort({
@@ -480,33 +552,356 @@ describe("composer capability + effort extraction", () => {
     }),
   );
   it.effect(
-    "allows implicit no-effort for nonreasoning models but rejects every explicit effort",
+    "offers and applies Off only for adaptive (Messages) thinking, where it disables it",
     () =>
       Effect.gen(function* () {
-        const { runtime, calls } = makeRuntime();
-        const managed = {
-          ...runtime,
-          getReasoningMetadata: () => ({ ...known, supported: false, levels: [] }),
+        const ladder = ["off", "low", "medium", "high"].map((value) => ({ value, label: value }));
+        const options = (metadata: CustomModelReasoning) => {
+          const descriptor = buildDroidCapabilitiesFromEfforts(ladder, metadata)
+            .optionDescriptors?.[0];
+          return descriptor?.type === "select" ? descriptor.options.map((option) => option.id) : [];
         };
-        yield* applyDroidModelAndEffort({
-          runtime: managed,
-          requestedModel: undefined,
-          requestedEffort: undefined,
+        const adaptive = { ...known, levels: ["low", "high"], mode: "adaptive" } as const;
+        const effort = { ...known, levels: ["low", "high"], mode: "effort" } as const;
+        expect(options(adaptive)).toEqual(["off", "low", "high"]);
+        // For effort APIs Droid then sends no parameter, which is the model's default, not off.
+        expect(options(effort)).toEqual(["low", "high"]);
+        const offLadder = makeRuntime({
+          configOptions: [
+            {
+              id: "model",
+              name: "Model",
+              category: "model",
+              type: "select",
+              currentValue: "custom:scient-claude",
+              options: [{ value: "custom:scient-claude", name: "Claude" }],
+            },
+            {
+              id: "reasoning_effort",
+              name: "Reasoning",
+              category: "thought_level",
+              type: "select",
+              currentValue: "high",
+              options: ladder.map(({ value }) => ({ value, name: value })),
+            },
+          ] as never,
         });
-        for (const requestedEffort of ["none", "off", "high"]) {
-          expect(
-            (yield* Effect.exit(
-              applyDroidModelAndEffort({
-                runtime: managed,
-                requestedModel: undefined,
-                requestedEffort,
-              }),
-            ))._tag,
-          ).toBe("Failure");
-        }
-        expect(calls).toEqual([]);
+        yield* applyDroidModelAndEffort({
+          runtime: { ...offLadder.runtime, getReasoningMetadata: () => adaptive },
+          requestedModel: undefined,
+          requestedEffort: "off",
+        });
+        expect(offLadder.calls).toEqual([
+          { op: "setConfigOption", arg: { configId: "reasoning_effort", value: "off" } },
+        ]);
+        const refused = yield* Effect.exit(
+          applyDroidModelAndEffort({
+            runtime: { ...offLadder.runtime, getReasoningMetadata: () => effort },
+            requestedModel: undefined,
+            requestedEffort: "off",
+          }),
+        );
+        expect(refused._tag).toBe("Failure");
       }),
   );
+
+  it.effect("says which value Droid applied when it reports another effort", () =>
+    Effect.gen(function* () {
+      const { runtime } = makeRuntime();
+      const result = yield* Effect.exit(
+        applyDroidModelAndEffort({
+          runtime: {
+            ...runtime,
+            getReasoningMetadata: () => known,
+            setConfigOption: (configId: string, value: string) =>
+              Effect.fail(
+                new EffectAcpErrors.AcpRequestError({
+                  code: -32603,
+                  errorMessage: 'The agent applied reasoning_effort "none" instead of "high".',
+                  data: { configId, requestedValue: value, appliedValue: "none" },
+                }),
+              ),
+          },
+          requestedModel: undefined,
+          requestedEffort: "high",
+        }),
+      );
+      expect(result._tag).toBe("Failure");
+      expect(Exit.isFailure(result) && Cause.squash(result.cause)).toMatchObject({
+        message:
+          'Droid applied reasoning effort "none" instead of "high", so the message was not sent.',
+      });
+    }),
+  );
+  describe("a configured default Droid replaces", () => {
+    // Droid 0.213.0 and 0.230.0 keep their own ladder for a model id they know:
+    // gpt-5.2 configured with Minimal (or Max) runs at Low.
+    const levels = ["minimal", "low", "medium", "high"] as const;
+    const metadata = (defaultLevel: (typeof levels)[number]): CustomModelReasoning => ({
+      status: "known",
+      supported: true,
+      mode: "effort",
+      levels,
+      defaultLevel,
+    });
+    const makeClampingRuntime = (replacement: string) => {
+      const { runtime, calls } = makeRuntime({
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: "custom:scient-gpt",
+            options: [{ value: "custom:scient-gpt", name: "GPT" }],
+          },
+          {
+            id: "reasoning_effort",
+            name: "Reasoning",
+            category: "thought_level",
+            type: "select",
+            currentValue: "high",
+            options: levels.map((value) => ({ value, name: value })),
+          },
+        ] as never,
+      });
+      return {
+        calls,
+        runtime: {
+          ...runtime,
+          // The confirmed transport: the write fails with what Droid reported.
+          setConfigOption: (configId: string, value: string) =>
+            value !== "minimal"
+              ? runtime.setConfigOption(configId, value)
+              : runtime.setConfigOption(configId, replacement).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      new EffectAcpErrors.AcpRequestError({
+                        code: -32603,
+                        errorMessage: `The agent applied reasoning_effort "${replacement}" instead of "minimal".`,
+                        data: { configId, requestedValue: value, appliedValue: replacement },
+                      }),
+                    ),
+                  ),
+                ),
+        },
+      };
+    };
+
+    it.effect("runs at the level Droid applies and says which default it replaced", () =>
+      Effect.gen(function* () {
+        // The composer dispatches the default level like any other; none is the same wish.
+        for (const requestedEffort of [undefined, "minimal"]) {
+          const { runtime } = makeClampingRuntime("low");
+          const replaced = yield* applyDroidModelAndEffort({
+            runtime: {
+              ...runtime,
+              getReasoningMetadata: () => metadata("medium"),
+              getDefaultReasoningLevel: () => "minimal",
+            },
+            requestedModel: undefined,
+            requestedEffort,
+          });
+          expect(replaced, String(requestedEffort)).toEqual({
+            configured: "minimal",
+            applied: "low",
+          });
+          expect(droidReplacedDefaultNotice(replaced!)).toBe(
+            "Droid uses Low for this model instead of the configured default Minimal.",
+          );
+        }
+        const { runtime } = makeClampingRuntime("low");
+        expect(
+          yield* applyDroidModelAndEffort({
+            runtime: {
+              ...runtime,
+              getReasoningMetadata: () => metadata("medium"),
+              getDefaultReasoningLevel: () => "high",
+            },
+            requestedModel: undefined,
+            requestedEffort: undefined,
+          }),
+        ).toBeUndefined();
+      }),
+    );
+
+    it.effect("still refuses a level picked in the thread when Droid applies another", () =>
+      Effect.gen(function* () {
+        const { runtime } = makeClampingRuntime("low");
+        const result = yield* Effect.exit(
+          applyDroidModelAndEffort({
+            runtime: {
+              ...runtime,
+              getReasoningMetadata: () => metadata("medium"),
+              getDefaultReasoningLevel: () => "high",
+            },
+            requestedModel: undefined,
+            requestedEffort: "minimal",
+          }),
+        );
+        expect(Exit.isFailure(result) && Cause.squash(result.cause)).toMatchObject({
+          message:
+            'Droid applied reasoning effort "low" instead of "minimal", so the message was not sent.',
+        });
+      }),
+    );
+
+    it.effect("refuses a default Droid replaces with a level the model does not take", () =>
+      Effect.gen(function* () {
+        const { runtime } = makeClampingRuntime("none");
+        const result = yield* Effect.exit(
+          applyDroidModelAndEffort({
+            runtime: {
+              ...runtime,
+              getReasoningMetadata: () => metadata("minimal"),
+            },
+            requestedModel: undefined,
+            requestedEffort: undefined,
+          }),
+        );
+        expect(Exit.isFailure(result) && Cause.squash(result.cause)).toMatchObject({
+          message:
+            'Droid applied reasoning effort "none" instead of "minimal", so the message was not sent.',
+        });
+      }),
+    );
+
+    it.effect("leaves the session on the model and level the walk found it with", () =>
+      Effect.gen(function* () {
+        // Like Droid, the session keeps its reasoning level across model switches.
+        const current = { model: "native-a", reasoning_effort: "high" };
+        const calls: Array<string> = [];
+        const select = (id: "model" | "reasoning_effort", category: string, values: string[]) => ({
+          id,
+          name: id,
+          category,
+          type: "select" as const,
+          currentValue: current[id],
+          options: values.map((value) => ({ value, name: value })),
+        });
+        const runtime = {
+          getConfigOptions: Effect.sync(() => [
+            select("model", "model", ["native-a", "custom:scient-gpt"]),
+            select("reasoning_effort", "thought_level", [...levels]),
+          ]),
+          setModel: (model: string) =>
+            Effect.sync(() => {
+              calls.push(`model=${model}`);
+              current.model = model;
+            }),
+          setConfigOption: (_configId: string, value: string) =>
+            Effect.sync(() => {
+              calls.push(`effort=${value}`);
+              current.reasoning_effort = value;
+            }),
+          getReasoningMetadata: (model: string) =>
+            model === "custom:scient-gpt" ? metadata("medium") : undefined,
+          getDefaultReasoningLevel: () => "low",
+        };
+        const models = yield* discoverDroidModels(runtime);
+        expect(models.map((model) => model.slug)).toEqual(["native-a", "custom:scient-gpt"]);
+        // The Scient model's configured level was written during the walk.
+        expect(calls).toContain("effort=low");
+        expect(current).toEqual({ model: "native-a", reasoning_effort: "high" });
+        expect(calls.slice(-2)).toEqual(["model=native-a", "effort=high"]);
+      }),
+    );
+
+    it.effect("refuses a report that also names another model than the one selected", () =>
+      Effect.gen(function* () {
+        // Each effort write reports a level the model takes, and model B as current.
+        for (const [requestedEffort, reportedEffort] of [
+          [undefined, "low"],
+          ["minimal", "low"],
+          ["minimal", "minimal"],
+          ["high", "high"],
+        ] as const) {
+          const current = { model: "custom:scient-other", reasoning_effort: "high" as string };
+          const select = (
+            id: "model" | "reasoning_effort",
+            category: string,
+            values: string[],
+          ) => ({
+            id,
+            name: id,
+            category,
+            type: "select" as const,
+            currentValue: current[id],
+            options: values.map((value) => ({ value, name: value })),
+          });
+          const result = yield* Effect.exit(
+            applyDroidModelAndEffort({
+              runtime: {
+                getConfigOptions: Effect.sync(() => [
+                  select("model", "model", ["custom:scient-gpt", "native-b"]),
+                  select("reasoning_effort", "thought_level", [...levels]),
+                ]),
+                setModel: (model: string) =>
+                  Effect.sync(() => {
+                    current.model = model;
+                  }),
+                setConfigOption: (_configId: string, value: string) =>
+                  Effect.suspend(() => {
+                    current.model = "native-b";
+                    current.reasoning_effort = reportedEffort;
+                    return reportedEffort === value
+                      ? Effect.void
+                      : Effect.fail(
+                          new EffectAcpErrors.AcpRequestError({
+                            code: -32603,
+                            errorMessage: `The agent applied reasoning_effort "${reportedEffort}" instead of "${value}".`,
+                            data: {
+                              configId: "reasoning_effort",
+                              requestedValue: value,
+                              appliedValue: reportedEffort,
+                            },
+                          }),
+                        );
+                  }),
+                // Only the Scient model has metadata; B is one of Droid's own.
+                getReasoningMetadata: (model: string) =>
+                  model === "custom:scient-gpt" ? metadata("medium") : undefined,
+                getDefaultReasoningLevel: () => "minimal",
+              },
+              requestedModel: "custom:scient-gpt",
+              requestedEffort,
+            }),
+          );
+          expect(
+            Exit.isFailure(result) && Cause.squash(result.cause),
+            `${requestedEffort} -> ${reportedEffort}`,
+          ).toMatchObject({
+            message:
+              'Droid reported the model "native-b" instead of "custom:scient-gpt" after the reasoning effort was set, so the message was not sent.',
+          });
+        }
+      }),
+    );
+
+    it.effect("offers the level Droid runs, not the default it replaced", () =>
+      Effect.gen(function* () {
+        const { runtime } = makeClampingRuntime("low");
+        const [model] = yield* discoverDroidModels({
+          ...runtime,
+          getReasoningMetadata: () => metadata("medium"),
+          getDefaultReasoningLevel: () => "minimal",
+        });
+        expect(model?.replacedDefault).toEqual({ configured: "minimal", applied: "low" });
+        const descriptor = buildDroidCapabilitiesFromEfforts(
+          model!.efforts,
+          metadata("medium"),
+          "minimal",
+          model!.replacedDefault,
+        ).optionDescriptors?.[0];
+        expect(descriptor?.type === "select" && descriptor.options).toEqual([
+          { id: "low", label: "low", isDefault: true },
+          { id: "medium", label: "medium" },
+          { id: "high", label: "high" },
+        ]);
+      }),
+    );
+  });
+
   it("maps an effort ladder into a single reasoningEffort select descriptor", () => {
     const capabilities = buildDroidCapabilitiesFromEfforts([
       { value: "none", label: "None" },
@@ -553,6 +948,48 @@ describe("applyDroidModelAndEffort", () => {
       );
       expect(failure._tag).toBe("Failure");
       expect(second.calls).toEqual([]);
+    }),
+  );
+
+  it.effect("says why a model Droid does not offer is unavailable before selecting it", () =>
+    Effect.gen(function* () {
+      const native = makeRuntime();
+      const nativeFailure = yield* Effect.exit(
+        applyDroidModelAndEffort({
+          runtime: native.runtime,
+          requestedModel: "claude-opus-4-6",
+          requestedEffort: undefined,
+        }),
+      );
+      expect(Exit.isFailure(nativeFailure) && Cause.squash(nativeFailure.cause)).toMatchObject({
+        message: 'Droid no longer offers "claude-opus-4-6". Pick another model.',
+      });
+      const managed = makeRuntime();
+      const managedFailure = yield* Effect.exit(
+        applyDroidModelAndEffort({
+          runtime: {
+            ...managed.runtime,
+            describeUnavailableModel: (modelId: string) =>
+              modelId === "custom:scient-lost-0" ? "Re-enter the API key for Lab." : undefined,
+          },
+          requestedModel: "custom:scient-lost-0",
+          requestedEffort: "high",
+        }),
+      );
+      expect(Exit.isFailure(managedFailure) && Cause.squash(managedFailure.cause)).toMatchObject({
+        message: "Re-enter the API key for Lab.",
+      });
+      expect([...native.calls, ...managed.calls]).toEqual([]);
+    }),
+  );
+
+  it.effect("keeps Droid's own model for the Droid default and a blank model", () =>
+    Effect.gen(function* () {
+      for (const requestedModel of [DROID_DEFAULT_MODEL, "  "]) {
+        const { runtime, calls } = makeRuntime();
+        yield* applyDroidModelAndEffort({ runtime, requestedModel, requestedEffort: undefined });
+        expect(calls).toEqual([]);
+      }
     }),
   );
 
@@ -632,5 +1069,47 @@ describe("applyDroidModelAndEffort", () => {
       expect(failure._tag).toBe("Failure");
       expect(calls).toEqual([]);
     }),
+  );
+});
+
+describe("makeDroidCredentialRedactor", () => {
+  it.effect("takes the instance's credentials out of a Droid error, and nothing else", () =>
+    Effect.gen(function* () {
+      // The capability Droid holds in place of a custom model's key, as the broker makes it.
+      const broker = yield* makeDroidKeyBroker({
+        connections: [
+          {
+            id: "gateway",
+            name: "Gateway",
+            protocol: "openai-completions",
+            baseUrl: "http://127.0.0.1:9",
+            credentialId: "gateway-credential",
+            apiKey: Redacted.make("gateway-real-key-0123456789"),
+            models: [],
+          },
+        ],
+        isCurrent: () => true,
+        retire: Effect.void,
+      });
+      const capability = broker.route("gateway")!.apiKey;
+      const redact = makeDroidCredentialRedactor({
+        environment: { FACTORY_API_KEY: "fk-live-0123456789abcdef", PATH: "/usr/bin" },
+        sensitiveValues: ["gateway-token-0123456789", "gateway-token-0123456789-long", "on"],
+      });
+      expect(
+        redact(
+          `401 Invalid API key fk-live-0123456789abcdef for ${capability} via gateway-token-0123456789-long (gateway-token-0123456789) on /usr/bin`,
+        ),
+      ).toBe(
+        "401 Invalid API key [redacted] for [redacted] via [redacted] ([redacted]) on /usr/bin",
+      );
+      // Without the instance's sensitive values, the environment's key and capabilities still go.
+      expect(
+        makeDroidCredentialRedactor({ environment: { FACTORY_API_KEY: "fk-live-0123456789" } })(
+          `fk-live-0123456789 ${capability}`,
+        ),
+      ).toBe("[redacted] [redacted]");
+      expect(makeDroidCredentialRedactor({})("nothing configured")).toBe("nothing configured");
+    }).pipe(Effect.scoped),
   );
 });

@@ -36,6 +36,11 @@
       "purpose": "Share the provider/model slug codec and reasoning descriptors between Pi and Oh My Pi."
     },
     {
+      "path": "apps/server/src/provider/agentProcessEnvironment.ts",
+      "anchor": "export const agentProcessEnvironment",
+      "purpose": "Share the agent process environment rule between Droid and Oh My Pi."
+    },
+    {
       "path": "apps/server/src/provider/pi/PiModel.ts",
       "anchor": "splitAgentModelSlug",
       "purpose": "Keep Pi's canonical slug rule on top of the codec it now shares with Oh My Pi."

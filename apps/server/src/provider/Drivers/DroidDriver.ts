@@ -1,4 +1,5 @@
 import {
+  DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL,
   DroidSettings,
   ProviderDriverKind,
   type ServerProvider,
@@ -11,6 +12,8 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
@@ -24,6 +27,7 @@ import {
   buildInitialDroidProviderSnapshot,
   checkDroidProviderStatusWithCapabilities,
   enrichDroidSnapshot,
+  probeDroidCliVersion,
 } from "../Layers/DroidProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -33,7 +37,10 @@ import {
   type ProviderInstance,
 } from "../ProviderDriver.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
-import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
+import {
+  agentProcessEnvironment,
+  withoutInheritedEnvironment,
+} from "../agentProcessEnvironment.ts";
 import {
   makeCachedProviderMaintenanceResolution,
   makeManualOnlyProviderMaintenanceCapabilities,
@@ -55,6 +62,7 @@ import {
 } from "../../scient/providerLifecycle/DroidConnectionActions.ts";
 import { makeDroidManagedRuntimeResolution } from "../../scient/providerLifecycle/DroidManagedRuntimeActions.ts";
 import { makeDroidCustomModelsRuntimeFactory } from "../droid/DroidCustomModels.ts";
+import { makeDroidProviderStatus } from "../droid/DroidProviderStatus.ts";
 import { discoverDroidSkills, setDroidSkillEnabled } from "./DroidSkills.ts";
 
 const decodeDroidSettings = Schema.decodeSync(DroidSettings);
@@ -140,9 +148,20 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
       const httpClient = yield* HttpClient.HttpClient;
       const serverConfig = yield* ServerConfig;
       const serverSettings = yield* ServerSettingsService;
+      const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const eventLoggers = yield* ProviderEventLoggers;
-      const installationEnv = mergeProviderInstanceEnvironment(environment);
+      const platform = yield* HostProcessPlatform;
+      // Every Droid process, including those started by spawners that merge the
+      // server's own environment, gets the agent environment contract.
+      const installationEnv = withoutInheritedEnvironment(
+        agentProcessEnvironment({ instanceEnvironment: environment, platform }),
+        platform,
+      );
       const processEnv = droidProcessEnvironment(installationEnv);
+      // Never shown from a Droid error, in a thread or in the provider's status.
+      const sensitiveEnvironmentValues = (environment ?? []).flatMap((variable) =>
+        variable.sensitive ? [variable.value] : [],
+      );
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
@@ -199,11 +218,13 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
       const discoverSkillsForCwd = (
         cwd: string,
         fallback: ServerProvider["skills"] = [],
+        sessionId?: string,
       ): Effect.Effect<ServerProvider["skills"]> =>
         discoverDroidSkills({
           binaryPath: effectiveConfig.binaryPath,
           cwd,
           environment: processEnv,
+          sessionId,
         }).pipe(
           Effect.timeout(DROID_SKILL_DISCOVERY_TIMEOUT),
           Effect.catch((cause) =>
@@ -214,6 +235,8 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
           ),
         );
 
+      // Bound once the status exists; the adapter and probes report into it.
+      let status: Effect.Success<ReturnType<typeof makeDroidProviderStatus>> | undefined;
       const adapter = yield* makeDroidAdapter(effectiveConfig, {
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
@@ -236,14 +259,17 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
             adapter.stopAll(),
           );
 
+      // A full probe: one Droid session shared by status, models and skills.
       const checkProvider = checkDroidProviderStatusWithCapabilities(
         effectiveConfig,
         processEnv,
         makeAcpRuntime,
+        serverConfig.cwd,
+        sensitiveEnvironmentValues,
       ).pipe(
         Effect.flatMap((result) =>
           canDiscoverDroidSkills(result.snapshot)
-            ? discoverSkillsForCwd(serverConfig.cwd).pipe(
+            ? discoverSkillsForCwd(serverConfig.cwd, [], result.sessionId).pipe(
                 Effect.map((skills) => ({
                   ...result,
                   snapshot: { ...result.snapshot, skills },
@@ -254,6 +280,7 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
         Effect.map(({ snapshot: checkedSnapshot, accountCapabilities }) =>
           stampIdentity(checkedSnapshot, accountCapabilities),
         ),
+        Effect.tap((checked) => Effect.suspend(() => status?.observeProbe(checked) ?? Effect.void)),
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
@@ -267,7 +294,7 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
         getSettings: serverSettings.getSettings.pipe(Effect.map(mapSettings)),
         streamSettings: serverSettings.streamChanges.pipe(Stream.map(mapSettings)),
       };
-      const snapshot = yield* makeManagedServerProvider<
+      const managedSnapshot = yield* makeManagedServerProvider<
         ProviderSnapshotSettings<DroidSettings> & {
           customModels: ReturnType<typeof customModelDiscoverySnapshot>;
         }
@@ -276,6 +303,8 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
+        // Full probes start a Droid session; the periodic check below does not.
+        refreshOnInterval: false,
         initialSnapshot: (settings) =>
           buildInitialDroidProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider,
@@ -312,6 +341,24 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
             }),
         ),
       );
+      status = yield* makeDroidProviderStatus({
+        provider: managedSnapshot,
+        probeVersion: probeDroidCliVersion(effectiveConfig, processEnv).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        ),
+        refreshInterval: serverSettings.getSettings.pipe(
+          Effect.map(
+            (settings) =>
+              resolveServerBackgroundActivitySettings(settings).providerHealthRefreshInterval,
+          ),
+          Effect.orElseSucceed(() => DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL),
+        ),
+        hasDemand: Effect.all([
+          backgroundPolicy.shouldRunScopeWork({ type: "provider-status" }),
+          backgroundPolicy.shouldRunScopeWork({ type: "provider-status", instanceId }),
+        ]).pipe(Effect.map(([generic, instance]) => generic || instance)),
+      });
+      const snapshot = status.provider;
 
       const skillActions = {
         setEnabled: (skill: {

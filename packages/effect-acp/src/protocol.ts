@@ -62,6 +62,15 @@ export type AcpIncomingNotification =
       readonly params: unknown;
     };
 
+/** A request of the generated client, identified as it is sent and when its response arrives. */
+export interface AcpRequestSent {
+  readonly method: string;
+  readonly requestId: AcpError.AcpRequestId;
+}
+export interface AcpResponseArrival {
+  readonly requestId: AcpError.AcpRequestId;
+}
+
 /** Standard I/O whose input can report provider-specific ACP failures. */
 export interface AcpStdio extends Omit<Stdio.Stdio, "stdin"> {
   readonly stdin: Stream.Stream<Uint8Array, PlatformError.PlatformError | AcpError.AcpError>;
@@ -80,6 +89,20 @@ export interface AcpPatchedProtocolOptions {
   readonly onNotification?: (
     notification: AcpIncomingNotification,
   ) => Effect.Effect<void, AcpError.AcpError, never>;
+  /**
+   * Runs when a request of the generated client is handed to the writer, just
+   * before its bytes go out: the caller knows the request's id before its
+   * response can arrive, and a request stopped earlier (while it was logged
+   * or encoded) is never reported. The two are one uninterruptible step.
+   */
+  readonly onRequest?: (request: AcpRequestSent) => Effect.Effect<void>;
+  /**
+   * Runs when the response to a request of the generated client arrives, in
+   * arrival order with `onNotification` and before the response reaches its
+   * caller. The caller's own continuation runs later, so only this tells
+   * whether a notification preceded or followed the response.
+   */
+  readonly onResponse?: (response: AcpResponseArrival) => Effect.Effect<void>;
   readonly onExtRequest?: (
     method: string,
     params: unknown,
@@ -152,6 +175,8 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
 
   const offerOutgoing = Effect.fn("offerOutgoing")(function* (
     message: RpcMessage.FromClientEncoded | RpcMessage.FromServerEncoded,
+    /** A request of the generated client: `onRequest` reports it. */
+    reported = false,
   ) {
     // RpcClient emits `@effect/rpc/Interrupt` when a pending request's fiber is interrupted.
     // ACP has no such method; agents log it as an error and cannot act on it, so drop it.
@@ -185,8 +210,15 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         payload: typeof encoded === "string" ? encoded : new TextDecoder().decode(encoded),
       });
 
-      yield* ensureActive;
-      yield* Queue.offer(outgoing, encoded).pipe(Effect.asVoid);
+      // One step: once `onRequest` ran, the request is with the writer.
+      yield* Effect.uninterruptible(
+        Effect.gen(function* () {
+          yield* ensureActive;
+          if (reported && options.onRequest && message._tag === "Request" && message.id !== "")
+            yield* options.onRequest({ method: message.tag, requestId: message.id });
+          yield* Queue.offer(outgoing, encoded);
+        }),
+      );
     }
   });
 
@@ -400,7 +432,10 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       Effect.flatMap((pending) => {
         const pendingRequest = pending.get(String(message.requestId));
         if (!pendingRequest) {
-          return Queue.offer(clientQueue, restoreAcpResponseError(message)).pipe(Effect.asVoid);
+          return (options.onResponse?.({ requestId: message.requestId }) ?? Effect.void).pipe(
+            Effect.andThen(Queue.offer(clientQueue, restoreAcpResponseError(message))),
+            Effect.asVoid,
+          );
         }
         if (message.exit._tag === "Success") {
           return completeExtPendingSuccess(message.requestId, message.exit.value);
@@ -543,7 +578,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         Effect.forever,
       ),
     send: (_clientId, request) =>
-      offerOutgoing(request).pipe(
+      offerOutgoing(request, true).pipe(
         Effect.mapError(
           (error) =>
             new RpcClientError.RpcClientError({

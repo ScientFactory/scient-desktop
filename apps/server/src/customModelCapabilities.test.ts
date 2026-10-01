@@ -29,6 +29,11 @@ const source: CustomModelConnection = {
   ],
 };
 
+const brokered = (connectionId: string) => ({
+  baseUrl: `http://127.0.0.1:1/${connectionId}`,
+  apiKey: `capability-${connectionId}`,
+});
+
 describe("custom-model capability projection", () => {
   it("separates non-revoking refreshes from loaded authority revocation", () => {
     const model = source.models[0]!;
@@ -104,7 +109,7 @@ describe("custom-model capability projection", () => {
       thinkingLevelMap: { low: "low", high: "high", medium: null },
     });
     expect(
-      buildDroidCustomModelsSettings([{ ...source, models: [model], apiKey: null }]).settings
+      buildDroidCustomModelsSettings([{ ...source, models: [model], apiKey: null }], brokered)
         .customModels[0],
     ).toMatchObject({ enableThinking: true, reasoningEffort: "high" });
     expect(effectiveCustomModelReasoning(source.models[0]!, source.protocol)).toBeUndefined();
@@ -124,7 +129,7 @@ describe("custom-model capability projection", () => {
     };
     expect(effectiveCustomModelReasoning(model, source.protocol)?.supported).toBe(false);
     expect(
-      buildDroidCustomModelsSettings([{ ...source, models: [model], apiKey: null }]).settings
+      buildDroidCustomModelsSettings([{ ...source, models: [model], apiKey: null }], brokered)
         .customModels[0],
     ).toMatchObject({ enableThinking: false });
   });

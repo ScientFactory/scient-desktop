@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 
 import * as Effect from "effect/Effect";
@@ -67,11 +68,14 @@ const emitOverlappingXAiPromptCompleteOutOfOrder =
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
-// Droid-style async config refresh: publish the new inventory through a
-// `config_option_update`. The optional drop flag additionally leaves the
-// request pending to cover older Droid builds that applied a request without
-// responding. Current Droid model writes still require a JSON-RPC request.
+// Droid-style async config refresh: answer the write with `{}` and publish
+// the applied state in one `config_option_update` right after it, as Droid
+// does (verified against 0.183.0, 0.200.0, 0.213.0 and 0.230.0).
 const droidAsyncConfigRefresh = process.env.T3_ACP_DROID_ASYNC_CONFIG_REFRESH === "1";
+// The other order: publish the applied state first and answer the write with
+// `{}` once the client has had time to take the update in.
+const configUpdateBeforeEmptyResponse =
+  process.env.T3_ACP_CONFIG_UPDATE_BEFORE_EMPTY_RESPONSE === "1";
 // Droid's process-scoped settings overlay augments (does not replace) native models.
 const settingsArg = process.argv.indexOf("--settings");
 const overlayModels =
@@ -86,12 +90,40 @@ const overlayModels =
           }),
         ),
       )(NodeFS.readFileSync(process.argv[settingsArg + 1]!, "utf8")).customModels;
+// Droid runs the overlay's SessionStart hook commands before answering `session/new`.
+const overlaySessionStartCommands =
+  settingsArg < 0
+    ? []
+    : (
+        Schema.decodeSync(
+          Schema.fromJsonString(
+            Schema.Struct({
+              hooks: Schema.optional(
+                Schema.Struct({
+                  SessionStart: Schema.optional(
+                    Schema.Array(
+                      Schema.Struct({
+                        hooks: Schema.Array(Schema.Struct({ command: Schema.String })),
+                      }),
+                    ),
+                  ),
+                }),
+              ),
+            }),
+          ),
+        )(NodeFS.readFileSync(process.argv[settingsArg + 1]!, "utf8")).hooks?.SessionStart ?? []
+      ).flatMap((matcher) => matcher.hooks.map((hook) => hook.command));
 const overlayModelOptions = overlayModels.map((model) => ({
   value: model.id,
   name: model.displayName,
 }));
-const droidDropsConfigResponse = process.env.T3_ACP_DROID_DROP_CONFIG_RESPONSE === "1";
+// Droid's `autonomy_level` select, starting at the given level (a user default).
+const droidInitialAutonomy = process.env.T3_ACP_DROID_AUTONOMY?.trim() || undefined;
 const droidReturnsEmptyConfigResponse = process.env.T3_ACP_DROID_EMPTY_CONFIG_RESPONSE === "1";
+// Acknowledge autonomy writes without applying them (Droid keeps its own level).
+const droidAutonomyLocked = process.env.T3_ACP_DROID_AUTONOMY_LOCKED === "1";
+// Droid keeps its own ladder for a model id it knows: `minimal=low` applies Low to a Minimal write.
+const droidEffortReplacement = process.env.T3_ACP_DROID_EFFORT_REPLACEMENT?.split("=");
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const initialGrokReasoningEffort =
   process.env.T3_ACP_INITIAL_GROK_REASONING_EFFORT?.trim() || undefined;
@@ -112,6 +144,7 @@ let currentModeId = antigravityProfile ? "default" : "ask";
 let currentModelId = antigravityProfile ? "gemini-test-low" : "default";
 let parameterizedModelPicker = false;
 let currentReasoning = "medium";
+let currentAutonomy = droidInitialAutonomy;
 let currentContext = "272k";
 let currentFast = false;
 let promptCount = 0;
@@ -313,8 +346,24 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
       ...overlayModelOptions,
     ],
   };
+  const autonomyOptions: Array<AcpSchema.SessionConfigOption> =
+    currentAutonomy === undefined
+      ? []
+      : [
+          {
+            id: "autonomy_level",
+            name: "Autonomy",
+            type: "select" as const,
+            currentValue: currentAutonomy,
+            options: ["normal", "spec", "auto-low", "auto-medium", "auto-high"].map((value) => ({
+              value,
+              name: value,
+            })),
+          },
+        ];
   return currentModelId === "custom:Ox-Alpha-0"
     ? [
+        ...autonomyOptions,
         modelOption,
         {
           id: "reasoning_effort",
@@ -331,7 +380,7 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
           ],
         },
       ]
-    : [modelOption];
+    : [...autonomyOptions, modelOption];
 }
 
 function modelConfigOptionsFor(modelId: string): ReadonlyArray<AcpSchema.SessionConfigOption> {
@@ -517,6 +566,8 @@ const program = Effect.gen(function* () {
 
   yield* agent.handleCreateSession(() =>
     Effect.gen(function* () {
+      for (const command of overlaySessionStartCommands)
+        NodeChildProcess.execSync(command, { stdio: "ignore" });
       if (antigravityProfile) {
         yield* publishAntigravityCommands(sessionId);
       }
@@ -650,6 +701,14 @@ const program = Effect.gen(function* () {
       if (request.configId === "mode" && typeof request.value === "string") {
         currentModeId = request.value;
       }
+      if (
+        request.configId === "autonomy_level" &&
+        currentAutonomy !== undefined &&
+        !droidAutonomyLocked &&
+        typeof request.value === "string"
+      ) {
+        currentAutonomy = request.value;
+      }
       if (request.configId === "model" && typeof request.value === "string") {
         currentModelId = request.value;
         if (currentModelId === "custom:Ox-Alpha-0") {
@@ -660,7 +719,10 @@ const program = Effect.gen(function* () {
         (request.configId === "reasoning" || request.configId === "reasoning_effort") &&
         typeof request.value === "string"
       ) {
-        currentReasoning = request.value;
+        currentReasoning =
+          droidEffortReplacement?.[0] === request.value
+            ? (droidEffortReplacement[1] ?? request.value)
+            : request.value;
       }
       if (request.configId === "context" && typeof request.value === "string") {
         currentContext = request.value;
@@ -668,36 +730,35 @@ const program = Effect.gen(function* () {
       if (request.configId === "fast") {
         currentFast = request.value === true || request.value === "true";
       }
-      if (droidAsyncConfigRefresh) {
-        yield* agent.client.sessionUpdate({
+      if (droidAsyncConfigRefresh || configUpdateBeforeEmptyResponse) {
+        const publish = agent.client.sessionUpdate({
           sessionId: String(request.sessionId ?? sessionId),
           update: {
             sessionUpdate: "config_option_update",
             configOptions: configOptions(),
           },
         });
+        yield* configUpdateBeforeEmptyResponse
+          ? publish
+          : publish.pipe(Effect.delay("20 millis"), Effect.forkDetach);
       }
     });
 
   yield* agent.handleSetSessionConfigOption((request) =>
     Effect.gen(function* () {
       yield* applySessionConfigOption(request);
-      if (droidDropsConfigResponse) {
-        // Some older agents publish an authoritative update without completing
-        // the request. Confirmation must tolerate that without using notifications.
-        return yield* Effect.never;
-      }
       if (droidAsyncConfigRefresh) {
-        // Droid-style empty acknowledgment: the inventory was already
-        // published above as a notification. The lenient client codec
+        // Droid-style empty acknowledgment: the inventory follows as a
+        // notification. The lenient client codec
         // (`LenientSetSessionConfigOptionResponse`) keeps this absent — the
-        // runtime must not overwrite the notification with an empty list.
+        // runtime must not replace the inventory with an empty list.
         // Deliberate protocol violation used only to exercise the client's
         // lenient inbound compatibility. Public agent handlers remain typed
         // to the strict ACP response shape.
         return {} as AcpSchema.SetSessionConfigOptionResponse;
       }
-      if (droidReturnsEmptyConfigResponse) {
+      if (configUpdateBeforeEmptyResponse) yield* Effect.sleep("50 millis");
+      if (droidReturnsEmptyConfigResponse || configUpdateBeforeEmptyResponse) {
         return {} as AcpSchema.SetSessionConfigOptionResponse;
       }
       return {

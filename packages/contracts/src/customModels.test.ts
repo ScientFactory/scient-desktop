@@ -5,6 +5,7 @@ import {
   CustomModelsSettings,
   validateCustomModelConnection,
   customModelImageInput,
+  droidAdaptiveClaudeLevels,
   supportsModelConnections,
 } from "./customModels.ts";
 import { ServerSettingsPatch } from "./settings.ts";
@@ -21,6 +22,53 @@ const encode = Schema.encodeSync(Schema.toCodecJson(CustomModelSaveInput));
 const decodePatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const decodeSettings = Schema.decodeUnknownSync(CustomModelsSettings);
 describe("custom model contracts", () => {
+  it("knows the Claude model ids Droid sends adaptive thinking for", () => {
+    // Each id was sent through Droid 0.213.0 and 0.230.0 with a wire-capture stub.
+    for (const modelId of [
+      "claude-opus-4-7",
+      "claude-opus-4-7-fast",
+      "claude-opus-4-7@20260101",
+      "claude-opus-4-8",
+      "bedrock/anthropic.claude-opus-4-7",
+      "CLAUDE-OPUS-4-7",
+      "opus 4.7",
+      "claude-opus-5",
+      "claude-opus-5-fast",
+      "claude-opus-5-20270101",
+      "claude-sonnet-5",
+      "claude-fable-5",
+    ])
+      expect(droidAdaptiveClaudeLevels(modelId), modelId).toEqual(["xhigh", "max"]);
+    for (const modelId of [
+      "claude-opus-4-6",
+      "claude-opus-4-6-fast",
+      "claude-sonnet-4-6",
+      "claude-sonnet-4-6-20260101",
+      "us.anthropic.claude-sonnet-4-6-v1:0",
+      "anthropic/claude-opus-4.6",
+      "sonnet4.6",
+    ])
+      expect(droidAdaptiveClaudeLevels(modelId), modelId).toEqual(["max"]);
+    // Budget thinking, always-on thinking, or no entry in Droid's table.
+    for (const modelId of [
+      "plain-anthropic",
+      "claude-sonnet-4-5",
+      "claude-opus-4-5",
+      "claude-opus-4-1",
+      "claude-opus-4",
+      "claude-sonnet-4",
+      "claude-haiku-4-5",
+      "claude-haiku-4-6",
+      "claude-3-7-sonnet-20250219",
+      "claude-opus-5-5",
+      "claude-sonnet-5-5",
+      "claude-fable-5.1",
+      "claude-opus-9",
+      "kimi-k2",
+      "glm-4.6",
+    ])
+      expect(droidAdaptiveClaudeLevels(modelId), modelId).toBeUndefined();
+  });
   it("preserves legacy image choices and round-trips the independent override", () => {
     const legacy = {
       id: "m",

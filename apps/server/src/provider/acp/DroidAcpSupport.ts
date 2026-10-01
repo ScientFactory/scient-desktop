@@ -1,4 +1,5 @@
 import {
+  DROID_DEFAULT_MODEL,
   type DroidSettings,
   type RuntimeMode,
   type ServerProviderModel,
@@ -8,6 +9,8 @@ import { createModelCapabilities, preferredReasoningLevel } from "@t3tools/share
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
@@ -15,6 +18,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 import type { CustomModelReasoning } from "../../customModelCapabilities.ts";
+import type { DroidRequestLimitBreach } from "../droid/DroidKeyBroker.ts";
 
 /**
  * Droid ACP support — helpers for the Factory Droid CLI's standard-ACP
@@ -31,9 +35,9 @@ import type { CustomModelReasoning } from "../../customModelCapabilities.ts";
  * - The model inventory lives in the `model` select option (`category:
  *   "model"`); reasoning ladders live in `reasoning_effort` (`category:
  *   "thought_level"`) and change with the selected model.
- * - Model writes use `set_config_option` requests, confirmed through
- *   `config_option_update`. Droid 0.202 ignores notifications; older
- *   0.200 builds could apply a request without sending its response.
+ * - Model writes use `set_config_option` requests, confirmed through the
+ *   `config_option_update` Droid publishes after its `{}` answer (0.183.0,
+ *   0.200.0, 0.213.0 and 0.230.0). Droid 0.202 ignores notifications.
  * - Modes are exposed both as a `modes` block and an `autonomy_level`
  *   select option with ids `normal | spec | auto-low | auto-medium |
  *   auto-high`.
@@ -67,7 +71,8 @@ const DROID_AUTONOMY_CONFIG_ID = "autonomy_level";
 /** Env vars whose presence selects key-based auth for probes and sessions. */
 const DROID_API_KEY_ENV_KEYS: ReadonlyArray<string> = ["FACTORY_API_KEY"];
 
-type DroidAcpRuntimeDroidSettings = Pick<DroidSettings, "binaryPath">;
+type DroidAcpRuntimeDroidSettings = Pick<DroidSettings, "binaryPath"> &
+  Partial<Pick<DroidSettings, "cloudSessionSync">>;
 
 export interface DroidAcpRuntimeInput extends Omit<
   AcpSessionRuntime.AcpSessionRuntimeOptions,
@@ -82,8 +87,16 @@ export interface DroidAcpRuntimeInput extends Omit<
   readonly clientCapabilities?: AcpSessionRuntime.AcpSessionRuntimeOptions["clientCapabilities"];
   /** Passive status probes skip authentication and classify `session/new`. */
   readonly authenticationMode?: "active" | "passive";
-  /** Per-process Droid settings overlay. The path may contain secrets; never log it with contents. */
+  /** Per-process Droid settings overlay. It holds broker capabilities; never log its contents. */
   readonly runtimeSettingsPath?: string;
+  /**
+   * `disabled` removes tool definitions from Scient custom-model requests and
+   * makes Droid refuse every tool call before it runs. Droid still lists its
+   * tools to Factory-hosted models; it cannot withhold them in ACP mode. Only
+   * the custom-models factory can enforce it (overlay hook and broker); the
+   * plain factory refuses it rather than start Droid with tools.
+   */
+  readonly modelTools?: "disabled";
 }
 
 export type DroidAcpRuntime = AcpSessionRuntime.AcpSessionRuntime["Service"] & {
@@ -95,11 +108,69 @@ export type DroidAcpRuntime = AcpSessionRuntime.AcpSessionRuntime["Service"] & {
   readonly getDefaultReasoningLevel?: (modelId: string) => string | undefined;
   /** Loaded custom-model configuration; undefined leaves native Droid models alone. */
   readonly getImageSupport?: (modelId: string) => boolean | undefined;
+  /** Why Droid does not list a Scient model; undefined for native models. */
+  readonly describeUnavailableModel?: (modelId: string) => string | undefined;
+  /** Context window this process gave a loaded custom model; undefined when not known. */
+  readonly getContextWindow?: (modelId: string) => number | undefined;
   /** False for a pending next-turn generation as well as a retired process. */
   readonly isConfigurationCurrent?: () => boolean;
   readonly isConfigurationRetired?: () => boolean;
   readonly checkConfiguration?: () => Effect.Effect<void, EffectAcpErrors.AcpError>;
+  /**
+   * Starts the custom-model request budget of a new turn. Prompts that
+   * continue a turn (steers) keep its budget, so a breach sticks for the turn.
+   */
+  readonly beginTurn?: Effect.Effect<void>;
+  /** Set when Scient ended the current turn at its custom-model request limit. */
+  readonly requestLimitBreach?: () => DroidRequestLimitBreach | undefined;
+  /**
+   * Completes with the current turn's first 429 or 5xx answer from a custom
+   * model's endpoint, which Droid then retries without telling the user.
+   */
+  readonly upstreamRetrying?: Effect.Effect<number>;
+  /**
+   * In a process started without tools, after `start`: whether Droid will
+   * refuse tool calls. It does when it runs the overlay's hook, which an
+   * organization policy can disable. That holds for every model: a Scient
+   * custom model is offered no tools, but its endpoint can still answer with
+   * a tool call, and only the hook refuses that.
+   */
+  readonly backgroundToolGuard?: () => Effect.Effect<DroidToolGuard>;
 };
+
+/** Shorter values would be cut out of ordinary words. */
+const MIN_REDACTED_CREDENTIAL_CHARS = 8;
+/** What Droid holds in place of a custom model's key: see `DroidKeyBroker`. */
+const DROID_BROKER_CAPABILITY = /scient-cap-[A-Za-z0-9_-]{16,}/g;
+
+/**
+ * Takes one Droid instance's configured credentials out of text Scient shows
+ * or stores from Droid (an error, or a chunk of what Droid writes):
+ * `FACTORY_API_KEY`, the instance's environment values marked sensitive, and
+ * the key broker's capabilities (a custom model's own key never reaches
+ * Droid). Exact values in the text it is given, and nothing more.
+ */
+export function makeDroidCredentialRedactor(input: {
+  readonly environment?: NodeJS.ProcessEnv | undefined;
+  readonly sensitiveValues?: ReadonlyArray<string> | undefined;
+}): (text: string) => string {
+  const credentials = [
+    ...new Set([input.environment?.FACTORY_API_KEY, ...(input.sensitiveValues ?? [])]),
+  ]
+    .flatMap((value) =>
+      value !== undefined && value.length >= MIN_REDACTED_CREDENTIAL_CHARS ? [value] : [],
+    )
+    // Longest first: a value that contains another goes whole.
+    .toSorted((left, right) => right.length - left.length);
+  return (text) =>
+    credentials.reduce(
+      (next, credential) => next.replaceAll(credential, "[redacted]"),
+      text.replace(DROID_BROKER_CAPABILITY, "[redacted]"),
+    );
+}
+
+/** `unconfirmed`: a policy may disable the guard, or Droid did not show it runs. */
+export type DroidToolGuard = "enforced" | "disabled-by-policy" | "unconfirmed";
 export type DroidAcpRuntimeFactory = (
   input: DroidAcpRuntimeInput,
 ) => Effect.Effect<DroidAcpRuntime, EffectAcpErrors.AcpError, Crypto.Crypto | Scope.Scope>;
@@ -127,7 +198,9 @@ export function buildDroidAcpSpawnInput(
       ...(systemPrompt ? ["--append-system-prompt", systemPrompt] : []),
     ],
     cwd,
-    ...(environment ? { env: environment } : {}),
+    // The caller's environment is the complete child environment (the agent
+    // environment contract), never merged back over the server's own.
+    ...(environment ? { env: environment, extendEnv: false } : {}),
   };
 }
 
@@ -180,7 +253,17 @@ export const makeDroidAcpRuntime = (
   Crypto.Crypto | Scope.Scope
 > =>
   Effect.gen(function* () {
-    const { authenticationMode = "active", runtimeSettingsPath, ...runtimeInput } = input;
+    const {
+      authenticationMode = "active",
+      runtimeSettingsPath,
+      modelTools,
+      ...runtimeInput
+    } = input;
+    if (modelTools === "disabled")
+      return yield* new EffectAcpErrors.AcpRequestError({
+        code: -32603,
+        errorMessage: "Scient cannot run Droid without tools in this process.",
+      });
     const acpContext = yield* Layer.build(
       AcpSessionRuntime.layer({
         ...runtimeInput,
@@ -202,13 +285,12 @@ export const makeDroidAcpRuntime = (
                   ),
                 }),
         authenticateMeta: DROID_HEADLESS_AUTH_META,
-        // Droid 0.202 ignores request-shaped notifications. Send a real request
-        // and wait for its model/effort snapshot before applying effort or prompting.
-        // This also tolerates older builds that publish the snapshot without a response.
-        configOptionTransport: (configId) =>
-          ["model", "reasoning_effort"].includes(configId.trim().toLowerCase())
-            ? "request-confirmed"
-            : "request",
+        // Every write waits for Droid's own report of the new value. Droid answers
+        // `set_config_option` with `{}` and then publishes the applied state in a
+        // `config_option_update` (0.183.0, 0.200.0, 0.213.0, 0.230.0); an empty
+        // acknowledgement must never stand in for that report, least of all for
+        // autonomy, and nothing reported before the answer counts.
+        configOptionTransport: "request-confirmed",
       }).pipe(
         Layer.provide(
           Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),
@@ -241,6 +323,8 @@ export interface DroidDiscoveredModel {
    * description carries no leading multiplier.
    */
   readonly providerCostLabel: string | undefined;
+  /** Set when Droid runs another level than the one configured for this Scient model. */
+  readonly replacedDefault?: DroidReplacedDefault | undefined;
 }
 
 /**
@@ -391,6 +475,7 @@ export function findSelectDroidConfigOption(
 export interface DroidModelEffortRuntime {
   readonly getDefaultReasoningLevel?: DroidAcpRuntime["getDefaultReasoningLevel"];
   readonly getReasoningMetadata?: DroidAcpRuntime["getReasoningMetadata"];
+  readonly describeUnavailableModel?: DroidAcpRuntime["describeUnavailableModel"];
   readonly setModel: (modelId: string) => Effect.Effect<unknown, EffectAcpErrors.AcpError>;
   readonly getConfigOptions: Effect.Effect<
     ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
@@ -414,23 +499,61 @@ export function requestedDroidEffortFromSelection(
 }
 
 /**
+ * A model Droid does not list fails with the reason instead of Droid's whole
+ * model list: a Scient model's connection says what changed (key, removal,
+ * Use with); a native model is no longer offered by this Droid.
+ */
+const requireOfferedDroidModel = (runtime: DroidModelEffortRuntime, modelId: string) =>
+  Effect.gen(function* () {
+    const modelOption = findSelectDroidConfigOption(yield* runtime.getConfigOptions, {
+      category: "model",
+      id: "model",
+    });
+    if (
+      modelOption === undefined ||
+      flattenSelectOptions(modelOption).some((entry) => entry.value === modelId)
+    )
+      return;
+    return yield* new EffectAcpErrors.AcpRequestError({
+      code: -32602,
+      errorMessage:
+        runtime.describeUnavailableModel?.(modelId) ??
+        `Droid no longer offers "${modelId}". Pick another model.`,
+      data: { configId: modelOption.id, receivedValue: modelId },
+    });
+  });
+
+/**
  * Applies model first, then reasoning effort: Droid validates effort values
  * against the selected model, so the order is a protocol requirement, not a
  * preference. The effort is validated against the live ladder before writing
  * so a stale picker choice fails with an explicit error instead of an opaque
  * agent-side one. Managed models also validate inherited effort against
  * provider evidence when no explicit effort is requested.
+ *
+ * A Scient model's configured default is a wish: for a model ID it knows,
+ * Droid keeps its own ladder and applies its nearest level (verified against
+ * Droid 0.213.0 and 0.230.0: `gpt-5.2` configured with Minimal or Max runs at
+ * Low). The session then runs at Droid's level and the replacement is
+ * returned. The composer dispatches the default like any other level, so a
+ * request for it is the same wish; any other level was picked in the
+ * conversation and must be applied as asked.
  */
 const configureDroidModelAndEffort = (input: {
   readonly runtime: DroidModelEffortRuntime;
   readonly requestedModel: string | undefined;
   readonly requestedEffort: string | undefined;
   readonly validationOnly?: boolean;
-}): Effect.Effect<void, EffectAcpErrors.AcpError> =>
+}): Effect.Effect<DroidReplacedDefault | undefined, EffectAcpErrors.AcpError> =>
   Effect.gen(function* () {
     let requestedEffort = input.requestedEffort;
-    if (input.requestedModel !== undefined) {
-      yield* input.runtime.setModel(input.requestedModel);
+    // The Droid default and a blank model are no choice: Droid keeps its own.
+    const trimmedModel = input.requestedModel?.trim();
+    const requestedModel =
+      trimmedModel && trimmedModel !== DROID_DEFAULT_MODEL ? trimmedModel : undefined;
+    if (requestedModel !== undefined) {
+      yield* requireOfferedDroidModel(input.runtime, requestedModel);
+      yield* input.runtime.setModel(requestedModel);
     }
     if (requestedEffort === undefined && !input.runtime.getReasoningMetadata) {
       return;
@@ -448,14 +571,20 @@ const configureDroidModelAndEffort = (input: {
       typeof modelOption?.currentValue === "string"
         ? input.runtime.getReasoningMetadata?.(modelOption.currentValue)
         : undefined;
+    // Droid applies no reasoning to a Scient model its overlay gave no effort:
+    // every write reports `none`, and nothing is sent. A saved or stale level
+    // for it is therefore not written (Scient shows no reasoning control).
+    if (metadata !== undefined && !droidConfiguresEffort(metadata)) return;
     const preference =
       typeof modelOption?.currentValue === "string"
         ? input.runtime.getDefaultReasoningLevel?.(modelOption.currentValue)
         : undefined;
+    // Droid keeps the previous model's effort across a switch, so a managed
+    // model without an explicit choice gets its configured level written
+    // (verified against Droid 0.213.0 and 0.230.0).
+    let configuredDefault: string | undefined;
     if (
       !input.validationOnly &&
-      requestedEffort === undefined &&
-      preference !== undefined &&
       metadata?.status === "known" &&
       metadata.supported &&
       effortOption?.type === "select"
@@ -465,19 +594,12 @@ const configureDroidModelAndEffort = (input: {
           "value" in entry ? [entry.value] : entry.options.map((nested) => nested.value),
         )
         .filter((level) => droidMetadataAllowsEffort(metadata, level));
-      requestedEffort = preferredReasoningLevel(supported, metadata.defaultLevel, preference);
+      configuredDefault = preferredReasoningLevel(supported, metadata.defaultLevel, preference);
+      requestedEffort ??= configuredDefault;
     }
     const effectiveEffort =
       requestedEffort ??
       (typeof effortOption?.currentValue === "string" ? effortOption.currentValue : undefined);
-    // The managed overlay disables thinking for known nonreasoning models.
-    // Its inherited ACP sentinel is not an explicit API effort selection.
-    if (
-      metadata?.status === "known" &&
-      metadata.supported === false &&
-      requestedEffort === undefined
-    )
-      return;
     if (
       metadata?.status === "known" &&
       effectiveEffort !== undefined &&
@@ -485,10 +607,7 @@ const configureDroidModelAndEffort = (input: {
     ) {
       return yield* new EffectAcpErrors.AcpRequestError({
         code: -32602,
-        errorMessage:
-          metadata.supported === false
-            ? "The selected model does not support reasoning effort. Clear the explicit reasoning effort before sending."
-            : `Droid runtime reasoning effort "${effectiveEffort}" conflicts with the selected model's provider metadata. Select a supported effort before sending.`,
+        errorMessage: `Droid runtime reasoning effort "${effectiveEffort}" conflicts with the selected model's provider metadata. Select a supported effort before sending.`,
         data: { receivedValue: effectiveEffort },
       });
     }
@@ -510,21 +629,77 @@ const configureDroidModelAndEffort = (input: {
         data: { allowed, receivedValue: requestedEffort },
       });
     }
-    yield* input.runtime.setConfigOption(effortOption.id, requestedEffort);
-    if (metadata !== undefined) {
-      // Detect a runtime-reported clamp. This is ACP state, not proof that
-      // the upstream API honored reasoning (ACP can acknowledge optimistically).
-      const after = findSelectDroidConfigOption(yield* input.runtime.getConfigOptions, {
-        id: effortOption.id,
+    const isDefault = requestedEffort === configuredDefault;
+    const replaced = yield* input.runtime.setConfigOption(effortOption.id, requestedEffort).pipe(
+      Effect.as(undefined),
+      Effect.catch((error) => {
+        const described = describeDroidAppliedValue(error);
+        // Droid reported another level: for the default, the readback below decides.
+        return isDefault && described !== error
+          ? Effect.succeed(described)
+          : Effect.fail(described);
+      }),
+    );
+    if (metadata === undefined) return;
+    // Detect a runtime-reported clamp. This is ACP state, not proof that
+    // the upstream API honored reasoning (ACP can acknowledge optimistically).
+    const after = yield* input.runtime.getConfigOptions;
+    // The level was judged for the selected model: a report that names another
+    // model is not about it, whatever level it carries.
+    const modelAfter = findSelectDroidConfigOption(after, { category: "model", id: "model" });
+    if (modelAfter?.currentValue !== modelOption?.currentValue) {
+      return yield* new EffectAcpErrors.AcpRequestError({
+        code: -32602,
+        errorMessage: `Droid reported the model "${modelAfter?.currentValue ?? "unknown"}" instead of "${modelOption?.currentValue ?? "unknown"}" after the reasoning effort was set, so the message was not sent.`,
       });
-      if (after?.currentValue !== requestedEffort) {
-        return yield* new EffectAcpErrors.AcpRequestError({
-          code: -32602,
-          errorMessage: `Droid did not retain the requested reasoning effort "${requestedEffort}". The runtime reported "${after?.currentValue ?? "unknown"}"; the prompt was not sent.`,
-        });
-      }
     }
+    const reported = findSelectDroidConfigOption(after, { id: effortOption.id })?.currentValue;
+    if (reported === requestedEffort) return;
+    if (isDefault && typeof reported === "string" && droidMetadataAllowsEffort(metadata, reported))
+      return { configured: requestedEffort, applied: reported };
+    return yield* (
+      replaced ??
+        new EffectAcpErrors.AcpRequestError({
+          code: -32602,
+          errorMessage: `Droid did not retain the requested reasoning effort "${requestedEffort}". The runtime reported "${reported ?? "unknown"}"; the prompt was not sent.`,
+        })
+    );
   });
+
+/** The configured default of a Scient model and the level Droid runs in its place. */
+export interface DroidReplacedDefault {
+  readonly configured: string;
+  readonly applied: string;
+}
+
+const droidEffortLabel = (level: string) =>
+  level === "xhigh" ? "Extra-high" : level.charAt(0).toUpperCase() + level.slice(1);
+
+/** What a thread says, once, when it runs at another level than the configured default. */
+export const droidReplacedDefaultNotice = (replaced: DroidReplacedDefault) =>
+  `Droid uses ${droidEffortLabel(replaced.applied)} for this model instead of the configured default ${droidEffortLabel(replaced.configured)}.`;
+
+const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
+const AppliedConfigValue = Schema.Struct({
+  configId: Schema.String,
+  requestedValue: Schema.Union([Schema.String, Schema.Boolean]),
+  appliedValue: Schema.NullOr(Schema.Union([Schema.String, Schema.Boolean])),
+});
+const decodeAppliedConfigValue = Schema.decodeUnknownOption(AppliedConfigValue);
+
+/** Names the value Droid reported applying when it differs from the write. */
+function describeDroidAppliedValue(error: EffectAcpErrors.AcpError): EffectAcpErrors.AcpError {
+  if (!isAcpRequestError(error)) return error;
+  const applied = decodeAppliedConfigValue(error.data);
+  if (Option.isNone(applied) || applied.value.configId !== DROID_EFFORT_CONFIG_ID) return error;
+  const { requestedValue, appliedValue } = applied.value;
+  return new EffectAcpErrors.AcpRequestError({
+    code: error.code,
+    errorMessage: `Droid applied reasoning effort ${appliedValue === null ? "no value" : JSON.stringify(appliedValue)} instead of ${JSON.stringify(requestedValue)}, so the message was not sent.`,
+    data: error.data,
+    cause: error,
+  });
+}
 
 export const applyDroidModelAndEffort = (input: {
   readonly runtime: DroidModelEffortRuntime;
@@ -539,7 +714,7 @@ export const validateDroidReasoningState = (runtime: DroidModelEffortRuntime) =>
     requestedModel: undefined,
     requestedEffort: undefined,
     validationOnly: true,
-  });
+  }).pipe(Effect.asVoid);
 
 /**
  * Maps Scient runtime modes onto Droid's graduated autonomy ladder. The
@@ -568,25 +743,24 @@ export function resolveDroidAutonomyModeId(runtimeMode: RuntimeMode): string {
 
 // ── Live discovery over a started runtime ───────────────────────────────
 
-interface DiscoveryRuntime {
-  readonly getConfigOptions: AcpSessionRuntime.AcpSessionRuntime["Service"]["getConfigOptions"];
-  readonly setModel: AcpSessionRuntime.AcpSessionRuntime["Service"]["setModel"];
-}
-
 /**
  * Discovers Droid models and per-model reasoning-effort ladders over a
  * started runtime. The caller owns the runtime lifecycle and any overall
  * timeout; discovery never starts or stops sessions itself.
  *
  * Each model is briefly selected so its own ladder can be read, then the
- * originally selected model is restored. Restoration runs in an `ensuring`
+ * originally selected model and its reasoning level are restored. Restoration runs in an `ensuring`
  * finalizer, so even a caller timeout (which interrupts this effect) cannot
  * leave an unrelated model selected. A model whose ladder cannot be observed
  * stays listed with empty efforts — a missing ladder must not hide an
  * otherwise usable model.
+ *
+ * A Scient model also gets its configured level written, as a thread would,
+ * because only Droid's answer says whether it runs that level (one more write
+ * per Scient model with reasoning).
  */
 export const discoverDroidModels = (
-  runtime: DiscoveryRuntime,
+  runtime: DroidModelEffortRuntime,
 ): Effect.Effect<ReadonlyArray<DroidDiscoveredModel>, EffectAcpErrors.AcpError> =>
   Effect.gen(function* () {
     const configOptions = yield* runtime.getConfigOptions;
@@ -598,6 +772,17 @@ export const discoverDroidModels = (
       typeof modelOption?.currentValue === "string" && modelOption.currentValue.trim() !== ""
         ? modelOption.currentValue.trim()
         : initialModels[0]!.slug;
+    const effortSelector = { id: DROID_EFFORT_CONFIG_ID, category: "thought_level" };
+    const originalEffort = findSelectDroidConfigOption(configOptions, effortSelector)?.currentValue;
+    // Droid keeps the reasoning level across model switches, so the levels
+    // written for the walked models would stay on the original model.
+    const restore = Effect.gen(function* () {
+      yield* runtime.setModel(originalSlug);
+      if (typeof originalEffort !== "string") return;
+      const effort = findSelectDroidConfigOption(yield* runtime.getConfigOptions, effortSelector);
+      if (effort !== undefined && effort.currentValue !== originalEffort)
+        yield* runtime.setConfigOption(effort.id, originalEffort);
+    });
 
     const observeLadder = (
       model: DroidDiscoveredModel,
@@ -606,6 +791,15 @@ export const discoverDroidModels = (
         // Droid's runtime-level setModel contract returns only after the
         // authoritative config_option_update reflects this selection.
         yield* runtime.setModel(model.slug);
+        // A level Droid will not run at all is the thread's error to report.
+        const replacedDefault =
+          runtime.getReasoningMetadata?.(model.slug) == null
+            ? undefined
+            : yield* applyDroidModelAndEffort({
+                runtime,
+                requestedModel: undefined,
+                requestedEffort: undefined,
+              }).pipe(Effect.catch(() => Effect.succeed(undefined)));
         const snapshot = buildDroidModelsFromConfigOptions(yield* runtime.getConfigOptions);
         const observed = snapshot.find((entry) => entry.slug === model.slug);
         return {
@@ -615,15 +809,17 @@ export const discoverDroidModels = (
           currentEffortValue: observed?.currentEffortValue,
           efforts: observed?.efforts ?? [],
           providerCostLabel: model.providerCostLabel,
+          replacedDefault,
         } satisfies DroidDiscoveredModel;
       });
 
     return yield* Effect.forEach(initialModels, observeLadder, { concurrency: 1 }).pipe(
       // Restoration runs on every exit path — including a caller timeout that
       // interrupts this effect — so the walk cannot leave an unrelated model
-      // selected. A failing restore fails the walk; the probe then degrades
-      // to the snapshot inventory with unknown ladders rather than wrong ones.
-      Effect.onExit(() => runtime.setModel(originalSlug)),
+      // or level selected. A failing restore fails the walk; the probe then
+      // degrades to the snapshot inventory with unknown ladders rather than
+      // wrong ones.
+      Effect.onExit(() => restore),
     );
   });
 
@@ -637,13 +833,22 @@ export function buildDroidCapabilitiesFromEfforts(
   efforts: ReadonlyArray<DroidDiscoveredEffortLevel>,
   metadata?: CustomModelReasoning | null,
   defaultReasoningLevel?: string,
+  replacedDefault?: DroidReplacedDefault,
 ) {
+  // The level Droid runs is the default; the one it replaced is not a choice.
+  if (replacedDefault !== undefined) {
+    efforts = efforts.filter((entry) => entry.value !== replacedDefault.configured);
+    defaultReasoningLevel = replacedDefault.applied;
+  }
+  // A managed model without a configured effort keeps an empty strict
+  // control: nothing to pick, and no saved level is dispatched for it.
   efforts =
-    metadata?.status === "known"
-      ? efforts.filter((entry) => droidMetadataAllowsEffort(metadata, entry.value))
-      : efforts;
-  if (metadata !== undefined)
-    efforts = efforts.filter((entry) => !["off", "none"].includes(entry.value));
+    metadata === undefined
+      ? efforts
+      : droidConfiguresEffort(metadata)
+        ? efforts.filter((entry) => droidMetadataAllowsEffort(metadata, entry.value))
+        : [];
+  if (metadata !== undefined) efforts = efforts.filter((entry) => entry.value !== "none");
   const selectedDefault = preferredReasoningLevel(
     efforts.map((entry) => entry.value),
     metadata?.defaultLevel,
@@ -677,8 +882,28 @@ export function buildDroidCapabilitiesFromEfforts(
   });
 }
 
+/**
+ * Whether the overlay gives Droid a `reasoningEffort` for a Scient model
+ * (`buildDroidCustomModelsSettings`): only known reasoning with a concrete
+ * level. Without one, Droid 0.213.0 and 0.230.0 advertise a generic ladder but
+ * apply `none` for every choice and send no reasoning parameter.
+ */
+function droidConfiguresEffort(
+  metadata: CustomModelReasoning | null,
+): metadata is CustomModelReasoning {
+  return (
+    metadata?.status === "known" &&
+    metadata.supported === true &&
+    preferredReasoningLevel(metadata.levels) !== undefined
+  );
+}
+
 function droidMetadataAllowsEffort(metadata: CustomModelReasoning, effort: string): boolean {
   // Stale known evidence remains evidence. Never translate Droid sentinels
-  // (such as `none`) into API levels or manufacture an off capability.
+  // (such as `none`) into API levels. Off is a choice only for adaptive
+  // (Messages) thinking, where Droid then sends no thinking at all (verified
+  // against Droid 0.213.0 and 0.230.0); for effort APIs it omits the
+  // parameter, which is the model's default, not off.
+  if (effort === "off") return metadata.supported === true && metadata.mode === "adaptive";
   return metadata.supported !== false && metadata.levels.some((level) => level === effort);
 }

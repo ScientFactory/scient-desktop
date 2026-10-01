@@ -6,6 +6,8 @@ import * as NodeFS from "node:fs";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -1119,87 +1121,80 @@ describe("AcpSessionRuntime", () => {
     );
   });
 
+  const droidOrderedRuntime = (env: Record<string, string>) =>
+    AcpSessionRuntime.make({
+      ...mockRuntimeOptions,
+      configOptionTransport: "request-confirmed",
+      // Far above the expected settle time, so a wait for it shows as a failure.
+      configOptionSettleTimeout: "30 seconds",
+      spawn: {
+        ...mockRuntimeOptions.spawn,
+        env: { T3_ACP_DROID_ASYNC_CONFIG_REFRESH: "1", ...env },
+      },
+    });
+
+  it.live("confirms a write from the agent's update that follows its empty response", () =>
+    Effect.gen(function* () {
+      const runtime = yield* droidOrderedRuntime({});
+      yield* runtime.start();
+      yield* runtime.setModel("composer-2");
+      expect(
+        (yield* runtime.getConfigOptions).find((option) => option.id === "model")?.currentValue,
+      ).toBe("composer-2");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("fails a confirmed write at once when the agent applies another value", () =>
+    Effect.gen(function* () {
+      const runtime = yield* droidOrderedRuntime({
+        T3_ACP_DROID_AUTONOMY: "normal",
+        T3_ACP_DROID_AUTONOMY_LOCKED: "1",
+      });
+      yield* runtime.start();
+      const startedAt = yield* Clock.currentTimeMillis;
+      const result = yield* Effect.exit(runtime.setConfigOption("autonomy_level", "auto-high"));
+      const elapsed = (yield* Clock.currentTimeMillis) - startedAt;
+      expect(Exit.isFailure(result)).toBe(true);
+      const error = Exit.isFailure(result) ? Cause.squash(result.cause) : undefined;
+      expect(error).toBeInstanceOf(EffectAcpErrors.AcpRequestError);
+      expect(String((error as Error).message)).toBe(
+        'The agent applied autonomy_level "normal" instead of "auto-high".',
+      );
+      expect((error as EffectAcpErrors.AcpRequestError).data).toEqual({
+        configId: "autonomy_level",
+        requestedValue: "auto-high",
+        appliedValue: "normal",
+      });
+      expect(elapsed).toBeLessThan(3_000);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  // The default transport (Cursor, Grok, Antigravity): no confirmation is asked for.
   it.effect(
     "keeps notification-published inventory when an async agent acknowledges with an empty response",
     () =>
       Effect.gen(function* () {
-        const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+        const runtime = yield* AcpSessionRuntime.make({
+          ...mockRuntimeOptions,
+          clientCapabilities: { _meta: { parameterizedModelPicker: true } },
+          spawn: {
+            ...mockRuntimeOptions.spawn,
+            env: { T3_ACP_CONFIG_UPDATE_BEFORE_EMPTY_RESPONSE: "1" },
+          },
+        });
         yield* runtime.start();
 
-        // The mock agent runs in Droid-async mode: it publishes the refreshed
-        // inventory via a `config_option_update` notification and then acks
-        // the write with `{}`. The acknowledgment must not erase the
-        // authoritative inventory that preceded it.
+        // The agent publishes the refreshed inventory in a `config_option_update`
+        // and then answers the write with `{}`. The answer must not erase the
+        // inventory that preceded it.
         yield* runtime.setConfigOption("model", "gpt-5.4");
         const configOptions = yield* runtime.getConfigOptions;
-
         const modelOption = configOptions.find((option) => option.id === "model");
-        expect(modelOption).toBeDefined();
         if (modelOption?.type !== "select") throw new Error("model option must be select");
         expect(modelOption.currentValue).toBe("gpt-5.4");
-        // The per-model ladder for the selected model survived too.
-        const effortOption = configOptions.find((option) => option.id === "reasoning");
-        expect(effortOption).toBeDefined();
-      }).pipe(
-        Effect.provide(
-          AcpSessionRuntime.layer({
-            spawn: {
-              command: mockAgentCommand,
-              args: mockAgentArgs,
-              env: {
-                T3_ACP_DROID_ASYNC_CONFIG_REFRESH: "1",
-              },
-            },
-            cwd: process.cwd(),
-            clientCapabilities: {
-              _meta: { parameterizedModelPicker: true },
-            },
-            clientInfo: { name: "t3-test", version: "0.0.0" },
-            authMethodId: "test",
-          }),
-        ),
-        Effect.scoped,
-        Effect.provide(NodeServices.layer),
-      ),
-  );
-
-  it.effect(
-    "confirms a requested config write when the agent publishes an update but never responds",
-    () =>
-      Effect.gen(function* () {
-        const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
-        yield* runtime.start();
-
-        // Only request handlers are registered: a notification would be ignored.
-        yield* runtime.setModel("gpt-5.4");
-        const modelOption = (yield* runtime.getConfigOptions).find(
-          (option) => option.id === "model",
-        );
-        expect(modelOption?.currentValue).toBe("gpt-5.4");
-      }).pipe(
-        Effect.provide(
-          AcpSessionRuntime.layer({
-            spawn: {
-              command: mockAgentCommand,
-              args: mockAgentArgs,
-              env: {
-                T3_ACP_DROID_ASYNC_CONFIG_REFRESH: "1",
-                T3_ACP_DROID_DROP_CONFIG_RESPONSE: "1",
-              },
-            },
-            cwd: process.cwd(),
-            clientCapabilities: {
-              _meta: { parameterizedModelPicker: true },
-            },
-            clientInfo: { name: "t3-test", version: "0.0.0" },
-            authMethodId: "test",
-            configOptionTransport: (configId) =>
-              configId === "model" ? "request-confirmed" : "request",
-          }),
-        ),
-        Effect.scoped,
-        Effect.provide(NodeServices.layer),
-      ),
+        // The selected model's own ladder survived too.
+        expect(configOptions.find((option) => option.id === "reasoning")).toBeDefined();
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("tracks a successful config write when the agent returns an empty response", () =>
