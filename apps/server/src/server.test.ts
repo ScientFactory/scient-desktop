@@ -144,7 +144,10 @@ import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
-import { OrchestrationThreadSettleBlockedError } from "./orchestration/Errors.ts";
+import {
+  OrchestrationCommandInvariantError,
+  OrchestrationThreadSettleBlockedError,
+} from "./orchestration/Errors.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ScientForkReactor from "./orchestration/Services/ScientForkReactor.ts";
 import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
@@ -5299,6 +5302,91 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(response.threadResumeCompletionMarker, true);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
+
+  // SCIENT-FORK:START — Upstream T3 added threads without a project (#13612)
+  // and projects created from a name (#14527). Scient keeps both behind a
+  // server-side policy flag: the config omits the roots that advertise them,
+  // both RPCs refuse, and neither creates a folder nor dispatches a command.
+  it.effect("withholds threads without a project while the Sciant gate is off", () =>
+    Effect.gen(function* () {
+      const dispatched: Array<string> = [];
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatched.push(command.type);
+                return { sequence: dispatched.length };
+              }),
+          },
+        },
+      });
+
+      yield* Effect.scoped(
+        withWsRpcClient(yield* getWsServerUrl("/ws"), (client) =>
+          Effect.gen(function* () {
+            const config = yield* client[WS_METHODS.serverGetConfig]({});
+
+            assert.isUndefined(config.scratchWorkspaceRoot);
+
+            const ensure = yield* Effect.flip(client[WS_METHODS.projectsEnsureScratch]({}));
+            assert.include(String(ensure.message), "not available");
+          }),
+        ),
+      );
+      assert.deepEqual(dispatched, []);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("withholds projects created from a name while the Sciant gate is off", () =>
+    Effect.gen(function* () {
+      const dispatched: Array<string> = [];
+      const gitCalls: Array<string> = [];
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatched.push(command.type);
+                return { sequence: dispatched.length };
+              }),
+          },
+          gitVcsDriver: {
+            readConfigValue: () => Effect.succeed(null),
+            execute: (input) =>
+              Effect.sync(() => {
+                gitCalls.push(input.args.join(" "));
+                return {
+                  exitCode: ChildProcessSpawner.ExitCode(0),
+                  stdout: "",
+                  stderr: "",
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                };
+              }),
+          },
+        },
+      });
+
+      yield* Effect.scoped(
+        withWsRpcClient(yield* getWsServerUrl("/ws"), (client) =>
+          Effect.gen(function* () {
+            const config = yield* client[WS_METHODS.serverGetConfig]({});
+
+            assert.isUndefined(config.newProjectsRoot);
+
+            const created = yield* Effect.flip(
+              client[WS_METHODS.projectsCreateNew]({ name: "Pinball Stats" }),
+            );
+            assert.include(String(created.message), "not available");
+          }),
+        ),
+      );
+      assert.deepEqual(dispatched, []);
+      assert.deepEqual(gitCalls, []);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+  // SCIENT-FORK:END
 
   it.effect("advertises the usable file manager and its reveal label", () =>
     Effect.gen(function* () {
