@@ -1064,7 +1064,8 @@ and the first thin rich-LaTeX integration follow once they produce evidence.
    preserving extraction described in
    [Document session and persistence](#document-session-and-persistence--proposed).
    Then LaTeX source editing as the next integration checkpoint.
-3. **The contributor request:** preserve and test the LaTeX translator's
+3. **The [contributor request](./scient-latex-visual-contributor-request.md):**
+   preserve and test the LaTeX translator's
    source-fidelity behavior. The translator is improved in place, not rewritten
    against a large provisional interface; its findings shape the shared
    interface. Expected output:

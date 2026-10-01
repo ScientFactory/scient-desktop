@@ -231,7 +231,7 @@ Not decided in this note. The shared session has no dependency on Tiptap or Pros
 **You:**
 
 1. the small fixes from the review;
-2. the contributor request: tests and the capability table;
+2. the [contributor request](./scient-latex-visual-contributor-request.md): tests and the capability table;
 3. rule 2 for statement blocks, and the statement-body prototype for rule 1;
 4. the LaTeX side of rule 3, once the adapter hook is agreed.
 
