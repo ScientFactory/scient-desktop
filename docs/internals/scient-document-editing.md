@@ -203,10 +203,12 @@ belong to several roots.
   (package checks, references, which insertions are supported). It never creates
   a second, competing owner of the source.
 
-### Hard questions — Open (answered in writing in stage 1)
+### Hard questions — Answered for LaTeX in the architecture note
 
 These are where individually good components still add up to an unreliable
-editor. Each needs a written answer before shared code depends on it.
+editor. Each needs a written answer before shared code depends on it. The
+answers for the LaTeX Visual editor, and what they mean for #353, are in the
+[architecture note](./scient-latex-visual-architecture-note.md) (Proposed).
 
 1. **Selection.** How do selection and caret survive projection updates and
    external edits?
@@ -805,6 +807,12 @@ for coordinated edits is defined, an edit that needs a change in another file
 is refused with guidance, and a document check reports the missing requirement.
 No input is lost when an edit is refused.
 
+**One stated exception.** #353 already adds a package or declaration to the root
+when a chapter needs it, accepted only when every affected buffer is unchanged
+and available. That one kind stays; no others are added until coordinated
+failure and recovery are defined. See rule 7 of the
+[architecture note](./scient-latex-visual-architecture-note.md).
+
 ### Object editor layer — Proposed
 
 This takes the ownership rules from the 2026-09-21 proposal and applies them to
@@ -994,15 +1002,15 @@ work stays in **one PR (#353) for now**, organized into clear commits and
 checkpoints and regularly merged with `main`. How PRs are split is not the
 organizing concern.
 
-| Stage                               | Shared and Markdown work (owner and assigned implementers)                                                                                                                                                                                                                                                         | LaTeX work (contributor, by assignment)                                                                                                                                                                                |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **0. Agreement**                    | Agree this record; refresh the implementation baseline on `main` and #353, and check existing work and ownership before creating branches                                                                                                                                                                          | —                                                                                                                                                                                                                      |
-| **1. Baseline and contracts**       | Answer the [hard questions](#hard-questions--open-answered-in-writing-in-stage-1) in writing; define minimal revision, change, and adapter contracts; build the [measuring instrument](#measuring-instrument--proposed) and record baselines. **In parallel:** the [experience study](#experience-study--proposed) | Preserve and test the translator's source-fidelity behavior; produce a capability matrix; add regression fixtures; identify edits that need broader verification or root context (see [first assignment](#next-steps)) |
-| **2. Session foundation**           | The deliberately small extraction: Markdown on a format-neutral session and coordinator, behavior preserved. Then LaTeX source editing as the second consumer, with one active persistence owner per file                                                                                                          | Help connect LaTeX source. Remove the separate draft journal only after every view that uses it has migrated and qualified                                                                                             |
-| **3. First shared interaction**     | Complete floating math editing in Markdown: focus, selection, undo, validation, placement, and the math input decision. Starts once the study has answered its questions                                                                                                                                           | Exercise the same object-editor lifecycle with LaTeX math                                                                                                                                                              |
-| **4. Early rich LaTeX integration** | Adjust shared boundaries based on actual use                                                                                                                                                                                                                                                                       | Thin LaTeX path on the shared core: open, prose and math, raw source, edit, save, switch to source, reopen. Includes an unsupported command and an included chapter. Measured.                                         |
-| **5. Broader writing experience**   | Footer (after narrow-panel testing), commands, find, Insert, outline, keyboard, document creation                                                                                                                                                                                                                  | Format-specific controls; migrate the remaining constructs one by one: tables, figures, references, title, layout, and pagination if kept                                                                              |
-| **6. Qualification**                | Recovery, external changes, responsiveness, and the owner's visual review                                                                                                                                                                                                                                          | The same checks, plus root context, builds, and multi-file behavior                                                                                                                                                    |
+| Stage                               | Shared and Markdown work (owner and assigned implementers)                                                                                                                                                                                                                                                                 | LaTeX work (contributor, by assignment)                                                                                                                                                                                |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **0. Agreement**                    | Agree this record; refresh the implementation baseline on `main` and #353, and check existing work and ownership before creating branches                                                                                                                                                                                  | —                                                                                                                                                                                                                      |
+| **1. Baseline and contracts**       | Answer the [hard questions](#hard-questions--answered-for-latex-in-the-architecture-note) in writing; define minimal revision, change, and adapter contracts; build the [measuring instrument](#measuring-instrument--proposed) and record baselines. **In parallel:** the [experience study](#experience-study--proposed) | Preserve and test the translator's source-fidelity behavior; produce a capability matrix; add regression fixtures; identify edits that need broader verification or root context (see [first assignment](#next-steps)) |
+| **2. Session foundation**           | The deliberately small extraction: Markdown on a format-neutral session and coordinator, behavior preserved. Then LaTeX source editing as the second consumer, with one active persistence owner per file                                                                                                                  | Help connect LaTeX source. Remove the separate draft journal only after every view that uses it has migrated and qualified                                                                                             |
+| **3. First shared interaction**     | Complete floating math editing in Markdown: focus, selection, undo, validation, placement, and the math input decision. Starts once the study has answered its questions                                                                                                                                                   | Exercise the same object-editor lifecycle with LaTeX math                                                                                                                                                              |
+| **4. Early rich LaTeX integration** | Adjust shared boundaries based on actual use                                                                                                                                                                                                                                                                               | Thin LaTeX path on the shared core: open, prose and math, raw source, edit, save, switch to source, reopen. Includes an unsupported command and an included chapter. Measured.                                         |
+| **5. Broader writing experience**   | Footer (after narrow-panel testing), commands, find, Insert, outline, keyboard, document creation                                                                                                                                                                                                                          | Format-specific controls; migrate the remaining constructs one by one: tables, figures, references, title, layout, and pagination if kept                                                                              |
+| **6. Qualification**                | Recovery, external changes, responsiveness, and the owner's visual review                                                                                                                                                                                                                                                  | The same checks, plus root context, builds, and multi-file behavior                                                                                                                                                    |
 
 Moving to the next stage needs that stage's evidence, not every future UX
 decision. The session work and the experience study progress independently. Floating math
@@ -1146,14 +1154,26 @@ conformance suite; none is assumed to move unchanged.
   of the LaTeX work; #353's author works on LaTeX through assignments. The LaTeX
   work stays in one PR for now.
 - **Surface anatomy, footer concept, and Documents panel concept.**
+- **Persistence ownership.** The owner's side owns the complete LaTeX
+  persistence migration onto the shared session: saving, recovery, outside
+  changes, every view and included file, and retiring the old paths.
+- **Build policy.** Nothing rebuilds while writing or reading. The PDF builds
+  when it is opened and out of date, on Cmd+S while visible, on request, and once
+  after about 45 seconds without edits or interaction with the PDF. Every build
+  runs in the background and swaps in when ready. A setting chooses when the PDF
+  updates automatically: when idle (default), as I type, or never. See rule 6 of
+  the [architecture note](./scient-latex-visual-architecture-note.md).
 
 **Still to decide:**
 
 1. **Editing framework — Proposed.** ProseMirror directly for document editors,
-   validated by the thin LaTeX path in stage 4.
+   validated by the thin LaTeX path in stage 4. Decided after a thin LaTeX
+   integration on the shared session and before any broad rebuild of the
+   rich-editing components.
 2. **Stage order.** Session foundation and study in parallel first; floating math
    as the first visible improvement.
-3. **Hard questions.** Answered in writing in stage 1.
+3. **Hard questions.** Answered for LaTeX in the
+   [architecture note](./scient-latex-visual-architecture-note.md) — Proposed.
 4. **Math input.** Option A, B, or C, decided in stage 3.
 5. **Views.** The shared Write/Source/PDF vocabulary in the header; LaTeX's
    default view; whether Markdown gets a side-by-side view.
@@ -1164,4 +1184,3 @@ conformance suite; none is assumed to move unchanged.
    documents; what Duplicate copies.
 9. **Session scope.** Package name and boundary; which source views follow LaTeX
    source.
-10. **Build policy.** Automatic or on request (outside this record).

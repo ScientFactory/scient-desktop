@@ -1,0 +1,217 @@
+# Architecture note for the LaTeX Visual editor (#353)
+
+Status: Direction for #353, proposed 2026-10-01. Reviewed against the branch at `6d5cb5e8c4`.
+
+This note goes with the [hands-on review](https://github.com/ScientFactory/scient-desktop/pull/353#issuecomment-5907716544). The review said what to change; this says how the deeper items should be built, so each is done once and fits the shared editing plan in the [design record](./scient-document-editing.md). It was written after reading the branch at `6d5cb5e8c4`, including `docs/internals/scient-latex-visual.md` and the two fixes that followed the review.
+
+## What is already right
+
+These stay as they are, and the rest of the note builds on them:
+
+- **`.tex` is the authority.** The adapter is bounded, and what it doesn't understand stays byte-for-byte as source.
+- **Unaffected blocks stay exact.** An edit to one paragraph changes only that paragraph's bytes.
+- **Source and Visual share one revision-checked saver,** and each included file saves through the same mechanism.
+- **Ordinary typing is already protected.** The live editor document is kept when conversion or a save is refused, and maths fields explain several refusals.
+- **The labelled-equation fix (`6d5cb5e8c4`) is the pattern to follow.** For the subset it supports, it:
+  - keeps `\label`, `\tag`, `\notag` and `\nonumber` outside the maths editor;
+  - patches only the changed range inside a row;
+  - refuses a change that would cross a protected command.
+
+  Its limits are reasonable: the row count and equation type are fixed, and comments, malformed commands and numbering inside nested environments stay source-only.
+
+- **The selection fix (`39619117d7`) removes the reported title deletion.** Positions are clamped, not mapped, and history is still reset; rules 3 and 4 cover the general case.
+
+## Who owns what
+
+**We own saving, completely.** Saving governs the same file whether a change comes from Source, Visual, a maths field or an agent, so it sits beneath all of them. That covers:
+
+- the shared session and save coordinator (#415 is the foundation, not yet the finished integration);
+- recovery storage and restoring;
+- reconciling outside changes, conflict decisions, and connecting the session to each view;
+- every LaTeX view and every included file's session;
+- retiring the old paths once their replacements are proven.
+
+**You own what a valid change is:** parsing, source ranges, which operations are supported, how each construct is shown, and the tests and capability table that prove it.
+
+**Where the two meet,** the session will call an adapter hook, and you supply the LaTeX side of it: which source ranges map to which parts of the editor, and which existing objects survive a change. Both sides touch `LatexVisualEditor.tsx`, so we agree who edits which part before that work starts.
+
+**Until the migration lands:** please don't add or rework draft, journal or save mechanisms. Repairs to existing behavior are fine; tell us first if they touch those paths.
+
+**One repair should not wait for the migration, and it is ours.** Restoring a recovered draft today writes the whole recovered source over the current buffer. The stored base revision isn't checked when the draft is read (`visualDrafts.ts:26`), so changes made since can be overwritten. The raw typing snapshot is also installed automatically. Until recovery moves into the session:
+
+- recovery whose base no longer matches must show a comparison and ask;
+- where a safe merge can't be established, the recovered text stays available to read or copy;
+- nothing is replaced without an explicit choice.
+
+We will propose this change to you before it lands on the branch.
+
+## Three kinds of text
+
+Most of the saving and recovery questions come down to keeping these apart:
+
+| Kind                 | What it is                                                                                                                                                                         | Owner                             |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| **Working source**   | The current source accepted into the session. It includes unsaved text, and text that is syntactically incomplete but contained in its object's range.                             | The document session              |
+| **Pending input**    | Exact input that is not yet part of that source: a composition in progress, prose waiting to be converted, an operation the adapter refused or that was based on a stale revision. | One recovery owner in the session |
+| **Published source** | The revision the file system has acknowledged.                                                                                                                                     | The workspace file system         |
+
+Two consequences:
+
+- **A failed save doesn't change what kind of text it is.** Accepted working source stays working source; the session records the save error or conflict. It doesn't become pending input.
+- **Pending input is never published,** and it is not offered as "recovered source". It can be recovered and shown again as what it is.
+
+Your design already protects pending input, through the field journals and the raw editor snapshot. That protection is right. What changes is where it lives and how it ends:
+
+- **One recovery record per file, in the session,** replacing the source checkpoint, the document-level typing snapshot, and the per-field journals. We will define its contents with you. It has to cover both input inside one object and document-level prose that hasn't been converted. Each piece is stored with the source and context it was based on, and with the physical file it belongs to. The adapter owns the encoding, and the encoding is versioned.
+- **Every pending input has a defined end:** accepted into the source, kept for more editing, or discarded by the user. Closing the document, switching views, an outside change that deletes or replaces the object, or a change of root keeps it as recoverable work. It doesn't vanish.
+- **Deferral is visible and bounded.** While a composition is in progress, outside updates wait, as the Markdown editor already does. They resume when the composition ends. If the outside change overlaps the pending input, that is shown as a conflict.
+- **Nothing is blocked silently.** If Update PDF has to wait for unresolved input, it says so and offers the way to resolve it.
+
+We will do this consolidation as part of the migration. It is described here so new code doesn't add a fourth store.
+
+## The rules
+
+Each rule answers one of the [hard questions](./scient-document-editing.md#hard-questions--answered-for-latex-in-the-architecture-note) in the design record, and each comes from something seen in the review.
+
+### 1. Showing: don't drop or change meaning.
+
+Supported content is rendered without removing or altering what it says. Where the editor can't interpret something, it shows the exact source, clearly marked. Text made by stripping commands (`previewText`) must not stand in for document content.
+
+This doesn't ask for a pixel-exact page. As your document says, the canvas is a CSS approximation of layout, and the compiled PDF is the authority for exact output. Things that depend on a build, like reference numbers, are shown honestly as unresolved or out of date.
+
+- **Why:** theorem and proof bodies currently read as mathematics with the symbols removed (review items 2 and 6).
+- **In #353:**
+  - statement bodies (theorem-like blocks, proofs, abstracts) show their real content: paragraphs, inline maths, `\eqref`, display maths;
+  - whatever can't be handled appears as a source part inside the block, and doesn't lock the whole body;
+  - a locked block may render its maths for reading, with a "source only" mark.
+- **How to start:** statement bodies are a single attribute on an atomic node today, so making them real editable content is a substantial change. Please start with a thin prototype on one statement type, and agree the approach with us before changing the node structure broadly.
+
+### 2. Editing: change the range that was edited, and nothing else.
+
+An edit inside a block becomes the smallest source change. Writing a whole block again from its attributes is only for a real structural change to that block, and for newly inserted blocks.
+
+- **Why:** editing an editable theorem or abstract moves its `\label`, collapses its line breaks, and drops `\emph{…}` or a bold title (review item 5).
+- **In #353:**
+  - reuse the ranges that exist, and add the ones that are missing. Scientific blocks record body and title ranges only when the whole block is editable. Abstracts record none. A `\label` inside a body is masked before the body range is computed, so one span isn't enough;
+  - verify the smallest affected region. Broaden the check when an edit changes syntax boundaries or what surrounding text means, such as a closing brace or a new macro;
+  - add an exact-bytes check: after an edit, everything outside the edited range is byte-identical. Keep the existing structural round-trip check next to it. On its own it normalizes whitespace and some wrappers, so it passes while bytes change;
+  - inserting a block must not add a blank line where the source had a single newline, because that splits the paragraph that continued below.
+
+### 3. Outside changes: the projection can be rebuilt; the user's interaction cannot be thrown away.
+
+Your document calls the editor model disposable. That is right for its content: it can always be rebuilt from source. What the user is in the middle of is different:
+
+- the selection;
+- a composition;
+- the focused field or maths editor;
+- pending input.
+
+Those are preserved, or explicitly resolved, before anything is rebuilt.
+
+- **Why:** adopting an outside change replaces the full editor content and resets history. The reported title deletion is fixed; focus and field identity in the general case are not yet established.
+- **The rule:**
+  - prefer the smallest update that is known to be safe, including a change inside a block, not only whole-block replacement. A replaced block loses the caret's place inside it;
+  - reuse the objects and subtrees that survive, and map the selection through the change;
+  - take context into account: the same bytes can need re-interpreting when the preamble or root changes;
+  - when a small update isn't safe, a full re-projection is allowed, after pending input is retained and the interaction is resolved;
+  - identify fields and maths editors by something stable. Today field journals use ids derived from the block index, and maths fields a position captured at mount; both shift when a block is inserted above.
+- **Ownership:**
+  - we own the session side: when an update is offered, deferral, and conflicts;
+  - you supply the LaTeX mapping and identity reuse through the adapter hook.
+
+  This starts after that hook and the split of `LatexVisualEditor.tsx` are agreed.
+
+### 4. Undo: never let it overwrite an adopted outside change.
+
+Your concern is correct: Undo must not replay an edit from an obsolete revision. Resetting history guarantees that, and it stays as the fallback.
+
+Keeping history is possible on the incremental path, but it has to be proven case by case. Applying the outside change as a non-undoable step (`closeHistory` with `addToHistory: false`) isn't enough on its own. If a local edit changed `a` to `b` and an outside change then turned `b` into `c`, Undo gives back `a` and overwrites the outside change.
+
+- **So:**
+  - keep undo and redo only where tests show local history can't overwrite adopted outside work;
+  - define a conservative policy for overlaps in text, formatting and objects (for example, resetting history when an outside change touches a range that local history also touched);
+  - keep the reset fallback until those cases are covered.
+- **The test to hold:** after an outside change, Undo reverses surviving local edits and leaves the adopted outside change in place.
+
+### 5. Refused edits: the text stays, with a reason and a way forward.
+
+When an operation is refused, what the user typed stays in the editor as pending input. It is marked as not yet part of the document, with a short reason and clear choices: keep editing, discard, or open the source.
+
+- **Why:** ordinary typing already keeps its document on a refusal. Some other paths don't yet. Some immediate source-publication refusals reinstall the previous projection. A refused field edit shows only an "Editing draft" chip while Update PDF stays disabled.
+- **In #353:** extend the protection that typing and maths fields already have to those remaining paths.
+
+### 6. Saving and building are separate, visible facts.
+
+- **Saved** means published to the file. **Recoverable** means the recovery record has it. They are separate acknowledgements.
+- **The PDF's state comes from the build evidence:** current, out of date, or unknown.
+- **The building behavior is decided** (review item 17, updated):
+  - opening the PDF, from any view, builds it if it is out of date;
+  - Cmd+S saves now, and also builds when the PDF is visible;
+  - typing doesn't build;
+  - when the PDF is visible and out of date, and the user has neither edited nor touched the PDF (scroll, zoom, select, search, pointer over it) for about 45 seconds, it rebuilds once;
+  - Update PDF is always available;
+  - a setting chooses when the PDF updates automatically: when idle (default), as I type (also after a 2–3 second pause in typing), or never.
+- **Every build runs in the background and swaps in only when ready.** The old PDF stays usable, with no blank screen and no spinner over the page. The new one replaces it in one step at the same page, scroll position and zoom. A failed build changes nothing on screen except a small mark on the button. Builds are coalesced, and nothing is attempted without a TeX installation.
+- **Messages stay minimal.** Nothing is shown when all is well. An out-of-date PDF is shown by the button reading "Rebuild PDF". No explanatory paragraphs; details go in a tooltip or behind a click.
+- **One prerequisite for every build, however it was requested:** the affected files, including included ones, have saved successfully, with no unresolved save error or conflict. If something is unresolved, including pending input that the build would leave out, the request says what it is and how to resolve it. It is never just disabled.
+- **Ownership:**
+  - you implement these triggers in the LaTeX surface (`0a74929cc1` had the pause mechanism, for the "as I type" choice);
+  - we add the setting and the shared status presentation. Until the setting exists, the default (when idle) applies.
+
+### 7. Context: one source per file, whatever root interprets it.
+
+A chapter is one file with one working source. Which root and preamble interpret it is recorded with the projection, and a change of root refreshes what is supported without creating a second copy of the text.
+
+**Edits that need a change in another file.** The design record says to refuse these until failure and recovery across two saves is defined. The branch already supports one kind: adding a package or declaration to the root when a chapter needs it, accepted only when every affected buffer is unchanged and available. We keep that one kind as a stated exception. The two saves are independent: the chapter may save without its declaration, or the declaration may save while the chapter edit is still unpublished. When that happens, keep the failed edit available to retry or recover, show which file failed, and don't report the edit as fully saved. Please don't add other kinds until the migration defines the general case. When the root isn't available, the operation is refused, the input is kept, and the message says which change the root needs.
+
+## The editor framework
+
+Not decided in this note. The shared session has no dependency on Tiptap or ProseMirror, so the migration and these rules proceed with the editor as it is.
+
+- **When it is decided:** after a thin LaTeX integration on the shared session, and before any broad rebuild of the rich-editing components. The integration measures source fidelity, focus, composition, undo, performance, and how much special glue it needed. The statement-body prototype in rule 1 feeds the same decision.
+- **Until then:** build new reusable behavior against framework-neutral interfaces, or plain ProseMirror, where practical. Repairs to the current implementation are fine. Talk to us before adding substantial new Tiptap-specific infrastructure.
+
+## What this means for the review items
+
+| Review item                               | State and approach                                                                                | Who                                    | When                             |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------- | -------------------------------- |
+| 1. Labelled equations                     | Implemented for the supported subset in `6d5cb5e8c4`. Its limits go in the capability table.      | You                                    | Table: with the first assignment |
+| 4. Title deleted after an outside change  | The reported case is fixed in `39619117d7`. General interaction and history follow rules 3 and 4. | You and us                             | After the adapter hook is agreed |
+| The small fixes in the review             | As listed there                                                                                   | You                                    | Now                              |
+| First assignment                          | Tests, capability table, measurements                                                             | You                                    | Now, after the small fixes       |
+| 5. Whole-block rebuilds                   | Rule 2: range patches and the exact-bytes check                                                   | You                                    | After the first assignment       |
+| 2, 6. Statement bodies; rendering         | Rule 1: thin prototype first, then agree the node structure                                       | You                                    | After the first assignment       |
+| 17. When the PDF builds                   | Rule 6                                                                                            | You: triggers. Us: Settings and status | Any time                         |
+| Recovery restoring an older copy          | The interim repair above, then the migration                                                      | Us                                     | Repair: soon. Migration: next    |
+| Refused edits on the remaining paths      | Rule 5                                                                                            | You                                    | With rule 2                      |
+| Shared frame, Documents, rename, Settings | Shared work in the design record                                                                  | Us                                     | In parallel                      |
+
+## How we will know it holds
+
+- **A small set of real documents:** theorems, proofs, labelled equations, accents, tables, figures, included files. We provide it; your tests run against it.
+- **Tests that can't pass by accident:**
+  - no block displays a stripped preview string as its content;
+  - after any supported edit, bytes outside the edited range are identical;
+  - an outside change while typing, while composing, and while a field is focused keeps the selection, the field and the pending input, or resolves them explicitly;
+  - after an outside change, Undo reverses surviving local edits and never overwrites the adopted change.
+- **The capability table from the first assignment,** stating for each construct how it is shown, what can be edited, and what happens otherwise.
+
+## Order of work
+
+**You:**
+
+1. the small fixes from the review;
+2. the first assignment: tests, capability table, measurements;
+3. rule 2 for statement blocks, and the statement-body prototype for rule 1;
+4. the LaTeX side of rule 3, once the adapter hook is agreed.
+
+**Us:**
+
+1. the interim recovery repair;
+2. map the current persistence paths: which views write, which buffers hold unpublished input, how restoring works, how included files are identified;
+3. define the recovery record and the adapter hook with you;
+4. move LaTeX onto the shared session, with one active saver per file throughout;
+5. test it under typing during saves, outside edits, view switches, recovery, and failures across several files;
+6. retire the old paths.
+
+The shared frame proceeds in parallel.
