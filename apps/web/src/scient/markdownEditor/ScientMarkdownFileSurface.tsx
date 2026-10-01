@@ -52,6 +52,7 @@ import {
   isHomeRelativeLink,
   linkOpenLocation,
   settleWithin,
+  workspaceLocatorAskPath,
 } from "~/scient/fileOpening/chatFileLinkResolution";
 import { environmentFileLinkResolution } from "~/scient/fileOpening/environmentFileState";
 
@@ -362,7 +363,8 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
       await resolveAndOpenLink({
         request,
         anchor,
-        askedPath: relativePath,
+        // A resolved workspace location, never an authored home-relative link.
+        askedPath: workspaceLocatorAskPath(relativePath, props.cwd),
         clientPath: relativePath,
         knownMissing: result._tag === "Success" && result.value.complete,
       });

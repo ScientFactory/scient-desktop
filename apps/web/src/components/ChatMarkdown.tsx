@@ -250,6 +250,7 @@ import {
   claimLinkClick,
   clientPlacedLinkPath,
   linkOpenLocation,
+  workspaceLocatorAskPath,
   settleWithin,
   type ChatFileOpenPlan,
 } from "../scient/fileOpening/chatFileLinkResolution";
@@ -2568,16 +2569,17 @@ function useChatMarkdownState({
   // Opens the file a chat link means. A link whose location does not exist
   // opens the one workspace file it meant, when there is exactly one; without
   // a single answer it opens as written and the file panel offers the choices.
-  // `panelPath` is the client's placement of the link, or the authored `~/`
-  // spelling of a home-relative one, which only the environment can place.
-  const openFileInPanel = useCallback(
-    (panelPath: string, line: number | undefined) => {
+  // `panelPath` is the client's placement of the link: a workspace locator or
+  // a host path. For a link authored from the home folder it is that authored
+  // `~/` spelling instead, which only the environment can place.
+  const openLinkInPanel = useCallback(
+    (panelPath: string, line: number | undefined, authoredHomeRelative: boolean) => {
       if (!threadRef) return;
       const isCurrentClick = claimFileLinkClick(threadRef);
       void (async () => {
         const { plan, location } = await planFileLinkOpen(
-          panelPath,
-          clientPlacedLinkPath(panelPath, cwd),
+          authoredHomeRelative ? panelPath : workspaceLocatorAskPath(panelPath, cwd),
+          authoredHomeRelative ? clientPlacedLinkPath(panelPath, cwd) : panelPath,
         );
         if (!isCurrentClick()) return;
         if (plan.kind === "resolved") {
@@ -2591,6 +2593,14 @@ function useChatMarkdownState({
       })();
     },
     [cwd, planFileLinkOpen, threadRef],
+  );
+  const openFileInPanel = useCallback(
+    (panelPath: string, line: number | undefined) => openLinkInPanel(panelPath, line, false),
+    [openLinkInPanel],
+  );
+  const openHomeRelativeLinkInPanel = useCallback(
+    (panelPath: string, line: number | undefined) => openLinkInPanel(panelPath, line, true),
+    [openLinkInPanel],
   );
   // Outside media opens in the media viewer when its file exists. A missing
   // one gets the same treatment as any other link, in the file panel.
@@ -2720,7 +2730,9 @@ function useChatMarkdownState({
           theme={resolvedTheme}
           threadRef={threadRef}
           {...(canUseShellActions ? { onOpen: openInPreferredEditor } : {})}
-          onOpenInPanel={openFileInPanel}
+          onOpenInPanel={
+            homeRelativePath !== undefined ? openHomeRelativeLinkInPanel : openFileInPanel
+          }
           onOpenMedia={
             threadRef && canPreviewMedia
               ? () => openMarkdownMediaLink(mediaPath, fileLinkMeta.filePath, homeRelativePath)
@@ -2752,6 +2764,7 @@ function useChatMarkdownState({
       canUseShellActions,
       fileLinkParentSuffixByPath,
       openFileInPanel,
+      openHomeRelativeLinkInPanel,
       openHtmlLinkInBrowser,
       openInPreferredEditor,
       openMarkdownMediaLink,

@@ -8,6 +8,7 @@ import {
   claimLinkClick,
   clientPlacedLinkPath,
   settleWithin,
+  workspaceLocatorAskPath,
 } from "./chatFileLinkResolution";
 
 const path = EnvironmentFilePath.make;
@@ -221,5 +222,18 @@ describe("clientPlacedLinkPath", () => {
     // No conventional home to guess from: the spelling is kept for the environment.
     expect(clientPlacedLinkPath("~/notes.md", "/srv/project")).toBe("~/notes.md");
     expect(clientPlacedLinkPath("docs/a.md", "/Users/ada/project")).toBe("docs/a.md");
+  });
+});
+
+describe("workspaceLocatorAskPath", () => {
+  it("asks about a workspace ~ folder by its host path, never as the home folder", () => {
+    expect(workspaceLocatorAskPath("~/guide.md", "/repo")).toBe("/repo/~/guide.md");
+    expect(workspaceLocatorAskPath("~\\guide.md", "C:\\repo")).toBe("C:\\repo\\~\\guide.md");
+  });
+
+  it("leaves every other locator as the client spells it", () => {
+    expect(workspaceLocatorAskPath("notes/guide.md", "/repo")).toBe("notes/guide.md");
+    expect(workspaceLocatorAskPath("/tmp/guide.md", "/repo")).toBe("/tmp/guide.md");
+    expect(workspaceLocatorAskPath("~/guide.md", undefined)).toBe("~/guide.md");
   });
 });

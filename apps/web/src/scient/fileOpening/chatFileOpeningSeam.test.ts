@@ -27,7 +27,17 @@ describe("universal chat-file opening seam", () => {
     // within a bounded wait, and yields to a newer click or panel action.
     expect(chatMarkdownSource).toContain("await settleWithin(");
     expect(chatMarkdownSource.match(/if \(!isCurrentClick\(\)\) return/gu)).toHaveLength(3);
-    expect(chatMarkdownSource).toContain("clientPlacedLinkPath(panelPath, cwd),");
+    // A workspace locator is asked about as that location; only a link
+    // authored from the home folder is asked about by its `~/` spelling.
+    expect(chatMarkdownSource).toContain(
+      "authoredHomeRelative ? panelPath : workspaceLocatorAskPath(panelPath, cwd),",
+    );
+    expect(chatMarkdownSource).toContain(
+      "authoredHomeRelative ? clientPlacedLinkPath(panelPath, cwd) : panelPath,",
+    );
+    expect(chatMarkdownSource).toContain(
+      "homeRelativePath !== undefined ? openHomeRelativeLinkInPanel : openFileInPanel",
+    );
     // A resolved link opens the file it meant and says so on that tab; any
     // other answer opens the link as written.
     expect(chatMarkdownSource).toContain(

@@ -10,6 +10,7 @@ import {
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { workspaceFileHostPath } from "~/components/files/filePath";
 import { resolvePathLinkTarget } from "~/terminal-links";
 
 const decodeResolveInput = Schema.decodeUnknownOption(EnvironmentFileLinkResolveInput);
@@ -53,6 +54,22 @@ export function chatFileLinkResolveInput(input: {
  */
 export function isHomeRelativeLink(path: string): boolean {
   return path.startsWith("~/") || path.startsWith("~\\");
+}
+
+/**
+ * How to ask the environment about a workspace locator, as opposed to an
+ * authored link. A locator names one location under the workspace, and a
+ * folder really named `~` gives it the same `~/` spelling an authored
+ * home-relative link has. Asked by that spelling it could be answered with a
+ * file from the home folder, so such a locator is asked by its host path.
+ */
+export function workspaceLocatorAskPath(
+  locator: string,
+  workspaceRoot: string | undefined,
+): string {
+  return workspaceRoot && isHomeRelativeLink(locator)
+    ? workspaceFileHostPath(locator, workspaceRoot)
+    : locator;
 }
 
 /**

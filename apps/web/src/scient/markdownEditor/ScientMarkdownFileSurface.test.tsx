@@ -403,6 +403,22 @@ describe("ScientMarkdownFileSurface", () => {
     expect(mocks.listDirectory).not.toHaveBeenCalled();
   });
 
+  it("asks about a workspace folder named ~ as that folder, not as the home folder", async () => {
+    // From notes/current.md, `../~/guide.md` is the workspace location ~/guide.md.
+    const { onOpenFile } = await mount();
+    const anchor = attachedAnchor();
+    mocks.listDirectory.mockResolvedValue(success());
+
+    openLink("../~/guide.md", anchor);
+
+    await vi.waitFor(() => expect(mocks.resolveFileLink).toHaveBeenCalledOnce());
+    expect(mocks.resolveFileLink).toHaveBeenCalledWith({
+      environmentId,
+      input: { workspaceRoot: "/workspace", path: "/workspace/~/guide.md", changedPaths: [] },
+    });
+    expect(onOpenFile).not.toHaveBeenCalled();
+  });
+
   it("opens a link that leaves the project as the host file it names", async () => {
     const { onOpenFile } = await mount();
     const anchor = attachedAnchor();
