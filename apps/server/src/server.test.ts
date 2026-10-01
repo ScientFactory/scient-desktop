@@ -8613,6 +8613,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         }
         assert.equal(result.failure.failure, "operation_failed");
         assert.equal(result.failure.reason, "permission_denied");
+        // The system's own code travels too: a file mode refuses with EACCES,
+        // which the client tells apart from the system itself declining.
+        assert.equal(result.failure.osErrorCode, "EACCES");
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

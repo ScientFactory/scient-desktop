@@ -7,7 +7,7 @@ import { AnalysisArtifactResourceRef } from "@scientfactory/analysis";
 import { ComputeOutputResourceRef } from "@scientfactory/compute";
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { FilePathString, NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { EnvironmentFilePath } from "./fileOpening.ts";
 import {
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
@@ -21,14 +21,16 @@ const WORKSPACE_ASSET_PATH_MAX_LENGTH = 1_024;
 const ENVIRONMENT_ASSET_PATH_MAX_LENGTH = 4_096;
 const ASSET_RELATIVE_URL_MAX_LENGTH = 32_768;
 
-const WorkspaceFilePath = TrimmedNonEmptyString.check(
+const WorkspaceRootPath = TrimmedNonEmptyString.check(
   Schema.isMaxLength(WORKSPACE_ASSET_PATH_MAX_LENGTH),
 );
+// A file locator keeps its whitespace: it names one exact file.
+const WorkspaceFilePath = FilePathString.check(Schema.isMaxLength(WORKSPACE_ASSET_PATH_MAX_LENGTH));
 
 const WorkspaceFileAssetResource = Schema.TaggedStruct("workspace-file", {
   // SCIENT-WORKSPACE-ASSET: cwd + relativePath are the document locator.
   // The legacy thread pair remains optional during client/server version skew.
-  cwd: Schema.optional(WorkspaceFilePath),
+  cwd: Schema.optional(WorkspaceRootPath),
   relativePath: Schema.optional(WorkspaceFilePath),
   threadId: Schema.optional(ThreadId),
   path: Schema.optional(WorkspaceFilePath),
@@ -59,13 +61,13 @@ export const AssetResource = Schema.Union([
   // workspace; a relative one resolves against the thread's workspace.
   Schema.TaggedStruct("media-file", {
     threadId: ThreadId,
-    path: TrimmedNonEmptyString.check(Schema.isMaxLength(ENVIRONMENT_ASSET_PATH_MAX_LENGTH)),
+    path: FilePathString.check(Schema.isMaxLength(ENVIRONMENT_ASSET_PATH_MAX_LENGTH)),
   }),
   // A workspace file named by a draft that has no thread yet. The draft names
   // its workspace root explicitly instead of resolving one from a thread.
   Schema.TaggedStruct("draft-workspace-file", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ENVIRONMENT_ASSET_PATH_MAX_LENGTH)),
-    path: TrimmedNonEmptyString.check(Schema.isMaxLength(ENVIRONMENT_ASSET_PATH_MAX_LENGTH)),
+    path: FilePathString.check(Schema.isMaxLength(ENVIRONMENT_ASSET_PATH_MAX_LENGTH)),
   }),
   Schema.TaggedStruct("attachment", {
     attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
@@ -134,7 +136,7 @@ export const AssetCreateUrlResult = Schema.Struct({
   relativeUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_RELATIVE_URL_MAX_LENGTH)),
   expiresAt: Schema.Number,
   sourcePath: Schema.optional(
-    TrimmedNonEmptyString.check(Schema.isMaxLength(ENVIRONMENT_ASSET_PATH_MAX_LENGTH)),
+    FilePathString.check(Schema.isMaxLength(ENVIRONMENT_ASSET_PATH_MAX_LENGTH)),
   ),
   /** Pixel size read from the image header, so a client can reserve the exact box before the bytes arrive. */
   imageDimensions: Schema.optional(AssetImageDimensions),
