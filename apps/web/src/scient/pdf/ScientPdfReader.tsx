@@ -634,12 +634,7 @@ function LoadedScientPdfReader(props: {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      {props.source._tag === "generated-pdf" && props.source.bindingStatus === "stale" ? (
-        <div className="scient-pdf-notice" role="status">
-          The latest build failed. Showing the last successful PDF.
-          {props.source.staleReason ? ` ${props.source.staleReason}` : ""}
-        </div>
-      ) : null}
+
       {searchOpen ? (
         <form
           className="scient-pdf-searchbar"

@@ -23,8 +23,10 @@ interface FileState {
   data: VisualProjectFile | null;
   error: string | null;
   write: (contents: string) => void;
+  flush: () => Promise<boolean>;
 }
 interface Props extends LatexVisualEditorProps {
+  registerSaveProject?: (save: (() => Promise<boolean>) | null) => void;
   environmentId: EnvironmentId;
   cwd: string;
   relativePath: string;
@@ -104,14 +106,31 @@ function ProjectFileSession(props: {
           : { contents, revision, truncated: truncated === true },
       error: query.error,
       write: coordinator.change,
+      flush: coordinator.flush,
     });
-  }, [path, contents, revision, truncated, query.error, coordinator.change, update]);
+  }, [
+    path,
+    contents,
+    revision,
+    truncated,
+    query.error,
+    coordinator.change,
+    coordinator.flush,
+    update,
+  ]);
   return null;
 }
 
 /** One editor for the compiled root, with revision-checked sessions for its source files. */
 export function LatexProjectVisualEditor(props: Props) {
   const [states, setStates] = useState(new Map<string, FileState>());
+  useEffect(() => {
+    props.registerSaveProject?.(async () => {
+      const results = await Promise.all([...states.values()].map((file) => file.flush()));
+      return results.every(Boolean);
+    });
+    return () => props.registerSaveProject?.(null);
+  }, [props.registerSaveProject, states]);
   const [pendingPaths, setPendingPaths] = useState(new Set<string>());
   const [saveErrors, setSaveErrors] = useState(new Map<string, string>());
   const [editError, setEditError] = useState<string | null>(null);

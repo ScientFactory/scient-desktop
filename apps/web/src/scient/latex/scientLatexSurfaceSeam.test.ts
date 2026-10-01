@@ -34,7 +34,7 @@ function declaredPropNames(): ReadonlyArray<string> {
 describe("Scient LaTeX file-preview seam", () => {
   it("does not mount collapsed diagnostics over the Visual document", () => {
     expect(surfaceSource).toContain(
-      'diagnostics.length > 0 && (mode !== "visual" || diagnosticsOpen)',
+      '(diagnostics.length > 0 || status.state === "failed") && diagnosticsOpen',
     );
     expect(surfaceSource).toContain("onClick={() => setDiagnosticsOpen(true)}");
   });
@@ -87,9 +87,10 @@ describe("Scient LaTeX file-preview seam", () => {
   });
 
   it("mounts source-derived writing independently of the compiled viewer", () => {
-    expect(surfaceSource).toContain("<LatexVisualEditor");
-    expect(surfaceSource).toContain('mode === "visual" ? (');
-    expect(surfaceSource).toContain('const showViewer = mode === "pdf" || mode === "split";');
+    expect(surfaceSource).toContain("<LatexProjectVisualEditor");
+    expect(surfaceSource).toContain('const showVisual = activePreview === "visual";');
+    expect(surfaceSource).toContain("const showRightPane = activePreview !== null;");
+    expect(surfaceSource).toContain("{showVisual || visualOpened ? (");
     expect(surfaceSource).not.toContain("LatexVisualInteraction");
     expect(surfaceSource).not.toContain("ensureLatexVisualBuild");
     expect(surfaceSource).not.toContain("scheduleLatexRebuild");
@@ -165,13 +166,16 @@ describe("Scient LaTeX file-preview seam", () => {
   });
 
   it("keeps PDF and Split navigation separate from writing", () => {
-    expect(surfaceSource).toContain('if (mode !== "split") return;');
-    expect(surfaceSource).toContain(
-      '...(mode === "pdf" || mode === "split" ? { onInverseSearch: handleInverseSync } : {})',
+    expect(surfaceSource).toContain('if (mode !== "split" || splitPreview !== "pdf") return;');
+    expect(surfaceSource).toMatch(
+      /mode === "pdf" \|\| \(mode === "split" && splitPreview === "pdf"\)[\s\S]*?\? \{ onInverseSearch: handleInverseSync \}/u,
     );
     expect(surfaceSource).not.toContain("renderInteraction: renderVisualInteraction");
     expect(surfaceSource).not.toContain('if (preferredMode === "source") selectMode("split")');
-    expect(surfaceSource).not.toMatch(/event\.(?:ctrlKey|metaKey)/u);
+    expect(surfaceSource).toContain('event.key.toLowerCase() !== "s"');
+    expect(surfaceSource).toContain(
+      "void saveAndBuild(false, pdfVisible && !!build.toolchain?.kind)",
+    );
   });
 
   it("keeps the LaTeX surface off the chat markdown pipeline", () => {

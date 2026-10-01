@@ -14,7 +14,15 @@ import {
   type ScientLatexSyncUnavailableReason,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { ChevronRight, CircleAlert, LoaderCircle, RotateCw, TriangleAlert, X } from "lucide-react";
+import {
+  ChevronRight,
+  CircleAlert,
+  Ellipsis,
+  LoaderCircle,
+  RotateCw,
+  TriangleAlert,
+  X,
+} from "lucide-react";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -54,6 +62,8 @@ import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import { WordFileExportDialog } from "~/scient/wordExport/WordFileExportDialog";
 
 import { documentBindingChanges } from "./bindingChanges";
+import { DockMenu } from "../markdownEditor/ui/dockChrome";
+import { DocumentExportMenuItems } from "../documentExport/DocumentExportMenuItems";
 const LatexProjectVisualEditor = lazy(() =>
   import("./LatexProjectVisualEditor").then((module) => ({
     default: module.LatexProjectVisualEditor,
@@ -96,6 +106,7 @@ import {
 import { checkpointVisualDraft, confirmVisualDraft, discardVisualDraft } from "./visualDrafts";
 import { useLatexSourceIdentity } from "./visualPdfPublication";
 import { visualStateAfterSaveResolution } from "./visualSaveResolution";
+import { useLatexAutoBuild } from "./useLatexAutoBuild";
 
 import "./scient-latex.css";
 
@@ -423,7 +434,7 @@ const LatexViewerPane = memo(function LatexViewerPane({
         <LatexPendingViewer label="Building…" />
       ) : (
         <div className="scient-latex-placeholder">
-          <p>Choose Update PDF to create the typeset document with your local TeX installation.</p>
+          <p>Choose Rebuild PDF to create the typeset document with your local TeX installation.</p>
         </div>
       )}
     </div>
@@ -505,6 +516,8 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const visualPendingBaseRevisionRef = useRef<string | null>(null);
   const visualConfirmedRevisionRef = useRef(props.revision);
   const finishVisualEditingRef = useRef<(() => void) | null>(null);
+  const saveProjectRef = useRef<(() => Promise<boolean>) | null>(null);
+  const [lastEditAt, setLastEditAt] = useState(0);
   const sourceRef = useRef(props.contents);
   sourceRef.current = props.contents;
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -662,6 +675,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   });
   const handleContentsChange = useCallback(
     (contents: string) => {
+      setLastEditAt(Date.now());
       if (visualPendingSourceRef.current !== null && visualPendingSourceRef.current !== contents) {
         checkpointVisualDraft(
           visualDraftKey,
@@ -928,9 +942,78 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const registerFinishVisualEditing = useCallback((finish: (() => void) | null) => {
     finishVisualEditingRef.current = finish;
   }, []);
+  const registerSaveProject = useCallback((save: (() => Promise<boolean>) | null) => {
+    saveProjectRef.current = save;
+  }, []);
+  const pdfVisible = activePreview === "pdf";
+  const buildBlocked =
+    props.truncated || props.saveResolution !== null || visibleSaveError !== null;
+  const buildRequestInFlight = useRef(false);
+  const saveAndBuild = useCallback(
+    async (reprobe = false, compile = true) => {
+      if (buildRequestInFlight.current || buildBlocked) return;
+      buildRequestInFlight.current = true;
+      try {
+        finishVisualEditingRef.current?.();
+        const clean = await coordinator.flush();
+        const projectClean = await (saveProjectRef.current?.() ?? Promise.resolve(true));
+        if (clean && projectClean && compile && target !== null)
+          requestLatexRebuild(target, { reprobeToolchain: reprobe });
+      } finally {
+        buildRequestInFlight.current = false;
+      }
+    },
+    [buildBlocked, coordinator.flush, target],
+  );
+  const requestAutoBuild = useCallback(() => {
+    if (target) requestLatexRebuild(target);
+  }, [target]);
+  useLatexAutoBuild({
+    visible: pdfVisible,
+    needsBuild:
+      status.stale || descriptor === null || (sourceIdentity !== null && !pdfMatchesBuffer),
+    blocked:
+      !target ||
+      !status.canRebuild ||
+      buildBlocked ||
+      sourcePending ||
+      visualAwaitingSave ||
+      visualProjectState.pending ||
+      hasLocalVisualDraft,
+    busy: status.busy,
+    toolchainReady: !!build.toolchain?.kind,
+    sourceKey: (target?.relativePath ?? "") + "\0" + props.revision + "\0" + lastEditAt,
+    lastEditAt,
+    requestBuild: requestAutoBuild,
+  });
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const save = (event: KeyboardEvent) => {
+      if (
+        !(event.ctrlKey || event.metaKey) ||
+        event.altKey ||
+        event.shiftKey ||
+        event.key.toLowerCase() !== "s"
+      )
+        return;
+      const active = document.activeElement;
+      if (!surfaceRef.current?.contains(active)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void saveAndBuild(false, pdfVisible && !!build.toolchain?.kind);
+    };
+    window.addEventListener("keydown", save, true);
+    return () => window.removeEventListener("keydown", save, true);
+  }, [saveAndBuild, pdfVisible, build.toolchain?.kind]);
 
   return (
-    <div className="scient-latex-surface" data-latex-layout={mode} dir="ltr">
+    <div
+      ref={surfaceRef}
+      className="scient-latex-surface"
+      data-latex-layout={mode}
+      dir="ltr"
+      onInputCapture={() => setLastEditAt(Date.now())}
+    >
       <div className="scient-latex-toolbar">
         <div className="scient-latex-modes" role="group" aria-label="Document view">
           {LATEX_PREVIEW_MODES.map((candidate) => (
@@ -946,21 +1029,6 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           ))}
         </div>
         <div className="scient-latex-status">
-          {mode === "visual" && !visibleSaveError && !props.saveResolution ? (
-            <span className="scient-latex-save-state" aria-label="File save status">
-              {hasLocalVisualDraft
-                ? "Draft"
-                : visualAwaitingSave || visualProjectState.pending
-                  ? "Saving..."
-                  : "Saved"}
-            </span>
-          ) : null}
-          {resolution.pending || status.busy ? (
-            <LoaderCircle
-              className="size-3.5 animate-spin text-muted-foreground"
-              aria-hidden="true"
-            />
-          ) : null}
           {target === null ? (
             <span className="scient-latex-status-label">
               {resolution.pending
@@ -982,16 +1050,23 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                 {status.label}
               </span>
             </ScientTooltip>
-          ) : (
-            <span
-              className={cn(
-                "scient-latex-status-label",
-                status.state === "failed" ? "text-destructive" : undefined,
-              )}
+          ) : status.offline ? (
+            <span className="scient-latex-status-label">Build status unavailable</span>
+          ) : status.state === "failed" ? (
+            <ScientTooltip
+              content={
+                status.firstDiagnosticLine ?? build.snapshot?.failureSummary ?? "Open the build log"
+              }
             >
-              {status.label}
-            </span>
-          )}
+              <button
+                type="button"
+                className="scient-latex-action"
+                onClick={() => setDiagnosticsOpen(true)}
+              >
+                Build failed · View details
+              </button>
+            </ScientTooltip>
+          ) : null}
           {target === null &&
           (resolution.result?._tag === "ambiguous" || resolution.result?._tag === "unresolved") &&
           resolution.result.candidates.length > 0 ? (
@@ -1048,15 +1123,6 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               {status.warningCount} {status.warningCount === 1 ? "warning" : "warnings"}
             </button>
           ) : null}
-          {status.stale ? (
-            status.staleReason ? (
-              <ScientTooltip content={status.staleReason}>
-                <span className="scient-latex-chip">PDF needs rebuilding</span>
-              </ScientTooltip>
-            ) : (
-              <span className="scient-latex-chip">PDF needs rebuilding</span>
-            )
-          ) : null}
           {visibleSaveError === null ? null : (
             <ScientTooltip content={visibleSaveError}>
               <span className="scient-latex-chip scient-latex-chip-error">Save failed</span>
@@ -1077,31 +1143,18 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         </div>
         <div className="scient-latex-actions">
           <div className="scient-latex-document-tools" ref={setDocumentToolsHost} />
-          <button
-            type="button"
-            className="scient-latex-action"
-            disabled={
-              target === null ||
-              sourcePending ||
-              visualAwaitingSave ||
-              visualProjectState.pending ||
-              hasLocalVisualDraft ||
-              visibleSaveError !== null
-            }
-            onClick={() => setWordExportOpen(true)}
-          >
-            Export ▸ Word
-          </button>
-          {status.canCancel && target !== null ? (
+          <span className="scient-latex-cancel-slot">
             <button
               type="button"
               className="scient-latex-action"
-              onClick={() => cancelLatexBuild(target)}
+              disabled={!status.canCancel || target === null}
+              onClick={() => {
+                if (target) cancelLatexBuild(target);
+              }}
             >
-              <X className="size-3.5" aria-hidden="true" />
-              Cancel
+              <X className="size-3.5" aria-hidden="true" /> Cancel
             </button>
-          ) : null}
+          </span>
           {mode === "split" ? (
             <div className="scient-latex-modes" role="group" aria-label="Split right pane view">
               {LATEX_SPLIT_PREVIEWS.map((candidate) => (
@@ -1117,38 +1170,49 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               ))}
             </div>
           ) : null}
-          <button
-            type="button"
-            className="scient-latex-action"
-            disabled={
-              target === null ||
-              !status.canRebuild ||
-              visualAwaitingSave ||
-              visualProjectState.pending ||
-              hasLocalVisualDraft ||
-              visibleSaveError !== null ||
-              props.saveResolution !== null
-            }
-            // By hand is the one rebuild that re-probes: a TeX installed while
-            // this document sat here has no other way to be noticed.
-            onClick={() => {
-              if (target !== null) requestLatexRebuild(target, { reprobeToolchain: true });
-            }}
-          >
-            <RotateCw className="size-3.5" aria-hidden="true" />
-            Update PDF
-          </button>
           <ScientTooltip
             content={
-              pdfMatchesBuffer && !status.stale
-                ? "Save a PDF copy"
-                : "Update PDF to export the current document"
+              status.busy
+                ? status.label
+                : status.state === "failed"
+                  ? "Build failed. Rebuild PDF or open the log."
+                  : "Save and rebuild the PDF"
             }
           >
             <button
               type="button"
-              className="scient-latex-action"
-              disabled={
+              className="scient-latex-action scient-latex-build-action"
+              disabled={target === null || !status.canRebuild || buildBlocked}
+              onClick={() => void saveAndBuild(true)}
+            >
+              {status.busy ? (
+                <LoaderCircle className="size-3.5" aria-hidden="true" />
+              ) : status.state === "failed" ? (
+                <CircleAlert className="size-3.5" aria-hidden="true" />
+              ) : (
+                <RotateCw className="size-3.5" aria-hidden="true" />
+              )}
+              <span>{status.busy ? "Building PDF?" : "Rebuild PDF"}</span>
+            </button>
+          </ScientTooltip>
+          <DockMenu
+            label="More actions"
+            icon={<Ellipsis className="size-3.5" />}
+            chevron={false}
+            align="end"
+          >
+            <DocumentExportMenuItems
+              onWordExport={() => setWordExportOpen(true)}
+              wordDisabled={
+                target === null ||
+                sourcePending ||
+                visualAwaitingSave ||
+                visualProjectState.pending ||
+                hasLocalVisualDraft ||
+                buildBlocked
+              }
+              pdfLabel={exportingPdf ? "Exporting?" : "PDF"}
+              pdfDisabled={
                 descriptor === null ||
                 !pdfMatchesBuffer ||
                 status.stale ||
@@ -1156,34 +1220,30 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                 visualAwaitingSave ||
                 visualProjectState.pending ||
                 hasLocalVisualDraft ||
-                visibleSaveError !== null ||
-                props.saveResolution !== null ||
+                buildBlocked ||
                 exportingPdf
               }
-              onClick={async () => {
+              pdfUnavailableReason="Rebuild PDF to export the current document."
+              onPdfExport={() => {
                 if (!descriptor || !pdfMatchesBuffer || status.stale || exportingPdf) return;
                 setExportingPdf(true);
                 setSyncNotice(null);
-                try {
-                  await savePdfCopy(descriptor);
-                } catch (error) {
-                  setSyncNotice({
-                    label: "Export failed",
-                    message:
-                      error instanceof Error ? error.message : "Could not save the PDF copy.",
-                  });
-                } finally {
-                  setExportingPdf(false);
-                }
+                void savePdfCopy(descriptor)
+                  .catch((error: unknown) =>
+                    setSyncNotice({
+                      label: "Export failed",
+                      message:
+                        error instanceof Error ? error.message : "Could not save the PDF copy.",
+                    }),
+                  )
+                  .finally(() => setExportingPdf(false));
               }}
-            >
-              {exportingPdf ? "Exporting..." : "Export PDF"}
-            </button>
-          </ScientTooltip>
+            />
+          </DockMenu>
         </div>
       </div>
 
-      {diagnostics.length > 0 && diagnosticsOpen ? (
+      {(diagnostics.length > 0 || status.state === "failed") && diagnosticsOpen ? (
         <div className="scient-latex-diagnostics">
           <button
             type="button"
@@ -1196,31 +1256,42 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               aria-hidden="true"
             />
             <span className="scient-latex-diagnostics-summary">
-              {status.firstDiagnosticLine ?? `${diagnostics.length} build messages`}
+              {status.firstDiagnosticLine ??
+                build.snapshot?.failureSummary ??
+                (diagnostics.length > 0
+                  ? `${diagnostics.length} build messages`
+                  : "Build failed without compiler diagnostics")}
             </span>
             {diagnostics.length > 1 ? (
               <span className="scient-latex-diagnostics-count">{diagnostics.length}</span>
             ) : null}
           </button>
           {diagnosticsOpen ? (
-            <ul className="scient-latex-diagnostics-list">
-              {diagnosticRows.map((row) => (
-                <LatexDiagnosticsRow
-                  key={row.key}
-                  diagnostic={row.diagnostic}
-                  workspaceRoot={props.cwd}
-                  onNavigate={(relativePath, line) =>
-                    onOpenFileSource(
-                      relativePath,
-                      line,
-                      build.snapshot === null
-                        ? undefined
-                        : { latexRootRelativePath: build.snapshot.rootRelativePath },
-                    )
-                  }
-                />
-              ))}
-            </ul>
+            diagnostics.length === 0 ? (
+              <p className="scient-latex-diagnostic-message">
+                {build.snapshot?.failureSummary ??
+                  "The build failed without compiler diagnostics. Check the LaTeX toolchain and rebuild."}
+              </p>
+            ) : (
+              <ul className="scient-latex-diagnostics-list">
+                {diagnosticRows.map((row) => (
+                  <LatexDiagnosticsRow
+                    key={row.key}
+                    diagnostic={row.diagnostic}
+                    workspaceRoot={props.cwd}
+                    onNavigate={(relativePath, line) =>
+                      onOpenFileSource(
+                        relativePath,
+                        line,
+                        build.snapshot === null
+                          ? undefined
+                          : { latexRootRelativePath: build.snapshot.rootRelativePath },
+                      )
+                    }
+                  />
+                ))}
+              </ul>
+            )
           ) : null}
         </div>
       ) : null}
@@ -1346,6 +1417,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                         );
                     }}
                     registerFinishEditing={registerFinishVisualEditing}
+                    registerSaveProject={registerSaveProject}
                   />
                 </Suspense>
               </div>
