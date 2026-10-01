@@ -97,6 +97,7 @@ interface ScientForkDialogProps {
   readonly onConfirm: (
     confirmation: ScientForkConfirmation,
     beforeNavigate: () => Promise<boolean>,
+    confirmSkippedImages: (names: ReadonlyArray<string>) => Promise<boolean>,
   ) => void | Promise<unknown>;
   readonly open: boolean;
   readonly error?: string | null | undefined;
@@ -192,18 +193,25 @@ export function ScientForkWorkspaceModeDialog({
   const [newWorktree, setNewWorktree] = useState(false);
   const wasOpenRef = useRef(false);
   const [closingForNavigation, setClosingForNavigation] = useState(false);
+  const [skippedImages, setSkippedImages] = useState<ReadonlyArray<string> | null>(null);
+  const finishImageConfirmation = useRef<((proceed: boolean) => void) | null>(null);
+  const declinedImages = useRef(false);
   const finishClose = useRef<((completed: boolean) => void) | null>(null);
   // Whether the dialog has stayed open since its last submission. Closing it
   // dismisses that fork for good; opening the dialog again does not undo it.
   const openSinceSubmit = useRef(false);
   useLayoutEffect(() => {
     if (!open) {
+      finishImageConfirmation.current?.(false);
+      finishImageConfirmation.current = null;
       openSinceSubmit.current = false;
       return;
     }
     return () => {
       // Leaving the source while the card closes must release the operation
       // without navigating back or leaving the origin locked.
+      finishImageConfirmation.current?.(false);
+      finishImageConfirmation.current = null;
       finishClose.current?.(false);
       finishClose.current = null;
       // The dialog is gone, whether it closed or its view went away.
@@ -256,6 +264,7 @@ export function ScientForkWorkspaceModeDialog({
     event.preventDefault();
     if (disabled || checking || !submission.ok) return;
     openSinceSubmit.current = true;
+    declinedImages.current = false;
     try {
       const outcome = await onConfirm(
         { ...submission.confirmation, displayTitle: displayedTitle },
@@ -267,9 +276,23 @@ export function ScientForkWorkspaceModeDialog({
                 setClosingForNavigation(true);
               })
             : Promise.resolve(false),
+        (names) =>
+          new Promise<boolean>((resolve) => {
+            if (!openSinceSubmit.current) {
+              declinedImages.current = true;
+              resolve(false);
+              return;
+            }
+            finishImageConfirmation.current = (proceed) => {
+              declinedImages.current = !proceed;
+              setSkippedImages(null);
+              resolve(proceed);
+            };
+            setSkippedImages(names);
+          }),
       );
       // This dialog can no longer show the error, so say it here.
-      if (outcome === "not-accepted" && !openSinceSubmit.current) {
+      if (outcome === "not-accepted" && !openSinceSubmit.current && !declinedImages.current) {
         toastManager.add({
           type: "error",
           title: "The fork did not finish",
@@ -348,7 +371,12 @@ export function ScientForkWorkspaceModeDialog({
                 onCheckedChange={(checked) => setNewWorktree(Boolean(checked))}
               />
             </label>
-            {error ? (
+            {skippedImages ? (
+              <p role="alert" className="text-xs leading-relaxed">
+                These images could not be read: {skippedImages.join(", ")}. Continue with the
+                message text and readable images, or cancel.
+              </p>
+            ) : error ? (
               <p role="alert" className="text-destructive text-xs leading-relaxed">
                 {error}
               </p>
@@ -361,15 +389,31 @@ export function ScientForkWorkspaceModeDialog({
         </DialogPanel>
         <DialogFooter variant="bare" padding="compact">
           <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
-            {disabled ? "Close" : "Cancel"}
+            {skippedImages ? "Cancel" : disabled ? "Close" : "Cancel"}
           </Button>
           <Button
             form={formId}
-            type="submit"
+            type={skippedImages ? "button" : "submit"}
+            onClick={
+              skippedImages
+                ? () => {
+                    finishImageConfirmation.current?.(true);
+                    finishImageConfirmation.current = null;
+                  }
+                : undefined
+            }
             size="sm"
-            disabled={disabled || checking || !submission.ok}
+            disabled={!skippedImages && (disabled || checking || !submission.ok)}
           >
-            {disabled ? "Forking…" : checking ? "Checking…" : locked || error ? "Retry" : "Fork"}
+            {skippedImages
+              ? "Fork without these images"
+              : disabled
+                ? "Forking…"
+                : checking
+                  ? "Checking…"
+                  : locked || error
+                    ? "Retry"
+                    : "Fork"}
           </Button>
         </DialogFooter>
       </DialogPopup>

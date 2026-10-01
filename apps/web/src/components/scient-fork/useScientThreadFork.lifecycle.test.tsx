@@ -70,6 +70,62 @@ afterEach(async () => {
 });
 
 describe("fork lifecycle across navigation and remounts", () => {
+  it.each([true, false])(
+    "dispatches a missing-image fork only after confirmation (%s)",
+    async (proceed) => {
+      const userSource = {
+        kind: "user-message" as const,
+        messageId: MessageId.make("user-with-image"),
+        prompt: "Keep exact text",
+        attachments: [
+          {
+            type: "image" as const,
+            id: "missing",
+            name: "missing.png",
+            mimeType: "image/png",
+            sizeBytes: 1,
+          },
+        ],
+      };
+      commands.options.mockResolvedValue(
+        AsyncResult.success({
+          available: true,
+          localAvailable: true,
+          reason: null,
+          newWorktree: false,
+          sourceAssistantMessageId: null,
+          sourceUserMessageId: userSource.messageId,
+        }),
+      );
+      await render();
+      let outcome: unknown;
+      await act(async () => {
+        outcome = await hook.forkFromMessage(
+          userSource,
+          {
+            workspaceMode: "local",
+            confirmSkippedImages: async (names) => {
+              expect(names).toEqual(["missing.png"]);
+              expect(commands.dispatch).not.toHaveBeenCalled();
+              return proceed;
+            },
+          },
+          "/workspace",
+        );
+      });
+      expect(outcome).toBe(proceed ? "accepted" : "not-accepted");
+      expect(commands.dispatch).toHaveBeenCalledTimes(proceed ? 1 : 0);
+      if (proceed) {
+        const id = commands.dispatch.mock.calls[0]![0].input.newThreadId;
+        expect(
+          useComposerDraftStore.getState().draftsByThreadKey[
+            scopedThreadKey(scopeThreadRef(environmentId, id))
+          ]?.prompt,
+        ).toBe(userSource.prompt);
+      } else expect(Object.keys(useComposerDraftStore.getState().draftsByThreadKey)).toEqual([]);
+    },
+  );
+
   it.each([other, { ...origin, environmentId: EnvironmentId.make("another-environment") }])(
     "finishes without stealing navigation after switching to %j, then opens the same ready fork",
     async (nextOrigin) => {

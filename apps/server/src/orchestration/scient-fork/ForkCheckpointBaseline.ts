@@ -36,6 +36,12 @@ export interface ScientForkCheckpointBaselineShape {
     readonly cwd: string;
     readonly toCheckpointRef: CheckpointRef;
   }) => Effect.Effect<boolean>;
+  readonly verifyWorktree: (input: {
+    readonly cwd: string;
+    readonly path: string;
+    readonly branch: string;
+    readonly checkpointRef: string;
+  }) => Effect.Effect<boolean, VcsError>;
   /**
    * Best-effort removal of what an abandoned fork created: its worktree, its
    * `scient/fork/*` branch and its turn-zero checkpoint ref.
@@ -144,6 +150,49 @@ const make = Effect.gen(function* () {
         ),
       );
 
+  const verifyWorktree: ScientForkCheckpointBaselineShape["verifyWorktree"] = Effect.fn(
+    "verifyScientForkWorktree",
+  )(function* (input) {
+    const git = (cwd: string, args: string[]) =>
+      process.run({
+        operation: "ScientForkCheckpointBaseline.verifyWorktree",
+        command: "git",
+        args,
+        cwd,
+        allowNonZeroExit: true,
+      });
+    const head = yield* git(input.path, ["rev-parse", "HEAD"]);
+    const expected = yield* git(input.cwd, ["rev-parse", `${input.checkpointRef}^{commit}`]);
+    const branch = yield* git(input.path, ["symbolic-ref", "--short", "HEAD"]);
+    const common = yield* git(input.path, [
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-common-dir",
+    ]);
+    const originCommon = yield* git(input.cwd, [
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-common-dir",
+    ]);
+    const lock = yield* git(input.path, [
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-path",
+      "index.lock",
+    ]);
+    const status = yield* git(input.path, ["status", "--porcelain", "--untracked-files=all"]);
+    return (
+      [head, expected, branch, common, originCommon, lock, status].every(
+        (result) => result.exitCode === 0,
+      ) &&
+      head.stdout.trim() === expected.stdout.trim() &&
+      branch.stdout.trim() === input.branch &&
+      common.stdout.trim() === originCommon.stdout.trim() &&
+      !(yield* fs.exists(lock.stdout.trim()).pipe(Effect.orElseSucceed(() => true))) &&
+      status.stdout.trim() === ""
+    );
+  });
+
   const discard: ScientForkCheckpointBaselineShape["discard"] = Effect.fn(
     "discardScientForkWorkspace",
   )(function* (input) {
@@ -176,6 +225,7 @@ const make = Effect.gen(function* () {
     resolveCheckpoint,
     copy,
     capture,
+    verifyWorktree,
     discard,
   } satisfies ScientForkCheckpointBaselineShape;
 });
@@ -192,6 +242,7 @@ export const testLayer = (
     resolveCheckpoint: () => Effect.succeed("a".repeat(40)),
     copy: () => Effect.succeed(true),
     capture: () => Effect.succeed(true),
+    verifyWorktree: () => Effect.succeed(true),
     discard: () => Effect.void,
     ...overrides,
   });

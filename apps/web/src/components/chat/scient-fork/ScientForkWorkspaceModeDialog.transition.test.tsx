@@ -213,3 +213,54 @@ it.each([
     expect(toasts.add).toHaveBeenCalledTimes(notified ? 1 : 0);
   },
 );
+
+it.each(["continue", "cancel", "unmount"] as const)(
+  "resolves unreadable-image confirmation on %s",
+  async (action) => {
+    const fork = vi.fn();
+    function Probe() {
+      const [open, setOpen] = useState(true);
+      const [busy, setBusy] = useState(false);
+      return (
+        <ScientForkWorkspaceModeDialog
+          open={open}
+          disabled={busy}
+          source="this-message"
+          proposedTitle="My fork"
+          titleOverrideSupported
+          worktreeAvailability={{ available: true }}
+          onOpenChange={setOpen}
+          onConfirm={async (_, __, confirmImages) => {
+            setBusy(true);
+            const proceed = await confirmImages(["missing.png"]);
+            if (proceed) fork();
+            setBusy(false);
+            return proceed ? "accepted" : "not-accepted";
+          }}
+        />
+      );
+    }
+    await act(() => root.render(<Probe />));
+    await act(() => {
+      document
+        .querySelector("form")!
+        .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("missing.png");
+    expect(fork).not.toHaveBeenCalled();
+    if (action === "unmount") await act(() => root.render(null));
+    else
+      await act(() => {
+        [...document.querySelectorAll("button")]
+          .find(
+            (button) =>
+              button.textContent ===
+              (action === "continue" ? "Fork without these images" : "Cancel"),
+          )!
+          .click();
+      });
+    await act(async () => {});
+    expect(fork).toHaveBeenCalledTimes(action === "continue" ? 1 : 0);
+    expect(toasts.add).not.toHaveBeenCalled();
+  },
+);

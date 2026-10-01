@@ -141,8 +141,11 @@ Forking is a durable, restart-safe saga:
 6. The copied logical-boundary manifest records remapped turn and message IDs.
    It lets a fork be forked again directly, without walking ancestor threads or
    pretending copied transcript rows are provider-native turns.
-7. For a user-message fork, the web client prepares every authorized image,
-   persists the complete unsent destination draft, and flushes storage before
+7. For a user-message fork, the web client prepares readable images. If an image
+   cannot be read, the user must confirm continuing without it before any draft
+   or fork is created. Unsupported non-image files still prevent message editing;
+   inherited history attachments are never silently omitted. The client
+   persists the unsent destination draft and flushes storage before
    issuing the server command. Only a confirmed rejected or abandoned operation
    removes that staged draft; an interrupted connection does not.
 8. On the first provider turn, the fork's context transfer is resolved: a
@@ -154,6 +157,18 @@ Forking is a durable, restart-safe saga:
 9. Terminal failures such as a disappeared origin attachment or an unavailable
    required worktree checkpoint delete the unusable target thread and record an
    `abandoned` lineage state. Transient failures remain retryable.
+
+Dedicated worktrees are verified against the frozen checkpoint and expected
+branch before publication or reuse. A dirty, incomplete, locked, or foreign
+worktree is never adopted. An invalid existing worktree is left intact and the
+fork fails with an explanation; a newly created invalid checkout follows the
+existing terminal cleanup path. The seven-minute provisioning budget exceeds
+Git's five-minute checkout deadline, allowing time for the other stages.
+
+A missing recorded assistant ID may resolve to the latest non-streaming assistant
+message of that same completed turn. The resolver does not rewrite the origin or
+borrow another turn's answer. Fork preparation does not display the origin as an
+active agent turn; existing guards still prevent conflicting actions.
 
 The domain-event stream is only a wake-up signal. The lineage table remains the
 authority, so a restart or missed live event cannot lose the work.

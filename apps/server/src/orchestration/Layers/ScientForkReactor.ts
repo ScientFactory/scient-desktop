@@ -114,7 +114,8 @@ function isTerminalForkFailure(cause: Cause.Cause<unknown>): boolean {
 const PROVISIONING_RETRIES = 3;
 const PROVISIONING_RETRY_BASE = Duration.millis(250);
 /** One attempt may not hold the serial fork worker indefinitely. */
-const PROVISIONING_ATTEMPT_TIMEOUT = Duration.minutes(3);
+// Git checkout has a five-minute deadline; leave room for the other provisioning stages.
+const PROVISIONING_ATTEMPT_TIMEOUT = Duration.minutes(7);
 const LEGACY_FORK_BOUNDARY_TURN_ID = "legacy-fork-boundary";
 
 function forkBranchName(threadId: string): string {
@@ -182,6 +183,19 @@ const make = Effect.gen(function* () {
     });
     const existing = exactRef(listed.refs, branch);
     if (existing?.worktreePath) {
+      const verified = yield* checkpointBaseline.verifyWorktree({
+        ...input,
+        path: existing.worktreePath,
+        branch,
+        checkpointRef: input.fromRef,
+      });
+      if (!verified) {
+        return yield* new ScientForkCompletionError({
+          threadId: input.threadId,
+          detail:
+            "The existing fork worktree is incomplete or has changed. Its files were left intact. Restore it to the saved checkpoint before retrying.",
+        });
+      }
       return { path: existing.worktreePath, refName: branch };
     }
 
@@ -195,6 +209,18 @@ const make = Effect.gen(function* () {
             path: null,
           },
     );
+    if (
+      !(yield* checkpointBaseline.verifyWorktree({
+        ...input,
+        path: created.worktree.path,
+        branch,
+        checkpointRef: input.fromRef,
+      }))
+    ) {
+      return yield* new ScientForkTerminalProvisioningError({
+        detail: "The new fork worktree did not complete checkout. Nothing was published as ready.",
+      });
+    }
     return created.worktree;
   });
 

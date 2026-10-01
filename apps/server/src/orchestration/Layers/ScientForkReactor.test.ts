@@ -7,10 +7,13 @@ import {
   ThreadId,
   TurnId,
   type VcsCreateWorktreeInput,
+  type VcsRef,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import { TestClock } from "effect/testing";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -90,6 +93,8 @@ function makeCheckpointBaselineFake(
 function makeGitWorkflowFake(
   worktreePath: string,
   createWorktreeCalls: Array<VcsCreateWorktreeInput>,
+  existingRefs: VcsRef[] = [],
+  beforeCheckout: () => Effect.Effect<void> = () => Effect.void,
 ) {
   return Layer.succeed(GitWorkflowService, {
     isRepository: () => Effect.die("unused in ScientForkReactor test"),
@@ -106,7 +111,7 @@ function makeGitWorkflowFake(
     preparePullRequestThread: () => Effect.die("unused in ScientForkReactor test"),
     listRefs: () =>
       Effect.succeed({
-        refs: [],
+        refs: existingRefs,
         isRepo: true,
         hasPrimaryRemote: true,
         nextCursor: null,
@@ -116,6 +121,7 @@ function makeGitWorkflowFake(
       Effect.sync(() => {
         createWorktreeCalls.push(input);
       }).pipe(
+        Effect.andThen(beforeCheckout()),
         Effect.as({
           worktree: { path: worktreePath, refName: input.newRefName ?? input.refName },
         }),
@@ -143,6 +149,8 @@ function makeHarnessLayer(
   baselineResult = true,
   attachmentCopierOverrides?: Partial<ScientForkAttachmentCopierShape>,
   baselineOverrides?: Partial<ScientForkCheckpointBaselineShape>,
+  existingRefs: VcsRef[] = [],
+  beforeCheckout: () => Effect.Effect<void> = () => Effect.void,
 ) {
   const orchestrationLayer = OrchestrationEngineLive.pipe(
     Layer.provide(OrchestrationProjectionSnapshotQueryLive),
@@ -169,7 +177,9 @@ function makeHarnessLayer(
     ),
     Layer.provideMerge(ScientForkAttachmentCopierTest(attachmentCopierOverrides)),
     Layer.provideMerge(ScientForkContextDeliveryTest()),
-    Layer.provideMerge(makeGitWorkflowFake(NEW_WORKTREE_FIXTURE, createWorktreeCalls)),
+    Layer.provideMerge(
+      makeGitWorkflowFake(NEW_WORKTREE_FIXTURE, createWorktreeCalls, existingRefs, beforeCheckout),
+    ),
     // Expose SqlClient (shared, memoized instance) so the test can read the
     // Scient lineage table directly.
     Layer.provideMerge(SqlitePersistenceMemory),
@@ -861,6 +871,109 @@ describe("ScientForkReactor", () => {
       expect(lineage?.workspace_mode).toBe("new-worktree");
     }).pipe(Effect.provide(makeHarnessLayer(forkBaselineCalls, createWorktreeCalls)));
   });
+
+  it.effect("allows a four-minute checkout to finish before the provisioning deadline", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const reactor = yield* ScientForkReactor;
+        const sql = yield* SqlClient.SqlClient;
+        yield* reactor.start();
+        yield* seedOrigin();
+        yield* dispatchFork("new-worktree", "slow-checkout");
+        yield* Deferred.await(entered);
+        yield* TestClock.adjust("4 minutes");
+        yield* reactor.awaitCompletion(NEW);
+        yield* reactor.drain;
+        expect((yield* readLineageRow(sql))?.status).toBe("ready");
+        expect((yield* readLineageRow(sql))?.attempt_count).toBe(1);
+      }).pipe(
+        Effect.provide(
+          makeHarnessLayer([], [], true, undefined, undefined, [], () =>
+            Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.sleep("4 minutes"))),
+          ),
+        ),
+      );
+    }),
+  );
+
+  for (const verified of [true, false]) {
+    it.live(`reuses an existing worktree only after verification (${verified})`, () => {
+      const creates: VcsCreateWorktreeInput[] = [];
+      const discards: unknown[] = [];
+      return Effect.gen(function* () {
+        const reactor = yield* ScientForkReactor;
+        const sql = yield* SqlClient.SqlClient;
+        const snapshot = yield* ProjectionSnapshotQuery;
+        yield* reactor.start();
+        yield* seedOrigin();
+        yield* dispatchFork("new-worktree", `existing-checkout-${verified}`);
+        const result = yield* reactor.awaitCompletion(NEW).pipe(Effect.result);
+        yield* reactor.drain;
+        expect(result._tag).toBe(verified ? "Success" : "Failure");
+        expect((yield* readLineageRow(sql))?.status).toBe(verified ? "ready" : "failed");
+        expect(creates).toEqual([]);
+        expect(discards).toEqual([]);
+        const threads = (yield* snapshot.getSnapshot()).threads;
+        expect(threads.find((thread) => thread.id === NEW)?.worktreePath).toBe(
+          verified ? NEW_WORKTREE_FIXTURE : null,
+        );
+        expect(threads.find((thread) => thread.id === ORIGIN)?.worktreePath).toBe(ORIGIN_WORKTREE);
+      }).pipe(
+        Effect.provide(
+          makeHarnessLayer(
+            [],
+            creates,
+            true,
+            undefined,
+            {
+              verifyWorktree: (input) =>
+                Effect.sync(() => {
+                  expect(input.path).toBe(NEW_WORKTREE_FIXTURE);
+                  expect(input.branch).toBe(`scient/fork/${NEW}`);
+                  expect(input.checkpointRef).toBe(checkpointRefForThreadTurn(NEW, 0));
+                  return verified;
+                }),
+              discard: (input) =>
+                Effect.sync(() => {
+                  discards.push(input);
+                }),
+            },
+            [
+              {
+                name: `scient/fork/${NEW}`,
+                current: false,
+                isDefault: false,
+                worktreePath: NEW_WORKTREE_FIXTURE,
+              },
+            ],
+          ),
+        ),
+      );
+    });
+  }
+
+  it.live("does not publish an incomplete new checkout as ready", () =>
+    Effect.gen(function* () {
+      const reactor = yield* ScientForkReactor;
+      const sql = yield* SqlClient.SqlClient;
+      const snapshot = yield* ProjectionSnapshotQuery;
+      yield* reactor.start();
+      yield* seedOrigin();
+      yield* dispatchFork("new-worktree", "invalid-checkout");
+      const result = yield* reactor.awaitCompletion(NEW).pipe(Effect.result);
+      yield* reactor.drain;
+      expect(result._tag).toBe("Failure");
+      expect((yield* readLineageRow(sql))?.status).toBe("abandoned");
+      const threads = (yield* snapshot.getSnapshot()).threads;
+      expect(Option.isNone(yield* snapshot.getThreadDetailById(NEW))).toBe(true);
+      expect(threads.find((thread) => thread.id === ORIGIN)?.worktreePath).toBe(ORIGIN_WORKTREE);
+    }).pipe(
+      Effect.provide(
+        makeHarnessLayer([], [], true, undefined, { verifyWorktree: () => Effect.succeed(false) }),
+      ),
+    ),
+  );
 
   it.live("leaves a user-message fork empty for an unsent client composer draft", () => {
     const forkBaselineCalls: Array<Parameters<ScientForkCheckpointBaselineShape["copy"]>[0]> = [];

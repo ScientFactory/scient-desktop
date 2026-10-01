@@ -188,4 +188,52 @@ it.layer(layer)("ScientForkCheckpointBaseline", (it) => {
       }),
     ),
   );
+  it.effect("accepts only a complete clean checkout at the frozen commit and expected branch", () =>
+    withRepository((cwd) =>
+      Effect.gen(function* () {
+        const process = yield* VcsProcess;
+        const baseline = yield* ScientForkCheckpointBaseline;
+        const path = NodePath.join(cwd, "fork-worktree");
+        const checkpointRef = "refs/t3/checkpoints/frozen/turn/0";
+        const branch = "scient/fork/verification-test";
+        const git = (directory: string, args: string[]) =>
+          process.run({ operation: "test.verify", command: "git", args, cwd: directory });
+        yield* git(cwd, ["update-ref", checkpointRef, "HEAD"]);
+        yield* git(cwd, ["worktree", "add", "-b", branch, path, checkpointRef]);
+        const input = { cwd, path, branch, checkpointRef };
+        assert.isTrue(yield* baseline.verifyWorktree(input));
+        assert.isFalse(yield* baseline.verifyWorktree({ ...input, branch: "another-branch" }));
+        NodeFS.unlinkSync(NodePath.join(path, "evidence.txt"));
+        assert.isFalse(yield* baseline.verifyWorktree(input));
+        yield* git(path, ["checkout", "--", "evidence.txt"]);
+        NodeFS.writeFileSync(NodePath.join(path, "unexpected.txt"), "user work");
+        assert.isFalse(yield* baseline.verifyWorktree(input));
+        NodeFS.unlinkSync(NodePath.join(path, "unexpected.txt"));
+        const lock = yield* git(path, [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-path",
+          "index.lock",
+        ]);
+        NodeFS.writeFileSync(lock.stdout.trim(), "");
+        assert.isFalse(yield* baseline.verifyWorktree(input));
+        NodeFS.unlinkSync(lock.stdout.trim());
+        NodeFS.writeFileSync(NodePath.join(path, "evidence.txt"), "different commit\n");
+        yield* git(path, ["commit", "-am", "different commit"]);
+        assert.isFalse(yield* baseline.verifyWorktree(input));
+        // Even a matching branch and commit in another repository is not ours.
+        const foreign = NodePath.join(cwd, "foreign");
+        yield* git(cwd, ["clone", "--no-hardlinks", path, foreign]);
+        yield* git(foreign, ["checkout", "-b", "foreign-check"]);
+        assert.isFalse(
+          yield* baseline.verifyWorktree({
+            cwd: path,
+            path: foreign,
+            branch: "foreign-check",
+            checkpointRef: "HEAD",
+          }),
+        );
+      }),
+    ),
+  );
 });

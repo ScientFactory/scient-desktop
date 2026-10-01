@@ -120,7 +120,19 @@ function makeForkBoundaryQueries(sql: SqlClient.SqlClient) {
           turns.thread_id AS "threadId",
           turns.turn_id AS "turnId",
           turns.pending_message_id AS "userMessageId",
-          turns.assistant_message_id AS "assistantMessageId",
+          CASE
+            WHEN turns.assistant_message_id IS NOT NULL AND NOT EXISTS (
+              SELECT 1 FROM projection_thread_messages AS recorded
+              WHERE recorded.thread_id = turns.thread_id
+                AND recorded.message_id = turns.assistant_message_id
+            ) THEN COALESCE((
+              SELECT answer.message_id FROM projection_thread_messages AS answer
+              WHERE answer.thread_id = turns.thread_id AND answer.turn_id = turns.turn_id
+                AND answer.role = 'assistant' AND answer.is_streaming = 0
+              ORDER BY answer.created_at DESC, answer.message_id DESC LIMIT 1
+            ), turns.assistant_message_id)
+            ELSE turns.assistant_message_id
+          END AS "assistantMessageId",
           turns.completed_at AS "completedAt",
           turns.checkpoint_turn_count AS "checkpointTurnCount",
           turns.checkpoint_status AS "checkpointStatus",
