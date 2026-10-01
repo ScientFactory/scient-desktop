@@ -183,7 +183,11 @@ describe("Markdown persistence feedback", () => {
       classifyFailure: () => "terminal",
     });
     const host = mount(coordinator, {
-      refreshFailure: { reason: "not_found", osErrorCode: "ENOENT" },
+      refreshCopy: {
+        title: "This file is no longer at this location",
+        description:
+          "It may have been moved, renamed, or deleted. The last confirmed version is still open.",
+      },
       missingFileChoices: ["archive/notes.md", "drafts/notes.md", "old/notes.md"],
       onOpenFile,
     });

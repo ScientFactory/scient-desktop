@@ -1,59 +1,39 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { AlertTriangle } from "lucide-react";
 
-import type { ProjectReadFailure } from "~/components/files/projectFilesQueryState";
 import { Button } from "~/components/ui/button";
-import { readDeniedDescription } from "~/scient/fileSurfaces/fileFailureCopy";
 import type { MarkdownPersistenceLease } from "../persistence/markdownPersistenceRegistry";
 
 // The same small number of same-name files the plain viewer offers inline.
 const MAX_MISSING_FILE_CHOICES = 2;
 const NO_MISSING_FILE_CHOICES: ReadonlyArray<string> = [];
 
-/**
- * What to say when the open document could not be re-read from disk. The
- * operating system's reason names the cause; without one the copy must not
- * guess. The last confirmed version stays open either way.
- */
-export function markdownRefreshFailureCopy(
-  failure: ProjectReadFailure | null,
-  hostOs: string | null,
-): { readonly title: string; readonly description: string } {
-  switch (failure?.reason) {
-    case "not_found":
-      return {
-        title: "This file is no longer at this location",
-        description:
-          "It may have been moved, renamed, or deleted. The last confirmed version is still open.",
-      };
-    case "permission_denied":
-      return {
-        title: "This file can no longer be read",
-        description: `${readDeniedDescription({ osErrorCode: failure.osErrorCode, hostOs })} The last confirmed version is still open.`,
-      };
-    default:
-      return {
-        title: "This file couldn’t be refreshed",
-        description:
-          "Scient could not check the latest disk version. The last confirmed version is still open. Retry to check it again.",
-      };
-  }
+/** What the notice says when the open document could not be re-read from disk. */
+export interface MarkdownRefreshNoticeCopy {
+  readonly title: string;
+  readonly description: string;
 }
+
+const UNEXPLAINED_REFRESH_FAILURE: MarkdownRefreshNoticeCopy = {
+  title: "This file couldn’t be refreshed",
+  description:
+    "Scient could not check the latest disk version. The last confirmed version is still open. Retry to check it again.",
+};
 
 /** Routine persistence is silent. Only an actionable episode is announced. */
 export function ScientMarkdownPersistenceNotice({
   persistence,
-  refreshFailure = null,
-  hostOs = null,
+  refreshCopy = UNEXPLAINED_REFRESH_FAILURE,
   missingFileChoices = NO_MISSING_FILE_CHOICES,
   onOpenFile,
 }: {
   readonly persistence: MarkdownPersistenceLease;
-  /** Why the last refresh read failed, when the operating system said. */
-  readonly refreshFailure?: ProjectReadFailure | null;
-  /** Operating system of the environment that owns the file. */
-  readonly hostOs?: string | null;
-  /** Workspace files a missing path may have meant; each opens as another document. */
+  /** Names why the last refresh read failed, when the operating system said. */
+  readonly refreshCopy?: MarkdownRefreshNoticeCopy;
+  /**
+   * Workspace files a missing path may have meant, given only when the file
+   * is missing; each opens as another document.
+   */
   readonly missingFileChoices?: ReadonlyArray<string>;
   readonly onOpenFile?: (relativePath: string) => void;
 }) {
@@ -74,7 +54,6 @@ export function ScientMarkdownPersistenceNotice({
         ? "failure"
         : "refresh"
       : null;
-  const refreshCopy = markdownRefreshFailureCopy(refreshFailure, hostOs);
   const title =
     issue === "conflict"
       ? "This file was changed by another writer"
@@ -82,9 +61,7 @@ export function ScientMarkdownPersistenceNotice({
         ? refreshCopy.title
         : "Changes haven’t been saved";
   const choices =
-    issue === "refresh" && refreshFailure?.reason === "not_found" && onOpenFile
-      ? missingFileChoices.slice(0, MAX_MISSING_FILE_CHOICES)
-      : [];
+    issue === "refresh" && onOpenFile ? missingFileChoices.slice(0, MAX_MISSING_FILE_CHOICES) : [];
 
   useEffect(() => {
     if (issue === previousIssue.current) return;

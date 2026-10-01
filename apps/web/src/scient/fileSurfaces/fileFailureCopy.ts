@@ -157,6 +157,33 @@ export function staleCopyNotice(reason: ProjectFileErrorReason | null): string {
   }
 }
 
+/**
+ * What an editor that keeps its last confirmed version on screen says when
+ * that document could not be re-read from disk. The operating system's reason
+ * names the cause; without one there is nothing specific to claim, and the
+ * editor keeps its own generic notice.
+ */
+export function refreshFailureNoticeCopy(
+  failure: { readonly reason: ProjectFileErrorReason; readonly osErrorCode: string | null } | null,
+  hostOs: string | null,
+): { readonly title: string; readonly description: string } | null {
+  switch (failure?.reason) {
+    case "not_found":
+      return {
+        title: "This file is no longer at this location",
+        description:
+          "It may have been moved, renamed, or deleted. The last confirmed version is still open.",
+      };
+    case "permission_denied":
+      return {
+        title: "This file can no longer be read",
+        description: `${readDeniedDescription({ osErrorCode: failure.osErrorCode, hostOs })} The last confirmed version is still open.`,
+      };
+    default:
+      return null;
+  }
+}
+
 export type MediaFailureKind = "image" | "audio" | "video" | "document";
 
 /**

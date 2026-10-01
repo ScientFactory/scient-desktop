@@ -119,6 +119,7 @@ import {
   isOutsideProjectFailure,
   MEDIA_FAILURE_COPY,
   readFailureBlocksPreview,
+  refreshFailureNoticeCopy,
 } from "~/scient/fileSurfaces/fileFailureCopy";
 import { FileLinkResolutionNotice } from "~/scient/fileSurfaces/FileLinkResolutionNotice";
 import { FileReadFailure } from "~/scient/fileSurfaces/FileReadFailure";
@@ -1594,6 +1595,7 @@ export default function FilePreviewPanel({
     markdownSnapshot && !markdownSnapshot.pending
       ? projectReadFailure(markdownSnapshot.error)
       : null;
+  const markdownRefreshCopy = refreshFailureNoticeCopy(markdownRefreshFailure, hostOs);
   // Once admitted, the retained draft is the editor's display truth even when
   // an unrelated cached query fails or temporarily returns an older snapshot.
   const file =
@@ -1999,10 +2001,10 @@ export default function FilePreviewPanel({
         <ScientMarkdownPersistenceNotice
           key={relativePath}
           persistence={markdownLease}
-          refreshFailure={markdownRefreshFailure}
-          hostOs={hostOs}
-          missingFileChoices={missingFile.paths}
-          onOpenFile={onOpenFile}
+          {...(markdownRefreshCopy ? { refreshCopy: markdownRefreshCopy } : {})}
+          {...(markdownRefreshFailure?.reason === "not_found"
+            ? { missingFileChoices: missingFile.paths, onOpenFile }
+            : {})}
         />
       ) : (
         <ScientFileFreshnessNotices

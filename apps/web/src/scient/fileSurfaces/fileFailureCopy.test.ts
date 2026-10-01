@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   fileReadFailureCopy,
   readFailureBlocksPreview,
+  refreshFailureNoticeCopy,
   staleCopyNotice,
   UNSUPPORTED_PREVIEW_TITLE,
 } from "./fileFailureCopy";
@@ -149,5 +150,23 @@ describe("staleCopyNotice", () => {
     expect(staleCopyNotice(null)).toBe(
       "The latest version could not be loaded. Showing the last available copy.",
     );
+  });
+});
+
+describe("refreshFailureNoticeCopy", () => {
+  it("names a moved file and a denied read, and claims nothing without a reason", () => {
+    expect(refreshFailureNoticeCopy({ reason: "not_found", osErrorCode: "ENOENT" }, null)).toEqual({
+      title: "This file is no longer at this location",
+      description:
+        "It may have been moved, renamed, or deleted. The last confirmed version is still open.",
+    });
+    const denied = refreshFailureNoticeCopy(
+      { reason: "permission_denied", osErrorCode: "EACCES" },
+      "darwin",
+    );
+    expect(denied?.title).toBe("This file can no longer be read");
+    expect(denied?.description).toContain("permissions of the file and its folders");
+    expect(denied?.description).toContain("The last confirmed version is still open.");
+    expect(refreshFailureNoticeCopy(null, "darwin")).toBeNull();
   });
 });
