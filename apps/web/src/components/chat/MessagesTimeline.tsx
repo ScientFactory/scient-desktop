@@ -258,7 +258,7 @@ import { ScientChatImageGallery } from "~/scient/images/ScientChatImageGallery";
 import { remoteImageAddress } from "~/scient/presentation/remoteImageAddress";
 // SCIENT-FORK:END
 import { SkillChipIcon, SkillInlineText } from "./SkillInlineText";
-import { deriveAgentSpawnSummary } from "./agentSpawnSummary";
+import { agentSpawnRowLabel, deriveAgentSpawnSummary } from "./agentSpawnSummary";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import {
   buildReviewCommentRenderablePatch,
@@ -3389,6 +3389,42 @@ function WorkingTimer({ createdAt }: { createdAt: string }) {
   );
 }
 
+/** A step this young shows no timer: only one that runs long needs to prove it is alive. */
+const LIVE_STEP_TIMER_AFTER_MS = 10_000;
+
+function liveStepElapsedSuffix(startedAt: string): string {
+  const elapsedMs = Date.now() - Date.parse(startedAt);
+  return Number.isFinite(elapsedMs) && elapsedMs >= LIVE_STEP_TIMER_AFTER_MS
+    ? ` · ${formatWorkingTimerNow(startedAt)}`
+    : "";
+}
+
+/**
+ * How long a step that is still running has run, once it has run long enough
+ * to wonder. Ticks through DOM writes, like the turn's own timer.
+ */
+function LiveStepElapsed({ startedAt }: { startedAt: string }) {
+  const textRef = useRef<HTMLSpanElement>(null);
+  const initialText = liveStepElapsedSuffix(startedAt);
+
+  useEffect(() => {
+    const updateText = () => {
+      if (textRef.current) {
+        textRef.current.textContent = liveStepElapsedSuffix(startedAt);
+      }
+    };
+    updateText();
+    const id = setInterval(updateText, 1000);
+    return () => clearInterval(id);
+  }, [startedAt]);
+
+  return (
+    <span ref={textRef} className="shrink-0 whitespace-pre tabular-nums">
+      {initialText}
+    </span>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Extracted row sections — own their state / store subscriptions so changes
 // re-render only the affected row, not the entire list.
@@ -3742,6 +3778,11 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
               <span className="min-w-0 truncate text-foreground">
                 {getQuestionAnswerPreview(row.entry.questionAnswer)}
               </span>
+            </span>
+          ) : row.active && row.entry.toolLifecycleStatus === "inProgress" ? (
+            <span className="flex min-w-0">
+              <span className="min-w-0 truncate">{label}</span>
+              <LiveStepElapsed startedAt={row.entry.startedAt ?? row.entry.createdAt} />
             </span>
           ) : (
             label
@@ -4976,10 +5017,16 @@ const AgentSpawnRow = memo(function AgentSpawnRow(props: {
     agentCount,
     coordinatorStatus: workflowGroup?.workflow.status,
   });
-  const { live, lead } = summary;
+  const { live } = summary;
   const failed = summary.tone === "failed";
   const workflowName =
     workflowGroup?.workflow.workflowName ?? workflowGroup?.workflow.title ?? null;
+  const label = agentSpawnRowLabel(summary, workflowName);
+  // The longest-running agent still at work: a quiet row keeps counting.
+  const workingSince = agents
+    .filter((agent) => isActiveSubagentStatus(agent.status) && agent.startedAt !== null)
+    .map((agent) => agent.startedAt!)
+    .toSorted()[0];
   const toggleExpanded = () => {
     props.onToggleEntry?.(expanded);
     onToggleSpawnRow(workEntry.id, !expanded);
@@ -4994,7 +5041,19 @@ const AgentSpawnRow = memo(function AgentSpawnRow(props: {
         className="flex cursor-pointer select-none rounded-md text-left transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
         <LiveActivityRow
-          label={workflowName ? `${lead} · ${workflowName}` : lead}
+          label={
+            live && workingSince ? (
+              <span className="flex min-w-0">
+                <span className="min-w-0 truncate">{label}</span>
+                <span className="shrink-0 whitespace-pre tabular-nums">
+                  {" · "}
+                  <WorkingTimer createdAt={workingSince} />
+                </span>
+              </span>
+            ) : (
+              label
+            )
+          }
           iconName="bot"
           active={live && props.active !== false}
           failed={failed}
@@ -5115,7 +5174,14 @@ function AgentSpawnMemberRow({
           ) : null}
         </p>
         <span className="scient-reading-compact shrink-0 font-mono tabular-nums text-muted-foreground">
-          {statusLabel}
+          {activeStatus && agent.startedAt ? (
+            <>
+              {`${statusLabel} · `}
+              <WorkingTimer createdAt={agent.startedAt} />
+            </>
+          ) : (
+            statusLabel
+          )}
         </span>
       </div>
       {!open && firstLine ? (
