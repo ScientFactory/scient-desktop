@@ -454,6 +454,17 @@ describe("resolveEnvironmentFileLink while the workspace changes", () => {
           path: "project/reviews/b/dup.md",
           missingPath: path.join(alias, "dup.md"),
         };
+        // A folder whose name merely starts with two dots is inside the workspace.
+        yield* fileSystem.makeDirectory(path.join(workspace, "..notes"), { recursive: true });
+        yield* fileSystem.writeFileString(path.join(workspace, "..notes/dup.md"), "x\n");
+        expect(
+          yield* resolveEnvironmentFileLink({
+            workspaceRoot: make(alias),
+            path: make("zz/dup.md"),
+            changedPaths: [make("..notes/dup.md")],
+          }),
+        ).toMatchObject({ _tag: "recovered", path: "..notes/dup.md" });
+        yield* fileSystem.remove(path.join(workspace, "..notes"), { recursive: true });
         // Relative to the workspace, by its alias, or by its real path.
         expect(yield* viaAlias(["project/reviews/b/dup.md"])).toEqual(expected);
         expect(yield* viaAlias([path.join(alias, "project/reviews/b/dup.md")])).toEqual(expected);

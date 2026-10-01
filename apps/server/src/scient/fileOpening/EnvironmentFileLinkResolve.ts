@@ -54,6 +54,33 @@ export interface LinkCandidateSearchLimits {
   readonly readDirectory?: (directory: string) => Promise<ReadonlyArray<NodeFS.Dirent>>;
 }
 
+const TIMED_OUT = Symbol("timed-out");
+
+/**
+ * One wall-clock budget for a whole resolution. A filesystem call that never
+ * returns (a stalled network volume) must not outlast it, whichever step it is
+ * in. With a supplied clock there is no wall-clock timer: that clock decides.
+ */
+interface TimeBudget {
+  readonly within: <T>(work: Promise<T>) => Promise<T | typeof TIMED_OUT>;
+  readonly stop: () => void;
+}
+
+function startTimeBudget(limits: LinkCandidateSearchLimits): TimeBudget {
+  let stop = () => {};
+  const timedOut = new Promise<typeof TIMED_OUT>((resolve) => {
+    if (limits.now !== undefined) return;
+    const timer = setTimeout(resolve, Math.max(0, limits.deadlineMs), TIMED_OUT);
+    stop = () => clearTimeout(timer);
+  });
+  return { within: (work) => Promise.race([work, timedOut]), stop: () => stop() };
+}
+
+const DEFAULT_LIMITS: LinkCandidateSearchLimits = {
+  maxDirectories: MAX_SEARCHED_DIRECTORIES,
+  deadlineMs: SEARCH_DEADLINE_MS,
+};
+
 function errorCode(error: unknown): unknown {
   return typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
 }
@@ -68,13 +95,11 @@ function isSymlinkLoop(error: unknown): boolean {
   return errorCode(error) === "ELOOP";
 }
 
-const TIMED_OUT = Symbol("timed-out");
-
 /**
  * Finds every file named `fileName` under `root`, including symlinks that lead
  * to regular files, which a file index does not list. `root` must be a real
- * path: every directory entered is checked to still be the real directory that
- * was queued, so the search neither enters symlinked directories nor follows
+ * path: every directory entered is checked to still be a directory rather
+ * than a link, so the search neither enters symlinked directories nor follows
  * one swapped in while it runs, and cannot leave the workspace or loop.
  *
  * The result is a snapshot. Anything that could not be examined (a bound, an
@@ -84,27 +109,16 @@ const TIMED_OUT = Symbol("timed-out");
 export async function findFilesNamed(
   root: string,
   fileName: string,
-  limits: LinkCandidateSearchLimits = {
-    maxDirectories: MAX_SEARCHED_DIRECTORIES,
-    deadlineMs: SEARCH_DEADLINE_MS,
-  },
+  limits: LinkCandidateSearchLimits = DEFAULT_LIMITS,
+  budget?: TimeBudget,
 ): Promise<LinkCandidateSearch> {
   const now = limits.now ?? Date.now;
   const readDirectory =
     limits.readDirectory ??
     ((directory: string) => NodeFSP.readdir(directory, { withFileTypes: true }));
   const deadline = now() + limits.deadlineMs;
-  // A filesystem call that never returns must not outlast the bound either.
-  // The wall-clock timer only applies with the real clock; a supplied clock
-  // decides the bound by itself.
-  let stop: (() => void) | undefined;
-  const timedOut = new Promise<typeof TIMED_OUT>((resolve) => {
-    if (limits.now !== undefined) return;
-    const timer = setTimeout(resolve, Math.max(0, limits.deadlineMs), TIMED_OUT);
-    stop = () => clearTimeout(timer);
-  });
-  const bounded = <T>(work: Promise<T>): Promise<T | typeof TIMED_OUT> =>
-    Promise.race([work, timedOut]);
+  const ownBudget = budget === undefined ? startTimeBudget(limits) : undefined;
+  const bounded = (budget ?? ownBudget!).within;
 
   const candidates: LinkCandidate[] = [];
   const pending = [root];
@@ -118,15 +132,19 @@ export async function findFilesNamed(
       }
       searched += 1;
       const directory = next;
-      const listed = await bounded(
-        Promise.all([
-          readDirectory(directory).catch(() => null),
-          NodeFSP.realpath(directory).catch(() => null),
-        ]),
+      const entries = await bounded(readDirectory(directory).catch(() => null));
+      if (entries === TIMED_OUT) return { candidates, complete: false };
+      // Checked after the listing, so a directory replaced by a link before it
+      // was listed is caught here and its entries are discarded. One lstat
+      // per directory: the directories above it were checked the same way.
+      const stillDirectory = await bounded(
+        NodeFSP.lstat(directory).then(
+          (entry) => entry.isDirectory(),
+          () => false,
+        ),
       );
-      if (listed === TIMED_OUT) return { candidates, complete: false };
-      const [entries, realDirectory] = listed;
-      if (entries === null || realDirectory !== directory) {
+      if (stillDirectory === TIMED_OUT) return { candidates, complete: false };
+      if (entries === null || !stillDirectory) {
         // Unreadable, or no longer the directory that was queued (replaced by
         // a link while the search ran): its contents are not examined.
         complete = false;
@@ -160,7 +178,7 @@ export async function findFilesNamed(
     // Time can also run out while the last directory was being examined.
     return { candidates, complete: complete && now() <= deadline };
   } finally {
-    stop?.();
+    ownBudget?.stop();
   }
 }
 
@@ -241,66 +259,84 @@ export const resolveEnvironmentFileLink = Effect.fn("EnvironmentFileLinkResolve.
     // path tools an agent built the link with.
     const workspaceRoot = NodePath.resolve(input.workspaceRoot);
     const linkPath = NodePath.resolve(workspaceRoot, input.path);
-    const missing = yield* Effect.promise(() =>
-      // Whatever is at the link's own location is what it names, including a
-      // link whose target is gone. Only absence starts a search; a denied or
-      // failing location is opened as written and reports its real reason.
-      NodeFSP.lstat(linkPath).then(
-        () => false,
-        (error: unknown) => isMissing(error),
-      ),
-    );
     const literalPath = EnvironmentFilePath.make(linkPath);
-    if (!missing) return { _tag: "literal", path: literalPath };
+    const searchLimits = limits ?? DEFAULT_LIMITS;
+    return yield* Effect.promise(async (): Promise<EnvironmentFileLinkResolution> => {
+      const budget = startTimeBudget(searchLimits);
+      try {
+        return await resolveWithin(budget);
+      } finally {
+        budget.stop();
+      }
+    });
 
-    // The search runs on the real root, so every directory can be checked
-    // against its own real path.
-    const realRoot = yield* Effect.promise(() => NodeFSP.realpath(workspaceRoot).catch(() => null));
-    if (realRoot === null) return { _tag: "incomplete", paths: [], missingPath: literalPath };
-    const search = yield* Effect.promise(() =>
-      findFilesNamed(realRoot, NodePath.basename(linkPath), limits),
-    );
-    // Changed files are named relative to the workspace as the client knows
-    // it; candidates are under its real path.
-    const changedPaths = new Set(
-      (input.changedPaths ?? []).map((changedPath) => {
-        const lexical = NodePath.resolve(workspaceRoot, changedPath);
-        const relative = NodePath.relative(workspaceRoot, lexical);
-        return relative.startsWith("..") || NodePath.isAbsolute(relative)
-          ? lexical
-          : NodePath.join(realRoot, relative);
-      }),
-    );
-    const best = rankLinkCandidates(
-      linkPath,
-      search.candidates.map((candidate) => candidate.path),
-      changedPaths,
-    ).slice(0, MAX_REPORTED_PATHS);
-    // The workspace may have changed since each candidate was seen. A best
-    // candidate that is no longer the entry that was found is dropped, and
-    // the search no longer counts as a complete picture.
-    const kinds = new Map(search.candidates.map((candidate) => [candidate.path, candidate.kind]));
-    const stillThere = yield* Effect.promise(() =>
-      Promise.all(
-        best.map((candidatePath) =>
-          isStillCandidate({ path: candidatePath, kind: kinds.get(candidatePath) ?? "file" }),
+    async function resolveWithin(budget: TimeBudget): Promise<EnvironmentFileLinkResolution> {
+      const incomplete = (paths: ReadonlyArray<EnvironmentFilePath> = []) =>
+        ({ _tag: "incomplete", paths, missingPath: literalPath }) as const;
+      // Whatever is at the link's own location is what it names, including a
+      // link whose target is gone. Only absence starts a search; a denied,
+      // failing or stalled location is opened as written and reports its
+      // real reason.
+      const missing = await budget.within(
+        NodeFSP.lstat(linkPath).then(
+          () => false,
+          (error: unknown) => isMissing(error),
         ),
-      ),
-    );
-    const confirmed = best.filter((_, index) => stillThere[index] === true);
-    const complete = search.complete && confirmed.length === best.length;
-    const relativePaths = confirmed.map((candidatePath) =>
-      EnvironmentFilePath.make(
-        NodePath.relative(realRoot, candidatePath).split(NodePath.sep).join("/"),
-      ),
-    );
-    if (!complete) {
-      return { _tag: "incomplete", paths: relativePaths, missingPath: literalPath };
+      );
+      if (missing !== true) return { _tag: "literal", path: literalPath };
+
+      // The search runs on the real root, so every directory can be checked
+      // against its own real path.
+      const realRoot = await budget.within(NodeFSP.realpath(workspaceRoot).catch(() => null));
+      if (realRoot === TIMED_OUT || realRoot === null) return incomplete();
+      const search = await findFilesNamed(
+        realRoot,
+        NodePath.basename(linkPath),
+        searchLimits,
+        budget,
+      );
+      // Changed files are named relative to the workspace as the client knows
+      // it; candidates are under its real path.
+      const changedPaths = new Set(
+        (input.changedPaths ?? []).map((changedPath) => {
+          const lexical = NodePath.resolve(workspaceRoot, changedPath);
+          const relative = NodePath.relative(workspaceRoot, lexical);
+          const outside =
+            relative === ".." ||
+            relative.startsWith(`..${NodePath.sep}`) ||
+            NodePath.isAbsolute(relative);
+          return outside ? lexical : NodePath.join(realRoot, relative);
+        }),
+      );
+      const best = rankLinkCandidates(
+        linkPath,
+        search.candidates.map((candidate) => candidate.path),
+        changedPaths,
+      ).slice(0, MAX_REPORTED_PATHS);
+      // The workspace may have changed since each candidate was seen. A best
+      // candidate that is no longer the entry that was found is dropped, and
+      // the search no longer counts as a complete picture.
+      const kinds = new Map(search.candidates.map((candidate) => [candidate.path, candidate.kind]));
+      const stillThere = await budget.within(
+        Promise.all(
+          best.map((candidatePath) =>
+            isStillCandidate({ path: candidatePath, kind: kinds.get(candidatePath) ?? "file" }),
+          ),
+        ),
+      );
+      if (stillThere === TIMED_OUT) return incomplete();
+      const confirmed = best.filter((_, index) => stillThere[index] === true);
+      const relativePaths = confirmed.map((candidatePath) =>
+        EnvironmentFilePath.make(
+          NodePath.relative(realRoot, candidatePath).split(NodePath.sep).join("/"),
+        ),
+      );
+      if (!search.complete || confirmed.length !== best.length) return incomplete(relativePaths);
+      const [only] = relativePaths;
+      if (only === undefined) return { _tag: "none", missingPath: literalPath };
+      return relativePaths.length === 1
+        ? { _tag: "recovered", path: only, missingPath: literalPath }
+        : { _tag: "tie", paths: relativePaths, missingPath: literalPath };
     }
-    const [only] = relativePaths;
-    if (only === undefined) return { _tag: "none", missingPath: literalPath };
-    return relativePaths.length === 1
-      ? { _tag: "recovered", path: only, missingPath: literalPath }
-      : { _tag: "tie", paths: relativePaths, missingPath: literalPath };
   },
 );
