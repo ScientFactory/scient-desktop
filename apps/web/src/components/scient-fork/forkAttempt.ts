@@ -58,7 +58,7 @@ const isConnectionTransient = Schema.is(ConnectionTransientError);
 const isRpcFailure = Schema.is(RpcClientError.RpcClientError);
 
 /** The request lost its connection; the server may still be working on the fork. */
-export function isForkConnectionLoss(error: unknown): boolean {
+function isForkConnectionLoss(error: unknown): boolean {
   if (isConnectionTransient(error)) return true;
   if (isRpcFailure(error)) return error.reason._tag.startsWith("Socket");
   return (
