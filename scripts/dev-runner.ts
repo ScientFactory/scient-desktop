@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import * as NodeOS from "node:os";
+import * as NodeCrypto from "node:crypto";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -308,6 +309,7 @@ export function createDevRunnerEnv({
   devUrl,
 }: CreateDevRunnerEnvInput): Effect.Effect<NodeJS.ProcessEnv, never, Path.Path> {
   return Effect.gen(function* () {
+    const path = yield* Path.Path;
     const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
     const webPort = BASE_WEB_PORT + webOffset;
     // Precedence (--home-dir > worktree .scient-next > candidate default) is resolved
@@ -330,6 +332,15 @@ export function createDevRunnerEnv({
     output.SCIENT_NEXT_HOME = resolvedBaseDir;
     output.T3CODE_HOME = resolvedBaseDir;
     output.SCIENT_NEXT_SAFETY_ENVELOPE = SCIENT_DESKTOP_IDENTITY.safetyEnvelopeMarker;
+    // Scratch must not inherit the checkout containing this candidate's state.
+    // Derive it here, rather than inheriting another candidate's environment.
+    output.SCIENT_DEV_SCRATCH_ROOT = path.join(
+      NodeOS.homedir(),
+      ".scient-next",
+      "dev-scratch",
+      NodeCrypto.createHash("sha256").update(resolvedBaseDir).digest("hex"),
+      "scratch",
+    );
 
     // A dev-runner server is never launcher-managed. When the shell that runs
     // this script was itself spawned by the machine's managed t3 service (an

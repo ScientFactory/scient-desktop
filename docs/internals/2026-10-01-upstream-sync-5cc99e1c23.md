@@ -71,7 +71,8 @@ files into a project remains unsupported.
 The server advertises `scratchWorkspaceRoot` only outside Git data directories;
 VCS detection failures still fail closed. This guard keeps scratch folders from
 inheriting a development checkout's Git state. Remote and mobile clients consume
-the same advertised capability. A worktree-local dev profile may not offer it.
+the same advertised capability. Dev candidates now select a persistent scratch root outside the checkout while
+keeping their existing profile in place; the selected parent is still checked for Git.
 
 **Why create-from-name remains off.** Scient already creates a project from any
 typed path through "Create & Add", dispatching `project.create` with
@@ -188,3 +189,20 @@ renderer hot reload alone does not refresh the bundled backend.
    while `desktop-macos-preview-publish.yml:287` still calls it, so that workflow fails on
    every run. Restoring upstream's file would also restore the packaging path this
    repository replaced, so it still needs an explicit release decision.
+
+## Dev candidate scratch follow-up, 2026-10-02
+
+Based on `3ade90344d`, the owner requested a runnable candidate for testing. The
+runner now derives an external persistent scratch root per resolved candidate state
+root. CLI configuration admits it only with a development URL and safety envelope;
+the desktop primary forwards it only in development and other backends scrub it.
+The existing profile stays in place. Scratch advertisement and workspace admission
+use the same selected root, retaining Git detection and canonical-child checks.
+
+Server, scripts, and desktop typechecks passed. Changed-file formatting/lint and
+whitespace checks passed. The candidate was stopped through its managed lifecycle;
+old runner/app/backend processes and listeners were gone before restarting. The new
+candidate responds on backend 15150 and web 7110 with HTTP 200. Native UI inspection
+opened the existing New thread picker and confirmed AAA first, No project, and Add
+project. The picker was left open for the owner's testing. No provider turn was
+submitted; full runtime suites and end-to-end scratch tool execution remain pending.

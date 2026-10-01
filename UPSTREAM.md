@@ -635,7 +635,9 @@ worktree lineage and existing authority-generation/publication checks.
 The server still withholds `ServerConfig.scratchWorkspaceRoot` and
 `projects.ensureScratch` when its data directory is inside a Git checkout or VCS
 detection fails. Clients gate on the advertised root, including remote/mobile
-entry points; a worktree-local development profile may therefore not offer it.
+entry points. The dev runner selects persistent scratch storage outside the
+checkout without moving its existing profile; that selected parent must also be
+outside Git.
 Thread deletion retains scratch files. Moving a started scratch conversation and
 its files into another project remains a follow-up.
 

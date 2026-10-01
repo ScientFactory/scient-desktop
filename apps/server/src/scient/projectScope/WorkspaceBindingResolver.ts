@@ -74,10 +74,11 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const config = yield* ServerConfig.ServerConfig;
+  const scratchRoot = ServerConfig.scratchWorkspaceRoot(config, path);
 
   const isScratchProject = (workspaceRoot: string) =>
     SCIENT_DESKTOP_IDENTITY.projectlessThreadsEnabled &&
-    path.resolve(workspaceRoot) === path.resolve(config.baseDir, "scratch");
+    path.resolve(workspaceRoot) === scratchRoot;
 
   // Scratch threads have host-registered plain folders, not Git worktrees.
   // Admit only a direct canonical child of this server's scratch project;
@@ -93,7 +94,7 @@ const make = Effect.gen(function* () {
       ) {
         return false;
       }
-      const canonicalBaseDir = yield* fs.realPath(config.baseDir).pipe(
+      const canonicalBaseDir = yield* fs.realPath(path.dirname(scratchRoot)).pipe(
         Effect.mapError(
           (cause) =>
             new WorkspaceBindingResolutionError({
@@ -103,7 +104,7 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-      return project.canonicalRoot === path.join(canonicalBaseDir, "scratch");
+      return project.canonicalRoot === path.join(canonicalBaseDir, path.basename(scratchRoot));
     },
   );
 

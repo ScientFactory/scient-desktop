@@ -132,7 +132,9 @@ Do not expose its model-supplied cwd as agent workspace authority.
 
 The upstream alignment through `5cc99e1c23` enables **No project** after owner approval.
 These conversations still have a real owning project: the server's internal scratch
-project at `<baseDir>/scratch`. Each thread records its own plain subfolder in
+project at `<baseDir>/scratch` in production. The dev runner selects a separate
+persistent scratch root outside the checkout; advertisement and authority use the
+same configured location. Each thread records its own plain subfolder in
 `worktreePath`; this does not reintroduce historical null-project Quick Chat threads.
 
 The shared resolver admits only a host-registered direct canonical child of this

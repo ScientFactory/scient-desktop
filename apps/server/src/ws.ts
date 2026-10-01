@@ -2066,10 +2066,10 @@ const makeWsRpcLayer = (
         });
 
       const path = yield* Path.Path;
-      // Scratch threads run in a plain folder under the data dir. Inside a
-      // checkout (a dev worktree's .t3, a dotfiles home) that folder would
-      // inherit the repo's git status and checkpoints, so it is only offered
-      // when the data dir is outside any work tree. Detection failures and
+      // Scratch threads run in a plain folder. Production uses the data dir;
+      // the dev runner can select isolated storage outside its checkout.
+      // Offer it only when the selected parent is outside any work tree,
+      // so it cannot inherit a repository's Git status and checkpoints. Detection failures and
       // defects fail closed and hide the folder, never the config.
       // Probed once per connection: a negative VCS detection is not cached.
       // An interrupt stays an interrupt, so a config load cancelled mid-probe
@@ -2078,14 +2078,13 @@ const makeWsRpcLayer = (
       // this advertisement. Scratch retains a real owning project; each
       // thread's registered plain folder is also admitted by Scient's resolver.
       const scratchThreadsOffered = SCIENT_DESKTOP_IDENTITY.projectlessThreadsEnabled;
+      const scratchWorkspaceRoot = ServerConfig.scratchWorkspaceRoot(config, path);
       // SCIENT-FORK:END
       const [cachedScratchWorkspaceRoot, invalidateScratchWorkspaceRoot] =
         yield* Effect.cachedInvalidateWithTTL(
-          gitWorkflow.isRepository(config.baseDir).pipe(
+          gitWorkflow.isRepository(path.dirname(scratchWorkspaceRoot)).pipe(
             Effect.map((isRepository) =>
-              !scratchThreadsOffered || isRepository
-                ? undefined
-                : path.resolve(config.baseDir, "scratch"),
+              !scratchThreadsOffered || isRepository ? undefined : scratchWorkspaceRoot,
             ),
             Effect.catchCause((cause) =>
               Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(undefined),

@@ -130,7 +130,8 @@ or turn diffs. Deleting a conversation keeps its folder; moving a started scratc
 conversation and its files into another project is not yet supported.
 
 The option is available only on a connected machine whose data directory is outside a
-Git checkout. A dev app with state inside its worktree may therefore not offer it.
+Git checkout. Dev candidates keep their profile inside the worktree but use a
+separate persistent scratch location outside Git.
 
 ## Group threads into sections
 
