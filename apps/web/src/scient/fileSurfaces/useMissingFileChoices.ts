@@ -9,7 +9,8 @@ import { useMemo } from "react";
 import { chatFileLinkResolveInput } from "~/scient/fileOpening/chatFileLinkResolution";
 import { environmentFileLinkResolution } from "~/scient/fileOpening/environmentFileState";
 import { useEnvironmentQuery } from "~/state/query";
-import { isAbsolutePath, resolvePathLinkTarget } from "~/terminal-links";
+import { workspaceFileHostPath } from "~/components/files/filePath";
+import { isAbsolutePath } from "~/terminal-links";
 
 export interface MissingFileChoices {
   /** Workspace files a missing path may have meant, as explicit choices. */
@@ -55,7 +56,7 @@ export function useMissingFileChoices(input: {
   const absolutePath = useMemo(() => {
     if (path === null || path.length === 0) return null;
     if (isAbsolutePath(path)) return collapseAbsoluteFilePath(path);
-    return cwd ? collapseAbsoluteFilePath(resolvePathLinkTarget(path, cwd)) : null;
+    return cwd ? collapseAbsoluteFilePath(workspaceFileHostPath(path, cwd)) : null;
   }, [cwd, path]);
   const resolveInput = useMemo(
     () =>

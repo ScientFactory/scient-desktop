@@ -68,13 +68,15 @@ import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
-import type {
-  FileLinkResolution,
-  HtmlFilePresentationRequest,
-  LatexFilePresentationRequest,
-  OpenFileOptions,
+import {
+  useRightPanelStore,
+  type FileLinkResolution,
+  type HtmlFilePresentationRequest,
+  type LatexFilePresentationRequest,
+  type OpenFileOptions,
 } from "~/rightPanelStore";
-import { isAbsolutePath, resolvePathLinkTarget } from "~/terminal-links";
+import { isAbsolutePath } from "~/terminal-links";
+import { workspaceFileHostPath } from "./filePath";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Button } from "~/components/ui/button";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
@@ -123,8 +125,6 @@ import {
 } from "~/scient/fileSurfaces/fileFailureCopy";
 import { FileLinkResolutionNotice } from "~/scient/fileSurfaces/FileLinkResolutionNotice";
 import { FileReadFailure } from "~/scient/fileSurfaces/FileReadFailure";
-import { announceResolvedLink } from "~/scient/fileOpening/announceResolvedLink";
-import { shouldOpenInBrowserByDefault } from "~/scient/fileOpening/fileOpeningPolicy";
 import {
   fileCopyNotice,
   saveEnvironmentFileCopy,
@@ -197,7 +197,11 @@ interface FilePreviewPanelProps {
   htmlPresentationRequest: HtmlFilePresentationRequest | null;
   latexPresentationRequest: LatexFilePresentationRequest | null;
   latexRootRelativePath: string | null;
-  onOpenFile: (relativePath: string) => void;
+  /**
+   * Opens a file where it belongs. `linkResolution` says the file is the one a
+   * link meant, not the one it named, so wherever it opens says so.
+   */
+  onOpenFile: (relativePath: string, linkResolution?: FileLinkResolution) => void;
   onOpenFileSource: (relativePath: string, line?: number, options?: OpenFileOptions) => void;
   onHtmlPresentationRequestHandled: (
     relativePath: string,
@@ -1550,15 +1554,12 @@ export default function FilePreviewPanel({
     revealLine === null ||
     (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId);
   const [dismissedCitationReveal, setDismissedCitationReveal] = useState<number | null>(null);
-  // Dismissing hides the note for this open only; opening the link again shows it again.
-  // The panel is shared by every file tab and each file counts its own opens,
-  // so one open is a file together with its count.
-  const [dismissedLinkResolution, setDismissedLinkResolution] = useState<string | null>(null);
-  const linkResolutionOpen = `${revealRequestId}:${relativePath ?? ""}`;
-  const shownLinkResolution =
-    linkResolution !== undefined && dismissedLinkResolution !== linkResolutionOpen
-      ? linkResolution
-      : null;
+  // Dismissing removes the note from this tab. It belongs to one open of the
+  // file, so it is gone until a link is repaired into this file again.
+  const dismissLinkResolution = useCallback(() => {
+    if (relativePath === null) return;
+    useRightPanelStore.getState().dismissFileLinkResolution(threadRef, relativePath);
+  }, [relativePath, threadRef]);
   const citationRevealActive =
     fileCitation !== undefined && dismissedCitationReveal !== revealRequestId;
   const renderMarkdown =
@@ -1719,7 +1720,7 @@ export default function FilePreviewPanel({
     isPreviewSupportedInRuntime() &&
     isBrowserPreviewFile(previewPath);
   const absolutePath =
-    relativePath && attachment === undefined ? resolvePathLinkTarget(relativePath, cwd) : null;
+    relativePath && attachment === undefined ? workspaceFileHostPath(relativePath, cwd) : null;
   const missingFile = useMissingFileChoices({
     environmentId,
     cwd,
@@ -2035,10 +2036,10 @@ export default function FilePreviewPanel({
           onResolve={resolveReloadNotice}
         />
       )}
-      {shownLinkResolution ? (
+      {linkResolution ? (
         <FileLinkResolutionNotice
-          missingPath={shownLinkResolution.missingPath}
-          onDismiss={() => setDismissedLinkResolution(linkResolutionOpen)}
+          missingPath={linkResolution.missingPath}
+          onDismiss={dismissLinkResolution}
         />
       ) : null}
       {relativePath && !markdownLease && !isPdf && file.data?.readOnly ? (
@@ -2311,16 +2312,7 @@ export default function FilePreviewPanel({
                   citationRevealId={revealRequestId}
                   resolvedTheme={resolvedTheme}
                   onOpenFile={onOpenFile}
-                  onOpenResolvedLink={(path, missingPath) => {
-                    if (!shouldOpenInBrowserByDefault(path)) {
-                      onOpenFileSource(path, undefined, { linkResolution: { missingPath } });
-                      return;
-                    }
-                    // A page opens in the browser, which has no tab to carry
-                    // the note, so it is announced as a chat link's page is.
-                    onOpenFile(path);
-                    announceResolvedLink({ path, missingPath });
-                  }}
+                  onOpenResolvedLink={(path, missingPath) => onOpenFile(path, { missingPath })}
                   onOpenFileSource={(path, line) =>
                     runAfterPendingSave([relativePath], () => onOpenFileSource(path, line))
                   }

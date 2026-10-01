@@ -203,6 +203,8 @@ interface RightPanelStoreState {
     relativePath: string,
     requestId: number,
   ) => void;
+  /** Removes a file tab's note that it was opened from a repaired link. */
+  dismissFileLinkResolution: (ref: ScopedThreadRef, relativePath: string) => void;
   openAttachment: (ref: ScopedThreadRef, attachment: ChatFileAttachment) => void;
   openPullRequest: (
     ref: ScopedThreadRef,
@@ -850,6 +852,26 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                 htmlPresentationRequest: _consumedHtmlPresentationRequest,
                 ...remainingSurface
               } = surface;
+              return remainingSurface;
+            });
+            return changed ? { ...current, surfaces } : current;
+          }),
+        })),
+      dismissFileLinkResolution: (ref, relativePath) =>
+        set((state) => ({
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+            let changed = false;
+            const surfaces = current.surfaces.map((surface): RightPanelSurface => {
+              if (
+                surface.kind !== "file" ||
+                surface.attachment !== undefined ||
+                surface.relativePath !== relativePath ||
+                surface.linkResolution === undefined
+              ) {
+                return surface;
+              }
+              changed = true;
+              const { linkResolution: _dismissedLinkResolution, ...remainingSurface } = surface;
               return remainingSurface;
             });
             return changed ? { ...current, surfaces } : current;

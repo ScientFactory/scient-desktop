@@ -18,6 +18,23 @@ export interface FileBreadcrumbChild extends ProjectEntry {
 }
 
 /**
+ * The host path of a file named by a file tab or a workspace locator: an
+ * absolute path as it is, a workspace path joined to the workspace root.
+ *
+ * A locator is never a link. A workspace folder really named `~` yields the
+ * locator `~/notes.md`, which must stay under the workspace root; expanding it
+ * as a home-relative link would name a different file. Links are placed before
+ * they become locators.
+ */
+export function workspaceFileHostPath(path: string, workspaceRoot: string): string {
+  if (!workspaceRoot || isAbsolutePath(path)) return path;
+  const windowsRoot = isWindowsAbsolutePath(workspaceRoot) || workspaceRoot.startsWith("\\\\");
+  // On POSIX a trailing backslash is part of the folder's name, not a separator.
+  const root = workspaceRoot.replace(windowsRoot ? /[\\/]+$/ : /\/+$/, "");
+  return windowsRoot ? `${root}\\${path.replaceAll("/", "\\")}` : `${root}/${path}`;
+}
+
+/**
  * The path a file tab actually reads. A workspace-relative path that climbs
  * out of the workspace (`../notes.md`, including tabs saved before links were
  * resolved) names a host file, so it becomes that absolute path and opens

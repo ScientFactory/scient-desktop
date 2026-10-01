@@ -42,6 +42,11 @@ describe("universal chat-file opening seam", () => {
     expect(chatMarkdownSource).toContain(
       "(!canPreviewMedia && isAbsolutePath(fileLinkMeta.filePath)",
     );
+    // A home-relative link is never placed by the client's guess: media asks
+    // through its media action, everything else through the panel action.
+    expect(chatMarkdownSource).toMatch(
+      /homeRelativePath !== undefined\s+\? canPreviewMedia\s+\? null\s+: homeRelativePath/u,
+    );
     // Outside media links resolve like other links, then open in the media viewer.
     expect(chatMarkdownSource).toContain(
       "openMarkdownMediaLink(mediaPath, fileLinkMeta.filePath, homeRelativePath)",

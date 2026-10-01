@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   fileTabTitles,
+  workspaceFileHostPath,
   fileBreadcrumbChildren,
   fileBreadcrumbParent,
   fileBreadcrumbs,
@@ -121,6 +122,22 @@ describe("fileBreadcrumbParent", () => {
     ["", null],
   ])("returns the parent of %j", (path, expected) => {
     expect(fileBreadcrumbParent(path)).toBe(expected);
+  });
+});
+
+describe("workspaceFileHostPath", () => {
+  it("joins a workspace locator to its root and leaves a host path alone", () => {
+    expect(workspaceFileHostPath("docs/a.md", "/repo")).toBe("/repo/docs/a.md");
+    expect(workspaceFileHostPath("docs/a.md", "/repo/")).toBe("/repo/docs/a.md");
+    expect(workspaceFileHostPath("docs/a.md", "C:\\repo")).toBe("C:\\repo\\docs\\a.md");
+    expect(workspaceFileHostPath("/tmp/a.md", "/repo")).toBe("/tmp/a.md");
+    expect(workspaceFileHostPath("C:\\tmp\\a.md", "/repo")).toBe("C:\\tmp\\a.md");
+  });
+
+  it("keeps a workspace folder named ~ under the workspace, never the home folder", () => {
+    expect(workspaceFileHostPath("~/notes.md", "/Users/ada/project")).toBe(
+      "/Users/ada/project/~/notes.md",
+    );
   });
 });
 

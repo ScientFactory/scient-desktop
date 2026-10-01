@@ -187,6 +187,7 @@ import {
 } from "./files/filePathClipboard";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import { isAbsolutePath, resolvePathLinkTarget } from "../terminal-links";
+import { workspaceFileHostPath } from "./files/filePath";
 import {
   openFileInPreview,
   openUrlInPreview,
@@ -2604,9 +2605,12 @@ function useChatMarkdownState({
         const { plan, location } = await planFileLinkOpen(homeRelativePath ?? filePath, filePath);
         if (!isCurrentClick()) return;
         if (plan.kind === "as-written") {
-          // A home-relative link plays from where the environment says it is.
+          // A home-relative link opens from where the environment says it is:
+          // in the files panel when that is inside the workspace, like any
+          // other workspace media, otherwise in the media viewer.
           if (location === filePath) openMarkdownMedia(mediaPath, filePath);
-          else openMarkdownMedia(location, location);
+          else if (isAbsolutePath(location)) openMarkdownMedia(location, location);
+          else useRightPanelStore.getState().openFile(threadRef, location);
           return;
         }
         if (plan.kind === "resolved") {
@@ -2641,12 +2645,12 @@ function useChatMarkdownState({
       }
       if (plan.kind === "resolved" && cwd) {
         announceResolvedLink(plan);
-        return openMarkdownFileInPreview(resolvePathLinkTarget(plan.path, cwd), plan.path);
+        return openMarkdownFileInPreview(workspaceFileHostPath(plan.path, cwd), plan.path);
       }
       if (location !== clientPath) {
         // A home-relative page, opened where the environment says it is.
         return cwd && !isAbsolutePath(location)
-          ? openMarkdownFileInPreview(resolvePathLinkTarget(location, cwd), location)
+          ? openMarkdownFileInPreview(workspaceFileHostPath(location, cwd), location)
           : openEnvironmentHtmlInPreview(location);
       }
       return cwd && workspaceRelativePath
@@ -2690,10 +2694,14 @@ function useChatMarkdownState({
       // files (a report in a temp dir) open read-only in the files panel.
       // A home-relative link is handed over as authored: only the machine
       // that owns the files knows where its home folder is.
+      // Home-relative media has no panel path of its own: it goes through
+      // the media action, which asks the same way.
       const homeRelativePath = fileLinkMeta.homeRelativePath;
       const panelPath =
-        homeRelativePath !== undefined && !canPreviewMedia
-          ? homeRelativePath
+        homeRelativePath !== undefined
+          ? canPreviewMedia
+            ? null
+            : homeRelativePath
           : (fileLinkMeta.workspaceRelativePath ??
             (!canPreviewMedia && isAbsolutePath(fileLinkMeta.filePath)
               ? fileLinkMeta.filePath

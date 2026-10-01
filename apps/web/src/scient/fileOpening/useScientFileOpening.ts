@@ -13,15 +13,18 @@ import { useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
-import { resolvePathLinkTarget } from "~/terminal-links";
+import { workspaceFileHostPath } from "~/components/files/filePath";
 
+import type { FileLinkResolution, OpenFileOptions } from "~/rightPanelStore";
+
+import { announceResolvedLink } from "./announceResolvedLink";
 import { shouldOpenInBrowserByDefault } from "./fileOpeningPolicy";
 
 export function useScientFileOpening(input: {
   readonly threadRef: ScopedThreadRef | null;
   readonly workspaceRoot: string | null;
-  readonly openSource: (relativePath: string) => void;
-}): (relativePath: string) => void {
+  readonly openSource: (relativePath: string, line?: number, options?: OpenFileOptions) => void;
+}): (relativePath: string, linkResolution?: FileLinkResolution) => void {
   const { threadRef, workspaceRoot, openSource } = input;
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(threadRef?.environmentId ?? null);
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
@@ -32,15 +35,19 @@ export function useScientFileOpening(input: {
   });
 
   return useCallback(
-    (relativePath: string) => {
+    (relativePath: string, linkResolution?: FileLinkResolution) => {
       if (!threadRef || !workspaceRoot) return;
+      // A file the link did not name says so wherever it lands: on its tab in
+      // the panel, or announced when it is a page in the browser.
+      const openInPanel = () =>
+        openSource(relativePath, undefined, linkResolution ? { linkResolution } : undefined);
 
       if (
         !shouldOpenInBrowserByDefault(relativePath) ||
         !isPreviewSupportedInRuntime() ||
         environmentHttpBaseUrl === null
       ) {
-        openSource(relativePath);
+        openInPanel();
         return;
       }
 
@@ -50,14 +57,20 @@ export function useScientFileOpening(input: {
             threadRef,
             workspaceRoot,
             relativePath,
-            filePath: resolvePathLinkTarget(relativePath, workspaceRoot),
+            filePath: workspaceFileHostPath(relativePath, workspaceRoot),
             httpBaseUrl: environmentHttpBaseUrl,
             createAssetUrl,
             openPreview,
           });
-          if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
+          if (result._tag === "Success") {
+            if (linkResolution) {
+              announceResolvedLink({ path: relativePath, missingPath: linkResolution.missingPath });
+            }
+            return;
+          }
+          if (isAtomCommandInterrupted(result)) return;
 
-          openSource(relativePath);
+          openInPanel();
           const error = squashAtomCommandFailure(result);
           toastManager.add(
             stackedThreadToast({
@@ -67,7 +80,7 @@ export function useScientFileOpening(input: {
             }),
           );
         } catch (cause) {
-          openSource(relativePath);
+          openInPanel();
           toastManager.add(
             stackedThreadToast({
               type: "error",

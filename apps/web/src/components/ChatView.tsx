@@ -229,6 +229,7 @@ import {
   selectThreadRightPanelState,
   type HtmlFilePresentationRequest,
   type LatexFilePresentationRequest,
+  type FileLinkResolution,
   type OpenFileOptions,
   type RightPanelSurface,
   useRightPanelStore,
@@ -5301,9 +5302,9 @@ function ChatViewContent(props: ChatViewProps) {
     if (!sessionStillExists) usePreviewMiniPlayerStore.getState().close(activeThreadRef);
   }, [activePreviewMiniPlayer, activeThreadRef, deviceState.sessions, deviceStateLoaded]);
   const openFileSurface = useCallback(
-    (relativePath: string) => {
+    (relativePath: string, linkResolution?: FileLinkResolution) => {
       runAfterPendingFileSave(`file:${relativePath}`, () => {
-        openFileSurfaceNow(relativePath);
+        openFileSurfaceNow(relativePath, linkResolution);
       });
     },
     [openFileSurfaceNow, runAfterPendingFileSave],
