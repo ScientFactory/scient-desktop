@@ -10,7 +10,10 @@ import { Button } from "../../components/ui/button";
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { startCodexBrowserSignIn } from "./codexLifecycleActions";
-import { startReviewedProviderRuntimeAction } from "./providerLifecycleActions";
+import {
+  isRuntimePlanStale,
+  managedRuntimeSwitchNeedsDecision,
+} from "./ManagedRuntimeSwitchDecision";
 import type { ProviderSettingsLifecyclePresentation } from "./providerSettingsLifecyclePresentation";
 import {
   isActiveProviderConnectionOperation,
@@ -209,7 +212,7 @@ function ManagedRuntimeActionButton(props: {
   readonly environmentId: EnvironmentId;
   readonly provider: ServerProvider;
   readonly displayName: string;
-  readonly onManage: () => void;
+  readonly onManage: (runtimeAction?: ProviderManagedRuntimeAction) => void;
 }) {
   const controller = useProviderLifecycleController({
     environmentId: props.environmentId,
@@ -227,8 +230,19 @@ function ManagedRuntimeActionButton(props: {
     pendingRef.current = true;
     setPending(true);
     try {
-      await startReviewedProviderRuntimeAction(controller, props.action);
+      const plan = await controller.planRuntime(props.action);
+      // Replacing a newer system runtime, or one of unknown version, is decided
+      // in the dialog, which plans the action again; this click starts nothing.
+      if (managedRuntimeSwitchNeedsDecision(plan)) {
+        props.onManage(props.action);
+        return;
+      }
+      await controller.startRuntime(plan);
     } catch (error) {
+      if (isRuntimePlanStale(error)) {
+        props.onManage(props.action);
+        return;
+      }
       toastManager.add(
         stackedThreadToast({
           type: "error",

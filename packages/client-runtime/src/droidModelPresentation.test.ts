@@ -22,6 +22,15 @@ describe("Droid model presentation", () => {
     "kimi-k2.6",
     "grok-4.5",
     "claude-sonnet-4-5-20250929",
+    // Superseded in both the managed Droid 0.213.0 catalog and 0.230.0's.
+    "claude-opus-4-7-fast",
+    "claude-opus-4-6-fast",
+    "gpt-5.2-codex",
+    "gpt-5.1-codex-max",
+    "glm-5.1",
+    "glm-5",
+    "glm-4.7",
+    "kimi-k2.5",
   ])("places %s in More models", (slug) => {
     expect(getDroidModelSection(row(slug))).toBe("more");
   });
@@ -40,6 +49,22 @@ describe("Droid model presentation", () => {
     "claude-sonnet-4-7",
     "claude-haiku-4-6",
     "new-provider-model",
+    // Droid 0.230.0's newest, and models that are still the newest in 0.213.0.
+    "claude-fable-5.1",
+    "claude-fable-5",
+    "claude-opus-5-5",
+    "gpt-6-sol",
+    "gpt-6-astra",
+    "gpt-5.6-sol",
+    "gemini-3.8-flash",
+    "glm-5.3",
+    "glm-5.3-flash",
+    "glm-5.2",
+    "qwen3.8-max",
+    "grok-4.7",
+    "mistral-medium-3.5",
+    "minimax-m2.7",
+    "deepseek-v4-pro",
   ])("keeps %s visible", (slug) => {
     expect(getDroidModelSection(row(slug))).toBe("models");
   });

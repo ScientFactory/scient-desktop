@@ -55,6 +55,47 @@ it("keeps explicit conversation effort when the model's default changes", () => 
   ]);
 });
 
+it("keeps Off when a concrete reasoning control offers it, and never invents it", () => {
+  const caps = (options: ReadonlyArray<{ id: string; label: string; isDefault?: true }>) =>
+    createModelCapabilities({
+      optionDescriptors: [
+        {
+          id: "reasoningEffort",
+          label: "Reasoning",
+          type: "select",
+          concreteReasoning: true,
+          options: [...options],
+        },
+      ],
+    });
+  const selections = [{ id: "reasoningEffort", value: "off" }];
+  const offered = getProviderOptionDescriptors({
+    caps: caps([
+      { id: "off", label: "Off" },
+      { id: "high", label: "High", isDefault: true },
+    ]),
+    selections,
+  });
+  expect(getProviderOptionCurrentValue(offered[0])).toBe("off");
+  expect(buildExplicitProviderOptionSelectionsFromDescriptors(offered, selections)).toEqual(
+    selections,
+  );
+  // Not offered: a saved Off falls back to the default level, as before.
+  const notOffered = getProviderOptionDescriptors({
+    caps: caps([{ id: "high", label: "High", isDefault: true }]),
+    selections,
+  });
+  expect(getProviderOptionCurrentValue(notOffered[0])).toBe("high");
+  // With no saved choice the default is still a level, never Off.
+  const fresh = getProviderOptionDescriptors({
+    caps: caps([
+      { id: "off", label: "Off" },
+      { id: "high", label: "High" },
+    ]),
+  });
+  expect(getProviderOptionCurrentValue(fresh[0])).toBe("high");
+});
+
 const codexCaps: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [
     {

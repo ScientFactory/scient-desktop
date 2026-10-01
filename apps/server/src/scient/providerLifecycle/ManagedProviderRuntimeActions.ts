@@ -4,16 +4,19 @@ import {
   type ManagedProviderRuntimeProgress,
   ManagedRuntimeFileError,
   type ManagedRuntimeArtifact,
+  type ManagedRuntimeCatalogProvider,
 } from "@scientfactory/provider-runtime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type {
   ProviderManagedRuntimeAction,
   ProviderRuntimeDiagnostics,
+  ProviderRuntimePlan,
   ProviderRuntimeSummary,
 } from "@t3tools/contracts";
 import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
@@ -21,14 +24,14 @@ import type {
   ProviderManagedRuntimeActions,
   ProviderManagedRuntimeProgress,
 } from "../../provider/ProviderDriver.ts";
-import { spawnAndCollect } from "../../provider/providerSnapshot.ts";
+import { parseGenericCliVersion, spawnAndCollect } from "../../provider/providerSnapshot.ts";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 import {
   ManagedRuntimeCatalog,
   resolveManagedRuntimeCatalogCandidate,
   resolveManagedRuntimeRepairArtifact,
 } from "./ManagedRuntimeCatalog.ts";
-import { isManagedRuntimeUpdate } from "./managedRuntimeVersion.ts";
+import { compareManagedRuntimeVersions, isManagedRuntimeUpdate } from "./managedRuntimeVersion.ts";
 
 const runtimeError = (message: string, cause?: unknown) =>
   new ProviderConnectionActionError({
@@ -46,9 +49,9 @@ export function managedRuntimeInstallationFailureMessage(
     : summary;
 }
 
-/** Whether `binary --version` exits 0 within five seconds. */
-export const configuredRuntimeVersionSucceeds = Effect.fn(
-  "ManagedProviderRuntimeActions.configuredRuntimeVersionSucceeds",
+/** What `binary --version` prints when it exits 0 within five seconds. */
+export const readConfiguredRuntimeVersion = Effect.fn(
+  "ManagedProviderRuntimeActions.readConfiguredRuntimeVersion",
 )(function* (input: {
   readonly binary: string;
   readonly environment: NodeJS.ProcessEnv;
@@ -72,20 +75,105 @@ export const configuredRuntimeVersionSucceeds = Effect.fn(
     Effect.timeoutOption("5 seconds"),
     Effect.result,
   );
-  return (
-    result._tag === "Success" && Option.isSome(result.success) && result.success.value.code === 0
-  );
+  return result._tag === "Success" &&
+    Option.isSome(result.success) &&
+    result.success.value.code === 0
+    ? Option.some(`${result.success.value.stdout}\n${result.success.value.stderr}`)
+    : Option.none<string>();
 });
 
-/** Decides whether the configured (custom or system) runtime is healthy. */
+/**
+ * Decides whether the configured (custom or system) runtime is healthy: its
+ * `--version` output when it is, none when it is not.
+ */
 export type ConfiguredRuntimeProbe = (
   binary: string,
   environment: NodeJS.ProcessEnv,
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
-) => Effect.Effect<boolean>;
+) => Effect.Effect<Option.Option<string>>;
 
-const hasHealthyConfiguredRuntime: ConfiguredRuntimeProbe = (binary, environment, spawner) =>
-  configuredRuntimeVersionSucceeds({ binary, environment, extendEnv: true, spawner });
+const readHealthyConfiguredRuntime: ConfiguredRuntimeProbe = (binary, environment, spawner) =>
+  readConfiguredRuntimeVersion({ binary, environment, extendEnv: true, spawner });
+
+const CURSOR_CLI_VERSION = /\b\d{4}\.\d{2}\.\d{2}-[0-9a-f]{7,40}\b/u;
+
+/** The release a runtime's `--version` output names, in its provider's own version scheme. */
+export function parseConfiguredRuntimeVersion(
+  provider: ManagedRuntimeCatalogProvider,
+  output: string,
+): string | null {
+  return provider === "cursor"
+    ? (CURSOR_CLI_VERSION.exec(output)?.[0] ?? null)
+    : parseGenericCliVersion(output);
+}
+
+/**
+ * Whether using the managed release instead of the system runtime would move
+ * to an older release. A system version Scient cannot read or compare is not
+ * known to be newer.
+ */
+export function isManagedRuntimeDowngrade(input: {
+  readonly artifact: ManagedRuntimeArtifact | undefined;
+  readonly systemVersion: string | null;
+}): boolean {
+  return (
+    input.artifact !== undefined &&
+    input.systemVersion !== null &&
+    compareManagedRuntimeVersions({
+      provider: input.artifact.provider,
+      current: input.systemVersion,
+      candidate: input.artifact.version,
+    }) === "older"
+  );
+}
+
+/**
+ * Why Codex's private copy that failed its check is not repaired or updated
+ * while a newer PATH Codex stands in for it: both releases.
+ */
+export function managedRuntimeDowngradeMessage(input: {
+  readonly providerName: string;
+  readonly managedVersion: string;
+  readonly systemVersion: string;
+}): string {
+  return `Scient-managed ${input.providerName} ${input.managedVersion} is older than the ${input.providerName} ${input.systemVersion} installed on this computer, so Scient keeps using the system installation.`;
+}
+
+/**
+ * What a plan says about switching from the system runtime to the managed
+ * release: the user's own choice of the managed copy, offered whatever the two
+ * releases are and decided with both in view. When Scient does not know the
+ * system runtime's release (it reported none, or the instance is disabled and
+ * its tool is not run), the plan says so instead of implying an order. What
+ * the user has to decide (an older release, an unknown one) is part of the
+ * plan's revision, so a plan made before that changed (the system tool was
+ * upgraded meanwhile) is not carried out: the next plan is a new decision.
+ */
+export function managedRuntimeSwitchPlan(input: {
+  readonly providerName: string;
+  readonly artifact: ManagedRuntimeArtifact | undefined;
+  readonly systemVersion: string | null;
+}): Pick<ProviderRuntimePlan, "catalogRevision" | "message" | "systemVersion" | "olderThanSystem"> {
+  const { providerName, systemVersion } = input;
+  const managedVersion = input.artifact?.version ?? "";
+  const olderThanSystem = isManagedRuntimeDowngrade(input);
+  const scope = `${providerName} accounts in this environment that use the default runtime will use`;
+  const decision = olderThanSystem
+    ? ":older-than-system"
+    : systemVersion === null
+      ? ":system-version-unknown"
+      : "";
+  return {
+    systemVersion,
+    olderThanSystem,
+    catalogRevision: `${input.artifact?.catalogRevision ?? "unavailable"}${decision}`,
+    message: olderThanSystem
+      ? `Scient-managed ${providerName} ${managedVersion} is older than your installed ${providerName} ${systemVersion}. Scient will use its own verified copy; your installation stays as it is. ${scope} that copy; custom paths remain unchanged.`
+      : systemVersion === null
+        ? `Scient does not know which ${providerName} version, if any, is installed on this computer (system version unknown), so Scient-managed ${providerName} ${managedVersion} may be older than it. Scient will use its own verified copy; an existing installation stays as it is. ${scope} that copy; custom paths remain unchanged.`
+        : `Scient will install private ${providerName} ${managedVersion} and use it instead of the system installation (${systemVersion}), which stays untouched. ${scope} the verified private copy; custom paths remain unchanged.`,
+  };
+}
 
 export function resolveManagedRuntimeSource(input: {
   readonly hasCustomRuntime: boolean;
@@ -117,8 +205,12 @@ export function resolveManagedRuntimePolicy(input: {
     ? []
     : input.source === "missing"
       ? ["install"]
-      : input.source === "system" && input.systemToManagedSwitchAllowed
-        ? ["install"]
+      : input.source === "system"
+        ? // Using the managed copy instead is the user's choice, whatever the
+          // two releases are; the plan shows both before anything starts.
+          input.systemToManagedSwitchAllowed
+          ? ["install"]
+          : []
         : input.source === "scient_managed"
           ? input.installed &&
             input.artifact &&
@@ -222,14 +314,27 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
   }).pipe(Effect.ignore);
 
   const hasCustomRuntime = input.configuredBinaryPath !== defaultBinary;
-  const configuredRuntimeHealthy =
+  const probeConfiguredRuntime = (input.probeConfiguredRuntime ?? readHealthyConfiguredRuntime)(
+    input.configuredBinaryPath,
+    environment,
+    spawner,
+  ).pipe(Effect.catchCause(() => Effect.succeed(Option.none<string>())));
+  const configuredRuntimeVersionOutput =
     input.configuredRuntimeProbeAllowed === false
-      ? false
-      : yield* (input.probeConfiguredRuntime ?? hasHealthyConfiguredRuntime)(
-          input.configuredBinaryPath,
-          environment,
-          spawner,
-        ).pipe(Effect.catchCause(() => Effect.succeed(false)));
+      ? Option.none<string>()
+      : yield* probeConfiguredRuntime;
+  const configuredRuntimeHealthy = Option.isSome(configuredRuntimeVersionOutput);
+  const systemVersionOf = (versionOutput: Option.Option<string>) =>
+    bundledArtifact && Option.isSome(versionOutput)
+      ? parseConfiguredRuntimeVersion(bundledArtifact.provider, versionOutput.value)
+      : null;
+  /**
+   * The latest look at the configured runtime. The first one, above, decided
+   * which runtime this instance launches; the tool can be upgraded, installed
+   * or removed outside Scient afterwards, so an install looks again
+   * (`prepareAction`) and summaries describe what was seen last.
+   */
+  const latestConfiguredRuntime = yield* Ref.make(configuredRuntimeVersionOutput);
   const configuredExecutable = configuredRuntimeHealthy
     ? yield* resolveCommandPath(input.configuredBinaryPath, {
         env: environment,
@@ -268,8 +373,10 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
       : runtime.launchPath(artifact!)
     : input.configuredBinaryPath;
 
-  const getSummary = Effect.gen(function* () {
-    const currentArtifact = yield* resolveCandidate(false);
+  /** The runtime's state with `currentArtifact` as the release on offer. */
+  const summarize = Effect.fnUntraced(function* (
+    currentArtifact: ManagedRuntimeArtifact | undefined,
+  ) {
     const latest = bundledArtifact
       ? yield* Effect.tryPromise({
           try: () => runtime.status(bundledArtifact),
@@ -279,9 +386,10 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
       : undefined;
     const latestManagedInstalled = latest?.installed ?? false;
     const latestManagedSelected = latest?.selected ?? false;
+    const latestVersionOutput = yield* Ref.get(latestConfiguredRuntime);
     const latestSource = resolveManagedRuntimeSource({
       hasCustomRuntime,
-      configuredRuntimeHealthy,
+      configuredRuntimeHealthy: Option.isSome(latestVersionOutput),
       managedInstalled: latestManagedInstalled,
       managedSelected: latestManagedSelected,
     });
@@ -337,6 +445,7 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
       }),
     } satisfies ProviderRuntimeSummary;
   });
+  const getSummary = resolveCandidate(false).pipe(Effect.flatMap(summarize));
 
   const prepareAction = Effect.fn("ManagedProviderRuntimeActions.prepareAction")(function* (
     action: ProviderManagedRuntimeAction,
@@ -344,30 +453,56 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
     // Explicit download actions wait for a bounded, TTL-gated catalog refresh.
     // Routine checks and removal remain local and non-blocking.
     const candidateArtifact = yield* resolveCandidate(action !== "remove");
-    const summary = yield* getSummary;
-    if (!summary.actions.includes(action)) {
-      return yield* runtimeError(
-        `The ${action} action is not available for this ${providerName} runtime.`,
-      );
-    }
     const isDownload = action === "install" || action === "update" || action === "repair";
-    const activeArtifact =
-      action === "repair" && bundledArtifact
-        ? (yield* Effect.tryPromise({
+    const managed =
+      isDownload && bundledArtifact
+        ? yield* Effect.tryPromise({
             try: () => runtime.status(bundledArtifact),
             catch: (cause) => runtimeError("Scient could not inspect its private runtime.", cause),
-          })).activeArtifact
+          })
         : undefined;
+    // The release this action installs, as planned here and as `run` installs it.
     const actionArtifact =
       action === "repair"
         ? resolveManagedRuntimeRepairArtifact({
             bundledArtifact,
             candidateArtifact,
-            activeArtifact,
+            activeArtifact: managed?.activeArtifact,
           })
         : isDownload
           ? candidateArtifact
           : undefined;
+    // A download puts the managed copy in use, unless the user already selected
+    // it: then it is the runtime in use and maintaining it replaces nothing.
+    // Otherwise (no copy, or a legacy copy that was never selected) look at
+    // the system runtime now, whatever was seen when this instance was built.
+    // A disabled instance's tool is never run: its system runtime stays unknown.
+    const replacesUnselected = isDownload && !hasCustomRuntime && managed?.selected !== true;
+    const probeAllowed = input.configuredRuntimeProbeAllowed !== false;
+    if (replacesUnselected && probeAllowed)
+      yield* Ref.set(latestConfiguredRuntime, yield* probeConfiguredRuntime);
+    // The same release decides whether the action is offered at all.
+    const summary = yield* summarize(candidateArtifact);
+    // A copy that was never explicitly selected is offered Repair and Update
+    // while its instance is not probed. They stay available once the fresh
+    // look found a healthy system runtime beside it, as the switch they are
+    // (below): the download records the selection the user decided on.
+    const unselectedCopyActions =
+      managed?.installed === true && managed.selected !== true && !hasCustomRuntime
+        ? resolveManagedRuntimePolicy({
+            source: "scient_managed",
+            artifact: candidateArtifact,
+            installed: true,
+            installedVersion: managed.activeVersion,
+            managedInstallationAllowed,
+            systemToManagedSwitchAllowed: input.systemToManagedSwitchAllowed,
+          }).actions
+        : [];
+    if (!summary.actions.includes(action) && !unselectedCopyActions.includes(action)) {
+      return yield* runtimeError(
+        `The ${action} action is not available for this ${providerName} runtime.`,
+      );
+    }
     if (isDownload && !actionArtifact) {
       return yield* runtimeError(
         `No qualified ${providerName} artifact is available for this computer.`,
@@ -391,9 +526,18 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
               ? `Scient will repair the private ${providerName} ${actionArtifact?.version ?? ""} release and use it after verification. The working system installation is untouched.`
               : action === "repair"
                 ? `Scient will download, verify, test, and repair ${providerName} ${actionArtifact?.version ?? ""}. The current version remains active until then.`
-                : action === "install" && summary.source === "system"
-                  ? `Scient will install private ${providerName} ${actionArtifact?.version ?? ""} beside the system installation. Default-runtime ${providerName} accounts in this environment will use the verified private copy; custom paths remain unchanged.`
-                  : `Scient will download, verify, stage, test, and activate ${providerName} ${actionArtifact?.version ?? ""}.`,
+                : `Scient will download, verify, stage, test, and activate ${providerName} ${actionArtifact?.version ?? ""}.`,
+      // Install beside a system runtime, and Repair or Update of a copy that was
+      // never selected, put the managed copy in use in its place (or may: a
+      // disabled instance's system runtime is unknown). One decision for all:
+      // both releases, compared with the release that will be installed.
+      ...(replacesUnselected && (summary.source === "system" || !probeAllowed)
+        ? managedRuntimeSwitchPlan({
+            providerName,
+            artifact: actionArtifact,
+            systemVersion: systemVersionOf(yield* Ref.get(latestConfiguredRuntime)),
+          })
+        : {}),
     };
     return { plan, artifact: actionArtifact };
   });

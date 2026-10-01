@@ -395,6 +395,10 @@ user-facing setup flow. Implementation notes that go beyond the shared runtime:
   inspect account capabilities. It calls `session/new` without `authenticate` to classify account
   state and read the model inventory. Model-specific reasoning ladders are discovered best-effort
   and time-bounded; failure keeps the models with unknown ladders instead of publishing wrong ones.
+  The model selected when that session starts is Droid's own default and is the one reported as
+  default (`isDefault`), which is all the [automatic model policy](#automatic-conversation-defaults)
+  needs to start new threads on it. Text generation is outside that policy: without a chosen model
+  it uses `DROID_DEFAULT_MODEL`, a marker never sent to Droid, so the session keeps the same default.
 - `acp/DroidAcpSupport.ts` owns auth-method selection, model and effort parsing, autonomy mapping,
   and the shared model/effort application used by interactive and headless paths.
 - `Layers/DroidAdapter.ts` owns prompt preparation, steering, atomic turn settlement, interruption,
@@ -531,16 +535,18 @@ orchestration types. The adapter owns the process and the turn mapping.
   and a remaining conversation fails the activation. The qualification process carries the
   activation token, so a repair does not deadlock on its own hold. The gate is per server, which is
   sufficient because Scient never runs `omp update`.
-- The child environment (`OmpEnvironment.ts`) is the server's login environment minus Scient's
-  internals (`T3CODE_*`, `T3_*`, `SCIENT_*`, `VITE_*`, `ELECTRON_RUN_AS_NODE`,
-  `ELECTRON_RENDERER_PORT`, `PORT`, case-insensitive), then the instance environment as configured
-  (the filter applies only to what the server inherited), then without
-  `PI_CODING_AGENT_SESSION_DIR`. The predicate is OMP's own; other drivers keep their existing
-  policies. Scient adds nothing back: its bridge secrets travel in extension bootstrap files.
-  `NO_PROXY` and `no_proxy` both receive the union of their entries plus loopback (one
-  case-insensitive variable on Windows). An instance home removes inherited `OMP_PROFILE`/
-  `PI_PROFILE`, an instance profile removes inherited `PI_PROFILE`/`PI_CODING_AGENT_DIR`, and a
-  defined `OMP_PROFILE` drops `PI_PROFILE`, matching OMP's precedence so the resume identity does.
+- The child environment (`OmpEnvironment.ts`) is the agent environment shared with Droid
+  (`agentProcessEnvironment.ts`): the server's login environment minus Scient's internals
+  (`T3CODE_*`, `T3_*`, `SCIENT_*`, `VITE_*`, `ELECTRON_RUN_AS_NODE`, `ELECTRON_RENDERER_PORT`,
+  `PORT`, case-insensitive), then the instance environment as configured (the filter applies only
+  to what the server inherited), with `NO_PROXY` and `no_proxy` both receiving the union of their
+  entries plus loopback (one case-insensitive variable on Windows). OMP then removes
+  `PI_CODING_AGENT_SESSION_DIR`. Scient adds nothing back: its bridge secrets travel in extension
+  bootstrap files. No OMP spawn merges the server's own environment into it (`extendEnv: false`).
+  Drivers other than Droid and OMP keep their existing policies. An instance home removes inherited
+  `OMP_PROFILE`/`PI_PROFILE`, an instance profile removes inherited `PI_PROFILE`/
+  `PI_CODING_AGENT_DIR`, and a defined `OMP_PROFILE` drops `PI_PROFILE`, matching OMP's precedence
+  so the resume identity does.
 - One process serves one thread. Stop closes that process only. The child receives an explicit
   `--session-dir` under Scient's per-instance/per-thread state root; the legacy session environment
   variable is retained only as a compatibility fallback in the process environment.

@@ -209,6 +209,19 @@ export const ProviderRuntimePlan = Schema.Struct({
   sourceLabel: TrimmedNonEmptyString,
   catalogRevision: TrimmedNonEmptyString,
   message: TrimmedNonEmptyString,
+  /**
+   * Present when the action switches from a healthy system runtime to the
+   * managed release: the system runtime's own release, null when Scient could
+   * not read it. Optional so older clients and servers keep decoding the plan.
+   */
+  systemVersion: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  /**
+   * Whether `version` is older than `systemVersion`. A switch to an older
+   * release, or from a system runtime whose release is unknown (null), starts
+   * only with `ProviderRuntimeStartInput.acceptOlderThanSystem`, after the
+   * user saw what the plan says about both.
+   */
+  olderThanSystem: Schema.optionalKey(Schema.Boolean),
 });
 export type ProviderRuntimePlan = typeof ProviderRuntimePlan.Type;
 
@@ -216,6 +229,8 @@ export const ProviderRuntimeStartInput = Schema.Struct({
   instanceId: ProviderInstanceId,
   action: ProviderManagedRuntimeAction,
   catalogRevision: TrimmedNonEmptyString,
+  /** The user accepted a plan whose `olderThanSystem` is true or whose `systemVersion` is null. */
+  acceptOlderThanSystem: Schema.optionalKey(Schema.Boolean),
 });
 export type ProviderRuntimeStartInput = typeof ProviderRuntimeStartInput.Type;
 

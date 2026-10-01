@@ -22,6 +22,7 @@ import {
   isProviderAccountPresentedAsConnected,
   providerLifecycleFailureMessage,
 } from "./providerConnectionPresentation";
+import { useManagedRuntimeSwitchDecision } from "./ManagedRuntimeSwitchDecision";
 import { useProviderLifecycleController } from "./useProviderLifecycleController";
 import { useProviderEnableAction } from "./useProviderEnableAction";
 
@@ -67,7 +68,8 @@ type AssistedProviderSetupHostProps = AssistedProviderSetupHostBaseProps &
 /**
  * The single frontend dispatch seam for assisted provider setup. Provider
  * flows stay in their own inline views; this host owns only controller
- * construction and the management surface's shared account action.
+ * construction, the decision before a switch to an older managed release, and
+ * the management surface's shared account action.
  */
 export function AssistedProviderSetupHost(props: AssistedProviderSetupHostProps) {
   if (!supportsAssistedProviderSetupSurface(props.provider.driver, props.surface)) return null;
@@ -102,7 +104,7 @@ export function ProviderProbePendingSetup(props: { readonly displayName: string 
 }
 
 function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProps) {
-  const controller = useProviderLifecycleController({
+  const lifecycle = useProviderLifecycleController({
     environmentId: props.environmentId,
     provider: props.provider,
   });
@@ -110,6 +112,13 @@ function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProp
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
   const displayName =
     props.displayName.trim() || props.provider.displayName?.trim() || String(props.provider.driver);
+  // Every inline setup starts runtime actions through this controller, so the
+  // decision before a switch to an older managed release is made once, here.
+  const { controller, decision } = useManagedRuntimeSwitchDecision({
+    controller: lifecycle,
+    provider: props.provider,
+    displayName,
+  });
   const isManagement = props.surface === "management";
 
   const disconnect = async () => {
@@ -275,7 +284,9 @@ function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProp
   if (setup === null) return null;
   return (
     <>
-      {setup}
+      {decision}
+      {/* Kept mounted while it waits for the decision, so its own state survives Back. */}
+      {decision ? <div hidden>{setup}</div> : setup}
       {isManagement && disconnectError ? (
         <div
           className="flex items-start gap-2 rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-destructive text-xs leading-relaxed"

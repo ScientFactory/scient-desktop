@@ -419,6 +419,69 @@ describe("ProviderSettingsLifecycleAction", () => {
     },
   );
 
+  it("opens the decision instead of starting an install that replaces a newer system runtime", async () => {
+    // Offered as a first installation; the plan found a newer system runtime.
+    const value = provider({ source: "missing" });
+    const onManage = vi.fn();
+    commands.plan.mockResolvedValue({
+      instanceId: value.instanceId,
+      action: "install",
+      target: "darwin-arm64",
+      version: "0.148.0",
+      downloadBytes: 42,
+      sourceLabel: "Official release",
+      catalogRevision: "reviewed:1:older-than-system",
+      message: "Scient-managed Codex 0.148.0 is older than your installed Codex 0.150.0.",
+      systemVersion: "0.150.0",
+      olderThanSystem: true,
+    } satisfies ProviderRuntimePlan);
+
+    await settingsButton(value, onManage).props.onClick();
+
+    expect(commands.start).not.toHaveBeenCalled();
+    expect(commands.toast).not.toHaveBeenCalled();
+    // The dialog plans the install again and shows both versions with Back / Use Scient-managed.
+    expect(onManage).toHaveBeenCalledExactlyOnceWith("install");
+  });
+
+  it("opens the decision instead of starting an install over a system runtime of unknown version", async () => {
+    const value = provider({ source: "missing" });
+    const onManage = vi.fn();
+    commands.plan.mockResolvedValue({
+      instanceId: value.instanceId,
+      action: "install",
+      target: "darwin-arm64",
+      version: "0.148.0",
+      downloadBytes: 42,
+      sourceLabel: "Official release",
+      catalogRevision: "reviewed:1:system-version-unknown",
+      message: "Scient does not know which Codex version, if any, is installed on this computer.",
+      systemVersion: null,
+      olderThanSystem: false,
+    } satisfies ProviderRuntimePlan);
+
+    await settingsButton(value, onManage).props.onClick();
+
+    expect(commands.start).not.toHaveBeenCalled();
+    expect(onManage).toHaveBeenCalledExactlyOnceWith("install");
+  });
+
+  it("opens the decision when the system runtime was upgraded after the plan", async () => {
+    const value = provider({ source: "missing" });
+    const onManage = vi.fn();
+    commands.start.mockRejectedValue(
+      Object.assign(new Error("The provider setup plan changed."), {
+        reason: "runtime_plan_stale",
+      }),
+    );
+
+    await settingsButton(value, onManage).props.onClick();
+
+    expect(commands.start).toHaveBeenCalledTimes(1);
+    expect(commands.toast).not.toHaveBeenCalled();
+    expect(onManage).toHaveBeenCalledExactlyOnceWith("install");
+  });
+
   it.each(["install", "update", "repair", "remove"] as const)(
     "opens existing details for active or failed %s without starting/retrying it",
     (action) => {
