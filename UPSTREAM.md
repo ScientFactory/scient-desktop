@@ -626,8 +626,9 @@ relocation command is restored.
 Scient's existing sidebar New thread row opens the shared "New thread in…"
 picker with **Add project** above **No project**, both fixed below its scrolling
 projects. The shared palette renderer keeps these actions in the same keyboard
-navigation list. Shift+click still starts in the
-current project. The draft project picker can switch destinations before sending;
+navigation list. A separate dashed chat button on the left of the sidebar row
+starts without a project through the same `useScratchProject` flow and current-
+environment capability check. Shift+click still starts in the current project. The draft project picker can switch destinations before sending;
 Scient omits the redundant "or start without a project" composer prompt. Shared
 workspace admission accepts only a registered direct canonical child of this
 server's scratch project, with verified non-Git evidence. It rejects the shared

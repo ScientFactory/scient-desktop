@@ -119,6 +119,10 @@ that project. When there are many projects, only the projects scroll; both actio
 visible. **⌘N** works the same way. To skip the list and start in the current project, **Shift+click** New thread or
 press **⇧⌘N**.
 
+The small dashed chat button to the left of **New thread**, separated by a vertical
+line, starts a chat without a project directly. Its tooltip is **Chat without a
+project**. It appears when the current environment offers scratch conversations.
+
 ### Threads without a project
 
 **No project** opens the usual composer. Before sending, its project picker lets you switch
