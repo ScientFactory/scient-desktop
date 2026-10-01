@@ -9,6 +9,58 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.21",
+    publishedAt: "2026-10-02",
+    format: "paragraphs",
+    headline: "Start without a project. Keep conversations on track.",
+    highlights: [
+      {
+        id: "scratch-conversations-0621",
+        title: "Chat without a project",
+        description:
+          "Choose No project or use the sidebar shortcut to chat in its own folder. Files remain after deletion; moving a started chat into a project is not yet available.",
+      },
+      {
+        id: "queue-editing-0621",
+        title: "Better queue editing",
+        description:
+          "Queue messages with files. Editing makes a draft that sends only when you choose. Your previous draft stays in Stash. Send no longer needs a retry when an answer finishes.",
+      },
+      {
+        id: "droid-conversations-0621",
+        title: "Clearer Droid conversations",
+        description:
+          "Droid preserves output on Stop and resumes on your next message. Subagents show progress; model, reasoning, and permission choices are checked. You can stop conversation sync to Factory.",
+      },
+      {
+        id: "custom-models-0621",
+        title: "Clearer custom models",
+        description:
+          "Choose which agents use a model and test through a selected agent. Missing keys and connection errors are clearer. Saved custom-model keys stay out of Droid’s settings and environment.",
+      },
+      {
+        id: "file-recovery-0621",
+        title: "Better file recovery",
+        description:
+          "Files outside the project open read-only in Files. Save a copy to your device, with clearer missing-file choices and explanations when a file cannot be edited.",
+      },
+      {
+        id: "fork-recovery-0621",
+        title: "Clearer fork recovery",
+        description:
+          "Fork requests recover after a lost connection, failures remain visible after leaving the dialog, and copied history no longer shows old tools as running.",
+      },
+      {
+        id: "agent-tool-refresh-0621",
+        title: "Reload your agent’s tools",
+        description:
+          "Reload skills, plugins, and MCP servers with Restart agent session in the command palette, keeping the conversation.",
+      },
+    ],
+    alsoIncluded:
+      "Claude compaction and subagent model labels are corrected. Agent-triggered downloads save without a dialog. Provider switches compare versions. Screen-reader suggestions, Tab shortcuts, theme imports, and Codex Ultrafast indicators are improved.",
+  },
+  {
     version: "0.6.20",
     publishedAt: "2026-10-01",
     format: "paragraphs",
