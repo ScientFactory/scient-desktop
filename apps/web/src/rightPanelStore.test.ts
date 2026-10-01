@@ -962,7 +962,17 @@ describe("rightPanelStore", () => {
     });
     expect(fileSurfaceOf()).toMatchObject({ linkResolution: { missingPath: "/repo/plan.md" } });
 
-    // Saved state never carries the note, so a restart does not repeat it.
+    // What is written to storage never carries the note, so a restart does not
+    // repeat it; and state saved by a build that did write it is cleaned on load.
+    const written = useRightPanelStore.persist
+      .getOptions()
+      .partialize?.(useRightPanelStore.getState()) as {
+      byThreadKey: Record<string, { surfaces: ReadonlyArray<object> }>;
+    };
+    expect(Object.values(written.byThreadKey)[0]?.surfaces[0]).toMatchObject({
+      id: "file:drafts/plan.md",
+    });
+    expect(Object.values(written.byThreadKey)[0]?.surfaces[0]).not.toHaveProperty("linkResolution");
     const reloaded = migratePersistedRightPanelState(
       JSON.parse(JSON.stringify({ byThreadKey: useRightPanelStore.getState().byThreadKey })),
     );

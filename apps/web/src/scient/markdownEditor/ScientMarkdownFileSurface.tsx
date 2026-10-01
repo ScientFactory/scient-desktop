@@ -48,14 +48,25 @@ import {
 } from "./wikiLinkPicker";
 import {
   chatFileLinkResolveInput,
-  chatFileOpenPlan,
+  clientPlacedLinkPath,
   isHomeRelativeLink,
+  linkOpenLocation,
   settleWithin,
 } from "~/scient/fileOpening/chatFileLinkResolution";
 import { environmentFileLinkResolution } from "~/scient/fileOpening/environmentFileState";
 
 // Longer than the environment's own search bound, so a slow search still answers.
 const FILE_LINK_RESOLVE_WAIT_MS = 3_000;
+
+/** The file path a link destination names: without its query or fragment, escapes decoded. */
+function decodedLinkPath(destination: string): string | null {
+  const suffixStart = destination.search(/[?#]/u);
+  try {
+    return decodeURIComponent(suffixStart < 0 ? destination : destination.slice(0, suffixStart));
+  } catch {
+    return null;
+  }
+}
 
 const LINK_FEEDBACK_TIMEOUT_MS = 1_800;
 
@@ -248,6 +259,78 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
     },
     [props.cwd, props.environmentId, props.relativePath],
   );
+  // Asks the environment that owns the files what a link means, exactly as a
+  // chat link does, and acts on the answer: the file at the link's own
+  // location opens; one workspace file the link meant opens and says so;
+  // several open the link as written so the panel offers them; none leaves
+  // the reader here with a plain explanation. `request` is the click this
+  // belongs to: a newer click, an unmounted editor or a detached anchor drops
+  // the answer, and a stalled environment answers as if it could not be asked.
+  const resolveAndOpenLink = useCallback(
+    async (input: {
+      readonly request: number;
+      readonly anchor: HTMLElement;
+      /** The link as the environment is asked about it. */
+      readonly askedPath: string;
+      /** Where the client itself places the link. */
+      readonly clientPath: string;
+      /** A complete listing already showed that nothing is at the link's location. */
+      readonly knownMissing: boolean;
+    }) => {
+      const { anchor, askedPath, clientPath, request } = input;
+      const resolveInput = chatFileLinkResolveInput({
+        linkPath: askedPath,
+        workspaceRoot: props.cwd,
+        changedPaths: [],
+      });
+      const resolution =
+        resolveInput === null
+          ? null
+          : await settleWithin(
+              resolveFileLink({ environmentId: props.environmentId, input: resolveInput }).then(
+                (answer) => (answer._tag === "Success" ? answer.value : null),
+              ),
+              FILE_LINK_RESOLVE_WAIT_MS,
+              null,
+            );
+      if (!mountedRef.current || request !== linkOpenRequestRef.current || !anchor.isConnected) {
+        return;
+      }
+      const location = linkOpenLocation({
+        resolution,
+        askedPath,
+        clientPath,
+        workspaceRoot: props.cwd,
+      });
+      switch (resolution?._tag) {
+        case "recovered":
+          if (onOpenResolvedLink) onOpenResolvedLink(resolution.path, resolution.missingPath);
+          else onOpenFile(resolution.path);
+          return;
+        case "literal":
+        case "tie":
+          onOpenFile(location);
+          return;
+        case "none":
+        case "incomplete":
+          showLinkFeedback(anchor, "Linked file isn't available.");
+          return;
+        case undefined:
+          showLinkFeedback(
+            anchor,
+            input.knownMissing ? "Linked file isn't available." : "Couldn't check this link.",
+          );
+      }
+    },
+    [
+      onOpenFile,
+      onOpenResolvedLink,
+      props.cwd,
+      props.environmentId,
+      resolveFileLink,
+      showLinkFeedback,
+    ],
+  );
   const openWorkspaceFile = useCallback(
     async (relativePath: string, anchor: HTMLElement) => {
       const request = beginLinkOpen();
@@ -263,108 +346,47 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
       if (!mountedRef.current || request !== linkOpenRequestRef.current || !anchor.isConnected) {
         return;
       }
-      if (result._tag === "Failure") {
-        showLinkFeedback(anchor, "Couldn't check this link.");
-        return;
-      }
-      const entry = result.value.entries.find(
-        (candidate) => candidate.name === name && candidate.relativePath === relativePath,
-      );
-      if (entry && entry.kind !== "directory") {
-        onOpenFile(relativePath);
-        return;
-      }
-      if (!result.value.complete) {
-        showLinkFeedback(anchor, "Couldn't check this link.");
-        return;
-      }
-      // Nothing exists where the link points. Ask the environment what it
-      // meant, exactly as a chat link does: one answer opens and says so on
-      // its tab, several open the link as written so the panel offers them,
-      // and none leaves the reader here with a plain explanation.
-      const resolveInput = chatFileLinkResolveInput({
-        linkPath: relativePath,
-        workspaceRoot: props.cwd,
-        changedPaths: [],
-      });
-      const resolution =
-        resolveInput === null
-          ? null
-          : await settleWithin(
-              resolveFileLink({ environmentId: props.environmentId, input: resolveInput }).then(
-                (answer) => (answer._tag === "Success" ? answer.value : null),
-              ),
-              FILE_LINK_RESOLVE_WAIT_MS,
-              null,
+      const entry =
+        result._tag === "Failure"
+          ? undefined
+          : result.value.entries.find(
+              (candidate) => candidate.name === name && candidate.relativePath === relativePath,
             );
-      if (!mountedRef.current || request !== linkOpenRequestRef.current || !anchor.isConnected) {
+      if (entry) {
+        if (entry.kind === "directory") showLinkFeedback(anchor, "Linked file isn't available.");
+        else onOpenFile(relativePath);
         return;
       }
-      if (resolution?._tag === "recovered" && onOpenResolvedLink) {
-        onOpenResolvedLink(resolution.path, resolution.missingPath);
-        return;
-      }
-      if (resolution?._tag === "tie") {
-        onOpenFile(relativePath);
-        return;
-      }
-      showLinkFeedback(anchor, "Linked file isn't available.");
+      // Nothing was listed at the link's location, or its folder could not be
+      // listed at all, which is what a link into a moved folder looks like.
+      await resolveAndOpenLink({
+        request,
+        anchor,
+        askedPath: relativePath,
+        clientPath: relativePath,
+        knownMissing: result._tag === "Success" && result.value.complete,
+      });
     },
     [
       beginLinkOpen,
       listDirectory,
       onOpenFile,
-      onOpenResolvedLink,
       props.cwd,
       props.environmentId,
-      resolveFileLink,
+      resolveAndOpenLink,
       showLinkFeedback,
     ],
   );
   const openHomeRelativeFile = useCallback(
-    async (target: string, anchor: HTMLElement) => {
-      const request = beginLinkOpen();
-      const resolveInput = chatFileLinkResolveInput({
-        linkPath: target,
-        workspaceRoot: props.cwd,
-        changedPaths: [],
-      });
-      const resolution =
-        resolveInput === null
-          ? null
-          : await settleWithin(
-              resolveFileLink({ environmentId: props.environmentId, input: resolveInput }).then(
-                (answer) => (answer._tag === "Success" ? answer.value : null),
-              ),
-              FILE_LINK_RESOLVE_WAIT_MS,
-              null,
-            );
-      if (!mountedRef.current || request !== linkOpenRequestRef.current || !anchor.isConnected) {
-        return;
-      }
-      const plan = chatFileOpenPlan(resolution, { path: target, workspaceRoot: props.cwd });
-      if (plan.kind === "resolved" && onOpenResolvedLink) {
-        onOpenResolvedLink(plan.path, plan.missingPath);
-        return;
-      }
-      if (plan.kind === "as-written" && plan.path) {
-        onOpenFile(plan.path);
-        return;
-      }
-      showLinkFeedback(
+    (homeRelativePath: string, anchor: HTMLElement) =>
+      resolveAndOpenLink({
+        request: beginLinkOpen(),
         anchor,
-        resolution === null ? "Couldn't check this link." : "Linked file isn't available.",
-      );
-    },
-    [
-      beginLinkOpen,
-      onOpenFile,
-      onOpenResolvedLink,
-      props.cwd,
-      props.environmentId,
-      resolveFileLink,
-      showLinkFeedback,
-    ],
+        askedPath: homeRelativePath,
+        clientPath: clientPlacedLinkPath(homeRelativePath, props.cwd),
+        knownMissing: false,
+      }),
+    [beginLinkOpen, props.cwd, resolveAndOpenLink],
   );
   const handleOpenLink = useCallback(
     (target: string, anchor: HTMLElement) => {
@@ -387,8 +409,16 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
         return;
       }
       if (isHomeRelativeLink(target)) {
-        // Only the machine that owns the files knows its home folder.
-        void openHomeRelativeFile(target, anchor);
+        // Only the machine that owns the files knows its home folder. The
+        // destination is a URL: its fragment is not part of the file's name,
+        // and its escapes are decoded like any other link's.
+        const homeRelativePath = decodedLinkPath(target);
+        if (homeRelativePath === null) {
+          beginLinkOpen();
+          showLinkFeedback(anchor, "This link isn't available.");
+          return;
+        }
+        void openHomeRelativeFile(homeRelativePath, anchor);
         return;
       }
       const path = resolveMarkdownUrlPath(props.relativePath, target);

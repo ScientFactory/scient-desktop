@@ -438,6 +438,8 @@ describe("ScientMarkdownFileSurface", () => {
       _tag: "Failure",
       cause: new Error("connection unavailable"),
     });
+    // Neither the listing nor the environment could say anything about the link.
+    mocks.resolveFileLink.mockResolvedValue({ _tag: "Failure" });
 
     openLink("other.md", anchor);
 
@@ -450,6 +452,176 @@ describe("ScientMarkdownFileSurface", () => {
       ),
     );
     expect(onOpenFile).not.toHaveBeenCalled();
+  });
+
+  it("repairs a link into a folder that no longer exists", async () => {
+    const { onOpenFile, onOpenResolvedLink } = await mount();
+    const anchor = attachedAnchor();
+    // A missing folder cannot be listed at all.
+    mocks.listDirectory.mockResolvedValue({ _tag: "Failure", cause: new Error("ENOENT") });
+    mocks.resolveFileLink.mockResolvedValueOnce({
+      _tag: "Success",
+      value: {
+        _tag: "recovered",
+        path: "archive/guide.md",
+        missingPath: "/workspace/notes/old-folder/guide.md",
+      },
+    });
+
+    openLink("old-folder/guide.md", anchor);
+
+    await vi.waitFor(() =>
+      expect(onOpenResolvedLink).toHaveBeenCalledExactlyOnceWith(
+        "archive/guide.md",
+        "/workspace/notes/old-folder/guide.md",
+      ),
+    );
+    expect(onOpenFile).not.toHaveBeenCalled();
+    expect(mocks.anchoredAdd).not.toHaveBeenCalled();
+  });
+
+  it("opens a file the environment finds at the link's own location", async () => {
+    // The listing was taken before another process created the file.
+    const { onOpenFile } = await mount();
+    const anchor = attachedAnchor();
+    mocks.listDirectory.mockResolvedValue(success());
+    mocks.resolveFileLink.mockResolvedValueOnce({
+      _tag: "Success",
+      value: { _tag: "literal", path: "/workspace/notes/fresh.md" },
+    });
+
+    openLink("fresh.md", anchor);
+
+    await vi.waitFor(() => expect(onOpenFile).toHaveBeenCalledExactlyOnceWith("notes/fresh.md"));
+    expect(mocks.anchoredAdd).not.toHaveBeenCalled();
+  });
+
+  it("reads a home-relative destination as a URL: no fragment, escapes decoded", async () => {
+    const { onOpenFile } = await mount();
+    const anchor = attachedAnchor();
+    mocks.resolveFileLink.mockResolvedValue({
+      _tag: "Success",
+      value: { _tag: "literal", path: "/home/ada/My Notes.md" },
+    });
+
+    openLink("~/My%20Notes.md#intro", anchor);
+
+    await vi.waitFor(() => expect(onOpenFile).toHaveBeenCalledWith("/home/ada/My Notes.md"));
+    expect(mocks.resolveFileLink).toHaveBeenLastCalledWith({
+      environmentId,
+      input: { workspaceRoot: "/workspace", path: "~/My Notes.md", changedPaths: [] },
+    });
+
+    // A missing one names the location the environment checked, and stays here.
+    mocks.resolveFileLink.mockResolvedValue({
+      _tag: "Success",
+      value: { _tag: "none", missingPath: "/home/ada/gone.md" },
+    });
+    openLink("~/gone.md", anchor);
+    await vi.waitFor(() =>
+      expect(mocks.anchoredAdd).toHaveBeenLastCalledWith(
+        expect.objectContaining({ title: "Linked file isn't available." }),
+      ),
+    );
+    expect(onOpenFile).toHaveBeenCalledOnce();
+  });
+
+  describe("a slow answer about what a link means", () => {
+    const recovered = {
+      _tag: "Success" as const,
+      value: {
+        _tag: "recovered" as const,
+        path: "archive/guide.md",
+        missingPath: "/workspace/notes/guide.md",
+      },
+    };
+    // Both paths that ask: a missing workspace link, and a home-relative link.
+    const cases = [
+      { name: "a missing workspace link", target: "guide.md" },
+      { name: "a home-relative link", target: "~/guide.md" },
+    ];
+
+    for (const { name, target } of cases) {
+      it(`never acts for ${name} after the editor is gone`, async () => {
+        const pending = deferred<typeof recovered>();
+        mocks.listDirectory.mockResolvedValue(success());
+        mocks.resolveFileLink.mockReturnValue(pending.promise);
+        const { onOpenFile, onOpenResolvedLink, root } = await mount();
+
+        openLink(target, attachedAnchor());
+        await vi.waitFor(() => expect(mocks.resolveFileLink).toHaveBeenCalledOnce());
+        await act(() => root.unmount());
+        roots.splice(roots.indexOf(root), 1);
+        pending.resolve(recovered);
+        await pending.promise;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(onOpenResolvedLink).not.toHaveBeenCalled();
+        expect(onOpenFile).not.toHaveBeenCalled();
+        expect(mocks.anchoredAdd).not.toHaveBeenCalled();
+      });
+
+      it(`never acts for ${name} once its link has left the document`, async () => {
+        const pending = deferred<typeof recovered>();
+        mocks.listDirectory.mockResolvedValue(success());
+        mocks.resolveFileLink.mockReturnValue(pending.promise);
+        const { onOpenFile, onOpenResolvedLink } = await mount();
+        const anchor = attachedAnchor();
+
+        openLink(target, anchor);
+        await vi.waitFor(() => expect(mocks.resolveFileLink).toHaveBeenCalledOnce());
+        anchor.remove();
+        pending.resolve(recovered);
+        await pending.promise;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(onOpenResolvedLink).not.toHaveBeenCalled();
+        expect(onOpenFile).not.toHaveBeenCalled();
+        expect(mocks.anchoredAdd).not.toHaveBeenCalled();
+      });
+
+      it(`never lets ${name} override a newer click`, async () => {
+        const pending = deferred<typeof recovered>();
+        mocks.listDirectory.mockResolvedValue(success());
+        mocks.resolveFileLink.mockReturnValueOnce(pending.promise);
+        const { onOpenFile, onOpenResolvedLink } = await mount();
+        const anchor = attachedAnchor();
+
+        openLink(target, anchor);
+        await vi.waitFor(() => expect(mocks.resolveFileLink).toHaveBeenCalledOnce());
+        // The reader clicks another link, which opens at once.
+        openLink("/outside.md", anchor);
+        expect(onOpenFile).toHaveBeenCalledExactlyOnceWith("/outside.md");
+        pending.resolve(recovered);
+        await pending.promise;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(onOpenResolvedLink).not.toHaveBeenCalled();
+        expect(onOpenFile).toHaveBeenCalledOnce();
+      });
+
+      it(`answers the click for ${name} when the environment stalls`, async () => {
+        vi.useFakeTimers();
+        try {
+          mocks.listDirectory.mockResolvedValue(success());
+          mocks.resolveFileLink.mockReturnValue(new Promise(() => {}));
+          const { onOpenFile, onOpenResolvedLink } = await mount();
+          const anchor = attachedAnchor();
+
+          openLink(target, anchor);
+          await vi.waitFor(() => expect(mocks.resolveFileLink).toHaveBeenCalledOnce());
+          expect(mocks.anchoredAdd).not.toHaveBeenCalled();
+          await act(() => vi.advanceTimersByTimeAsync(3_000));
+
+          // The click is not swallowed: it ends in an explanation, never a guess.
+          expect(mocks.anchoredAdd).toHaveBeenCalledOnce();
+          expect(onOpenResolvedLink).not.toHaveBeenCalled();
+          expect(onOpenFile).not.toHaveBeenCalled();
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+    }
   });
 
   it("ignores a late check after unmount instead of opening or orphaning feedback", async () => {

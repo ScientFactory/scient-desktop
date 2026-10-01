@@ -247,10 +247,12 @@ import {
   chatFileLinkResolveInput,
   chatFileOpenPlan,
   claimLinkClick,
-  isHomeRelativeLink,
+  clientPlacedLinkPath,
+  linkOpenLocation,
   settleWithin,
   type ChatFileOpenPlan,
 } from "../scient/fileOpening/chatFileLinkResolution";
+import { announceResolvedLink } from "../scient/fileOpening/announceResolvedLink";
 import { environmentFileLinkResolution } from "../scient/fileOpening/environmentFileState";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
@@ -350,21 +352,6 @@ function claimFileLinkClick(threadRef: ScopedThreadRef): () => boolean {
     claimLatest: claimWorkspaceBasenameLookup,
     readUserActionRevision: () => useRightPanelStore.getState().getUserActionRevision(threadRef),
   });
-}
-
-/**
- * Says when a link led to a different page than it names, so an unexpected
- * match is noticed. Only for a page opened in the browser: a file opened in
- * the panel carries the same note on its own tab, where it covers nothing.
- */
-function announceResolvedLink(plan: Extract<ChatFileOpenPlan, { kind: "resolved" }>): void {
-  toastManager.add(
-    stackedThreadToast({
-      type: "info",
-      title: `Link resolved to ${plan.path}`,
-      description: `Nothing existed at ${plan.missingPath}, where the link pointed.`,
-    }),
-  );
 }
 
 // Longer than the environment's own search bound, so a slow search still answers.
@@ -2546,16 +2533,23 @@ function useChatMarkdownState({
     [cwd, environmentId, searchProjectEntries],
   );
   // Asks the environment that owns the files what a link means; see
-  // resolveEnvironmentFileLink on the server. Null when it could not be asked,
-  // in which case the link opens as written.
+  // resolveEnvironmentFileLink on the server. `location` is where the link
+  // opens when it opens as written: the client's own placement, except for a
+  // home-relative link, which opens where the environment says it is. When
+  // the environment could not be asked, the link opens as the client placed it.
   const planFileLinkOpen = useCallback(
-    async (linkPath: string): Promise<ChatFileOpenPlan> => {
+    async (
+      askedPath: string,
+      clientPath: string,
+    ): Promise<{ readonly plan: ChatFileOpenPlan; readonly location: string }> => {
       const input = chatFileLinkResolveInput({
-        linkPath,
+        linkPath: askedPath,
         workspaceRoot: cwd,
         changedPaths: changedFiles?.map((file) => file.path) ?? [],
       });
-      if (input === null || environmentId === null) return chatFileOpenPlan(null);
+      if (input === null || environmentId === null) {
+        return { plan: chatFileOpenPlan(null), location: clientPath };
+      }
       const resolution = await settleWithin(
         resolveEnvironmentFileLink({ environmentId, input }).then((result) =>
           result._tag === "Success" ? result.value : null,
@@ -2563,19 +2557,27 @@ function useChatMarkdownState({
         FILE_LINK_RESOLVE_WAIT_MS,
         null,
       );
-      return chatFileOpenPlan(resolution, { path: linkPath, workspaceRoot: cwd });
+      return {
+        plan: chatFileOpenPlan(resolution),
+        location: linkOpenLocation({ resolution, askedPath, clientPath, workspaceRoot: cwd }),
+      };
     },
     [changedFiles, cwd, environmentId, resolveEnvironmentFileLink],
   );
   // Opens the file a chat link means. A link whose location does not exist
   // opens the one workspace file it meant, when there is exactly one; without
   // a single answer it opens as written and the file panel offers the choices.
+  // `panelPath` is the client's placement of the link, or the authored `~/`
+  // spelling of a home-relative one, which only the environment can place.
   const openFileInPanel = useCallback(
     (panelPath: string, line: number | undefined) => {
       if (!threadRef) return;
       const isCurrentClick = claimFileLinkClick(threadRef);
       void (async () => {
-        const plan = await planFileLinkOpen(panelPath);
+        const { plan, location } = await planFileLinkOpen(
+          panelPath,
+          clientPlacedLinkPath(panelPath, cwd),
+        );
         if (!isCurrentClick()) return;
         if (plan.kind === "resolved") {
           // The tab itself says it shows a different file than the link named.
@@ -2584,27 +2586,27 @@ function useChatMarkdownState({
           });
           return;
         }
-        useRightPanelStore
-          .getState()
-          .openFile(threadRef, (plan.kind === "as-written" && plan.path) || panelPath, line);
+        useRightPanelStore.getState().openFile(threadRef, location, line);
       })();
     },
-    [planFileLinkOpen, threadRef],
+    [cwd, planFileLinkOpen, threadRef],
   );
   // Outside media opens in the media viewer when its file exists. A missing
   // one gets the same treatment as any other link, in the file panel.
   const openMarkdownMediaLink = useCallback(
-    (mediaPath: string, filePath: string) => {
+    (mediaPath: string, filePath: string, homeRelativePath?: string) => {
       if (!threadRef) {
         openMarkdownMedia(mediaPath, filePath);
         return;
       }
       const isCurrentClick = claimFileLinkClick(threadRef);
       void (async () => {
-        const plan = await planFileLinkOpen(filePath);
+        const { plan, location } = await planFileLinkOpen(homeRelativePath ?? filePath, filePath);
         if (!isCurrentClick()) return;
         if (plan.kind === "as-written") {
-          openMarkdownMedia(mediaPath, filePath);
+          // A home-relative link plays from where the environment says it is.
+          if (location === filePath) openMarkdownMedia(mediaPath, filePath);
+          else openMarkdownMedia(location, location);
           return;
         }
         if (plan.kind === "resolved") {
@@ -2613,7 +2615,7 @@ function useChatMarkdownState({
           });
           return;
         }
-        useRightPanelStore.getState().openFile(threadRef, filePath);
+        useRightPanelStore.getState().openFile(threadRef, location);
       })();
     },
     [openMarkdownMedia, planFileLinkOpen, threadRef],
@@ -2625,19 +2627,27 @@ function useChatMarkdownState({
     async (
       filePath: string,
       workspaceRelativePath: string | null,
+      homeRelativePath?: string,
     ): Promise<AtomCommandResult<unknown, unknown>> => {
       const superseded = AsyncResult.success<void, never>(undefined);
       if (!threadRef) return openEnvironmentHtmlInPreview(filePath);
       const isCurrentClick = claimFileLinkClick(threadRef);
-      const plan = await planFileLinkOpen(filePath);
+      const clientPath = workspaceRelativePath ?? filePath;
+      const { plan, location } = await planFileLinkOpen(homeRelativePath ?? filePath, clientPath);
       if (!isCurrentClick()) return superseded;
       if (plan.kind === "missing") {
-        useRightPanelStore.getState().openFile(threadRef, workspaceRelativePath ?? filePath);
+        useRightPanelStore.getState().openFile(threadRef, location);
         return superseded;
       }
       if (plan.kind === "resolved" && cwd) {
         announceResolvedLink(plan);
         return openMarkdownFileInPreview(resolvePathLinkTarget(plan.path, cwd), plan.path);
+      }
+      if (location !== clientPath) {
+        // A home-relative page, opened where the environment says it is.
+        return cwd && !isAbsolutePath(location)
+          ? openMarkdownFileInPreview(resolvePathLinkTarget(location, cwd), location)
+          : openEnvironmentHtmlInPreview(location);
       }
       return cwd && workspaceRelativePath
         ? openMarkdownFileInPreview(filePath, workspaceRelativePath)
@@ -2678,14 +2688,16 @@ function useChatMarkdownState({
         ) !== null;
       // Media outside the workspace keeps the expanded preview; other host
       // files (a report in a temp dir) open read-only in the files panel.
-      // A `~/` link the client could not place is still a file on the machine
-      // that owns the files; the panel opens it where that machine says it is.
+      // A home-relative link is handed over as authored: only the machine
+      // that owns the files knows where its home folder is.
+      const homeRelativePath = fileLinkMeta.homeRelativePath;
       const panelPath =
-        fileLinkMeta.workspaceRelativePath ??
-        (!canPreviewMedia &&
-        (isAbsolutePath(fileLinkMeta.filePath) || isHomeRelativeLink(fileLinkMeta.filePath))
-          ? fileLinkMeta.filePath
-          : null);
+        homeRelativePath !== undefined && !canPreviewMedia
+          ? homeRelativePath
+          : (fileLinkMeta.workspaceRelativePath ??
+            (!canPreviewMedia && isAbsolutePath(fileLinkMeta.filePath)
+              ? fileLinkMeta.filePath
+              : null));
 
       return (
         <MarkdownFileLink
@@ -2703,7 +2715,7 @@ function useChatMarkdownState({
           onOpenInPanel={openFileInPanel}
           onOpenMedia={
             threadRef && canPreviewMedia
-              ? () => openMarkdownMediaLink(mediaPath, fileLinkMeta.filePath)
+              ? () => openMarkdownMediaLink(mediaPath, fileLinkMeta.filePath, homeRelativePath)
               : undefined
           }
           openInEditorMenuLabel={preferredEditorMenuLabel}
@@ -2717,7 +2729,12 @@ function useChatMarkdownState({
             threadRef &&
             isPreviewSupportedInRuntime() &&
             resolveWorkspaceFileLinkOpenTarget(fileLinkMeta.filePath) === "browser"
-              ? () => openHtmlLinkInBrowser(fileLinkMeta.filePath, browserRelativePath)
+              ? () =>
+                  openHtmlLinkInBrowser(
+                    fileLinkMeta.filePath,
+                    browserRelativePath,
+                    homeRelativePath,
+                  )
               : undefined
           }
         />

@@ -27,7 +27,7 @@ describe("universal chat-file opening seam", () => {
     // within a bounded wait, and yields to a newer click or panel action.
     expect(chatMarkdownSource).toContain("await settleWithin(");
     expect(chatMarkdownSource.match(/if \(!isCurrentClick\(\)\) return/gu)).toHaveLength(3);
-    expect(chatMarkdownSource).toContain("const plan = await planFileLinkOpen(panelPath);");
+    expect(chatMarkdownSource).toContain("clientPlacedLinkPath(panelPath, cwd),");
     // A resolved link opens the file it meant and says so on that tab; any
     // other answer opens the link as written.
     expect(chatMarkdownSource).toContain(
@@ -37,19 +37,21 @@ describe("universal chat-file opening seam", () => {
       chatMarkdownSource.match(/linkResolution: \{ missingPath: plan\.missingPath \}/gu),
     ).toHaveLength(2);
     expect(chatMarkdownSource).toContain(
-      '.openFile(threadRef, (plan.kind === "as-written" && plan.path) || panelPath, line);',
+      "useRightPanelStore.getState().openFile(threadRef, location, line);",
     );
     expect(chatMarkdownSource).toContain(
-      "(isAbsolutePath(fileLinkMeta.filePath) || isHomeRelativeLink(fileLinkMeta.filePath))",
+      "(!canPreviewMedia && isAbsolutePath(fileLinkMeta.filePath)",
     );
     // Outside media links resolve like other links, then open in the media viewer.
-    expect(chatMarkdownSource).toContain("openMarkdownMediaLink(mediaPath, fileLinkMeta.filePath)");
+    expect(chatMarkdownSource).toContain(
+      "openMarkdownMediaLink(mediaPath, fileLinkMeta.filePath, homeRelativePath)",
+    );
     expect(chatMarkdownSource).toContain("openMarkdownMedia(mediaPath, filePath);");
   });
 
   it("routes HTML through the integrated Browser with an explicit document capability", () => {
     expect(chatMarkdownSource).toContain(
-      "openHtmlLinkInBrowser(fileLinkMeta.filePath, browserRelativePath)",
+      "openHtmlLinkInBrowser(\n                    fileLinkMeta.filePath,\n                    browserRelativePath,\n                    homeRelativePath,",
     );
     expect(chatMarkdownSource).toContain(
       'resolveWorkspaceFileLinkOpenTarget(fileLinkMeta.filePath) === "browser"',

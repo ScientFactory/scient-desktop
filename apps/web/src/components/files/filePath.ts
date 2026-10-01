@@ -34,8 +34,17 @@ export function resolveFileTabPath(path: string, workspaceRoot: string): string 
   return workspaceRelativeFilePath(hostPath, workspaceRoot) === null ? hostPath : path;
 }
 
+/**
+ * A path's parts. The first part of an absolute path keeps its root, so
+ * `/tmp/report.md` on the host and `tmp/report.md` in the workspace never
+ * look like the same folder.
+ */
 function pathSegments(path: string): string[] {
-  return path.split(/[\\/]/).filter(Boolean);
+  const segments = path.split(/[\\/]/).filter(Boolean);
+  const first = segments[0];
+  if (first === undefined) return segments;
+  const root = path.startsWith("\\\\") ? "\\\\" : path.startsWith("/") ? "/" : "";
+  return root === "" ? segments : [`${root}${first}`, ...segments.slice(1)];
 }
 
 /**

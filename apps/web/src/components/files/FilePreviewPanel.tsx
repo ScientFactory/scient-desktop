@@ -123,6 +123,7 @@ import {
 } from "~/scient/fileSurfaces/fileFailureCopy";
 import { FileLinkResolutionNotice } from "~/scient/fileSurfaces/FileLinkResolutionNotice";
 import { FileReadFailure } from "~/scient/fileSurfaces/FileReadFailure";
+import { announceResolvedLink } from "~/scient/fileOpening/announceResolvedLink";
 import { shouldOpenInBrowserByDefault } from "~/scient/fileOpening/fileOpeningPolicy";
 import {
   fileCopyNotice,
@@ -1433,6 +1434,12 @@ export default function FilePreviewPanel({
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
   });
+  // A copy must be of the file as it is now. An exact capability is pinned to
+  // the revision it was issued for, so a cached one would refuse a changed file.
+  const createCopyUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
+    reportFailure: false,
+    refresh: true,
+  });
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
@@ -1544,9 +1551,12 @@ export default function FilePreviewPanel({
     (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId);
   const [dismissedCitationReveal, setDismissedCitationReveal] = useState<number | null>(null);
   // Dismissing hides the note for this open only; opening the link again shows it again.
-  const [dismissedLinkResolution, setDismissedLinkResolution] = useState<number | null>(null);
+  // The panel is shared by every file tab and each file counts its own opens,
+  // so one open is a file together with its count.
+  const [dismissedLinkResolution, setDismissedLinkResolution] = useState<string | null>(null);
+  const linkResolutionOpen = `${revealRequestId}:${relativePath ?? ""}`;
   const shownLinkResolution =
-    linkResolution !== undefined && dismissedLinkResolution !== revealRequestId
+    linkResolution !== undefined && dismissedLinkResolution !== linkResolutionOpen
       ? linkResolution
       : null;
   const citationRevealActive =
@@ -1735,7 +1745,7 @@ export default function FilePreviewPanel({
       environmentId,
       path: absolutePath,
       httpBaseUrl: environmentHttpBaseUrl,
-      createAssetUrl,
+      createAssetUrl: createCopyUrl,
     })
       .then(
         (result) => fileCopyNotice(result),
@@ -1748,7 +1758,7 @@ export default function FilePreviewPanel({
       .finally(() => {
         savingCopyRef.current = false;
       });
-  }, [absolutePath, createAssetUrl, environmentHttpBaseUrl, environmentId]);
+  }, [absolutePath, createCopyUrl, environmentHttpBaseUrl, environmentId]);
   const canSaveCopy =
     attachment === undefined && absolutePath !== null && !isDirectory && !!environmentHttpBaseUrl;
 
@@ -2028,7 +2038,7 @@ export default function FilePreviewPanel({
       {shownLinkResolution ? (
         <FileLinkResolutionNotice
           missingPath={shownLinkResolution.missingPath}
-          onDismiss={() => setDismissedLinkResolution(revealRequestId)}
+          onDismiss={() => setDismissedLinkResolution(linkResolutionOpen)}
         />
       ) : null}
       {relativePath && !markdownLease && !isPdf && file.data?.readOnly ? (
@@ -2301,12 +2311,16 @@ export default function FilePreviewPanel({
                   citationRevealId={revealRequestId}
                   resolvedTheme={resolvedTheme}
                   onOpenFile={onOpenFile}
-                  onOpenResolvedLink={(path, missingPath) =>
-                    // A page opens in the browser, which has no tab to carry the note.
-                    shouldOpenInBrowserByDefault(path)
-                      ? onOpenFile(path)
-                      : onOpenFileSource(path, undefined, { linkResolution: { missingPath } })
-                  }
+                  onOpenResolvedLink={(path, missingPath) => {
+                    if (!shouldOpenInBrowserByDefault(path)) {
+                      onOpenFileSource(path, undefined, { linkResolution: { missingPath } });
+                      return;
+                    }
+                    // A page opens in the browser, which has no tab to carry
+                    // the note, so it is announced as a chat link's page is.
+                    onOpenFile(path);
+                    announceResolvedLink({ path, missingPath });
+                  }}
                   onOpenFileSource={(path, line) =>
                     runAfterPendingSave([relativePath], () => onOpenFileSource(path, line))
                   }

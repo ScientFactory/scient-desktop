@@ -3,9 +3,14 @@ import {
   EnvironmentFilePath,
   type EnvironmentFileLinkResolution,
 } from "@t3tools/contracts";
-import { workspaceRelativeFilePath } from "@t3tools/client-runtime/markdown-links";
+import {
+  collapseAbsoluteFilePath,
+  workspaceRelativeFilePath,
+} from "@t3tools/client-runtime/markdown-links";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+
+import { resolvePathLinkTarget } from "~/terminal-links";
 
 const decodeResolveInput = Schema.decodeUnknownOption(EnvironmentFileLinkResolveInput);
 const isEnvironmentFilePath = Schema.is(EnvironmentFilePath);
@@ -51,38 +56,40 @@ export function isHomeRelativeLink(path: string): boolean {
 }
 
 /**
+ * Where the client itself would place a link. A home-relative link is placed
+ * by guessing the home folder from the workspace's own location, which is
+ * right only for a workspace under a conventional home; it is the fallback
+ * for an environment that cannot say. Any other link is already placed.
+ */
+export function clientPlacedLinkPath(linkPath: string, workspaceRoot: string | undefined): string {
+  if (!isHomeRelativeLink(linkPath) || !workspaceRoot) return linkPath;
+  const guessed = collapseAbsoluteFilePath(resolvePathLinkTarget(linkPath, workspaceRoot));
+  return workspaceRelativeFilePath(guessed, workspaceRoot) ?? guessed;
+}
+
+/**
  * What a click on a chat link does with the environment's answer.
  *
  * - `as-written`: the link's own location is the file (it exists, or fails for
  *   a real reason that opening it will show), or the environment could not be
- *   asked. `path` is set only for a home-relative link, whose location the
- *   environment had to spell out: open that instead of the `~/` spelling.
+ *   asked.
  * - `resolved`: nothing exists at the link's location and one workspace file
  *   is what it meant; open that file and say so.
  * - `missing`: nothing exists there and there is no single answer; open the
  *   link as written so the file panel explains and offers the choices.
  */
 export type ChatFileOpenPlan =
-  | { readonly kind: "as-written"; readonly path?: string }
+  | { readonly kind: "as-written" }
   | { readonly kind: "resolved"; readonly path: string; readonly missingPath: string }
   | { readonly kind: "missing" };
 
 export function chatFileOpenPlan(
   resolution: EnvironmentFileLinkResolution | null,
-  /** The link as the client asked about it, to tell a home-relative one. */
-  link?: { readonly path: string; readonly workspaceRoot: string | undefined },
 ): ChatFileOpenPlan {
   switch (resolution?._tag) {
     case undefined:
-      return { kind: "as-written" };
     case "literal":
-      return link !== undefined && isHomeRelativeLink(link.path)
-        ? {
-            kind: "as-written",
-            // A file inside the workspace stays a workspace file, so it stays editable.
-            path: workspaceRelativeFilePath(resolution.path, link.workspaceRoot) ?? resolution.path,
-          }
-        : { kind: "as-written" };
+      return { kind: "as-written" };
     case "recovered":
       return { kind: "resolved", path: resolution.path, missingPath: resolution.missingPath };
     case "tie":
@@ -90,6 +97,35 @@ export function chatFileOpenPlan(
     case "incomplete":
       return { kind: "missing" };
   }
+}
+
+/**
+ * The path a link opens at when it opens as written. Ordinarily that is the
+ * client's own spelling. A home-relative link has no spelling the client can
+ * trust, so it opens where the environment says the link's location is: the
+ * file it found there, or the location it checked and found empty. That
+ * location stays a workspace path when it is inside the workspace, so the
+ * file stays editable.
+ *
+ * `clientPath` is the client's own placement of the link, used when the
+ * environment could not be asked or predates home-folder expansion (it then
+ * reports the unexpanded `~` under the workspace for a missing file).
+ */
+export function linkOpenLocation(input: {
+  readonly resolution: EnvironmentFileLinkResolution | null;
+  /** The link as the environment was asked about it. */
+  readonly askedPath: string;
+  readonly clientPath: string;
+  readonly workspaceRoot: string | undefined;
+}): string {
+  const { resolution } = input;
+  if (resolution === null || !isHomeRelativeLink(input.askedPath)) return input.clientPath;
+  if (resolution._tag === "recovered") return input.clientPath;
+  const reported = resolution._tag === "literal" ? resolution.path : resolution.missingPath;
+  const location = workspaceRelativeFilePath(reported, input.workspaceRoot) ?? reported;
+  return resolution._tag !== "literal" && isHomeRelativeLink(location)
+    ? input.clientPath
+    : location;
 }
 
 /**

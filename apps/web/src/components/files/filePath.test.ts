@@ -153,6 +153,13 @@ describe("fileTabTitles", () => {
     expect(titles.get("/Users/me/out/plan.md")).toBe("plan.md — out");
   });
 
+  it("tells a host file from a workspace file whose folders are spelled alike", () => {
+    const titles = fileTabTitles(["tmp/report.md", "/tmp/report.md", "\\\\nas\\tmp\\report.md"]);
+    expect(titles.get("tmp/report.md")).toBe("report.md — tmp");
+    expect(titles.get("/tmp/report.md")).toBe("report.md — /tmp");
+    expect(titles.get("\\\\nas\\tmp\\report.md")).toBe("report.md — \\\\nas/tmp");
+  });
+
   it("handles Windows separators and a path opened twice", () => {
     const titles = fileTabTitles(["C:\\work\\a\\plan.md", "b/plan.md", "b/plan.md"]);
     expect(titles.get("C:\\work\\a\\plan.md")).toBe("plan.md — a");
