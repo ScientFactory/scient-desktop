@@ -127,6 +127,26 @@ agent-driven browser downloads. The receipt separates original qualification,
 later static checks, and the owner's visual/manual acceptance. Create-from-name
 and the deferred publication changes remain off.
 
+The alignment after that one is recorded in
+[the 2026-10-02 receipt](docs/internals/2026-10-02-upstream-sync-a3abb52660.md) and
+`upstream-state.json`. It integrates 15 first-parent official commits through
+`a3abb5266080c15b2a675d7f92b517b567c427e2` onto owned base
+`299a8f8f7273fc06d1b99781dd8912dc21d6ad52`. Upstream merge
+`10007bd9b3c531104a516b31f8339cdc72220a56` retains that exact target as its second
+parent. The range is dominated by the Expo SDK 58 and React Native 0.88.0-rc.3
+mobile upgrade, plus a cloned-project favicon fix, per-thread alert stacking, an
+Android subscription widget, and an eas-cli pin.
+
+**`expo-modules-core@58.0.9` removes every `@synchronized` block from its iOS
+tree** — the count falls from 6 on `57.0.14` to 0. The repository's own
+ThreadSanitizer regression harnesses, which compile the permissions registry and
+notification centre straight out of the installed package, catch the resulting
+races on `-[__NSDictionaryM setObject:forKey:]`. Hosted CI stays green because both
+tests are `skipIf(platform !== "darwin")`, so this is a macOS-checkout failure
+rather than a pipeline failure. The upgrade must not be treated as qualified until
+the owner chooses between restoring the locks in a patch, holding the Expo 58
+bump, or recording an explicit exception for the two checks.
+
 ## Receiving T3 updates
 
 The local alignment through `1ab2dfb5` is documented in the
