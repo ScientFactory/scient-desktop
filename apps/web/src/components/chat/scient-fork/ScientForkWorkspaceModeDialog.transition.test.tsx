@@ -2,12 +2,17 @@
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+
+const toasts = vi.hoisted(() => ({ add: vi.fn() }));
+vi.mock("../../ui/toast", () => ({ toastManager: toasts }));
+
 import { ScientForkWorkspaceModeDialog } from "./ScientForkWorkspaceModeDialog";
 
 let root: Root;
 let container: HTMLDivElement;
 const animationsDescriptor = Object.getOwnPropertyDescriptor(Element.prototype, "getAnimations");
 beforeEach(() => {
+  toasts.add.mockReset();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   // happy-dom has no Web Animations API; exercise the native no-motion exit.
   Object.defineProperty(Element.prototype, "getAnimations", {
@@ -144,5 +149,67 @@ it.each([false, true])(
       expect(handoff).toHaveBeenCalledWith(false);
     });
     expect(document.querySelector('[role="dialog"]') !== null).toBe(reopened);
+  },
+);
+
+// What the user did with the dialog before its fork ended, and whether a failure must be notified.
+it.each([
+  { afterSubmit: "stays open", outcome: "not-accepted", notified: false },
+  { afterSubmit: "closed", outcome: "not-accepted", notified: true },
+  { afterSubmit: "closed and reopened", outcome: "not-accepted", notified: true },
+  { afterSubmit: "reopened and closed again", outcome: "not-accepted", notified: true },
+  { afterSubmit: "unmounted", outcome: "not-accepted", notified: true },
+  { afterSubmit: "closed", outcome: "accepted", notified: false },
+] as const)(
+  "notifies a fork failure only when its dialog can no longer show it ($afterSubmit, $outcome)",
+  async ({ afterSubmit, outcome, notified }) => {
+    let finish!: (outcome: string) => void;
+    const forked = new Promise<string>((resolve) => {
+      finish = resolve;
+    });
+    let setDialogOpen!: (open: boolean) => void;
+    function Probe() {
+      const [open, setOpen] = useState(true);
+      const [busy, setBusy] = useState(false);
+      setDialogOpen = setOpen;
+      return (
+        <ScientForkWorkspaceModeDialog
+          open={open}
+          disabled={busy}
+          source="this-response"
+          proposedTitle="My fork"
+          titleOverrideSupported
+          worktreeAvailability={{ available: true }}
+          onOpenChange={setOpen}
+          onConfirm={async () => {
+            setBusy(true);
+            const result = await forked;
+            setBusy(false);
+            return result;
+          }}
+        />
+      );
+    }
+    await act(() => root.render(<Probe />));
+    await act(() => {
+      document
+        .querySelector("form")!
+        .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    if (afterSubmit === "unmounted") {
+      await act(() => root.render(null));
+    } else if (afterSubmit !== "stays open") {
+      await act(() => setDialogOpen(false));
+      if (afterSubmit !== "closed") await act(() => setDialogOpen(true));
+      if (afterSubmit === "reopened and closed again") await act(() => setDialogOpen(false));
+    }
+
+    await act(async () => {
+      finish(outcome);
+      await forked;
+    });
+    await act(async () => {});
+
+    expect(toasts.add).toHaveBeenCalledTimes(notified ? 1 : 0);
   },
 );

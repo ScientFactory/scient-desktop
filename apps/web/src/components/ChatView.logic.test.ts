@@ -58,7 +58,6 @@ import {
   restorePlanFollowUpComposer,
   resolveComposerProviderSelection,
   resolveDraftPromotionNavigationTarget,
-  forkFailureNeedsNotification,
   resolveForkTargetAfterAttempt,
   resolveThreadWorkspaceRoot,
   findRecordedWorktreeSetup,
@@ -491,34 +490,6 @@ describe("resolveForkTargetAfterAttempt", () => {
     expect(resolveForkTargetAfterAttempt(newerTarget, attemptedTarget, "accepted")).toBe(
       newerTarget,
     );
-  });
-});
-
-describe("forkFailureNeedsNotification", () => {
-  const attemptedTarget = { messageId: "message-1" };
-
-  it("leaves a failure to the dialog that is still showing that fork", () => {
-    expect(forkFailureNeedsNotification(attemptedTarget, attemptedTarget, "not-accepted")).toBe(
-      false,
-    );
-  });
-
-  it("notifies once the dialog was closed", () => {
-    expect(forkFailureNeedsNotification(null, attemptedTarget, "not-accepted")).toBe(true);
-  });
-
-  it("notifies when the dialog was closed and opened again, on any fork point", () => {
-    // A reopened dialog has a new target, even for the same message.
-    expect(
-      forkFailureNeedsNotification({ messageId: "message-1" }, attemptedTarget, "not-accepted"),
-    ).toBe(true);
-    expect(
-      forkFailureNeedsNotification({ messageId: "message-2" }, attemptedTarget, "not-accepted"),
-    ).toBe(true);
-  });
-
-  it("stays quiet when the fork was made", () => {
-    expect(forkFailureNeedsNotification(null, attemptedTarget, "accepted")).toBe(false);
   });
 });
 

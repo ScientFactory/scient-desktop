@@ -77,18 +77,6 @@ export function resolveForkTargetAfterAttempt<T>(
   return outcome === "accepted" && currentTarget === attemptedTarget ? null : currentTarget;
 }
 
-/**
- * A fork's dialog shows its own failure. Once that dialog was closed, or shows
- * something else, the failure needs a notification instead.
- */
-export function forkFailureNeedsNotification<T>(
-  shownTarget: T | null,
-  attemptedTarget: T,
-  outcome: ForkAcceptanceOutcome,
-): boolean {
-  return outcome === "not-accepted" && shownTarget !== attemptedTarget;
-}
-
 export function agentControlledBrowserCloseConfirmation(
   surfaces: readonly RightPanelSurface[],
   desktopByTabId: Readonly<Record<string, Pick<DesktopPreviewOverlay, "controller"> | undefined>>,

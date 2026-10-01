@@ -29,6 +29,7 @@ import {
 } from "../../ui/dialog";
 import { Input } from "../../ui/input";
 import { Switch } from "../../ui/switch";
+import { toastManager } from "../../ui/toast";
 
 type ForkWorkspaceMode = "new-worktree" | "local";
 export type ScientForkSource =
@@ -92,6 +93,7 @@ interface ScientForkDialogProps {
   readonly titleOverrideSupported: boolean;
   readonly worktreeAvailability: ForkWorktreeAvailability;
   readonly onOpenChange: (open: boolean) => void;
+  /** Resolves to "not-accepted" when the fork was not made. */
   readonly onConfirm: (
     confirmation: ScientForkConfirmation,
     beforeNavigate: () => Promise<boolean>,
@@ -204,6 +206,8 @@ export function ScientForkWorkspaceModeDialog({
       // without navigating back or leaving the origin locked.
       finishClose.current?.(false);
       finishClose.current = null;
+      // The dialog is gone, whether it closed or its view went away.
+      openSinceSubmit.current = false;
     };
   }, [open]);
 
@@ -253,15 +257,25 @@ export function ScientForkWorkspaceModeDialog({
     if (disabled || checking || !submission.ok) return;
     openSinceSubmit.current = true;
     try {
-      await onConfirm({ ...submission.confirmation, displayTitle: displayedTitle }, () =>
-        // Closed while the fork was being made: it stays where the user is.
-        openSinceSubmit.current
-          ? new Promise<boolean>((resolve) => {
-              finishClose.current = resolve;
-              setClosingForNavigation(true);
-            })
-          : Promise.resolve(false),
+      const outcome = await onConfirm(
+        { ...submission.confirmation, displayTitle: displayedTitle },
+        () =>
+          // Closed while the fork was being made: it stays where the user is.
+          openSinceSubmit.current
+            ? new Promise<boolean>((resolve) => {
+                finishClose.current = resolve;
+                setClosingForNavigation(true);
+              })
+            : Promise.resolve(false),
       );
+      // This dialog can no longer show the error, so say it here.
+      if (outcome === "not-accepted" && !openSinceSubmit.current) {
+        toastManager.add({
+          type: "error",
+          title: "The fork did not finish",
+          description: "Fork from the same message again to resume it.",
+        });
+      }
     } finally {
       // A failed navigation reopens the same form with its saved retry state.
       setClosingForNavigation(false);
