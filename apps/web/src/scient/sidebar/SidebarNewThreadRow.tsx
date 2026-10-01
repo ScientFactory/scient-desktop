@@ -61,7 +61,10 @@ export function SidebarNewThreadRow(props: {
             </TooltipTrigger>
             <TooltipPopup side="right">Chat without a project</TooltipPopup>
           </Tooltip>
-          <span aria-hidden className="h-4 w-px shrink-0 bg-sidebar-border" />
+          <span
+            aria-hidden
+            className="h-4 w-px shrink-0 bg-sidebar-border [mask-image:linear-gradient(to_bottom,transparent,black_25%,black_75%,transparent)]"
+          />
         </>
       ) : null}
       <div className="min-w-0 flex-1">
