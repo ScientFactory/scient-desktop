@@ -2373,14 +2373,14 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
       const carried = TurnId.make("inherited-unanswered");
       const second = TurnId.make("inherited-second");
       // Copies share timestamps and get random ids, so the unanswered request can
-      // sort on either side of an answer. Here it sits before the first answer
+      // sort on either side of an answer. Here it sits before the whole first turn
       // although its turn follows that one.
       const inherited = (id: string, role: "user" | "assistant", text: string, turnId: TurnId) =>
         message({ id, role, text, turnId, createdAt: "2026-01-01T00:00:01.000Z" });
       const reforkOrigin = makeOriginThread({
         messages: [
-          inherited("first-user", "user", "first prompt", first),
           inherited("carried-user", "user", "lost prompt", carried),
+          inherited("first-user", "user", "first prompt", first),
           inherited("first-assistant", "assistant", "first answer", first),
           inherited("second-user", "user", "second prompt", second),
           inherited("second-assistant", "assistant", "second answer", second),
@@ -2425,8 +2425,19 @@ it.layer(NodeServices.layer)("scient fork decider", (it) => {
       expect(activitiesIn(atFirst)).toEqual([]);
 
       const atSecond = yield* fork(MessageId.make("second-assistant"));
-      expect(sentIn(atSecond).map((entry) => entry.text)).toContain("lost prompt");
+      const sent = sentIn(atSecond);
+      expect(sent.map((entry) => entry.text)).toContain("lost prompt");
       expect(activitiesIn(atSecond)).toHaveLength(1);
+      // The new fork records the same history order, whatever the message positions,
+      // so forking it again places the unanswered turn the same way.
+      const turnOf = (text: string) => sent.find((entry) => entry.text === text)?.turnId;
+      const forked = atSecond.find((event) => event.type === "thread.forked");
+      if (forked?.type !== "thread.forked") throw new Error("missing thread.forked");
+      expect(forked.payload.inheritedTurnIds).toEqual([
+        turnOf("first answer"),
+        turnOf("lost prompt"),
+        turnOf("second answer"),
+      ]);
     }),
   );
 });

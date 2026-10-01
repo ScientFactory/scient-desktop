@@ -922,7 +922,17 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       workspaceMode: command.workspaceMode,
       providerMode: "transcript-bootstrap",
       attachmentCopies,
-      inheritedTurnIds: [...new Set(importedTurnIds.values())],
+      // In history order: what the origin itself inherited keeps its recorded
+      // order (message positions can differ from it), then the origin's own turns.
+      inheritedTurnIds: [
+        ...new Set([
+          ...[...(resolvedBoundaries.inheritedTurnIds ?? [])].flatMap((sourceTurnId) => {
+            const turnId = importedTurnIds.get(sourceTurnId);
+            return turnId === undefined ? [] : [turnId];
+          }),
+          ...importedTurnIds.values(),
+        ]),
+      ],
       ...(sourceImport === undefined ? {} : { sourceImport }),
       ...(liveTail === null
         ? {}

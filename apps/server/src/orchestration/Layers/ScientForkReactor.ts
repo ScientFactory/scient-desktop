@@ -477,6 +477,17 @@ const make = Effect.gen(function* () {
         });
       }
       if (yield* isForkThreadDeleted(sql, payload.newThreadId)) return;
+      if (keepWorkspace) {
+        // An earlier attempt may have recorded the worktree on the thread; a deleted
+        // thread's worktree can be cleaned up later, so let go of it first.
+        yield* orchestrationEngine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make(`server:scient-fork:release:${payload.newThreadId}`),
+          threadId: payload.newThreadId,
+          branch: null,
+          worktreePath: null,
+        });
+      }
       yield* orchestrationEngine.dispatch({
         type: "thread.delete",
         commandId: CommandId.make(`server:scient-fork:abandon:${payload.newThreadId}`),

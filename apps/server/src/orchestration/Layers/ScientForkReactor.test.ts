@@ -932,6 +932,11 @@ describe("ScientForkReactor", () => {
           expect(lineage?.last_error).toContain("Fork again");
           expect(discards).toEqual([expect.objectContaining({ worktreePath: null, branch: null })]);
           expect(Option.isNone(yield* snapshot.getThreadDetailById(NEW))).toBe(true);
+          // Nothing may tie the kept folder to the deleted thread: cleanup of
+          // deleted threads' worktrees would otherwise remove it later.
+          expect(
+            (yield* snapshot.getDeletedWorktreeThreads()).some((thread) => thread.id === NEW),
+          ).toBe(false);
         }
         expect(threads.find((thread) => thread.id === ORIGIN)?.worktreePath).toBe(ORIGIN_WORKTREE);
       }).pipe(
