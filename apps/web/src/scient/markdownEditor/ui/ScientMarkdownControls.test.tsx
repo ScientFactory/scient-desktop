@@ -287,6 +287,12 @@ describe("formatting menu focus", () => {
     await vi.waitFor(() => expect(view.hasFocus()).toBe(true));
     expect(view.state.selection).toBeInstanceOf(CellSelection);
     expect((view.state.selection as CellSelection).isColSelection()).toBe(true);
+    // Every selected cell is counted, not only the one the selection ends in.
+    await vi.waitFor(() =>
+      expect(footerHost.querySelector(".scient-document-footer-count")?.textContent).toBe(
+        "4 of 4 words",
+      ),
+    );
     const direction = controlsHost.querySelector<HTMLButtonElement>(
       'button[aria-label^="Table direction:"]',
     )!;

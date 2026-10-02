@@ -41,6 +41,9 @@ const {
       disabled: boolean;
       source: string;
     },
+    // The header row's offer to host the editor's controls, and whether to take it.
+    host: null as null | import("../writing/readerBarHost").ReaderBarHost,
+    hosts: false,
   },
   build: { snapshot: null as unknown, toolchain: null as unknown },
   sync: { forward: vi.fn(), inverse: vi.fn() },
@@ -49,6 +52,7 @@ const {
       readonly forwardTarget: unknown;
       readonly onInverseSearch?: (point: { page: number; x: number; y: number }) => void;
     },
+    host: null as null | import("../writing/readerBarHost").ReaderBarHost,
   },
 }));
 
@@ -65,12 +69,17 @@ vi.mock("~/components/files/FilePreviewPanel", () => ({
 vi.mock("~/scient/markdownEditor/persistence/markdownPersistenceTransport", () => ({
   createMarkdownPersistenceTransport: vi.fn(),
 }));
-vi.mock("~/scient/pdf/ScientPdfReader", () => ({
-  ScientPdfReader: (props: { syncNavigation?: typeof reader.navigation }) => {
-    reader.navigation = props.syncNavigation ?? null;
-    return <div data-testid="pdf-reader" />;
-  },
-}));
+vi.mock("~/scient/pdf/ScientPdfReader", async () => {
+  const { useContext } = await import("react");
+  const { ReaderBarHostContext } = await import("../writing/readerBarHost");
+  return {
+    ScientPdfReader: (props: { syncNavigation?: typeof reader.navigation }) => {
+      reader.navigation = props.syncNavigation ?? null;
+      reader.host = useContext(ReaderBarHostContext);
+      return <div data-testid="pdf-reader" />;
+    },
+  };
+});
 vi.mock("~/scient/pdf/usePdfSaveCopy", () => ({ usePdfSaveCopy: () => savePdfCopy }));
 vi.mock("../writing/dockChrome", () => ({
   DockMenu: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -91,12 +100,26 @@ vi.mock("../documentExport/DocumentExportMenuItems", () => ({
     return null;
   },
 }));
-vi.mock("./LatexProjectVisualEditor", () => ({
-  LatexProjectVisualEditor: (props: NonNullable<typeof visual.props>) => {
-    visual.props = props;
-    return <div data-testid="visual-editor" />;
-  },
-}));
+vi.mock("./LatexProjectVisualEditor", async () => {
+  const { useContext, useEffect } = await import("react");
+  const { ReaderBarHostContext } = await import("../writing/readerBarHost");
+  return {
+    LatexProjectVisualEditor: (props: NonNullable<typeof visual.props>) => {
+      visual.props = props;
+      const host = useContext(ReaderBarHostContext);
+      visual.host = host;
+      const slot = host?.slot ?? null;
+      const onHosted = host?.onHosted;
+      // The real editor draws its reader controls into the slot and says so.
+      useEffect(() => {
+        if (!visual.hosts || !onHosted || slot === null) return;
+        onHosted(true);
+        return () => onHosted(false);
+      }, [onHosted, slot]);
+      return <div data-testid="visual-editor" />;
+    },
+  };
+});
 vi.mock("./useLatexAutoBuild", () => ({ useLatexAutoBuild: () => {} }));
 vi.mock("./client", () => ({
   readLatexBuildStatus,
@@ -184,6 +207,8 @@ describe("the LaTeX surface on a document session", () => {
     exportDialog.savedRevision = null;
     exportMenu.props = null;
     visual.props = null;
+    visual.host = null;
+    visual.hosts = false;
     disk = { source: BASE, revision: revisionOf(BASE) };
     const registry = new MarkdownPersistenceRegistry({
       debounceMs: 250,
@@ -313,6 +338,141 @@ describe("the LaTeX surface on a document session", () => {
       }
     },
   );
+
+  describe("the header row", () => {
+    const toolbar = () => container.querySelector<HTMLElement>(".scient-latex-toolbar")!;
+    const slot = () => container.querySelector<HTMLElement>(".scient-latex-reader-slot")!;
+    const ownActions = () => container.querySelector<HTMLElement>(".scient-latex-actions")!;
+
+    it("takes the document's controls into the same row as the view switch", async () => {
+      visual.hosts = true;
+      await mount("visual");
+      expect(slot().hidden).toBe(false);
+      expect(slot().parentElement).toBe(toolbar());
+      expect(toolbar().querySelector('[aria-label="Document view"]')).not.toBeNull();
+      expect(visual.host?.slot).toBe(slot());
+      // Rebuild and the document's commands travel with the hosted controls,
+      // so the row does not draw them a second time.
+      expect(toolbar().hasAttribute("data-reader-hosted")).toBe(true);
+      expect(ownActions().childElementCount).toBe(0);
+      expect(visual.host?.trailing).toBeTruthy();
+      expect(visual.host?.moreActions).toBeTruthy();
+      // Only Split has a second switch to offer.
+      expect(visual.host?.beforeSearch).toBeNull();
+    });
+
+    it("keeps its own Rebuild until some controls are drawn in the row", async () => {
+      await mount("visual");
+      expect(slot().hidden).toBe(false);
+      expect(toolbar().hasAttribute("data-reader-hosted")).toBe(false);
+      expect(ownActions().querySelector("button")).not.toBeNull();
+    });
+
+    it("offers Split's own switch to whichever pane is on the right", async () => {
+      build.snapshot = {
+        logicalDocumentKey: "latex:paper.tex",
+        rootRelativePath: "paper.tex",
+        state: "succeeded",
+        diagnostics: [],
+        descriptor: PdfSourceDescriptor.make({
+          _tag: "generated-pdf",
+          authority: ArtifactAuthority.make("environment-latex"),
+          logicalDocumentKey: LogicalDocumentKey.make("latex:paper.tex"),
+          artifactId: ArtifactId.make("artifact-1"),
+          revisionId: ArtifactRevisionId.make("revision-1"),
+          bindingGeneration: BindingGeneration.make(1),
+          bindingStatus: "current",
+          staleReason: null,
+          title: "paper",
+          fileName: "paper.pdf",
+          capabilities: { canSaveCopy: true, canRevealSource: false },
+        }),
+        failureSummary: null,
+        startedAtEpochMs: null,
+        finishedAtEpochMs: null,
+        toolchain: null,
+        pendingRerun: false,
+      };
+      reader.host = null;
+      await mount("split");
+      expect(slot().hidden).toBe(false);
+      expect(reader.host?.slot).toBe(slot());
+      expect(reader.host?.beforeSearch).toBeTruthy();
+      expect(reader.host?.trailing).toBeTruthy();
+    });
+
+    it("leaves the Source view with the plain row", async () => {
+      visual.hosts = true;
+      await mount("source");
+      expect(slot().hidden).toBe(true);
+      expect(toolbar().hasAttribute("data-reader-hosted")).toBe(false);
+      expect(ownActions().querySelector("button")).not.toBeNull();
+    });
+  });
+
+  describe("build messages", () => {
+    const card = () => container.querySelector<HTMLElement>('[aria-label="Build messages"]');
+    const chip = () => container.querySelector<HTMLButtonElement>(".scient-latex-chip-warning")!;
+    const press = (target: Element) =>
+      act(async () => {
+        target.dispatchEvent(new Event("pointerdown", { bubbles: true, composed: true }));
+      });
+    beforeEach(() => {
+      build.snapshot = {
+        logicalDocumentKey: "latex:paper.tex",
+        rootRelativePath: "paper.tex",
+        state: "succeeded",
+        diagnostics: [
+          { severity: "warning", message: "Overfull \\hbox.", file: "paper.tex", line: 4 },
+        ],
+        descriptor: null,
+        failureSummary: null,
+        startedAtEpochMs: null,
+        finishedAtEpochMs: null,
+        toolchain: null,
+        pendingRerun: false,
+      };
+    });
+
+    it("opens over the document from the warnings count, and closes from it again", async () => {
+      await mount("visual");
+      expect(card()).toBeNull();
+      expect(chip().textContent).toBe("1 warning");
+      await act(async () => chip().click());
+      expect(card()).not.toBeNull();
+      expect(chip().getAttribute("aria-expanded")).toBe("true");
+      // It floats: the card is not a row between the header and the document.
+      expect(card()!.parentElement!.className).toBe("scient-latex-diagnostics-anchor");
+      expect(card()!.textContent).toContain("Overfull");
+      // No heading and no chrome of its own: the messages are the whole card.
+      expect(card()!.querySelector("h1, h2, h3, header")).toBeNull();
+      await act(async () => chip().click());
+      expect(card()).toBeNull();
+    });
+
+    it("closes on a press anywhere else, and stays open while it is used", async () => {
+      await mount("visual");
+      await act(async () => chip().click());
+      await press(card()!.querySelector(".scient-latex-diagnostic")!);
+      expect(card()).not.toBeNull();
+      // The count toggles the card itself; the outside-press rule must not fight it.
+      await press(chip());
+      expect(card()).not.toBeNull();
+      await press(container.querySelector('[data-testid="visual-editor"]')!);
+      expect(card()).toBeNull();
+    });
+
+    it("closes on Escape from inside the card", async () => {
+      await mount("visual");
+      await act(async () => chip().click());
+      await act(async () => {
+        card()!.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+        );
+      });
+      expect(card()).toBeNull();
+    });
+  });
 
   it("gives the source pane the session, so every keystroke has one owner", async () => {
     await mount();
