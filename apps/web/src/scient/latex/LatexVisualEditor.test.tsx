@@ -342,11 +342,7 @@ describe("writing editor source transactions", () => {
     const headerSlot = document.createElement("div");
     document.body.append(headerSlot);
     try {
-      await mount(
-        ["First cat and cat.", "", "Middle cat.", "", "Last cat."].join("\n"),
-        "",
-        headerSlot,
-      );
+      await mount(["cat cat.", "", "Last cat."].join("\n"), "", headerSlot);
       await act(() =>
         headerSlot
           .querySelector<HTMLButtonElement>('button[aria-label^="Search Document"]')!
@@ -354,7 +350,7 @@ describe("writing editor source transactions", () => {
       );
       const bar = container.querySelector(".scient-markdown-find-bar")!;
       await setField(bar.querySelector<HTMLInputElement>("input[aria-label='Find text']")!, "cat");
-      expect(bar.textContent).toContain("1 of 4");
+      expect(bar.textContent).toContain("1 of 3");
       await act(() => bar.querySelector<HTMLButtonElement>("[aria-label='Show replace']")!.click());
       await setField(
         bar.querySelector<HTMLInputElement>("input[aria-label='Replacement text']")!,
@@ -368,9 +364,10 @@ describe("writing editor source transactions", () => {
       });
       await act(() => {});
       expect(current).toContain("Last dog.");
-      // The positions found earlier no longer point at the same words.
-      expect(current).toContain("cat First cat and cat.");
-      expect(current).toContain("Middle cat.");
+      // The positions found earlier still hold the word "cat", but they are no
+      // longer the words that were matched: nothing in this paragraph changes.
+      expect(current).toContain("cat cat cat.");
+      expect(current).not.toContain("dog dog");
       expect(container.textContent).not.toContain("could not");
     } finally {
       headerSlot.remove();

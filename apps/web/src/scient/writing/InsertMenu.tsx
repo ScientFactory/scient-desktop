@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Table as TableIcon } from "lucide-react";
 
 import { Menu, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
@@ -93,7 +93,7 @@ export function InsertMenuContent(props: {
   const table =
     onInsertTable === undefined ? null : props.unavailableReason ? (
       <DockCommandItem disabled title={props.unavailableReason}>
-        Table
+        <MenuRow icon={<TableIcon className="size-4 text-muted-foreground" />} label="Table" />
       </DockCommandItem>
     ) : (
       <DocumentTableSizeMenu
