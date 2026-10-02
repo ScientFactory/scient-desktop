@@ -102,6 +102,8 @@ export function DocumentReaderControls(props: {
             value={pageInput}
             inputMode="numeric"
             aria-label="Page number"
+            // As wide as the longest page number, with two digits as the minimum.
+            style={{ width: `calc(${Math.max(2, String(props.pageCount).length)}ch + 12px)` }}
             disabled={!props.ready}
             onChange={(event) => setPageInput(event.target.value)}
             onBlur={commitPage}

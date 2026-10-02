@@ -53,18 +53,22 @@
   background: var(--border);
 }
 
+/* Previous and next page: narrower than the other buttons, same height. */
+.scient-pdf-toolbar-button.scient-pdf-action-page-step {
+  width: 20px;
+}
+
 .scient-pdf-page-control {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   color: var(--muted-foreground);
   font-size: 11px;
   white-space: nowrap;
 }
 
 .scient-pdf-page-control input {
-  width: 38px;
   height: 24px;
   border: 1px solid var(--border);
   border-radius: 5px;
