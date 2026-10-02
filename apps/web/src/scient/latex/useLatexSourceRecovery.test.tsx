@@ -37,7 +37,7 @@ describe("Source recovery without a Visual editor", () => {
       createTransport: () => ({
         read: async () => disk,
         write: async (intent) => {
-          write(intent);
+          await write(intent);
           if (intent.expectedRevision !== disk.revision) throw new Error("conflict");
           disk = { source: intent.source, revision: `${disk.revision}+` };
           return { revision: disk.revision };
@@ -71,7 +71,7 @@ describe("Source recovery without a Visual editor", () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     localStorage.clear();
     clearVisualDraft(key);
-    write.mockClear();
+    write.mockReset();
     disk = { source: base, revision: "r1" };
     presentation = "visual";
     lease = openLease();
@@ -155,6 +155,50 @@ describe("Source recovery without a Visual editor", () => {
     await mount();
     expect(recovery.recovery).toBeNull();
     expect(readPersistedVisualDraft(key)?.source).toBe(newer);
+  });
+  it("keeps later typing recoverable across an earlier save acknowledgement", async () => {
+    let releaseFirst!: () => void;
+    let releaseSecond!: () => void;
+    const first = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const second = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    write.mockImplementation((intent) => (intent.source === mine ? first : second));
+    await mount();
+    let firstLanded!: () => void;
+    const acknowledged = new Promise<void>((resolve) => {
+      firstLanded = resolve;
+    });
+    const stop = lease.subscribe(() => {
+      if (lease.getSnapshot().baselineSource === mine) firstLanded();
+    });
+    let saved!: Promise<boolean>;
+    await act(async () => {
+      lease.change(mine, lease.getSnapshot().editVersion);
+      saved = lease.flushNow();
+    });
+    expect(write).toHaveBeenCalledOnce();
+    await act(async () => {
+      lease.change(newer, lease.getSnapshot().editVersion);
+    });
+    flushVisualDraft(key);
+    expect(readPersistedVisualDraft(key)).toEqual({ source: newer, baseRevision: "r1" });
+    await act(async () => {
+      releaseFirst();
+      await acknowledged;
+    });
+    expect(disk.source).toBe(mine);
+    expect(lease.getSnapshot()).toMatchObject({ draftSource: newer, pending: true });
+    expect(readPersistedVisualDraft(key)).toEqual({ source: newer, baseRevision: "r1" });
+    await act(async () => {
+      releaseSecond();
+      expect(await saved).toBe(true);
+    });
+    expect(disk.source).toBe(newer);
+    expect(readPersistedVisualDraft(key)).toBeNull();
+    stop();
   });
   it("retains a newer checkpoint when an earlier save finishes", async () => {
     await mount();

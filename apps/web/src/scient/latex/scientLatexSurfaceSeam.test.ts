@@ -138,23 +138,6 @@ describe("Scient LaTeX file-preview seam", () => {
     expect(projectSource).toContain("useMarkdownPersistenceLease({");
   });
 
-  it("drops the Visual recovery copy only when the writer takes the version on disk", () => {
-    expect(surfaceSource).toMatch(
-      /next\.recoverySource === pendingSource && !next\.pending[\s\S]*?discardVisualDraft\(visualDraftKey,[\s\S]*?source: pendingSource[\s\S]*?visualPendingBaseRevisionRef\.current/u,
-    );
-    expect(surfaceSource).not.toContain("saveResolution");
-  });
-
-  it("owns one Visual journal base across intermediate save confirmations", () => {
-    expect(surfaceSource).toContain(
-      "if (!snapshot.pending) visualPendingBaseRevisionRef.current = snapshot.baselineRevision;",
-    );
-    expect(surfaceSource).toContain(
-      "visualPendingBaseRevisionRef.current ?? snapshot.baselineRevision",
-    );
-    expect(surfaceSource).toContain("checkpointVisualDraft(");
-  });
-
   it("passes truthful source and current PDF page context to forward SyncTeX", () => {
     // The inherited editor does not expose its cursor on main. Zero is
     // SyncTeX's specified unknown-column value, and avoids guessing visual
