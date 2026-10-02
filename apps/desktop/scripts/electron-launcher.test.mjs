@@ -16,6 +16,7 @@ import {
   makeDevelopmentLauncherScript,
   developmentBootstrapConfig,
   developmentBootstrapEnvironment,
+  developmentBootstrapPackageName,
   resolveDevelopmentCodeSigningIdentity,
   resolveElectronBinaryPath,
   resolveDevelopmentAppDisplayName,
@@ -232,6 +233,24 @@ describe("electron development launcher", () => {
       }),
       { VITE_DEV_SERVER_URL: "http://127.0.0.1:5733" },
     );
+  });
+
+  it("names each bundle identity's keychain entry separately", () => {
+    // macOS asks for the login password when an app reads a keychain entry
+    // another app created, so candidates must not share one.
+    const first = developmentBootstrapPackageName("scientdesktopfeaturea20261002");
+    const second = developmentBootstrapPackageName("scientdesktopfeatureb20261002");
+    assert.equal(first, "scient-next-dev-scientdesktopfeaturea20261002");
+    assert.notEqual(first, second);
+    assert.equal(developmentBootstrapPackageName(""), "scient-next-dev-local");
+    // The same checkout keeps its entry, and with it what it encrypted, across rebuilds.
+    assert.equal(developmentBootstrapPackageName("scientdesktopfeaturea20261002"), first);
+    const launcherSource = NodeFS.readFileSync(
+      new URL("./electron-launcher.mjs", import.meta.url),
+      "utf8",
+    );
+    assert.include(launcherSource, "name: developmentBootstrapPackageName(devBundleIdSuffix)");
+    assert.notInclude(launcherSource, '"scient-next-dev-bootstrap"');
   });
 
   it("declares why the macOS app needs protected access", () => {
