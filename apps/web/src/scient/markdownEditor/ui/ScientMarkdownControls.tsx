@@ -81,6 +81,7 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 import { WritingCommandIcon } from "../../writing/commandIcons";
+import { InsertMenu, type InsertMenuAction, type InsertMenuLayout } from "../../writing/InsertMenu";
 import { WRITING_COMMAND_LABELS } from "../../writing/commandNames";
 
 import {
@@ -447,16 +448,49 @@ function InsertBlockMenuItems({ controller }: { readonly controller: ScientMarkd
   );
 }
 
+/** Markdown's actions for the shared Insert menu: only what a Markdown file can hold. */
+function markdownInsertActions(controller: ScientMarkdownEditorView): readonly InsertMenuAction[] {
+  return [
+    ...INSERT_ITEMS.map((item) => ({
+      id: item.command,
+      label: item.label,
+      icon: commandIcon(item.command),
+      run: () => {
+        controller.execute(item.command);
+      },
+    })),
+    {
+      id: "hard-break",
+      label: "Line break",
+      icon: commandIcon("hard-break"),
+      shortcut: scientMarkdownShortcut("hardBreak"),
+      run: () => {
+        controller.execute("hard-break");
+      },
+    },
+  ];
+}
+
+/** Markdown's arrangement: the table picker first, a line break last. */
+const markdownInsertLayout: InsertMenuLayout = (item, table) => (
+  <>
+    {table}
+    {INSERT_ITEMS.map(({ command }) => item(command))}
+    <MenuSeparator />
+    {item("hard-break")}
+  </>
+);
+
 function InsertBlockMenu({ controller }: { readonly controller: ScientMarkdownEditorView }) {
   return (
-    <DockMenu
-      label={WRITING_COMMAND_LABELS.insert}
-      icon={<WritingCommandIcon command="insert" />}
-      groupLabel="Insert"
-      popupClassName="w-52"
-    >
-      <InsertBlockMenuItems controller={controller} />
-    </DockMenu>
+    <InsertMenu
+      actions={markdownInsertActions(controller)}
+      layout={markdownInsertLayout}
+      onInsertTable={(rows, columns) => {
+        controller.insertTable({ rows, columns });
+      }}
+      onReturnFocus={() => controller.view?.focus()}
+    />
   );
 }
 

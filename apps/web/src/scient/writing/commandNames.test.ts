@@ -12,7 +12,7 @@ const SURFACES = {
   "the Markdown bar": read("../markdownEditor/ui/ScientMarkdownControls.tsx"),
   "the Markdown slash menu": read("../markdownEditor/prosemirror/commands.ts"),
   "the LaTeX writing row": read("../latex/LatexVisualEditor.tsx"),
-  "the LaTeX Insert menu": read("../latex/LatexInsertMenu.tsx"),
+  "the shared Insert menu": read("./InsertMenu.tsx"),
 };
 
 describe("shared writing command names", () => {
