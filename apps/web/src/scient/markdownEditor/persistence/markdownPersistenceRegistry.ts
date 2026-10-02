@@ -1,5 +1,11 @@
 import {
-  MarkdownPersistenceCoordinator,
+  DocumentPersistenceCoordinator,
+  type DocumentPatchReconciliation,
+  type DocumentSourceEdit,
+  type DocumentSourceEditOutcome,
+  type ReconcileDocument,
+} from "@scientfactory/scient-document";
+import {
   reconcileMarkdown,
   type MarkdownExternalConflict,
   type MarkdownPersistenceSnapshot,
@@ -23,6 +29,13 @@ import {
 
 export type { MarkdownPersistenceTarget } from "./markdownPersistenceTransport";
 
+/**
+ * How one file's unsaved draft is combined with a verified outside change. The
+ * strategy is chosen once per file and stays with it for as long as the file
+ * is registered, whichever view or root opened it.
+ */
+export type DocumentReconcileStrategy = ReconcileDocument<DocumentPatchReconciliation>;
+
 export interface MarkdownPersistenceRegistryState extends MarkdownPersistenceTarget {
   readonly pending: boolean;
   readonly attention: boolean;
@@ -33,6 +46,8 @@ export interface MarkdownPersistenceLease {
   readonly getSnapshot: () => MarkdownPersistenceSnapshot;
   readonly subscribe: (listener: () => void) => () => void;
   readonly change: (source: string, basedOnVersion: number) => boolean;
+  /** A planned edit; refused with a reason, and the draft untouched, when it no longer fits. */
+  readonly applyEdit: (edit: DocumentSourceEdit) => DocumentSourceEditOutcome;
   readonly noteFreshnessHint: (reason?: string) => void;
   readonly flushNow: () => Promise<boolean>;
   readonly retry: () => Promise<boolean>;
@@ -48,7 +63,8 @@ export interface MarkdownPersistenceLease {
 
 interface RegistryEntry {
   readonly target: MarkdownPersistenceTarget;
-  readonly coordinator: MarkdownPersistenceCoordinator;
+  readonly coordinator: DocumentPersistenceCoordinator<DocumentPatchReconciliation>;
+  readonly reconcile: DocumentReconcileStrategy;
   readonly transport: MarkdownPersistenceTransport;
   readonly leases: Set<object>;
   readonly projections: Map<object, PrepareMarkdownExternalUpdate>;
@@ -78,6 +94,10 @@ export class MarkdownPersistenceRegistry {
         target: MarkdownPersistenceTarget,
       ) => MarkdownPersistenceTransport;
       readonly checkpointStore?: MarkdownDraftCheckpointStore;
+      /** The merge strategy for a file; Markdown's block merge where it names none. */
+      readonly reconcile?: (
+        target: MarkdownPersistenceTarget,
+      ) => DocumentReconcileStrategy | undefined;
       readonly cleanTtlMs?: number;
       readonly cleanLimit?: number;
       readonly debounceMs?: number;
@@ -89,6 +109,10 @@ export class MarkdownPersistenceRegistry {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   };
+
+  private strategyFor(target: MarkdownPersistenceTarget): DocumentReconcileStrategy {
+    return this.options.reconcile?.(target) ?? reconcileMarkdown;
+  }
 
   has(target: MarkdownPersistenceTarget): boolean {
     return this.entries.has(projectFileOperationKey(target));
@@ -146,7 +170,8 @@ export class MarkdownPersistenceRegistry {
                 ? checkpoint.draftSource
                 : checkpoint.baselineSource === checkpoint.draftSource
                   ? undefined
-                  : reconcileMarkdown(
+                  : // The same strategy that will own the file once it is open.
+                    this.strategyFor(target)(
                       checkpoint.baselineSource,
                       checkpoint.draftSource,
                       initial.contents,
@@ -183,8 +208,10 @@ export class MarkdownPersistenceRegistry {
     initialConflict?: MarkdownExternalConflict,
   ): RegistryEntry {
     const projections = new Map<object, PrepareMarkdownExternalUpdate>();
-    const coordinator = new MarkdownPersistenceCoordinator({
+    const reconcile = this.strategyFor(target);
+    const coordinator = new DocumentPersistenceCoordinator<DocumentPatchReconciliation>({
       ...(initialConflict === undefined ? {} : { initialConflict }),
+      reconcile,
       source: initial.contents,
       revision: initial.revision,
       ...(draftSource === undefined ? {} : { draftSource }),
@@ -204,6 +231,7 @@ export class MarkdownPersistenceRegistry {
     const entry: RegistryEntry = {
       target,
       coordinator,
+      reconcile,
       transport,
       leases: new Set(),
       projections,
@@ -237,6 +265,9 @@ export class MarkdownPersistenceRegistry {
     }
     const ownedEntry = entry;
     const token = {};
+    // One view may hold several projections on a lease (a source pane and a
+    // rendered pane). Each registration is its own participant.
+    const registrations = new Set<object>();
     let active = true;
     ownedEntry.leases.add(token);
     ownedEntry.lastUsed = Date.now();
@@ -252,13 +283,18 @@ export class MarkdownPersistenceRegistry {
         if (!active) return;
         active = false;
         ownedEntry.leases.delete(token);
-        ownedEntry.projections.delete(token);
+        for (const registration of registrations) ownedEntry.projections.delete(registration);
+        registrations.clear();
         ownedEntry.coordinator.resumeExternalUpdates();
         ownedEntry.lastUsed = Date.now();
         this.changed(ownedEntry);
       },
       change: (source, basedOnVersion) =>
         isActive() && ownedEntry.coordinator.change(source, basedOnVersion),
+      applyEdit: (edit) =>
+        isActive()
+          ? ownedEntry.coordinator.applyEdit(edit)
+          : { accepted: false, reason: "unavailable" },
       noteFreshnessHint: (reason) => {
         if (isActive()) ownedEntry.coordinator.noteFreshnessHint(reason);
       },
@@ -271,9 +307,14 @@ export class MarkdownPersistenceRegistry {
       restoreRecovery: () => isActive() && ownedEntry.coordinator.restoreRecovery(),
       holdForRename: () => (isActive() ? ownedEntry.coordinator.holdForRename() : null),
       registerExternalProjection: (prepare) => {
-        if (isActive()) ownedEntry.projections.set(token, prepare);
+        const registration = {};
+        if (isActive()) {
+          registrations.add(registration);
+          ownedEntry.projections.set(registration, prepare);
+        }
         return () => {
-          if (ownedEntry.projections.get(token) === prepare) ownedEntry.projections.delete(token);
+          registrations.delete(registration);
+          ownedEntry.projections.delete(registration);
           ownedEntry.coordinator.resumeExternalUpdates();
         };
       },

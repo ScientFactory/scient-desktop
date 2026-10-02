@@ -762,6 +762,9 @@ importers:
       '@scientfactory/scient-citations':
         specifier: workspace:*
         version: link:../../packages/scient-citations
+      '@scientfactory/scient-document':
+        specifier: workspace:*
+        version: link:../../packages/scient-document
       '@scientfactory/scient-markdown':
         specifier: workspace:*
         version: link:../../packages/scient-markdown

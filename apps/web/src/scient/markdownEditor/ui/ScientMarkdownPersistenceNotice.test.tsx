@@ -37,6 +37,7 @@ describe("Markdown persistence feedback", () => {
       getSnapshot: coordinator.getSnapshot,
       subscribe: coordinator.subscribe,
       change: (source, version) => coordinator.change(source, version),
+      applyEdit: coordinator.applyEdit.bind(coordinator),
       noteFreshnessHint: () => coordinator.noteFreshnessHint(),
       flushNow: () => coordinator.flushNow(),
       retry: () => coordinator.retry(),

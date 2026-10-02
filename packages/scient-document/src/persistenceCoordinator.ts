@@ -7,11 +7,21 @@ import {
   DocumentSourcePatchError,
   type DocumentSourceEdit,
   type DocumentSourceEditOutcome,
+  type DocumentSourcePatch,
 } from "./sourcePatch.ts";
 
 /** The combined source of a three-way merge, plus any format-specific detail. */
 export interface DocumentReconciliation {
   readonly source: string;
+}
+
+/**
+ * A merge that also says how to reach it from the local draft, so a view that
+ * shows the draft can apply the outside change in place instead of reloading.
+ */
+export interface DocumentPatchReconciliation extends DocumentReconciliation {
+  /** Changes from the local draft to `source`, in UTF-16 offsets. */
+  readonly patches: ReadonlyArray<DocumentSourcePatch>;
 }
 
 /**

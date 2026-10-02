@@ -24,6 +24,7 @@ export {
 export {
   DocumentPersistenceCoordinator,
   type DocumentExternalUpdate,
+  type DocumentPatchReconciliation,
   type DocumentPersistenceFailureKind,
   type DocumentPersistenceOptions,
   type DocumentPersistenceReadResult,
