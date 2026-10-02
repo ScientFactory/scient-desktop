@@ -971,7 +971,28 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     };
   }, [saveAndBuild, pdfVisible, build.toolchain?.kind]);
 
-  const mergesReaderBar = mode === "pdf" || mode === "visual";
+  // Every mode with a right-hand pane: PDF, Visual, and Split's PDF or Visual.
+  const mergesReaderBar = showRightPane;
+  const splitPreviewSwitch =
+    mode === "split" ? (
+      <div
+        className="scient-latex-modes scient-latex-split-modes"
+        role="group"
+        aria-label="Split right pane view"
+      >
+        {LATEX_SPLIT_PREVIEWS.map((candidate) => (
+          <button
+            key={candidate}
+            type="button"
+            className="scient-latex-mode-button"
+            aria-pressed={splitPreview === candidate}
+            onClick={() => selectSplitPreview(candidate)}
+          >
+            {LATEX_PREVIEW_MODE_LABELS[candidate]}
+          </button>
+        ))}
+      </div>
+    ) : null;
   const readerHosted = mergesReaderBar && hostedReaders > 0;
   const buildButton = (
     <ScientTooltip
@@ -1010,6 +1031,13 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   );
   const documentMenuItems = (
     <>
+      {mode === "split"
+        ? LATEX_SPLIT_PREVIEWS.map((candidate) => (
+            <DockCommandItem key={candidate} onClick={() => selectSplitPreview(candidate)}>
+              Split preview: {LATEX_PREVIEW_MODE_LABELS[candidate]}
+            </DockCommandItem>
+          ))
+        : null}
       {diagnostics.length > 0 || status.state === "failed" ? (
         <DockCommandItem onClick={() => setDiagnosticsOpen(true)}>
           <CircleAlert /> Build messages
@@ -1080,6 +1108,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   );
   const readerBarHost = (slot: HTMLElement | null): ReaderBarHost => ({
     slot,
+    beforeSearch: splitPreviewSwitch,
     trailing: buildButton,
     moreActions: documentMenuItems,
     onHosted: onReaderHosted,
@@ -1221,25 +1250,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         </div>
         <div ref={setReaderSlot} className="scient-latex-reader-slot" hidden={!mergesReaderBar} />
         <div className="scient-latex-actions">
-          {mode === "split" ? (
-            <div
-              className="scient-latex-modes scient-latex-split-modes"
-              role="group"
-              aria-label="Split right pane view"
-            >
-              {LATEX_SPLIT_PREVIEWS.map((candidate) => (
-                <button
-                  key={candidate}
-                  type="button"
-                  className="scient-latex-mode-button"
-                  aria-pressed={splitPreview === candidate}
-                  onClick={() => selectSplitPreview(candidate)}
-                >
-                  {LATEX_PREVIEW_MODE_LABELS[candidate]}
-                </button>
-              ))}
-            </div>
-          ) : null}
+          {readerHosted ? null : splitPreviewSwitch}
           {readerHosted ? null : buildButton}
           {readerHosted ? null : (
             // The same button and menu the reader controls use, so Rebuild and
@@ -1248,19 +1259,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               <DropdownMenuTrigger render={<ReaderButton label="More actions" />}>
                 <Ellipsis />
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {mode === "split"
-                  ? LATEX_SPLIT_PREVIEWS.map((candidate) => (
-                      <DockCommandItem
-                        key={candidate}
-                        onClick={() => selectSplitPreview(candidate)}
-                      >
-                        Split preview: {LATEX_PREVIEW_MODE_LABELS[candidate]}
-                      </DockCommandItem>
-                    ))
-                  : null}
-                {documentMenuItems}
-              </DropdownMenuContent>
+              <DropdownMenuContent align="end">{documentMenuItems}</DropdownMenuContent>
             </DropdownMenu>
           )}
         </div>
@@ -1404,12 +1403,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
             ) : null}
             {showVisual || visualOpened ? (
               <div style={{ display: showVisual ? "contents" : "none" }}>
-                <ReaderBarHostContext
-                  // In Split each pane keeps its own bar for now.
-                  value={
-                    mode === "split" ? null : readerBarHost(mode === "visual" ? readerSlot : null)
-                  }
-                >
+                <ReaderBarHostContext value={readerBarHost(showVisual ? readerSlot : null)}>
                   <Suspense fallback={<LatexPendingViewer label="Opening Visual view…" />}>
                     <LatexProjectVisualEditor
                       // The project's recovery copy is retired only when nothing is
@@ -1462,7 +1456,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               </div>
             ) : null}
             {activePreview === "pdf" ? (
-              <ReaderBarHostContext value={mode === "pdf" ? readerBarHost(readerSlot) : null}>
+              <ReaderBarHostContext value={readerBarHost(readerSlot)}>
                 <LatexViewerPane
                   descriptor={descriptor}
                   readerScope={

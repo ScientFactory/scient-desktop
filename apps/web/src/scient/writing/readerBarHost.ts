@@ -8,6 +8,8 @@ import { createContext, type ReactNode } from "react";
 export interface ReaderBarHost {
   /** Where the controls are drawn. Nothing is drawn while this is null. */
   readonly slot: HTMLElement | null;
+  /** Drawn just before Search. */
+  readonly beforeSearch?: ReactNode;
   /** Drawn between Search and More. */
   readonly trailing?: ReactNode;
   /** Added to the More menu after the reader's own actions. */
