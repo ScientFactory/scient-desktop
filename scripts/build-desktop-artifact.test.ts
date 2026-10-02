@@ -2,6 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import { createPackageWithOptions } from "@electron/asar";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -44,6 +45,7 @@ import {
   MacPasskeySigningConfigurationResolutionError,
   MissingMacPasskeyProvisioningProfileError,
   packWindowsServerAsar,
+  validatePackagedComputeBridges,
   preflightLinuxDesktopBuild,
   preflightMacDesktopBuild,
   preflightWindowsDesktopBuild,
@@ -86,6 +88,7 @@ import {
   WINDOWS_CONVERSATION_ASSOCIATION_INCLUDE,
   renderWindowsConversationAssociationInclude,
   WINDOWS_NATIVE_ASAR_UNPACK_GLOB,
+  COMPUTE_BRIDGE_ASAR_UNPACK_DIR,
   WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT,
   WINDOWS_SERVER_ASAR_IGNORE_GLOBS,
   WINDOWS_SERVER_EXTRA_RESOURCES,
@@ -724,10 +727,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       // stay archived. Other platforms retain electron-builder's defaults.
       assert.notProperty(mac, "asar");
       assert.notProperty(linux, "asar");
-      assert.notProperty(mac, "asarUnpack");
-      assert.notProperty(linux, "asarUnpack");
+      assert.deepStrictEqual(mac.asarUnpack, [`${COMPUTE_BRIDGE_ASAR_UNPACK_DIR}/**/*`]);
+      assert.deepStrictEqual(linux.asarUnpack, mac.asarUnpack);
       assert.deepStrictEqual(win.asar, { smartUnpack: false });
-      assert.deepStrictEqual(win.asarUnpack, [WINDOWS_NATIVE_ASAR_UNPACK_GLOB]);
+      assert.deepStrictEqual(win.asarUnpack, [
+        WINDOWS_NATIVE_ASAR_UNPACK_GLOB,
+        `${COMPUTE_BRIDGE_ASAR_UNPACK_DIR}/**/*`,
+      ]);
       assert.deepStrictEqual(winWithoutWslPrebuild.asar, win.asar);
       assert.deepStrictEqual(winWithoutWslPrebuild.asarUnpack, win.asarUnpack);
       assert.deepStrictEqual(mac.extraResources, DESKTOP_EXTRA_RESOURCES);
@@ -927,6 +933,55 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "!apps/desktop/prod-resources/synctex-runtime/**/*",
     ]);
   });
+
+  it.effect("packs both Compute bridge scripts as files external interpreters can read", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-compute-packaging-" });
+      const source = path.join(root, "source");
+      const bridgeDirectory = path.join(source, COMPUTE_BRIDGE_ASAR_UNPACK_DIR);
+      yield* fs.makeDirectory(bridgeDirectory, { recursive: true });
+      const names = ["scient_compute_bridge.py", "scient_matlab_engine_bridge.py"];
+      for (const name of names) yield* fs.writeFileString(path.join(bridgeDirectory, name), name);
+      for (const archive of ["app.asar", "server.asar"]) {
+        const asarPath = path.join(root, archive);
+        if (archive === "server.asar") {
+          yield* packWindowsServerAsar({ sourceDir: source, asarPath, arch: "x64" });
+        } else {
+          yield* Effect.promise(() =>
+            createPackageWithOptions(source, asarPath, {
+              unpackDir: COMPUTE_BRIDGE_ASAR_UNPACK_DIR,
+            }),
+          );
+        }
+        yield* validatePackagedComputeBridges(asarPath);
+        for (const name of names) {
+          const physicalPath = path.join(
+            `${asarPath}.unpacked`,
+            COMPUTE_BRIDGE_ASAR_UNPACK_DIR,
+            name,
+          );
+          assert.equal(yield* fs.readFileString(physicalPath), name);
+        }
+        const protocolPath = path.join(
+          `${asarPath}.unpacked`,
+          COMPUTE_BRIDGE_ASAR_UNPACK_DIR,
+          names[0]!,
+        );
+        yield* fs.writeFileString(protocolPath, "truncated");
+        const truncated = yield* validatePackagedComputeBridges(asarPath).pipe(Effect.flip);
+        assert.include(truncated.message, "truncated");
+        yield* fs.remove(protocolPath);
+        const missing = yield* validatePackagedComputeBridges(asarPath).pipe(Effect.flip);
+        assert.include(missing.message, "scient_compute_bridge.py");
+      }
+      const packedOnly = path.join(root, "packed-only.asar");
+      yield* Effect.promise(() => createPackageWithOptions(source, packedOnly, {}));
+      const packed = yield* validatePackagedComputeBridges(packedOnly).pipe(Effect.flip);
+      assert.include(packed.message, "must be a nonempty unpacked file");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 
   it("unpacks native binaries while keeping their JavaScript and metadata archived", () => {
     for (const file of [
@@ -2101,6 +2156,16 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const mac = config.mac as Record<string, unknown>;
       const extendInfo = mac.extendInfo as Record<string, unknown>;
       assert.match(String(extendInfo.NSMicrophoneUsageDescription), /dictate a message/u);
+      // Opening a file anywhere must not be silently denied in protected folders.
+      for (const key of [
+        "NSDesktopFolderUsageDescription",
+        "NSDocumentsFolderUsageDescription",
+        "NSDownloadsFolderUsageDescription",
+        "NSRemovableVolumesUsageDescription",
+        "NSNetworkVolumesUsageDescription",
+      ]) {
+        assert.match(String(extendInfo[key]), /^Scient reads files /u);
+      }
       assert.deepStrictEqual(extendInfo.CFBundleDocumentTypes, [
         {
           CFBundleTypeName: "Scient Conversation",

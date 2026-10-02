@@ -32,6 +32,8 @@ describe("Scient awareness", () => {
     expect(SCIENT_CORE_AWARENESS).toContain("Linked project `.html` files open directly");
     expect(SCIENT_CORE_AWARENESS).toContain("integrated browser with relative resources");
     expect(SCIENT_CORE_AWARENESS).toContain("prefer clickable project-relative Markdown links");
+    // Agents write links relative to their shell directory unless told not to.
+    expect(SCIENT_CORE_AWARENESS).toContain("Markdown links (never shell-relative)");
     expect(SCIENT_CORE_AWARENESS).toContain("temporary preview URLs");
     expect(SCIENT_CORE_AWARENESS).not.toContain("localhost");
     expect(SCIENT_CORE_AWARENESS).not.toContain("When LaTeX fits");

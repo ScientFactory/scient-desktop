@@ -5,10 +5,12 @@ type DroidModelRow = {
 };
 
 // Presentation only: never filter discovery or change availability. Unknown/new
-// model families remain visible until deliberately curated.
-const OLDER_CLAUDE = /^claude-(?:opus-4-(?:5|6)|sonnet-4-5)(?:-|$)/;
+// model families remain visible until deliberately curated. A model moves to
+// More models only once it is superseded in every catalog Scient runs: the
+// managed Droid 0.213.0 and the current 0.230.0 (checked 2026-10-01). So
+// claude-fable-5, glm-5.2 and grok-4.6 stay visible: they are the newest in 0.213.0.
+const OLDER_CLAUDE = /^claude-(?:opus-4-(?:5|6|7)|sonnet-4-5)(?:-|$)/;
 const ADDITIONAL_MODELS = new Set([
-  "claude-opus-4-7",
   "claude-opus-4-8",
   "claude-opus-4-8-fast",
   "claude-haiku-4-5-20251001",
@@ -16,7 +18,12 @@ const ADDITIONAL_MODELS = new Set([
   "gemini-3.6-flash",
   "gemini-3.5-flash",
   "gemini-3-flash-preview",
+  // Dropped by 0.230.0 but still offered by 0.213.0, next to kimi-k3.
   "kimi-k2.6",
+  "kimi-k2.5",
+  "glm-5.1",
+  "glm-5",
+  "glm-4.7",
   "grok-4.5",
 ]);
 

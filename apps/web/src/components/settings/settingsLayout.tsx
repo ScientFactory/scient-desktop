@@ -255,6 +255,7 @@ export function SettingsUnavailableGroup({
 export function SettingsRow({
   title,
   description,
+  descriptionSize = "default",
   status,
   resetAction,
   onResetOverride,
@@ -268,6 +269,7 @@ export function SettingsRow({
 }: Omit<ComponentPropsWithoutRef<"div">, "title"> & {
   title: ReactNode;
   description?: ReactNode;
+  descriptionSize?: "default" | "compact";
   status?: ReactNode;
   resetAction?: ReactNode;
   /** Replaces the default override clear for rows with side effects beyond the settings key. */
@@ -446,7 +448,12 @@ export function SettingsRow({
             </span>
           </div>
           {description ? (
-            <p className="max-w-xl text-sm leading-compact text-muted-foreground/80">
+            <p
+              className={cn(
+                "max-w-xl leading-compact text-muted-foreground/80",
+                descriptionSize === "compact" ? "text-xs" : "text-sm",
+              )}
+            >
               {description}
             </p>
           ) : null}

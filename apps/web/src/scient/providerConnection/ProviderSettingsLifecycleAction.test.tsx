@@ -152,16 +152,27 @@ function findButton(node: ReactNode): ActionButton | undefined {
   if (Array.isArray(node)) {
     return node.map(findButton).find((button) => button !== undefined);
   }
-  if (!isValidElement<{ onClick?: () => void; children?: ReactNode; action?: string }>(node)) {
+  if (
+    !isValidElement<{
+      onClick?: () => void;
+      children?: ReactNode;
+      render?: ReactNode;
+      action?: string;
+      labeled?: boolean;
+    }>(node)
+  ) {
     return undefined;
   }
   if (node.props.onClick) return node as ActionButton;
-  // Run the stateful managed-action child, while leaving button/tooltips as UI primitives.
-  if (typeof node.type === "function" && node.props.action !== undefined) {
+  // Traverse our action composition and primitive render slots without executing UI hooks.
+  if (
+    typeof node.type === "function" &&
+    (node.props.action !== undefined || node.props.labeled !== undefined)
+  ) {
     const props = node.props;
     return findButton((node.type as (componentProps: typeof props) => ReactNode)(props));
   }
-  return findButton(node.props.children);
+  return findButton(node.props.children) ?? findButton(node.props.render);
 }
 
 function settingsButton(value: ServerProvider, onManage: () => void) {
@@ -211,15 +222,15 @@ describe("ProviderSettingsLifecycleAction", () => {
     expect(disabled).toContain("lucide-settings-2");
     expect(
       render(provider({ source: "scient_managed", actions: ["update", "repair", "remove"] })),
-    ).toContain(">Update<");
+    ).toContain(">Manage<");
   });
 
-  it("names the provider on its short Install and Update actions", () => {
+  it("names the provider on its short Install and Manage actions", () => {
     const name = provider({ source: "missing" }).displayName ?? "Provider";
     expect(render(provider({ source: "missing" }))).toContain(`aria-label="Install ${name}"`);
     expect(
       render(provider({ source: "scient_managed", actions: ["update", "repair", "remove"] })),
-    ).toContain(`aria-label="Update ${name}"`);
+    ).toContain(`aria-label="Manage ${name}"`);
   });
 
   it.each([
@@ -245,20 +256,17 @@ describe("ProviderSettingsLifecycleAction", () => {
     expect(render(value)).not.toContain(">Enable<");
   });
 
-  it("renders a compact status while the enabled provider probe settles", () => {
+  it("keeps management available while the enabled provider probe settles", () => {
     const markup = render({
       ...provider({ source: "system" }),
       installed: false,
       probePending: true,
     });
 
-    expect(markup).toContain("lucide-loader");
-    expect(markup).toContain('role="status"');
-    expect(markup).toContain(">Checking<");
-    expect(markup).toContain("Codex status");
+    expect(markup).toContain(">Manage<");
     expect(markup).not.toContain(">Install<");
     expect(markup).not.toContain(">Sign in<");
-    expect(markup).not.toContain(">Manage<");
+    expect(markup).not.toContain(">Checking<");
   });
 
   it("keeps Codex browser sign-in direct and routes provider choosers through the dialog", () => {
@@ -335,13 +343,20 @@ describe("ProviderSettingsLifecycleAction", () => {
   });
 
   it.each(["install", "update"] as const)(
-    "starts %s once without opening the card; pending clicks only open details",
+    "routes %s through the header without duplicating runtime transactions",
     async (action) => {
       const value = provider({
         source: action === "install" ? "missing" : "scient_managed",
         actions: [action],
       });
       const onManage = vi.fn();
+      if (action === "update") {
+        settingsButton(value, onManage).props.onClick();
+        expect(onManage).toHaveBeenCalledExactlyOnceWith();
+        expect(commands.plan).not.toHaveBeenCalled();
+        expect(commands.start).not.toHaveBeenCalled();
+        return;
+      }
       const plan = deferred<ProviderRuntimePlan>();
       const started = deferred<ServerProvider>();
       commands.plan.mockReturnValue(plan.promise);
@@ -404,6 +419,69 @@ describe("ProviderSettingsLifecycleAction", () => {
     },
   );
 
+  it("opens the decision instead of starting an install that replaces a newer system runtime", async () => {
+    // Offered as a first installation; the plan found a newer system runtime.
+    const value = provider({ source: "missing" });
+    const onManage = vi.fn();
+    commands.plan.mockResolvedValue({
+      instanceId: value.instanceId,
+      action: "install",
+      target: "darwin-arm64",
+      version: "0.148.0",
+      downloadBytes: 42,
+      sourceLabel: "Official release",
+      catalogRevision: "reviewed:1:older-than-system",
+      message: "Scient-managed Codex 0.148.0 is older than your installed Codex 0.150.0.",
+      systemVersion: "0.150.0",
+      olderThanSystem: true,
+    } satisfies ProviderRuntimePlan);
+
+    await settingsButton(value, onManage).props.onClick();
+
+    expect(commands.start).not.toHaveBeenCalled();
+    expect(commands.toast).not.toHaveBeenCalled();
+    // The dialog plans the install again and shows both versions with Back / Use Scient-managed.
+    expect(onManage).toHaveBeenCalledExactlyOnceWith("install");
+  });
+
+  it("opens the decision instead of starting an install over a system runtime of unknown version", async () => {
+    const value = provider({ source: "missing" });
+    const onManage = vi.fn();
+    commands.plan.mockResolvedValue({
+      instanceId: value.instanceId,
+      action: "install",
+      target: "darwin-arm64",
+      version: "0.148.0",
+      downloadBytes: 42,
+      sourceLabel: "Official release",
+      catalogRevision: "reviewed:1:system-version-unknown",
+      message: "Scient does not know which Codex version, if any, is installed on this computer.",
+      systemVersion: null,
+      olderThanSystem: false,
+    } satisfies ProviderRuntimePlan);
+
+    await settingsButton(value, onManage).props.onClick();
+
+    expect(commands.start).not.toHaveBeenCalled();
+    expect(onManage).toHaveBeenCalledExactlyOnceWith("install");
+  });
+
+  it("opens the decision when the system runtime was upgraded after the plan", async () => {
+    const value = provider({ source: "missing" });
+    const onManage = vi.fn();
+    commands.start.mockRejectedValue(
+      Object.assign(new Error("The provider setup plan changed."), {
+        reason: "runtime_plan_stale",
+      }),
+    );
+
+    await settingsButton(value, onManage).props.onClick();
+
+    expect(commands.start).toHaveBeenCalledTimes(1);
+    expect(commands.toast).not.toHaveBeenCalled();
+    expect(onManage).toHaveBeenCalledExactlyOnceWith("install");
+  });
+
   it.each(["install", "update", "repair", "remove"] as const)(
     "opens existing details for active or failed %s without starting/retrying it",
     (action) => {
@@ -418,7 +496,7 @@ describe("ProviderSettingsLifecycleAction", () => {
           message: status === "failed" ? "Verification failed." : "Working.",
         });
         settingsButton(value, onManage).props.onClick();
-        expect(onManage).toHaveBeenLastCalledWith(undefined);
+        expect(onManage).toHaveBeenLastCalledWith();
       }
       expect(onManage).toHaveBeenCalledTimes(4);
       expect(commands.plan).not.toHaveBeenCalled();
@@ -448,17 +526,17 @@ describe("ProviderSettingsLifecycleAction", () => {
       render(externalUpdate, { onRunExternalUpdate: vi.fn() }),
       render(managedUpdate),
     ]) {
-      expect(markup).toContain(">Update</button>");
+      expect(markup).not.toContain(">Update</button>");
       expect(markup).toContain('aria-label="Manage Codex"');
       expect(markup).toContain("lucide-settings-2");
-      expect(markup).not.toContain(">Manage</button>");
+      expect(markup).toContain(">Manage</button>");
     }
 
     const updatingMarkup = render(externalUpdate, {
       externalUpdateRunning: true,
       onRunExternalUpdate: vi.fn(),
     });
-    expect(updatingMarkup).toContain(">Updating</button>");
+    expect(updatingMarkup).toContain(">Manage</button>");
     const manageButtonEnd = updatingMarkup.indexOf('aria-label="Manage Codex"');
     const manageButtonStart = updatingMarkup.lastIndexOf("<button", manageButtonEnd);
     const manageButtonClose = updatingMarkup.indexOf("</button>", manageButtonEnd);

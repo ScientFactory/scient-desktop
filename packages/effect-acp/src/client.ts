@@ -38,6 +38,10 @@ export interface AcpClientOptions {
   ) => AcpSchema.SessionNotification;
   /** Reports input failures and process exits, even between requests. */
   readonly onTermination?: (error: AcpError.AcpError) => Effect.Effect<void, never, never>;
+  /** Reports each request as it is sent (see the protocol option). */
+  readonly onRequest?: (request: AcpProtocol.AcpRequestSent) => Effect.Effect<void>;
+  /** Reports each response in arrival order with session updates (see the protocol option). */
+  readonly onResponse?: (response: AcpProtocol.AcpResponseArrival) => Effect.Effect<void>;
 }
 
 type AcpClientRaw = {
@@ -419,6 +423,8 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
       ? { transformSessionUpdate: options.transformSessionUpdate }
       : {}),
     ...(options.onTermination ? { onTermination: options.onTermination } : {}),
+    ...(options.onRequest ? { onRequest: options.onRequest } : {}),
+    ...(options.onResponse ? { onResponse: options.onResponse } : {}),
     onNotification: dispatchNotification,
     onExtRequest: dispatchExtRequest,
   });

@@ -13,7 +13,7 @@ import { useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
-import { resolvePathLinkTarget } from "~/terminal-links";
+import { workspaceFileHostPath } from "~/components/files/filePath";
 
 import { shouldOpenInBrowserByDefault } from "./fileOpeningPolicy";
 
@@ -50,7 +50,7 @@ export function useScientFileOpening(input: {
             threadRef,
             workspaceRoot,
             relativePath,
-            filePath: resolvePathLinkTarget(relativePath, workspaceRoot),
+            filePath: workspaceFileHostPath(relativePath, workspaceRoot),
             httpBaseUrl: environmentHttpBaseUrl,
             createAssetUrl,
             openPreview,

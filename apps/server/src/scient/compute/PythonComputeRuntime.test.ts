@@ -166,6 +166,30 @@ describe("managed Python probe ownership", () => {
 });
 
 describe("python bridge location", () => {
+  it.each(["app.asar", "server.asar"])("uses physical bridge files beside %s", (archive) => {
+    const directory = NodePath.join("/installed", archive, "apps/server/dist");
+    expect(bridgePathCandidates(directory)).toEqual([
+      NodePath.join(
+        "/installed",
+        `${archive}.unpacked`,
+        "apps/server/dist/bridge",
+        BRIDGE_SCRIPT_NAME,
+      ),
+      NodePath.join(
+        "/installed",
+        `${archive}.unpacked`,
+        "apps/server/dist",
+        STAGED_BRIDGE_DIRECTORY,
+        BRIDGE_SCRIPT_NAME,
+      ),
+    ]);
+    expect(
+      bridgePathCandidates(
+        directory.replace(`${archive}${NodePath.sep}`, `${archive}.unpacked${NodePath.sep}`),
+      ),
+    ).toEqual(bridgePathCandidates(directory));
+  });
+
   it("looks beside the source before anything a build staged", () => {
     expect(bridgePathCandidates("/app")).toEqual([
       NodePath.join("/app", "bridge", BRIDGE_SCRIPT_NAME),

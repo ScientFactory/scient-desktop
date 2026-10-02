@@ -1,4 +1,4 @@
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { ScopedThreadRef, ScientThreadQueueItem } from "@t3tools/contracts";
 import type { ComposerThreadDraftState, DraftId } from "../../composerDraftStore";
 import { migrateQueueComposerContext } from "./composerSnapshot";
 
@@ -6,9 +6,11 @@ export type QueueEditSession = {
   key: string;
   journalKey: string;
   stashed?: boolean;
-  composerSeparated?: boolean;
-  originalTarget: ScopedThreadRef;
-  editTarget: DraftId;
+  transferred?: boolean;
+  extractedItem?: ScientThreadQueueItem | undefined;
+  composerSeparated?: boolean | undefined;
+  originalTarget: ScopedThreadRef | DraftId;
+  editTarget: ScopedThreadRef | DraftId;
   queueItemId: string;
   editToken: string;
   ordinary: ComposerThreadDraftState;

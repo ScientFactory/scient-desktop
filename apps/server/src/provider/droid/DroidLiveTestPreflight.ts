@@ -3,10 +3,13 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeUtil from "node:util";
 import catalog from "../../scient/providerLifecycle/bundled-managed-runtime-catalog.json" with { type: "json" };
 
-/** These fixtures qualify the bundled release, whose wire behavior is version-specific. */
+/**
+ * These fixtures qualify the bundled release, whose wire behavior is
+ * version-specific. SCIENT_DROID_TEST_VERSION names another release under test.
+ */
 export async function qualifyDroidTestBinary(binary: string | undefined): Promise<void> {
   if (!binary) return;
-  const expected = catalog.providers.droid.version;
+  const expected = process.env.SCIENT_DROID_TEST_VERSION?.trim() || catalog.providers.droid.version;
   const { stdout } = await NodeUtil.promisify(NodeChildProcess.execFile)(binary, ["--version"], {
     timeout: 5_000,
     maxBuffer: 64 * 1024,

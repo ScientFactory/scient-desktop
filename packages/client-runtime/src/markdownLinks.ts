@@ -14,6 +14,9 @@ const POSITION_ONLY_PATTERN = /^\d+(?::\d+)?$/;
 const INLINE_CODE_DISQUALIFIER_PATTERN = /[\s`]/;
 const PATH_SEPARATOR_PATTERN = /[\\/]/;
 const FILE_EXTENSION_PATTERN = /\.[A-Za-z0-9_-]+$/;
+// A final dot between digits marks a version or model id (`glm-5.3`,
+// `Qwen2.5-Coder`), not an extension. `ls.1` and `libfoo.so.1` stay files.
+const VERSION_SUFFIX_PATTERN = /\d\.\d[^.]*$/;
 const NUMERIC_DOTTED_PATTERN = /^\d+(?:\.\d+)+$/;
 // Standard OS and dev-container roots; deliberately excludes app-route-ish
 // prefixes like /app/ or /chat/ so SPA routes never read as files.
@@ -176,6 +179,7 @@ export function inlineCodeFilePathCandidate(codeText: string): string | null {
         .replace(/[/\\]+$/, "")
         .split(/[\\/]/)
         .at(-1) ?? "";
+    if (VERSION_SUFFIX_PATTERN.test(basename)) return null;
     if (!hasPosition && !FILE_EXTENSION_PATTERN.test(basename)) return null;
   }
   return candidate;
@@ -324,18 +328,84 @@ export function fileBasename(path: string): string {
   return separatorIndex >= 0 ? trimmed.slice(separatorIndex + 1) : trimmed;
 }
 
+const UNC_ROOT_PATTERN = /^\\\\[^\\/]+[\\/][^\\/]+/;
+const WINDOWS_DRIVE_ROOT_PATTERN = /^[A-Za-z]:(?=[\\/])/;
+
+/**
+ * Resolves `.` and `..` segments in an absolute host path without climbing
+ * above its root, keeping the path's own separator style:
+ *
+ * - `C:\` and `C:/` drive paths and `\\host\share` UNC paths are Windows
+ *   paths, where both separators divide segments;
+ * - `/` paths are POSIX paths, where only `/` divides segments and a
+ *   backslash is an ordinary filename character.
+ *
+ * A path starting with exactly `//` is ambiguous (a POSIX path, or a Windows
+ * UNC share written with forward slashes) and a relative path has no base
+ * here, so both are returned unchanged.
+ */
+export function collapseAbsoluteFilePath(path: string): string {
+  const source = stripSlashPrefixedWindowsDrive(path);
+  let root: string;
+  let separator: string;
+  let splitter: RegExp;
+  const unc = source.match(UNC_ROOT_PATTERN);
+  const drive = source.match(WINDOWS_DRIVE_ROOT_PATTERN);
+  if (unc) {
+    separator = "\\";
+    splitter = /[\\/]+/;
+    root = unc[0].replaceAll("/", "\\");
+  } else if (drive) {
+    separator = source.charAt(drive[0].length);
+    splitter = /[\\/]+/;
+    root = `${drive[0]}${separator}`;
+  } else if (source.startsWith("/") && !/^\/\/(?!\/)/.test(source)) {
+    separator = "/";
+    splitter = /\/+/;
+    root = "/";
+  } else {
+    return path;
+  }
+  const rest = source.slice(unc ? unc[0].length : root.length);
+  const segments: string[] = [];
+  for (const segment of rest.split(splitter)) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") segments.pop();
+    else segments.push(segment);
+  }
+  if (unc) return segments.length > 0 ? `${root}\\${segments.join("\\")}` : root;
+  return `${root}${segments.join(separator)}`;
+}
+
+/**
+ * Writes a Windows path (drive or UNC) with `/` separators for comparison. A
+ * POSIX path is returned as is: there a backslash is part of a file name.
+ */
+function portableSeparators(path: string): string {
+  return WINDOWS_DRIVE_ROOT_PATTERN.test(path) || path.startsWith("\\\\")
+    ? path.replaceAll("\\", "/")
+    : path;
+}
+
+/**
+ * The path relative to the workspace root, or null when the path is not inside
+ * it. Dot segments are resolved first, so `<root>/../notes.md` is correctly
+ * outside the workspace rather than the workspace path `../notes.md`.
+ */
 export function workspaceRelativeFilePath(
   path: string,
   workspaceRoot: string | null | undefined,
 ): string | null {
   if (!workspaceRoot) return null;
-  const normalizedPath = stripSlashPrefixedWindowsDrive(path.replaceAll("\\", "/"));
-  const normalizedRoot = stripSlashPrefixedWindowsDrive(
-    workspaceRoot.replaceAll("\\", "/"),
-  ).replace(/\/+$/, "");
+  const normalizedPath = portableSeparators(collapseAbsoluteFilePath(path));
+  const normalizedRoot = portableSeparators(collapseAbsoluteFilePath(workspaceRoot)).replace(
+    /\/+$/,
+    "",
+  );
   const caseInsensitive = isWindowsAbsolutePath(stripSlashPrefixedWindowsDrive(workspaceRoot));
   const pathForCompare = caseInsensitive ? normalizedPath.toLowerCase() : normalizedPath;
   const rootForCompare = caseInsensitive ? normalizedRoot.toLowerCase() : normalizedRoot;
+  if (pathForCompare.replace(/\/+$/, "") === rootForCompare) return ".";
   if (!pathForCompare.startsWith(`${rootForCompare}/`)) return null;
   return normalizedPath.slice(normalizedRoot.length + 1);
 }

@@ -80,7 +80,7 @@ import { formatRelativeTime } from "../../timestampFormat";
  * First-run welcome wizard. Rendered over the workspace at `/welcome` on a
  * fresh install (no completed-onboarding flag, empty workspace). Flow per the
  * onboarding overhaul spec: connection choice → sign-in/pair (remote paths) →
- * agent setup with inline install terminal → project import → main screen.
+ * native provider setup with an inline CLI terminal → project import → main screen.
  * Every step past the connection gate is skippable; the whole wizard is
  * re-runnable by clearing the flag.
  */
@@ -95,17 +95,21 @@ const SCAN_LIMIT_MESSAGE = "Scan limit reached. Some projects or conversations m
 export function WelcomeWizard({
   localAvailable,
   onDone,
+  resumeEnvironmentId,
 }: {
   /** Whether this client is authenticated to the server serving the app. */
   readonly localAvailable: boolean;
+  readonly resumeEnvironmentId?: EnvironmentId | undefined;
   readonly onDone: (projectRef?: ScopedProjectRef) => void | Promise<void>;
 }) {
   const completeOnboarding = useCompleteOnboarding();
-  const [step, setStep] = useState<WizardStep>("connection");
+  const [step, setStep] = useState<WizardStep>(resumeEnvironmentId ? "agents" : "connection");
   const { environments } = useEnvironments();
   const [selection, setSelection] = useState<ReadonlySet<EnvironmentId> | null>(null);
   const autoSelectedComputers = useRef(new Set<EnvironmentId>());
-  const [setupIds, setSetupIds] = useState<readonly EnvironmentId[]>([]);
+  const [setupIds, setSetupIds] = useState<readonly EnvironmentId[]>(
+    resumeEnvironmentId ? [resumeEnvironmentId] : [],
+  );
   const [isImporting, setIsImporting] = useState(false);
   const finishingPromiseRef = useRef<Promise<boolean> | null>(null);
   const completionErrorToastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
@@ -196,6 +200,7 @@ export function WelcomeWizard({
   return (
     <Dialog open disablePointerDismissal onOpenChange={(_, event) => event.cancel()}>
       <WizardPopup
+        size="wide"
         bottomStickOnMobile={false}
         showCloseButton={false}
         initialFocus={() => document.getElementById("onboarding-pairing-url") ?? true}
@@ -620,7 +625,7 @@ function PairingForm({
 
 // ── Step 3: agents ───────────────────────────────────────────
 
-const PRIMARY_AGENT_DRIVERS = ["claudeAgent", "codex"] as const;
+const PRIMARY_AGENT_DRIVERS = ["codex", "claudeAgent"] as const;
 type OnboardingAgentDriver = (typeof PRIMARY_AGENT_DRIVERS)[number];
 
 /** Setup values stay fixed while provider probes refresh the surrounding cards. */
@@ -633,13 +638,7 @@ interface AgentTerminalSession {
   readonly keybindings: ServerConfig["keybindings"];
 }
 
-/**
- * Claude Code and Codex use live probe status. Install opens the built-in
- * terminal inline with the vendor's standalone installer pre-typed. The update
- * RPC can't install a binary that isn't there yet (it infers the installer from
- * the installed binary's path), and the terminal also handles the interactive
- * login that follows.
- */
+/** Native CLI setup for the hosted connection wizard. */
 function AgentsStep({
   environmentIds,
   onContinue,
@@ -649,8 +648,11 @@ function AgentsStep({
 }) {
   const { environments } = useEnvironments();
   return (
-    <StepShell title="Your agents" description="Agents available on your selected computers.">
-      <ScrollArea scrollFade className="mt-5 h-auto max-h-96">
+    <StepShell
+      title="Connect your agents"
+      description="Choose an agent to start coding. You can add more later."
+    >
+      <ScrollArea scrollFade className="mt-5 h-auto max-h-[min(32rem,55dvh)]">
         <div className="space-y-5 pr-3">
           {environmentIds.map((environmentId) => (
             <ConnectedAgentsStep
@@ -763,20 +765,21 @@ function AgentCard({
 }) {
   const meta = getDriverOption(ProviderDriverKind.make(driver));
   const Icon = meta?.icon;
-  const displayName = driver === "claudeAgent" ? "Claude Code" : (meta?.label ?? driver);
+  const displayName =
+    provider?.displayName || (driver === "claudeAgent" ? "Claude Code" : (meta?.label ?? driver));
   const summary = getProviderSummary(provider);
   const providerState = getOnboardingProviderState(provider);
 
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-3 py-2.5">
+    <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-4">
       {Icon ? (
         <Icon className={cn("size-5 shrink-0", driver !== "claudeAgent" && "fill-foreground")} />
       ) : null}
       <div className="min-w-0 flex-1">
         <span className="block text-sm font-medium text-foreground">{displayName}</span>
         <p className="mt-0.5 text-xs leading-relaxed break-words whitespace-pre-wrap text-muted-foreground">
-          {summary.headline}
-          {summary.detail ? ` · ${summary.detail}` : ""}
+          {providerState === "ready" ? "Ready to code." : summary.headline}
+          {providerState !== "ready" && summary.detail ? ` · ${summary.detail}` : ""}
         </p>
       </div>
       <div className="shrink-0">

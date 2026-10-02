@@ -124,6 +124,7 @@ import {
 } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useScratchProject } from "../hooks/useScratchProject";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings } from "../hooks/useSettings";
@@ -1527,11 +1528,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const accessibleTitle = isRenaming ? null : <span className="sr-only">{thread.title}</span>;
 
   // Stacks show their layer count; multiple unrelated links show their total count.
-  // Plain clicks open T3; individual PR links also support opening the host in a new tab.
+  // Either opens the thread's pull requests tab; a single PR link opens that PR and still
+  // supports opening the host in a new tab.
   const prBadgeShape = supportsMultiplePullRequests
     ? resolveThreadPullRequestBadge(thread.pullRequests)
     : null;
-  const handlePrStackClick = useCallback(() => {
+  const handlePrListClick = useCallback(() => {
     useRightPanelStore.getState().open(threadRef, "pull-requests");
     if (!props.isActive) onThreadActivate(threadRef);
   }, [onThreadActivate, props.isActive, threadRef]);
@@ -1543,7 +1545,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         number={pr?.number ?? currentLinkedPr?.number}
         url={pr?.url ?? currentLinkedPr?.url}
         status={prStatus}
-        onOpenStack={handlePrStackClick}
+        onOpenList={handlePrListClick}
         onOpenPullRequest={handlePrClick}
       />
     ) : null;
@@ -2275,6 +2277,12 @@ export default function Sidebar() {
   );
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const { scratchEnvironmentId, startScratchThread } = useScratchProject();
+  const scratchTargetEnvironmentId = scratchEnvironmentId(
+    newThreadContext.activeThread?.environmentId ??
+      newThreadContext.activeDraftThread?.environmentId ??
+      primaryEnvironmentId,
+  );
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
@@ -3941,7 +3949,7 @@ export default function Sidebar() {
       const selectedRefs = selectedThreads.map((thread) =>
         scopeThreadRef(thread.environmentId, thread.id),
       );
-      if (await handleSectionMenuAction(clicked.value, selectedRefs)) {
+      if (await handleSectionMenuAction(clicked.value, selectedRefs, position)) {
         clearSelection();
         return;
       }
@@ -4183,7 +4191,7 @@ export default function Sidebar() {
         );
         if (clicked._tag === "Failure") return;
         // SCIENT-FORK:START
-        if (await handleSectionMenuAction(clicked.value, [threadRef])) return;
+        if (await handleSectionMenuAction(clicked.value, [threadRef], position)) return;
         if (handleConversationExportMenuAction(clicked.value, threadRef)) return;
         // SCIENT-FORK:END
         if (clicked.value?.startsWith("snooze:")) {
@@ -4499,8 +4507,8 @@ export default function Sidebar() {
     if (isMobile) setOpenMobile(false);
     openCommandPalette({ open: "new-thread-in" });
   }, [isMobile, newThreadContext, opensNewThreadTargetPicker, setOpenMobile]);
-  // SCIENT-FORK:START — the New thread row honours the Shift+click its tooltip
-  // advertises: straight into the current project, skipping the picker.
+  // SCIENT-FORK:START — Shift+click starts straight in the current project,
+  // skipping the picker.
   const handleNewThreadRowClick = useCallback(
     (event: { readonly shiftKey: boolean }) => {
       if (!event.shiftKey || projectGroups.length === 0) {
@@ -4518,6 +4526,22 @@ export default function Sidebar() {
     [handleNewThreadClick, isMobile, newThreadContext, projectGroups.length, setOpenMobile],
   );
   // SCIENT-FORK:END
+
+  const handleNewWithoutProject = useCallback(async () => {
+    if (scratchTargetEnvironmentId === null) return;
+    if (isMobile) setOpenMobile(false);
+    try {
+      await startScratchThread(scratchTargetEnvironmentId);
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not start without a project",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    }
+  }, [isMobile, scratchTargetEnvironmentId, setOpenMobile, startScratchThread]);
 
   // chat.newLocal is a valid fallback label only when both commands create
   // directly. When the picker is available, it is advertised separately as
@@ -4768,6 +4792,9 @@ export default function Sidebar() {
             {/* SCIENT-FORK:START — New thread gets its own labelled row below search. */}
             <SidebarNewThreadRow
               onNewThread={handleNewThreadRowClick}
+              onNewWithoutProject={
+                scratchTargetEnvironmentId === null ? null : handleNewWithoutProject
+              }
               shortcutLabel={newThreadShortcutLabel}
               inProjectShortcutLabel={newThreadInProjectShortcutLabel}
               showInProjectHint={showNewThreadInProjectHint}
@@ -5256,7 +5283,7 @@ export default function Sidebar() {
       </SidebarContent>
       <SidebarChromeFooter />
       {/* SCIENT-FORK:START */}
-      {sections.dialog}
+      {sections.popover}
       {/* SCIENT-FORK:END */}
     </>
   );

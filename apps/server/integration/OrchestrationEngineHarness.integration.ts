@@ -35,6 +35,8 @@ import * as ProviderSessionRuntime from "../src/persistence/ProviderSessionRunti
 import { makeSqlitePersistenceLive } from "../src/persistence/Layers/Sqlite.ts";
 import { ProjectionPendingApprovalRepository } from "../src/persistence/Services/ProjectionPendingApprovals.ts";
 import { makeAdapterRegistryMock } from "../src/provider/testUtils/providerAdapterRegistryMock.ts";
+import type { ProviderAdapterError } from "../src/provider/Errors.ts";
+import type { ProviderAdapterShape } from "../src/provider/Services/ProviderAdapter.ts";
 import { ProviderAdapterRegistry } from "../src/provider/Services/ProviderAdapterRegistry.ts";
 import { makeProviderRegistryLayer } from "../src/provider/testUtils/providerRegistryMock.ts";
 import { ProviderSessionDirectoryLive } from "../src/provider/Layers/ProviderSessionDirectory.ts";
@@ -237,6 +239,12 @@ export interface OrchestrationIntegrationHarness {
 interface MakeOrchestrationIntegrationHarnessOptions {
   readonly provider?: ProviderDriverKind;
   readonly realCodex?: boolean;
+  /** A real adapter for `provider`, built in the harness's server environment. */
+  readonly makeAdapter?: Effect.Effect<
+    ProviderAdapterShape<ProviderAdapterError>,
+    never,
+    ServerConfig | Layer.Success<typeof NodeServices.layer> | Scope.Scope
+  >;
   /** Tracer for every fiber the harness runtime runs, including reactors. */
   readonly tracer?: Tracer.Tracer;
 }
@@ -250,11 +258,13 @@ export const makeOrchestrationIntegrationHarness = (
 
     const provider = options?.provider ?? ProviderDriverKind.make("codex");
     const useRealCodex = options?.realCodex === true;
-    const adapterHarness = useRealCodex
-      ? null
-      : yield* makeTestProviderAdapterHarness({
-          provider,
-        });
+    const makeAdapter = options?.makeAdapter;
+    const adapterHarness =
+      useRealCodex || makeAdapter !== undefined
+        ? null
+        : yield* makeTestProviderAdapterHarness({
+            provider,
+          });
     const fakeRegistry = adapterHarness
       ? Layer.succeed(
           ProviderAdapterRegistry,
@@ -295,20 +305,31 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(NodeServices.layer),
       Layer.provideMerge(providerSessionDirectoryLayer),
     );
+    const realAdapterRegistry =
+      makeAdapter === undefined
+        ? null
+        : Layer.effect(
+            ProviderAdapterRegistry,
+            Effect.map(makeAdapter, (adapter) => makeAdapterRegistryMock({ [provider]: adapter })),
+          ).pipe(
+            Layer.provideMerge(ServerConfig.layerTest(workspaceDir, rootDir)),
+            Layer.provideMerge(NodeServices.layer),
+          );
     const providerEventLoggersLayer = Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers);
-    const providerLayer = useRealCodex
-      ? makeProviderServiceLive().pipe(
-          Layer.provide(providerSessionDirectoryLayer),
-          Layer.provide(realCodexRegistry),
-          Layer.provide(AnalyticsService.layerTest),
-          Layer.provide(providerEventLoggersLayer),
-        )
-      : makeProviderServiceLive().pipe(
-          Layer.provide(providerSessionDirectoryLayer),
-          Layer.provide(fakeRegistry!),
-          Layer.provide(AnalyticsService.layerTest),
-          Layer.provide(providerEventLoggersLayer),
-        );
+    const providerLayer =
+      useRealCodex || realAdapterRegistry !== null
+        ? makeProviderServiceLive().pipe(
+            Layer.provide(providerSessionDirectoryLayer),
+            Layer.provide(realAdapterRegistry ?? realCodexRegistry),
+            Layer.provide(AnalyticsService.layerTest),
+            Layer.provide(providerEventLoggersLayer),
+          )
+        : makeProviderServiceLive().pipe(
+            Layer.provide(providerSessionDirectoryLayer),
+            Layer.provide(fakeRegistry!),
+            Layer.provide(AnalyticsService.layerTest),
+            Layer.provide(providerEventLoggersLayer),
+          );
     const providerRegistryLayer = makeProviderRegistryLayer();
 
     const checkpointStoreLayer = CheckpointStore.layer.pipe(Layer.provide(VcsDriverRegistry.layer));

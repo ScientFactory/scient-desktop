@@ -1,6 +1,8 @@
+import { ConnectionTransientError } from "@t3tools/client-runtime/connection";
 import { CommandId, EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
+  FORK_RECONNECT_DELAYS_MS,
   createForkAttemptStore,
   deliverForkAttempt,
   forkAttemptKey,
@@ -41,6 +43,84 @@ function fixture() {
     key: forkAttemptKey("env", "origin", "answer"),
   };
 }
+
+describe("a fork request that loses its connection", () => {
+  const connectionLost = () =>
+    new ConnectionTransientError({ reason: "transport", detail: "Test environment disconnected." });
+
+  it("repeats the same command until the server answers", async () => {
+    const { attempt, store, key } = fixture();
+    const wait = vi.fn(async (_milliseconds: number) => {});
+    const dispatch = vi
+      .fn<(current: ForkAttempt) => Promise<Readonly<Record<string, string>>>>()
+      .mockRejectedValueOnce(connectionLost())
+      .mockRejectedValueOnce(connectionLost())
+      .mockResolvedValue({ "origin-image": "fork-image" });
+
+    const delivered = await deliverForkAttempt({
+      attempt,
+      store,
+      key,
+      discardDraft: vi.fn(),
+      dispatch,
+      wait,
+    });
+
+    expect(delivered.ready).toBe(true);
+    expect(delivered.attachmentIdMap).toEqual({ "origin-image": "fork-image" });
+    expect(dispatch.mock.calls.map(([current]) => current.command)).toEqual([
+      attempt.command,
+      attempt.command,
+      attempt.command,
+    ]);
+    expect(wait.mock.calls.map(([delay]) => delay)).toEqual(FORK_RECONNECT_DELAYS_MS.slice(0, 2));
+  });
+
+  it("stops repeating after its waits and keeps the attempt for a manual retry", async () => {
+    const { attempt, store, key } = fixture();
+    const discardDraft = vi.fn();
+    const dispatch = vi.fn(async () => {
+      throw connectionLost();
+    });
+
+    await expect(
+      deliverForkAttempt({
+        attempt,
+        store,
+        key,
+        discardDraft,
+        dispatch,
+        wait: async () => {},
+      }),
+    ).rejects.toBeInstanceOf(ConnectionTransientError);
+
+    expect(dispatch).toHaveBeenCalledTimes(FORK_RECONNECT_DELAYS_MS.length + 1);
+    expect(discardDraft).not.toHaveBeenCalled();
+    expect(store.get(key)).toEqual(attempt);
+  });
+
+  it("does not repeat a command the server answered with an error", async () => {
+    const { attempt, store, key } = fixture();
+    const dispatch = vi.fn(async () => {
+      throw Object.assign(new Error("This fork point is unavailable."), {
+        forkDisposition: "rejected",
+      });
+    });
+
+    await expect(
+      deliverForkAttempt({
+        attempt,
+        store,
+        key,
+        discardDraft: vi.fn(),
+        dispatch,
+        wait: async () => {},
+      }),
+    ).rejects.toThrow("unavailable");
+
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("durable fork attempts", () => {
   it("reuses the exact command and preserves the draft across a lost acknowledgement and reload", async () => {

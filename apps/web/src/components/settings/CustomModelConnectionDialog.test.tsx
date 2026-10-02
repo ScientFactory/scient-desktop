@@ -51,7 +51,7 @@ describe("connection management", () => {
     else Reflect.deleteProperty(Element.prototype, "getAnimations");
     vi.unstubAllGlobals();
   });
-  async function render(fail = false) {
+  async function render(fail = false, keyMissing = false) {
     const onSave = vi.fn(async (_input: CustomModelSaveInput) => {
       if (fail) throw new Error("Custom models changed. Reload and try again.");
     });
@@ -64,6 +64,7 @@ describe("connection management", () => {
           onSave={onSave}
           onClose={onClose}
           onDelete={vi.fn()}
+          keyMissing={keyMissing}
         />,
       ),
     );
@@ -124,5 +125,10 @@ describe("connection management", () => {
     expect(callbacks.onSave.mock.calls[0]![0].revision).toBe(7);
     expect(callbacks.onClose).not.toHaveBeenCalled();
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("Reload and try again");
+  });
+  it("says a saved key is missing and asks for it again instead of showing its last four", async () => {
+    await render(false, true);
+    expect(document.body.textContent).toContain("Saved key missing — re-enter it");
+    expect(document.body.textContent).not.toContain("Key ending in");
   });
 });

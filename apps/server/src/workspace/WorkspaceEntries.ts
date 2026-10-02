@@ -424,7 +424,7 @@ export const make = Effect.gen(function* () {
     "WorkspaceEntries.listDirectory",
   )(function* (input) {
     const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
-    const requestedDirectory = input.relativeDirectory.trim();
+    const requestedDirectory = input.relativeDirectory;
     const target =
       requestedDirectory.length === 0
         ? { absolutePath: normalizedCwd, relativePath: "" }

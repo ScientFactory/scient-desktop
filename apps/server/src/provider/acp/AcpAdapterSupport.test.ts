@@ -26,6 +26,27 @@ describe("AcpAdapterSupport", () => {
     expect(error.message).toContain("Invalid params");
   });
 
+  it("lets the adapter rewrite the agent's text before it becomes the error's detail", () => {
+    const redact = (message: string) => message.replaceAll("fk-live-0123456789", "[redacted]");
+    for (const cause of [
+      new EffectAcpErrors.AcpRequestError({
+        code: -32000,
+        errorMessage: "Key fk-live-0123456789 was refused",
+      }),
+      new EffectAcpErrors.AcpProcessExitedError({ code: 1, stderr: "bad key fk-live-0123456789" }),
+    ]) {
+      const error = mapAcpToAdapterError(
+        ProviderDriverKind.make("droid"),
+        "thread-1" as never,
+        "session/start",
+        cause,
+        redact,
+      );
+      expect(error.message).toContain("[redacted]");
+      expect(error.message).not.toContain("fk-live-0123456789");
+    }
+  });
+
   it("maps ACP process exits without stderr to a process error instead of a closed session", () => {
     const error = mapAcpToAdapterError(
       ProviderDriverKind.make("cursor"),

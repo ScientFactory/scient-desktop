@@ -56,8 +56,8 @@ its exact operating system and architecture. Remote clients continue using the r
 on their server. The app displays the qualified version and download details before installation.
 
 When a newer qualified stable release is available, **Update** preserves the current working copy
-until the replacement passes local verification and activation. **Repair** restores the exact active
-release; it does not silently update Claude.
+until the replacement passes local verification and activation. **Repair** installs the latest
+qualified release (or the installed one, when that is newer), so it can also bring a newer release.
 
 ## Advanced And Multiple-Account Setups
 

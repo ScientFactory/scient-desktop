@@ -18,12 +18,13 @@ import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/ho
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { OMP_RPC_PROTOCOL_V2 } from "effect-omp-rpc/schema";
 
 import {
-  configuredRuntimeVersionSucceeds,
+  readConfiguredRuntimeVersion,
   makeManagedProviderRuntimeResolution,
   nativeProviderRuntimeBackendLabel,
   type ConfiguredRuntimeProbe,
@@ -320,7 +321,7 @@ const probeConfiguredOmpRuntime =
       }).pipe(Effect.orElseSucceed(() => binary));
       const identity = yield* canonicalOmpExecutablePath(resolvedBinary);
       yield* gate.acquireProcess(identity, { kind: "one-shot" });
-      return yield* configuredRuntimeVersionSucceeds({
+      return yield* readConfiguredRuntimeVersion({
         binary: resolvedBinary,
         environment,
         extendEnv: false,
@@ -330,7 +331,7 @@ const probeConfiguredOmpRuntime =
       Effect.scoped,
       Effect.provide(NodeServices.layer),
       // Busy behind an activation: not provably healthy right now.
-      Effect.orElseSucceed(() => false),
+      Effect.orElseSucceed(() => Option.none<string>()),
     );
 
 function detectTargetSafely(input: { readonly platform: NodeJS.Platform; readonly arch: string }) {

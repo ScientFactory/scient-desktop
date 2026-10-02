@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 import { ElementContextDetails, PreviewAnnotationPayloadSchema } from "@t3tools/contracts";
+import type { ScientThreadQueueItem, ThreadId } from "@t3tools/contracts";
 import { collectSelectedScientSkillNames } from "@t3tools/shared/composerInlineTokens";
 import {
   PersistedTerminalContextDraft,
@@ -8,8 +9,15 @@ import {
 import { ReviewCommentContextSchema } from "../../reviewCommentContext";
 import { elementContextToPreviewAnnotation } from "../../lib/elementContext";
 import { migrateLegacyTerminalContextPlaceholders } from "../../lib/terminalContext";
-import { ensureInlineContextReferences } from "../../lib/composerContextReferences";
 import {
+  ensureInlineContextReferences,
+  producerIdFromComposerContextId,
+} from "../../lib/composerContextReferences";
+import {
+  asKnownContextRecord,
+  terminalContextDraftFromRecord,
+  reviewCommentFromRecord,
+  previewAnnotationFromRecord,
   terminalContextReference,
   previewAnnotationContextReference,
   reviewCommentContextReference,
@@ -103,4 +111,59 @@ export function assertQueueEditSelectionProvenance(separated: boolean | undefine
   if (!separated && collectSelectedScientSkillNames(prompt).length > 0) {
     throw new Error(LEGACY_QUEUE_SELECTION_MESSAGE);
   }
+}
+
+/** Typed ordinary submissions (including mobile) can recover without a web-only snapshot. */
+export function decodeQueueItemComposerContext(
+  item: ScientThreadQueueItem,
+  threadId: ThreadId,
+): ContextDraft | undefined {
+  if (item.composerSnapshot !== undefined)
+    return decodeQueueComposerSnapshot(item.composerSnapshot);
+  if (item.selectedScientSkillNames === undefined && item.context === undefined) return undefined;
+  const authored = collectSelectedScientSkillNames(item.text).toSorted();
+  if (item.selectedScientSkillNames === undefined)
+    assertQueueEditSelectionProvenance(false, item.text);
+  else if (JSON.stringify(authored) !== JSON.stringify(item.selectedScientSkillNames.toSorted()))
+    throw new Error(LEGACY_QUEUE_SELECTION_MESSAGE);
+  const draft: ContextDraft = {
+    prompt: item.text,
+    terminalContexts: [],
+    previewAnnotations: [],
+    reviewComments: [],
+  };
+  for (const candidate of item.context?.records ?? []) {
+    const record = asKnownContextRecord(candidate);
+    if (!record)
+      throw new Error(
+        "This queued context cannot be restored by this client. The message has been kept.",
+      );
+    switch (record.kind) {
+      case "terminal":
+        draft.terminalContexts.push({
+          ...terminalContextDraftFromRecord(record, threadId),
+          createdAt: item.createdAt,
+        });
+        break;
+      case "review-comment":
+        draft.reviewComments.push(reviewCommentFromRecord(record));
+        break;
+      case "preview-annotation":
+        draft.previewAnnotations.push(previewAnnotationFromRecord(record));
+        break;
+      case "element":
+        draft.previewAnnotations.push(
+          elementContextToPreviewAnnotation(
+            record,
+            producerIdFromComposerContextId("element", record.contextId),
+            item.createdAt,
+          ),
+        );
+        break;
+      case "image":
+      case "file":
+        break;
+    }
+  }
+  return draft;
 }

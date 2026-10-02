@@ -9,6 +9,150 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.21",
+    publishedAt: "2026-10-02",
+    format: "paragraphs",
+    headline: "Start without a project. Keep conversations on track.",
+    highlights: [
+      {
+        id: "scratch-conversations-0621",
+        title: "Chat without a project",
+        description:
+          "Choose No project or use the sidebar shortcut to chat in its own folder. Files remain after deletion; moving a started chat into a project is not yet available.",
+      },
+      {
+        id: "queue-editing-0621",
+        title: "Better queue editing",
+        description:
+          "Queue messages with files. Editing makes a draft that sends only when you choose. Your previous draft stays in Stash. Send no longer needs a retry when an answer finishes.",
+      },
+      {
+        id: "droid-conversations-0621",
+        title: "Clearer Droid conversations",
+        description:
+          "Droid preserves output on Stop and resumes on your next message. Subagents show progress; model, reasoning, and permission choices are checked. You can stop conversation sync to Factory.",
+      },
+      {
+        id: "custom-models-0621",
+        title: "Clearer custom models",
+        description:
+          "Choose which agents use a model and test through a selected agent. Missing keys and connection errors are clearer. Saved custom-model keys stay out of Droid’s settings and environment.",
+      },
+      {
+        id: "file-recovery-0621",
+        title: "Better file recovery",
+        description:
+          "Files outside the project open read-only in Files. Save a copy to your device, with clearer missing-file choices and explanations when a file cannot be edited.",
+      },
+      {
+        id: "fork-recovery-0621",
+        title: "Clearer fork recovery",
+        description:
+          "Fork requests recover after a lost connection, failures remain visible after leaving the dialog, and copied history no longer shows old tools as running.",
+      },
+      {
+        id: "agent-tool-refresh-0621",
+        title: "Reload your agent’s tools",
+        description:
+          "Reload skills, plugins, and MCP servers with Restart agent session in the command palette, keeping the conversation.",
+      },
+    ],
+    alsoIncluded:
+      "Claude compaction and subagent model labels are corrected. Agent-triggered downloads save without a dialog. Provider switches compare versions. Screen-reader suggestions, Tab shortcuts, theme imports, and Codex Ultrafast indicators are improved.",
+  },
+  {
+    version: "0.6.20",
+    publishedAt: "2026-10-01",
+    format: "paragraphs",
+    headline: "Easier AI setup, better defaults, smoother conversations.",
+    highlights: [
+      {
+        id: "ai-setup-0620",
+        title: "Connect your AI more easily",
+        description:
+          "Choose from one scrollable provider list during setup. Install or sign in when needed, with Manage always available. Settings are more compact, and browser sign-in keeps your setup page open.",
+      },
+      {
+        id: "conversation-defaults-0620",
+        title: "Better defaults for new conversations",
+        description:
+          "Codex prefers GPT 6.1 Sol; Claude prefers Opus 5.5. Both use Medium reasoning where supported, while Antigravity prefers High. Automatic defaults are clearer; your saved choices stay intact.",
+      },
+      {
+        id: "section-interactions-0620",
+        title: "Smoother conversation organization",
+        description:
+          "Create sections in a compact form beside its starting point. Conversation drags follow the pointer and land more accurately. Failed moves no longer reorder the original section.",
+      },
+      {
+        id: "reading-end-0620",
+        title: "Stay with the latest answer",
+        description:
+          "Reading-end detection follows the latest answer rather than later messages or tool activity. A small allowance for covered answer lines makes scrolling and sending more consistent.",
+      },
+      {
+        id: "agent-questions-0620",
+        title: "See what your agent is asking",
+        description:
+          "When an agent needs your input, the conversation timeline shows the actual question, making it easier to see what needs an answer.",
+      },
+      {
+        id: "grok-recovery-0620",
+        title: "Recover from interrupted Grok sessions",
+        description:
+          "Crashed Grok sessions are no longer reused. Active requests settle before Scient replaces the session, helping conversations recover cleanly.",
+      },
+    ],
+    alsoIncluded:
+      "Updated Codex support recognizes Pro Max and eligible Ultrafast access. Workspace-root links open the file explorer; model IDs stay inline code; multi-PR badges open linked pull requests. Menu descriptions and diff filenames display more clearly, and shared OpenCode Go usage limits are grouped correctly.",
+  },
+  {
+    version: "0.6.19",
+    publishedAt: "2026-09-30",
+    format: "paragraphs",
+    headline: "A more portable, organized Scient.",
+    highlights: [
+      {
+        id: "conversation-portability-0619",
+        title: "Take conversations with you",
+        description:
+          "Export conversations as Markdown, PDF, Word, or portable .scic files. Import .scic or Markdown into a project through a compact review flow, then continue in a fresh session; agent work never starts automatically.",
+      },
+      {
+        id: "oh-my-pi-0619",
+        title: "Connect Oh My Pi",
+        description:
+          "Use Oh My Pi as an optional provider in Scient, with custom models, tools, and Skills. Scient-managed installation is supported on Apple silicon Macs.",
+      },
+      {
+        id: "sidebar-sections-0619",
+        title: "Organize conversations your way",
+        description:
+          "Switch the sidebar between Status and Sections. Group, reorder, rename, and move conversations between sections, then start a thread right where it belongs. New thread also offers Add project.",
+      },
+      {
+        id: "reading-position-0619",
+        title: "Keep your place while reading",
+        description:
+          "Scient restores your reading position when you return or reload. Sending near the end gently reveals the answer; sending from earlier history leaves your place intact. A badge counts unread replies below.",
+      },
+      {
+        id: "file-recovery-0619",
+        title: "Recover files with clearer guidance",
+        description:
+          "File paths now copy correctly for workspace and host files. If a file or PDF can't open, get a clear explanation, a retry where available, and details on demand. Unsaved edits stay intact.",
+      },
+      {
+        id: "conversation-context-0619",
+        title: "Keep conversation branches and long requests on track",
+        description:
+          "Forks preserve prior context more reliably through provider recovery. Long Pi requests can compact and continue within the selected model's context limit.",
+      },
+    ],
+    alsoIncluded:
+      "Provider names and setup are clearer; managed updates wait until active work is idle. Long table values stay readable, citations and queued attachments scan more easily, and voice formatting and new-thread reasoning choices are preserved.",
+  },
+  {
     version: "0.6.18",
     publishedAt: "2026-09-29",
     format: "paragraphs",

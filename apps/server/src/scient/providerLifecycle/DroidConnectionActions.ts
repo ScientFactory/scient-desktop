@@ -76,7 +76,6 @@ const openDroidAcp = Effect.fn("DroidConnectionActions.openAcp")(function* (inpu
   const spawn = buildDroidAcpSpawnInput(input.settings, process.cwd(), input.environment);
   const resolved = yield* resolveSpawnCommand(spawn.command, spawn.args, {
     env: input.environment,
-    extendEnv: true,
   }).pipe(
     Effect.mapError((cause) => connectionError("Scient could not prepare Droid sign in.", cause)),
   );
@@ -85,7 +84,6 @@ const openDroidAcp = Effect.fn("DroidConnectionActions.openAcp")(function* (inpu
       ChildProcess.make(resolved.command, resolved.args, {
         ...(spawn.cwd ? { cwd: spawn.cwd } : {}),
         env: input.environment,
-        extendEnv: true,
         shell: resolved.shell,
       }),
     )

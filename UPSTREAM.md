@@ -7,11 +7,17 @@ sends (LegendList `maintainScrollAtEnd` stays off). While idle and resting at th
 end, `MessagesTimeline` itself keeps that end in place through size changes of existing
 rows and viewport resizes (measured on screen, reacting only when content moves the
 text end), never for new rows or while the reader's own scrolling input is in motion,
-paused during disclosure toggles and briefly after any click or key in the timeline. Scroll bookkeeping runs once per frame. The end is the last message's text
-(`withReadingEnd`), not trailing changed files, tool groups or meta rows. Preserve
-the existing first-message framing. Send eligibility allows at most two
-rendered body-text lines below the reading edge; other end controls retain the
-inherited 40-pixel band. Eligible sends, and queued prompts the server delivers (`queue:` ids) while
+paused during disclosure toggles and briefly after any click or key in the timeline. Scroll bookkeeping runs once per frame. The end is the latest answer's text
+(`withReadingEnd`; the reader's own latest message before any answer), not trailing
+changed files, tool groups, meta rows or the reader's own later messages. While a
+turn runs (a running turn id, not merely a busy thread) or after it was interrupted
+or failed, the end is its latest content row (busy indicators excluded), so its new
+activity below the reader shows the end control; a completed turn that wrote no
+answer keeps its latest content as the end. One rule,
+`readerAtReadingEnd`, decides being at the end for the end control, sending,
+navigation, saved positions and idle end keeping: at most the answer's last three
+lines hidden, in its own line height, never less than the inherited 40-pixel band.
+Preserve the existing first-message framing. Eligible sends, and queued prompts the server delivers (`queue:` ids) while
 the reader is at the end, reveal the prompt and the start of its response's latest
 message through `chat/useBoundedAnswerFollow.ts`: capped at the prompt's first line
 reaching the top margin, past it only to show a message pushed below the fold, never
@@ -82,35 +88,64 @@ official `main` only after its untouched baseline passed. That historical
 revision remains literal ancestry of owned `main`; it is not merely a reviewed
 or observed tip.
 
-The current T3 alignment is recorded in
-[`docs/internals/2026-09-29-upstream-sync-d2c9281b8.md`](docs/internals/2026-09-29-upstream-sync-d2c9281b8.md)
-and in `upstream-state.json`. It advances the integration through
-`d2c9281b8112dc3b2991642c4bdb985e4b08b9bb`: 14 official commits after
-`de251fc2971a884cb5b1305ba4daf309dc8cccb0`, merged onto owned base
-`63d9edf1b6eba1387826c8aa6ae7dfe8c292a770` as
-`eb56e78c44cb76fa37c19d0a99b099a93a69eee3`, whose second parent is the exact
-official target. Every one of the 14 donor commits is literal ancestry. The
-preceding alignment ([PR #384](docs/internals/2026-09-27-upstream-sync-a727d1d9.md))
+The preceding alignment is [Scient PR #420](https://github.com/ScientFactory/scient-desktop/pull/420),
+recorded in [the 2026-09-30 receipt](docs/internals/2026-09-30-upstream-sync-35be904f2f.md)
+and `upstream-state.json`. It integrates all 20 official commits after
+`d2c9281b8112dc3b2991642c4bdb985e4b08b9bb` through
+`35be904f2fc40aa6d7a42778b6895e8274f3097f`, onto owned base
+`136ab8ad104b92f100a6ccd8fac1e6ee0c884102`. The upstream merge
+`efacdaf575f2cd3d65068d8e4e78a2ffb2b16578` preserves that exact official target
+as its second parent. Owned-main catch-up merge
+`14fb2478174667b49afaf6d7405526ed897d0c16` incorporates owned main
+`e0efa3fa4346ea6b7c88c93b25b4638cea715fe4` without changing the official target.
+The receipt separately records the original qualification and the 2026-10-01
+catch-up checks and the Compute/conversation workspaces' explicit use of the existing root
+test configuration; fresh hosted CI remains required. The [preceding alignment](docs/internals/2026-09-29-upstream-sync-d2c9281b8.md)
 remains literal ancestry.
 
-This routine range activates no protected boundary. It carries Claude Sonnet
-5.5, the OpenCode v2 incompatibility marking, a large-transcript usage
-preservation fix, a shortcut-latency fix, the Linux URL-handler icon and
-MIME-cache refresh, Bitbucket credentials in Source Control settings, and the
-Claude/OpenCode interrupt fixes. `node-pty` stays on `^1.1.0` and no package
-manifest changed: the range does not bump the version, upstream's Windows
-readiness wait is a no-op on 1.1.0 because the process PID is assigned
-synchronously, and upstream's `node-pty@1.2.0-beta.15` patch registration was
-removed because pnpm rejects an entry for an uninstalled version — the patch
-file is retained for a future adoption. Desktop identity stays `scient` /
-`scient.desktop` / `Name=Scient`; the fork's usage-accounting secret lifecycle
-composes beside upstream's Bitbucket one behind a generalized redaction marker.
-Three upstream identity literals had auto-merged into non-conflicted test
-regions and were corrected. `docs/user/remote-access.md` keeps Scient's framing:
-upstream's replacement would have advertised T3 Connect and a hosted relay the
-product does not provide. The receipt records every conflict composition, the
-post-merge semantic findings, the full gate results, and the attributed
-env-blocked `server.test.ts` baseline.
+The range brings Codex 0.159 protocol support, Pro Max/Ultrafast capability
+handling, OpenCode credential-grouped usage, Grok crash recovery, workspace-root
+links, agent-question rows, pull-request navigation/layout fixes, and Vite+ 1.0.
+Upstream ChatGPT subscription-sharing machinery is retained but dormant behind
+Scient's tested activation boundaries. Native Codex authentication and Scient's
+existing managed CLI lifecycle remain active. The receipt records composition,
+backend and client review, complete passing qualification, and the isolated native
+visual review. No protected release, cloud, telemetry, or publication boundary is
+activated.
+
+The current alignment is [Scient PR #428](https://github.com/ScientFactory/scient-desktop/pull/428),
+recorded in [the 2026-10-01 receipt](docs/internals/2026-10-01-upstream-sync-5cc99e1c23.md)
+and `upstream-state.json`. It integrates the next 20 first-parent official commits
+through `5cc99e1c23980d7995a13c47f969b47cb68ed1be` onto owned base
+`3b3c0b882e98f8df73544d68849f8101d0aecc18`. Upstream merge
+`b6444f75637c8587f3c14b2b6a3cfb11daf750d0` retains that exact target as its second
+parent. Owned-main catch-up merge `8934fe7cd8e568b09d839d8c9bb3ea0b5c84dcc9`
+incorporates `22a3bcf6d9aec5489a9c0c00eac544b9ccfb2ed3` without advancing the
+official target. The range adds scratch conversations, session restart, Claude
+compact/subagent fixes, accessible suggestions, theme and hotkey fixes, and
+agent-driven browser downloads. The receipt separates original qualification,
+later static checks, and the owner's visual/manual acceptance. Create-from-name
+and the deferred publication changes remain off.
+
+The alignment after that one is recorded in
+[the 2026-10-02 receipt](docs/internals/2026-10-02-upstream-sync-a3abb52660.md) and
+`upstream-state.json`. It integrates 15 first-parent official commits through
+`a3abb5266080c15b2a675d7f92b517b567c427e2` onto owned base
+`299a8f8f7273fc06d1b99781dd8912dc21d6ad52`. Upstream merge
+`10007bd9b3c531104a516b31f8339cdc72220a56` retains that exact target as its second
+parent. The range is dominated by the Expo SDK 58 and React Native 0.88.0-rc.3
+mobile upgrade, plus a cloned-project favicon fix, per-thread alert stacking, an
+Android subscription widget, and an eas-cli pin.
+
+**`expo-modules-core@58.0.9` removes every `@synchronized` block from its iOS
+tree** — the count falls from 6 on `57.0.14` to 0. The repository's own
+ThreadSanitizer regression harnesses, which compile the permissions registry and
+notification centre straight out of the installed package, catch the resulting
+races on `-[__NSDictionaryM setObject:forKey:]`. Hosted CI stays green because both
+tests are `skipIf(platform !== "darwin")`, so this is a macOS-checkout failure
+rather than a pipeline failure. The upgrade must not be treated as qualified until
+the owner chooses between restoring the locks in a patch, holding the Expo 58
+bump, or recording an explicit exception for the two checks.
 
 ## Receiving T3 updates
 
@@ -574,8 +609,8 @@ mounts. A few lines change in place: two in `Sidebar.tsx`, the search field's cl
 list and the New thread icon's `hidden` attribute in `SidebarThreadHeader.tsx`, and
 the undo-action union in `showThreadUndoNotice.ts`. New thread always opens the
 "New thread in…" picker (`shouldOpenNewThreadTargetPicker` changes in place), which
-ends with Add project, so a project, including the first, can be added from New
-thread; Shift+click and ⇧⌘N still start directly in the current project. The
+keeps Add project above No project beneath the scrolling project list, so a project,
+including the first, can be added from New thread; Shift+click and ⇧⌘N still start directly in the current project. The
 Sections view reuses T3's rows, shelves and order keys and never changes pin state. If T3 ships its own
 grouping or collapsible shelves, reconcile against these seams instead of layering a
 second grouping. Decisions, invariants and the full seam list are in
@@ -607,12 +642,57 @@ code, not a runtime or update dependency. Scient does not refresh from open PR
 heads. Only an official T3 `main` merge enters through the bounded upstream
 process. Immutable event decoders retain only the nullability required to
 replay a historical thread that was moved into a real project before the
-retirement; no current command can create or move a projectless thread.
+retirement. New thread commands continue to require a real owning project.
 
 The exact #5822 snapshot and import merge are frozen as a historical exception
 in `upstream-state.json` with `followUpdates: false`. The dedicated provenance
 workflow rejects new non-official merge parents. Historical sync reports remain
 the provenance record; there is no longer a live Quick Chat seam inventory.
+
+T3 added a different scratch design on its official `main` as
+`pingdotgg/t3code#13612`, integrated through `5cc99e1c23`. The owner approved it
+in alignment PR #428: `SCIENT_DESKTOP_IDENTITY.projectlessThreadsEnabled` is true.
+Unlike the retired Quick Chat experiment, every scratch thread has a real owning
+project, the internal "No project" project, and its own plain subfolder under
+`<data dir>/scratch`, stored in `worktreePath`. No null-project creation or old
+relocation command is restored.
+
+Scient's existing sidebar New thread row opens the shared "New thread in…"
+picker with **Add project** above **No project**, both fixed below its scrolling
+projects. The shared palette renderer keeps these actions in the same keyboard
+navigation list. A separate dashed chat button on the left of the sidebar row
+starts without a project through the same `useScratchProject` flow and current-
+environment capability check. Shift+click still starts in the current project. The draft project picker can switch destinations before sending;
+Scient omits the redundant "or start without a project" composer prompt. Shared
+workspace admission accepts only a registered direct canonical child of this
+server's scratch project, with verified non-Git evidence. It rejects the shared
+parent, nested descendants, and symlink escapes, while retaining ordinary Git
+worktree lineage and existing authority-generation/publication checks.
+
+The server still withholds `ServerConfig.scratchWorkspaceRoot` and
+`projects.ensureScratch` when the selected scratch root's parent is inside a Git
+checkout or VCS detection fails. Clients gate on the advertised root, including remote/mobile
+entry points. The dev runner selects persistent scratch storage outside the
+checkout without moving its existing profile; that selected parent must also be
+outside Git.
+Thread deletion retains scratch files. Moving a started scratch conversation and
+its files into another project remains unsupported. The owner approved both as
+temporary limits, with two planned follow-ups: an explicit option to delete the
+conversation's scratch files when deleting it, and moving a started conversation
+with its files into an existing or newly created project. Neither capability is
+implemented by this alignment. Cleanup must preserve files shared by another
+conversation; relocation must preserve conversation history, attachments,
+workspace authority, and provider continuation or explicitly restart the session
+when continuation cannot survive the move.
+
+`pingdotgg/t3code#14527` "start a new project from just a name", merged in the same
+commit, remains off through `createProjectFromNameEnabled`. Scient already
+creates a project from any typed path through the palette's "Create & Add", and that
+path then runs Scient project initialization (`PROJECT.md`, `AGENTS.md`,
+`.scient/project.json`). Upstream's path slugs the name into a `projects` folder
+under the data directory, writes its own README and icon, runs `git init`, and never
+calls that initializer, so enabling it would give users two different "new project"
+behaviors with Scient-managed projects from only one of them.
 
 Scient's first-run Getting Started flow is isolated under
 `apps/web/src/scient/onboarding`. It reuses canonical provider, project, and
@@ -651,6 +731,18 @@ visibility observation, and section jumps. Preserve its single rendering slot in
 component. The Settings route retains `data-settings-page-layout` as the observer's
 root. Page changes do not automatically open a submenu. Settings search,
 page routing, and shared sidebar primitives remain upstream-owned.
+
+Scient retains native Codex browser/device sign-in and its existing managed-runtime
+lifecycle. Upstream `setupMode: managed` means ChatGPT subscription sharing; it
+is separate from Scient installing a CLI. That capability remains dormant:
+settings activation, driver creation, installer operations, remote handoff/profile
+RPCs, and desktop callbacks reject before credential, browser or process work.
+Its setup/coordinator UI has no active mount, and the dormant installer does not
+probe PATH at startup. Persisted unsupported modes remain decodable and unavailable;
+users can recover by switching to native/existing mode. Preserve these guards until
+a separately qualified activation explicitly replaces them. Shared policy lives in
+`packages/shared/src/scientCodexPolicy.ts`; backend guards live in
+`apps/server/src/scient/providerLifecycle/codexSubscriptionSharingPolicy.ts`.
 
 In the shared provider settings editor, Scient displays the authenticated account's
 subscription label on its own line above the email/visibility control. Preserve
@@ -728,6 +820,12 @@ positioner props on `ui/menu.tsx` and `ui/popover.tsx`, `useMediaActionUrl` in
 behavior, and Markdown transport must remain outside inherited T3 components;
 `index.css` inherited rule bodies stay byte-identical. See
 [Scient rich Markdown editor](docs/internals/scient-rich-markdown-editor.md).
+
+LaTeX Source saving shares the Scient-owned document session and
+`apps/web/src/scient/markdownEditor/persistence/markdownPersistenceRegistry.ts`.
+The registry selects conflict-only reconciliation for LaTeX and keeps one saver
+per file; it is also classified in `scient-latex-seams.json`. Preserve this shared
+ownership rather than adding a second LaTeX saver in the inherited file panel.
 
 Markdown file quotes deliberately extend the inherited assistant Cite flow.
 Preserve the concrete `FileCitation` variant and `composerCitations` helpers,

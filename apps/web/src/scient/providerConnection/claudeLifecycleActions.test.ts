@@ -52,6 +52,7 @@ function controller(overrides: Partial<ProviderLifecycleController> = {}) {
     startRuntime: vi.fn(async () => provider()),
     cancelRuntime: vi.fn(async () => provider()),
     updateExternalRuntime: vi.fn(async () => provider()),
+    refresh: vi.fn(async () => provider()),
     ...overrides,
   } satisfies ProviderLifecycleController;
 }

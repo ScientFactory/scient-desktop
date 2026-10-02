@@ -543,7 +543,7 @@ export const ChatHeader = memo(function ChatHeader({
         </Menu>
       </div>
       {/* SCIENT-FORK:START */}
-      {newSection.dialog}
+      {newSection.popover}
       {/* SCIENT-FORK:END */}
     </div>
   );

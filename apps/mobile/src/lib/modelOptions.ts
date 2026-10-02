@@ -13,6 +13,7 @@ import type {
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
+  resolveAutomaticModel,
 } from "@t3tools/shared/model";
 
 export type ModelOption = {
@@ -174,6 +175,7 @@ export function buildModelOptions(
 
     const providerLabel = providerDisplayLabel(provider);
     const reasoningGroups = getAntigravityModelGroups(provider.driver, provider.models);
+    const automaticModel = resolveAutomaticModel(provider.driver, provider.models);
     for (const model of provider.models) {
       const reasoningGroup = reasoningGroups.find((group) =>
         group.models.some(({ slug }) => slug === model.slug),
@@ -188,7 +190,7 @@ export function buildModelOptions(
         supportedRuntimeModes: provider.supportedRuntimeModes,
         providerLabel,
         providerDriver: provider.driver,
-        isDefault: model.isDefault === true,
+        isDefault: model.slug === automaticModel,
         isLegacy: model.isLegacy === true,
         capabilities: model.capabilities,
         selection: normalizeSelectionOptions(

@@ -30,9 +30,20 @@ export interface ProviderLifecycleController {
   readonly disconnect: () => Promise<ServerProvider>;
   readonly openAuthorizationPage: (url: string) => Promise<void>;
   readonly planRuntime: (action: ProviderManagedRuntimeAction) => Promise<ProviderRuntimePlan>;
-  readonly startRuntime: (plan: ProviderRuntimePlan) => Promise<ServerProvider>;
+  /**
+   * Starts a planned action. A switch to a release older than the system
+   * runtime, or from one of unknown version, starts only with
+   * `acceptOlderThanSystem`, which a caller passes once the user saw the plan
+   * and chose the managed release.
+   */
+  readonly startRuntime: (
+    plan: ProviderRuntimePlan,
+    options?: { readonly acceptOlderThanSystem?: boolean },
+  ) => Promise<ServerProvider>;
   readonly cancelRuntime: (operationId: string) => Promise<ServerProvider>;
   readonly updateExternalRuntime: () => Promise<ServerProvider>;
+  /** Runs one full status check of this provider instance and returns what it found. */
+  readonly refresh: () => Promise<ServerProvider>;
 }
 
 function providerFromResult(
@@ -120,6 +131,9 @@ export function useProviderLifecycleController(input: {
   const updateProvider = useAtomCommand(serverEnvironment.updateProvider, {
     reportFailure: false,
   });
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
 
   const instanceId = input.provider.instanceId;
   const providerDriver = input.provider.driver;
@@ -173,7 +187,13 @@ export function useProviderLifecycleController(input: {
     if (!isSafeProviderAuthorizationUrl(url)) {
       throw new Error("Scient refused an invalid or insecure provider sign-in link.");
     }
-    await ensureLocalApi().shell.openExternal(url);
+    if (window.desktopBridge) {
+      await ensureLocalApi().shell.openExternal(url);
+      return;
+    }
+    // Preview hosts distinguish a popup from a new-tab link. Preserve the
+    // originating setup page and isolate the authorization page from its opener.
+    window.open(url, "_blank", "popup,noopener,noreferrer");
   }, []);
 
   const planRuntime = useCallback(
@@ -188,13 +208,14 @@ export function useProviderLifecycleController(input: {
   );
 
   const startRuntime = useCallback(
-    async (plan: ProviderRuntimePlan) => {
+    async (plan: ProviderRuntimePlan, options?: { readonly acceptOlderThanSystem?: boolean }) => {
       const result = await startProviderRuntime({
         environmentId: input.environmentId,
         input: {
           instanceId,
           action: plan.action,
           catalogRevision: plan.catalogRevision,
+          ...(options?.acceptOlderThanSystem === true ? { acceptOlderThanSystem: true } : {}),
         },
       });
       const value = resultValue(result, "Scient could not start the provider runtime action.");
@@ -224,6 +245,15 @@ export function useProviderLifecycleController(input: {
     return providerFromResult(value.providers, instanceId);
   }, [input.environmentId, instanceId, providerDriver, updateProvider]);
 
+  const refresh = useCallback(async () => {
+    const result = await refreshProviders({
+      environmentId: input.environmentId,
+      input: { instanceId },
+    });
+    const value = resultValue(result, "Scient could not check the provider.");
+    return providerFromResult(value.providers, instanceId);
+  }, [input.environmentId, instanceId, refreshProviders]);
+
   return useMemo(
     () => ({
       startConnection,
@@ -235,6 +265,7 @@ export function useProviderLifecycleController(input: {
       startRuntime,
       cancelRuntime,
       updateExternalRuntime,
+      refresh,
     }),
     [
       cancelConnection,
@@ -242,6 +273,7 @@ export function useProviderLifecycleController(input: {
       disconnect,
       openAuthorizationPage,
       planRuntime,
+      refresh,
       startConnection,
       submitAuthorizationCode,
       startRuntime,

@@ -194,6 +194,22 @@ function filesystemFailure(
   }
 }
 
+/** The stable failure for a Node filesystem error, by its code. */
+function nodeFileFailure(cause: unknown): "not_found" | "unreadable" | "inspection_failed" {
+  const code =
+    typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
+  switch (code) {
+    case "ENOENT":
+    case "ENOTDIR":
+      return "not_found";
+    case "EACCES":
+    case "EPERM":
+      return "unreadable";
+    default:
+      return "inspection_failed";
+  }
+}
+
 export const prepareEnvironmentFileOpen = Effect.fn("EnvironmentFileOpen.prepare")(function* (
   input: EnvironmentFilePrepareInput,
 ): Effect.fn.Return<
@@ -220,63 +236,63 @@ export const prepareEnvironmentFileOpen = Effect.fn("EnvironmentFileOpen.prepare
     ),
   );
 
-  const opened = yield* Effect.scoped(
-    Effect.gen(function* () {
-      const file = yield* fileSystem.open(canonicalPath).pipe(
-        Effect.mapError(
-          (cause) =>
-            new EnvironmentFilePrepareError({
-              path: input.path,
-              failure: filesystemFailure(cause),
-            }),
+  // Opened non-blocking, like WorkspaceFileSystem.readFile, so a FIFO (even one
+  // swapped in after canonicalization) opens at once instead of waiting for a
+  // writer, and the stat of the opened handle rejects it. Regular files ignore
+  // the flag; Windows has no FIFOs to open.
+  const opened = yield* Effect.acquireUseRelease(
+    Effect.tryPromise({
+      try: () =>
+        NodeFS.promises.open(
+          canonicalPath,
+          NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NONBLOCK ?? 0),
         ),
-      );
-      const info = yield* file.stat.pipe(
-        Effect.mapError(
-          (cause) =>
-            new EnvironmentFilePrepareError({
-              path: input.path,
-              failure: filesystemFailure(cause),
-            }),
-        ),
-      );
-      if (info.type !== "File") {
-        return yield* new EnvironmentFilePrepareError({
-          path: input.path,
-          failure: "not_a_file",
-        });
-      }
-      const byteLength = Number(info.size);
-      if (!Number.isSafeInteger(byteLength) || byteLength < 0) {
-        return yield* new EnvironmentFilePrepareError({
-          path: input.path,
-          failure: "inspection_failed",
-        });
-      }
-      const bytes =
-        byteLength === 0
-          ? new Uint8Array()
-          : Option.getOrElse(
-              yield* file.readAlloc(Math.min(byteLength, INSPECTION_BYTE_LIMIT)).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new EnvironmentFilePrepareError({
-                      path: input.path,
-                      failure: filesystemFailure(cause),
-                    }),
-                ),
-              ),
-              () => new Uint8Array(),
-            );
-      return {
-        byteLength,
-        mtimeMs: Option.match(info.mtime, {
-          onNone: () => null,
-          onSome: (mtime) => mtime.getTime(),
-        }),
-        bytes,
-      };
+      catch: (cause) =>
+        new EnvironmentFilePrepareError({ path: input.path, failure: nodeFileFailure(cause) }),
     }),
+    (handle) =>
+      Effect.gen(function* () {
+        const info = yield* Effect.tryPromise({
+          try: () => handle.stat(),
+          catch: (cause) =>
+            new EnvironmentFilePrepareError({ path: input.path, failure: nodeFileFailure(cause) }),
+        });
+        if (!info.isFile()) {
+          return yield* new EnvironmentFilePrepareError({
+            path: input.path,
+            failure: "not_a_file",
+          });
+        }
+        const byteLength = info.size;
+        if (!Number.isSafeInteger(byteLength) || byteLength < 0) {
+          return yield* new EnvironmentFilePrepareError({
+            path: input.path,
+            failure: "inspection_failed",
+          });
+        }
+        const sampleLength = Math.min(byteLength, INSPECTION_BYTE_LIMIT);
+        const bytes =
+          sampleLength === 0
+            ? new Uint8Array()
+            : yield* Effect.tryPromise({
+                try: async () => {
+                  const buffer = new Uint8Array(sampleLength);
+                  const { bytesRead } = await handle.read(buffer, 0, sampleLength, 0);
+                  return buffer.subarray(0, bytesRead);
+                },
+                catch: (cause) =>
+                  new EnvironmentFilePrepareError({
+                    path: input.path,
+                    failure: nodeFileFailure(cause),
+                  }),
+              });
+        return {
+          byteLength,
+          mtimeMs: Number.isFinite(info.mtimeMs) ? info.mtimeMs : null,
+          bytes,
+        };
+      }),
+    (handle) => Effect.tryPromise(() => handle.close()).pipe(Effect.orElseSucceed(() => undefined)),
   );
 
   return {

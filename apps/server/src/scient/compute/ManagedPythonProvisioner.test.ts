@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeChildProcess from "node:child_process";
 
 import type { ExecutionProcessPort } from "@scientfactory/execution";
 import { ComputeToolkitId } from "@scientfactory/compute";
@@ -47,7 +48,10 @@ describe("ManagedPythonProvisioner", () => {
     await NodeFSP.rm(temporaryRoot, { recursive: true, force: true });
   });
 
-  const cachedInstaller = async (processes: ExecutionProcessPort) => {
+  const cachedInstaller = async (
+    processes: ExecutionProcessPort,
+    specDirectory = NodePath.join(import.meta.dirname, "managed-python"),
+  ) => {
     const computeDir = NodePath.join(temporaryRoot, "compute");
     const versionRoot = NodePath.join(computeDir, "tooling", "uv", MANAGED_PYTHON_UV_VERSION);
     const artifact = managedPythonUvArtifactForTarget({ platform: "darwin", arch: "arm64" });
@@ -64,7 +68,7 @@ describe("ManagedPythonProvisioner", () => {
     await NodeFSP.writeFile(auxiliaryExecutable, auxiliaryFixture);
     const provisioner = makeManagedPythonProvisioner({
       computeDir,
-      specDirectory: NodePath.join(import.meta.dirname, "managed-python"),
+      specDirectory,
       processes,
       spawnProbe: () => Effect.die("The cancelled setup must not reach a Python probe."),
       environment: {},
@@ -91,6 +95,7 @@ describe("ManagedPythonProvisioner", () => {
       ) =>
         provisioner.provision({
           ...interpreter,
+          specDirectory: NodePath.join(import.meta.dirname, "managed-python"),
           targetRoot: NodePath.join(temporaryRoot, generation),
           toolkitIds: [],
           toolkitRevision: "fixture",
@@ -100,6 +105,101 @@ describe("ManagedPythonProvisioner", () => {
         }),
     };
   };
+
+  it.each(["app.asar", "server.asar"])(
+    "can start the installer when bundled recipes live inside %s",
+    async (archiveName) => {
+      const archive = NodePath.join(temporaryRoot, archiveName);
+      await NodeFSP.writeFile(archive, "An archive is a file, not an OS working directory.");
+      const recipeDirectory = NodePath.join(archive, "apps/server/dist/scient-managed-python");
+      let checks = 0;
+      const fixture = await cachedInstaller(
+        {
+          start: (input) =>
+            Effect.sync(() => {
+              if (input.args[0] !== "--version") throw new Error("Fixture reached package work");
+              // Ask the OS to launch a harmless process with the production cwd.
+              // A mocked spawn would accept an ASAR directory and miss this bug.
+              const output = NodeChildProcess.execFileSync(
+                process.execPath,
+                ["-e", `process.stdout.write('uv ${MANAGED_PYTHON_UV_VERSION}')`],
+                { cwd: input.cwd, encoding: "utf8", timeout: 10_000 },
+              );
+              checks += 1;
+              return {
+                output: Stream.make({ stream: "stdout" as const, text: output }),
+                exitCode: Effect.succeed(0),
+                cancel: Effect.void,
+              };
+            }),
+        },
+        recipeDirectory,
+      );
+      await NodeFSP.mkdir(NodePath.join(temporaryRoot, "generation"));
+      await expect(fixture.provision(new AbortController().signal)).rejects.toThrow(
+        "Fixture reached package work",
+      );
+      expect(checks).toBe(1);
+      expect(downloadManagedRuntime).not.toHaveBeenCalled();
+      expect(await NodeFSP.readFile(fixture.executable, "utf8")).toBe("cached-installer-fixture");
+    },
+  );
+
+  it.each(["app.asar", "server.asar"])(
+    "can finish scientific verification when recipes live inside %s",
+    async (archiveName) => {
+      const archive = NodePath.join(temporaryRoot, archiveName);
+      await NodeFSP.writeFile(archive, "archive");
+      let scientificChecks = 0;
+      const executable = process.execPath;
+      const provisioner = makeManagedPythonProvisioner({
+        computeDir: temporaryRoot,
+        specDirectory: NodePath.join(archive, "scient-managed-python"),
+        environment: {},
+        platform: "darwin",
+        arch: "arm64",
+        spawnProbe: () =>
+          Effect.succeed(
+            JSON.stringify({
+              executable,
+              executableRealpath: executable,
+              executableMtimeNs: "1",
+              implementation: "CPython",
+              version: MANAGED_PYTHON_VERSION,
+              architecture: "arm64",
+              prefix: temporaryRoot,
+              base_prefix: temporaryRoot,
+              platform: "darwin",
+              packages: {
+                jupyter_client: "8.6.3",
+                ipykernel: "6.30.1",
+                matplotlib: "3.10.6",
+                nbformat: "5.10.4",
+              },
+            }),
+          ),
+        processes: {
+          start: (input) =>
+            Effect.sync(() => {
+              expect(input.args).toEqual(["-I", "-c", expect.stringContaining("import numpy")]);
+              NodeChildProcess.execFileSync(process.execPath, ["-e", ""], {
+                cwd: input.cwd,
+                timeout: 10_000,
+              });
+              scientificChecks += 1;
+              return { output: Stream.empty, exitCode: Effect.succeed(0), cancel: Effect.void };
+            }),
+        },
+      });
+      await provisioner.verify({
+        executable,
+        toolkitIds: [],
+        pythonVersion: MANAGED_PYTHON_VERSION,
+        signal: new AbortController().signal,
+      });
+      expect(scientificChecks).toBe(1);
+    },
+  );
 
   it.each([0, 3 * 1024 ** 3])(
     "reuses only the private artifact cache and enforces retention at %s bytes",

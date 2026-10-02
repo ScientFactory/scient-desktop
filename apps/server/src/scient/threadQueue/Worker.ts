@@ -89,11 +89,13 @@ export const ScientQueueWorkerLive = Layer.effect(
         type: "thread.turn.start",
         commandId: CommandId.make(`queue:${item.queueItemId}:${doc.revision}`),
         threadId: id,
+        titleSeed: item.titleSeed,
+        sourceProposedPlan: item.sourceProposedPlan,
         ...(item.selectedScientSkillNames === undefined
           ? {}
           : { selectedScientSkillNames: item.selectedScientSkillNames }),
         message: {
-          messageId: MessageId.make(`queue:${item.queueItemId}`),
+          messageId: item.messageId ?? MessageId.make(`queue:${item.queueItemId}`),
           role: "user",
           text: item.text,
           attachments: item.attachments,
@@ -111,7 +113,9 @@ export const ScientQueueWorkerLive = Layer.effect(
         createdAt: DateTime.formatIso(yield* DateTime.now),
       };
       yield* Effect.gen(function* () {
-        const normalized = yield* normalizeDispatchCommand(command);
+        const normalized = yield* normalizeDispatchCommand(command, {
+          durableQueueAttachments: true,
+        });
         if (normalized.type !== "thread.turn.start") return;
         yield* engine
           .dispatch({ ...normalized, queueItemId: item.queueItemId, queueRevision: doc.revision })

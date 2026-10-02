@@ -3305,6 +3305,113 @@ describe("quiet timeline: nested agents", () => {
     expect(allDone).toHaveLength(2);
   });
 
+  it("shows Droid's sub-agents with what each is, how it ended, and what a wait is for", () => {
+    // Stored activities for two Droid Task calls, a follow-up that cancelled
+    // one, and a wait on the other (Droid 0.231.0).
+    const turnId = TurnId.make("turn-droid");
+    const at = (seconds: number) => `2026-10-01T09:00:${String(seconds).padStart(2, "0")}.000Z`;
+    const note = "Droid reports a sub-agent's steps only when it finishes.";
+    const unreported = "The turn ended. Droid has not reported this sub-agent's result.";
+    const task = (
+      id: string,
+      kind: "task.started" | "task.progress" | "task.updated",
+      taskId: string,
+      title: string,
+      seconds: number,
+      extra: Record<string, unknown> = {},
+    ) =>
+      makeActivity({
+        id: EventId.make(id),
+        kind,
+        summary: kind,
+        createdAt: at(seconds),
+        turnId,
+        payload: {
+          taskId,
+          toolUseId: taskId,
+          agentKind: "agent",
+          taskType: "subagent",
+          title,
+          role: "explorer",
+          ...extra,
+        },
+      });
+    const rows = buildThreadFeed(
+      makeThread({
+        id: ThreadId.make("thread-droid"),
+        projectId: ProjectId.make("project-1"),
+        title: "Droid sub-agents",
+        activities: [
+          task("a-start", "task.started", "a", "Audit the build", 1, { detail: "Audit the build" }),
+          task("a-progress", "task.progress", "a", "Audit the build", 1, {
+            detail: note,
+            summary: note,
+            status: "running",
+          }),
+          task("b-start", "task.started", "b", "Audit code smells", 2, {
+            detail: "Audit code smells",
+          }),
+          task("b-cancelled", "task.updated", "b", "Audit code smells", 30, {
+            status: "cancelled",
+            error: "Cancelled when you sent a follow-up message.",
+          }),
+          // A background sub-agent Droid never reported on before the turn ended.
+          task("c-start", "task.started", "c", "Review the host", 3, {
+            detail: "Review the host",
+            role: "worker",
+          }),
+          task("c-idle", "task.updated", "c", "Review the host", 50, {
+            status: "idle",
+            detail: unreported,
+            role: "worker",
+          }),
+          makeActivity({
+            id: EventId.make("wait"),
+            kind: "tool.updated",
+            tone: "tool",
+            summary: "Waiting for sub-agent · Audit the build (up to 10 min)",
+            createdAt: at(40),
+            turnId,
+            payload: {
+              itemType: "collab_agent_tool_call",
+              toolCallId: "wait-1",
+              status: "inProgress",
+              title: "Waiting for sub-agent · Audit the build (up to 10 min)",
+            },
+          }),
+        ],
+      }),
+    ).flatMap((entry) => (entry.type === "activity-group" ? entry.activities : []));
+
+    expect(rows.map((row) => row.summary)).toEqual([
+      "Kicked off 3 subagents · 1 working",
+      "Waiting for sub-agent · Audit the build (up to 10 min)",
+    ]);
+    // Each member says what it is (description and type) and how it stands.
+    expect(rows[0]!.workEntry.agentSpawn!.agents).toMatchObject([
+      { title: "Audit the build", role: "explorer", status: "inProgress", detail: note },
+      {
+        title: "Audit code smells",
+        role: "explorer",
+        status: "stopped",
+        detail: "Cancelled when you sent a follow-up message.",
+      },
+      // No result was reported: not working any more, and not completed either.
+      { title: "Review the host", role: "worker", status: "stopped", detail: unreported },
+    ]);
+    expect(rows[1]).toMatchObject({ lifecycleStatus: "inProgress" });
+    // The card shows the type beside the state.
+    expect(
+      agentSpawnSummary(rows[0]!.workEntry.agentSpawn!, "inProgress").members.map(
+        (member) => `${member.title} | ${member.status}`,
+      ),
+    ).toEqual([
+      "Audit the build | explorer · working",
+      "Audit code smells | explorer · stopped",
+      "Review the host | worker · stopped",
+    ]);
+  });
+
   it("folds the tool call that launched an agent into its spawn card", () => {
     const turnId = TurnId.make("turn-agent-tool");
     const at = (seconds: number) => `2026-04-01T00:00:${String(seconds).padStart(2, "0")}.000Z`;

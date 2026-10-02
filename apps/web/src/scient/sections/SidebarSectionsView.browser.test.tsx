@@ -5,13 +5,17 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vitest/browser";
 
+const { reorderActiveThread } = vi.hoisted(() => ({
+  reorderActiveThread: vi.fn(async () => ({ _tag: "Success" })),
+}));
+
 vi.mock("../../hooks/useThreadActions", () => {
   const succeed = vi.fn(async () => ({ _tag: "Success" }));
   return {
     useThreadActions: () => ({
       unsettleThread: succeed,
       unsnoozeThread: succeed,
-      reorderActiveThread: succeed,
+      reorderActiveThread,
       reorderPinnedThread: succeed,
     }),
   };
@@ -30,6 +34,8 @@ let root: Root | undefined;
 let host: HTMLDivElement | undefined;
 
 afterEach(() => {
+  moveThreadsToSection.mockReset().mockResolvedValue(true);
+  reorderActiveThread.mockClear();
   root?.unmount();
   host?.remove();
   root = undefined;
@@ -80,7 +86,18 @@ function renderView(
       settledThreads={[]}
       showSnoozedShelf={false}
       pinnedKeysById={new Map()}
-      activeKeysById={new Map()}
+      activeKeysById={
+        new Map([
+          ["env:g1", "a"],
+          ["env:g2", "b"],
+          ["env:a1", "d"],
+          ["env:a2", "g"],
+          ["env:a3", "m"],
+          ["env:b1", "t"],
+          ["env:b2", "w"],
+          ["env:b3", "z"],
+        ])
+      }
       canDragThread={() => true}
       renderThreadRow={(row, _lifecycle, sortable) => (
         <li
@@ -107,9 +124,7 @@ function renderView(
       renamingSectionId={options.renaming ?? null}
       onRenamingSectionChange={() => {}}
       onRenameSection={(_id: string, name: string) => options.onRename?.(name)}
-      creatingSection={null}
       onStartCreateSection={() => {}}
-      onCancelCreateSection={() => {}}
     />,
   );
 }
@@ -218,7 +233,7 @@ it("files a thread dragged up onto a collapsed section's header into that sectio
   let y = start.top + start.height / 2;
   pointer("pointerdown", row, x, y);
   const header = headerOf("a").getBoundingClientRect();
-  while (y > header.top + header.height / 2) {
+  while (y > header.top + header.height * 0.75) {
     y -= 12;
     pointer("pointermove", document, x, y);
     await nextFrame();
@@ -232,6 +247,229 @@ it("files a thread dragged up onto a collapsed section's header into that sectio
     [expect.objectContaining({ threadId: "b2" })],
     "a",
   );
+});
+
+it.each([
+  { source: "g1", pickup: "top" },
+  { source: "g1", pickup: "bottom" },
+  { source: "b1", pickup: "top" },
+  { source: "b1", pickup: "bottom" },
+])(
+  "appends $source to A with $pickup pickup and keeps the preview stable",
+  async ({ source, pickup }) => {
+    let release: (value: boolean) => void = () => {};
+    moveThreadsToSection.mockClear();
+    moveThreadsToSection.mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          release = resolve;
+        }),
+    );
+    reorderActiveThread.mockClear();
+    renderView(vi.fn());
+    await nextFrame();
+    const row = document.querySelector<HTMLElement>(`[data-row="${source}"]`)!;
+    const start = row.getBoundingClientRect();
+    const last = document.querySelector<HTMLElement>('[data-row="a3"]')!;
+    const target = last.getBoundingClientRect();
+    const x = start.left + 20;
+    // Placement follows the pointer regardless of where the row was picked up.
+    const pickupY = pickup === "top" ? start.top + 4 : start.bottom - 4;
+    pointer("pointerdown", row, x, pickupY);
+    const y = target.bottom - 4;
+    pointer("pointermove", document, x, pickupY - 8);
+    await nextFrame();
+    pointer("pointermove", document, x, y);
+    await nextFrame();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const previewTop = last.getBoundingClientRect().top;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(last.getBoundingClientRect().top).toBeCloseTo(previewTop, 0);
+    pointer("pointerup", document, x, y);
+    await nextFrame();
+    expect(moveThreadsToSection).toHaveBeenCalledWith(
+      [expect.objectContaining({ threadId: source })],
+      "a",
+    );
+    const ids = [...document.querySelectorAll<HTMLElement>("[data-row]")].map(
+      (node) => node.dataset.row,
+    );
+    expect(ids.indexOf(source)).toBe(ids.indexOf("a3") + 1);
+    expect(reorderActiveThread).not.toHaveBeenCalled();
+    release(true);
+    await vi.waitFor(() => expect(reorderActiveThread).toHaveBeenCalledTimes(1));
+    const [ref, key] = reorderActiveThread.mock.calls[0]! as unknown as [
+      { threadId: string },
+      string,
+    ];
+    expect(ref.threadId).toBe(source);
+    expect(key > "m").toBe(true);
+    await nextFrame();
+  },
+);
+
+it("changes insertion side within the same row before committing", async () => {
+  moveThreadsToSection.mockClear();
+  reorderActiveThread.mockClear();
+  renderView(vi.fn());
+  await nextFrame();
+  const row = document.querySelector<HTMLElement>('[data-row="b1"]')!;
+  const start = row.getBoundingClientRect();
+  const target = document.querySelector<HTMLElement>('[data-row="a2"]')!.getBoundingClientRect();
+  const x = start.left + 20;
+  pointer("pointerdown", row, x, start.top + 4);
+  pointer("pointermove", document, x, start.top + 12);
+  await nextFrame();
+  pointer("pointermove", document, x, target.top + 4);
+  await nextFrame();
+  pointer("pointermove", document, x, target.bottom - 4);
+  await nextFrame();
+  pointer("pointerup", document, x, target.bottom - 4);
+  await nextFrame();
+  expect(reorderActiveThread).toHaveBeenCalledTimes(1);
+  const [, key] = reorderActiveThread.mock.calls[0]! as unknown as [unknown, string];
+  expect(key > "g" && key < "m").toBe(true);
+});
+
+it("reorders to the end within a section without changing membership", async () => {
+  moveThreadsToSection.mockClear();
+  reorderActiveThread.mockClear();
+  renderView(vi.fn());
+  await nextFrame();
+  const row = document.querySelector<HTMLElement>('[data-row="a1"]')!;
+  const start = row.getBoundingClientRect();
+  const target = document.querySelector<HTMLElement>('[data-row="a3"]')!.getBoundingClientRect();
+  const x = start.left + 20;
+  pointer("pointerdown", row, x, start.top + 4);
+  pointer("pointermove", document, x, start.top + 12);
+  await nextFrame();
+  pointer("pointermove", document, x, target.bottom - 4);
+  await nextFrame();
+  pointer("pointerup", document, x, target.bottom - 4);
+  await nextFrame();
+  expect(moveThreadsToSection).not.toHaveBeenCalled();
+  expect(reorderActiveThread).toHaveBeenCalledTimes(1);
+  const [ref, key] = reorderActiveThread.mock.calls[0]! as unknown as [
+    { threadId: string },
+    string,
+  ];
+  expect(ref.threadId).toBe("a1");
+  expect(key > "m").toBe(true);
+});
+
+it("cancels an end-slot preview without writing membership or order", async () => {
+  moveThreadsToSection.mockClear();
+  reorderActiveThread.mockClear();
+  renderView(vi.fn());
+  await nextFrame();
+  const row = document.querySelector<HTMLElement>('[data-row="b1"]')!;
+  const start = row.getBoundingClientRect();
+  const target = document.querySelector<HTMLElement>('[data-row="a3"]')!.getBoundingClientRect();
+  const x = start.left + 20;
+  pointer("pointerdown", row, x, start.top + 4);
+  pointer("pointermove", document, x, start.top + 12);
+  await nextFrame();
+  pointer("pointermove", document, x, target.bottom - 4);
+  await nextFrame();
+  document.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }),
+  );
+  await nextFrame();
+  expect(moveThreadsToSection).not.toHaveBeenCalled();
+  expect(reorderActiveThread).not.toHaveBeenCalled();
+});
+
+it.each([4, 24, 44])("keeps the grabbed point under the pointer (pickup %ipx)", async (grab) => {
+  renderView(vi.fn());
+  await nextFrame();
+  const row = document.querySelector<HTMLElement>('[data-row="g1"]')!;
+  const start = row.getBoundingClientRect();
+  const x = start.left + 20;
+  pointer("pointerdown", row, x, start.top + grab);
+  pointer("pointermove", document, x, start.top + grab + 8);
+  await nextFrame();
+  for (const offset of [150, 241, 387, 180]) {
+    const y = host!.getBoundingClientRect().top + offset;
+    pointer("pointermove", document, x + 40, y);
+    await nextFrame();
+    expect(Math.abs(row.getBoundingClientRect().top + grab - y)).toBeLessThan(1);
+    expect(Math.abs(row.getBoundingClientRect().left - start.left)).toBeLessThan(1);
+  }
+  document.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }),
+  );
+  await nextFrame();
+  await vi.waitFor(() =>
+    expect(Math.abs(row.getBoundingClientRect().top - start.top)).toBeLessThan(1),
+  );
+  expect(reorderActiveThread).not.toHaveBeenCalled();
+  expect(moveThreadsToSection).not.toHaveBeenCalled();
+});
+
+it("switches from a section overlay to direct conversation tracking", async () => {
+  const onReorderSections = vi.fn();
+  renderView(onReorderSections);
+  await nextFrame();
+  const handle = headerOf("a").querySelector<HTMLElement>("button[aria-expanded]")!;
+  const header = handle.getBoundingClientRect();
+  const x = header.left + 20;
+  const headerY = header.top + header.height / 2;
+  pointer("pointerdown", handle, x, headerY);
+  pointer("pointermove", document, x, headerY + 12);
+  await nextFrame();
+  expect(
+    [...document.querySelectorAll<HTMLElement>("div")].some(
+      (node) => getComputedStyle(node).position === "fixed" && node.textContent?.trim() === "A",
+    ),
+  ).toBe(true);
+  document.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }),
+  );
+  await nextFrame();
+  const row = document.querySelector<HTMLElement>('[data-row="g1"]')!;
+  const start = row.getBoundingClientRect();
+  pointer("pointerdown", row, x, start.top + 4);
+  pointer("pointermove", document, x, start.top + 12);
+  await nextFrame();
+  const y = host!.getBoundingClientRect().top + 180;
+  pointer("pointermove", document, x, y);
+  await nextFrame();
+  expect(Math.abs(row.getBoundingClientRect().top + 4 - y)).toBeLessThan(1);
+  document.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }),
+  );
+  await nextFrame();
+  expect(onReorderSections).not.toHaveBeenCalled();
+  expect(reorderActiveThread).not.toHaveBeenCalled();
+});
+
+it("keeps pointer attachment when its scrollable list scrolls", async () => {
+  renderView(vi.fn());
+  host!.style.height = "300px";
+  host!.style.overflow = "auto";
+  await nextFrame();
+  const row = document.querySelector<HTMLElement>('[data-row="g1"]')!;
+  const start = row.getBoundingClientRect();
+  const grab = 24;
+  const x = start.left + 20;
+  const y = host!.getBoundingClientRect().top + 180;
+  pointer("pointerdown", row, x, start.top + grab);
+  pointer("pointermove", document, x, start.top + grab + 8);
+  await nextFrame();
+  pointer("pointermove", document, x, y);
+  await nextFrame();
+  expect(Math.abs(row.getBoundingClientRect().top + grab - y)).toBeLessThan(1);
+  host!.scrollTop = 60;
+  await vi.waitFor(() => {
+    expect(host!.scrollTop).toBe(60);
+    expect(Math.abs(row.getBoundingClientRect().top + grab - y)).toBeLessThan(1);
+  });
+  document.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }),
+  );
+  await nextFrame();
+  expect(reorderActiveThread).not.toHaveBeenCalled();
+  expect(moveThreadsToSection).not.toHaveBeenCalled();
 });
 
 it("sets section names 4px low, nearer their own threads, without growing the header", async () => {
@@ -305,3 +543,115 @@ it("capitalizes a section name as it is typed, keeping the caret in place", asyn
   await userEvent.keyboard("{Enter}");
   expect(onRename).toHaveBeenCalledWith("Research notes");
 });
+
+it("slides a header as soon as the pointer crosses its midpoint and commits the shown slot", async () => {
+  renderView(vi.fn());
+  await nextFrame();
+  const row = document.querySelector<HTMLElement>('[data-row="b2"]')!;
+  const start = row.getBoundingClientRect();
+  const header = headerOf("a").getBoundingClientRect();
+  const x = start.left + 20;
+  pointer("pointerdown", row, x, start.top + 4);
+  pointer("pointermove", document, x, start.top + 16);
+  await nextFrame();
+  pointer("pointermove", document, x, header.top + header.height / 2 + 2);
+  await nextFrame();
+  expect(headerOf("a").getBoundingClientRect().top).toBeCloseTo(header.top, 0);
+  pointer("pointermove", document, x, header.top + header.height / 2 - 2);
+  await vi.waitFor(() =>
+    expect(headerOf("a").getBoundingClientRect().top).toBeGreaterThan(header.top + 40),
+  );
+  await nextFrame();
+  expect(headerOf("a").getBoundingClientRect().top).toBeGreaterThan(header.top + 40);
+  pointer("pointermove", document, x, header.top + header.height / 2 + 2);
+  await vi.waitFor(() =>
+    expect(headerOf("a").getBoundingClientRect().top).toBeCloseTo(header.top, 0),
+  );
+  pointer("pointermove", document, x, header.top + header.height / 2 - 2);
+  await vi.waitFor(() =>
+    expect(headerOf("a").getBoundingClientRect().top).toBeGreaterThan(header.top + 40),
+  );
+  pointer("pointerup", document, x, header.top + header.height / 2 - 2);
+  await nextFrame();
+  expect(moveThreadsToSection).toHaveBeenCalledWith(
+    [expect.objectContaining({ threadId: "b2" })],
+    null,
+  );
+});
+
+it.each([48, 96, 144].flatMap((height) => [4, 24, 44].map((grab) => ({ height, grab }))))(
+  "responds at the header midpoint with a $height px preceding row and $grab px pickup",
+  async ({ height, grab }) => {
+    renderView(vi.fn());
+    await nextFrame();
+    document.querySelector<HTMLElement>('[data-row="g2"]')!.style.height = `${height}px`;
+    await nextFrame();
+    const row = document.querySelector<HTMLElement>('[data-row="b2"]')!;
+    const start = row.getBoundingClientRect();
+    const header = headerOf("a").getBoundingClientRect();
+    const x = start.left + 20;
+    const midpoint = header.top + header.height / 2;
+    pointer("pointerdown", row, x, start.top + grab);
+    pointer("pointermove", document, x, start.top + grab - 8);
+    await nextFrame();
+    pointer("pointermove", document, x, midpoint + 2);
+    await nextFrame();
+    expect(headerOf("a").getBoundingClientRect().top).toBeCloseTo(header.top, 0);
+    pointer("pointermove", document, x, midpoint - 2);
+    await vi.waitFor(() =>
+      expect(headerOf("a").getBoundingClientRect().top).toBeGreaterThan(header.top + 40),
+    );
+    await nextFrame();
+    expect(headerOf("a").getBoundingClientRect().top).toBeGreaterThan(header.top + 40);
+    expect(Math.abs(row.getBoundingClientRect().top + grab - (midpoint - 2))).toBeLessThan(1);
+    await userEvent.keyboard("{Escape}");
+    expect(moveThreadsToSection).not.toHaveBeenCalled();
+    expect(reorderActiveThread).not.toHaveBeenCalled();
+  },
+);
+
+it.each([false, true])(
+  "waits for section membership before writing order (success: %s)",
+  async (success) => {
+    let complete: (value: boolean) => void = () => {};
+    moveThreadsToSection.mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          complete = resolve;
+        }),
+    );
+    renderView(vi.fn());
+    await nextFrame();
+    const row = document.querySelector<HTMLElement>('[data-row="b2"]')!;
+    const start = row.getBoundingClientRect();
+    const target = document.querySelector<HTMLElement>('[data-row="a2"]')!.getBoundingClientRect();
+    const x = start.left + 20;
+    pointer("pointerdown", row, x, start.top + 4);
+    pointer("pointermove", document, x, start.top + 12);
+    await nextFrame();
+    pointer("pointermove", document, x, target.bottom - 4);
+    await nextFrame();
+    pointer("pointerup", document, x, target.bottom - 4);
+    await vi.waitFor(() =>
+      expect(moveThreadsToSection).toHaveBeenCalledWith(
+        [expect.objectContaining({ threadId: "b2" })],
+        "a",
+      ),
+    );
+    expect(reorderActiveThread).not.toHaveBeenCalled();
+    const ids = () =>
+      [...document.querySelectorAll<HTMLElement>("[data-row]")].map((node) => node.dataset.row);
+    expect(ids().indexOf("b2")).toBe(ids().indexOf("a2") + 1);
+    complete(success);
+    if (success) {
+      await vi.waitFor(() => expect(reorderActiveThread).toHaveBeenCalledTimes(1));
+      expect(reorderActiveThread).toHaveBeenCalledWith(
+        expect.objectContaining({ threadId: "b2" }),
+        expect.any(String),
+      );
+    } else {
+      await vi.waitFor(() => expect(ids().indexOf("b2")).toBe(ids().indexOf("b1") + 1));
+      expect(reorderActiveThread).not.toHaveBeenCalled();
+    }
+  },
+);

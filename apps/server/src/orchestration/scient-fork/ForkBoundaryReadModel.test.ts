@@ -209,6 +209,58 @@ layer("ForkBoundaryReadModel resolver", (it) => {
     }),
   );
 
+  it.effect(
+    "repairs a missing placeholder answer using only the completed turn's own final answer",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* prepare;
+        yield* seedThreeTurns(sql);
+        yield* sql`UPDATE projection_turns SET assistant_message_id = 'assistant:turn-1' WHERE turn_id = ${T1}`;
+        yield* insertMessage(sql, {
+          threadId: ORIGIN,
+          messageId: MessageId.make("later-reasoning"),
+          turnId: T1,
+          role: "reasoning",
+          createdAt: "2026-01-01T00:00:09.000Z",
+        });
+        const result = yield* makeForkBoundaryResolver(sql).resolve({
+          originThreadId: ORIGIN,
+          sourceAssistantMessageId: A3,
+          threadCreatedAt: THREAD_CREATED_AT,
+        });
+        assert.strictEqual(result.boundaries[1]?.assistantMessageId, A1);
+        const clickedAnswer = yield* makeForkBoundaryResolver(sql).resolve({
+          originThreadId: ORIGIN,
+          sourceAssistantMessageId: A1,
+          threadCreatedAt: THREAD_CREATED_AT,
+        });
+        assert.strictEqual(clickedAnswer.selectedBoundary.turnId, T1);
+        assert.strictEqual(clickedAnswer.selectedBoundary.checkpointTurnCount, 1);
+        const origin = (yield* sql<{
+          readonly assistant_message_id: string;
+        }>`SELECT assistant_message_id FROM projection_turns WHERE turn_id = ${T1}`)[0];
+        assert.strictEqual(origin?.assistant_message_id, "assistant:turn-1");
+      }),
+  );
+
+  it.effect("does not borrow another turn's answer or an unfinished answer", () =>
+    Effect.gen(function* () {
+      const sql = yield* prepare;
+      yield* seedThreeTurns(sql);
+      yield* sql`UPDATE projection_turns SET assistant_message_id = 'assistant:turn-1' WHERE turn_id = ${T1}`;
+      yield* sql`UPDATE projection_thread_messages SET is_streaming = 1 WHERE message_id = ${A1}`;
+      const result = yield* makeForkBoundaryResolver(sql).resolve({
+        originThreadId: ORIGIN,
+        sourceAssistantMessageId: A3,
+        threadCreatedAt: THREAD_CREATED_AT,
+      });
+      // The turn stays in the history without an answer, and later answers still resolve.
+      assert.strictEqual(result.boundaries[1]?.turnId, T1);
+      assert.strictEqual(result.boundaries[1]?.assistantMessageId, null);
+      assert.strictEqual(result.selectedBoundary.assistantMessageId, A3);
+    }),
+  );
+
   it.effect("returns all SQL-backed boundaries ordered by turn count", () =>
     Effect.gen(function* () {
       const sql = yield* prepare;
@@ -440,6 +492,18 @@ layer("ForkBoundaryReadModel resolver", (it) => {
         checkpointTurnCount: 1,
         checkpointStatus: "ready",
       });
+      for (const [messageId, turnId] of [
+        ["fork-baseline-assistant", baselineTurnId],
+        ["fork-assistant-1", postForkTurnId],
+      ] as const) {
+        yield* insertMessage(sql, {
+          threadId: forkThreadId,
+          messageId: MessageId.make(messageId),
+          turnId,
+          role: "assistant",
+          createdAt: NOW,
+        });
+      }
       const resolver = makeForkBoundaryResolver(sql);
 
       // Select the baseline assistant.
@@ -631,6 +695,13 @@ layer("ForkBoundaryReadModel resolver", (it) => {
         completedAt: "2026-01-01T00:00:02.000Z",
         checkpointTurnCount: null,
         checkpointStatus: null,
+      });
+      yield* insertMessage(sql, {
+        threadId: ORIGIN,
+        messageId: A1,
+        turnId: T1,
+        role: "assistant",
+        createdAt: "2026-01-01T00:00:02.000Z",
       });
       const resolver = makeForkBoundaryResolver(sql);
 

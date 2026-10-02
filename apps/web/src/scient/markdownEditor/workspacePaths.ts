@@ -1,3 +1,13 @@
+import {
+  collapseAbsoluteFilePath,
+  isRelativeFilePath,
+  parseMarkdownFileLink,
+} from "@t3tools/client-runtime/markdown-links";
+
+import { isWindowsAbsolutePath } from "@t3tools/shared/path";
+
+import { resolvePathLinkTarget } from "~/terminal-links";
+
 import { isScientMarkdownDocumentPath } from "./markdownDocumentPaths";
 
 /** URL destinations are decoded once; wiki targets are already filesystem text. */
@@ -94,4 +104,33 @@ export function markdownWikiTargetForPath(
   ];
   const relative = relativeSegments.join("/").replace(/\.md$/iu, "");
   return relative.length > 0 ? relative : null;
+}
+
+/**
+ * The absolute host path a Markdown link names when it leaves the workspace:
+ * an absolute path, a `file:` URL, or a relative path that climbs above the
+ * workspace root. Such a file opens read-only like any other host file.
+ * Returns null for web and other URL schemes, fragments, and empty links.
+ */
+export function resolveMarkdownHostLinkPath(
+  markdownRelativePath: string,
+  workspaceRoot: string,
+  destination: string,
+): string | null {
+  // The link as written comes first, which keeps absolute drive and UNC paths
+  // exact. Failing that, in a Windows workspace a relative link written with
+  // backslashes, encoded or not, uses them as separators; on POSIX they are
+  // part of a file name.
+  const target =
+    parseMarkdownFileLink(destination) ??
+    (isWindowsAbsolutePath(workspaceRoot)
+      ? parseMarkdownFileLink(destination.replaceAll(/%5C/giu, "/").replaceAll("\\", "/"))
+      : null);
+  if (target === null) return null;
+  if (!isRelativeFilePath(target.path)) return collapseAbsoluteFilePath(target.path);
+  if (!workspaceRoot) return null;
+  const markdownPath = resolvePathLinkTarget(markdownRelativePath, workspaceRoot);
+  const separator = markdownPath.includes("\\") && !markdownPath.includes("/") ? "\\" : "/";
+  // The trailing `..` drops the document's own name, leaving its directory.
+  return collapseAbsoluteFilePath(`${markdownPath}${separator}..${separator}${target.path}`);
 }
