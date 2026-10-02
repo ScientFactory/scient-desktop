@@ -29,8 +29,8 @@ const projectFilesRefreshSignal = Atom.family((key: string) =>
 const optimisticFileTargets: Map<
   string,
   { readonly environmentId: EnvironmentId; readonly cwd: string; readonly relativePath: string }
-> = import.meta.hot?.data.optimisticFileTargets ?? new Map();
-if (import.meta.hot) import.meta.hot.data.optimisticFileTargets = optimisticFileTargets;
+> = import.meta.hot?.data?.optimisticFileTargets ?? new Map();
+if (import.meta.hot?.data) import.meta.hot.data.optimisticFileTargets = optimisticFileTargets;
 
 /** Refresh both query-backed pickers and mounted lazy trees after known workspace writes. */
 export function refreshProjectFiles(environmentId: EnvironmentId, cwd: string): void {
