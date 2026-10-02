@@ -72,7 +72,8 @@ export const scientAgentTarget: OmpTarget = {
   },
   unsupportedDetail: `This is not a Scient Agent release this version of Scient supports (${SCIENT_AGENT_MINIMUM_VERSION} or newer ${SCIENT_AGENT_SUPPORTED_MAJOR}.x). Check the configured executable.`,
   minimumVersion: SCIENT_AGENT_MINIMUM_VERSION,
-  noModelsHint: "Add a custom model in Settings, or start a local model server such as Ollama.",
+  noModelsHint:
+    "Sign in to a model account, add a custom model in Settings, or start a local model server such as Ollama.",
 };
 
 /** The directory Scient Agent keeps all of its own files in, assigned by this server. */

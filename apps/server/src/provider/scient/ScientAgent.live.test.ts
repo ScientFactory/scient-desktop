@@ -20,15 +20,26 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import { makeOmpAdapter } from "../Layers/OmpAdapter.ts";
 import { checkOmpProviderStatus } from "../Layers/OmpProvider.ts";
 import * as OmpExecutableGate from "../omp/OmpExecutableGate.ts";
 import { ompLiveInstance, ompQualifyBinary, ompQualifyModel } from "../omp/OmpLive.testFixtures.ts";
-import { makeOmpRpcProcess, type OmpRpcProcessOptions } from "../omp/OmpRpcProcess.ts";
+import {
+  makeOmpRpcProcess,
+  OMP_ISOLATED_ARGS,
+  type OmpRpcProcessOptions,
+} from "../omp/OmpRpcProcess.ts";
 import { ompTarget } from "../omp/OmpTarget.ts";
+import { ProviderConnectionActionError } from "../../scient/providerLifecycle/ProviderConnectionActions.ts";
+import {
+  makeScientAgentConnectionActions,
+  readScientAgentAccounts,
+} from "../../scient/providerLifecycle/ScientAgentConnectionActions.ts";
 import { scientAgentProcessEnvironment, scientAgentTarget } from "./ScientAgentTarget.ts";
 
 const scientAgentBinary = process.env.SCIENT_AGENT_QUALIFY_BINARY || undefined;
@@ -133,6 +144,67 @@ describe.runIf(scientAgentBinary)("real Scient Agent", () => {
       expect(result.status).toBe("ready");
       expect(result.version).toMatch(/^0\.\d+\.\d+/u);
       expect(result.models.length).toBeGreaterThan(0);
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("lists its sign-ins and runs one the way Scient's sign-in screen does", () =>
+    Effect.gen(function* () {
+      const { root, home, stateDir } = makeRoot("sign-in");
+      const { environment } = scientAgentInstance(home, stateDir, "scient");
+      const makeProcess = yield* gatedProcess;
+      const status = yield* checkOmpProviderStatus(
+        scientAgentTarget,
+        settings(binary),
+        environment,
+        makeProcess,
+        root,
+        readScientAgentAccounts,
+      );
+      const accounts = status.accounts ?? [];
+      expect(accounts.find((entry) => entry.id === "openai-codex")?.kind).toBe("account");
+      // A new root has no stored sign-in, so there is nothing to sign out of.
+      expect(accounts.find((entry) => entry.id === "openrouter")).toMatchObject({
+        kind: "account",
+        canDisconnect: false,
+      });
+      expect(accounts.some((entry) => entry.kind === "key")).toBe(true);
+
+      const actions = makeScientAgentConnectionActions({
+        open: makeProcess({
+          target: scientAgentTarget,
+          command: binary,
+          env: environment,
+          extraArgs: OMP_ISOLATED_ARGS,
+        }).pipe(
+          Effect.provide(NodeServices.layer),
+          Effect.map((client) => ({
+            events: client.events,
+            command: client.command,
+            extensionUiResponse: client.extensionUiResponse,
+            redact: client.redaction.text,
+          })),
+          Effect.mapError(
+            (cause) => new ProviderConnectionActionError({ message: cause.message, cause }),
+          ),
+        ),
+      });
+      // OpenRouter's flow builds its link locally and waits on a loopback
+      // callback, so the start reaches no outside service.
+      const scope = yield* Scope.make();
+      const attempt = yield* actions
+        .start("scient_agent_account", "openrouter")
+        .pipe(Scope.provide(scope));
+      expect(attempt.authorizationUrl).toMatch(/^https:\/\/openrouter\.ai\/auth\?/u);
+      expect(attempt.authorizationUrlKind).toBe("primary");
+      expect(attempt.submitAuthorizationCode).toBeDefined();
+      expect(attempt.instructions).toMatch(/authorization code/iu);
+      yield* attempt.cancel;
+      yield* Scope.close(scope, Exit.void);
+
+      // Signing out of an entry with nothing stored is answered, not an error.
+      yield* Effect.scoped(actions.disconnectAccount!("openrouter"));
+      expect(homeEntries(home)).toEqual([]);
       NodeFS.rmSync(root, { recursive: true, force: true });
     }).pipe(Effect.provide(layer)),
   );

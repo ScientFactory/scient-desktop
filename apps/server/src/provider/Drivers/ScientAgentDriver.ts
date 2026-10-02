@@ -12,16 +12,26 @@ import type { BackgroundPolicy } from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { customModelDiscoverySnapshot } from "../../customModelCapabilities.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { ProviderConnectionActionError } from "../../scient/providerLifecycle/ProviderConnectionActions.ts";
+import {
+  makeScientAgentConnectionActions,
+  readScientAgentAccounts,
+} from "../../scient/providerLifecycle/ScientAgentConnectionActions.ts";
 import { makeScientAgentManagedRuntimeResolution } from "../../scient/providerLifecycle/ScientAgentManagedRuntimeActions.ts";
 import { makeOmpTextGeneration } from "../../textGeneration/OmpTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeOmpAdapter } from "../Layers/OmpAdapter.ts";
-import { checkOmpProviderStatus, makePendingOmpProvider } from "../Layers/OmpProvider.ts";
+import {
+  checkOmpProviderStatus,
+  makePendingOmpProvider,
+  type OmpProviderStatus,
+} from "../Layers/OmpProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import { makeOmpCustomModelsClientFactory } from "../omp/OmpCustomModels.ts";
 import type { OmpExecutableGate } from "../omp/OmpExecutableGate.ts";
 import { sweepStaleOmpExtensionFiles } from "../omp/OmpExtensionBootstrap.ts";
+import { OMP_ISOLATED_ARGS } from "../omp/OmpRpcProcess.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -131,15 +141,25 @@ export const ScientAgentDriver: ProviderDriver<ScientAgentSettings, ScientAgentD
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
       });
-      const stamp = (snapshot: ServerProviderDraft): ServerProvider => ({
-        ...stampIdentity(snapshot),
-        connection: {
-          methods: [],
-          canDisconnect: false,
-          operation: null,
-          runtime: managedRuntime.summary,
-        },
-      });
+      // The agent signs in to several model accounts and reports its own list.
+      // An agent build that does not describe its entries offers no sign-in.
+      // The list itself says sign-in is available: `methods` stays empty, so a
+      // client that predates the account method still decodes this provider.
+      const stamp = (
+        snapshot: ServerProviderDraft & Pick<OmpProviderStatus, "accounts">,
+      ): ServerProvider => {
+        const { accounts, ...draft } = snapshot;
+        return {
+          ...stampIdentity(draft),
+          connection: {
+            methods: [],
+            canDisconnect: false,
+            operation: null,
+            runtime: managedRuntime.summary,
+            ...(accounts ? { accounts } : {}),
+          },
+        };
+      };
       const adapter = yield* makeOmpAdapter({
         target: scientAgentTarget,
         binaryPath: launchConfig.binaryPath,
@@ -176,12 +196,40 @@ export const ScientAgentDriver: ProviderDriver<ScientAgentSettings, ScientAgentD
           processEnv,
           makeRpcClient,
           cwd,
+          readScientAgentAccounts,
         ).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),
           Effect.map(stamp),
         );
+      // One isolated agent process per sign-in or sign-out, in the caller's scope.
+      const openSignIn = makeRpcClient({
+        target: scientAgentTarget,
+        command: launchConfig.binaryPath,
+        env: processEnv,
+        extraArgs: OMP_ISOLATED_ARGS,
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.map((client) => ({
+          events: client.events,
+          command: client.command,
+          extensionUiResponse: client.extensionUiResponse,
+          redact: client.redaction.text,
+        })),
+        Effect.mapError(
+          (cause) =>
+            new ProviderConnectionActionError({
+              message: "Scient could not start Scient Agent to manage the account.",
+              cause,
+            }),
+        ),
+      );
+      // Signing out also stops this provider's conversations; the lifecycle
+      // manager does that, so it holds for whichever instance is current.
+      const connectionActions = makeScientAgentConnectionActions({ open: openSignIn });
       // Scient Agent has no updater of its own; Scient replaces the executable.
       const maintenance = makeManualOnlyProviderMaintenanceCapabilities({
         provider: DRIVER_KIND,
@@ -217,6 +265,7 @@ export const ScientAgentDriver: ProviderDriver<ScientAgentSettings, ScientAgentD
         snapshotForCwd: checkProvider,
         adapter,
         textGeneration,
+        connectionActions,
         managedRuntimeActions: managedRuntime.actions,
       } satisfies ProviderInstance;
     }),
