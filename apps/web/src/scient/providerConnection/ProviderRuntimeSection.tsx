@@ -33,6 +33,11 @@ import {
   isManagedRuntimeActionDurablySettled,
   type OptimisticProviderValue,
 } from "./optimisticProviderValue";
+import {
+  isRuntimePlanStale,
+  managedRuntimeSwitchNeedsDecision,
+  managedRuntimeSwitchTitle,
+} from "./ManagedRuntimeSwitchDecision";
 import { ProviderRuntimeDiagnosticsDetails } from "./ProviderRuntimeDiagnostics";
 import {
   cancelRuntimeActionLabel,
@@ -244,17 +249,34 @@ export function ProviderRuntimeSection(props: {
           instanceId: props.provider.instanceId,
           action: nextPlan.action,
           catalogRevision: nextPlan.catalogRevision,
+          // Reached only from the decision that showed both releases.
+          ...(managedRuntimeSwitchNeedsDecision(nextPlan) ? { acceptOlderThanSystem: true } : {}),
         },
       });
       if (result._tag === "Failure") {
+        const failure = isAtomCommandInterrupted(result) ? null : squashAtomCommandFailure(result);
+        if (failure && isRuntimePlanStale(failure)) {
+          // The system runtime changed since the plan: show the switch as it
+          // is now, for a new decision, instead of starting or failing it.
+          const replanned = await planRuntime({
+            environmentId: props.environmentId,
+            input: { instanceId: props.provider.instanceId, action: nextPlan.action },
+          });
+          if (replanned._tag === "Success" && replanned.value.systemVersion !== undefined) {
+            setPendingAction(null);
+            setPreparedPlan(replanned.value);
+            props.onPlanOpenChange?.(true);
+            return;
+          }
+        }
         setPendingAction(null);
-        if (!isAtomCommandInterrupted(result)) {
+        if (failure) {
           setLocalFailure({
             kind: "start",
             action: nextPlan.action,
             operationId,
             message: providerLifecycleFailureMessage(
-              squashAtomCommandFailure(result),
+              failure,
               `Scient could not start the ${props.displayName} runtime operation.`,
             ),
           });
@@ -285,6 +307,7 @@ export function ProviderRuntimeSection(props: {
       setPendingAction(null);
     },
     [
+      planRuntime,
       startRuntime,
       props.displayName,
       props.environmentId,
@@ -308,9 +331,14 @@ export function ProviderRuntimeSection(props: {
         props.onPlanOpenChange?.(false);
         return;
       }
+      // Removal is destructive, and switching away from a working system
+      // installation changes the release in use: both wait for a decision made
+      // with the plan in view.
+      const needsDecision =
+        action === "remove" || (action === "install" && runtime.source === "system");
       setLocalFailure(null);
       setPendingAction("plan");
-      if (action === "remove") props.onPlanOpenChange?.(true);
+      if (needsDecision) props.onPlanOpenChange?.(true);
       const result = await planRuntime({
         environmentId: props.environmentId,
         input: { instanceId: props.provider.instanceId, action },
@@ -330,13 +358,15 @@ export function ProviderRuntimeSection(props: {
         }
         return;
       }
-      // Install, update, and repair are already authorized by the action click.
-      // Keep the server preflight and its exact catalog revision; only removal
-      // needs a second, destructive confirmation.
-      if (action !== "remove") {
+      // Other installs, updates and repairs are already authorized by the
+      // action click. Keep the server preflight and its exact catalog revision.
+      // A plan that names a system runtime puts the managed copy in use in its
+      // place, whatever the action was called: that is decided here.
+      if (!needsDecision && result.value.systemVersion === undefined) {
         await startPlan(result.value);
         return;
       }
+      if (!needsDecision) props.onPlanOpenChange?.(true);
       setPendingAction(null);
       setPreparedPlan(result.value);
     },
@@ -348,6 +378,7 @@ export function ProviderRuntimeSection(props: {
       props.provider.instanceId,
       runtime.actions,
       runtime.operation,
+      runtime.source,
       startPlan,
     ],
   );
@@ -496,6 +527,7 @@ export function ProviderRuntimeSection(props: {
   }
 
   if (plan) {
+    const removing = plan.action === "remove";
     return (
       <div
         className={
@@ -505,12 +537,27 @@ export function ProviderRuntimeSection(props: {
         }
       >
         <div className="flex items-start gap-3">
-          <ShieldCheckIcon className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden />
+          {managedRuntimeSwitchNeedsDecision(plan) ? (
+            <TriangleAlertIcon className="mt-0.5 size-5 shrink-0 text-warning" aria-hidden />
+          ) : (
+            <ShieldCheckIcon className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden />
+          )}
           <div className="min-w-0">
-            <p className="text-sm font-medium text-foreground">Remove {props.displayName}?</p>
+            <p className="text-sm font-medium text-foreground">
+              {removing
+                ? `Remove ${props.displayName}?`
+                : managedRuntimeSwitchTitle(props.displayName, plan)}
+            </p>
             <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-              Only Scient’s managed copy will be removed. Your account and other {props.displayName}{" "}
-              installations stay unchanged.
+              {removing ? (
+                <>
+                  Only Scient’s managed copy will be removed. Your account and other{" "}
+                  {props.displayName} installations stay unchanged.
+                </>
+              ) : (
+                // The server names the release it installs and the system one it replaces.
+                plan.message
+              )}
             </p>
           </div>
         </div>
@@ -535,12 +582,18 @@ export function ProviderRuntimeSection(props: {
           <Button
             type="button"
             size="sm"
-            variant="ghost-destructive-action"
+            variant={removing ? "ghost-destructive-action" : "ghost-primary"}
             disabled={isWorking}
             onClick={() => void start()}
           >
-            {pendingAction === "start" ? <LoaderIcon className="animate-spin" /> : <Trash2Icon />}
-            Remove
+            {pendingAction === "start" ? (
+              <LoaderIcon className="animate-spin" />
+            ) : removing ? (
+              <Trash2Icon />
+            ) : (
+              <DownloadIcon />
+            )}
+            {removing ? "Remove" : "Use Scient-managed"}
           </Button>
         </div>
       </div>

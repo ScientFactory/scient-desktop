@@ -315,6 +315,15 @@ or Windows arm64; those assisted paths must remain unqualified until the
 product records an explicit availability policy. Listing a uv target is not
 packaged-app release evidence.
 
+Bundled recipes are read through Electron's filesystem and may remain inside
+ASAR. They must never be used as subprocess working directories. Installer
+and scientific verification checks run from the real app-owned Compute directory;
+package installation uses
+the staged generation's real project directory. The Python and MATLAB bridge
+scripts ship together in `app.asar.unpacked` (or `server.asar.unpacked` on native
+Windows), and runtime resolution passes those physical paths to interpreters.
+An Electron-readable file is not necessarily readable by an external process.
+
 PyArrow remains optional: its pinned release has no Windows ARM64 wheel, so its
 proposed promotion to the base has not passed the platform gate. The expanded
 image toolkit has no imagecodecs musl wheels; cftime also lacks musl ARM64 wheels.

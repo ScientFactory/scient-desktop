@@ -41,6 +41,9 @@ Terminology: `docs/internals/glossary.md`.
 - Orchestration is event-sourced: commands pass through deciders, events are
   persisted, and projectors build read models. Reactors perform side effects.
   Preserve this path rather than treating projections as authoritative data.
+- Server features are services and transports stay thin: a `ws.ts` RPC handler, HTTP route,
+  MCP tool, scheduled task, or CLI entry decodes input, calls one service method, and maps
+  errors. See [Effect services](docs/internals/effect-services.md).
 - A provider driver identifies an implementation; a provider instance identifies
   one configured runtime. Route model selections and sessions by instance ID,
   not merely by driver kind.

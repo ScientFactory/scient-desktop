@@ -35,6 +35,36 @@ its user-global skill directories under that profile, so the profile links those
 back to the user's real `~/.gemini`; MCP servers, hooks, and rules there stay out of the profile.
 See [profile isolation](../../apps/server/src/provider/antigravityAuthSupport.ts).
 
+## Automatic conversation defaults
+
+`resolveAutomaticModel` in `packages/shared/src/model.ts` owns implicit model selection.
+ProviderRegistry publishes the same default flags to all clients. Desktop/web instance
+selection, onboarding, Settings, and mobile consume that policy without changing catalog
+order, native dispatch identifiers, or persisted selections.
+
+| Driver                | Automatic model                                                                                                       | Reasoning for new selections                                                                    |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Codex                 | GPT 6.1 Sol, then GPT 6 Astra, then GPT 6 Luna; otherwise reported default                                            | Medium when advertised, otherwise native default                                                |
+| Claude                | Opus 5.5, then Fable 5.1; otherwise reported default                                                                  | Medium when advertised                                                                          |
+| OpenCode              | Configured native model, or a single connected vendor's reported default; otherwise OpenAI GPT 6.1 Sol when available | Medium for OpenAI/Anthropic models when advertised; other families retain their adapter default |
+| Antigravity           | Native default model family, choosing its verified High Gemini variant when available                                 | High through the native model ID; unsupported/unknown models stay native                        |
+| Pi / Oh My Pi / Droid | Reported default                                                                                                      | Existing reported/configured effort; shared supported-level fallback prefers Medium             |
+| Cursor / Grok         | Reported default                                                                                                      | Native reported effort                                                                          |
+
+Preferred models must exist in the instance's current non-legacy catalog. When neither
+a preference nor a reported/static fallback is available, the first remaining built-in
+model is the final compatibility fallback. Empty Antigravity catalogs never yield an
+invented dispatch ID. Hidden models remain excluded by the existing client preference
+filter before automatic resolution.
+
+Built-in Codex and Claude capability defaults mark supported Medium reasoning as
+concrete so both web and mobile serialize it on dispatch. OpenCode does the same for its
+chosen advertised variant; it no longer invents effort variants when a discovered model
+reports none. Custom model capability declarations and explicit selection options remain
+owned by their existing paths. Automatic Settings displays the effective model alongside
+its traits. These are conversation defaults; background text-generation preferences are
+unchanged. No stored thread, project, or draft selections are migrated.
+
 ## Runtime context
 
 Every adapter uses `apps/server/src/provider/RuntimeInstructions.ts` to identify T3 Code and
@@ -238,7 +268,8 @@ The control descriptor is local UI data, never a provider option sent over ACP o
 selection. The native ID remains authoritative for drafts, defaults, favorites, resume, and turns.
 Favorites retain exact variant shortcuts; hidden rows are not restored by grouping. Custom
 models, ambiguous names, and models already advertising native options are not rewritten.
-The catalog, ACP adapter, legacy `agy` reasoning path, and managed lifecycle remain unchanged.
+The ACP adapter and managed lifecycle preserve native semantics. Automatic selections prefer
+a verified High variant; the legacy `agy` catalog also prefers High when supported.
 
 On desktop/web, an unstarted draft may still contain an old `agy` family ID with
 separate reasoning. `antigravityDraftSelection.ts` reconciles only verified live
@@ -364,6 +395,10 @@ user-facing setup flow. Implementation notes that go beyond the shared runtime:
   inspect account capabilities. It calls `session/new` without `authenticate` to classify account
   state and read the model inventory. Model-specific reasoning ladders are discovered best-effort
   and time-bounded; failure keeps the models with unknown ladders instead of publishing wrong ones.
+  The model selected when that session starts is Droid's own default and is the one reported as
+  default (`isDefault`), which is all the [automatic model policy](#automatic-conversation-defaults)
+  needs to start new threads on it. Text generation is outside that policy: without a chosen model
+  it uses `DROID_DEFAULT_MODEL`, a marker never sent to Droid, so the session keeps the same default.
 - `acp/DroidAcpSupport.ts` owns auth-method selection, model and effort parsing, autonomy mapping,
   and the shared model/effort application used by interactive and headless paths.
 - `Layers/DroidAdapter.ts` owns prompt preparation, steering, atomic turn settlement, interruption,
@@ -473,9 +508,9 @@ orchestration types. The adapter owns the process and the turn mapping.
 
 - The executable is `omp` 18.2.8 or newer and below major 19; a newer major is refused until it is
   qualified. Launch arguments are `--mode rpc` and
-  `--approval-mode yolo`. Scient does not call `login` during discovery. A desktop macOS Apple
-  silicon app can install the qualified private binary. Other machines use an executable the user
-  installed.
+  `--approval-mode yolo`. Scient does not call `login` during discovery. The desktop app can
+  install the qualified private binary on every approved target (below); otherwise Scient uses an
+  executable the user installed.
   Scient never runs `omp update`: it cannot pin a version, follows npm `latest` across majors,
   and has no rollback. The maintenance capabilities are manual-only for every channel. The
   advisory compares the running version with the latest stable release in the supported major,
@@ -484,8 +519,9 @@ orchestration types. The adapter owns the process and the turn mapping.
   not publish third-party taps), and GitHub `releases/latest` for mise and as the fallback. Only
   successful lookups are cached. Nix installations are not checked. The notice carries the
   copyable `omp update` command and names Scient-managed Oh My Pi when a managed artifact exists
-  for the target. A desktop
-  macOS Apple silicon app can install a private Oh My Pi from the qualified catalog. That copy is
+  for the target. The desktop
+  app can install a private Oh My Pi from the qualified catalog on macOS arm64/x64, Linux glibc
+  arm64/x64 and Windows arm64/x64 (`ompManifest.ts`); OMP's musl builds are not approved. That copy is
   updated only through the managed-runtime actions. Managed activation also runs an isolated
   RPC-v2 handshake and state probe after staging; a binary that only answers `--version` is
   rejected and the previous runtime is restored.
@@ -499,16 +535,18 @@ orchestration types. The adapter owns the process and the turn mapping.
   and a remaining conversation fails the activation. The qualification process carries the
   activation token, so a repair does not deadlock on its own hold. The gate is per server, which is
   sufficient because Scient never runs `omp update`.
-- The child environment (`OmpEnvironment.ts`) is the server's login environment minus Scient's
-  internals (`T3CODE_*`, `T3_*`, `SCIENT_*`, `VITE_*`, `ELECTRON_RUN_AS_NODE`,
-  `ELECTRON_RENDERER_PORT`, `PORT`, case-insensitive), then the instance environment as configured
-  (the filter applies only to what the server inherited), then without
-  `PI_CODING_AGENT_SESSION_DIR`. The predicate is OMP's own; other drivers keep their existing
-  policies. Scient adds nothing back: its bridge secrets travel in extension bootstrap files.
-  `NO_PROXY` and `no_proxy` both receive the union of their entries plus loopback (one
-  case-insensitive variable on Windows). An instance home removes inherited `OMP_PROFILE`/
-  `PI_PROFILE`, an instance profile removes inherited `PI_PROFILE`/`PI_CODING_AGENT_DIR`, and a
-  defined `OMP_PROFILE` drops `PI_PROFILE`, matching OMP's precedence so the resume identity does.
+- The child environment (`OmpEnvironment.ts`) is the agent environment shared with Droid
+  (`agentProcessEnvironment.ts`): the server's login environment minus Scient's internals
+  (`T3CODE_*`, `T3_*`, `SCIENT_*`, `VITE_*`, `ELECTRON_RUN_AS_NODE`, `ELECTRON_RENDERER_PORT`,
+  `PORT`, case-insensitive), then the instance environment as configured (the filter applies only
+  to what the server inherited), with `NO_PROXY` and `no_proxy` both receiving the union of their
+  entries plus loopback (one case-insensitive variable on Windows). OMP then removes
+  `PI_CODING_AGENT_SESSION_DIR`. Scient adds nothing back: its bridge secrets travel in extension
+  bootstrap files. No OMP spawn merges the server's own environment into it (`extendEnv: false`).
+  Drivers other than Droid and OMP keep their existing policies. An instance home removes inherited
+  `OMP_PROFILE`/`PI_PROFILE`, an instance profile removes inherited `PI_PROFILE`/
+  `PI_CODING_AGENT_DIR`, and a defined `OMP_PROFILE` drops `PI_PROFILE`, matching OMP's precedence
+  so the resume identity does.
 - One process serves one thread. Stop closes that process only. The child receives an explicit
   `--session-dir` under Scient's per-instance/per-thread state root; the legacy session environment
   variable is retained only as a compatibility fallback in the process environment.
@@ -835,3 +873,10 @@ when a request opens (approval) or user input is requested, via
 [ingest]: ../../apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts
 [cmd]: ../../apps/server/src/orchestration/Layers/ProviderCommandReactor.ts
 [checkpoint]: ../../apps/server/src/orchestration/Layers/CheckpointReactor.ts
+
+Managed subscription-sharing OAuth and remote handoff are retained as upstream machinery,
+but are not enabled in Scient. Native Codex sign-in remains the active connection path.
+
+Antigravity sign-out closes admission to new processes and stops existing processes before clearing account
+metadata. Otherwise a helper or resumed session could retain the old account. Cached model lists
+do not establish current access, and an authoritative empty catalog must clear the old list.

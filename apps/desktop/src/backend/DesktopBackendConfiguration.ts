@@ -89,6 +89,7 @@ const SCIENT_DESKTOP_DEV_BACKEND_LAUNCH_GENERATION_ENV =
   "SCIENT_DESKTOP_DEV_BACKEND_LAUNCH_GENERATION";
 
 const DESKTOP_BACKEND_ENV_NAMES = [
+  "SCIENT_DEV_SCRATCH_ROOT",
   ...SCIENT_ANALYTICS_METADATA_ENV_NAMES,
   "T3CODE_HOME",
   "SCIENT_NEXT_HOME",
@@ -661,6 +662,9 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
         T3CODE_HOME: environment.baseDir,
         SCIENT_NEXT_HOME: environment.baseDir,
         SCIENT_NEXT_DEVELOPMENT_STATE: environment.isDevelopment ? "true" : undefined,
+        SCIENT_DEV_SCRATCH_ROOT: environment.isDevelopment
+          ? process.env.SCIENT_DEV_SCRATCH_ROOT
+          : undefined,
         SCIENT_NEXT_SAFETY_ENVELOPE: SCIENT_DESKTOP_IDENTITY.safetyEnvelopeMarker,
         ...Option.match(environment.developmentBackendPidHandoff, {
           onNone: () => ({}),

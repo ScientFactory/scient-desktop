@@ -94,8 +94,7 @@ open through the system chooser. Videos open in a full-screen player with native
 supported iOS videos stream from their environment as they play. Unsupported formats can still be
 saved or shared to another app.
 
-On desktop and web, generic files cannot yet be queued. Keep them in the composer and
-send when the current turn finishes, or use the steer shortcut when supported.
+On desktop and web, supported file attachments stay with the message when it is queued.
 Editing a fork from a sent message with file attachments is not supported yet;
 fork from a completed response to retain the conversation and its files.
 
@@ -246,6 +245,10 @@ provider. On mobile, both are also available before starting a thread on
 
 The slash menu also includes skills unless you turn off **Settings → General →
 Show skills in slash menu**. Only skills enabled for the provider are listed.
+
+After you add or change skills, plugins, or MCP servers, use **Restart agent
+session** in the command palette on web and desktop. The conversation continues,
+and your next message starts the agent again with the new setup.
 
 Provider commands must start the message to run. Scient commands such as
 `/model` and `/plan`, and skill mentions, work on any line.
@@ -448,10 +451,11 @@ settings does not appear in either menu.
 
 Use **Settings → Skills → External skills** to inspect provider-owned skills.
 Where a switch is available, it changes the provider's own setting and can also
-affect that provider outside Scient. Codex, Droid, Grok, and ordinary personal
-Claude skills support switching; other entries remain read-only when Scient
-cannot change their native setting. A provider may require a new conversation
-to load changed settings.
+affect that provider outside Scient. Codex, Grok, and ordinary personal Claude
+and Droid skills support switching; other entries remain read-only when Scient
+cannot change their native setting. Claude and Droid project skills are
+read-only here: change them in the project. A provider may require a new
+conversation to load changed settings.
 
 Provider commands such as `/compact` only run when they open the message, so the `/` menu offers
 them only there. Scient's own commands, such as `/model` and `/plan`, and skills stay available on
@@ -537,15 +541,15 @@ action to request an immediate steer. The provider must support adopting the
 message into its current turn; a rejection remains visible.
 
 Drag queued rows to change their order, or delete them. **Edit** removes a row
-from the waiting list and puts its text and images into the same composer. If
-you were already writing, that ordinary draft is temporarily hidden and kept
-intact. Send the edit to return it to its previous place and restore your
-ordinary draft. Messages that already started cannot be overtaken.
+from the waiting list and puts its text, attachments, and context into the same
+composer as an ordinary draft. Any draft you were already writing is saved in
+the usual stash menu. The edited message has no reserved queue position.
 
-An item being edited cannot send itself. Other waiting messages can continue
-while you edit. The existing **Stash** action saves the edit for later, releases
-its queue position, and brings back your ordinary draft. Restore the saved text
-and attachments through the usual stash menu.
+Other waiting messages can continue while you edit. Your draft stays in the
+composer until you press **Send**: it starts when the thread is idle and eligible,
+or joins the end of the queue when work is still running or other messages are
+waiting. Finishing a turn or starting another queued message does not submit
+your draft automatically. **Stash** saves it for later through the usual menu.
 
 **Stop** leaves queued messages in place. When you send another message, that
 answer runs first; the queue waits until it finishes successfully, then advances
@@ -556,11 +560,12 @@ the rest of the queue continues after its answer succeeds. No extra **Retry**
 is needed after that answer finishes.
 
 **Retry** is for a queue delivery error; it cannot bypass a running answer or
-release messages waiting after Stop. If an ordinary Send races another start,
-Scient preserves the draft and asks you to send again so it can join the queue safely.
+release messages waiting after Stop. Ordinary **Send** is accepted as a new turn
+or a queued message, including while the previous answer's checkpoint is settling.
+This completion race does not require sending again.
 
-Queues survive app restarts and hold up to 20 messages and 64 MiB per thread.
-Generic files still cannot be queued. Local threads that have not reached the
+Queues survive app restarts and hold up to 20 messages and 64 MiB per thread,
+including their attachments. Local threads that have not reached the
 server yet have no persistent queue. Edited drafts recover from this browser's
 local storage; keep the owning window or reopen it to finish an edit. Older
 clients must update before sending to a server using the new queue protocol.
@@ -568,27 +573,43 @@ clients must update before sending to a server using the new queue protocol.
 ## Reading while an answer arrives
 
 By default, an answer grows below your reading position. Reaching the bottom
-or clicking Scroll to end does not enable automatic following. Tool activity
-and queued messages do not pull the conversation downward.
+or clicking Scroll to end does not enable automatic following, and tool
+activity does not pull the conversation downward. "The bottom" means the end
+of the latest answer's text, and you still count as at the bottom with up to
+its last three lines hidden behind the composer. A changed-files list, tool
+activity, timestamps or your own message sent after that answer do not count
+as unread. While the agent is working, everything it has produced since your
+latest message is new: when its latest step or answer is below you, **Scroll
+to end** appears. The same holds after you stop the turn or it fails, and
+when it finishes without writing an answer.
 
-Sending near the bottom gently reveals your message and its answer, allowing
-a margin of at most two rendered body-text lines. The first message retains its existing placement
+Sending at the bottom (by that same rule) gently reveals your message and its
+answer. The first message retains its existing placement
 near the top. Movement stops when your sent message's first line reaches the top
 of the reading area; only the bubble's padding may pass above it. It then stays there
-while the rest grows below the screen. If you were reading earlier content,
-sending leaves that position alone. Manual scrolling cancels both pending
-placement and limited answer following, including during an upload.
+while the rest grows below the screen. When progress notes, reasoning or tool
+activity push the message the agent is writing below the screen, the reveal
+continues just far enough to show that message's first lines, never its end. A
+queued message that is sent while you are at the bottom is revealed the same way.
+If you were reading earlier content, sending leaves that position alone.
+Scrolling back up cancels both pending placement and limited answer following,
+including during an upload; clicking, selecting text, or scrolling down does not.
+
+While nothing is running and you are at the end, the end stays in view when the
+window resizes or a diagram or image finishes rendering.
 
 Use the existing **Scroll to end** button for a single jump. It appears when more
 content remains below you, not just blank space reserved for message placement.
 Its small count shows
-new assistant messages below your view that you have not reached yet, once per
-message, not once per streaming update. It excludes your messages and tool activity.
+new answers below your view that you have not reached yet: once per response,
+not once per progress note or streaming update. It excludes your messages and
+tool activity.
 The count tracks reading within the current app window session; opening older
 history does not mark it newly unread.
 
 Returning to a thread, or reloading the same window, restores the message you
 were reading and its position in the view. If a temporary working indicator has
 become an answer, restoration uses that turn's content. Older history loads when
-needed to find the saved message. A thread with no saved reading position opens
-at the end once. These positions are local to the window, not synced read receipts.
+needed to find the saved message; if a few pages do not contain it, the nearest
+message or the end is used instead. A thread with no saved reading position
+opens at the end once, and stays there while its rows finish rendering. These positions are local to the window, not synced read receipts.

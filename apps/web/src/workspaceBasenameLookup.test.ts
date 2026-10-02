@@ -15,6 +15,8 @@ describe("needsWorkspaceBasenameLookup", () => {
   it("leaves anything with a directory alone", () => {
     expect(needsWorkspaceBasenameLookup("apps/web/src/components/ChatView.tsx")).toBe(false);
     expect(needsWorkspaceBasenameLookup("apps\\web\\ChatView.tsx")).toBe(false);
+    expect(needsWorkspaceBasenameLookup(".")).toBe(false);
+    expect(needsWorkspaceBasenameLookup("..")).toBe(false);
     expect(needsWorkspaceBasenameLookup("   ")).toBe(false);
   });
 });
@@ -25,10 +27,19 @@ describe("pickWorkspaceBasenameMatch", () => {
     { path: "apps/web/src/components/ChatView.tsx", kind: "file" as const },
   ];
 
-  it("takes the first exact filename match, not the closest fuzzy one", () => {
+  it("takes the exact filename match, not the closest fuzzy one", () => {
     expect(pickWorkspaceBasenameMatch("ChatView.tsx", entries)).toBe(
       "apps/web/src/components/ChatView.tsx",
     );
+  });
+
+  it("returns null rather than guessing between two files with the same name", () => {
+    expect(
+      pickWorkspaceBasenameMatch("notes.md", [
+        { path: "reviews/a/notes.md", kind: "file" },
+        { path: "reviews/b/notes.md", kind: "file" },
+      ]),
+    ).toBeNull();
   });
 
   it("ignores directories", () => {

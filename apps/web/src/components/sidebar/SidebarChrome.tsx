@@ -1,4 +1,10 @@
-import { ArrowLeftIcon, ChartNoAxesColumnIcon, ImportIcon, SettingsIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  ChartNoAxesColumnIcon,
+  EllipsisVerticalIcon,
+  ImportIcon,
+  SettingsIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
@@ -14,6 +20,7 @@ import {
   useEnvironmentStageLabel,
 } from "../SidebarStageBackdrop";
 import { Badge } from "../ui/badge";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import {
   SidebarFooter,
   SidebarMenu,
@@ -120,13 +127,18 @@ function SidebarUtilityItem({
   icon,
   label,
   onClick,
+  secondary = false,
 }: {
   icon: ReactNode;
   label: string;
   onClick: () => void;
+  secondary?: boolean;
 }) {
   return (
-    <SidebarMenuItem className="shrink-0">
+    <SidebarMenuItem
+      className="shrink-0"
+      data-sidebar-utility={secondary ? "secondary" : undefined}
+    >
       <Tooltip>
         <TooltipTrigger
           render={
@@ -171,6 +183,11 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     void navigate({ to: "/settings" });
   }, [closeMobileSidebar, navigate]);
 
+  const handleImportClick = useCallback(() => {
+    closeMobileSidebar();
+    requestConversationImport();
+  }, [closeMobileSidebar]);
+
   const handleUsageClick = useCallback(() => {
     if (isMobile) {
       setOpenMobile(false);
@@ -184,45 +201,66 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   }, [closeMobileSidebar, navigateToMainApp]);
 
   return (
-    <SidebarMenu className="flex-row items-center">
-      {isOnUtilityPage ? (
-        <SidebarMenuItem className="min-w-0 flex-1">
-          <SidebarMenuButton onClick={handleBackClick}>
-            <ArrowLeftIcon />
-            <span>Back</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      ) : (
-        <>
-          <SidebarUtilityItem
-            icon={<ImportIcon />}
-            label="Import conversation"
-            onClick={() => {
-              closeMobileSidebar();
-              requestConversationImport();
-            }}
-          />
-          <SidebarUtilityItem
-            icon={<SettingsIcon />}
-            label="Settings"
-            onClick={handleSettingsClick}
-          />
-          {pullRequestsSupported ? (
+    // Container width follows the sidebar resize, rather than the app window.
+    <div className="@container/sidebar-utilities pl-1">
+      <SidebarMenu className="flex-row items-center @max-[14rem]/sidebar-utilities:has-[[data-update-active]]:[&_[data-sidebar-utility=secondary]]:hidden @max-[14rem]/sidebar-utilities:has-[[data-update-active]]:[&_[data-sidebar-utility=overflow]]:block">
+        {isOnUtilityPage ? (
+          <SidebarMenuItem className="min-w-0 flex-1">
+            <SidebarMenuButton onClick={handleBackClick}>
+              <ArrowLeftIcon />
+              <span>Back</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        ) : (
+          <>
             <SidebarUtilityItem
-              icon={<PullRequestGlyph.pullRequest />}
-              label="Pull Requests"
-              onClick={handlePullRequestsClick}
+              icon={<ImportIcon />}
+              label="Import conversation"
+              onClick={handleImportClick}
+              secondary
             />
-          ) : null}
-          <SidebarUtilityItem
-            icon={<ChartNoAxesColumnIcon />}
-            label="Usage"
-            onClick={handleUsageClick}
-          />
-        </>
-      )}
-      <SidebarUpdatePill />
-    </SidebarMenu>
+            <SidebarUtilityItem
+              icon={<SettingsIcon />}
+              label="Settings"
+              onClick={handleSettingsClick}
+            />
+            {pullRequestsSupported ? (
+              <SidebarUtilityItem
+                icon={<PullRequestGlyph.pullRequest />}
+                label="Pull Requests"
+                onClick={handlePullRequestsClick}
+              />
+            ) : null}
+            <SidebarUtilityItem
+              icon={<ChartNoAxesColumnIcon />}
+              label="Usage"
+              onClick={handleUsageClick}
+              secondary
+            />
+            <SidebarMenuItem className="hidden shrink-0" data-sidebar-utility="overflow">
+              <Menu>
+                <MenuTrigger
+                  render={<SidebarMenuButton size="icon" aria-label="More sidebar actions" />}
+                >
+                  <EllipsisVerticalIcon />
+                </MenuTrigger>
+                <MenuPopup side="top" align="start">
+                  <MenuItem onClick={handleImportClick}>
+                    <ImportIcon />
+                    Import conversation
+                  </MenuItem>
+                  <MenuItem onClick={handleUsageClick}>
+                    <ChartNoAxesColumnIcon />
+                    Usage
+                  </MenuItem>
+                </MenuPopup>
+              </Menu>
+            </SidebarMenuItem>
+          </>
+        )}
+        <SidebarUpdatePill />
+      </SidebarMenu>
+    </div>
   );
 });
 

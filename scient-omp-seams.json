@@ -10,6 +10,9 @@
     "apps/server/src/provider/Layers/OmpProvider.ts",
     "apps/server/src/scient/providerLifecycle/OmpManagedRuntimeActions.ts",
     "apps/server/src/textGeneration/OmpTextGeneration.ts",
+    "apps/web/src/scient/modelPicker/modelSourceSections.browser.test.tsx",
+    "apps/web/src/scient/modelPicker/modelSourceSections.test.ts",
+    "apps/web/src/scient/modelPicker/modelSourceSections.ts",
     "apps/web/src/scient/providerConnection/OmpInlineSetup.tsx",
     "apps/web/src/scient/releaseNotes/catalog.ts",
     "docs/user/providers-omp.md",
@@ -20,7 +23,7 @@
     {
       "path": ".github/workflows/managed-provider-runtime-update-provider.yml",
       "anchor": "inputs.provider == 'omp'",
-      "purpose": "Qualify Oh My Pi catalog candidates on its one supported target with the server's RPC check."
+      "purpose": "Qualify Oh My Pi catalog candidates on every supported target with the server's RPC check."
     },
     {
       "path": ".github/workflows/managed-provider-runtime-updates.yml",
@@ -31,6 +34,11 @@
       "path": "apps/server/src/provider/agentModel.ts",
       "anchor": "splitAgentModelSlug",
       "purpose": "Share the provider/model slug codec and reasoning descriptors between Pi and Oh My Pi."
+    },
+    {
+      "path": "apps/server/src/provider/agentProcessEnvironment.ts",
+      "anchor": "export const agentProcessEnvironment",
+      "purpose": "Share the agent process environment rule between Droid and Oh My Pi."
     },
     {
       "path": "apps/server/src/provider/pi/PiModel.ts",
@@ -135,19 +143,24 @@
       "purpose": "Test custom model connections through Oh My Pi's own model slug."
     },
     {
+      "path": "apps/web/src/components/Icons.tsx",
+      "anchor": "OhMyPiIcon",
+      "purpose": "Define the Oh My Pi mark."
+    },
+    {
       "path": "apps/web/src/components/chat/MessagesTimeline.tsx",
       "anchor": "workEntry.externalUrl",
       "purpose": "Offer an Open in browser link for provider open-url activity such as Oh My Pi's login."
     },
     {
+      "path": "apps/web/src/components/chat/ModelPickerContent.tsx",
+      "anchor": "groupModelsBySource",
+      "purpose": "Split Oh My Pi and Pi models into the user's own accounts and Scient custom models, as collapsible sections."
+    },
+    {
       "path": "apps/web/src/components/chat/providerIconUtils.ts",
       "anchor": "[ProviderDriverKind.make(\"omp\")]: OhMyPiIcon",
       "purpose": "Resolve the Oh My Pi icon."
-    },
-    {
-      "path": "apps/web/src/components/Icons.tsx",
-      "anchor": "OhMyPiIcon",
-      "purpose": "Define the Oh My Pi mark."
     },
     {
       "path": "apps/web/src/components/settings/providerDriverMeta.ts",

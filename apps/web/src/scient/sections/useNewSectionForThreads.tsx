@@ -10,7 +10,7 @@ import { readThreadShell } from "../../state/entities";
 import { useThreadSectionActions } from "./actions";
 import { useThreadSectionCatalog } from "./catalog";
 import type { SectionOrigin } from "./logic";
-import { NewSectionDialog } from "./NewSectionDialog";
+import { NewSectionPopover, type SectionCreateAnchor } from "./NewSectionPopover";
 import { readSidebarSectionScope } from "./sidebarScope";
 
 /**
@@ -34,7 +34,7 @@ function sectionOriginForThreads(
 
 /**
  * Creates a section for `threadRefs` and files them into it: the one step
- * behind both the dialog and the Sections view's inline row. Resolves the
+ * behind the shared creation popover. Resolves the
  * section, or null when it could not be created (nothing is filed then).
  * Filing reports its own failures and offers Undo.
  */
@@ -61,43 +61,60 @@ export async function createSectionAndFile(input: {
  * "New section…" from a thread menu: asks for a name, creates the section
  * (or reuses one with that name) and files the threads into it in one step.
  */
-export function useNewSectionForThreads(): {
-  readonly request: (threadRefs: readonly ScopedThreadRef[]) => void;
-  readonly dialog: ReactNode;
+export function useNewSectionForThreads(
+  options: { readonly onCreated?: (section: ThreadSection) => void } = {},
+): {
+  readonly request: (threadRefs: readonly ScopedThreadRef[], anchor: SectionCreateAnchor) => void;
+  readonly popover: ReactNode;
+  readonly close: () => void;
 } {
   const catalog = useThreadSectionCatalog();
   const { moveThreadsToSection } = useThreadSectionActions();
-  const [pending, setPending] = useState<readonly ScopedThreadRef[] | null>(null);
+  // Keep the origin through dismissal so positioning and return focus can finish.
+  const [pending, setPending] = useState<{
+    readonly open: boolean;
+    readonly threadRefs: readonly ScopedThreadRef[];
+    readonly anchor: SectionCreateAnchor;
+  } | null>(null);
   const [requestKey, setRequestKey] = useState(0);
 
-  const request = useCallback((threadRefs: readonly ScopedThreadRef[]) => {
-    setRequestKey((key) => key + 1);
-    setPending(threadRefs);
-  }, []);
+  const request = useCallback(
+    (threadRefs: readonly ScopedThreadRef[], anchor: SectionCreateAnchor) => {
+      setRequestKey((key) => key + 1);
+      setPending({ open: true, threadRefs, anchor });
+    },
+    [],
+  );
 
   const submit = useCallback(
     async (name: string) => {
       const section = await createSectionAndFile({
         name,
-        threadRefs: pending ?? [],
+        threadRefs: pending?.threadRefs ?? [],
         scopeProjectRefs: readSidebarSectionScope(),
         create: catalog.create,
         moveThreadsToSection,
       });
+      if (section !== null) options.onCreated?.(section);
       return section !== null;
     },
-    [catalog, moveThreadsToSection, pending],
+    [catalog, moveThreadsToSection, pending, options.onCreated],
   );
 
   return {
     request,
-    dialog: (
-      <NewSectionDialog
-        open={pending !== null}
+    close: () => setPending((current) => (current ? { ...current, open: false } : current)),
+    popover: (
+      <NewSectionPopover
+        open={pending?.open ?? false}
         requestKey={requestKey}
-        threadCount={pending?.length ?? 0}
+        threadCount={pending?.threadRefs.length ?? 0}
+        anchor={pending?.anchor ?? null}
         onOpenChange={(open) => {
-          if (!open) setPending(null);
+          if (!open)
+            setPending((current) =>
+              current && current === pending ? { ...current, open: false } : current,
+            );
         }}
         onSubmit={submit}
       />

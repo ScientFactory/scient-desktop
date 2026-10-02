@@ -29,6 +29,7 @@ const controller: ProviderLifecycleController = {
   disconnect: vi.fn(),
   openAuthorizationPage: vi.fn(),
   updateExternalRuntime: vi.fn(),
+  refresh: vi.fn(),
 };
 
 const driver = "pi";

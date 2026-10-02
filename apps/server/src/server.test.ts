@@ -12,6 +12,7 @@ import {
   AuthTokenExchangeGrantType,
   CommandId,
   DEFAULT_SERVER_SETTINGS,
+  DroidSettings,
   type CustomModelsSettings,
   EnvironmentFilePath,
   type DpopFailureReason,
@@ -128,6 +129,9 @@ afterAll(() => {
 
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
+import type { DroidAcpRuntime } from "./provider/acp/DroidAcpSupport.ts";
+import { droidCustomModelId } from "./provider/droid/DroidCustomModels.ts";
+import { makeDroidTextGeneration } from "./textGeneration/DroidTextGeneration.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { HTTP_ROUTER_CONFIG, makeRoutesLayer } from "./server.ts";
 import {
@@ -144,7 +148,10 @@ import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
-import { OrchestrationThreadSettleBlockedError } from "./orchestration/Errors.ts";
+import {
+  OrchestrationCommandInvariantError,
+  OrchestrationThreadSettleBlockedError,
+} from "./orchestration/Errors.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ScientForkReactor from "./orchestration/Services/ScientForkReactor.ts";
 import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
@@ -163,6 +170,7 @@ import {
   AntigravityInstallation,
   AntigravityInstallationError,
 } from "./provider/AntigravityInstallation.ts";
+import { CodexInstallation } from "./provider/CodexInstallation.ts";
 import type { ProviderInstance } from "./provider/ProviderDriver.ts";
 import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
 import { ProviderAdapterRequestError } from "./provider/Errors.ts";
@@ -284,6 +292,7 @@ const providerSetupAuthState: ProviderAuthState = {
   expiresAt: null,
   message: null,
 };
+const decodeDroidSettings = Schema.decodeEffect(DroidSettings);
 const providerSetupInstance: ProviderInstance = {
   instanceId: providerSetupInstanceId,
   driverKind: providerSetupDriver,
@@ -557,6 +566,7 @@ const buildAppUnderTest = (options?: {
     providerAuth?: Partial<ProviderAuthService["Service"]>;
     providerInstanceRegistry?: Partial<ProviderInstanceRegistry["Service"]>;
     antigravityInstallation?: Partial<AntigravityInstallation["Service"]>;
+    codexInstallation?: Partial<CodexInstallation["Service"]>;
     serverSettings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
     externalLauncher?: Partial<ExternalLauncher.ExternalLauncher["Service"]>;
     vcsDriver?: Partial<VcsDriver.VcsDriver["Service"]>;
@@ -883,6 +893,10 @@ const buildAppUnderTest = (options?: {
             listInstances: Effect.succeed([]),
             ...options?.layers?.providerInstanceRegistry,
           }),
+          Layer.mock(CodexInstallation)({
+            managedDirectory: "unused-test-codex-runtime",
+            ...options?.layers?.codexInstallation,
+          }),
           Layer.mock(AntigravityInstallation)({
             managedDirectory: "unused-test-antigravity-runtime",
             ...options?.layers?.antigravityInstallation,
@@ -908,6 +922,7 @@ const buildAppUnderTest = (options?: {
           getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
           updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
           streamChanges: Stream.empty,
+          committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
           ...options?.layers?.serverSettings,
         }),
       ),
@@ -5294,6 +5309,93 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  // SCIENT-FORK:START — Upstream T3 added threads without a project (#13612)
+  // and projects created from a name (#14527). Scratch is approved but still
+  // withheld in Git data directories; create-from-name remains gated off.
+  it.effect("withholds threads without a project inside a Git data directory", () =>
+    Effect.gen(function* () {
+      const dispatched: Array<string> = [];
+      yield* buildAppUnderTest({
+        layers: {
+          vcsDriver: {
+            isInsideWorkTree: () => Effect.succeed(true),
+          },
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatched.push(command.type);
+                return { sequence: dispatched.length };
+              }),
+          },
+        },
+      });
+
+      yield* Effect.scoped(
+        withWsRpcClient(yield* getWsServerUrl("/ws"), (client) =>
+          Effect.gen(function* () {
+            const config = yield* client[WS_METHODS.serverGetConfig]({});
+
+            assert.isUndefined(config.scratchWorkspaceRoot);
+
+            const ensure = yield* Effect.flip(client[WS_METHODS.projectsEnsureScratch]({}));
+            assert.include(String(ensure.message), "not available");
+          }),
+        ),
+      );
+      assert.deepEqual(dispatched, []);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("withholds projects created from a name while the Scient gate is off", () =>
+    Effect.gen(function* () {
+      const dispatched: Array<string> = [];
+      const gitCalls: Array<string> = [];
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatched.push(command.type);
+                return { sequence: dispatched.length };
+              }),
+          },
+          gitVcsDriver: {
+            readConfigValue: () => Effect.succeed(null),
+            execute: (input) =>
+              Effect.sync(() => {
+                gitCalls.push(input.args.join(" "));
+                return {
+                  exitCode: ChildProcessSpawner.ExitCode(0),
+                  stdout: "",
+                  stderr: "",
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                };
+              }),
+          },
+        },
+      });
+
+      yield* Effect.scoped(
+        withWsRpcClient(yield* getWsServerUrl("/ws"), (client) =>
+          Effect.gen(function* () {
+            const config = yield* client[WS_METHODS.serverGetConfig]({});
+
+            assert.isUndefined(config.newProjectsRoot);
+
+            const created = yield* Effect.flip(
+              client[WS_METHODS.projectsCreateNew]({ name: "Pinball Stats" }),
+            );
+            assert.include(String(created.message), "not available");
+          }),
+        ),
+      );
+      assert.deepEqual(dispatched, []);
+      assert.deepEqual(gitCalls, []);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+  // SCIENT-FORK:END
+
   it.effect("advertises the usable file manager and its reveal label", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest({
@@ -6160,6 +6262,234 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("says why Droid ran no custom model test when its tool blocking is not confirmed", () =>
+    Effect.gen(function* () {
+      const id = ProviderInstanceId.make("droid");
+      const catalog: CustomModelsSettings = {
+        revision: 1,
+        connections: [
+          {
+            id: "lab",
+            name: "Lab",
+            baseUrl: "http://127.0.0.1:1/v1",
+            protocol: "openai-completions",
+            credentialId: "saved-key",
+            models: [
+              {
+                id: "one",
+                modelId: "one",
+                name: "One",
+                images: false,
+                reasoning: false,
+                instanceIds: [id],
+              },
+            ],
+          },
+        ],
+      };
+      const slug = droidCustomModelId("lab", "one");
+      let prompts = 0;
+      const current: Record<string, string> = { autonomy_level: "auto-high", model: "gpt-5.6-sol" };
+      // Droid's own background generation, in a process whose organization
+      // policy dropped the hook that refuses tool calls.
+      const textGeneration = yield* makeDroidTextGeneration(
+        yield* decodeDroidSettings({ binaryPath: "droid" }),
+        {},
+        () =>
+          Effect.sync(
+            () =>
+              ({
+                handleSessionUpdate: () => Effect.void,
+                handleRequestPermission: () => Effect.void,
+                handleElicitation: () => Effect.void,
+                start: () => Effect.succeed({}),
+                getConfigOptions: Effect.sync(() => [
+                  {
+                    id: "autonomy_level",
+                    name: "Autonomy",
+                    type: "select" as const,
+                    currentValue: current.autonomy_level,
+                    options: ["normal", "auto-high"].map((value) => ({ value, name: value })),
+                  },
+                  {
+                    id: "model",
+                    name: "Model",
+                    category: "model",
+                    type: "select" as const,
+                    currentValue: current.model,
+                    options: ["gpt-5.6-sol", slug].map((value) => ({ value, name: value })),
+                  },
+                ]),
+                setConfigOption: (configId: string, value: string) =>
+                  Effect.sync(() => {
+                    current[configId] = value;
+                    return {};
+                  }),
+                setModel: (model: string) =>
+                  Effect.sync(() => {
+                    current.model = model;
+                  }),
+                backgroundToolGuard: () => Effect.succeed("disabled-by-policy" as const),
+                prompt: () =>
+                  Effect.sync(() => {
+                    prompts += 1;
+                    return { stopReason: "end_turn" as const };
+                  }),
+              }) as unknown as DroidAcpRuntime,
+          ),
+      ).pipe(Effect.provide(NodeServices.layer));
+      const instance: ProviderInstance = {
+        instanceId: id,
+        driverKind: ProviderDriverKind.make("droid"),
+        enabled: true,
+        displayName: "Droid",
+        continuationIdentity: {
+          driverKind: ProviderDriverKind.make("droid"),
+          continuationKey: id,
+        },
+        get adapter(): never {
+          throw new Error("Must not start a chat");
+        },
+        get snapshot(): never {
+          throw new Error("Must not probe");
+        },
+        textGeneration,
+      };
+      yield* buildAppUnderTest({
+        layers: {
+          serverSettings: {
+            getSettings: Effect.succeed({ ...DEFAULT_SERVER_SETTINGS, customModels: catalog }),
+            resolveCustomModels: () =>
+              Effect.succeed([
+                { ...catalog.connections[0]!, apiKey: Redacted.make("synthetic-key") },
+              ]),
+          },
+          providerInstanceRegistry: { getInstance: () => Effect.succeed(instance) },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.serverTestCustomModel]({
+            revision: 1,
+            connectionId: "lab",
+            modelId: "one",
+            instanceId: id,
+          }).pipe(Effect.result),
+        ),
+      );
+      if (result._tag !== "Failure" || result.failure._tag !== "CustomModelError")
+        assert.fail("Expected the test to be refused");
+      // The Test runs through background generation, so it is refused too, in its own words.
+      assert.equal(
+        result.failure.message,
+        "Droid: Your organization's Droid policy disables Scient's tool blocking, which the test needs, so the test was not run. To try this model, send a message in a Droid thread.",
+      );
+      assert.equal(prompts, 0);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("says a custom model test timed out and names the agent", () =>
+    Effect.gen(function* () {
+      const id = ProviderInstanceId.make("droid_work");
+      const catalog: CustomModelsSettings = {
+        revision: 1,
+        connections: [
+          {
+            id: "slow",
+            name: "Slow",
+            baseUrl: "http://127.0.0.1:1/v1",
+            protocol: "openai-completions",
+            credentialId: null,
+            models: [
+              {
+                id: "one",
+                modelId: "one",
+                name: "One",
+                images: false,
+                reasoning: false,
+                instanceIds: [id],
+              },
+            ],
+          },
+        ],
+      };
+      const started = yield* Deferred.make<void>();
+      const instance: ProviderInstance = {
+        instanceId: id,
+        driverKind: ProviderDriverKind.make("droid"),
+        enabled: true,
+        displayName: "Droid work",
+        continuationIdentity: { driverKind: ProviderDriverKind.make("droid"), continuationKey: id },
+        get adapter(): never {
+          throw new Error("Must not start a chat");
+        },
+        get snapshot(): never {
+          throw new Error("Must not probe");
+        },
+        textGeneration: {
+          generateThreadTitle: () =>
+            Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+          generateBranchName: (): never => {
+            throw new Error("Unexpected generation");
+          },
+          generateCommitMessage: (): never => {
+            throw new Error("Unexpected generation");
+          },
+          generatePrContent: (): never => {
+            throw new Error("Unexpected generation");
+          },
+        },
+      };
+      yield* buildAppUnderTest({
+        layers: {
+          serverSettings: {
+            getSettings: Effect.succeed({ ...DEFAULT_SERVER_SETTINGS, customModels: catalog }),
+            resolveCustomModels: () =>
+              Effect.succeed([{ ...catalog.connections[0]!, apiKey: null }]),
+          },
+          providerInstanceRegistry: { getInstance: () => Effect.succeed(instance) },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const pending = yield* client[WS_METHODS.serverTestCustomModel]({
+              revision: 1,
+              connectionId: "slow",
+              modelId: "one",
+              instanceId: id,
+            }).pipe(Effect.result, Effect.forkChild);
+            yield* Deferred.await(started);
+            // The timeout's timer registers on the server's own schedule, and its
+            // answer travels back in real time. Advance test time once past the
+            // timeout and wait; advancing while the answer is on its way would add
+            // minutes of test time and trip the connection's own timers.
+            const waitLive = (millis: number) =>
+              Effect.gen(function* () {
+                for (
+                  let waited = 0;
+                  waited < millis && pending.pollUnsafe() === undefined;
+                  waited += 20
+                )
+                  yield* Effect.sleep("20 millis").pipe(TestClock.withLive);
+              });
+            yield* waitLive(100);
+            for (let attempt = 0; attempt < 3 && pending.pollUnsafe() === undefined; attempt += 1) {
+              yield* TestClock.adjust("46 seconds");
+              yield* waitLive(2_000);
+            }
+            return yield* Fiber.join(pending);
+          }),
+        ),
+      );
+      if (result._tag !== "Failure" || result.failure._tag !== "CustomModelError")
+        assert.fail("Expected a timed-out test");
+      assert.equal(result.failure.message, "Droid work: No response within 45 s.");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("keeps agent session import project failures structured over websocket rpc", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
@@ -6694,6 +7024,52 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         failureMessage.includes("Unauthorized") ||
           failureMessage.includes("An error occurred during Open"),
       );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects dormant Codex subscription-sharing RPCs before starting auth", () =>
+    Effect.gen(function* () {
+      let authCalls = 0;
+      yield* buildAppUnderTest({
+        layers: {
+          providerAuth: {
+            start: () =>
+              Effect.sync(() => {
+                authCalls += 1;
+                return providerSetupAuthState;
+              }),
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const exported = yield* client[WS_METHODS.chatGptReconnectProfile]({
+              instanceId: providerSetupInstanceId,
+              methodId: "chatgpt",
+            }).pipe(Effect.flip);
+            assert.equal(exported._tag, "ProviderSetupError");
+            const handoff = yield* client[WS_METHODS.chatGptHandoffSubscribe]({
+              instanceId: providerSetupInstanceId,
+              environmentId: testEnvironmentDescriptor.environmentId,
+              attemptId: "synthetic-handoff",
+              returnUrl: "scient://auth-return",
+              profile: null,
+            }).pipe(Stream.runHead, Effect.flip);
+            assert.equal(handoff._tag, "ProviderSetupError");
+            const callback = yield* client[WS_METHODS.codexAuthCallbackSubscribe]({
+              instanceId: providerSetupInstanceId,
+              environmentId: testEnvironmentDescriptor.environmentId,
+              flowId: "synthetic-callback",
+              authorizationUrl: "https://example.com/authorize",
+              returnUrl: "scient://auth-return",
+            }).pipe(Stream.runHead, Effect.flip);
+            assert.equal(callback._tag, "ProviderSetupError");
+          }),
+        ),
+      );
+      assert.equal(authCalls, 0);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -8080,7 +8456,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const outsideFile = path.join(outsideDir, "outside.txt");
       yield* fs.writeFileString(outsideFile, "outside\n");
       yield* fs.symlink(outsideFile, path.join(workspaceDir, "linked-outside.txt"));
-      const resolvedOutsideFile = yield* fs.realPath(outsideFile);
 
       yield* buildAppUnderTest();
 
@@ -8105,6 +8480,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               view: "ordinary",
             }).pipe(Effect.result),
             read: client[WS_METHODS.projectsReadFile]({
+              cwd: workspaceDir,
+              relativePath: "missing.txt",
+            }).pipe(Effect.result),
+            linkedRead: client[WS_METHODS.projectsReadFile]({
               cwd: workspaceDir,
               relativePath: "linked-outside.txt",
             }).pipe(Effect.result),
@@ -8171,13 +8550,21 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const readError = results.read.failure;
       assert.equal(
         readError.message,
-        `Failed to read workspace file 'linked-outside.txt' in '${workspaceDir}'.`,
+        `Failed to read workspace file 'missing.txt' in '${workspaceDir}'.`,
       );
       assert.equal(readError.cwd, workspaceDir);
-      assert.equal(readError.relativePath, "linked-outside.txt");
-      assert.equal(readError.failure, "resolved_path_outside_root");
-      assert.equal(readError.resolvedPath, resolvedOutsideFile);
+      assert.equal(readError.relativePath, "missing.txt");
+      assert.equal(readError.failure, "operation_failed");
+      assert.equal(readError.reason, "not_found");
       assert.isDefined(readError.cause);
+
+      // A symlink leading out of the project is viewable, never editable.
+      if (results.linkedRead._tag !== "Success") {
+        assert.fail("Expected the symlinked outside file to be readable");
+      }
+      assert.equal(results.linkedRead.success.relativePath, "linked-outside.txt");
+      assert.equal(results.linkedRead.success.contents, "outside\n");
+      assert.equal(results.linkedRead.success.readOnly, true);
 
       if (
         results.browse._tag !== "Failure" ||
@@ -8196,6 +8583,130 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(browseError.parentPath, missingBrowseParent);
       assert.isDefined(browseError.cause);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "opens the file a chat link means over the wire, wherever it lives",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-file-links-" }),
+        );
+        const workspaceDir = path.join(baseDir, "workspace");
+        const outsideDir = path.join(baseDir, "outside");
+        yield* fs.makeDirectory(path.join(workspaceDir, "reports/2026"), { recursive: true });
+        yield* fs.makeDirectory(path.join(workspaceDir, "data"), { recursive: true });
+        yield* fs.makeDirectory(outsideDir, { recursive: true });
+        yield* fs.writeFileString(path.join(workspaceDir, "reports/2026/summary.md"), "inside\n");
+        yield* fs.writeFileString(path.join(outsideDir, "notes.md"), "outside\n");
+        yield* fs.symlink(
+          path.join(outsideDir, "notes.md"),
+          path.join(workspaceDir, "data/shared-notes.md"),
+        );
+
+        yield* buildAppUnderTest();
+
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const link = (linkPath: string) => ({
+          workspaceRoot: EnvironmentFilePath.make(workspaceDir),
+          path: EnvironmentFilePath.make(linkPath),
+        });
+        const results = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            Effect.all({
+              outside: client[WS_METHODS.filesystemResolveFileLink](link("../outside/notes.md")),
+              wrongFolder: client[WS_METHODS.filesystemResolveFileLink](link("2026/summary.md")),
+              symlinkOnly: client[WS_METHODS.filesystemResolveFileLink](link("shared-notes.md")),
+              nothing: client[WS_METHODS.filesystemResolveFileLink](link("reports/none.md")),
+              // The outside file reads the same through every spelling.
+              readClimbing: client[WS_METHODS.projectsReadFile]({
+                cwd: workspaceDir,
+                relativePath: "../outside/notes.md",
+              }),
+              readSymlink: client[WS_METHODS.projectsReadFile]({
+                cwd: workspaceDir,
+                relativePath: "data/shared-notes.md",
+              }),
+              // Writing through the same spellings is still refused.
+              writeClimbing: client[WS_METHODS.projectsWriteFile]({
+                cwd: workspaceDir,
+                relativePath: "../outside/notes.md",
+                contents: "overwritten\n",
+              }).pipe(Effect.result),
+              writeSymlink: client[WS_METHODS.projectsWriteFile]({
+                cwd: workspaceDir,
+                relativePath: "data/shared-notes.md",
+                contents: "overwritten\n",
+              }).pipe(Effect.result),
+            }),
+          ),
+        );
+
+        const filePath = EnvironmentFilePath.make;
+        assert.deepEqual(results.outside, {
+          _tag: "literal",
+          path: filePath(path.join(outsideDir, "notes.md")),
+        });
+        assert.deepEqual(results.wrongFolder, {
+          _tag: "recovered",
+          path: filePath("reports/2026/summary.md"),
+          missingPath: filePath(path.join(workspaceDir, "2026/summary.md")),
+        });
+        assert.deepEqual(results.symlinkOnly, {
+          _tag: "recovered",
+          path: filePath("data/shared-notes.md"),
+          missingPath: filePath(path.join(workspaceDir, "shared-notes.md")),
+        });
+        assert.equal(results.nothing._tag, "none");
+        for (const read of [results.readClimbing, results.readSymlink]) {
+          assert.equal(read.contents, "outside\n");
+          assert.equal(read.readOnly, true);
+        }
+        assert.equal(results.readClimbing.revision, results.readSymlink.revision);
+        assert.equal(results.writeClimbing._tag, "Failure");
+        assert.equal(results.writeSymlink._tag, "Failure");
+        assert.equal(yield* fs.readFileString(path.join(outsideDir, "notes.md")), "outside\n");
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  // chmod cannot deny the superuser, and Windows has no POSIX permission bits.
+  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32" || process.getuid?.() === 0)(
+    "reports an unreadable file as a permission failure",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workspaceDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "t3-ws-workspace-denied-",
+        });
+        const lockedFile = path.join(workspaceDir, "locked.txt");
+        yield* fs.writeFileString(lockedFile, "private\n");
+        yield* fs.chmod(lockedFile, 0o000);
+
+        yield* buildAppUnderTest();
+
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const result = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.projectsReadFile]({
+              cwd: workspaceDir,
+              relativePath: "locked.txt",
+            }).pipe(Effect.result),
+          ),
+        );
+        yield* fs.chmod(lockedFile, 0o600);
+
+        if (result._tag !== "Failure" || result.failure._tag !== "ProjectReadFileError") {
+          assert.fail("Expected a ProjectReadFileError");
+        }
+        assert.equal(result.failure.failure, "operation_failed");
+        assert.equal(result.failure.reason, "permission_denied");
+        // The system's own code travels too: a file mode refuses with EACCES,
+        // which the client tells apart from the system itself declining.
+        assert.equal(result.failure.osErrorCode, "EACCES");
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("reports workspace root stat failures without relabeling them as missing", () =>
@@ -8711,6 +9222,87 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             assert.equal(lists.at(-1)?.[0]?.phase, "done");
             yield* Deferred.await(metaUpdateDispatched);
             assert.deepEqual(dispatched, ["project.create", "project.meta.update"]);
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("finds a cloned project's icon once the clone lands", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parentDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-clone-favicon-" });
+      const destinationPath = path.join(parentDir, "app");
+      const projectId = ProjectId.make("project-clone-favicon");
+      const cloneGate = yield* Deferred.make<void>();
+      const metaUpdateDispatched = yield* Deferred.make<void>();
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              (command.type === "project.meta.update"
+                ? Deferred.succeed(metaUpdateDispatched, undefined)
+                : Effect.void
+              ).pipe(Effect.as({ sequence: 1 })),
+          },
+          projectionSnapshotQuery: {
+            getActiveProjectByWorkspaceRoot: (workspaceRoot) =>
+              Effect.succeed(
+                workspaceRoot === destinationPath
+                  ? Option.some({
+                      ...makeDefaultOrchestrationReadModel().projects[0]!,
+                      id: projectId,
+                      workspaceRoot,
+                    })
+                  : Option.none(),
+              ),
+          },
+          sourceControlRepositoryService: {
+            prepareClone: (input) =>
+              Effect.succeed({
+                destinationPath: input.destinationPath,
+                remoteUrl: input.remoteUrl ?? "",
+                cloneUrl: input.remoteUrl ?? "",
+                repository: null,
+              }),
+            cloneRepository: (input) =>
+              Deferred.await(cloneGate).pipe(
+                Effect.andThen(
+                  fs.writeFileString(path.join(input.destinationPath, "favicon.svg"), "<svg/>"),
+                ),
+                Effect.orDie,
+                Effect.as({
+                  cwd: input.destinationPath,
+                  remoteUrl: input.remoteUrl ?? "",
+                  repository: null,
+                }),
+              ),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            yield* client[WS_METHODS.projectCloneStart]({
+              projectId,
+              title: "app",
+              createdAt: "2026-01-01T00:00:00.000Z",
+              remoteUrl: "git@github.com:octocat/app.git",
+              destinationPath,
+            });
+            const resource = { _tag: "project-favicon" as const, cwd: destinationPath };
+            const duringClone = yield* client[WS_METHODS.assetsCreateUrl]({ resource });
+            assert.isTrue(duringClone.relativeUrl.endsWith("/project-favicon-missing"));
+
+            yield* Deferred.succeed(cloneGate, undefined);
+            yield* Deferred.await(metaUpdateDispatched);
+            // The lookup during the clone must not leave a cached miss behind.
+            const afterClone = yield* client[WS_METHODS.assetsCreateUrl]({ resource });
+            assert.equal(afterClone.sourcePath, "favicon.svg");
           }),
         ),
       );

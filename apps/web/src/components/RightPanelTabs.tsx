@@ -81,6 +81,7 @@ import { scientRightPanelSurfaceTitle } from "~/scient/rightPanel/surfaces";
 import { useScientAnalyticsView } from "~/scient/analytics/client";
 import { panelCategory } from "~/scient/analytics/viewCategories";
 
+import { fileTabTitles } from "./files/filePath";
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
 import { FaviconImage } from "./preview/PreviewFaviconIcon";
 import { previewBridge } from "./preview/previewBridge";
@@ -707,6 +708,12 @@ function RightPanelEmptyState(props: {
   );
 }
 
+/** The file a tab shows, for tabs whose title is that file's name. */
+function fileTabPath(surface: RightPanelSurface): string | null {
+  if (surface.kind === "file") return surface.attachment ? null : surface.relativePath;
+  return surface.kind === "scient" && surface.module === "file" ? surface.path : null;
+}
+
 function surfaceTitle(
   surface: RightPanelSurface,
   sessions: Readonly<Record<string, PreviewSessionSnapshot>>,
@@ -947,6 +954,17 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const browserProfiles = useBrowserDefaults().profiles;
   const { resolvedTheme } = useTheme();
   const tabListRef = useRef<HTMLDivElement>(null);
+  // Files with the same name get the folder that tells them apart.
+  const fileTitles = useMemo(
+    () =>
+      fileTabTitles(
+        props.surfaces.flatMap((surface) => {
+          const path = fileTabPath(surface);
+          return path === null ? [] : [path];
+        }),
+      ),
+    [props.surfaces],
+  );
   const [renamingDevice, setRenamingDevice] = useState<string | null>(null);
   const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
   const [tabScrollState, setTabScrollState] = useState({
@@ -1268,7 +1286,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
               const active = surface.id === props.activeSurfaceId;
               const pending = props.pendingSurfaceIds.has(surface.id);
               const attention = !active && props.attentionSurfaceIds?.has(surface.id);
-              const title = surfaceTitle(surface, props.previewSessions, props.terminalLabelsById);
+              const title =
+                fileTitles.get(fileTabPath(surface) ?? "") ??
+                surfaceTitle(surface, props.previewSessions, props.terminalLabelsById);
               const previewTabId = previewTabIdOf(surface, props.previewSessions);
               // Desktop state is keyed by the session id, but desktop actions
               // must be addressed with the runtime id.

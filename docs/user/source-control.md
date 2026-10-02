@@ -10,6 +10,9 @@ changes, and review them without leaving the app.
 Source control is optional. An ordinary local folder can still be a Scient
 project without Git or a hosted repository.
 
+[No project conversations](./thread-sidebar.md#threads-without-a-project) use plain
+scratch folders. They have no Git branch controls, checkpoints, or turn diffs.
+
 ## Supported providers
 
 Scient works with the platforms your team already uses:
@@ -287,7 +290,7 @@ on the Pull Requests page, **Link to thread** lets you search for an active thre
 also lists the threads that link to it, including archived threads, so you can return to their context.
 
 Thread badges show a stack's layer count, a single review's number, or the total count of multiple
-unrelated links. On mobile, the Git overview lists linked reviews and their stacks; tap a review to open it.
+unrelated links. Clicking a badge with more than one review opens the **Linked pull requests** panel. On mobile, the Git overview lists linked reviews and their stacks; tap a review to open it.
 Linking and unlinking are available in the web and desktop clients.
 
 The **Linked pull requests** panel lists every review and groups stacks. Unlink a review from its

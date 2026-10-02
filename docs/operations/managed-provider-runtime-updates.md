@@ -87,11 +87,19 @@ Grok, Pi, and Oh My Pi. The nine release-family runs are intentionally independe
    Pi binary runs the isolated live Pi integration suites once against synthetic local
    model endpoints. Those suites verify runtime/RPC behavior, custom-model protocols,
    secret isolation, and preservation of Pi-owned configuration before repair and removal.
-   Oh My Pi runs only on the macOS Apple-silicon runner, its only approved target. After
+   Oh My Pi uses all six runners; its musl builds are not approved. After
    install and after repair, `apps/server/scripts/qualify-omp-rpc.ts` runs the app's own
    managed-activation check against the installed binary: the RPC v2 handshake, the
    reported version, and `get_state`, in an isolated home without a session, tools,
    extensions, skills or rules. Its server dependencies are installed for that step.
+   Droid uses all six runners for the shared lifecycle checks. On the two macOS runners the
+   installed binary also runs the live Droid suites once (`--droid-live-tests`), against
+   local stubs with a fixture key and a private home, so no Factory account or network is
+   involved. They cover ACP startup and the session controls the app reads (model, autonomy
+   level, reasoning effort), turns over every custom-model protocol, status probes, and the
+   guards for custom-model keys, background generation and request loops. The fixtures use
+   POSIX shells and are verified on macOS only; Linux and Windows binaries of the same
+   release are qualified by the shared lifecycle checks.
    Official Antigravity ACP uses T3's paired-executable installer instead of the generic
    runtime engine. Its five runners cover Apple-silicon macOS, Linux x64/ARM64, and Windows
    x64/ARM64; no ACP artifact exists for Intel macOS. Its qualification initializes the
@@ -105,8 +113,17 @@ Grok, Pi, and Oh My Pi. The nine release-family runs are intentionally independe
    provider that passed.
 6. Confirm that current `main` still descends from the discovery commit and that
    managed-runtime policy, discovery, qualification, and publication code did
-   not change while the candidate was running. Unrelated `main` changes do not
-   block publication; relevant changes require a fresh run.
+   not change while the candidate was running. For Droid, qualification code
+   also includes everything its live protocol suites load: the provider and
+   text-generation code, the server modules those import (settings, custom
+   models, source control, VCS, auth, telemetry and the like) and the workspace
+   packages behind them. Those paths are folders, so a module added to one of
+   them is covered, and `scripts/managed-provider-runtime-workflow.test.ts`
+   follows the suites' imports and fails when a module they load lies outside
+   the guard. That wider list voids only a Droid publication; every other
+   provider is guarded by the policy, discovery, artifact-qualification and
+   publication code alone. Other `main` changes do not block publication; a
+   guarded change requires a fresh run.
 7. Publish with a normal fast-forward push using the release GitHub App.
 
 A failed provider is red in its own matrix entry and does not stop other

@@ -1,11 +1,13 @@
 import type { ProjectReadFileResult } from "@t3tools/contracts";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectReadFileError } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   clearProjectFileQueryData,
   confirmProjectFileQueryData,
   getOptimisticProjectFileQueryData,
+  projectReadFailure,
   resolveProjectFileQueryData,
   refreshProjectFiles,
   setProjectFileQueryData,
@@ -123,5 +125,32 @@ describe("project files queries", () => {
     expect(
       resolveProjectFileQueryData(environmentId, "/repo", "convex.json", authoritative),
     ).toEqual(authoritative);
+  });
+});
+
+describe("projectReadFailure", () => {
+  const missing = new ProjectReadFileError({
+    cwd: "/repo",
+    relativePath: "notes.md",
+    failure: "operation_failed",
+    reason: "not_found",
+    osErrorCode: "ENOENT",
+  });
+
+  it("finds the system's reason in the read error or in the cause that carried it", () => {
+    const expected = { reason: "not_found", osErrorCode: "ENOENT" };
+    expect(projectReadFailure(missing)).toEqual(expected);
+    expect(projectReadFailure(Cause.fail(missing))).toEqual(expected);
+  });
+
+  it("reports nothing for errors that carry no single system reason", () => {
+    expect(projectReadFailure(null)).toBeNull();
+    expect(projectReadFailure(new Error("offline"))).toBeNull();
+    expect(projectReadFailure(Cause.die("defect"))).toBeNull();
+    expect(
+      projectReadFailure(
+        new ProjectReadFileError({ cwd: "/repo", relativePath: "a.bin", failure: "binary_file" }),
+      ),
+    ).toBeNull();
   });
 });

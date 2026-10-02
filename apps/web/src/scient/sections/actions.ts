@@ -140,7 +140,7 @@ export function useThreadSectionActions() {
           }),
         );
       }
-      return failures.length === 0;
+      return results.every((result) => result._tag === "Success");
     },
     [setThreadSection],
   );

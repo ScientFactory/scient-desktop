@@ -466,7 +466,8 @@ export function makeManagedPythonProvisioner(
     const output = await run(
       executable,
       ["--version"],
-      options.specDirectory,
+      // Recipes may be readable inside ASAR, but subprocesses need a real cwd.
+      options.computeDir,
       options.environment,
       signal,
       "uv-smoke",
@@ -810,7 +811,7 @@ export function makeManagedPythonProvisioner(
     const verification = await Effect.runPromise(
       adapter.verify({
         profile: buildProfile(probe, "managed"),
-        cwd: options.specDirectory,
+        cwd: options.computeDir,
         environment: options.environment,
       }),
       { signal: input.signal },
@@ -827,7 +828,7 @@ export function makeManagedPythonProvisioner(
     await run(
       input.executable,
       ["-I", "-c", representativeScientificCheck(input.toolkitIds)],
-      options.specDirectory,
+      options.computeDir,
       options.environment,
       input.signal,
       "scientific-check",

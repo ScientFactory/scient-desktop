@@ -91,7 +91,7 @@ describe("user-message fork draft staging", () => {
     ).toBeUndefined();
   });
 
-  it("leaves no partial draft when an authorized image cannot be read", async () => {
+  it("refuses, with no partial draft, when nobody can confirm omitting an unreadable image", async () => {
     const fetchAsset: typeof fetch = async () => new Response(null, { status: 403 });
 
     await expect(
@@ -102,11 +102,64 @@ describe("user-message fork draft staging", () => {
         fetchAsset,
         readAsDataUrl: async () => "unused",
       }),
-    ).rejects.toThrow("could not be read");
+    ).rejects.toThrow(`These images could not be read: ${attachment.name}`);
 
     expect(
       useComposerDraftStore.getState().draftsByThreadKey[scopedThreadKey(destinationRef)],
     ).toBeUndefined();
+  });
+
+  it.each([true, false])(
+    "asks before omitting an unreadable image (continue: %s)",
+    async (proceed) => {
+      const readable = {
+        ...attachment,
+        id: "readable",
+        name: "readable.png",
+        previewUrl: "https://local.test/readable",
+      };
+      const fetchAsset: typeof fetch = async (url) =>
+        url === readable.previewUrl
+          ? new Response(new Uint8Array([1]), { headers: { "content-type": "image/png" } })
+          : new Response(null, { status: 403 });
+      const prompt = "Keep this exact text\nwith $x^2$";
+      const staged = await stageUserForkDraft({
+        destinationRef,
+        prompt,
+        attachments: [attachment, readable],
+        fetchAsset,
+        readAsDataUrl: async () => "data:image/png;base64,AQ==",
+        confirmSkippedImages: async (names) => {
+          expect(names).toEqual([attachment.name]);
+          expect(
+            useComposerDraftStore.getState().draftsByThreadKey[scopedThreadKey(destinationRef)],
+          ).toBeUndefined();
+          return proceed;
+        },
+      });
+      expect(staged).toBe(proceed);
+      const draft =
+        useComposerDraftStore.getState().draftsByThreadKey[scopedThreadKey(destinationRef)];
+      if (proceed) {
+        expect(draft?.prompt).toBe(prompt);
+        expect(draft?.images.map((image) => image.id)).toEqual([readable.id]);
+      } else expect(draft).toBeUndefined();
+    },
+  );
+
+  it("allows an image-only message to become an empty draft after confirmation", async () => {
+    expect(
+      await stageUserForkDraft({
+        destinationRef,
+        prompt: "",
+        attachments: [{ ...attachment, previewUrl: undefined }],
+        confirmSkippedImages: async (names) => names.length === 1,
+      }),
+    ).toBe(true);
+    const draft =
+      useComposerDraftStore.getState().draftsByThreadKey[scopedThreadKey(destinationRef)];
+    expect(draft?.prompt ?? "").toBe("");
+    expect(draft?.images ?? []).toEqual([]);
   });
 
   it("rejects non-image attachments without leaving a partial draft", async () => {

@@ -76,6 +76,10 @@ import {
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
+import { CODEX_SUBSCRIPTION_SHARING_UNAVAILABLE } from "../../scient/providerLifecycle/codexSubscriptionSharingPolicy.ts";
+import { CodexInstallation } from "../CodexInstallation.ts";
+import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
+import { ServerEnvironmentIdentity } from "../../environment/ServerEnvironment.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("codex");
@@ -119,7 +123,10 @@ export type CodexDriverEnv =
   | Path.Path
   | ProviderEventLoggers
   | ServerConfig
-  | ServerSettingsService;
+  | ServerSettingsService
+  | ServerSecretStore
+  | ServerEnvironmentIdentity
+  | CodexInstallation;
 
 /**
  * Stamp instance identity onto a `ServerProvider` snapshot produced by the
@@ -160,6 +167,13 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
   defaultConfig: (): CodexSettings => decodeCodexSettings({}),
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
+      // SCIENT-FORK: native Codex owns credentials; plan-sharing activation is deferred.
+      if (config.setupMode === "managed")
+        return yield* new ProviderDriverError({
+          driver: DRIVER_KIND,
+          instanceId,
+          detail: CODEX_SUBSCRIPTION_SHARING_UNAVAILABLE,
+        });
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const serverConfig = yield* ServerConfig;
       const resetCreditCoordinator = yield* ResetCreditCoordinator.ResetCreditCoordinator;

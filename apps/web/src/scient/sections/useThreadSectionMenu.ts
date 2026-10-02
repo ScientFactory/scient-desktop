@@ -1,5 +1,6 @@
 import type { ContextMenuItem, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { useCallback } from "react";
+import type { SectionCreateAnchor } from "./NewSectionPopover";
 
 import { readEnvironmentSupportsSections, useThreadSectionActions } from "./actions";
 import { useThreadSectionCatalog } from "./catalog";
@@ -10,7 +11,10 @@ import { buildSectionSubmenu, parseSectionMenuAction, type SectionMenuId } from 
  * the chat header): building it for the clicked threads and handling its ids.
  */
 export function useThreadSectionMenu(
-  onRequestNewSection: (threadRefs: readonly ScopedThreadRef[]) => void,
+  onRequestNewSection: (
+    threadRefs: readonly ScopedThreadRef[],
+    anchor: SectionCreateAnchor,
+  ) => void,
 ) {
   const { available, generalIndex, sections } = useThreadSectionCatalog();
   const { moveThreadsToSection } = useThreadSectionActions();
@@ -37,10 +41,14 @@ export function useThreadSectionMenu(
 
   /** Resolves true when the clicked id belonged to the Section submenu. */
   const handleMenuAction = useCallback(
-    async (menuId: string | null, threadRefs: readonly ScopedThreadRef[]) => {
+    async (
+      menuId: string | null,
+      threadRefs: readonly ScopedThreadRef[],
+      anchor: SectionCreateAnchor,
+    ) => {
       const action = menuId === null ? null : parseSectionMenuAction(menuId);
       if (action === null) return false;
-      if (action.kind === "new") onRequestNewSection(threadRefs);
+      if (action.kind === "new") onRequestNewSection(threadRefs, anchor);
       else await moveThreadsToSection(threadRefs, action.kind === "set" ? action.sectionId : null);
       return true;
     },

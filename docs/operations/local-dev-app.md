@@ -254,6 +254,21 @@ by its `Scient (Dev) Stable` name; each candidate shows a short worktree label.
 Still confirm the worktree, state root, ports, and exact Git head before acting;
 never infer code or data ownership from a window title alone.
 
+### Scratch conversations in a dev candidate
+
+The dev runner derives `SCIENT_DEV_SCRATCH_ROOT` from the resolved candidate state
+root, overwriting any inherited value. Scratch files live under
+`~/.scient-next/dev-scratch/<sha256 of candidate state root>/scratch`, outside the
+checkout. Databases, settings, credentials, and Electron state keep their existing
+worktree-local locations; this does not move or import a profile.
+
+The desktop primary forwards this location only for development. WSL and production
+launches scrub it, and the server accepts it only with a dev URL and the candidate
+safety envelope. The selected scratch parent is still checked for Git inheritance;
+detection failures hide the option. Advertisement and Scient workspace admission
+use the same configured root, with each conversation scoped to its own direct
+canonical subfolder. Stop/restart the owning candidate after changing this setup.
+
 ## macOS Identity And Microphone Access
 
 The generated candidate app launches through macOS LaunchServices instead of

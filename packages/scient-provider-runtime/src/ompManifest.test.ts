@@ -8,7 +8,7 @@ import {
 } from "./ompManifest.ts";
 
 describe("Oh My Pi managed artifact", () => {
-  it("publishes only the qualified macOS arm64 raw binary", () => {
+  it("resolves the qualified macOS arm64 raw binary", () => {
     const artifact = resolveReviewedOmpArtifact({ platform: "darwin", arch: "arm64" });
     expect(artifact).toMatchObject({
       provider: "omp",
@@ -23,9 +23,31 @@ describe("Oh My Pi managed artifact", () => {
       },
       supportTier: "fully_assisted",
     });
-    expect(resolveReviewedOmpArtifact({ platform: "darwin", arch: "x64" })).toBeUndefined();
+  });
+
+  it.each([
+    [{ platform: "darwin", arch: "x64" }, "omp-darwin-x64", "omp"],
+    [{ platform: "linux", arch: "arm64", libc: "glibc" }, "omp-linux-arm64", "omp"],
+    [{ platform: "linux", arch: "x64", libc: "glibc" }, "omp-linux-x64", "omp"],
+    [{ platform: "win32", arch: "arm64" }, "omp-windows-arm64.exe", "omp.exe"],
+    [{ platform: "win32", arch: "x64" }, "omp-windows-x64.exe", "omp.exe"],
+  ] as const)("resolves the official %o binary", (target, artifactName, executablePath) => {
+    const artifact = resolveReviewedOmpArtifact(target);
+    expect(artifact).toMatchObject({
+      artifactName,
+      executablePath,
+      url: `https://github.com/can1357/oh-my-pi/releases/download/v18.2.8/${artifactName}`,
+      archiveFormat: "raw",
+    });
+    expect(artifact?.checksum.digest).toMatch(/^[0-9a-f]{64}$/u);
+  });
+
+  it("does not approve Oh My Pi's musl builds", () => {
     expect(
       resolveReviewedOmpArtifact({ platform: "linux", arch: "arm64", libc: "musl" }),
+    ).toBeUndefined();
+    expect(
+      resolveReviewedOmpArtifact({ platform: "linux", arch: "x64", libc: "musl" }),
     ).toBeUndefined();
   });
 });

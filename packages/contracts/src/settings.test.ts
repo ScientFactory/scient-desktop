@@ -1168,6 +1168,13 @@ describe("ServerSettingsPatch.providerInstances", () => {
   });
 });
 
+describe("ServerSettingsPatch provider fields", () => {
+  it("carries every Droid setting, so none is dropped on save", () => {
+    const droid = { ...DEFAULT_SERVER_SETTINGS.providers.droid, cloudSessionSync: false };
+    expect(decodeServerSettingsPatch({ providers: { droid } }).providers?.droid).toEqual(droid);
+  });
+});
+
 describe("ServerSettingsPatch string normalization", () => {
   it("trims string settings while decoding patches", () => {
     const patch = decodeServerSettingsPatch({

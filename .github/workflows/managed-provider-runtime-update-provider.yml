@@ -92,7 +92,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: ${{ fromJSON(inputs.provider == 'omp' && '["macos-26"]' || inputs.provider == 'antigravityAcp' && '["macos-26","ubuntu-24.04","ubuntu-24.04-arm","windows-2025","windows-11-arm"]' || '["macos-26","macos-15-intel","ubuntu-24.04","ubuntu-24.04-arm","windows-2025","windows-11-arm"]') }}
+        runner: ${{ fromJSON(inputs.provider == 'antigravityAcp' && '["macos-26","ubuntu-24.04","ubuntu-24.04-arm","windows-2025","windows-11-arm"]' || '["macos-26","macos-15-intel","ubuntu-24.04","ubuntu-24.04-arm","windows-2025","windows-11-arm"]') }}
     steps:
       - name: Checkout immutable discovery source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -131,6 +131,13 @@ jobs:
         # managed-activation code, so it needs the server workspace.
         run: vp install --frozen-lockfile --ignore-scripts --filter=t3...
 
+      - name: Install Droid protocol qualification dependencies
+        if: inputs.provider == 'droid' && runner.os == 'macOS'
+        # The protocol suites drive the managed Droid binary through the server's
+        # own ACP code against local stubs: no Factory account and no network.
+        # Their fixtures use POSIX shells and a private HOME, verified on macOS.
+        run: vp install --frozen-lockfile --ignore-scripts --filter=t3...
+
       - name: Exercise download, verification, smoke, activation, and removal
         if: inputs.provider != 'antigravityAcp'
         shell: bash
@@ -146,6 +153,7 @@ jobs:
             echo "Qualification $attempt/$QUALIFICATION_RUNS"
             args=("${base_args[@]}")
             if [[ "$PROVIDER" == pi && "$attempt" == 1 ]]; then args+=(--pi-live-tests); fi
+            if [[ "$PROVIDER" == droid && "$attempt" == 1 && "$RUNNER_OS" == macOS ]]; then args+=(--droid-live-tests); fi
             node scripts/qualify-managed-runtime-catalog.ts "${args[@]}"
           done
 
@@ -230,6 +238,7 @@ jobs:
             echo "Discovery source $SOURCE_SHA is no longer an ancestor of main; retry safely." >&2
             exit 1
           fi
+          # What discovery, artifact qualification and publication run, for every provider.
           if ! git diff --quiet "$SOURCE_SHA" refs/remotes/origin/main -- \
             .github/workflows/managed-provider-runtime-update-provider.yml \
             apps/server/src/scient/providerLifecycle/ManagedRuntimeCatalog.ts \
@@ -252,6 +261,41 @@ jobs:
             scripts/qualify-managed-runtime-catalog.ts \
             scripts/update-managed-runtime-catalog.ts; then
             echo "Managed-runtime policy or qualification changed during this run; retry from current main." >&2
+            exit 1
+          fi
+          # Droid's qualification also runs its protocol suites against the server:
+          # everything they load, kept complete by
+          # scripts/managed-provider-runtime-workflow.test.ts. A folder covers its
+          # whole tree; the quoted pattern is matched by git in both commits, so a
+          # server module added on main counts too.
+          if [[ "$PROVIDER" == droid ]] && ! git diff --quiet "$SOURCE_SHA" refs/remotes/origin/main -- \
+            ':(glob)apps/server/src/*.ts' \
+            apps/server/src/auth \
+            apps/server/src/background \
+            apps/server/src/git \
+            apps/server/src/mcp \
+            apps/server/src/observability \
+            apps/server/src/provider \
+            apps/server/src/resourceTelemetry \
+            apps/server/src/scient/providerLifecycle \
+            apps/server/src/scient/threadSections \
+            apps/server/src/sourceControl \
+            apps/server/src/stream \
+            apps/server/src/telemetry \
+            apps/server/src/textGeneration \
+            apps/server/src/utils \
+            apps/server/src/vcs \
+            packages/contracts \
+            packages/scient-analysis \
+            packages/scient-analytics \
+            packages/scient-compute \
+            packages/scient-document-artifacts \
+            packages/scient-execution \
+            packages/scient-operations \
+            packages/scient-project-init \
+            packages/scient-sources \
+            packages/shared; then
+            echo "What Droid's protocol qualification runs changed during this run; retry from current main." >&2
             exit 1
           fi
 

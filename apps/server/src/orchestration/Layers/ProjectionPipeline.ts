@@ -1,3 +1,4 @@
+import { readQueue } from "../../scient/threadQueue/Ledger.ts";
 import {
   ApprovalRequestId,
   isImportedAgentSessionMessageId,
@@ -2164,6 +2165,15 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             threadId: ThreadId.make(threadId),
           });
           const retainedPaths = collectThreadAttachmentRelativePaths(threadId, messages);
+          const queue = yield* readQueue(ThreadId.make(threadId)).pipe(
+            Effect.provideService(SqlClient.SqlClient, sql),
+          );
+          for (const item of queue.items)
+            for (const attachment of item.attachments) {
+              if ("dataUrl" in attachment) continue;
+              const relativePath = attachmentRelativePath(attachment);
+              if (relativePath) retainedPaths.add(relativePath);
+            }
           const activities = yield* projectionThreadActivityRepository.listByThreadId({
             threadId: ThreadId.make(threadId),
           });
@@ -2242,23 +2252,24 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             deletedThreadIds: new Set<string>(),
             prunedThreadRelativePaths: new Map<string, Set<string>>(),
           };
-          yield* sql.withTransaction(
-            Effect.gen(function* () {
-              yield* Effect.forEach(
-                projectors,
-                (projector) => projector.apply(event, attachmentSideEffects),
-                { concurrency: 1, discard: true },
-              );
-              // Runtime projectors commit together. Bootstrap still advances each cursor separately.
-              yield* projectionStateRepository.upsertMany(
-                projectors.map((projector) => ({
-                  projector: projector.name,
-                  lastAppliedSequence: event.sequence,
-                  updatedAt: event.occurredAt,
-                })),
-              );
-            }),
+          // SCIENT-FORK:START — no nested transaction here. The caller owns the
+          // transaction, and a nested one costs a savepoint that Effect SQL never
+          // releases on success. A command with thousands of events (a fork)
+          // stacked one per event, and every later write slowed with the stack.
+          yield* Effect.forEach(
+            projectors,
+            (projector) => projector.apply(event, attachmentSideEffects),
+            { concurrency: 1, discard: true },
           );
+          // Runtime projectors commit together. Bootstrap still advances each cursor separately.
+          yield* projectionStateRepository.upsertMany(
+            projectors.map((projector) => ({
+              projector: projector.name,
+              lastAppliedSequence: event.sequence,
+              updatedAt: event.occurredAt,
+            })),
+          );
+          // SCIENT-FORK:END
           const hasCleanup =
             attachmentSideEffects.deletedThreadIds.size > 0 ||
             attachmentSideEffects.prunedThreadRelativePaths.size > 0;
@@ -2272,15 +2283,18 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
         Effect.provideService(ServerConfig, serverConfig),
-        Effect.catchTag("SqlError", (sqlError) =>
-          Effect.fail(toPersistenceSqlError("ProjectionPipeline.projectEvent:query")(sqlError)),
-        ),
       );
 
     const projectEvent: OrchestrationProjectionPipelineShape["projectEvent"] = Effect.fn(
       "projectEvent",
     )(function* (event) {
-      const cleanup = yield* projectEventDeferred(event);
+      const cleanup = yield* sql
+        .withTransaction(projectEventDeferred(event))
+        .pipe(
+          Effect.catchTag("SqlError", (sqlError) =>
+            Effect.fail(toPersistenceSqlError("ProjectionPipeline.projectEvent:query")(sqlError)),
+          ),
+        );
       yield* cleanup;
     });
 

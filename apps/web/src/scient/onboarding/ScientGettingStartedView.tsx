@@ -1,13 +1,14 @@
 import type { EnvironmentId, ProviderDriverKind } from "@t3tools/contracts";
-import { Link } from "@tanstack/react-router";
-import { ArrowLeftIcon, CheckIcon, ChevronRightIcon, PlusIcon } from "lucide-react";
-import { type ComponentType, type ReactNode, useEffect, useRef } from "react";
+import { ArrowLeftIcon, PlusIcon } from "lucide-react";
+import { type ComponentType, type ReactNode, useEffect, useId, useRef, useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import { SidebarInset } from "../../components/ui/sidebar";
 import { ScientSymbol } from "../../components/ScientSymbol";
 import type { ProviderInstanceEntry } from "../../providerInstances";
+import { ProviderSettingsLifecycleAction } from "../providerConnection/ProviderSettingsLifecycleAction";
+import { ProviderConnectionDialog } from "../providerConnection/ProviderConnectionDialog";
 import { ProviderLifecycleSetupSurface } from "../providerConnection/ProviderOnboardingPicker";
 import { SCIENT_OTHER_WORK_MAX_LENGTH, type ScientWorkKind } from "./model";
 import type { ScientOnboardingStep } from "./policy";
@@ -128,6 +129,12 @@ export function GettingStartedAgentStep(props: {
   readonly onContinue: () => void;
   readonly canContinue: boolean;
 }) {
+  const providerListId = useId();
+  const [managedEntryId, setManagedEntryId] = useState<string | null>(null);
+  const managedEntry = props.choices.find(
+    (choice) => choice.entry?.instanceId === managedEntryId,
+  )?.entry;
+
   if (props.selectedEntry) {
     return (
       <div>
@@ -161,57 +168,76 @@ export function GettingStartedAgentStep(props: {
         description="Use a ChatGPT, Claude, or Google subscription you already have, or skip this for now."
         title="Choose an AI"
       />
-      <div className="mt-6 divide-y divide-border/70 border-y border-border/70">
-        {props.choices.map((choice) => {
-          const Icon = choice.icon;
-          return (
-            <button
-              key={choice.driverKind}
-              className="group flex min-h-16 w-full items-center gap-3 px-1 py-3 text-left transition-colors hover:bg-foreground/3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={!choice.actionable}
-              onClick={() => props.onSelect(choice)}
-              type="button"
-            >
-              <span className="flex size-8 shrink-0 items-center justify-center">
-                <Icon className="size-6" />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium text-foreground">{choice.label}</span>
-                {choice.detail ? (
-                  <span className="mt-0.5 block text-xs text-muted-foreground">
-                    {choice.detail}
-                  </span>
-                ) : null}
-              </span>
-              {/* Identity stays on the left; the right edge only carries state. */}
-              {choice.ready ? (
-                <span className="flex items-center gap-1 text-success text-xs font-medium">
-                  <CheckIcon aria-hidden className="size-3.5" /> Ready
-                </span>
-              ) : (
-                <span className="flex shrink-0 items-center gap-1.5 text-muted-foreground text-xs">
-                  {choice.status}
-                  <ChevronRightIcon
-                    aria-hidden
-                    className="size-4 shrink-0 text-icon-muted transition-transform group-hover:translate-x-0.5"
-                  />
-                </span>
-              )}
-            </button>
-          );
-        })}
+      <div
+        id={providerListId}
+        role="region"
+        aria-label="AI providers"
+        tabIndex={0}
+        className="mt-6 max-h-[14rem] overflow-y-auto overscroll-y-contain divide-y divide-border/70 border-t border-border/70"
+      >
+        {props.choices.map((choice) => (
+          <div
+            key={choice.driverKind}
+            className="flex min-h-16 w-full items-center gap-3 px-1 py-3"
+          >
+            <GettingStartedProviderIdentity choice={choice} />
+            {choice.entry && choice.actionable ? (
+              <ProviderSettingsLifecycleAction
+                environmentId={props.environmentId}
+                provider={choice.entry.snapshot}
+                displayName={choice.label}
+                onManage={() => setManagedEntryId(choice.entry?.instanceId ?? null)}
+              />
+            ) : (
+              <Button
+                disabled={!choice.actionable}
+                onClick={() => props.onSelect(choice)}
+                size="compact"
+                type="button"
+                variant="ghost-muted"
+              >
+                Manage
+              </Button>
+            )}
+          </div>
+        ))}
       </div>
-      <div className="mt-4 flex items-center justify-between gap-3">
-        <Button render={<Link to="/settings/providers" />} size="sm" variant="ghost-muted">
-          More providers
-        </Button>
-        {props.canContinue ? (
+      {managedEntry ? (
+        <ProviderConnectionDialog
+          displayName={managedEntry.displayName}
+          environmentId={props.environmentId}
+          provider={managedEntry.snapshot}
+          open
+          onOpenChange={(open) => {
+            if (!open) setManagedEntryId(null);
+          }}
+        />
+      ) : null}
+      {props.canContinue ? (
+        <div className="mt-1 flex justify-end">
           <Button onClick={props.onContinue} size="sm" type="button">
             Continue
           </Button>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+function GettingStartedProviderIdentity(props: { readonly choice: GettingStartedProviderChoice }) {
+  const Icon = props.choice.icon;
+  return (
+    <>
+      <span className="flex size-8 shrink-0 items-center justify-center">
+        <Icon className="size-6" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-medium text-foreground">{props.choice.label}</span>
+        {props.choice.detail ? (
+          <span className="mt-0.5 block text-xs text-muted-foreground">{props.choice.detail}</span>
+        ) : null}
+      </span>
+    </>
   );
 }
 

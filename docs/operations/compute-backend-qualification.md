@@ -75,3 +75,33 @@ Python is qualified on macOS and Linux against the supported toolkit
 combinations. MATLAB needs a licensed protected runner. Any platform or runtime
 absent from the current workflow remains not qualified; source portability is
 not execution evidence.
+
+## Packaged application acceptance
+
+For a release claiming Compute support, also qualify the exact packaged app on
+each claimed native target. Source checkout tests and tests that extract the
+entire app archive before running cannot establish this boundary.
+
+The desktop artifact build rejects a missing, archived-only, or truncated Compute
+bridge payload in the final packaged application. This structural gate complements
+the runtime acceptance below; it does not establish interpreter or license readiness.
+
+Use a fresh isolated profile with no managed installer, interpreter, or
+environment cache. Leave the app in its packaged ASAR layout and exercise the
+same setup operation exposed by Settings. Verify that:
+
+1. Scientific Python completes setup from the empty profile.
+2. A synthetic project starts a session, executes arithmetic and emits a figure,
+   then shuts down without leaving its bridge or kernel alive.
+3. Restarting the app reuses the installed environment; repair also completes.
+4. MATLAB helper setup, verification, and a synthetic execution succeed on a
+   machine with a supported, activated MATLAB installation. A skipped licensed
+   test is an explicit qualification gap.
+5. Failed or interrupted setup can be retried without corrupting an existing
+   working environment or changing a system installation.
+
+Record the artifact identity, OS and architecture, fresh-profile evidence,
+setup result, execution result, and shutdown result. The bridge scripts must be
+readable as physical files by the external interpreter, and every subprocess
+working directory must be a real directory outside ASAR. Keep source CI,
+packaged runtime acceptance, signing, and release approval as distinct evidence.

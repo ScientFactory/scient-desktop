@@ -36,6 +36,7 @@ export const MAX_STASH_ENTRY_ATTACHMENT_CHARS = 2_700_000;
  */
 const StashEntrySchema = Schema.Struct({
   queueEditKey: Schema.optionalKey(Schema.String),
+  queueEditSide: Schema.optionalKey(Schema.Literals(["ordinary", "edited"])),
   id: Schema.String,
   createdAt: Schema.String,
   prompt: Schema.String,
@@ -236,7 +237,7 @@ interface PromptStashStoreState {
 export const usePromptStashStore = create<PromptStashStoreState>()((set, get) => ({
   entries: [],
   stashEntry: (entry) => {
-    const nextEntries = [entry, ...get().entries];
+    const nextEntries = [entry, ...get().entries.filter((candidate) => candidate.id !== entry.id)];
     const evicted = nextEntries.length > MAX_STASH_ENTRIES ? (nextEntries.pop() ?? null) : null;
     const { written, durable } = persistEntries(nextEntries);
     // A rejected write must not leave the entry visible either: the caller

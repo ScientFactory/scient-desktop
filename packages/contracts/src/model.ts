@@ -159,7 +159,7 @@ const PI_DRIVER_KIND = ProviderDriverKind.make("pi");
 const OMP_DRIVER_KIND = ProviderDriverKind.make("omp");
 const ANTIGRAVITY_DRIVER_KIND = ProviderDriverKind.make("antigravity");
 
-export const DEFAULT_MODEL = "gpt-6-astra";
+export const DEFAULT_MODEL = "gpt-6.1-sol";
 
 /**
  * Codex default-model preference, most preferred first. The provider snapshot
@@ -168,8 +168,8 @@ export const DEFAULT_MODEL = "gpt-6-astra";
  */
 export const PREFERRED_DEFAULT_CODEX_MODELS: ReadonlyArray<string> = [
   DEFAULT_MODEL,
-  "gpt-5.6-sol",
-  "gpt-5.6-terra",
+  "gpt-6-astra",
+  "gpt-6-luna",
 ];
 export const PREFERRED_DEFAULT_ANTIGRAVITY_MODELS: ReadonlyArray<string> = [
   "gemini-3.7-flash",
@@ -180,15 +180,22 @@ export const PREFERRED_DEFAULT_ANTIGRAVITY_MODELS: ReadonlyArray<string> = [
 export const DEFAULT_TEXT_GENERATION_MODEL = "gpt-6-luna";
 /** Keep the official Antigravity session's current model. Never send this ID to ACP. */
 export const ANTIGRAVITY_DEFAULT_MODEL = "antigravity-default";
+/**
+ * Keep the model Droid starts a session with (its default, which Droid's
+ * discovery marks `isDefault`). Never sent to Droid as a model id. Only text
+ * generation uses it: conversation defaults come from the shared automatic
+ * model policy, which resolves this marker to that same reported default.
+ */
+export const DROID_DEFAULT_MODEL = "droid-default";
 export const DEFAULT_TEXT_GENERATION_REASONING_EFFORT = "low";
 
 export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
   [CODEX_DRIVER_KIND]: DEFAULT_MODEL,
-  [CLAUDE_DRIVER_KIND]: "claude-fable-5-1",
+  [CLAUDE_DRIVER_KIND]: "claude-opus-5-5",
   [CURSOR_DRIVER_KIND]: "auto",
   // Product slug, not an ACP model id. The Grok adapter treats it as "the session's current model".
   [GROK_DRIVER_KIND]: "grok-build",
-  [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  [OPENCODE_DRIVER_KIND]: "openai/gpt-6.1-sol",
   [ANTIGRAVITY_DRIVER_KIND]: ANTIGRAVITY_DEFAULT_MODEL,
 };
 
@@ -201,6 +208,8 @@ export const DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
   [CURSOR_DRIVER_KIND]: "composer-2",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  // Droid's catalog varies per account and build; use the model Droid starts with.
+  [DROID_DRIVER_KIND]: DROID_DEFAULT_MODEL,
 };
 
 // Droid ships no static default model: its ACP catalog is authoritative and

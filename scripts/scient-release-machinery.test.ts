@@ -36,13 +36,13 @@ describe("Scient release machinery", () => {
     );
   });
 
-  it("prepares stable candidates at 03:00 Jerusalem without direct publication authority", () => {
+  it("prepares stable candidates at 04:00 Jerusalem without direct publication authority", () => {
     const workflow = NodeFS.readFileSync(
       NodePath.join(import.meta.dirname, "../.github/workflows/scheduled-stable-candidate.yml"),
       "utf8",
     );
 
-    assert.include(workflow, 'cron: "0 3 * * *"');
+    assert.include(workflow, 'cron: "0 4 * * *"');
     assert.include(workflow, 'timezone: "Asia/Jerusalem"');
     assert.include(workflow, "actions: write");
     assert.include(workflow, "contents: read");

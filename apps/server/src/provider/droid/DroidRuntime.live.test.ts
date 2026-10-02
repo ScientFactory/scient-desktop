@@ -4,7 +4,7 @@ import { beforeAll } from "vite-plus/test";
 import { qualifyDroidTestBinary } from "./DroidLiveTestPreflight.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderInstanceId } from "@t3tools/contracts";
 import { Effect, FileSystem, Path, Redacted, Stream, Schema } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as TestClock from "effect/testing/TestClock";
@@ -16,6 +16,91 @@ beforeAll(() => qualifyDroidTestBinary(binary), 10_000);
 const encodeFixtureValue = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeFixtureRequest = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
+
+// The first thing a release must keep: Scient reads these controls at every
+// session start and refuses to send without them. Verified against Droid
+// 0.213.0 and 0.230.0.
+it.effect.skipIf(!binary)(
+  "real Droid starts a session with the controls Scient depends on",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-droid-controls-" });
+      // Every Factory request goes to this stub; no account or hosted inference is used.
+      const server = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          NodeHttp.createServer((_request, response) => {
+            response.writeHead(200, { "content-type": "application/json" });
+            response.end("{}");
+          }),
+        ),
+        (server) =>
+          Effect.promise(
+            () =>
+              new Promise<void>((resolve) => {
+                server.close(() => resolve());
+                server.closeAllConnections();
+              }),
+          ),
+      );
+      yield* Effect.promise(
+        () => new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve)),
+      );
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Missing fixture port");
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+      const factory = yield* makeDroidCustomModelsRuntimeFactory(
+        {
+          committedCustomModels: () => ({ revision: 0, connections: [] }),
+          resolveCustomModels: () => Effect.succeed([]),
+          subscribeChanges: Effect.succeed(Stream.never),
+        },
+        ProviderInstanceId.make("droid_controls_fixture"),
+      );
+      const runtime = yield* factory({
+        childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+        droidSettings: { binaryPath: binary! },
+        cwd: root,
+        clientInfo: { name: "scient-droid-controls-test", version: "0" },
+        environment: {
+          PATH: process.env.PATH,
+          HOME: root,
+          FACTORY_PROFILE_DIR: path.join(root, "profile"),
+          FACTORY_API_KEY: "fk-fixture",
+          FACTORY_API_BASE_URL: baseUrl,
+          FACTORY_TELEMETRY_INGEST_BASE_URL: baseUrl,
+          FACTORY_DROID_AUTO_UPDATE_ENABLED: "false",
+          FACTORY_DISABLE_KEYRING: "true",
+        },
+      });
+      const started = yield* runtime.start().pipe(Effect.timeout("8 seconds"));
+      expect(started.initializeResult.protocolVersion).toBe(1);
+      // The API key signs this session in; pairing is what Scient's sign-in starts.
+      expect((started.initializeResult.authMethods ?? []).map((method) => method.id)).toEqual(
+        expect.arrayContaining(["factory-api-key", "device-pairing"]),
+      );
+      expect(started.sessionId).not.toBe("");
+
+      const options = yield* runtime.getConfigOptions;
+      const choices = (id: string) => {
+        const option = options.find((entry) => entry.id === id);
+        expect(option?.type, id).toBe("select");
+        return option?.type === "select"
+          ? option.options.flatMap((entry) =>
+              "value" in entry ? [entry.value] : entry.options.map((nested) => nested.value),
+            )
+          : [];
+      };
+      expect(choices("model").length).toBeGreaterThan(0);
+      // Every runtime mode Scient maps to an autonomy level, and plan mode.
+      expect(choices("autonomy_level")).toEqual(
+        expect.arrayContaining(["normal", "spec", "auto-low", "auto-medium", "auto-high"]),
+      );
+      expect(choices("reasoning_effort").length).toBeGreaterThan(0);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), TestClock.withLive),
+  30_000,
 );
 
 for (const explicitLimits of [true, false]) {
@@ -110,10 +195,7 @@ for (const explicitLimits of [true, false]) {
         ];
         const factory = yield* makeDroidCustomModelsRuntimeFactory(
           {
-            getSettings: Effect.succeed({
-              ...DEFAULT_SERVER_SETTINGS,
-              customModels: { revision: 0, connections },
-            }),
+            committedCustomModels: () => ({ revision: 0, connections }),
             resolveCustomModels: () => Effect.succeed(connections),
             subscribeChanges: Effect.succeed(Stream.never),
           },
@@ -260,10 +342,7 @@ it.effect.skipIf(!binary)(
       }));
       const factory = yield* makeDroidCustomModelsRuntimeFactory(
         {
-          getSettings: Effect.succeed({
-            ...DEFAULT_SERVER_SETTINGS,
-            customModels: { revision: 0, connections },
-          }),
+          committedCustomModels: () => ({ revision: 0, connections }),
           resolveCustomModels: () => Effect.succeed(connections),
           subscribeChanges: Effect.succeed(Stream.never),
         },

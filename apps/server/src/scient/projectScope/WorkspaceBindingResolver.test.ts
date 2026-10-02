@@ -12,6 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
+import * as ServerConfig from "../../config.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import {
   type ObservedWorkspaceEvidence,
@@ -169,6 +170,7 @@ const makeResolverLayer = (state: ResolverState) => {
     Layer.provide(
       Layer.mergeAll(environmentLayer, authorityProjectionLayer, evidenceLayer, storeLayer),
     ),
+    Layer.provide(ServerConfig.layerTest("/projects/example", { prefix: "workspace-resolver-" })),
     Layer.provide(NodeServices.layer),
   );
 };

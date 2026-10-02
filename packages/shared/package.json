@@ -362,11 +362,27 @@
     "./cliRelease": {
       "types": "./src/cliRelease.ts",
       "import": "./src/cliRelease.ts"
+    },
+    "./providerAuthReturnUrl": {
+      "types": "./src/providerAuthReturnUrl.ts",
+      "import": "./src/providerAuthReturnUrl.ts"
+    },
+    "./codexAuthCallback": {
+      "types": "./src/codexAuthCallback.ts",
+      "import": "./src/codexAuthCallback.ts"
+    },
+    "./codexAuthHandoff": {
+      "types": "./src/codexAuthHandoff.ts",
+      "import": "./src/codexAuthHandoff.ts"
+    },
+    "./scientCodexPolicy": {
+      "types": "./src/scientCodexPolicy.ts",
+      "import": "./src/scientCodexPolicy.ts"
     }
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vp test run"
+    "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {
     "@noble/curves": "catalog:",

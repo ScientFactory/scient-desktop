@@ -7,9 +7,16 @@ export interface UnreadTimelineMessages {
 
 const threads = new Map<string, UnreadTimelineMessages>();
 
+/**
+ * `countable` holds each response's latest assistant message (see
+ * `deriveTerminalAssistantMessageIds`). A response counts once: the progress
+ * notes an agent writes between tool calls are each the latest message when
+ * they arrive, and stop counting as soon as a later message supersedes them.
+ */
 export function updateUnreadMessages(
   previous: UnreadTimelineMessages | undefined,
   messages: readonly { id: string; role: string; createdAt: string }[],
+  countable?: ReadonlySet<string>,
 ): UnreadTimelineMessages {
   const state = previous ?? {
     known: new Set<string>(),
@@ -19,20 +26,27 @@ export function updateUnreadMessages(
   const baseline = state.newestCreatedAt;
   for (const message of messages) {
     if (!state.known.has(message.id)) {
-      if (previous && message.role === "assistant" && message.createdAt >= baseline)
+      if (
+        previous &&
+        message.role === "assistant" &&
+        message.createdAt >= baseline &&
+        (!countable || countable.has(message.id))
+      )
         state.unread.add(message.id);
       state.known.add(message.id);
     }
     if (message.createdAt > state.newestCreatedAt) state.newestCreatedAt = message.createdAt;
   }
+  if (countable) for (const id of state.unread) if (!countable.has(id)) state.unread.delete(id);
   return state;
 }
 
 export function unreadMessagesForThread(
   key: string,
   messages: readonly { id: string; role: string; createdAt: string }[],
+  countable?: ReadonlySet<string>,
 ) {
-  const state = updateUnreadMessages(threads.get(key), messages);
+  const state = updateUnreadMessages(threads.get(key), messages, countable);
   threads.delete(key);
   threads.set(key, state);
   if (threads.size > 100) threads.delete(threads.keys().next().value!);

@@ -1,5 +1,7 @@
-import { observeQueueCommand } from "../../scient/threadQueue/Ledger.ts";
+import { observeQueueCommand, wasQueuedCommand } from "../../scient/threadQueue/Ledger.ts";
+import { notifyQueue } from "../../scient/threadQueue/signals.ts";
 import type {
+  DispatchResult,
   OrchestrationClientOrigin,
   OrchestrationEvent,
   OrchestrationReadModel,
@@ -65,7 +67,8 @@ const isOrchestrationCommandInvariantError = Schema.is(OrchestrationCommandInvar
 interface CommandEnvelope {
   command: OrchestrationCommand;
   origin: OrchestrationClientOrigin | undefined;
-  result: Deferred.Deferred<{ sequence: number }, OrchestrationDispatchError>;
+  bootstrapHandoff?: string | undefined;
+  result: Deferred.Deferred<DispatchResult, OrchestrationDispatchError>;
   startedAtMs: number;
 }
 
@@ -184,8 +187,20 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             });
           }
           if (existingReceipt.value.status === "accepted") {
+            const queued = yield* wasQueuedCommand(envelope.command).pipe(
+              Effect.provideService(SqlClient.SqlClient, sql),
+            );
             return {
               sequence: existingReceipt.value.resultSequence,
+              queued,
+              ...(envelope.command.type === "thread.turn.start" && envelope.command.submissionId
+                ? {
+                    submission: {
+                      submissionId: envelope.command.submissionId,
+                      outcome: queued ? ("queued" as const) : ("sent" as const),
+                    },
+                  }
+                : {}),
             };
           }
           return yield* new OrchestrationCommandPreviouslyRejectedError({
@@ -381,7 +396,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         const committedCommand = yield* sql
           .withTransaction(
             Effect.gen(function* () {
-              yield* observeQueueCommand(
+              const queued = yield* observeQueueCommand(
                 envelope.command,
                 "threadId" in envelope.command
                   ? commandReadModel.threads.find(
@@ -389,6 +404,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                         "threadId" in envelope.command && thread.id === envelope.command.threadId,
                     )
                   : undefined,
+                envelope.bootstrapHandoff,
               ).pipe(
                 Effect.provideService(SqlClient.SqlClient, sql),
                 Effect.mapError(
@@ -399,6 +415,27 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                     }),
                 ),
               );
+              if (queued) {
+                yield* commandReceiptRepository.upsert({
+                  commandId: envelope.command.commandId,
+                  aggregateKind: aggregateRef.aggregateKind,
+                  aggregateId: aggregateRef.aggregateId,
+                  acceptedAt:
+                    "createdAt" in envelope.command
+                      ? envelope.command.createdAt
+                      : DateTime.formatIso(yield* DateTime.now),
+                  resultSequence: commandReadModel.snapshotSequence,
+                  status: "accepted",
+                  error: null,
+                });
+                return {
+                  committedEvents: [],
+                  attachmentCleanups: [],
+                  lastSequence: commandReadModel.snapshotSequence,
+                  nextCommandReadModel: commandReadModel,
+                  queued: true,
+                } as const;
+              }
               const committedEvents: OrchestrationEvent[] = [];
               const attachmentCleanups: Effect.Effect<void>[] = [];
               let nextCommandReadModel = commandReadModel;
@@ -434,6 +471,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                 attachmentCleanups,
                 lastSequence: lastSavedEvent.sequence,
                 nextCommandReadModel,
+                queued: false,
               } as const;
             }),
           )
@@ -446,6 +484,15 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           );
 
         commandReadModel = committedCommand.nextCommandReadModel;
+        // SCIENT-FORK:START — Retry queues skipped while busy only after readiness commits.
+        if (
+          envelope.command.type === "thread.session.set" &&
+          envelope.command.session.status === "ready"
+        ) {
+          const threadId = envelope.command.threadId;
+          yield* Effect.sync(() => notifyQueue(sql, threadId));
+        }
+        // SCIENT-FORK:END
         for (const cleanup of committedCommand.attachmentCleanups) {
           yield* cleanup;
         }
@@ -464,7 +511,18 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             );
           }
         }
-        return { sequence: committedCommand.lastSequence };
+        return {
+          sequence: committedCommand.lastSequence,
+          queued: committedCommand.queued,
+          ...(envelope.command.type === "thread.turn.start" && envelope.command.submissionId
+            ? {
+                submission: {
+                  submissionId: envelope.command.submissionId,
+                  outcome: committedCommand.queued ? ("queued" as const) : ("sent" as const),
+                },
+              }
+            : {}),
+        };
       }).pipe(Effect.withSpan(`orchestration.command.${envelope.command.type}`)),
     ).pipe(
       Effect.flatMap((exit) =>
@@ -563,10 +621,11 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
   const dispatch: OrchestrationEngineShape["dispatch"] = (command, options) =>
     Effect.gen(function* () {
-      const result = yield* Deferred.make<{ sequence: number }, OrchestrationDispatchError>();
+      const result = yield* Deferred.make<DispatchResult, OrchestrationDispatchError>();
       yield* Queue.offer(commandQueue, {
         command,
         origin: options?.origin,
+        bootstrapHandoff: options?.bootstrapHandoff,
         result,
         startedAtMs: yield* Clock.currentTimeMillis,
       });

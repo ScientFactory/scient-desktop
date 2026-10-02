@@ -18,12 +18,13 @@ import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/ho
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { OMP_RPC_PROTOCOL_V2 } from "effect-omp-rpc/schema";
 
 import {
-  configuredRuntimeVersionSucceeds,
+  readConfiguredRuntimeVersion,
   makeManagedProviderRuntimeResolution,
   nativeProviderRuntimeBackendLabel,
   type ConfiguredRuntimeProbe,
@@ -169,6 +170,33 @@ class QualifiedManagedOmpRuntime extends ManagedOmpRuntime {
 }
 
 /**
+ * Oh My Pi's RPC mode exits at startup when it has no model at all, and the
+ * isolated home has none of the user's sign-ins. This stub provider gives it
+ * one; the check never sends a prompt, so nothing is sent to its unroutable
+ * address. Local-server discovery is off so the result does not depend on
+ * what else runs on the machine.
+ */
+const OMP_QUALIFICATION_MODELS = `providers:
+  scient-qualification:
+    baseUrl: http://127.0.0.1:9/v1
+    api: openai-completions
+    auth: none
+    models:
+      - id: stub
+        name: Scient qualification stub
+        input: [text]
+        contextWindow: 8192
+        maxTokens: 1024
+`;
+const OMP_QUALIFICATION_CONFIG = `disabledProviders:
+  - ollama
+  - llama.cpp
+  - lm-studio
+`;
+/** A first launch of the large standalone binary can be slow on a cold machine. */
+const OMP_QUALIFICATION_TIMEOUT = "30 seconds";
+
+/**
  * A managed OMP binary is not activated until it completes Scient's RPC v2
  * handshake and answers `get_state`, in an isolated home with no extensions,
  * tools, skills, rules or session.
@@ -184,20 +212,29 @@ export const qualifyManagedOmpRuntime = Effect.fn("OmpManagedRuntime.qualify")(f
   yield* Effect.scoped(
     Effect.gen(function* () {
       const home = NodePath.join(input.cwd, "qualification-home");
-      yield* Effect.promise(() => NodeFSP.mkdir(home, { recursive: true, mode: 0o700 }));
+      const agent = NodePath.join(home, "agent");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(agent, { recursive: true, mode: 0o700 });
+        await NodeFSP.writeFile(NodePath.join(agent, "models.yml"), OMP_QUALIFICATION_MODELS, {
+          mode: 0o600,
+        });
+        await NodeFSP.writeFile(NodePath.join(agent, "config.yml"), OMP_QUALIFICATION_CONFIG, {
+          mode: 0o600,
+        });
+      });
       const client = yield* makeOmpRpcProcess({
         command: input.executablePath,
         cwd: input.cwd,
         env: {
           ...managedRuntimeSmokeEnvironment(input.environment),
           HOME: home,
-          PI_CODING_AGENT_DIR: NodePath.join(home, "agent"),
+          PI_CODING_AGENT_DIR: agent,
         },
         extraArgs: [...OMP_ISOLATED_ARGS],
         executableActivation: input.activations.find(
           (activation) => activation.identity === identity,
         ),
-      }).pipe(Effect.timeout("8 seconds"));
+      }).pipe(Effect.timeout(OMP_QUALIFICATION_TIMEOUT));
       const cleanup = client.shutdown.pipe(
         Effect.ignore,
         Effect.andThen(client.close()),
@@ -220,7 +257,7 @@ export const qualifyManagedOmpRuntime = Effect.fn("OmpManagedRuntime.qualify")(f
         yield* client.getState();
       }).pipe(
         Effect.onExit(() => cleanup),
-        Effect.timeout("8 seconds"),
+        Effect.timeout(OMP_QUALIFICATION_TIMEOUT),
       );
     }),
   ).pipe(
@@ -284,7 +321,7 @@ const probeConfiguredOmpRuntime =
       }).pipe(Effect.orElseSucceed(() => binary));
       const identity = yield* canonicalOmpExecutablePath(resolvedBinary);
       yield* gate.acquireProcess(identity, { kind: "one-shot" });
-      return yield* configuredRuntimeVersionSucceeds({
+      return yield* readConfiguredRuntimeVersion({
         binary: resolvedBinary,
         environment,
         extendEnv: false,
@@ -294,7 +331,7 @@ const probeConfiguredOmpRuntime =
       Effect.scoped,
       Effect.provide(NodeServices.layer),
       // Busy behind an activation: not provably healthy right now.
-      Effect.orElseSucceed(() => false),
+      Effect.orElseSucceed(() => Option.none<string>()),
     );
 
 function detectTargetSafely(input: { readonly platform: NodeJS.Platform; readonly arch: string }) {

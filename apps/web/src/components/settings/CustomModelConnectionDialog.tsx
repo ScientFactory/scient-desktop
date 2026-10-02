@@ -12,7 +12,7 @@ import {
   DialogPanel,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
-import { CUSTOM_MODEL_PROTOCOLS } from "./customModels";
+import { CUSTOM_MODEL_PROTOCOLS, MISSING_KEY_STATUS } from "./customModels";
 
 /** Connection-level settings: name and credential. Models are edited separately. */
 export function CustomModelConnectionDialog({
@@ -21,9 +21,12 @@ export function CustomModelConnectionDialog({
   onSave,
   onDelete,
   onClose,
+  keyMissing = false,
 }: {
   connection: CustomModelConnection;
   revision: number;
+  /** An agent reported the saved key missing or unusable. */
+  keyMissing?: boolean;
   onSave: (input: CustomModelSaveInput) => Promise<void>;
   onDelete: () => void;
   onClose: () => void;
@@ -35,11 +38,15 @@ export function CustomModelConnectionDialog({
   const [error, setError] = useState<string | null>(null);
   const protocolName =
     CUSTOM_MODEL_PROTOCOLS.find((p) => p.id === connection.protocol)?.name ?? connection.protocol;
-  const keyStatus = connection.credentialId
-    ? connection.apiKeySuffix
-      ? `Key ending in ${connection.apiKeySuffix}`
-      : "Key saved"
-    : "No API key";
+  // A missing key's last four describe nothing that can still be used.
+  const missing = Boolean(connection.credentialId) && keyMissing;
+  const keyStatus = !connection.credentialId
+    ? "No API key"
+    : missing
+      ? MISSING_KEY_STATUS
+      : connection.apiKeySuffix
+        ? `Key ending in ${connection.apiKeySuffix}`
+        : "Key saved";
   const submit = async () => {
     setBusy(true);
     setError(null);
@@ -107,7 +114,7 @@ export function CustomModelConnectionDialog({
               </label>
               <label className="flex min-w-0 flex-col gap-1.5">
                 <span className="text-sm/4 font-medium text-foreground">
-                  {connection.credentialId ? "Replace API key" : "API key"}
+                  {connection.credentialId && !missing ? "Replace API key" : "API key"}
                 </span>
                 <Input
                   type="password"
@@ -117,7 +124,13 @@ export function CustomModelConnectionDialog({
                   disabled={removeKey}
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
-                  placeholder={connection.credentialId ? "Leave blank to keep" : "Optional"}
+                  placeholder={
+                    missing
+                      ? "Enter the API key again"
+                      : connection.credentialId
+                        ? "Leave blank to keep"
+                        : "Optional"
+                  }
                 />
               </label>
               {connection.credentialId ? (

@@ -1,12 +1,20 @@
 import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-presentation";
 import { useBoundedAnswerFollow } from "./useBoundedAnswerFollow";
+import { deriveTerminalAssistantMessageIds } from "@scientfactory/conversation/work-log-grouping";
 import { countUnreadBelow, unreadMessagesForThread } from "./unreadTimelineMessages";
-import { readingIdentity, resolveReadingRow } from "./readerScrollPolicy";
+import {
+  readerAtReadingEnd,
+  readingEndAllowance,
+  readingEndGapOnScreen,
+  readingIdentity,
+  resolveReadingRow,
+} from "./readerScrollPolicy";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { useRightPanelStore } from "~/rightPanelStore";
 import {
   getQuestionAnswerPreview,
   getQuestionAnswerText,
+  getQuestionTextPreview,
   hasQuestionAnswer,
 } from "@t3tools/client-runtime/work-log/user-input";
 import {
@@ -155,7 +163,6 @@ import { serverEnvironment } from "../../state/server";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
   flushTimelinePositions,
-  withRealTimelineEnd,
   readTimelinePosition,
   rememberTimelinePosition,
   timelineContentOverflowsViewport,
@@ -182,7 +189,6 @@ import {
   liveWorkEntryLabel,
   workEntryIsActiveTurnActivity,
   resolveAssistantMessageCopyState,
-  resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapCurrentIndex,
   resolveTimelineMinimapHeightStyle,
@@ -252,7 +258,7 @@ import { ScientChatImageGallery } from "~/scient/images/ScientChatImageGallery";
 import { remoteImageAddress } from "~/scient/presentation/remoteImageAddress";
 // SCIENT-FORK:END
 import { SkillChipIcon, SkillInlineText } from "./SkillInlineText";
-import { deriveAgentSpawnSummary } from "./agentSpawnSummary";
+import { agentSpawnRowLabel, deriveAgentSpawnSummary } from "./agentSpawnSummary";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import {
   buildReviewCommentRenderablePatch,
@@ -374,6 +380,13 @@ function TimelineListFooter({ composerInset }: { readonly composerInset: number 
   );
 }
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
+/** Which rows are listed: a new or removed row changes it, a row changing size does not. */
+function timelineRowsKey(data: readonly unknown[]) {
+  const last = data.at(-1) as { id?: string } | undefined;
+  return `${data.length}:${last?.id ?? ""}`;
+}
+/** Older-history pages a missing saved message may load before falling back. */
+const MAX_READING_HISTORY_PAGES = 2;
 // ---------------------------------------------------------------------------
 // Props (public API)
 // ---------------------------------------------------------------------------
@@ -536,11 +549,27 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ReadonlySet<string>
   >(() => rememberedPosition?.disclosures?.reasoningMessages ?? new Set());
   const [positionedThreadKey, setPositionedThreadKey] = useState<string | null>(null);
+  // Whether the latest turn is unfinished (running, or it ended interrupted or
+  // with an error): its latest content is then the reading end.
+  const turnUnfinished =
+    runningTurnId !== null || latestTurn?.state === "interrupted" || latestTurn?.state === "error";
+  const turnUnfinishedRef = useRef(turnUnfinished);
+  useLayoutEffect(() => {
+    turnUnfinishedRef.current = turnUnfinished;
+  });
   const [readingListLoaded, setReadingListLoaded] = useState(false);
   const requestedReadingPages = useRef({ key: listIdentityKey, cursors: new Set<string>() });
   if (requestedReadingPages.current.key !== listIdentityKey) {
     requestedReadingPages.current = { key: listIdentityKey, cursors: new Set() };
   }
+  // A saved message that no longer exists (a revert, a deleted turn) must not
+  // page in the whole history: after a few pages, a neighbor or the end is used.
+  const [readingHistoryPages, setReadingHistoryPages] = useState({
+    key: listIdentityKey,
+    count: 0,
+  });
+  const readingHistoryPageCount =
+    readingHistoryPages.key === listIdentityKey ? readingHistoryPages.count : 0;
   const restoringThreadPosition = positionedThreadKey !== listIdentityKey;
   const listIdentityRef = useRef(listIdentityKey);
   const previousLatestTurnRef = useRef(latestTurn);
@@ -588,6 +617,21 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     [listIdentityKey, rememberedPosition],
   );
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
+  // Expanding or collapsing a block at the end must not pin the end: the
+  // toggled row keeps its place instead (maintainVisibleContentPosition).
+  const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
+  // Any click or key in the timeline can expand or collapse content (a long
+  // message, a plan, tool output). Idle end pinning pauses briefly after one,
+  // so the toggled content keeps its place instead of being pinned to its end.
+  const [interactionSettling, setInteractionSettling] = useState(false);
+  // The reader's own scrolling input, held until their movement has stopped:
+  // a drag, an animated wheel notch or key scroll moves for several frames.
+  const readerInputRef = useRef(false);
+  const scrollbarHeldRef = useRef(false);
+  const lastBookkeepingScrollRef = useRef<number | null>(null);
+  const stillFramesRef = useRef(0);
+  // Schedules a bookkeeping pass; set once the per-frame scheduler exists.
+  const scheduleBookkeepingRef = useRef<() => void>(() => {});
   const disclosureAnchorKeyRef = useRef<string | null>(null);
   const disclosureSettleFrameRef = useRef<number | null>(null);
   const disclosureSettleSecondFrameRef = useRef<number | null>(null);
@@ -605,6 +649,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const suspendEndScrollMaintenanceForDisclosure = useCallback(
     (anchorKey: string, collapsed = false) => {
       disclosureAnchorKeyRef.current = anchorKey;
+      setDisclosureToggleSettling(true);
       if (disclosureSettleFrameRef.current !== null) {
         cancelAnimationFrame(disclosureSettleFrameRef.current);
       }
@@ -614,17 +659,25 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       disclosureSettleFrameRef.current = requestAnimationFrame(() => {
         disclosureSettleSecondFrameRef.current = requestAnimationFrame(() => {
           disclosureAnchorKeyRef.current = null;
+          setDisclosureToggleSettling(false);
           disclosureSettleFrameRef.current = null;
           disclosureSettleSecondFrameRef.current = null;
           // Wait for row measurement and the disclosure click's blur check.
           // Closing output can reveal the end without a scroll event.
-          if (collapsed && resolveTimelineIsAtEnd(listRef.current?.getState()) === true) {
+          if (
+            collapsed &&
+            readerAtReadingEnd(
+              listRef.current?.getState(),
+              contentInsetEndAdjustment,
+              turnUnfinishedRef.current,
+            ) === true
+          ) {
             onToolOutputCollapsedAtEnd?.();
           }
         });
       });
     },
-    [listRef, onToolOutputCollapsedAtEnd],
+    [contentInsetEndAdjustment, listRef, onToolOutputCollapsedAtEnd],
   );
 
   const shouldRestoreVisibleContentPosition = useCallback((row: MessagesTimelineRow) => {
@@ -784,16 +837,29 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     worktreeSetup,
   ]);
   const rows = useStableRows(rawRows, listIdentityKey);
+  // A finished reveal (revealed or cancelled) no longer holds off idle end pinning.
+  const [finishedRevealPromptId, setFinishedRevealPromptId] = useState<string | null>(null);
+  const onRevealFinished = useCallback((promptId: string) => {
+    setFinishedRevealPromptId(promptId);
+  }, []);
+  const revealActive =
+    readingFollowPromptId !== null && finishedRevealPromptId !== readingFollowPromptId;
   useBoundedAnswerFollow({
     listRef,
     rows,
     promptMessageId: readingFollowPromptId,
+    responseRunning: isWorking,
     suspended: timelinePositioningPending || restoringThreadPosition || positionHistoryLoading,
     composerInset: contentInsetEndAdjustment,
+    onFinished: onRevealFinished,
   });
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
+  // The last allowed page must arrive before the saved message is given up on.
+  const readingHistoryExhausted =
+    loadEarlier === null ||
+    (readingHistoryPageCount >= MAX_READING_HISTORY_PAGES && !loadEarlier.loading);
   const restoreTarget = rememberedPosition
-    ? resolveReadingRow(rows, rememberedPosition, loadEarlier === null)
+    ? resolveReadingRow(rows, rememberedPosition, readingHistoryExhausted)
     : null;
   const restoreRowIndex = restoreTarget?.index ?? -1;
   const restoreOffset = restoreTarget?.exact ? (rememberedPosition?.offsetWithinRow ?? 0) : 0;
@@ -801,15 +867,31 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     restoringThreadPosition &&
     !!rememberedPosition &&
     restoreTarget === null &&
-    loadEarlier !== null;
+    !readingHistoryExhausted;
   useEffect(() => {
-    if (!waitingForReadingHistory || positionHistoryLoading || !loadEarlier || loadEarlier.loading)
+    if (
+      !waitingForReadingHistory ||
+      positionHistoryLoading ||
+      !loadEarlier ||
+      loadEarlier.loading ||
+      readingHistoryPageCount >= MAX_READING_HISTORY_PAGES
+    )
       return;
     const cursor = loadEarlier.cursor ?? "initial";
     if (requestedReadingPages.current.cursors.has(cursor)) return;
     requestedReadingPages.current.cursors.add(cursor);
+    setReadingHistoryPages((current) => ({
+      key: listIdentityKey,
+      count: (current.key === listIdentityKey ? current.count : 0) + 1,
+    }));
     loadEarlier.onLoadEarlier();
-  }, [waitingForReadingHistory, positionHistoryLoading, loadEarlier]);
+  }, [
+    waitingForReadingHistory,
+    positionHistoryLoading,
+    loadEarlier,
+    listIdentityKey,
+    readingHistoryPageCount,
+  ]);
   const restoringAlwaysRender = useMemo(
     () =>
       restoringThreadPosition && restoreRowIndex >= 0 ? { indices: [restoreRowIndex] } : undefined,
@@ -886,7 +968,28 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     void Promise.resolve(scrolling).then(() => {
       if (cancelled) return;
       if (!position || index < 0) {
-        setPositionedThreadKey(listIdentityKey);
+        // Rows measure after the first jump; keep the end in view until the
+        // list height holds for two frames, so a fresh open lands at the end.
+        let stableEndFrames = 0;
+        let remainingEndFrames = 60;
+        const settleAtEnd = () => {
+          if (cancelled) return;
+          const element = list.getScrollableNode();
+          if (!element || --remainingEndFrames <= 0) {
+            setPositionedThreadKey(listIdentityKey);
+            return;
+          }
+          if (element.scrollHeight - element.clientHeight - element.scrollTop > 1) {
+            stableEndFrames = 0;
+            void Promise.resolve(list.scrollToEnd({ animated: false })).then(() => {
+              if (!cancelled) settleFrame = requestAnimationFrame(settleAtEnd);
+            });
+            return;
+          }
+          if (++stableEndFrames >= 2) setPositionedThreadKey(listIdentityKey);
+          else settleFrame = requestAnimationFrame(settleAtEnd);
+        };
+        settleFrame = requestAnimationFrame(settleAtEnd);
         return;
       }
       // Index scrolling starts from estimates. Keep the saved row mounted
@@ -953,6 +1056,65 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
+  useEffect(() => {
+    if (!timelineViewportElement) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const settle = () => {
+      setInteractionSettling(true);
+      if (timer !== null) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        setInteractionSettling(false);
+      }, 400);
+    };
+    // The reader's own scrolling input; idle end keeping never acts on it.
+    const input = () => {
+      readerInputRef.current = true;
+      stillFramesRef.current = 0;
+      scheduleBookkeepingRef.current();
+    };
+    // A scrollbar drag moves the view on every frame until release.
+    const pressed = (event: PointerEvent) => {
+      if (event.target !== listRef.current?.getScrollableNode()) return;
+      scrollbarHeldRef.current = true;
+      input();
+    };
+    const released = () => {
+      scrollbarHeldRef.current = false;
+    };
+    const keyed = (event: globalThis.KeyboardEvent) => {
+      // Keys typed into the composer or another field don't scroll the timeline.
+      if (
+        event.target instanceof Element &&
+        event.target.closest("input, textarea, [contenteditable=true], [contenteditable='']")
+      )
+        return;
+      if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key))
+        input();
+    };
+    const ownerDocument = timelineViewportElement.ownerDocument;
+    timelineViewportElement.addEventListener("click", settle, { capture: true });
+    timelineViewportElement.addEventListener("keydown", settle, { capture: true });
+    timelineViewportElement.addEventListener("wheel", input, { capture: true, passive: true });
+    timelineViewportElement.addEventListener("touchmove", input, { capture: true, passive: true });
+    timelineViewportElement.addEventListener("pointerdown", pressed, { capture: true });
+    ownerDocument.addEventListener("keydown", keyed, { capture: true });
+    ownerDocument.addEventListener("pointerup", released);
+    ownerDocument.addEventListener("pointercancel", released);
+    ownerDocument.addEventListener("mouseup", released);
+    return () => {
+      if (timer !== null) clearTimeout(timer);
+      timelineViewportElement.removeEventListener("click", settle, { capture: true });
+      timelineViewportElement.removeEventListener("keydown", settle, { capture: true });
+      timelineViewportElement.removeEventListener("wheel", input, { capture: true });
+      timelineViewportElement.removeEventListener("touchmove", input, { capture: true });
+      timelineViewportElement.removeEventListener("pointerdown", pressed, { capture: true });
+      ownerDocument.removeEventListener("keydown", keyed, { capture: true });
+      ownerDocument.removeEventListener("pointerup", released);
+      ownerDocument.removeEventListener("pointercancel", released);
+      ownerDocument.removeEventListener("mouseup", released);
+    };
+  }, [listRef, timelineViewportElement]);
   // Re-measure the minimap gutter when the chat column changes width without a viewport resize.
   const chatWidth = useClientSettings((settings) => settings.chatWidth);
   const {
@@ -1067,7 +1229,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       offsetWithinRow: identity.rowId
         ? element.getBoundingClientRect().top - row.getBoundingClientRect().top
         : 0,
-      atEnd: resolveTimelineIsAtEnd(state) ?? false,
+      atEnd: readerAtReadingEnd(state, contentInsetEndAdjustment, turnUnfinished) ?? false,
       ...(anchorMessageId ? { anchorMessageId } : {}),
       disclosures: {
         turns: paintedExpandedTurnIds,
@@ -1085,6 +1247,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     citationPositioning,
     timelinePositioningPending,
     runningTurnId,
+    turnUnfinished,
     rows,
     listIdentityKey,
     anchorMessageId,
@@ -1110,6 +1273,20 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       window.removeEventListener("pagehide", save);
     };
   }, [listIdentityKey]);
+  // Each response's latest message: the unit the unread badge counts.
+  const responseEndMessageIds = useMemo(
+    () => deriveTerminalAssistantMessageIds(timelineEntries),
+    [timelineEntries],
+  );
+  // Where the reader last rested at the reading end: the on-screen distance
+  // to the end of the last message's text, and where that end sat in the
+  // content. Null when not at the end.
+  const restingAtReadingEndRef = useRef<{
+    gap: number;
+    contentEnd: number;
+    /** The rows at rest (count and last row): only their size changes are kept in view. */
+    rowsKey: string;
+  } | null>(null);
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
     if (restoringThreadPosition || positionHistoryLoading || state?.data !== rows) return;
@@ -1119,7 +1296,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       const messages = timelineEntries.flatMap((entry) =>
         entry.kind === "message" ? [entry.message] : [],
       );
-      const unread = unreadMessagesForThread(listIdentityKey, messages);
+      const unread = unreadMessagesForThread(listIdentityKey, messages, responseEndMessageIds);
       const rect = viewport.getBoundingClientRect();
       const bounds = rows.flatMap((row, index) => {
         if (row.kind !== "message" || row.message.role !== "assistant") return [];
@@ -1149,12 +1326,40 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       // Removing a tail wholly below the viewport cannot clamp the reading position.
       if (bottom >= state.scroll + state.scrollLength) onReleaseUnusedAnchor?.();
     }
-    // Reserved anchor space is not unread content. Only real rows can make the
-    // existing end control appear; overflowing answers still do.
-    const isAtEnd = resolveTimelineIsAtEnd(
-      anchorMessageId ? withRealTimelineEnd(state, contentInsetEndAdjustment) : state,
-    );
+    // The reader is at the bottom once the end's text is in view, but for at
+    // most its last three lines (readerAtReadingEnd: a running turn's latest
+    // content, otherwise the latest turn's answer). Reserved anchor space and
+    // what trails a finished answer are not unread content.
+    const isAtEnd = readerAtReadingEnd(state, contentInsetEndAdjustment, turnUnfinished);
     if (isAtEnd !== undefined && !citationPositioning) onIsAtEndChange(isAtEnd);
+    // Whether the reader rests at the reading end, measured on screen (the
+    // list's positions can trail the rendered rows by a frame).
+    const restingGap = viewport
+      ? readingEndGapOnScreen(state, viewport, contentInsetEndAdjustment)
+      : null;
+    restingAtReadingEndRef.current =
+      restingGap !== null && viewport && restingGap <= readingEndAllowance(state)
+        ? {
+            gap: restingGap,
+            contentEnd: restingGap + viewport.scrollTop,
+            rowsKey: timelineRowsKey(state.data),
+          }
+        : null;
+    // Clear the reader's input only once their movement has stopped: the
+    // scrollbar released and a few frames in a row without movement. Until
+    // then, keep checking every frame.
+    const scrollNow = viewport?.scrollTop ?? null;
+    if (readerInputRef.current) {
+      const still =
+        !scrollbarHeldRef.current &&
+        scrollNow !== null &&
+        lastBookkeepingScrollRef.current !== null &&
+        Math.abs(scrollNow - lastBookkeepingScrollRef.current) <= 0.5;
+      stillFramesRef.current = still ? stillFramesRef.current + 1 : 0;
+      if (stillFramesRef.current >= 3) readerInputRef.current = false;
+      else scheduleBookkeepingRef.current();
+    }
+    lastBookkeepingScrollRef.current = scrollNow;
     reportContentOverflow();
     if (!state || minimapItems.length === 0) {
       return;
@@ -1204,21 +1409,98 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     positionHistoryLoading,
     saveReadingPosition,
     timelineEntries,
+    responseEndMessageIds,
     onUnreadBelowChange,
     anchorMessageId,
     timelinePositioningPending,
     onReleaseUnusedAnchor,
     contentInsetEndAdjustment,
+    runningTurnId,
+    turnUnfinished,
     minimapItems,
     minimapStripMap,
     onIsAtEndChange,
     reportContentOverflow,
   ]);
 
+  // Row size changes arrive many times per frame while an answer streams, and
+  // new rows or state arrive on top of them. The position, unread and end
+  // bookkeeping runs at most once per frame, with the latest state.
+  const handleScrollRef = useRef(handleScroll);
+  useLayoutEffect(() => {
+    handleScrollRef.current = handleScroll;
+  });
+  // While the reader rests at the end of an idle thread, late layout (a
+  // resized window, a diagram or image finishing its render) keeps the end of
+  // the last message's text where it was. New rows, streaming, reveals, and
+  // content the reader just toggled never move the reader.
+  const idleEndKeeping =
+    !isWorking &&
+    !revealActive &&
+    !interactionSettling &&
+    !timelinePositioningPending &&
+    !citationPositioning &&
+    !restoringThreadPosition &&
+    !anchoredEndSpace &&
+    !disclosureToggleSettling;
+  const idleEndKeepingRef = useRef(idleEndKeeping);
+  useLayoutEffect(() => {
+    idleEndKeepingRef.current = idleEndKeeping;
+  });
+  const keepReadingEndInView = useCallback(() => {
+    const resting = restingAtReadingEndRef.current;
+    const list = listRef.current;
+    const viewport = list?.getScrollableNode();
+    if (!idleEndKeepingRef.current || !resting || !list || !viewport) return;
+    const state = list.getState();
+    // New rows grow below the reader and never move them; a frame with the
+    // reader's own scrolling input is theirs, whatever else changed in it.
+    if (readerInputRef.current || timelineRowsKey(state.data) !== resting.rowsKey) return;
+    // Measured on screen: the list's own positions can trail the rendered rows.
+    const gap = readingEndGapOnScreen(state, viewport, contentInsetEndAdjustment);
+    if (gap === null) return;
+    // Only content moving the text end counts. A scroll alone (the reader, a
+    // minimap or citation jump, find in page) leaves the text end where it is
+    // in the content, and is the reader's new position; content above that
+    // the list already compensated for leaves the on-screen gap unchanged.
+    const contentEnd = gap + viewport.scrollTop;
+    if (Math.abs(contentEnd - resting.contentEnd) <= 1) return;
+    const grown = gap - resting.gap;
+    if (grown > 1) viewport.scrollTop += grown;
+  }, [contentInsetEndAdjustment, listRef]);
+  const keepReadingEndInViewRef = useRef(keepReadingEndInView);
+  useLayoutEffect(() => {
+    keepReadingEndInViewRef.current = keepReadingEndInView;
+  });
+  const bookkeepingFrameRef = useRef<number | null>(null);
+  const handleScrollOnNextFrame: () => void = useCallback(() => {
+    if (bookkeepingFrameRef.current !== null) return;
+    bookkeepingFrameRef.current = requestAnimationFrame(() => {
+      bookkeepingFrameRef.current = null;
+      keepReadingEndInViewRef.current();
+      handleScrollRef.current();
+    });
+  }, []);
+  useLayoutEffect(() => {
+    scheduleBookkeepingRef.current = handleScrollOnNextFrame;
+  }, [handleScrollOnNextFrame]);
+  useEffect(
+    () => () => {
+      if (bookkeepingFrameRef.current !== null) cancelAnimationFrame(bookkeepingFrameRef.current);
+    },
+    [],
+  );
   useEffect(() => {
-    const frame = requestAnimationFrame(handleScroll);
-    return () => cancelAnimationFrame(frame);
-  }, [handleScroll, rows.length]);
+    handleScrollOnNextFrame();
+  }, [handleScroll, handleScrollOnNextFrame, rows.length]);
+  // A resized window or panel changes the viewport without a scroll or row event.
+  useEffect(() => {
+    const viewport = readingListLoaded ? listRef.current?.getScrollableNode() : null;
+    if (!viewport) return;
+    const observer = new ResizeObserver(() => handleScrollOnNextFrame());
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [handleScrollOnNextFrame, listRef, readingListLoaded]);
 
   useEffect(() => {
     if (!timelineViewportElement) {
@@ -1449,8 +1731,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                 : maintainVisibleContentPosition
             }
             maintainScrollAtEndThreshold={1}
-            onScroll={handleScroll}
-            onItemSizeChanged={handleScroll}
+            onScroll={handleScrollOnNextFrame}
+            onItemSizeChanged={handleScrollOnNextFrame}
             className={cn(
               "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5",
               topFadeEnabled && "topbar-scroll-fade",
@@ -2443,6 +2725,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
               threadRef={ctx.threadRef ?? undefined}
               isStreaming={Boolean(row.message.streaming)}
               messageId={row.message.id}
+              changedFiles={row.assistantTurnChangedFiles}
               directionHint={row.assistantDirectionHint}
               lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
               skills={ctx.skills}
@@ -2459,6 +2742,8 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
                 if (preview) ctx.onImageExpand(preview);
               }}
             />
+            {/* SCIENT-FORK: the end of the answer's readable content (withReadingEnd). */}
+            <span data-reading-end="true" aria-hidden="true" className="block h-0" />
           </>
         </AssistantCitationSource>
         <AssistantChangedFilesSection
@@ -3104,6 +3389,42 @@ function WorkingTimer({ createdAt }: { createdAt: string }) {
   );
 }
 
+/** A step this young shows no timer: only one that runs long needs to prove it is alive. */
+const LIVE_STEP_TIMER_AFTER_MS = 10_000;
+
+function liveStepElapsedSuffix(startedAt: string): string {
+  const elapsedMs = Date.now() - Date.parse(startedAt);
+  return Number.isFinite(elapsedMs) && elapsedMs >= LIVE_STEP_TIMER_AFTER_MS
+    ? ` · ${formatWorkingTimerNow(startedAt)}`
+    : "";
+}
+
+/**
+ * How long a step that is still running has run, once it has run long enough
+ * to wonder. Ticks through DOM writes, like the turn's own timer.
+ */
+function LiveStepElapsed({ startedAt }: { startedAt: string }) {
+  const textRef = useRef<HTMLSpanElement>(null);
+  const initialText = liveStepElapsedSuffix(startedAt);
+
+  useEffect(() => {
+    const updateText = () => {
+      if (textRef.current) {
+        textRef.current.textContent = liveStepElapsedSuffix(startedAt);
+      }
+    };
+    updateText();
+    const id = setInterval(updateText, 1000);
+    return () => clearInterval(id);
+  }, [startedAt]);
+
+  return (
+    <span ref={textRef} className="shrink-0 whitespace-pre tabular-nums">
+      {initialText}
+    </span>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Extracted row sections — own their state / store subscriptions so changes
 // re-render only the affected row, not the entire list.
@@ -3435,7 +3756,10 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
       />
     );
   }
-  const label = liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
+  const questionHeading = row.entry.questionAnswer
+    ? getQuestionTextPreview(row.entry.questionAnswer)
+    : "";
+  const label = questionHeading || liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
   const failed = workEntryDisplayIndicatesToolFailure(row.entry);
 
   return (
@@ -3448,19 +3772,17 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
     >
       <LiveActivityRow
         label={
-          row.entry.questionAnswer ? (
+          row.entry.questionAnswer && hasQuestionAnswer(row.entry.questionAnswer) ? (
             <span className="flex min-w-0 gap-1.5">
-              <span className="shrink-0">{label}</span>
-              <span
-                className={cn(
-                  "truncate",
-                  !row.expanded && hasQuestionAnswer(row.entry.questionAnswer)
-                    ? "text-foreground"
-                    : "text-muted-foreground",
-                )}
-              >
+              <span className="min-w-0 truncate">{label}</span>
+              <span className="min-w-0 truncate text-foreground">
                 {getQuestionAnswerPreview(row.entry.questionAnswer)}
               </span>
+            </span>
+          ) : row.active && row.entry.toolLifecycleStatus === "inProgress" ? (
+            <span className="flex min-w-0">
+              <span className="min-w-0 truncate">{label}</span>
+              <LiveStepElapsed startedAt={row.entry.startedAt ?? row.entry.createdAt} />
             </span>
           ) : (
             label
@@ -4695,10 +5017,16 @@ const AgentSpawnRow = memo(function AgentSpawnRow(props: {
     agentCount,
     coordinatorStatus: workflowGroup?.workflow.status,
   });
-  const { live, lead } = summary;
+  const { live } = summary;
   const failed = summary.tone === "failed";
   const workflowName =
     workflowGroup?.workflow.workflowName ?? workflowGroup?.workflow.title ?? null;
+  const label = agentSpawnRowLabel(summary, workflowName);
+  // The longest-running agent still at work: a quiet row keeps counting.
+  const workingSince = agents
+    .filter((agent) => isActiveSubagentStatus(agent.status) && agent.startedAt !== null)
+    .map((agent) => agent.startedAt!)
+    .toSorted()[0];
   const toggleExpanded = () => {
     props.onToggleEntry?.(expanded);
     onToggleSpawnRow(workEntry.id, !expanded);
@@ -4713,7 +5041,19 @@ const AgentSpawnRow = memo(function AgentSpawnRow(props: {
         className="flex cursor-pointer select-none rounded-md text-left transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
         <LiveActivityRow
-          label={workflowName ? `${lead} · ${workflowName}` : lead}
+          label={
+            live && workingSince ? (
+              <span className="flex min-w-0">
+                <span className="min-w-0 truncate">{label}</span>
+                <span className="shrink-0 whitespace-pre tabular-nums">
+                  {" · "}
+                  <WorkingTimer createdAt={workingSince} />
+                </span>
+              </span>
+            ) : (
+              label
+            )
+          }
           iconName="bot"
           active={live && props.active !== false}
           failed={failed}
@@ -4834,7 +5174,14 @@ function AgentSpawnMemberRow({
           ) : null}
         </p>
         <span className="scient-reading-compact shrink-0 font-mono tabular-nums text-muted-foreground">
-          {statusLabel}
+          {activeStatus && agent.startedAt ? (
+            <>
+              {`${statusLabel} · `}
+              <WorkingTimer createdAt={agent.startedAt} />
+            </>
+          ) : (
+            statusLabel
+          )}
         </span>
       </div>
       {!open && firstLine ? (
@@ -4916,10 +5263,18 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
     showWarningIndicator || showDestructiveRowStyle
       ? undefined
       : (workEntry.toolIcon ?? workEntry.toolSource?.icon);
-  const previewText = displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot);
-  const answerPreview = workEntry.questionAnswer
-    ? getQuestionAnswerPreview(workEntry.questionAnswer)
-    : null;
+  // The question is the row's identity: a generic "User input submitted"
+  // label buries what was asked, so lead with the question text and keep the
+  // answer as the trailing preview.
+  const questionHeading = workEntry.questionAnswer
+    ? getQuestionTextPreview(workEntry.questionAnswer)
+    : "";
+  const previewText =
+    displayLabel ?? (questionHeading || workEntryDisplayLabel(workEntry, workspaceRoot));
+  const answerPreview =
+    workEntry.questionAnswer && hasQuestionAnswer(workEntry.questionAnswer)
+      ? getQuestionAnswerPreview(workEntry.questionAnswer)
+      : null;
   const viewedImagePath = workEntryViewedImagePath(workEntry);
   const viewedImage =
     viewedImagePath && threadRef
@@ -5020,7 +5375,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
             <p className="flex min-w-0 w-full items-baseline gap-1.5 text-sm leading-relaxed">
               <span
                 className={cn(
-                  answerPreview ? "shrink-0" : "min-w-0 flex-1",
+                  answerPreview ? "min-w-0" : "min-w-0 flex-1",
                   expanded ? "whitespace-pre-wrap break-words select-text" : "truncate",
                   headingClass,
                 )}
