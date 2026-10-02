@@ -129,6 +129,9 @@ describe("scientAgentProcessEnvironment", () => {
       { name: "SCIENT_AGENT_PROFILE", value: "work" },
       { name: "SCIENT_AGENT_PROFILE_FALLBACK", value: "work" },
       { name: "SCIENT_AGENT_SESSION_DIR", value: "/elsewhere/sessions" },
+      { name: "SCIENT_AGENT_CONFIG_FILES", value: "/elsewhere/overlay.yml" },
+      { name: "SCIENT_AGENT_GITHUB_CACHE_DB", value: "/elsewhere/github-cache.db" },
+      { name: "SCIENT_AGENT_AUTH_BROKER_URL", value: "https://broker.invalid" },
     ]);
     expect(env.SCIENT_AGENT_ROOT).toBe("/state/scient-agent/instances/scient");
     expect(Object.keys(env).filter((name) => name.startsWith("SCIENT_AGENT_"))).toEqual([

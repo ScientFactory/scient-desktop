@@ -77,20 +77,16 @@ export const scientAgentTarget: OmpTarget = {
 
 /** The directory Scient Agent keeps all of its own files in, assigned by this server. */
 const SCIENT_AGENT_ROOT_ENV = "SCIENT_AGENT_ROOT";
-/** Variables that would move Scient Agent's state away from the assigned root. */
-const SCIENT_AGENT_STATE_SELECTORS = [
-  "SCIENT_AGENT_CONFIG_DIR",
-  scientAgentTarget.environment.agentDir,
-  scientAgentTarget.environment.profile,
-  scientAgentTarget.environment.profileFallback,
-  scientAgentTarget.environment.sessionDir,
-] as const;
+/** The agent's own variables: where its state, sessions, caches and settings overlays live. */
+const SCIENT_AGENT_ENV_PREFIX = "SCIENT_AGENT_";
 
 /**
  * The environment of every Scient Agent child process: the provider-neutral
  * agent environment, with the agent's whole config root assigned to `root`.
- * Nothing else may choose where its state lives, so an instance variable
- * that names a home, profile or session directory is dropped. Oh My Pi's own
+ * This server owns the agent's own variables, so only the root is set: an
+ * inherited `SCIENT_*` name never reaches an agent (`agentProcessEnvironment`),
+ * and a `SCIENT_AGENT_*` variable set on the instance is dropped here. The
+ * agent applies the same rule to `.env` files outside the root. Oh My Pi's own
  * variables pass through untouched: Scient Agent ignores them, and a stock
  * `omp` started from the agent's shell keeps the user's own setup.
  */
@@ -105,9 +101,8 @@ export const scientAgentProcessEnvironment = (input: {
     instanceEnvironment: input.instanceEnvironment,
     platform: input.platform,
   });
-  const selectors = new Set<string>([SCIENT_AGENT_ROOT_ENV, ...SCIENT_AGENT_STATE_SELECTORS]);
   for (const name of Object.keys(env)) {
-    if (selectors.has(name.toUpperCase())) delete env[name];
+    if (name.toUpperCase().startsWith(SCIENT_AGENT_ENV_PREFIX)) delete env[name];
   }
   env[SCIENT_AGENT_ROOT_ENV] = input.root;
   return env;
