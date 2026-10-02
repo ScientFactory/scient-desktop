@@ -163,8 +163,8 @@ adopted were not working on 58.0.0. Mobile publication stayed held, so no public
 build carried that breakage. The `expo-modules-core` thread-safety regression
 above is untouched by this range and its two harnesses still fail locally.
 
-Two Sciant compositions matter here. Upstream's beta Working shelf folds working
-and monitoring threads out of the inbox, but Sciant's sidebar has two mutually
+Two Scient compositions matter here. Upstream's beta Working shelf folds working
+and monitoring threads out of the inbox, but Scient's sidebar has two mutually
 exclusive layouts, `status` and `sections`, and the Sections view replaces the
 Status layout entirely. The shelf therefore lives only in the Status layout, and
 the Sections view receives the complete inbox in normal order so the toggle can
