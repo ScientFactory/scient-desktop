@@ -224,7 +224,14 @@ describe("EnvironmentProviderSettings routing", () => {
         ...provider(),
         instanceId,
         driver: ProviderDriverKind.make(driver),
-        models: ["anthropic/claude-haiku-4-5", "anthropic/claude-opus-5-5"].map((slug) => ({
+        models: [
+          "anthropic/claude-haiku-4-5",
+          "anthropic/claude-opus-5-5",
+          "google-antigravity/claude-opus-4-5",
+          "google-antigravity/claude-opus-4-6",
+          "google-antigravity/gemini-3.8-flash",
+          "google-antigravity/gemini-3.1-pro",
+        ].map((slug) => ({
           slug,
           name: slug,
           isCustom: false,
@@ -240,7 +247,10 @@ describe("EnvironmentProviderSettings routing", () => {
         renderPanel({ targetInstanceId: instanceId }),
         (element) => element.props.instanceId === instanceId && element.props.mode === "editor",
       );
-      expect(editor?.props.hiddenModels).toEqual(["anthropic/claude-haiku-4-5"]);
+      expect(editor?.props.hiddenModels).toEqual([
+        "anthropic/claude-haiku-4-5",
+        "google-antigravity/claude-opus-4-5",
+      ]);
       if (!editor) throw new Error("Provider editor was not rendered");
       (editor.props.onHiddenModelsChange as (models: string[]) => void)([]);
       const saved = { [instanceId]: { hiddenModels: [], modelOrder: [] } };

@@ -51,9 +51,11 @@ see [Scient tools and skills](#scient-tools-and-skills).
 
 For an instance without saved model visibility preferences, the picker initially shows
 Anthropic Sonnet 5.5, Opus 5.5 and Fable 5.5, and Codex GPT-6-Astra, GPT-6-Luna and
-GPT-6.1-Sol, when the native runtime reports those IDs. Other Anthropic and Codex
-subscription catalog entries start hidden, including dated variants. Google and other
-model groups keep their existing visibility. This curation does not verify account access.
+GPT-6.1-Sol. The Antigravity account route initially shows Gemini 3.8 Flash, Gemini
+3.1 Pro, and Claude Opus 4.6. These defaults apply only when the native runtime reports
+those IDs. Other entries in these three native groups start hidden, including dated
+variants. Other Google routes and model groups keep their existing visibility. This
+curation does not verify account access.
 The Anthropic catalog uses the same model IDs for OAuth and API-key accounts, so its
 visibility defaults apply to that group with either authentication method.
 

@@ -8,8 +8,9 @@ extensions, and skills remain Pi-owned. Models added through Scient use separate
 
 Pi shares Oh My Pi's initial model visibility: native Anthropic Sonnet 5.5, Opus 5.5
 and Fable 5.5, plus Codex GPT-6-Astra, GPT-6-Luna and GPT-6.1-Sol, are shown when
-reported. Other models in those two native groups start hidden. Google and other
-groups are unchanged. The defaults apply to the Anthropic group with OAuth or API-key
+reported. The Antigravity account route initially shows Gemini 3.8 Flash, Gemini
+3.1 Pro, and Claude Opus 4.6. Other entries in these three native groups start hidden.
+Other Google routes and model groups are unchanged. The defaults apply to the Anthropic group with OAuth or API-key
 authentication and do not verify subscription access. All discovered entries remain on
 the provider page, where visibility can be changed. An instance's saved visibility list
 takes precedence over the initial defaults; preferences belong to each client.

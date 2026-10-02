@@ -85,6 +85,10 @@ describe("instance-scoped model selection", () => {
           "anthropic/claude-sonnet-5-5",
           "openai-codex/gpt-6-sol",
           "openai-codex/gpt-6.1-sol",
+          "google-antigravity/claude-opus-4-5",
+          "google-antigravity/claude-opus-4-6",
+          "google-antigravity/gemini-3.8-flash",
+          "google-antigravity/gemini-3.1-pro",
         ],
       });
       const entry = deriveProviderInstanceEntries([native])[0]!;
@@ -96,6 +100,9 @@ describe("instance-scoped model selection", () => {
       expect(selected.map((model) => model.slug)).toEqual([
         "anthropic/claude-sonnet-5-5",
         "openai-codex/gpt-6.1-sol",
+        "google-antigravity/claude-opus-4-6",
+        "google-antigravity/gemini-3.8-flash",
+        "google-antigravity/gemini-3.1-pro",
       ]);
       expect(
         resolveAppModelSelectionForInstance(

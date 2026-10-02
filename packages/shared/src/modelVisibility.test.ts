@@ -17,7 +17,12 @@ const models = [
   "openai-codex/gpt-6-luna",
   "openai-codex/gpt-6-sol",
   "openai-codex/gpt-6.1-sol",
-  "google-antigravity/gemini-example",
+  "google-antigravity/gemini-3-flash",
+  "google-antigravity/gemini-3.8-flash",
+  "google-antigravity/gemini-3.1-pro",
+  "google-antigravity/claude-opus-4-5",
+  "google-antigravity/claude-opus-4-6",
+  "google/gemini-example",
   "openai/gpt-example",
 ].map((slug) => ({ slug }));
 
@@ -33,16 +38,23 @@ describe("curated native agent model visibility", () => {
       "openai-codex/gpt-6-astra",
       "openai-codex/gpt-6-luna",
       "openai-codex/gpt-6.1-sol",
-      "google-antigravity/gemini-example",
+      "google-antigravity/gemini-3.8-flash",
+      "google-antigravity/gemini-3.1-pro",
+      "google-antigravity/claude-opus-4-6",
+      "google/gemini-example",
       "openai/gpt-example",
     ]);
   });
   it("leaves custom models and other drivers alone", () => {
     expect(
-      getDefaultHiddenAgentModels("omp", [{ slug: "anthropic/custom", isCustom: true }]),
+      getDefaultHiddenAgentModels("omp", [
+        { slug: "anthropic/custom", isCustom: true },
+        { slug: "google-antigravity/custom", isCustom: true },
+      ]),
     ).toEqual([]);
     expect(getDefaultHiddenAgentModels("claudeAgent", models)).toEqual([]);
     expect(getDefaultHiddenAgentModels("codex", models)).toEqual([]);
+    expect(getDefaultHiddenAgentModels("antigravity", models)).toEqual([]);
   });
   it("does not invent a Fable 5.5 entry", () => {
     const catalog = [{ slug: "anthropic/claude-fable-5-1" }];

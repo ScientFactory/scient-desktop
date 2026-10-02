@@ -32,6 +32,9 @@ const VISIBLE_AGENT_SUBSCRIPTION_MODELS = new Set([
   "openai-codex/gpt-6-astra",
   "openai-codex/gpt-6-luna",
   "openai-codex/gpt-6.1-sol",
+  "google-antigravity/gemini-3.8-flash",
+  "google-antigravity/gemini-3.1-pro",
+  "google-antigravity/claude-opus-4-6",
 ]);
 
 /** Curated picker defaults for native Pi/OMP catalogs, independent of account access. */
@@ -44,7 +47,9 @@ export function getDefaultHiddenAgentModels(
     .filter(
       (model) =>
         !model.isCustom &&
-        (model.slug.startsWith("anthropic/") || model.slug.startsWith("openai-codex/")) &&
+        ["anthropic/", "openai-codex/", "google-antigravity/"].some((prefix) =>
+          model.slug.startsWith(prefix),
+        ) &&
         !VISIBLE_AGENT_SUBSCRIPTION_MODELS.has(model.slug),
     )
     .map((model) => model.slug);

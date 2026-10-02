@@ -32,6 +32,10 @@ describe("mobile model options", () => {
               "anthropic/claude-opus-5-5",
               "openai-codex/gpt-6-sol",
               "openai-codex/gpt-6-luna",
+              "google-antigravity/claude-opus-4-5",
+              "google-antigravity/claude-opus-4-6",
+              "google-antigravity/gemini-3.8-flash",
+              "google-antigravity/gemini-3.1-pro",
             ].map((slug) => ({
               slug,
               name: slug,
@@ -50,6 +54,9 @@ describe("mobile model options", () => {
       expect(options.map((model) => model.selection.model)).toEqual([
         "anthropic/claude-opus-5-5",
         "openai-codex/gpt-6-luna",
+        "google-antigravity/claude-opus-4-6",
+        "google-antigravity/gemini-3.8-flash",
+        "google-antigravity/gemini-3.1-pro",
       ]);
       expect(options.some((model) => model.isDefault)).toBe(true);
       expect(resolveDefaultableModelSelection(config, saved)).toBeNull();
