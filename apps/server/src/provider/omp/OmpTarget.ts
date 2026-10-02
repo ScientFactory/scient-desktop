@@ -52,6 +52,8 @@ export interface OmpTarget {
   readonly unsupportedDetail: string;
   /** The oldest release of the product this server supports, for messages. */
   readonly minimumVersion: string;
+  /** What the user can do when the product has no model to run. */
+  readonly noModelsHint: string;
 }
 
 /** True for an Oh My Pi release whose RPC surface this server is qualified against. */
@@ -84,4 +86,5 @@ export const ompTarget: OmpTarget = {
   },
   unsupportedDetail: `Scient supports Oh My Pi ${OMP_MINIMUM_VERSION} and later ${OMP_SUPPORTED_MAJOR}.x releases. Check the configured executable.`,
   minimumVersion: OMP_MINIMUM_VERSION,
+  noModelsHint: "Add a custom model, or sign in to a model provider in Oh My Pi.",
 };

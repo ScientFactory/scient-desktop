@@ -9,6 +9,7 @@ import { makeOmpRpcClient } from "effect-omp-rpc/client";
 import {
   OmpRpcCommandError,
   OmpRpcFrameTooLargeError,
+  OmpRpcProcessExitedError,
   type OmpRpcError,
 } from "effect-omp-rpc/errors";
 import type { OmpRpcResponse } from "effect-omp-rpc/schema";
@@ -244,6 +245,52 @@ describe("Oh My Pi provider status", () => {
 describe("Oh My Pi provider discovery errors", () => {
   const failingModels = (error: OmpRpcError) => () =>
     Effect.succeed(process({ getModels: () => Effect.fail(error) }));
+
+  it.effect("says how to add a model when the agent exits for lack of one", () =>
+    Effect.gen(function* () {
+      const exited = new OmpRpcProcessExitedError({ detail: "RPC stdout ended." });
+      const result = yield* checkOmpProviderStatus(ompTarget, settings, {}, () =>
+        Effect.succeed(
+          process({
+            getModels: () => Effect.fail(exited),
+            getCommands: () => Effect.fail(exited),
+            shutdown: Effect.succeed({
+              code: 1,
+              forced: false,
+              stderrTail: "No models available. Use /login or set an API key environment variable.",
+            }),
+          }),
+        ),
+      );
+      expect(result.status).toBe("warning");
+      expect(result.installed).toBe(true);
+      expect(result.version).toBe("18.2.8");
+      expect(result.message).toBe(
+        "Oh My Pi has no models yet. Add a custom model, or sign in to a model provider in Oh My Pi.",
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps reporting any other exit as a failure", () =>
+    Effect.gen(function* () {
+      const exited = new OmpRpcProcessExitedError({ detail: "RPC stdout ended." });
+      const result = yield* checkOmpProviderStatus(ompTarget, settings, {}, () =>
+        Effect.succeed(
+          process({
+            getModels: () => Effect.fail(exited),
+            getCommands: () => Effect.fail(exited),
+            shutdown: Effect.succeed({
+              code: 1,
+              forced: false,
+              stderrTail: "panic: out of memory",
+            }),
+          }),
+        ),
+      );
+      expect(result.status).toBe("error");
+      expect(result.message).toBe("Oh My Pi exited during the check: RPC stdout ended.");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 
   it.effect("names a command that timed out", () =>
     Effect.gen(function* () {

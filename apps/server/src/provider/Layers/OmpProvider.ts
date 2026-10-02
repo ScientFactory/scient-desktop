@@ -65,6 +65,12 @@ const isProcessExited = Schema.is(OmpRpcProcessExitedError);
 
 const checkedAt = Effect.map(DateTime.now, DateTime.formatIso);
 
+/**
+ * What the agent prints before it exits when no provider offers it a model.
+ * It answers nothing first, so the exit is the only sign.
+ */
+const NO_MODELS_OUTPUT = "No models available";
+
 const discoveryMessage = (target: OmpTarget, error: unknown): string => {
   if (isProtocolError(error) && Schema.isSchemaError(error.cause)) {
     return `Couldn't load ${target.name}'s model information. Refresh the provider in Settings to try again.`;
@@ -136,16 +142,36 @@ export const checkOmpProviderStatus = Effect.fn("checkOmpProviderStatus")(functi
           }),
         ),
       );
-      const [models, commands] = yield* Effect.all([modelList, client.getCommands()], {
+      return yield* Effect.all([modelList, client.getCommands()], {
         concurrency: "unbounded",
-      });
-      return {
-        version: client.version,
-        models: models.models,
-        commands: commands.commands,
-        modelConnections: client.assessModelConnections?.(models.models),
-        providerLabel: client.modelProviderLabel,
-      };
+      }).pipe(
+        Effect.map(([models, commands]) => ({
+          version: client.version,
+          models: models.models,
+          commands: commands.commands,
+          modelConnections: client.assessModelConnections?.(models.models),
+          providerLabel: client.modelProviderLabel,
+          exitedWithoutModels: false,
+        })),
+        // A working executable with nothing to run is a setup state, not a fault.
+        Effect.catchIf(isProcessExited, (error) =>
+          client.shutdown.pipe(
+            Effect.orElseSucceed(() => undefined),
+            Effect.flatMap((exit) =>
+              exit?.stderrTail.includes(NO_MODELS_OUTPUT)
+                ? Effect.succeed({
+                    version: client.version,
+                    models: [],
+                    commands: [],
+                    modelConnections: undefined,
+                    providerLabel: undefined,
+                    exitedWithoutModels: true,
+                  })
+                : Effect.fail(error),
+            ),
+          ),
+        ),
+      );
     }),
   ).pipe(Effect.exit);
   if (discovery._tag === "Failure") {
@@ -191,7 +217,11 @@ export const checkOmpProviderStatus = Effect.fn("checkOmpProviderStatus")(functi
       auth: { status: "unknown", required: false },
       ...(models.length > 0
         ? {}
-        : { message: `${target.name} started, but it did not report any models.` }),
+        : {
+            message: discovery.value.exitedWithoutModels
+              ? `${target.name} has no models yet. ${target.noModelsHint}`
+              : `${target.name} started, but it did not report any models.`,
+          }),
     },
   });
 });
