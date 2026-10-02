@@ -113,15 +113,30 @@ export function ProviderIcon(props: ProviderIconProps) {
   }
 
   if (props.provider === "scient") {
-    // Scient's own symbol, as in the web client.
+    // Match the web client's Scient Agent symbol and doubled line weight.
     return (
       <Svg width={size} height={size} viewBox="-78.67 -66.67 533.33 533.33" fill="none">
-        <Rect x={92} y={92} width={200} height={16} fill="#46587E" />
-        <Rect x={92} y={92} width={16} height={200} fill="#46587E" />
-        <Rect x={201} y={200} width={175} height={16} fill="#471A1A" />
-        <Rect x={184} y={0} width={16} height={200} fill="#471A1A" />
-        <Rect x={0} y={184} width={200} height={16} fill="#471A1A" />
-        <Rect x={200} y={200} width={16} height={200} fill="#471A1A" />
+        <Path
+          d="M292 100H100V292"
+          stroke="#46587E"
+          strokeWidth={32}
+          strokeLinecap="butt"
+          strokeLinejoin="miter"
+        />
+        <Path
+          d="M192 0V192H0"
+          stroke="#471A1A"
+          strokeWidth={32}
+          strokeLinecap="butt"
+          strokeLinejoin="miter"
+        />
+        <Path
+          d="M376 208H208V400"
+          stroke="#471A1A"
+          strokeWidth={32}
+          strokeLinecap="butt"
+          strokeLinejoin="miter"
+        />
       </Svg>
     );
   }
