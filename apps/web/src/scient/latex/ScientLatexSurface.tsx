@@ -629,9 +629,10 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         return;
       }
       if (pendingSource === null || next.draftSource === pendingSource) return;
-      if (next.recoverySource === pendingSource && before.recoverySource !== pendingSource) {
-        // The writer chose the version on disk over these edits. The session
-        // sets them aside at that moment, whichever disk version it then shows.
+      if (next.recoverySource === pendingSource && !next.pending) {
+        // The writer chose the version on disk over these edits: the session
+        // has set them aside and shows the file instead, whichever version of
+        // it that is, and whether or not it set the same text aside before.
         if (visualPendingBaseRevisionRef.current !== null)
           discardVisualDraft(visualDraftKey, {
             source: pendingSource,

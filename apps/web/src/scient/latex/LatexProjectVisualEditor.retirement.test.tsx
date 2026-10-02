@@ -5,7 +5,10 @@ import { act, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const { disk, visual, saveProject } = vi.hoisted(() => ({
+const { disk, optimistic, visual, saveProject, projectState } = vi.hoisted(() => ({
+  // Text another editor holds for a file and has not saved yet.
+  optimistic: new Map<string, string>(),
+  projectState: { current: { pending: false, error: null as string | null } },
   saveProject: { current: null as null | (() => Promise<boolean>) },
   // What is on disk for each file of the synthetic workspace.
   disk: new Map<string, { source: string; revision: string }>(),
@@ -32,8 +35,9 @@ vi.mock("~/components/files/projectFilesQueryState", () => ({
       onDisk === undefined
         ? null
         : { relativePath: file, contents: onDisk.source, revision: onDisk.revision };
+    const unsaved = optimistic.get(file);
     return {
-      data,
+      data: data && unsaved !== undefined ? { ...data, contents: unsaved } : data,
       authoritativeData: data,
       error: null,
       refresh: () => {},
@@ -139,7 +143,7 @@ describe("retiring the project's recovery copy", () => {
         onOpenSource={() => {}}
         onOpenFileSource={() => {}}
         onSaved={() => {}}
-        onProjectStateChange={() => {}}
+        onProjectStateChange={(state) => (projectState.current = state)}
       />
     );
   }
@@ -153,6 +157,7 @@ describe("retiring the project's recovery copy", () => {
     localStorage.clear();
     clearVisualDraft(KEY);
     disk.clear();
+    optimistic.clear();
     visual.props = null;
     containers = [];
     roots = [];
@@ -337,6 +342,19 @@ describe("retiring the project's recovery copy", () => {
       expect(localStorage.getItem(SLOT)).toBeNull();
     });
 
+    it("is not left pending by an edit undone before anything rendered", async () => {
+      const original = visual.props!.source;
+      const changed = edited("Chapter text.", "Chapter text, edited.");
+      await act(async () => {
+        expect(visual.props!.onEdit(original, changed)).toBe(true);
+        expect(visual.props!.onEdit(changed, original)).toBe(true);
+      });
+      await settle(20);
+      expect(writes).toBe(0);
+      expect(projectState.current.pending).toBe(false);
+      expect(await saveProject.current!()).toBe(true);
+    });
+
     it("refuses an edit made on text another view has since changed", async () => {
       const chapter = acquire("chapter.tex");
       const stale = visual.props!.source;
@@ -388,6 +406,13 @@ describe("retiring the project's recovery copy", () => {
     await mount(<FixedSurface source={tex("Root intro.\n\n\\input{data.txt}")} />);
     await settle(20);
     expect(visual.props!.source).toContain("Plain data.");
+    // Text its own editor has not saved yet is not part of this document.
+    optimistic.set("data.txt", "Typed elsewhere, unsaved.\n");
+    await act(async () =>
+      roots[0]!.render(<FixedSurface source={tex("Root intro.\n\n\\input{data.txt}")} />),
+    );
+    expect(visual.props!.source).toContain("Plain data.");
+    expect(visual.props!.source).not.toContain("Typed elsewhere");
     // No session: opened on its own, the file is saved by the generic editor alone.
     expect(
       vi

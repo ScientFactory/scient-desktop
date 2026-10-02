@@ -102,7 +102,9 @@ function ProjectFileSession(props: {
   }, [change, selected, sessionOpen, ownsSession, refresh, retryAdmission]);
 
   const disk = query.authoritativeData;
-  // Too large, read-only, or not a LaTeX file: shown, never written from here.
+  // Too large, read-only, or not a LaTeX file: never written from here, and
+  // shown as it is on disk. Text another editor has not saved yet is not part
+  // of what this document compiles from or keeps a recovery copy of.
   const sessionless =
     !selected && (ownsSession ? disk !== null && (disk.truncated || disk.readOnly === true) : true);
   const file = selected
@@ -110,7 +112,7 @@ function ProjectFileSession(props: {
     : snapshot
       ? { contents: snapshot.draftSource, revision: snapshot.baselineRevision, truncated: false }
       : sessionless
-        ? query.data
+        ? disk
         : null;
   const error = selected
     ? null
@@ -146,7 +148,7 @@ function ProjectFileSession(props: {
   // A file counts as observed once its saving state is known: the open file's
   // comes from the surface, a session's from its snapshot, and a file that
   // cannot be written has none.
-  const observed = selected || lease !== null || (sessionless && query.data !== null);
+  const observed = selected || lease !== null || (sessionless && disk !== null);
   useEffect(() => {
     if (!observed) return;
     reported(path, true);
@@ -302,7 +304,7 @@ export function LatexProjectVisualEditor(props: Props) {
   useEffect(() => {
     // Idle has to be an observed state, not the flags a component starts with.
     // Each session is also asked now: an edit accepted in this very update is
-    // in its session before any render reports it.
+    // in its session before any render reports it as pending.
     if (
       document &&
       saversReady &&
@@ -369,7 +371,6 @@ export function LatexProjectVisualEditor(props: Props) {
             file.revision,
           );
           state.write(contents);
-          pending(path, true);
         }
       }
       snapshot.current = {
@@ -381,7 +382,7 @@ export function LatexProjectVisualEditor(props: Props) {
       setEditError(null);
       return true;
     },
-    [root, props, saveErrors, pending],
+    [root, props, saveErrors],
   );
   const ready =
     !!document &&

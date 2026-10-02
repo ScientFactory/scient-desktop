@@ -411,6 +411,26 @@ describe("the LaTeX surface on a document session", () => {
     expect(stored()).toBeNull();
   });
 
+  it("drops it each time, even when the same text is given up twice", async () => {
+    await mount("visual");
+    for (const agent of ["Agent.", "Agent, again."]) {
+      const current = lease.getSnapshot().draftSource;
+      await act(async () => {
+        expect(visual.props!.onEdit(current, typed("Mine."))).toBe(true);
+      });
+      disk = { source: typed(agent), revision: revisionOf(typed(agent)) };
+      await act(async () => {
+        await lease.flushNow();
+      });
+      expect(stored()).not.toBeNull();
+      await act(async () => {
+        expect(await lease.resolveWithDisk()).toBe(true);
+      });
+      expect(lease.getSnapshot().draftSource).toBe(typed(agent));
+      expect(stored()).toBeNull();
+    }
+  });
+
   it("keeps a recovery copy again for edits the writer takes back", async () => {
     await mount("visual");
     await act(async () => {

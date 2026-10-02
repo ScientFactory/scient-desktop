@@ -140,7 +140,7 @@ describe("Scient LaTeX file-preview seam", () => {
 
   it("drops the Visual recovery copy only when the writer takes the version on disk", () => {
     expect(surfaceSource).toMatch(
-      /next\.recoverySource === pendingSource[\s\S]*?discardVisualDraft\(visualDraftKey,[\s\S]*?source: pendingSource[\s\S]*?visualPendingBaseRevisionRef\.current/u,
+      /next\.recoverySource === pendingSource && !next\.pending[\s\S]*?discardVisualDraft\(visualDraftKey,[\s\S]*?source: pendingSource[\s\S]*?visualPendingBaseRevisionRef\.current/u,
     );
     expect(surfaceSource).not.toContain("saveResolution");
   });
