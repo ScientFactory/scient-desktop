@@ -1000,6 +1000,7 @@ export function EnvironmentProviderSettings({
           updateProviderModelPreferences(row.instanceId, {
             ...modelPreferences,
             hiddenModels,
+            modelOrder: settings.providerModelPreferences?.[row.instanceId]?.modelOrder ?? [],
           })
         }
         onFavoriteModelsChange={(next) => updateProviderFavoriteModels(row.instanceId, next)}

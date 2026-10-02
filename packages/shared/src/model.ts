@@ -37,6 +37,26 @@ const VISIBLE_AGENT_SUBSCRIPTION_MODELS = new Set([
   "google-antigravity/claude-opus-4-6",
 ]);
 
+const AGENT_ACCOUNT_GROUP_ORDER = new Map([
+  ["anthropic", 0],
+  ["openai", 1],
+  ["openai-codex", 1],
+  ["google", 2],
+  ["google-antigravity", 2],
+  ["google-gemini-cli", 2],
+  ["google-vertex", 2],
+]);
+
+/** Default Pi/OMP account groups; preserve catalog order within each group. */
+export function sortAgentModelsByAccount<T extends { readonly slug: string }>(
+  driver: string,
+  models: ReadonlyArray<T>,
+): T[] {
+  if (driver !== "pi" && driver !== "omp") return [...models];
+  const rank = (model: T) => AGENT_ACCOUNT_GROUP_ORDER.get(model.slug.split("/")[0] ?? "") ?? 3;
+  return [...models].sort((a, b) => rank(a) - rank(b));
+}
+
 /** Curated picker defaults for native Pi/OMP catalogs, independent of account access. */
 export function getDefaultHiddenAgentModels(
   driver: string,
@@ -55,7 +75,7 @@ export function getDefaultHiddenAgentModels(
     .map((model) => model.slug);
 }
 
-/** An instance's saved visibility list overrides the curated initial list. */
+/** Saved visibility wins; use the default account order until the user reorders models. */
 export function resolveProviderModelPreferences(
   driver: string,
   models: ReadonlyArray<{ readonly slug: string; readonly isCustom?: boolean }>,
@@ -63,9 +83,14 @@ export function resolveProviderModelPreferences(
     | { readonly hiddenModels: ReadonlyArray<string>; readonly modelOrder: ReadonlyArray<string> }
     | undefined,
 ) {
-  return (
-    preferences ?? { hiddenModels: getDefaultHiddenAgentModels(driver, models), modelOrder: [] }
-  );
+  if (driver !== "pi" && driver !== "omp") {
+    return preferences ?? { hiddenModels: [], modelOrder: [] };
+  }
+  if (preferences?.modelOrder.length) return preferences;
+  return {
+    hiddenModels: preferences?.hiddenModels ?? getDefaultHiddenAgentModels(driver, models),
+    modelOrder: sortAgentModelsByAccount(driver, models).map((model) => model.slug),
+  };
 }
 
 export function createModelCapabilities(input: {

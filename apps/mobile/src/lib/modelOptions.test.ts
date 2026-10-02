@@ -28,14 +28,14 @@ describe("mobile model options", () => {
             installed: true,
             auth: { status: "unknown" },
             models: [
-              "anthropic/claude-haiku-4-5",
-              "anthropic/claude-opus-5-5",
-              "openai-codex/gpt-6-sol",
-              "openai-codex/gpt-6-luna",
               "google-antigravity/claude-opus-4-5",
               "google-antigravity/claude-opus-4-6",
               "google-antigravity/gemini-3.8-flash",
               "google-antigravity/gemini-3.1-pro",
+              "anthropic/claude-haiku-4-5",
+              "anthropic/claude-opus-5-5",
+              "openai-codex/gpt-6-sol",
+              "openai-codex/gpt-6-luna",
             ].map((slug) => ({
               slug,
               name: slug,

@@ -15,6 +15,10 @@ authentication and do not verify subscription access. All discovered entries rem
 the provider page, where visibility can be changed. An instance's saved visibility list
 takes precedence over the initial defaults; preferences belong to each client.
 
+The default account group order is Anthropic, then OpenAI/Codex, then
+Google/Antigravity. Models keep their native catalog order within each group.
+A saved model order takes precedence; other account groups follow afterward.
+
 Enable **Pi** in **Settings > Providers**. Pi is off by default. On supported macOS, Windows, and
 glibc-based Linux desktops, Scient can install a qualified private Pi runtime through the existing
 **Install** action. Repair, update, and remove affect only that private runtime, not your system

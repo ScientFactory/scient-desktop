@@ -15,6 +15,7 @@ import {
   getProviderOptionDescriptors,
   getDefaultHiddenAgentModels,
   resolveAutomaticModel,
+  sortAgentModelsByAccount,
 } from "@t3tools/shared/model";
 
 export type ModelOption = {
@@ -190,7 +191,7 @@ export function buildModelOptions(
       provider.driver,
       provider.models.filter((model) => !hiddenModels.has(model.slug)),
     );
-    for (const model of provider.models) {
+    for (const model of sortAgentModelsByAccount(provider.driver, provider.models)) {
       if (model.unavailableReason || hiddenModels.has(model.slug)) continue;
       const reasoningGroup = reasoningGroups.find((group) =>
         group.models.some(({ slug }) => slug === model.slug),

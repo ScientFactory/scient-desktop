@@ -64,6 +64,10 @@ visibility switch to show it again. Once you customize the list, the saved list 
 precedence over these initial defaults, including when you enable every model. Visibility
 preferences belong to the client; another device starts with its own defaults.
 
+The default account group order is Anthropic, then OpenAI/Codex, then
+Google/Antigravity. Models keep their native catalog order within each group.
+A saved model order takes precedence; other account groups follow afterward.
+
 Models known to be unavailable stay out of model selectors and automatic selection. They remain
 on this instance's provider page with an explanation and their picker switch off. During the server
 session, Scient remembers previously discovered models that disappear from a successful catalog

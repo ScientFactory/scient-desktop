@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import { getDefaultHiddenAgentModels, resolveProviderModelPreferences } from "./model.ts";
+import {
+  getDefaultHiddenAgentModels,
+  resolveProviderModelPreferences,
+  sortAgentModelsByAccount,
+} from "./model.ts";
 
 const models = [
   "anthropic/claude-3-5-sonnet-20240620",
@@ -27,6 +31,48 @@ const models = [
 ].map((slug) => ({ slug }));
 
 describe("curated native agent model visibility", () => {
+  it.each(["pi", "omp"])("orders %s accounts without changing within-group order", (driver) => {
+    const catalog = [
+      "google-antigravity/claude-opus-4-6",
+      "openai-codex/gpt-6-luna",
+      "anthropic/claude-opus-5-5",
+      "google-antigravity/gemini-3.8-flash",
+      "ollama/local",
+      "openai/api-model",
+      "anthropic/claude-sonnet-5-5",
+      "google-gemini-cli/gemini-example",
+    ].map((slug) => ({ slug }));
+    const original = [...catalog];
+    const ordered = sortAgentModelsByAccount(driver, catalog).map((model) => model.slug);
+    expect(ordered).toEqual([
+      "anthropic/claude-opus-5-5",
+      "anthropic/claude-sonnet-5-5",
+      "openai-codex/gpt-6-luna",
+      "openai/api-model",
+      "google-antigravity/claude-opus-4-6",
+      "google-antigravity/gemini-3.8-flash",
+      "google-gemini-cli/gemini-example",
+      "ollama/local",
+    ]);
+    expect(catalog).toEqual(original);
+    expect(resolveProviderModelPreferences(driver, catalog, undefined).modelOrder).toEqual(ordered);
+    const savedVisibility = { hiddenModels: ["ollama/local"], modelOrder: [] };
+    const resolved = resolveProviderModelPreferences(driver, catalog, savedVisibility);
+    expect(resolved.hiddenModels).toBe(savedVisibility.hiddenModels);
+    expect(resolved.modelOrder).toEqual(ordered);
+  });
+  it("preserves saved order and leaves other drivers' catalog order unchanged", () => {
+    const saved = {
+      hiddenModels: [],
+      modelOrder: ["google-antigravity/gemini-3.8-flash", "anthropic/claude-opus-5-5"],
+    };
+    expect(resolveProviderModelPreferences("omp", models, saved)).toBe(saved);
+    expect(sortAgentModelsByAccount("antigravity", models)).toEqual(models);
+    expect(sortAgentModelsByAccount("codex", models)).toEqual(models);
+    expect(resolveProviderModelPreferences("antigravity", models, undefined).modelOrder).toEqual(
+      [],
+    );
+  });
   it.each(["pi", "omp"])("keeps the requested %s models and other routes visible", (driver) => {
     const hidden = getDefaultHiddenAgentModels(driver, models);
     expect(
