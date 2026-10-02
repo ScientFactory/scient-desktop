@@ -693,14 +693,20 @@ function RightPanelEmptyState(props: {
         </div>
         {props.computeAvailable ? (
           <div className="mt-3 text-center">
-            <button
-              type="button"
-              className="cursor-pointer text-xs text-muted-foreground hover:text-foreground"
-              onClick={props.onAddCompute}
-              title="Run scientific code and inspect results and variables"
-            >
-              Scientific computing
-            </button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    className="cursor-pointer text-xs text-muted-foreground hover:text-foreground"
+                    onClick={props.onAddCompute}
+                  />
+                }
+              >
+                Scientific computing
+              </TooltipTrigger>
+              <TooltipPopup>Run scientific code and inspect results and variables</TooltipPopup>
+            </Tooltip>
           </div>
         ) : null}
       </div>

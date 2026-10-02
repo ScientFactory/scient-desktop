@@ -211,8 +211,8 @@ export function ScientFileFreshnessStatus(
         render={
           <Button
             size="xs"
-            variant="ghost"
-            className={cn("w-24 shrink-0", needsAttention && "text-warning")}
+            variant={needsAttention ? "ghost-warning" : "ghost"}
+            className="w-24 shrink-0"
             aria-label={`File status: ${status}`}
             title={status}
           />
@@ -230,7 +230,7 @@ export function ScientFileFreshnessStatus(
       <span className="sr-only" role="status">
         {status}
       </span>
-      <PopoverPopup align="end" className="w-96 max-w-[calc(100vw-24px)] p-3">
+      <PopoverPopup align="end" padding="comfortable" className="w-96 max-w-[calc(100vw-24px)]">
         <PopoverTitle>File status</PopoverTitle>
         {props.sessionAttention ? (
           <p className="mt-2 text-xs text-muted-foreground">
