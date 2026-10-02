@@ -5918,7 +5918,15 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     const heading = /^Heading (\d+)$/u.exec(selectionContext);
     if (heading)
       return headingStyles.find((style) => String(style.level) === heading[1])?.label ?? "Heading";
-    if (selectionContext === "Body text") return WRITING_COMMAND_LABELS.text;
+    const selected = (editor?.state.selection as { readonly node?: ProseMirrorNode } | undefined)
+      ?.node;
+    if (selected?.type.name === "latexRawBlock") return "Source-only block";
+    if (selectionContext === "Body text" || selectionContext === "List") {
+      if (listState?.type === "bulletList") return WRITING_COMMAND_LABELS.bulletList;
+      if (listState?.type === "orderedList") return WRITING_COMMAND_LABELS.numberedList;
+      if (listState?.type === "description") return "Description list";
+      return WRITING_COMMAND_LABELS.text;
+    }
     return selectionContext.slice(0, 1).toUpperCase() + selectionContext.slice(1);
   })();
   const sourceWords = useMemo(() => countLatexWords(props.source), [props.source]);

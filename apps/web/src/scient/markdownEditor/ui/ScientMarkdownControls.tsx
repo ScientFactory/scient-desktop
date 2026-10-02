@@ -825,7 +825,7 @@ function LinkEditorPopup({
   );
 }
 
-function TableMenuItems({ controller }: { readonly controller: ScientMarkdownEditorView }) {
+export function TableMenuItems({ controller }: { readonly controller: ScientMarkdownEditorView }) {
   const execute = (command: ScientMarkdownCommand) => {
     controller.execute(command);
   };
@@ -901,7 +901,7 @@ function TableMenuItems({ controller }: { readonly controller: ScientMarkdownEdi
   );
 }
 
-function TableActions({
+export function TableActions({
   controller,
   snapshot,
 }: {
@@ -1150,13 +1150,6 @@ export function ScientMarkdownControls({
     snapshot.slashQuery === null ? [] : filterScientMarkdownSlashCommands(snapshot.slashQuery);
 
   useEffect(() => {
-    // Entering a table reveals its contextual commands in the existing dock.
-    // A later manual collapse stays respected until the cursor leaves and
-    // re-enters a table; movement within cells never resizes the document.
-    if (snapshot.editable && snapshot.inTable) onExpandedChange(true);
-  }, [onExpandedChange, snapshot.editable, snapshot.inTable]);
-
-  useEffect(() => {
     if (snapshot.linkEditRequest !== 0 && snapshot.selectionEmpty) {
       onExpandedChange(true);
     }
@@ -1168,8 +1161,8 @@ export function ScientMarkdownControls({
   }, [mathPanel.open, onExpandedChange, snapshot.editable]);
 
   // Overflow order: direction goes first, then insert, history (undo covers
-  // it), lists, and style. Contextual table tools outlast those groups; core
-  // inline formatting is pinned. Displaced groups keep every action in the
+  // it), lists, and style; core inline formatting is pinned. A table's tools
+  // are in the footer, so entering a table never changes this row. Displaced groups keep every action in the
   // existing More-actions menu without adding another toolbar row.
   const dockGroups: readonly DockGroup[] = !snapshot.editable
     ? []
@@ -1329,24 +1322,6 @@ export function ScientMarkdownControls({
           overflowLabel: "Text direction",
           overflow: <DirectionMenuItems controller={controller} snapshot={snapshot} />,
         },
-        ...(snapshot.inTable
-          ? [
-              {
-                id: "table",
-                priority: 60,
-                estimatedWidth: 168,
-                alwaysInOverflow: true,
-                bar: (
-                  <>
-                    <DockDivider />
-                    <TableActions controller={controller} snapshot={snapshot} />
-                  </>
-                ),
-                overflowLabel: "Table",
-                overflow: <TableMenuItems controller={controller} />,
-              },
-            ]
-          : []),
       ];
 
   return (

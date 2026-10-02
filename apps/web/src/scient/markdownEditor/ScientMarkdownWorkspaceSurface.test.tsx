@@ -1011,8 +1011,10 @@ describe("ScientMarkdownWorkspaceSurface", () => {
       );
     });
 
+    // A table's tools are in the footer; the bar does not change inside a table.
     const toolbar = host.querySelector("[aria-label='Table actions']");
-    expect(toolbar?.closest("[aria-label='Document actions']")).not.toBeNull();
+    expect(toolbar?.closest(".scient-document-footer")).not.toBeNull();
+    expect(toolbar?.closest("[aria-label='Document actions']") ?? null).toBeNull();
     expect(host.querySelector(".scient-markdown-table-toolbar")).toBeNull();
     const addRow = toolbar?.querySelector("[aria-label='Add row below']");
     const addColumn = toolbar?.querySelector("[aria-label='Add column after']");
@@ -1022,8 +1024,12 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     expect(toolbar?.querySelector("[aria-label='Delete row']")).toBeNull();
     expect(toolbar?.querySelector("[aria-label='Delete column']")).toBeNull();
     expect(toolbar?.querySelector("[aria-label='More table actions']")).toBeNull();
-    expect(host.querySelectorAll("[aria-label='More actions']")).toHaveLength(1);
-    const moreActions = host.querySelector<HTMLButtonElement>("[aria-label='More actions']");
+    // Entering a table no longer opens the bar: it stays as the writer left it.
+    expect(host.querySelector("[aria-label='Show formatting tools']")).not.toBeNull();
+    expect(host.querySelectorAll("[aria-label='More actions']")).toHaveLength(0);
+    const moreActions = host.querySelector<HTMLButtonElement>(
+      ".scient-document-footer [aria-label='More table actions']",
+    );
     expect(moreActions).not.toBeNull();
     await act(() => moreActions!.click());
     const menuItems = Array.from(
@@ -1084,22 +1090,33 @@ describe("ScientMarkdownWorkspaceSurface", () => {
         view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, position))),
       );
 
+    const footer = host.querySelector(".scient-document-footer");
+    expect(footer).not.toBeNull();
+    const chromeBefore = dock!.innerHTML;
     await move(cellPositions[0]!);
+    // The table's tools appear in the footer; the bar is exactly as it was.
     expect(
-      host.querySelector("[aria-label='Table actions']")?.closest(".scient-markdown-editor-dock"),
-    ).toBe(dock);
-    await act(() =>
-      host.querySelector<HTMLButtonElement>("[aria-label='Hide formatting tools']")!.click(),
+      host.querySelector("[aria-label='Table actions']")?.closest(".scient-document-footer"),
+    ).toBe(footer);
+    expect(dock!.querySelector("[aria-label='Table actions']")).toBeNull();
+    expect(dock!.innerHTML).toBe(chromeBefore);
+    expect(footer!.querySelector(".scient-document-footer-position")?.textContent).toBe(
+      "Table · row 1, column 1",
     );
     await move(cellPositions[1]!);
-    expect(host.querySelector("[aria-label='Show formatting tools']")).not.toBeNull();
-    expect(host.querySelector("[aria-label='Table actions']")).toBeNull();
+    expect(footer!.querySelector(".scient-document-footer-position")?.textContent).toBe(
+      "Table · row 1, column 2",
+    );
+    expect(host.querySelector("[aria-label='Table actions']")).not.toBeNull();
 
     await move(1);
+    expect(host.querySelector("[aria-label='Table actions']")).toBeNull();
+    expect(footer!.querySelector(".scient-document-footer-position")?.textContent).toBe("Text");
     await move(cellPositions[2]!);
     expect(host.querySelector("[aria-label='Table actions']")).not.toBeNull();
     await move(1);
     expect(host.querySelector("[aria-label='Table actions']")).toBeNull();
+    expect(host.querySelector(".scient-document-footer")).toBe(footer);
     expect(host.querySelectorAll(".scient-markdown-editor-dock")).toHaveLength(1);
     expect(host.querySelector(".scient-markdown-editor-dock")).toBe(dock);
     expect(host.querySelector(".scient-markdown-document-shell")).toBe(documentShell);

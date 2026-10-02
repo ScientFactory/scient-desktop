@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { ScientMarkdownEditorView } from "../prosemirror/view";
 import { scientMarkdownShortcut } from "../shortcuts";
 import { ScientMarkdownControls } from "./ScientMarkdownControls";
+import { ScientMarkdownFooter } from "./ScientMarkdownFooter";
 
 describe("formatting menu focus", () => {
   const cleanups: Array<() => Promise<void>> = [];
@@ -263,8 +264,18 @@ describe("formatting menu focus", () => {
     const { view, controller, controlsHost } = await fixture(
       "| A | B |\n| --- | --- |\n| One | Two |\n",
     );
-    const trigger = controlsHost.querySelector<HTMLButtonElement>(
-      'button[aria-label="More actions"]',
+    // A table's commands are in the footer's menu, not in the bar's More actions.
+    const footerHost = document.createElement("div");
+    document.body.append(footerHost);
+    const footerRoot = createRoot(footerHost);
+    cleanups.push(async () => {
+      await act(() => footerRoot.unmount());
+      footerHost.remove();
+    });
+    await act(() => footerRoot.render(<ScientMarkdownFooter controller={controller} />));
+    expect(controlsHost.querySelector('[aria-label="Table actions"]')).toBeNull();
+    const trigger = footerHost.querySelector<HTMLButtonElement>(
+      'button[aria-label="More table actions"]',
     )!;
     await act(() => trigger.click());
     const item = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(

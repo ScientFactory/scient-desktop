@@ -36,6 +36,7 @@ import {
 } from "./shortcuts";
 import { showScientMarkdownTableContextMenu } from "./tableContextMenu";
 import { ScientMarkdownControls } from "./ui/ScientMarkdownControls";
+import { ScientMarkdownFooter } from "./ui/ScientMarkdownFooter";
 import { useFinalUnmount } from "./useFinalUnmount";
 import type { MarkdownPersistenceLease } from "./persistence/markdownPersistenceRegistry";
 import type { ScientMarkdownWikiLinkCandidate } from "./wikiLinkPicker";
@@ -380,6 +381,7 @@ export function ScientMarkdownWorkspaceSurface(props: ScientMarkdownWorkspaceSur
           documentActions={props.documentActions}
         />
         <ScientMarkdownDocument mode="write" controller={controller} />
+        <ScientMarkdownFooter controller={controller} />
         {props.citationSource ? (
           <MarkdownCitationActions
             controller={controller}

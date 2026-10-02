@@ -23,6 +23,7 @@ vi.mock("~/assets/assetUrls", () => ({
   useAssetUrlState: () => ({ _tag: "Failure", refresh: vi.fn() }),
 }));
 import { LatexVisualEditor } from "./LatexVisualEditor";
+import { ReaderBarHostContext } from "../writing/readerBarHost";
 import { mathSourceCompletions } from "./latexMathCompletion";
 import { clearVisualDraft } from "./visualDrafts";
 import { clearTypingDraft } from "./visualTyping";
@@ -36,6 +37,8 @@ const act = async (callback: () => unknown) =>
     await callback();
     await new Promise((resolve) => setTimeout(resolve, 320));
   });
+
+const readerHosted = vi.fn();
 
 describe("writing editor source transactions", () => {
   let container: HTMLDivElement;
@@ -138,11 +141,12 @@ describe("writing editor source transactions", () => {
     await act(() => editor().commands.setNodeSelection(position));
     return position;
   }
-  async function mount(body = "Hello", preamble = "") {
+  /** `headerSlot` hosts the reader controls the way the LaTeX surface's header does. */
+  async function mount(body = "Hello", preamble = "", headerSlot: HTMLElement | null = null) {
     current = tex(body).replace("\\begin{document}", preamble + "\\begin{document}");
     function Harness() {
       const [source, setSource] = useState(current);
-      return (
+      const editorElement = (
         <LatexVisualEditor
           draftKey="synthetic-editor-test"
           fileRevision="r1"
@@ -158,6 +162,13 @@ describe("writing editor source transactions", () => {
             return true;
           }}
         />
+      );
+      return headerSlot ? (
+        <ReaderBarHostContext value={{ slot: headerSlot, onHosted: readerHosted }}>
+          {editorElement}
+        </ReaderBarHostContext>
+      ) : (
+        editorElement
       );
     }
     await act(async () => {
@@ -189,6 +200,54 @@ describe("writing editor source transactions", () => {
     expect(context.nextElementSibling?.getAttribute("aria-label")).toMatch(/^Search Document/);
     expect(context.querySelector(".scient-latex-context-tools-slot")).not.toBeNull();
     expect(container.querySelector('[aria-label="Selected object properties"]')).toBeNull();
+  });
+
+  it("draws the reader controls in the host's header and leaves a compact footer", async () => {
+    const headerSlot = document.createElement("div");
+    document.body.append(headerSlot);
+    try {
+      await mount("Hello brave new world", "", headerSlot);
+      // Page, zoom and search are in the header slot, once.
+      expect(headerSlot.querySelector('input[aria-label="Page number"]')).not.toBeNull();
+      expect(headerSlot.querySelector(".scient-pdf-toolbar-hosted")).not.toBeNull();
+      expect(container.querySelector('input[aria-label="Page number"]')).toBeNull();
+      expect(document.body.querySelectorAll('input[aria-label="Page number"]')).toHaveLength(1);
+      expect(readerHosted).toHaveBeenLastCalledWith(true);
+      // The footer holds the object options slot and what follows the caret.
+      const footer = container.querySelector(".scient-document-footer")!;
+      expect(footer).not.toBeNull();
+      expect(footer.classList.contains("scient-latex-reader-footer")).toBe(true);
+      expect(footer.querySelector(".scient-latex-context-tools-slot")).not.toBeNull();
+      expect(footer.querySelector(".scient-document-footer-position")?.textContent).toBe("Text");
+      expect(footer.querySelector(".scient-document-footer-count")?.textContent).toBe("4 words");
+      await act(() => {
+        editor().commands.setTextSelection({ from: 1, to: 12 });
+      });
+      expect(footer.querySelector(".scient-document-footer-count")?.textContent).toBe(
+        "2 of 4 words",
+      );
+      // Search opens under the writing row, next to the controls that opened it.
+      await act(() =>
+        headerSlot
+          .querySelector<HTMLButtonElement>('button[aria-label^="Search Document"]')!
+          .click(),
+      );
+      const search = container.querySelector(".scient-pdf-searchbar")!;
+      expect(search).not.toBeNull();
+      const toolbar = container.querySelector(".scient-latex-writing-toolbar")!;
+      expect(
+        toolbar.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(
+        search.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(
+        search.compareDocumentPosition(container.querySelector(".scient-latex-visual-body")!) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    } finally {
+      headerSlot.remove();
+    }
   });
 
   it("offers the Markdown bar's inline formatting in the same order, without strikethrough", async () => {
