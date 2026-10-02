@@ -838,8 +838,10 @@ sup.scient-markdown-reference {
   position: absolute;
   z-index: 20;
   inset-block-end: calc(100% + 0.35rem);
-  inset-inline-start: 50%;
-  transform: translateX(-50%) translateY(0.15rem);
+  /* The link sits at the page's edge: a centred label would reach past it and
+     give the whole document a sideways scrollbar. */
+  inset-inline-end: 0;
+  transform: translateY(0.15rem);
   border: 1px solid color-mix(in oklab, var(--border) 82%, transparent);
   border-radius: 0.3rem;
   background: var(--popover);
@@ -860,7 +862,7 @@ sup.scient-markdown-reference {
 
 .scient-markdown-footnote-backlink:is(:hover, :focus-visible)
   .scient-markdown-footnote-backlink-tooltip {
-  transform: translateX(-50%) translateY(0);
+  transform: translateY(0);
   opacity: 1;
 }
 
