@@ -257,3 +257,241 @@ describe("VoiceModelManager", () => {
     await expect(NodeFSP.stat(manager.receiptPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
+
+describe("VoiceModelManager with a shared models folder", () => {
+  const neverFetch = (() => {
+    throw new Error("no download expected");
+  }) as unknown as typeof fetch;
+
+  async function installations() {
+    const shared = await makeModelDir();
+    const first = new VoiceModelManager({
+      modelsDirectory: await makeModelDir(),
+      manifest: manifest(),
+      fetchImpl: servingFetch(MODEL_BYTES),
+      sharedModelsDirectory: shared,
+    });
+    const second = new VoiceModelManager({
+      modelsDirectory: await makeModelDir(),
+      manifest: manifest(),
+      fetchImpl: neverFetch,
+      sharedModelsDirectory: shared,
+    });
+    return { shared, sharedPath: NodePath.join(shared, "test-model.bin"), first, second };
+  }
+  const signal = () => new AbortController().signal;
+
+  it("lets a second installation use a model the first downloaded, without downloading", async () => {
+    const { sharedPath, first, second } = await installations();
+    await first.ensureInstalled(signal());
+    expect(await NodeFSP.readFile(sharedPath)).toEqual(MODEL_BYTES);
+
+    // Asking for its status is enough: no download, and its own verified copy.
+    expect((await second.getStatus()).state).toBe("ready");
+    expect(await NodeFSP.readFile(second.modelPath)).toEqual(MODEL_BYTES);
+    expect(await second.verifyInstalledModel()).toBe(true);
+    expect(JSON.parse(await NodeFSP.readFile(second.receiptPath, "utf8"))).toMatchObject({
+      id: "test-model",
+      sha256: MODEL_SHA256,
+    });
+  });
+
+  it("shares a model that was installed before the shared folder existed", async () => {
+    const { shared, sharedPath, first } = await installations();
+    const earlier = new VoiceModelManager({
+      modelsDirectory: NodePath.dirname(first.modelPath),
+      manifest: manifest(),
+      fetchImpl: servingFetch(MODEL_BYTES),
+    });
+    await earlier.ensureInstalled(signal());
+    expect(await NodeFSP.readdir(shared)).toEqual([]);
+    expect((await first.getStatus()).state).toBe("ready");
+    expect(await NodeFSP.readFile(sharedPath)).toEqual(MODEL_BYTES);
+  });
+
+  it("keeps installations independent: removing one leaves the other and the shared copy", async () => {
+    const { sharedPath, first, second } = await installations();
+    await first.ensureInstalled(signal());
+    await second.getStatus();
+    await first.remove();
+    // Removed on purpose, so it does not come straight back from the shared folder.
+    expect((await first.getStatus()).state).toBe("missing");
+    expect((await second.getStatus()).state).toBe("ready");
+    expect(await NodeFSP.readFile(sharedPath)).toEqual(MODEL_BYTES);
+    // Asking for it again takes the shared copy rather than downloading.
+    const again = new VoiceModelManager({
+      modelsDirectory: NodePath.dirname(first.modelPath),
+      manifest: manifest(),
+      fetchImpl: neverFetch,
+      sharedModelsDirectory: NodePath.dirname(sharedPath),
+    });
+    await again.remove();
+    expect(await again.ensureInstalled(signal())).toBe(again.modelPath);
+    expect((await again.getStatus()).state).toBe("ready");
+  });
+
+  it("never installs a damaged shared copy, and replaces it after a real download", async () => {
+    const { shared, sharedPath, first } = await installations();
+    const damaged = NodeBuffer.Buffer.from(MODEL_BYTES);
+    damaged[damaged.byteLength - 1] = damaged[damaged.byteLength - 1]! ^ 0xff;
+    await NodeFSP.writeFile(sharedPath, damaged);
+
+    expect((await first.getStatus()).state).toBe("missing");
+    await expect(NodeFSP.stat(first.modelPath)).rejects.toMatchObject({ code: "ENOENT" });
+    // Not copied and checked again on every status request.
+    await NodeFSP.writeFile(sharedPath, MODEL_BYTES);
+    expect((await first.getStatus()).state).toBe("missing");
+    await NodeFSP.writeFile(sharedPath, damaged);
+
+    await first.ensureInstalled(signal());
+    expect(await first.verifyInstalledModel()).toBe(true);
+    expect(await NodeFSP.readFile(sharedPath)).toEqual(MODEL_BYTES);
+    expect((await NodeFSP.readdir(shared)).toSorted()).toEqual(["test-model.bin"]);
+  });
+
+  it("ignores a shared file of the wrong size and one that is still being written", async () => {
+    const { shared, sharedPath, second } = await installations();
+    await NodeFSP.writeFile(sharedPath, MODEL_BYTES.subarray(0, 10));
+    await NodeFSP.writeFile(`${sharedPath}.tmp-1-abcd`, MODEL_BYTES);
+    expect((await second.getStatus()).state).toBe("missing");
+    expect((await NodeFSP.readdir(shared)).toSorted()).toEqual([
+      "test-model.bin",
+      "test-model.bin.tmp-1-abcd",
+    ]);
+  });
+
+  it("copies once when status is asked for several times at once", async () => {
+    const { first, second } = await installations();
+    await first.ensureInstalled(signal());
+    const states = await Promise.all([
+      second.getStatus(),
+      second.getStatus(),
+      second.ensureInstalled(signal()),
+    ]);
+    expect(states[0].state).toBe("ready");
+    expect(states[1].state).toBe("ready");
+    expect(states[2]).toBe(second.modelPath);
+    expect((await NodeFSP.readdir(NodePath.dirname(second.modelPath))).toSorted()).toEqual([
+      "test-model.bin",
+      "test-model.bin.json",
+    ]);
+  });
+
+  it("replaces a shared copy found damaged later, after it had already shared its own", async () => {
+    const { sharedPath, first } = await installations();
+    await first.ensureInstalled(signal());
+    expect((await first.getStatus()).state).toBe("ready");
+    const damaged = NodeBuffer.Buffer.from(MODEL_BYTES);
+    damaged[damaged.byteLength - 1] = damaged[damaged.byteLength - 1]! ^ 0xff;
+    await NodeFSP.writeFile(sharedPath, damaged);
+
+    await first.remove();
+    await first.ensureInstalled(signal());
+    expect(await first.verifyInstalledModel()).toBe(true);
+    expect(await NodeFSP.readFile(sharedPath)).toEqual(MODEL_BYTES);
+  });
+
+  it("stays removed when a status probe was about to copy the shared model again", async () => {
+    const { first, second } = await installations();
+    await first.ensureInstalled(signal());
+    const internals = second as unknown as {
+      activeSharedCopy: Promise<boolean> | null;
+      sharedCopySkipped: boolean;
+      takeSharedCopy: () => Promise<boolean>;
+    };
+    const probe = second.getStatus();
+    while (internals.activeSharedCopy === null)
+      await new Promise((resolve) => setImmediate(resolve));
+    // A second probe that has read the receipt and reaches its next step the
+    // moment the first copy finishes: the same check-then-copy step as getStatus.
+    const lateProbe = internals.activeSharedCopy.then(() =>
+      internals.sharedCopySkipped ? false : internals.takeSharedCopy(),
+    );
+    await second.remove();
+    await Promise.all([probe, lateProbe]);
+    expect((await second.getStatus()).state).toBe("missing");
+    expect(await NodeFSP.readdir(NodePath.dirname(second.modelPath))).toEqual([]);
+  });
+
+  it("replaces a shared copy that was cut short, after it had already shared its own", async () => {
+    const { sharedPath, first } = await installations();
+    await first.ensureInstalled(signal());
+    expect((await first.getStatus()).state).toBe("ready");
+    await NodeFSP.writeFile(sharedPath, MODEL_BYTES.subarray(0, 10));
+
+    await first.remove();
+    await first.ensureInstalled(signal());
+    expect(await NodeFSP.readFile(sharedPath)).toEqual(MODEL_BYTES);
+  });
+
+  it("leaves a download that is under way alone when a shared copy appears", async () => {
+    const shared = await makeModelDir();
+    const sharedPath = NodePath.join(shared, "test-model.bin");
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let requested: () => void = () => undefined;
+    const fetching = new Promise<void>((resolve) => {
+      requested = resolve;
+    });
+    const manager = new VoiceModelManager({
+      modelsDirectory: await makeModelDir(),
+      manifest: manifest(),
+      sharedModelsDirectory: shared,
+      fetchImpl: (async () => {
+        requested();
+        await gate;
+        return new Response(new Uint8Array(MODEL_BYTES), { status: 200 });
+      }) as unknown as typeof fetch,
+    });
+    const download = manager.ensureInstalled(signal());
+    await fetching;
+    // Another installation publishes the model while this one is downloading.
+    await NodeFSP.writeFile(sharedPath, MODEL_BYTES);
+    // A status probe that had started before the download would reach this step.
+    const taken = await (
+      manager as unknown as { takeSharedCopy: () => Promise<boolean> }
+    ).takeSharedCopy();
+    expect(taken).toBe(false);
+    expect((await manager.getStatus()).state).toBe("downloading");
+    await expect(NodeFSP.stat(manager.modelPath)).rejects.toMatchObject({ code: "ENOENT" });
+    release();
+    expect(await download).toBe(manager.modelPath);
+    expect(await manager.verifyInstalledModel()).toBe(true);
+    expect((await NodeFSP.readdir(NodePath.dirname(manager.modelPath))).toSorted()).toEqual([
+      "test-model.bin",
+      "test-model.bin.json",
+    ]);
+  });
+
+  it("lets two installations take the same shared model at the same moment", async () => {
+    const { first, second, sharedPath } = await installations();
+    await first.ensureInstalled(signal());
+    const third = new VoiceModelManager({
+      modelsDirectory: await makeModelDir(),
+      manifest: manifest(),
+      fetchImpl: neverFetch,
+      sharedModelsDirectory: NodePath.dirname(sharedPath),
+    });
+    const states = await Promise.all([second.getStatus(), third.getStatus()]);
+    expect(states.map((state) => state.state)).toEqual(["ready", "ready"]);
+    expect(await second.verifyInstalledModel()).toBe(true);
+    expect(await third.verifyInstalledModel()).toBe(true);
+    expect(await NodeFSP.readFile(sharedPath)).toEqual(MODEL_BYTES);
+  });
+
+  it("works as before when the shared folder cannot be used", async () => {
+    const blocked = NodePath.join(await makeModelDir(), "not-a-folder");
+    await NodeFSP.writeFile(blocked, "file");
+    const manager = new VoiceModelManager({
+      modelsDirectory: await makeModelDir(),
+      manifest: manifest(),
+      fetchImpl: servingFetch(MODEL_BYTES),
+      sharedModelsDirectory: blocked,
+    });
+    expect((await manager.getStatus()).state).toBe("missing");
+    await manager.ensureInstalled(signal());
+    expect((await manager.getStatus()).state).toBe("ready");
+  });
+});
