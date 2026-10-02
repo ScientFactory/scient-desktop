@@ -172,11 +172,12 @@ export class VoiceModelManager {
     if (this.activeDownload) {
       throw new Error("The offline voice model is already downloading.");
     }
-    await this.activeSharedCopy;
+    await NodeFSP.rm(this.repairPartialPath, { force: true });
+    // Nothing is awaited between this check and claiming the transfer below.
+    while (this.activeSharedCopy) await this.activeSharedCopy;
     if (this.activeDownload) {
       throw new Error("The offline voice model is already downloading.");
     }
-    await NodeFSP.rm(this.repairPartialPath, { force: true });
     this.activeTransferPath = this.repairPartialPath;
     this.activeOperation = "repair";
     const repair = this.downloadAndVerify(signal, onProgress, this.repairPartialPath).finally(
@@ -309,6 +310,9 @@ export class VoiceModelManager {
     }
 
     const modelPath = await this.installVerified(partialPath);
+    // A fresh verified download is always offered: the shared copy may have
+    // gone missing or been damaged since this process last looked.
+    this.offeredToShare = false;
     await this.offerToShare();
     return modelPath;
   }
@@ -346,7 +350,7 @@ export class VoiceModelManager {
       sourceRevision: manifest.sourceRevision,
       verifiedAt: new Date().toISOString(),
     };
-    const pendingReceiptPath = `${this.receiptPath}.tmp-${process.pid}`;
+    const pendingReceiptPath = `${this.receiptPath}.tmp-${process.pid}-${NodeCrypto.randomBytes(4).toString("hex")}`;
     await NodeFSP.writeFile(pendingReceiptPath, `${JSON.stringify(receipt, null, 2)}\n`, {
       mode: 0o600,
     });

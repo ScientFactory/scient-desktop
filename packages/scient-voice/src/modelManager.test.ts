@@ -391,6 +391,17 @@ describe("VoiceModelManager with a shared models folder", () => {
     expect(await NodeFSP.readFile(sharedPath)).toEqual(MODEL_BYTES);
   });
 
+  it("replaces a shared copy that was cut short, after it had already shared its own", async () => {
+    const { sharedPath, first } = await installations();
+    await first.ensureInstalled(signal());
+    expect((await first.getStatus()).state).toBe("ready");
+    await NodeFSP.writeFile(sharedPath, MODEL_BYTES.subarray(0, 10));
+
+    await first.remove();
+    await first.ensureInstalled(signal());
+    expect(await NodeFSP.readFile(sharedPath)).toEqual(MODEL_BYTES);
+  });
+
   it("leaves a download that is under way alone when a shared copy appears", async () => {
     const shared = await makeModelDir();
     const sharedPath = NodePath.join(shared, "test-model.bin");

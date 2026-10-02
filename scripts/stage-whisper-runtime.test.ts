@@ -207,6 +207,20 @@ describe("the development runtime cache", () => {
     await stage(checkout("first"));
     expect(await sync(cacheRoot, checkout("first"))).toBe("cached");
     expect(await isStagedWhisperRuntime(entry, "mac", "arm64")).toBe(true);
+    // The damaged folder is gone, and nothing else is left beside the entry.
+    expect(await NodeFSP.readdir(cacheRoot)).toEqual([NodePath.basename(entry)]);
+  });
+
+  it("keeps the entry another checkout published first", async () => {
+    const { cacheRoot, checkout } = await workspace();
+    const entry = developmentRuntimeCacheEntry(cacheRoot, "mac", "arm64");
+    await stage(entry);
+    const published = await NodeFSP.stat(NodePath.join(entry, "whisper-server"));
+    // A checkout that publishes while the entry is already valid leaves it untouched.
+    await stage(checkout("late"));
+    expect(await sync(cacheRoot, checkout("late"))).toBe("current");
+    const after = await NodeFSP.stat(NodePath.join(entry, "whisper-server"));
+    expect(after.ino).toBe(published.ino);
   });
 
   it("does not accept a runtime whose helper is a link to a file elsewhere", async () => {

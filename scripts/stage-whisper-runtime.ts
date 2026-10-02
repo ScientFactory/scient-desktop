@@ -473,8 +473,10 @@ export async function isStagedWhisperRuntime(
 /**
  * Puts a verified copy of `source` at `destination`. The copy is checked
  * before it is given its name, so the destination is this runtime, complete,
- * or is left as it was. A destination that is already this runtime is kept:
- * when two checkouts publish at once, either result is the same bytes.
+ * or is left as it was. A destination that already holds this runtime is never
+ * removed: when two checkouts publish at once the first one stays and the
+ * second finds it there. Only a destination that fails verification is moved
+ * aside to make room.
  */
 async function publishVerifiedCopy(input: {
   readonly source: string;
@@ -483,23 +485,29 @@ async function publishVerifiedCopy(input: {
   readonly arch: WhisperRuntimeArch;
 }): Promise<boolean> {
   const { source, destination, platform, arch } = input;
-  const pending = `${destination}.partial-${process.pid}-${NodeCrypto.randomBytes(4).toString("hex")}`;
+  const unique = `${process.pid}-${NodeCrypto.randomBytes(4).toString("hex")}`;
+  const pending = `${destination}.partial-${unique}`;
+  const replaced = `${destination}.replaced-${unique}`;
+  const moveIntoPlace = () =>
+    NodeFSP.rename(pending, destination).then(
+      () => true,
+      () => false,
+    );
   try {
     await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
     await NodeFSP.cp(source, pending, { recursive: true, errorOnExist: true, dereference: true });
     if (!(await isStagedWhisperRuntime(pending, platform, arch))) return false;
+    // Renaming onto a folder that has contents fails, so this never replaces anything.
+    if (await moveIntoPlace()) return true;
     if (await isStagedWhisperRuntime(destination, platform, arch)) return true;
-    await NodeFSP.rm(destination, { recursive: true, force: true });
-    try {
-      await NodeFSP.rename(pending, destination);
-    } catch {
-      // Another checkout put its copy there between the two steps above.
-    }
+    await NodeFSP.rename(destination, replaced).catch(() => undefined);
+    await moveIntoPlace();
     return await isStagedWhisperRuntime(destination, platform, arch);
   } catch {
     return false;
   } finally {
     await NodeFSP.rm(pending, { recursive: true, force: true }).catch(() => undefined);
+    await NodeFSP.rm(replaced, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
