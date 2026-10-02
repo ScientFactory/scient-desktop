@@ -9,11 +9,14 @@
   ],
   "ownedFiles": [
     "apps/server/scripts/qualify-omp-rpc.ts",
+    "apps/server/scripts/qualifyScientAgentManagedRuntime.ts",
     "apps/server/src/provider/Drivers/OmpDriver.ts",
     "apps/server/src/provider/Drivers/ScientAgentDriver.ts",
     "apps/server/src/provider/Layers/OmpAdapter.ts",
     "apps/server/src/provider/Layers/OmpProvider.ts",
     "apps/server/src/scient/providerLifecycle/OmpManagedRuntimeActions.ts",
+    "apps/server/src/scient/providerLifecycle/QualifiedRpcManagedRuntime.ts",
+    "apps/server/src/scient/providerLifecycle/ScientAgentManagedRuntimeActions.ts",
     "apps/server/src/textGeneration/OmpTextGeneration.ts",
     "apps/web/src/scient/modelPicker/modelSourceSections.browser.test.tsx",
     "apps/web/src/scient/modelPicker/modelSourceSections.test.ts",
@@ -108,7 +111,7 @@
     },
     {
       "path": "scripts/qualify-managed-runtime-catalog.ts",
-      "anchor": "verifyOmpRpc",
+      "anchor": "if (provider === \"omp\") await verifyRpc",
       "purpose": "Publish an Oh My Pi release only after the server's RPC qualification passes."
     }
   ],
