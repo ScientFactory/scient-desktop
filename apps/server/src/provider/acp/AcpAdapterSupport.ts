@@ -12,36 +12,19 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 const isAcpProcessExitedError = Schema.is(EffectAcpErrors.AcpProcessExitedError);
-const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
 
+/** `describe` is applied to the agent's own text before it becomes the error's detail. */
 export function mapAcpToAdapterError(
   provider: ProviderDriverKind,
   threadId: ThreadId,
   method: string,
   error: EffectAcpErrors.AcpError,
+  describe: (message: string) => string = (message) => message,
 ): ProviderAdapterError {
-  if (isAcpProcessExitedError(error)) {
-    return new ProviderAdapterProcessError({
-      provider,
-      threadId,
-      detail: error.message,
-      cause: error,
-    });
-  }
-  if (isAcpRequestError(error)) {
-    return new ProviderAdapterRequestError({
-      provider,
-      method,
-      detail: error.message,
-      cause: error,
-    });
-  }
-  return new ProviderAdapterRequestError({
-    provider,
-    method,
-    detail: error.message,
-    cause: error,
-  });
+  const detail = describe(error.message);
+  return isAcpProcessExitedError(error)
+    ? new ProviderAdapterProcessError({ provider, threadId, detail, cause: error })
+    : new ProviderAdapterRequestError({ provider, method, detail, cause: error });
 }
 
 export function acpPermissionOutcome(decision: ProviderApprovalDecision): string {

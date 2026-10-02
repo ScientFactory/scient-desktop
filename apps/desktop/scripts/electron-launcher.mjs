@@ -43,7 +43,7 @@ const APP_BUNDLE_ID = isDevelopment
   ? `com.scientfactory.scient.next.dev.${devBundleIdSuffix || "local"}`
   : "com.scientfactory.scient.next";
 const APP_PROTOCOL_SCHEMES = isDevelopment ? ["scient-next-dev"] : ["scient-next"];
-const LAUNCHER_VERSION = 22;
+const LAUNCHER_VERSION = 23;
 const developmentMacIconPngPath = NodePath.join(
   repoRoot,
   "assets",
@@ -182,11 +182,8 @@ export function makeDevelopmentLauncherScript({
     `if [ -n "\${${SCIENT_DEV_APP_PID_FILE_ENV}:-}" ]; then`,
     "  umask 077",
     `  dev_pid_file_tmp="\$${SCIENT_DEV_APP_PID_FILE_ENV}.tmp.$$"`,
-    `  if ! printf "%s\\n" "$$" > "$dev_pid_file_tmp" || ! mv -f "$dev_pid_file_tmp" "\$${SCIENT_DEV_APP_PID_FILE_ENV}"; then`,
-    '    rm -f "$dev_pid_file_tmp"',
-    '    echo "Could not publish the managed development app PID." >&2',
-    "    exit 78",
-    "  fi",
+    '  printf "%s\\n" "$$" > "$dev_pid_file_tmp"',
+    `  mv -f "$dev_pid_file_tmp" "\$${SCIENT_DEV_APP_PID_FILE_ENV}"`,
     "fi",
     `exec ${shellSingleQuote(electronBinaryPath)} --t3code-dev-root=${shellSingleQuote(desktopRoot)} ${shellSingleQuote(mainEntryPath)} "$@"`,
     "",
@@ -537,6 +534,12 @@ export function resolveMacBundleInfoPlistStrings(executableName) {
     NSScreenCaptureUsageDescription:
       "Scient captures the active window when you use the snapshot shortcut.",
     NSDocumentsFolderUsageDescription: "Scient reads project files you open in the desktop app.",
+    NSDesktopFolderUsageDescription: "Scient reads files on your Desktop that you open in it.",
+    NSDownloadsFolderUsageDescription:
+      "Scient reads files in your Downloads folder that you open in it.",
+    NSRemovableVolumesUsageDescription:
+      "Scient reads files on external drives that you open in it.",
+    NSNetworkVolumesUsageDescription: "Scient reads files on network drives that you open in it.",
   };
 }
 

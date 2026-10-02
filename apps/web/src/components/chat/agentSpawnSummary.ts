@@ -62,3 +62,16 @@ export function deriveAgentSpawnSummary({
         : "inactive";
   return { live, lead, status, tone };
 }
+
+/**
+ * The collapsed row's text: what was launched and, unless everything simply
+ * completed, how it stands ("1 working", "1 failed", "1 stopped"), so a row
+ * nobody opens still says whether the agents are alive and how they ended.
+ */
+export function agentSpawnRowLabel(
+  summary: Pick<ReturnType<typeof deriveAgentSpawnSummary>, "lead" | "status" | "tone">,
+  workflowName: string | null,
+): string {
+  const lead = workflowName ? `${summary.lead} · ${workflowName}` : summary.lead;
+  return summary.tone === "completed" ? lead : `${lead} · ${summary.status}`;
+}

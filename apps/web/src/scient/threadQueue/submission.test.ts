@@ -1,54 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 
-import { acknowledgeQueueSubmission, queueSubmissionId, prepareQueueMessage } from "./submission";
-import { ComposerContextId, type OrchestrationMessageContext } from "@t3tools/contracts";
-import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
-
-describe("queued message context", () => {
-  const text = "Explain [Terminal](t3-context://v1/terminal/ctx_terminal)";
-  const context: OrchestrationMessageContext = {
-    version: 1,
-    records: [
-      {
-        version: 1,
-        kind: "terminal",
-        contextId: ComposerContextId.make("ctx_terminal"),
-        label: "Terminal",
-        terminalId: "default",
-        terminalLabel: "Terminal",
-        lineStart: 1,
-        lineEnd: 1,
-        text: "measured result: 42",
-      },
-    ],
-  };
-  it("retains typed context for capable queues", () => {
-    const message = prepareQueueMessage(text, context, true);
-    expect(message).toEqual({ text, context });
-    expect(
-      projectComposerContextForProvider({ text: message.text, records: message.context!.records }),
-    ).toContain("measured result: 42");
-  });
-  it("keeps retry identity when only the host's context delivery mode changes", async () => {
-    const identify = (supportsContext: boolean) => {
-      const payload = {
-        ...prepareQueueMessage(text, context, supportsContext),
-        composerSnapshot: "same draft",
-        attachments: [],
-      };
-      const { text: _wireText, context: _wireContext, ...identity } = payload;
-      return queueSubmissionId("context-retry", { ...identity, text, context });
-    };
-    expect(await identify(false)).toBe(await identify(true));
-  });
-  it("uses the existing context serializer for older queues", () => {
-    const message = prepareQueueMessage(text, context, false);
-    expect(message.context).toBeUndefined();
-    expect(message.text).toContain("measured result: 42");
-    expect(message.text).not.toContain("t3-context://");
-    expect(prepareQueueMessage("hello", undefined, false)).toEqual({ text: "hello" });
-  });
-});
+import {
+  acknowledgeQueueSubmission,
+  queueSubmissionId,
+  composerSubmissionMatchesDraft,
+} from "./submission";
+import { createEmptyThreadDraft } from "../../composerDraftStore";
 
 function createLocalStorageStub(): Storage {
   const store = new Map<string, string>();
@@ -136,5 +93,53 @@ describe("queueSubmissionId", () => {
     expect(first).toMatch(/^qitem_/);
     expect(await queueSubmissionId(target, payload)).toBe(first);
     expect(await queueSubmissionId(target, { ...payload, text: "changed" })).not.toBe(first);
+  });
+
+  it("retains an earlier ambiguous submission while a different draft is submitted", async () => {
+    const first = await queueSubmissionId(target, payload);
+    const secondPayload = { ...payload, text: "new draft" };
+    const second = await queueSubmissionId(target, secondPayload);
+    expect(second).not.toBe(first);
+    expect(await queueSubmissionId(target, payload)).toBe(first);
+    acknowledgeQueueSubmission(target, second);
+    expect(await queueSubmissionId(target, payload)).toBe(first);
+    expect(await queueSubmissionId(target, secondPayload)).not.toBe(second);
+  });
+});
+
+describe("accepted submission draft ownership", () => {
+  it("ignores upload receipt metadata but never clears later typing or attachment changes", () => {
+    const file = new File(["notes"], "notes.txt", { type: "text/plain" });
+    const submitted = {
+      ...createEmptyThreadDraft(),
+      prompt: "inspect",
+      files: [
+        {
+          type: "file" as const,
+          id: "notes",
+          name: file.name,
+          mimeType: file.type,
+          sizeBytes: file.size,
+          file,
+        },
+      ],
+    };
+    const uploaded = {
+      ...submitted,
+      files: [{ ...submitted.files[0]!, uploadedAttachmentId: "upload-finished" }],
+    };
+    expect(composerSubmissionMatchesDraft(submitted, uploaded)).toBe(true);
+    expect(
+      composerSubmissionMatchesDraft(submitted, { ...uploaded, prompt: "late transcript" }),
+    ).toBe(false);
+    expect(composerSubmissionMatchesDraft(submitted, { ...uploaded, files: [] })).toBe(false);
+    expect(
+      composerSubmissionMatchesDraft(submitted, {
+        ...uploaded,
+        files: [
+          { ...uploaded.files[0]!, file: new File(["different"], file.name, { type: file.type }) },
+        ],
+      }),
+    ).toBe(false);
   });
 });

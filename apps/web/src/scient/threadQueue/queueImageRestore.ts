@@ -1,14 +1,16 @@
-import type { UploadChatAttachment } from "@t3tools/contracts";
-
-import type { ComposerImageAttachment } from "../../composerDraftStore";
+import {
+  UploadChatAttachment,
+  ChatImageAttachment,
+  ChatFileAttachment,
+  type EnvironmentId,
+  type ScientThreadQueueItem,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import type { ComposerImageAttachment, ComposerFileAttachment } from "../../composerDraftStore";
 import { randomUUID } from "../../lib/utils";
+import { readQueuedAttachmentFile } from "./client";
 
-/**
- * Rebuilds composer image attachments from a queued item's upload-shaped
- * attachments so "edit" can restore exactly what was queued. Queued items
- * store data URLs (the thread.turn.start upload wire shape); the composer
- * works with File objects.
- */
+/** Legacy queue images carried inline bytes instead of durable attachment IDs. */
 export function restoreQueuedImages(
   attachments: ReadonlyArray<UploadChatAttachment>,
 ): ComposerImageAttachment[] {
@@ -41,4 +43,30 @@ export function restoreQueuedImages(
     });
   }
   return restored;
+}
+
+const isInlineAttachment = Schema.is(UploadChatAttachment);
+const isQueuedImage = Schema.is(ChatImageAttachment);
+const isQueuedFile = Schema.is(ChatFileAttachment);
+export async function restoreQueuedAttachments(
+  environmentId: EnvironmentId,
+  attachments: ScientThreadQueueItem["attachments"],
+) {
+  const images: ComposerImageAttachment[] = [];
+  const files: ComposerFileAttachment[] = [];
+  for (const attachment of attachments) {
+    if (isInlineAttachment(attachment)) {
+      const restored = restoreQueuedImages([attachment])[0];
+      if (!restored) throw new Error(`Could not restore attachment: ${attachment.name}`);
+      images.push(restored);
+      continue;
+    }
+    if (!isQueuedImage(attachment) && !isQueuedFile(attachment))
+      throw new Error("This queued attachment cannot be restored.");
+    const file = await readQueuedAttachmentFile(environmentId, attachment);
+    if (isQueuedImage(attachment))
+      images.push({ ...attachment, file, previewUrl: URL.createObjectURL(file) });
+    else files.push({ ...attachment, file });
+  }
+  return { images, files };
 }

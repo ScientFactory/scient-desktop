@@ -23,6 +23,10 @@ confirmation. The
 reading them does not install the update. On Windows, Scient can stay closed for
 a few minutes while the update installs, then reopens.
 
+On a narrow sidebar, **Import conversation** and **Usage** move into the
+three-dot **More sidebar actions** menu while the update control is active.
+Widening the sidebar brings their icons back into the footer row.
+
 Scient never installs an update on its own. Restarting interrupts running agent
 turns and terminal commands, so let them finish before choosing **Restart**.
 Threads, settings, and project files remain in their existing locations.

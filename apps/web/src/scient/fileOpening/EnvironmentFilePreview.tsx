@@ -12,7 +12,7 @@ import {
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { AlertTriangle, Globe, LoaderCircle, Music2 } from "lucide-react";
+import { AlertTriangle, Download, Globe, LoaderCircle, Music2 } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 
 import { useAssetUrlState } from "~/assets/assetUrls";
@@ -45,6 +45,7 @@ import {
   environmentFileAssetResource,
   openEnvironmentFileInPreview,
 } from "./openEnvironmentFileInPreview";
+import { fileCopyNotice, saveEnvironmentFileCopy } from "./saveEnvironmentFileCopy";
 import { useEnvironmentFileRefresh } from "./useEnvironmentFileRefresh";
 import {
   decodeEnvironmentTextPreview,
@@ -475,6 +476,8 @@ function EnvironmentFileBody(props: {
   readonly line: number | null;
   readonly refreshToken: number;
   readonly threadRef: ScopedThreadRef;
+  /** Saves a copy to the viewing device, the one action left for a file with no preview. */
+  readonly onSaveCopy?: () => void;
 }) {
   switch (props.file.presentation.kind) {
     case "image":
@@ -515,12 +518,16 @@ function EnvironmentFileBody(props: {
               <span className="block">
                 {props.file.presentation.mediaType} · {formatByteLength(props.file.byteLength)}
               </span>
-              <span className="block">
-                You can still open it in your preferred editor from the header.
-              </span>
+              <span className="block">You can still save a copy of it.</span>
             </>
           }
-        />
+        >
+          {props.onSaveCopy ? (
+            <Button type="button" size="xs" variant="outline" onClick={props.onSaveCopy}>
+              Save a copy
+            </Button>
+          ) : null}
+        </FileSurfaceMessage>
       );
   }
 }
@@ -539,6 +546,12 @@ export default function EnvironmentFilePreview(props: {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const httpBaseUrl = useEnvironmentHttpBaseUrl(props.environmentId);
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
+  // A copy must be of the file as it is now. An exact capability is pinned to
+  // the revision it was issued for, so a cached one would refuse a changed file.
+  const createCopyUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
+    reportFailure: false,
+    refresh: true,
+  });
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const file = freshness.file;
 
@@ -573,6 +586,22 @@ export default function EnvironmentFilePreview(props: {
       }
     })();
   }, [createAssetUrl, file, httpBaseUrl, openPreview, props.threadRef]);
+
+  // Works for a viewer on any machine, unlike the editor picker, which acts on the host.
+  const saveCopy = useCallback(() => {
+    if (!file || !httpBaseUrl) return;
+    void (async () => {
+      const notice = fileCopyNotice(
+        await saveEnvironmentFileCopy({
+          environmentId: props.environmentId,
+          path: file.canonicalPath,
+          httpBaseUrl,
+          createAssetUrl: createCopyUrl,
+        }),
+      );
+      if (notice) toastManager.add(stackedThreadToast(notice));
+    })();
+  }, [createCopyUrl, file, httpBaseUrl, props.environmentId]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
@@ -613,6 +642,23 @@ export default function EnvironmentFilePreview(props: {
               <Globe />
             </TooltipTrigger>
             <TooltipPopup>Open in Browser</TooltipPopup>
+          </Tooltip>
+        ) : null}
+        {file && httpBaseUrl ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={saveCopy}
+                  aria-label="Save a copy to this device"
+                />
+              }
+            >
+              <Download />
+            </TooltipTrigger>
+            <TooltipPopup>Save a copy to this device</TooltipPopup>
           </Tooltip>
         ) : null}
         <ScientFileReloadButton
@@ -656,6 +702,7 @@ export default function EnvironmentFilePreview(props: {
           line={props.surface.line}
           refreshToken={freshness.refreshToken}
           threadRef={props.threadRef}
+          {...(httpBaseUrl ? { onSaveCopy: saveCopy } : {})}
         />
       ) : (
         <CenteredLoading label="Inspecting file…" />

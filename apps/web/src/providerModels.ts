@@ -1,6 +1,5 @@
 import {
   DEFAULT_MODEL,
-  DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
   ProviderDriverKind,
   type ModelCapabilities,
@@ -8,7 +7,11 @@ import {
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import { createModelCapabilities, resolveSelectableModel } from "@t3tools/shared/model";
+import {
+  createModelCapabilities,
+  resolveAutomaticModel,
+  resolveSelectableModel,
+} from "@t3tools/shared/model";
 
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -98,10 +101,6 @@ export function getDefaultServerModel(
 ): string {
   const models = getProviderModels(providers, provider);
   return (
-    models.find((model) => model.isDefault && !model.isCustom)?.slug ??
-    models.find((model) => !model.isCustom)?.slug ??
-    models[0]?.slug ??
-    DEFAULT_MODEL_BY_PROVIDER[provider] ??
-    DEFAULT_MODEL
+    resolveAutomaticModel(provider, models) ?? (provider === "antigravity" ? "" : DEFAULT_MODEL)
   );
 }

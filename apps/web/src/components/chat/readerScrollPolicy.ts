@@ -1,4 +1,4 @@
-import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
+import { type MessagesTimelineRow, resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
 import {
   getRowBottom,
   type RememberedTimelinePosition,
@@ -9,12 +9,91 @@ import {
 /** Where a row's readable content ends; trailing file lists and controls come after it. */
 const READING_END_SELECTOR = '[data-reading-end], [data-user-message-body="true"]';
 
-function isReadingRow(row: MessagesTimelineRow | undefined) {
-  return (
-    (row?.kind === "message" &&
-      (row.message.role === "assistant" || row.message.role === "user")) ||
-    row?.kind === "proposed-plan"
-  );
+/** Rows that only show that the agent is busy; they are not content to read. */
+const INDICATOR_ROW_KINDS: ReadonlySet<MessagesTimelineRow["kind"]> = new Set([
+  "working",
+  "thinking",
+  "worktree-setup",
+  "assistant-meta",
+]);
+
+/**
+ * The row whose text marks the end of the conversation. While the latest
+ * turn is unfinished (running, or it ended interrupted or with an error),
+ * everything it produced after your latest message is new content, so the
+ * end is its latest row (an answer as it streams, a note, a tool step), or
+ * your message itself before anything arrives; busy indicators never count.
+ * Once a turn completed normally, the end is its answer (the agent's message
+ * or plan): what trails it (changed files, tool summaries, your own later
+ * message, sent or queued) doesn't count as unread. Before any answer
+ * exists, your latest message is the end. -1 when there is none.
+ */
+function readingEndRowIndex(rows: readonly MessagesTimelineRow[], turnUnfinished = false): number {
+  if (turnUnfinished) {
+    // The last row that isn't a busy indicator: the turn's latest content,
+    // or your latest message when nothing has arrived after it yet.
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const row = rows[index];
+      if (row && !INDICATOR_ROW_KINDS.has(row.kind)) return index;
+    }
+    return -1;
+  }
+  const isAnswer = (row: MessagesTimelineRow | undefined) =>
+    row?.kind === "proposed-plan" || (row?.kind === "message" && row.message.role === "assistant");
+  let promptIndex = -1;
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const row = rows[index];
+    if (row?.kind === "message" && row.message.role === "user") {
+      promptIndex = index;
+      break;
+    }
+  }
+  // The completed latest turn's own answer, or its latest content if it
+  // wrote none: both are new below your message.
+  let turnContent = -1;
+  for (let index = rows.length - 1; index > promptIndex; index -= 1) {
+    const row = rows[index];
+    if (isAnswer(row)) return index;
+    if (turnContent < 0 && row && !INDICATOR_ROW_KINDS.has(row.kind)) turnContent = index;
+  }
+  if (turnContent >= 0) return turnContent;
+  // Nothing after your latest message: the latest answer above it, or your
+  // message itself before any answer exists.
+  for (let index = promptIndex - 1; index >= 0; index -= 1) if (isAnswer(rows[index])) return index;
+  return promptIndex;
+}
+
+/** How many of the answer's last lines may be hidden while the reader counts as at the end. */
+const READING_END_HIDDEN_LINES = 3;
+/** The tolerance never falls below the timeline's inherited 40px end band. */
+const READING_END_MIN_ALLOWANCE_PX = 40;
+
+/**
+ * How far below the visible area the answer's text may end while the reader
+ * still counts as at the end: its last three lines, in its own line height
+ * so it holds at any text size. With no answer yet, the inherited 40px band.
+ */
+export function readingEndAllowance(
+  state: {
+    readonly data: readonly unknown[];
+    readonly elementAtIndex?: (index: number) => Element | null | undefined;
+  },
+  turnUnfinished = false,
+): number {
+  if (!state.data) return READING_END_MIN_ALLOWANCE_PX;
+  const rows = state.data as readonly MessagesTimelineRow[];
+  const index = readingEndRowIndex(rows, turnUnfinished);
+  // Before any answer exists, the end is the reader's own message and keeps
+  // the inherited band.
+  const row = rows[index];
+  if (row?.kind === "message" && row.message.role === "user") return READING_END_MIN_ALLOWANCE_PX;
+  const element = index < 0 ? undefined : state.elementAtIndex?.(index);
+  const bodies = element?.isConnected ? element.querySelectorAll(".chat-markdown") : [];
+  const body = bodies.length > 0 ? bodies[bodies.length - 1] : undefined;
+  const lineHeight = body ? Number.parseFloat(getComputedStyle(body).lineHeight) : Number.NaN;
+  return Number.isFinite(lineHeight) && lineHeight > 0
+    ? Math.max(READING_END_MIN_ALLOWANCE_PX, lineHeight * READING_END_HIDDEN_LINES)
+    : READING_END_MIN_ALLOWANCE_PX;
 }
 
 /**
@@ -30,51 +109,63 @@ export function readingEndGapOnScreen(
   },
   viewport: Element,
   composerInset: number,
+  turnUnfinished = false,
 ): number | null {
-  const rows = state.data as readonly MessagesTimelineRow[];
-  for (let index = rows.length - 1; index >= 0; index -= 1) {
-    if (!isReadingRow(rows[index])) continue;
-    const element = state.elementAtIndex?.(index);
-    if (!element?.isConnected) return null;
-    const markers = element.querySelectorAll(READING_END_SELECTOR);
-    const end = (
-      markers.length > 0 ? markers[markers.length - 1]! : element
-    ).getBoundingClientRect().bottom;
-    const view = viewport.getBoundingClientRect();
-    return end - (view.top + viewport.clientHeight - composerInset);
-  }
-  return null;
+  if (!state.data) return null;
+  const index = readingEndRowIndex(state.data as readonly MessagesTimelineRow[], turnUnfinished);
+  if (index < 0) return null;
+  const element = state.elementAtIndex?.(index);
+  if (!element?.isConnected) return null;
+  const markers = element.querySelectorAll(READING_END_SELECTOR);
+  const end = (markers.length > 0 ? markers[markers.length - 1]! : element).getBoundingClientRect()
+    .bottom;
+  const view = viewport.getBoundingClientRect();
+  return end - (view.top + viewport.clientHeight - composerInset);
 }
 
 /**
- * The timeline state with its end at the last conversational content: the
- * text of the last message or plan. Trailing changed-file lists, tool groups,
- * timestamps and working indicators are not something the reader has left to
- * read, so they never decide whether the reader is at the bottom. Falls back
- * to the last row (excluding reserved anchor padding) while unmeasured.
+ * The timeline state with its end at the reading end (readingEndRowIndex):
+ * an unfinished turn's latest content, or the latest turn's answer. What trails
+ * a finished answer (changed-file lists, tool groups, timestamps) and busy
+ * indicators never decide whether the reader is at the bottom. Falls back to
+ * the last row (excluding reserved anchor padding) while unmeasured.
  */
 export function withReadingEnd<
   T extends TimelineListMeasurementState & {
     readonly elementAtIndex?: (index: number) => Element | null | undefined;
   },
->(state: T | undefined, composerInset: number): T | undefined {
+>(state: T | undefined, composerInset: number, turnUnfinished = false): T | undefined {
   if (!state?.data) return state;
-  const rows = state.data as readonly MessagesTimelineRow[];
-  for (let index = rows.length - 1; index >= 0; index -= 1) {
-    if (!isReadingRow(rows[index])) continue;
-    const top = state.positionAtIndex(index);
-    const bottom = getRowBottom(state, index);
-    if (top === undefined || bottom === null) break;
-    const element = state.elementAtIndex?.(index);
-    const markers = element?.isConnected ? element.querySelectorAll(READING_END_SELECTOR) : [];
-    const marker = markers.length > 0 ? markers[markers.length - 1] : undefined;
-    const end =
-      element && marker
-        ? top + marker.getBoundingClientRect().bottom - element.getBoundingClientRect().top
-        : bottom;
-    return { ...state, contentLength: Math.min(end, bottom) + composerInset };
-  }
-  return withRealTimelineEnd(state, composerInset);
+  const index = readingEndRowIndex(state.data as readonly MessagesTimelineRow[], turnUnfinished);
+  const top = index < 0 ? undefined : state.positionAtIndex(index);
+  const bottom = index < 0 ? null : getRowBottom(state, index);
+  if (top === undefined || bottom === null) return withRealTimelineEnd(state, composerInset);
+  const element = state.elementAtIndex?.(index);
+  const markers = element?.isConnected ? element.querySelectorAll(READING_END_SELECTOR) : [];
+  const marker = markers.length > 0 ? markers[markers.length - 1] : undefined;
+  const end =
+    element && marker
+      ? top + marker.getBoundingClientRect().bottom - element.getBoundingClientRect().top
+      : bottom;
+  return { ...state, contentLength: Math.min(end, bottom) + composerInset };
+}
+
+/**
+ * Whether the reader is at the end: the end's text is in view, except at
+ * most its last three lines (see readingEndRowIndex: an unfinished turn's
+ * latest content, otherwise the latest turn's answer). The one rule for
+ * the end control, sending, navigation and saved positions.
+ */
+export function readerAtReadingEnd<
+  T extends TimelineListMeasurementState & {
+    readonly elementAtIndex?: (index: number) => Element | null | undefined;
+  },
+>(state: T | undefined, composerInset: number, turnUnfinished = false): boolean | undefined {
+  if (!state) return undefined;
+  return resolveTimelineIsAtEnd(
+    withReadingEnd(state, composerInset, turnUnfinished),
+    readingEndAllowance(state, turnUnfinished),
+  );
 }
 
 export function canApplySendAnchor(input: {
@@ -174,28 +265,6 @@ export function resolveReadingRow(
     }
   }
   return null;
-}
-
-/** Send intent tolerates two body-text lines; other end controls retain their existing band. */
-export function readSendScrollAllowance(
-  viewport: HTMLElement | null | undefined,
-): number | undefined {
-  const bodies = viewport?.querySelectorAll<HTMLElement>(
-    '[data-timeline-row-kind="message"] .chat-markdown',
-  );
-  // Virtualized containers can be recycled out of DOM order.
-  const body = bodies
-    ? Array.from(bodies).reduce<HTMLElement | undefined>(
-        (last, candidate) =>
-          !last || candidate.getBoundingClientRect().top > last.getBoundingClientRect().top
-            ? candidate
-            : last,
-        undefined,
-      )
-    : undefined;
-  if (!body) return undefined;
-  const lineHeight = Number.parseFloat(getComputedStyle(body).lineHeight);
-  return Number.isFinite(lineHeight) && lineHeight > 0 ? lineHeight * 2 : undefined;
 }
 
 /** The server delivers a queued prompt under this message id prefix (threadQueue Worker). */

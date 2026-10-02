@@ -406,6 +406,9 @@ export type MessagesTimelineRow =
       showAssistantCopyButton: boolean;
       assistantCopyStreaming: boolean;
       assistantTurnDiffSummary?: TurnDiffSummary | undefined;
+      /** Files the message's turn changed, for every assistant message of that
+          turn, not only the one the changed-files card attaches to. */
+      assistantTurnChangedFiles?: TurnDiffSummary["files"] | undefined;
       revertTurnCount?: number | undefined;
       canForkConversation?: boolean | undefined;
       assistantDirectionHint?: FixedContentDirection | null | undefined;
@@ -782,10 +785,12 @@ export function deriveMessagesTimelineRows(input: {
   worktreeSetup?: WorktreeSetupSnapshot | null;
 }): MessagesTimelineRow[] {
   const turnDiffSummaryByAssistantMessageId = new Map<MessageId, TurnDiffSummary>();
+  const turnDiffSummaryByTurnId = new Map<TurnId, TurnDiffSummary>();
   for (const summary of input.turnDiffSummaries) {
     if (summary.assistantMessageId) {
       turnDiffSummaryByAssistantMessageId.set(summary.assistantMessageId, summary);
     }
+    turnDiffSummaryByTurnId.set(summary.turnId, summary);
   }
   const revertTurnCountByUserMessageId = buildRevertTurnCountByUserMessageId({
     supportsConversationRollback: input.supportsConversationRollback,
@@ -1223,6 +1228,12 @@ export function deriveMessagesTimelineRows(input: {
         timelineEntry.message.role === "assistant"
           ? turnDiffSummaryByAssistantMessageId.get(timelineEntry.message.id)
           : undefined,
+      assistantTurnChangedFiles:
+        timelineEntry.message.role === "assistant" &&
+        timelineEntry.message.turnId !== null &&
+        timelineEntry.message.turnId !== undefined
+          ? turnDiffSummaryByTurnId.get(timelineEntry.message.turnId)?.files
+          : undefined,
       revertTurnCount:
         timelineEntry.message.role === "user"
           ? revertTurnCountByUserMessageId.get(timelineEntry.message.id)
@@ -1549,6 +1560,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
         a.assistantCopyStreaming === bm.assistantCopyStreaming &&
         a.assistantTurnDiffSummary === bm.assistantTurnDiffSummary &&
+        a.assistantTurnChangedFiles === bm.assistantTurnChangedFiles &&
         a.revertTurnCount === bm.revertTurnCount &&
         a.canForkConversation === bm.canForkConversation &&
         a.assistantDirectionHint === bm.assistantDirectionHint

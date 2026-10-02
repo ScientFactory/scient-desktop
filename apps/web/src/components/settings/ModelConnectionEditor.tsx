@@ -37,11 +37,23 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
-import { CUSTOM_MODEL_PRESETS, CUSTOM_MODEL_PROTOCOLS, customModelPresetId } from "./customModels";
+import {
+  CUSTOM_MODEL_PRESETS,
+  CUSTOM_MODEL_PROTOCOLS,
+  customModelPresetId,
+  droidDefaultReasoningLevels,
+  droidDefaultReasoningNote,
+  droidReasoningNote,
+} from "./customModels";
 
 const DEFAULT_CUSTOM_MODEL_PRESET = CUSTOM_MODEL_PRESETS[0]!;
 const REASONING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 type ReasoningLevel = (typeof REASONING_LEVELS)[number];
+/** The bounds the limit fields enforce; also what keeps Advanced open (see `limitsInvalid`). */
+const CONTEXT_WINDOW_RANGE = { min: 1024, max: 10_000_000 } as const;
+const MAX_OUTPUT_TOKENS_RANGE = { min: 1, max: 1_000_000 } as const;
+const limitInRange = (value: number | undefined, range: { min: number; max: number }) =>
+  value !== undefined && Number.isInteger(value) && value >= range.min && value <= range.max;
 const PENDING_DETECTION = "Detected from the provider after saving.";
 const NOT_DETECTED = "Not detected yet.";
 
@@ -194,12 +206,15 @@ export function ModelConnectionEditor({
   settings,
   target,
   agents,
+  defaultInstanceIds,
   onSave,
   onClose,
 }: {
   settings: CustomModelsSettings;
   target: EditorTarget;
   agents: ReadonlyArray<{ id: ProviderInstanceId; name: string; driver?: ProviderDriverKind }>;
+  /** Agents a new model starts attached to (see `defaultModelAgents`). */
+  defaultInstanceIds: ReadonlyArray<ProviderInstanceId>;
   onSave: (input: CustomModelSaveInput) => Promise<void>;
   onClose: () => void;
 }) {
@@ -247,11 +262,27 @@ export function ModelConnectionEditor({
     target.model?.reasoningOverride,
   );
   const [instanceIds, setInstanceIds] = useState<ReadonlyArray<ProviderInstanceId>>(
-    target.model?.instanceIds ?? agents.map((agent) => agent.id),
+    target.model?.instanceIds ?? defaultInstanceIds,
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  // Manual limits are required and bounded. A hidden field that fails either
+  // makes the browser refuse to submit without showing why, so Advanced opens
+  // while a limit is missing or out of range, and stays open afterwards rather
+  // than closing under the user who just completed it.
+  const limitsInvalid =
+    configurationMode === "manual" &&
+    !(
+      limitInRange(contextWindow, CONTEXT_WINDOW_RANGE) &&
+      limitInRange(maxOutputTokens, MAX_OUTPUT_TOKENS_RANGE)
+    );
+  if (limitsInvalid && !advancedOpen) setAdvancedOpen(true);
   const editing = target.model !== undefined;
+  // Agents this model was attached to that no longer exist; the user can detach them.
+  const removedAgents = (target.model?.instanceIds ?? []).filter(
+    (id) => !agents.some((agent) => agent.id === id),
+  );
   // Saved detection only describes the saved identity; any edit to it is a new model.
   const detected =
     target.model?.modelId === modelId.trim() &&
@@ -317,6 +348,39 @@ export function ModelConnectionEditor({
       setMaxOutputTokens(detected.maxOutputTokens);
   };
   const reasoningDetected = detected?.status === "known" && detected.supported === true;
+  const attachedAgents = agents.filter((agent) => instanceIds.includes(agent.id));
+  const droidAttached = attachedAgents.some((agent) => agent.driver === "droid");
+  // The default must be a level the agents apply. With Droid alone, only its
+  // levels are choices; beside another agent that applies more, those stay
+  // and the note says what Droid uses for one it cannot apply.
+  const defaultLevels =
+    droidAttached && attachedAgents.every((agent) => agent.driver === "droid")
+      ? droidDefaultReasoningLevels({ protocol, modelId, levels: preferenceLevels })
+      : preferenceLevels;
+  const droidDefaultNote = droidAttached
+    ? droidDefaultReasoningNote({
+        protocol,
+        modelId,
+        levels: preferenceLevels,
+        defaultLevel: defaultReasoningLevel,
+        metadataDefault: reasoningOverride
+          ? reasoningOverride.defaultLevel
+          : detected?.defaultLevel,
+      })
+    : undefined;
+  const droidNote = droidAttached
+    ? droidReasoningNote({
+        protocol,
+        // A manual override means adaptive thinking on Messages and effort elsewhere.
+        mode: reasoningOverride
+          ? protocol === "anthropic-messages"
+            ? "adaptive"
+            : "effort"
+          : detected?.mode,
+        modelId,
+        levels: preferenceLevels,
+      })
+    : undefined;
   // One selector carries the default level; "manual" unfolds the capability override.
   const reasoningValue = defaultReasoningLevel ?? (reasoningOverride ? "manual" : "");
   const reasoningValueLabel = (value: string) =>
@@ -544,9 +608,35 @@ export function ModelConnectionEditor({
                       </label>
                     );
                   })}
+                  {removedAgents.map((id) => (
+                    <label
+                      key={id}
+                      className="flex cursor-pointer items-center gap-3 px-3 py-2 text-sm transition-colors hover:bg-accent/40"
+                    >
+                      <span aria-hidden className="size-4 shrink-0" />
+                      <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                        {id} (removed)
+                      </span>
+                      <Switch
+                        size="sm"
+                        aria-label={`Use with ${id} (removed)`}
+                        checked={instanceIds.includes(id)}
+                        onCheckedChange={(checked) =>
+                          setInstanceIds((ids) =>
+                            checked ? [...ids, id] : ids.filter((entry) => entry !== id),
+                          )
+                        }
+                      />
+                    </label>
+                  ))}
                 </div>
               </fieldset>
-              <Collapsible>
+              <Collapsible
+                open={advancedOpen}
+                onOpenChange={(open) => {
+                  if (open || !limitsInvalid) setAdvancedOpen(open);
+                }}
+              >
                 <CollapsibleTrigger className="group inline-flex items-center gap-1 rounded-md py-1 pr-2 text-sm/4 font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring">
                   <ChevronRightIcon className="size-4 text-icon-muted transition-transform duration-200 group-data-panel-open:rotate-90" />
                   Advanced
@@ -605,8 +695,8 @@ export function ModelConnectionEditor({
                               <Input
                                 required
                                 type="number"
-                                min={1024}
-                                max={10000000}
+                                min={CONTEXT_WINDOW_RANGE.min}
+                                max={CONTEXT_WINDOW_RANGE.max}
                                 value={contextWindow ?? ""}
                                 onChange={(e) =>
                                   setContextWindow(
@@ -619,8 +709,8 @@ export function ModelConnectionEditor({
                               <Input
                                 required
                                 type="number"
-                                min={1}
-                                max={1000000}
+                                min={MAX_OUTPUT_TOKENS_RANGE.min}
+                                max={MAX_OUTPUT_TOKENS_RANGE.max}
                                 value={maxOutputTokens ?? ""}
                                 onChange={(e) =>
                                   setMaxOutputTokens(
@@ -682,12 +772,12 @@ export function ModelConnectionEditor({
                               Automatic
                             </SelectItem>
                             {defaultReasoningLevel &&
-                            !preferenceLevels.includes(defaultReasoningLevel) ? (
+                            !defaultLevels.includes(defaultReasoningLevel) ? (
                               <SelectItem hideIndicator disabled value={defaultReasoningLevel}>
                                 {reasoningLevelLabel(defaultReasoningLevel)} (unavailable)
                               </SelectItem>
                             ) : null}
-                            {preferenceLevels.map((level) => (
+                            {defaultLevels.map((level) => (
                               <SelectItem hideIndicator key={level} value={level}>
                                 {reasoningLevelLabel(level)}
                               </SelectItem>
@@ -704,6 +794,12 @@ export function ModelConnectionEditor({
                         </Select>
                       }
                     >
+                      {droidNote ? (
+                        <p className="text-xs text-muted-foreground">{droidNote}</p>
+                      ) : null}
+                      {droidDefaultNote ? (
+                        <p className="text-xs text-muted-foreground">{droidDefaultNote}</p>
+                      ) : null}
                       {reasoningOverride ? (
                         <div className="space-y-2">
                           <label className="flex items-center gap-2">

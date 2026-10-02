@@ -164,6 +164,27 @@ export interface CommandPaletteGroup {
   readonly value: string;
   readonly label: string;
   readonly items: ReadonlyArray<CommandPaletteActionItem | CommandPaletteSubmenuItem>;
+  /** Render beneath the scrolling results while retaining list keyboard navigation. */
+  readonly pinned?: boolean;
+}
+
+export function buildNewThreadProjectGroups(
+  items: ReadonlyArray<CommandPaletteActionItem>,
+  addProjectItem: CommandPaletteActionItem,
+): CommandPaletteGroup[] {
+  return [
+    {
+      value: "projects",
+      label: "Projects",
+      items: items.filter((item) => item.value !== "new-thread-in:no-project"),
+    },
+    {
+      value: "new-thread-project-actions",
+      label: "",
+      pinned: true,
+      items: [addProjectItem, ...items.filter((item) => item.value === "new-thread-in:no-project")],
+    },
+  ];
 }
 
 export interface CommandPaletteView {
@@ -523,7 +544,7 @@ export function filterCommandPaletteGroups(input: {
       return [];
     }
 
-    return [{ value: group.value, label: group.label, items }];
+    return [{ ...group, items }];
   });
 }
 

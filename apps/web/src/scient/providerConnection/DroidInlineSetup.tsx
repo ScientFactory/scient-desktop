@@ -48,6 +48,7 @@ type PendingAction =
   | "update"
   | "external-update"
   | "sign-in"
+  | "check"
   | "cancel-runtime"
   | "cancel-sign-in"
   | null;
@@ -67,11 +68,14 @@ export function DroidInlineSetup(props: {
 }) {
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  /** A status check that could not run; not a failure of the action it follows. */
+  const [checkError, setCheckError] = useState<string | null>(null);
   const [localRuntime, setLocalRuntime] = useState<ProviderRuntimeSummary | null>(null);
 
   useEffect(() => {
     setPendingAction(null);
     setLocalError(null);
+    setCheckError(null);
     setLocalRuntime(null);
   }, [props.provider.instanceId]);
 
@@ -168,6 +172,7 @@ export function DroidInlineSetup(props: {
   const signIn = async () => {
     if (!supportsDevicePairing) return;
     setLocalError(null);
+    setCheckError(null);
     setPendingAction("sign-in");
     try {
       await props.controller.startConnection("droid_device_pairing");
@@ -179,6 +184,38 @@ export function DroidInlineSetup(props: {
       setPendingAction(null);
     }
   };
+
+  /** One full status check: Droid's start, account and models. */
+  const checkAgain = async () => {
+    setLocalError(null);
+    setCheckError(null);
+    setPendingAction("check");
+    try {
+      await props.controller.refresh();
+    } catch (error) {
+      setCheckError(providerLifecycleFailureMessage(error, "Scient could not check Droid."));
+    } finally {
+      setPendingAction(null);
+    }
+  };
+  /** `quiet` beside the frame's own primary action. */
+  const checkAgainButton = (label: string, quiet = false) => (
+    <Button
+      aria-label="Check Droid again"
+      disabled={pendingAction !== null}
+      onClick={() => void checkAgain()}
+      size="sm"
+      type="button"
+      variant={quiet ? "ghost-muted" : "ghost-primary"}
+    >
+      {pendingAction === "check" ? (
+        <LoaderIcon aria-hidden className="animate-spin" />
+      ) : (
+        <RefreshCwIcon aria-hidden />
+      )}
+      {label}
+    </Button>
+  );
 
   const cancelSignIn = async () => {
     if (!activeConnectionOperation) return;
@@ -264,14 +301,19 @@ export function DroidInlineSetup(props: {
       <AssistedSetupFrame>
         <AssistedSetupStatus
           body={
-            localError ?? managedRuntimeRepairMessage(props.provider, "Droid", runtimeOperation)
+            checkError ??
+            localError ??
+            managedRuntimeRepairMessage(props.provider, "Droid", runtimeOperation)
           }
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
           role="alert"
           title="Droid needs repair"
         />
         <AssistedSetupActions>
+          {/* A start that failed once may work again; Droid is only re-checked on request. */}
+          {checkAgainButton("Try again", true)}
           <Button
+            disabled={pendingAction === "check"}
             onClick={() => void runRuntime("repair")}
             size="sm"
             type="button"
@@ -417,19 +459,58 @@ export function DroidInlineSetup(props: {
     );
   }
 
-  const signInError =
-    localError ?? (connectionOperation?.status === "failed" ? connectionOperation.message : null);
   const canInstallManaged =
     !props.managedRuntimePresentedExternally && (runtime?.actions.includes("install") ?? false);
-  if (!supportsDevicePairing) {
+  if (props.provider.status === "error") {
+    // The status check itself failed: Droid did not start, so there is no
+    // account state to act on. A Scient-managed runtime is repaired above.
     return (
       <AssistedSetupFrame>
         <AssistedSetupStatus
-          body={signInError ?? props.provider.message ?? "Assisted sign in is unavailable."}
-          icon={<TriangleAlertIcon className="size-5 text-warning" />}
-          role={signInError ? "alert" : undefined}
-          title="Assisted sign in unavailable"
+          body={
+            checkError ?? localError ?? props.provider.message ?? "Scient could not start Droid."
+          }
+          icon={<TriangleAlertIcon className="size-5 text-destructive" />}
+          role="alert"
+          title="Droid couldn’t start"
         />
+        <AssistedSetupActions>
+          {checkAgainButton("Try again", updateOffer !== null)}
+          {updateOffer ? (
+            <AssistedSetupUpdateButton name="Droid" onClick={() => void update()} retry={false} />
+          ) : null}
+        </AssistedSetupActions>
+        {secondaryActions}
+        <AssistedSetupDiagnostics
+          displayName={props.displayName}
+          managedActionBusy={pendingAction !== null}
+          onUseManaged={canInstallManaged ? () => void runRuntime("install") : undefined}
+          presentedExternally={props.managedRuntimePresentedExternally}
+          provider={props.provider}
+        />
+      </AssistedSetupFrame>
+    );
+  }
+
+  const signInError =
+    localError ?? (connectionOperation?.status === "failed" ? connectionOperation.message : null);
+  if (!supportsDevicePairing) {
+    // With FACTORY_API_KEY the account is the environment's key: no sign-in replaces it.
+    const usesApiKey = props.provider.auth.type === "apiKey";
+    return (
+      <AssistedSetupFrame>
+        <AssistedSetupStatus
+          body={
+            checkError ??
+            signInError ??
+            props.provider.message ??
+            "Assisted sign in is unavailable."
+          }
+          icon={<TriangleAlertIcon className="size-5 text-warning" />}
+          role={(checkError ?? signInError) ? "alert" : undefined}
+          title={usesApiKey ? "Factory rejected the API key" : "Assisted sign in unavailable"}
+        />
+        <AssistedSetupActions>{checkAgainButton("Check again")}</AssistedSetupActions>
         {secondaryActions}
         {runtimeDiagnostics}
       </AssistedSetupFrame>
@@ -440,22 +521,26 @@ export function DroidInlineSetup(props: {
     <AssistedSetupFrame>
       <AssistedSetupStatus
         body={
+          checkError ??
           signInError ??
           "Sign in with your existing Factory subscription. Droid owns the secure flow; Scient never sees your password."
         }
         icon={
-          signInError ? (
+          (checkError ?? signInError) ? (
             <TriangleAlertIcon className="size-5 text-destructive" />
           ) : (
             <ProviderSetupIcon displayName={props.displayName} driver={props.provider.driver} />
           )
         }
-        role={signInError ? "alert" : undefined}
+        role={(checkError ?? signInError) ? "alert" : undefined}
         title={signInError ? "Droid sign-in didn’t finish" : "Sign in required"}
       />
       <AssistedSetupActions>
+        {/* A sign-in finished outside Scient shows only after a status check. */}
+        {checkAgainButton("Check again", true)}
         <Button
           aria-label={signInError ? "Try again to sign in to Droid" : undefined}
+          disabled={pendingAction === "check"}
           onClick={() => void signIn()}
           size="sm"
           type="button"

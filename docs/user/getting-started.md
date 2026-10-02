@@ -30,6 +30,14 @@ This optional action finds existing Claude Code and Codex projects; it does not
 replace **Add project**.
 See [Import projects and conversations](welcome-wizard.md) for selection and history limits.
 
+All providers are listed on the Connect step. Scroll within the provider list
+to see additional providers; the card stays compact.
+Missing runtimes with supported Scient-managed installation show **Install**; installed
+providers needing account authentication show **Sign in**. Both retain a Manage icon.
+Other states, including disabled providers, show **Manage**, which opens the shared
+provider management dialog without leaving onboarding. Enabling a provider in that
+dialog does not automatically install it or sign in.
+
 Provider installation and sign-in use the same provider-owned account flows
 available elsewhere in Scient. Work preferences and an optional custom answer
 are saved only on the current device.

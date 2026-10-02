@@ -1,7 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { ScientFileFreshnessStatus, ScientFileReloadButton } from "./ScientFileFreshnessControls";
+import {
+  ScientFileFreshnessNotices,
+  ScientFileFreshnessStatus,
+  ScientFileReloadButton,
+} from "./ScientFileFreshnessControls";
 
 describe("ScientFileReloadButton", () => {
   it("renders the normal workspace reload action", () => {
@@ -79,5 +83,50 @@ describe("ScientFileFreshnessStatus", () => {
     );
     expect(refresh).toContain('aria-label="File status: The latest file could not be loaded"');
     expect(refresh).not.toContain("Changes have not been saved");
+  });
+});
+
+describe("ScientFileFreshnessNotices", () => {
+  const notices = (
+    overrides: Partial<Parameters<typeof ScientFileFreshnessNotices>[0]> = {},
+  ): string =>
+    renderToStaticMarkup(
+      <ScientFileFreshnessNotices
+        relativePath="report.txt"
+        notice={null}
+        readError="Failed to read workspace file"
+        saveError={null}
+        saveRetryReady={false}
+        hasFallbackData
+        onCancel={vi.fn()}
+        onReload={vi.fn()}
+        onRequestOverwrite={vi.fn()}
+        onRetrySave={vi.fn()}
+        onResolve={vi.fn()}
+        {...overrides}
+      />,
+    );
+
+  it("says an open file is gone and offers where it may have moved", () => {
+    const markup = notices({
+      readFailureReason: "not_found",
+      missingFileChoices: ["archive/report.txt", "old/report.txt", "older/report.txt"],
+      onOpenFile: vi.fn(),
+    });
+
+    expect(markup).toContain("This file is no longer at this location.");
+    expect(markup).toContain("Showing the last available copy.");
+    expect(markup).toContain("archive/report.txt");
+    expect(markup).toContain("old/report.txt");
+    // One line of notice: further candidates wait behind Try again.
+    expect(markup).not.toContain("older/report.txt");
+    expect(markup).toContain("Try again");
+  });
+
+  it("keeps the generic caution, without choices, when the cause is unknown", () => {
+    const markup = notices({ missingFileChoices: ["archive/report.txt"], onOpenFile: vi.fn() });
+
+    expect(markup).toContain("The latest version could not be loaded.");
+    expect(markup).not.toContain("archive/report.txt");
   });
 });

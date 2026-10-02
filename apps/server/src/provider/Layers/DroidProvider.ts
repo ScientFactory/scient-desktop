@@ -12,6 +12,8 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
+import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import * as AcpSessionRuntimeType from "../acp/AcpSessionRuntime.ts";
@@ -39,6 +41,7 @@ import {
   droidAccountCapabilitiesFromInitializeResult,
   hasDroidApiKeyEnvironment,
   makeDroidAcpRuntime,
+  makeDroidCredentialRedactor,
   resolveDroidCliBinaryPath,
   type DroidAccountCapabilities,
   type DroidAcpRuntimeFactory,
@@ -49,6 +52,8 @@ const DROID_PRESENTATION = {
   displayName: "Droid",
   showInteractionModeToggle: true,
   requiresNewThreadForModelChange: false,
+  // Droid's ACP surface has no conversation rewind.
+  supportsConversationRollback: false,
 } as const;
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -110,8 +115,9 @@ function droidModelsFromSettings(
 }
 
 /**
- * Builds the provider model list from one config-options snapshot. Only the
- * snapshot's currently selected model carries an observed reasoning-effort
+ * Builds the provider model list from one config-options snapshot, taken
+ * when the session starts. Only the snapshot's currently selected model (the
+ * default) carries an observed reasoning-effort
  * ladder (Droid refreshes ladders asynchronously after each selection);
  * other models stay listed with unknown (`null`) capabilities until they are
  * selected. Known-empty is reserved for a model that was selected and
@@ -139,6 +145,11 @@ function buildDroidDiscoveredModelsFromConfigOptions(
       // BYOK models. isCustom is reserved for legacy config.customModels rows
       // that clients rebuild from settings, not Droid's `custom:` id syntax.
       isCustom: false,
+      // At session start the selected model is Droid's own default (verified
+      // against Droid 0.213.0 and 0.230.0), not the first one it lists. This
+      // flag is Droid's whole part in the default: the shared automatic model
+      // policy (`resolveAutomaticModel`) chooses the reported default.
+      ...(model.capabilitiesObserved ? { isDefault: true } : {}),
       ...(model.providerCostLabel ? { providerCostLabel: model.providerCostLabel } : {}),
       capabilities:
         !model.capabilitiesObserved && metadata === undefined
@@ -181,9 +192,38 @@ export function isDroidAuthenticationRequiredError(error: unknown): boolean {
   return candidates.some(hasAuthMessage);
 }
 
+const isAcpProcessExited = Schema.is(EffectAcpErrors.AcpProcessExitedError);
+const isAcpSpawnFailure = Schema.is(EffectAcpErrors.AcpSpawnError);
+const isAcpRequestFailure = Schema.is(EffectAcpErrors.AcpRequestError);
+
+/**
+ * A short reason for a failed ACP startup, or none when the failure has no
+ * safe wording. Never the process's own output: it can carry tokens. Droid's
+ * answer to a startup request is quoted with the instance's credentials redacted.
+ */
+function describeDroidAcpStartupFailure(
+  cause: Cause.Cause<unknown>,
+  redactCredentials: (text: string) => string,
+): string | undefined {
+  // The probe reports a failed session start as a defect carrying its cause.
+  const squashed = Cause.squash(cause);
+  const failure = Cause.isCause(squashed) ? Cause.squash(squashed) : squashed;
+  if (isAcpProcessExited(failure))
+    return `Droid exited${failure.code === undefined ? "" : ` with code ${failure.code}`} before it was ready`;
+  if (isAcpSpawnFailure(failure)) return "Droid could not be started";
+  if (isAcpRequestFailure(failure)) {
+    const answer = redactCredentials(failure.errorMessage.trim().split("\n", 1)[0] ?? "").trim();
+    if (!answer) return undefined;
+    return `Droid answered "${answer.length > 120 ? `${answer.slice(0, 119).trimEnd()}…` : answer}"`;
+  }
+  return undefined;
+}
+
 interface DroidAcpProbeOutcome {
   readonly modelConnections?: ServerProviderDraft["modelConnections"];
   readonly authentication: "authenticated" | "unauthenticated";
+  /** The probe's Droid session, reused for skill discovery. */
+  readonly sessionId?: string;
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly accountCapabilities: DroidAccountCapabilities;
 }
@@ -203,6 +243,7 @@ const makeDroidAcpProbeRuntime = (
   droidSettings: DroidSettings,
   environment: NodeJS.ProcessEnv,
   makeAcpRuntime: DroidAcpRuntimeFactory,
+  cwd: string,
 ) =>
   Effect.gen(function* () {
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -210,7 +251,7 @@ const makeDroidAcpProbeRuntime = (
       droidSettings,
       environment,
       childProcessSpawner,
-      cwd: process.cwd(),
+      cwd,
       clientInfo: { name: "scient-provider-probe", version: "0.0.0" },
       clientCapabilities: DROID_PROBE_CLIENT_CAPABILITIES,
       authenticationMode: "passive",
@@ -228,8 +269,9 @@ const makeDroidAcpProbeRuntime = (
  */
 const probeAndDiscoverDroidViaAcp = (
   droidSettings: DroidSettings,
-  environment: NodeJS.ProcessEnv = process.env,
-  makeAcpRuntime: DroidAcpRuntimeFactory = makeDroidAcpRuntime,
+  environment: NodeJS.ProcessEnv,
+  makeAcpRuntime: DroidAcpRuntimeFactory,
+  cwd: string,
 ): Effect.Effect<
   DroidAcpProbeOutcome,
   never,
@@ -241,9 +283,12 @@ const probeAndDiscoverDroidViaAcp = (
       // A spawn/construction failure is an environment defect, not an
       // authentication signal — route it to the defect channel so the probe
       // reports a generic error instead of "unauthenticated".
-      const acp = yield* makeDroidAcpProbeRuntime(droidSettings, environment, makeAcpRuntime).pipe(
-        Effect.catch((error) => Effect.die(error)),
-      );
+      const acp = yield* makeDroidAcpProbeRuntime(
+        droidSettings,
+        environment,
+        makeAcpRuntime,
+        cwd,
+      ).pipe(Effect.catch((error) => Effect.die(error)));
       const initializeResult = yield* acp
         .initialize()
         .pipe(Effect.catch((error) => Effect.die(error)));
@@ -284,6 +329,7 @@ const probeAndDiscoverDroidViaAcp = (
         );
         return {
           authentication: "authenticated",
+          sessionId: started.sessionId,
           models: baseModels,
           modelConnections: acp.assessModelConnections?.(baseModels),
           accountCapabilities,
@@ -293,6 +339,7 @@ const probeAndDiscoverDroidViaAcp = (
       const walkedBySlug = new Map(walkedModels.value.map((model) => [model.slug, model] as const));
       return {
         authentication: "authenticated",
+        sessionId: started.sessionId,
         accountCapabilities,
         modelConnections: acp.assessModelConnections?.(baseModels),
         models: baseModels.map((model) => {
@@ -307,6 +354,7 @@ const probeAndDiscoverDroidViaAcp = (
                     walked?.efforts ?? [],
                     metadata,
                     acp.getDefaultReasoningLevel?.(model.slug),
+                    walked?.replacedDefault,
                   ),
           };
         }),
@@ -314,10 +362,7 @@ const probeAndDiscoverDroidViaAcp = (
     }),
   );
 
-const runDroidVersionCommand = (
-  droidSettings: DroidSettings,
-  environment: NodeJS.ProcessEnv = process.env,
-) =>
+const runDroidVersionCommand = (droidSettings: DroidSettings, environment: NodeJS.ProcessEnv) =>
   Effect.gen(function* () {
     const command = resolveDroidCliBinaryPath(droidSettings.binaryPath);
     const spawnCommand = yield* resolveSpawnCommand(command, ["--version"], {
@@ -332,15 +377,40 @@ const runDroidVersionCommand = (
     );
   });
 
+/**
+ * `droid --version` alone: no session, no network. None when the command
+ * failed, timed out or exited non-zero; periodic status checks use it.
+ */
+export const probeDroidCliVersion = (
+  droidSettings: DroidSettings,
+  environment: NodeJS.ProcessEnv,
+): Effect.Effect<Option.Option<string | null>, never, ChildProcessSpawner.ChildProcessSpawner> =>
+  runDroidVersionCommand(droidSettings, environment).pipe(
+    Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS),
+    Effect.map((output) =>
+      Option.isSome(output) && output.value.code === 0
+        ? Option.some(parseGenericCliVersion(`${output.value.stdout}\n${output.value.stderr}`))
+        : Option.none(),
+    ),
+    Effect.orElseSucceed(() => Option.none()),
+  );
+
 export interface DroidProviderStatusResult {
   readonly snapshot: ServerProviderDraft;
   readonly accountCapabilities: DroidAccountCapabilities;
+  /** The probe's Droid session when one was started; skill discovery reuses it. */
+  readonly sessionId?: string;
 }
 
 const droidProviderStatusResult = (
   snapshot: ServerProviderDraft,
   accountCapabilities: DroidAccountCapabilities = EMPTY_ACCOUNT_CAPABILITIES,
-): DroidProviderStatusResult => ({ snapshot, accountCapabilities });
+  sessionId?: string,
+): DroidProviderStatusResult => ({
+  snapshot,
+  accountCapabilities,
+  ...(sessionId !== undefined ? { sessionId } : {}),
+});
 
 export const checkDroidProviderStatusWithCapabilities = Effect.fn(
   "checkDroidProviderStatusWithCapabilities",
@@ -348,6 +418,9 @@ export const checkDroidProviderStatusWithCapabilities = Effect.fn(
   droidSettings: DroidSettings,
   environment: NodeJS.ProcessEnv = process.env,
   makeAcpRuntime: DroidAcpRuntimeFactory = makeDroidAcpRuntime,
+  cwd: string = process.cwd(),
+  /** The instance's environment values marked sensitive. */
+  sensitiveEnvironmentValues: ReadonlyArray<string> = [],
 ): Effect.fn.Return<
   DroidProviderStatusResult,
   never,
@@ -453,11 +526,16 @@ export const checkDroidProviderStatusWithCapabilities = Effect.fn(
     droidSettings,
     environment,
     makeAcpRuntime,
+    cwd,
   ).pipe(Effect.timeoutOption(DROID_ACP_AUTH_DISCOVERY_TIMEOUT_MS), Effect.exit);
   if (Exit.isFailure(probeExit)) {
     yield* Effect.logWarning("Droid ACP auth/model probe failed", {
       errorTag: causeErrorTag(probeExit.cause),
     });
+    const reason = describeDroidAcpStartupFailure(
+      probeExit.cause,
+      makeDroidCredentialRedactor({ environment, sensitiveValues: sensitiveEnvironmentValues }),
+    );
     return droidProviderStatusResult(
       buildServerProvider({
         presentation: DROID_PRESENTATION,
@@ -469,7 +547,9 @@ export const checkDroidProviderStatusWithCapabilities = Effect.fn(
           version,
           status: "error",
           auth: { status: "unknown" },
-          message: "Droid CLI is installed but ACP startup failed. Check server logs for details.",
+          message: reason
+            ? `Droid CLI is installed but ACP startup failed: ${reason}.`
+            : "Droid CLI is installed but ACP startup failed. Check server logs for details.",
         },
       }),
     );
@@ -531,6 +611,7 @@ export const checkDroidProviderStatusWithCapabilities = Effect.fn(
         },
       }),
       probeOutcome.accountCapabilities,
+      probeOutcome.sessionId,
     );
   }
 
@@ -549,6 +630,7 @@ export const checkDroidProviderStatusWithCapabilities = Effect.fn(
       },
     }),
     probeOutcome.accountCapabilities,
+    probeOutcome.sessionId,
   );
 });
 

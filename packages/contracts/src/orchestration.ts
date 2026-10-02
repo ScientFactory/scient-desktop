@@ -1491,6 +1491,8 @@ const ThreadTurnStartBootstrap = Schema.Struct({
 export type ThreadTurnStartBootstrap = typeof ThreadTurnStartBootstrap.Type;
 
 export const ThreadTurnStartCommand = Schema.Struct({
+  submissionId: Schema.optional(TrimmedNonEmptyString),
+  composerSnapshot: Schema.optional(Schema.String.check(Schema.isMaxLength(4 * 1024 * 1024))),
   selectedScientSkillNames: Schema.optional(SelectedScientSkillNames),
   queueProtocolVersion: Schema.optional(Schema.Literal(2)),
   sendIntent: Schema.optional(Schema.Literals(["normal", "steer"])),
@@ -1518,6 +1520,8 @@ export const ThreadTurnStartCommand = Schema.Struct({
 });
 
 const ClientThreadTurnStartCommand = Schema.Struct({
+  submissionId: ThreadTurnStartCommand.fields.submissionId,
+  composerSnapshot: ThreadTurnStartCommand.fields.composerSnapshot,
   selectedScientSkillNames: Schema.optional(SelectedScientSkillNames),
   queueProtocolVersion: Schema.optional(Schema.Literal(2)),
   sendIntent: Schema.optional(Schema.Literals(["normal", "steer"])),
@@ -2779,6 +2783,13 @@ export const ProjectionPendingApprovalDecision = Schema.NullOr(ProviderApprovalD
 export type ProjectionPendingApprovalDecision = typeof ProjectionPendingApprovalDecision.Type;
 
 export const DispatchResult = Schema.Struct({
+  submission: Schema.optional(
+    Schema.Struct({
+      submissionId: TrimmedNonEmptyString,
+      outcome: Schema.Literals(["sent", "queued"]),
+    }),
+  ),
+  queued: Schema.optional(Schema.Boolean),
   sequence: NonNegativeInt,
   /** Scient fork receipt: exact retained attachment ownership, absent on older servers. */
   forkAttachmentIdMap: Schema.optional(Schema.Record(ChatAttachmentId, ChatAttachmentId)),

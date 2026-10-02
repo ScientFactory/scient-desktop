@@ -122,6 +122,8 @@ export interface WorkLogEntry {
     readonly agentTaskIds: ReadonlyArray<string>;
     readonly agents: ReadonlyArray<{
       readonly title: string;
+      /** The kind of agent the provider named, such as "explorer". */
+      readonly role?: string | undefined;
       readonly status: WorkLogToolLifecycleStatus | undefined;
       readonly detail: string | undefined;
       /** When this member last reported, so the card can show the newest activity. */
@@ -136,6 +138,7 @@ interface DerivedWorkLogEntry extends WorkLogEntry {
   collapseKey?: string;
   /** Grouping key for subagent lifecycle rows (one row per agent). */
   taskId?: string;
+  agentRole?: string;
   /** The tool call that launched this agent, when the provider reports one. */
   agentSpawnToolCallId?: string;
   isWorkflowCoordinator?: boolean;
@@ -358,6 +361,13 @@ function resolvePendingUserInputAnswer(
   );
 }
 
+/**
+ * A sub-agent that became idle when its parent turn ended, with no result
+ * reported (Droid's background sub-agents). Other idle agents can resume.
+ */
+const isSubagentLeftIdle = (payload: Record<string, unknown>) =>
+  payload.status === "idle" && payload.taskType === "subagent" && payload.timelineBypass !== true;
+
 /** Some providers settle agents through task.updated instead of task.completed. */
 const MOBILE_TERMINAL_UPDATE_STATUSES: ReadonlySet<string> = new Set([
   "completed",
@@ -377,7 +387,8 @@ function isTerminalTaskUpdate(activity: OrchestrationThreadActivity): boolean {
   return (
     typeof payload?.status === "string" &&
     (MOBILE_TERMINAL_UPDATE_STATUSES.has(payload.status) ||
-      (payload.timelineBypass === true && payload.status === "idle"))
+      (payload.status === "idle" &&
+        (payload.timelineBypass === true || isSubagentLeftIdle(payload))))
   );
 }
 
@@ -557,6 +568,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     if (spawnToolCallId) {
       entry.agentSpawnToolCallId = spawnToolCallId;
     }
+    const role = asTrimmedString(payload.role);
+    if (role) {
+      entry.agentRole = role;
+    }
     if (
       payload.taskType === "local_workflow" ||
       (typeof payload.workflowName === "string" && payload.workflowName.length > 0)
@@ -637,9 +652,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     toolLifecycleStatus = activity.tone === "error" ? "failed" : "completed";
   }
   // A Codex child that finishes its turn reports "idle" (resumable, not
-  // terminal). For the batch row that is a finished member.
+  // terminal). For the batch row that is a finished member. A sub-agent left
+  // idle by the end of its turn reported no result: not working, not completed.
   if (!toolLifecycleStatus && isTaskActivity && payload?.status === "idle") {
-    toolLifecycleStatus = "completed";
+    toolLifecycleStatus = isSubagentLeftIdle(payload) ? "stopped" : "completed";
   }
   if (toolLifecycleStatus) {
     entry.toolLifecycleStatus = toolLifecycleStatus;
@@ -704,6 +720,7 @@ function agentSpawnMember(
 ) {
   return {
     title: entry.toolTitle ?? previous?.title ?? entry.label,
+    role: entry.agentRole ?? previous?.role,
     status: entry.toolLifecycleStatus ?? previous?.status,
     detail: entry.detail ?? previous?.detail,
     updatedAt: entry.createdAt,
@@ -1151,9 +1168,15 @@ export function agentSpawnSummary(
 ): AgentSpawnSummary {
   const members = agentSpawnMembers(spawn).map((agent) => {
     const tone = agentSpawnTone(agent.status);
+    const status = tone === "working" ? "working" : (agent.status ?? tone);
+    // The agent's type goes before its state, unless the title already is it.
+    const role =
+      agent.role && agent.role.toLowerCase() !== agent.title.trim().toLowerCase()
+        ? agent.role
+        : undefined;
     return {
       title: agent.title,
-      status: tone === "working" ? "working" : (agent.status ?? tone),
+      status: role ? `${role} · ${status}` : status,
       tone,
       detail: agent.detail,
       updatedAt: agent.updatedAt,

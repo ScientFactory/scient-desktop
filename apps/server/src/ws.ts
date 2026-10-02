@@ -13,6 +13,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import * as EffectAcpErrors from "effect-acp/errors";
 import { customModelProviderId } from "./customModels.ts";
 import { droidCustomModelId } from "./provider/droid/DroidCustomModels.ts";
+import { droidToolGuardTestRefusal } from "./textGeneration/DroidTextGeneration.ts";
 import { encodeOmpModelSlug } from "./provider/omp/OmpModel.ts";
 import { encodePiModelSlug } from "./provider/pi/PiModel.ts";
 import * as Crypto from "effect/Crypto";
@@ -23,12 +24,14 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import { rejectCodexSubscriptionSharing } from "./scient/providerLifecycle/codexSubscriptionSharingPolicy.ts";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   AuthAccessStreamError,
@@ -61,10 +64,12 @@ import {
   ORCHESTRATION_WS_METHODS,
   ProjectId,
   PROVIDER_DISPLAY_NAMES,
+  type ProjectCreateNewInput,
   type ProjectDirectoryFailure,
   type ProjectDirectoryOperation,
   type ProjectEntriesFailure,
   type ProjectFileFailure,
+  type ProjectFileErrorReason,
   type ProjectFileOperation,
   ProjectListDirectoryError,
   ProjectListEntriesError,
@@ -125,6 +130,7 @@ import { makeThreadLiveEventCoalescer } from "./orchestration/ThreadLiveEventCoa
 import { makeLiveStreamBudget, type RetainedLiveItem } from "./orchestration/LiveStreamBudget.ts";
 import {
   cleanupFailedUploadedAttachments,
+  cleanupUnusedAttachments,
   normalizeDispatchCommand,
   requireQueueProtocol,
 } from "./orchestration/Normalizer.ts";
@@ -178,6 +184,7 @@ import {
   prepareEnvironmentFileOpen,
   watchEnvironmentFile,
 } from "./scient/fileOpening/EnvironmentFileOpen.ts";
+import { resolveEnvironmentFileLink } from "./scient/fileOpening/EnvironmentFileLinkResolve.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -202,6 +209,7 @@ import { linkCreatedPullRequest } from "./git/linkCreatedPullRequest.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
+import * as NewProject from "./project/NewProject.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
@@ -223,6 +231,7 @@ import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { readAcceptedTurnReceipt } from "./scient/threadQueue/Ledger.ts";
 import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
@@ -239,6 +248,10 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
+// SCIENT-FORK:START — Serves the two upstream project-creation capability gates.
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
+// SCIENT-FORK:END
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 const isTextGenerationError = Schema.is(TextGenerationError);
 const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
@@ -253,8 +266,22 @@ const compactProviderError = (value: unknown): string | null => {
   return compact.length <= 500 ? compact : `${compact.slice(0, 497)}...`;
 };
 
-const customModelTestFailure = (driver: ProviderDriverKind, cause: unknown) => {
-  const agent = PROVIDER_DISPLAY_NAMES[driver] ?? driver;
+const CUSTOM_MODEL_TEST_TIMEOUT_SECONDS = 45;
+
+/** Names the agent the test ran through: its instance label, else the driver's name. */
+const customModelTestFailure = (
+  instance: { readonly driverKind: ProviderDriverKind; readonly displayName: string | undefined },
+  cause: unknown,
+) => {
+  const agent =
+    instance.displayName ?? PROVIDER_DISPLAY_NAMES[instance.driverKind] ?? instance.driverKind;
+  if (Predicate.isTagged(cause, "TimeoutError"))
+    return new CustomModelError({
+      message: `${agent}: No response within ${CUSTOM_MODEL_TEST_TIMEOUT_SECONDS} s.`,
+    });
+  // Droid refuses to run without its tool blocking; say so for a Test, not for titles.
+  const toolGuard = isTextGenerationError(cause) ? droidToolGuardTestRefusal(cause) : undefined;
+  if (toolGuard !== undefined) return new CustomModelError({ message: `${agent}: ${toolGuard}` });
   if (isTextGenerationError(cause) && isAcpRequestError(cause.cause)) {
     const providerDetail = compactProviderError(cause.cause.data);
     if (providerDetail) return new CustomModelError({ message: `${agent}: ${providerDetail}` });
@@ -400,6 +427,27 @@ function filesystemBrowseFailureContext(error: WorkspaceEntries.WorkspaceEntries
   }
 }
 
+/** The operating system's error code for a failed file operation, when it gave one. */
+function projectFileOsErrorCode(cause: unknown): string | undefined {
+  const code =
+    typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
+  return typeof code === "string" && /^[A-Z][A-Z0-9_]{0,31}$/u.test(code) ? code : undefined;
+}
+
+/** The operating system's reason for a failed file operation, when it gave one. */
+function projectFileErrorReason(code: string | undefined): ProjectFileErrorReason | undefined {
+  switch (code) {
+    case "ENOENT":
+    case "ENOTDIR":
+      return "not_found";
+    case "EACCES":
+    case "EPERM":
+      return "permission_denied";
+    default:
+      return undefined;
+  }
+}
+
 function projectFileFailureContext(
   error:
     | WorkspaceFileSystem.WorkspaceFileSystemError
@@ -411,17 +459,24 @@ function projectFileFailureContext(
   readonly operation?: ProjectFileOperation;
   readonly operationPath?: string;
   readonly currentRevision?: string;
+  readonly reason?: ProjectFileErrorReason;
+  readonly osErrorCode?: string;
 } {
   switch (error._tag) {
     case "WorkspacePathOutsideRootError":
       return { failure: "workspace_path_outside_root" };
-    case "WorkspaceFileSystemOperationError":
+    case "WorkspaceFileSystemOperationError": {
+      const osErrorCode = projectFileOsErrorCode(error.cause);
+      const reason = projectFileErrorReason(osErrorCode);
       return {
         failure: "operation_failed",
         resolvedPath: error.resolvedPath,
         operation: error.operation,
         operationPath: error.operationPath,
+        ...(reason ? { reason } : {}),
+        ...(osErrorCode ? { osErrorCode } : {}),
       };
+    }
     case "WorkspaceFilePathEscapeError":
       return {
         failure: "resolved_path_outside_root",
@@ -1859,7 +1914,10 @@ const makeWsRpcLayer = (
             // started. Drop the cancel handle and make the handoff atomic.
             yield* track(worktreeSetupTracker.markUncancellable(threadId));
             const started = yield* Effect.uninterruptible(
-              dispatchFromClient(finalTurnStartCommand),
+              orchestrationEngine.dispatch(finalTurnStartCommand, {
+                origin: clientOrigin,
+                ...(preparingSessionSet ? { bootstrapHandoff: command.message.messageId } : {}),
+              }),
             );
             yield* track(worktreeSetupTracker.stageStatus(threadId, "agent", "done"));
             // An async setup script outlives the handoff: the snapshot stays
@@ -2031,9 +2089,154 @@ const makeWsRpcLayer = (
           return yield* runBootstrap;
         });
 
-      const dispatchNormalizedCommand = (
+      const path = yield* Path.Path;
+      // Scratch threads run in a plain folder. Production uses the data dir;
+      // the dev runner can select isolated storage outside its checkout.
+      // Offer it only when the selected parent is outside any work tree,
+      // so it cannot inherit a repository's Git status and checkpoints. Detection failures and
+      // defects fail closed and hide the folder, never the config.
+      // Probed once per connection: a negative VCS detection is not cached.
+      // An interrupt stays an interrupt, so a config load cancelled mid-probe
+      // invalidates the cache and the next load probes again.
+      // SCIENT-FORK:START — Product policy and environment capability share
+      // this advertisement. Scratch retains a real owning project; each
+      // thread's registered plain folder is also admitted by Scient's resolver.
+      const scratchThreadsOffered = SCIENT_DESKTOP_IDENTITY.projectlessThreadsEnabled;
+      const scratchWorkspaceRoot = ServerConfig.scratchWorkspaceRoot(config, path);
+      // SCIENT-FORK:END
+      const [cachedScratchWorkspaceRoot, invalidateScratchWorkspaceRoot] =
+        yield* Effect.cachedInvalidateWithTTL(
+          gitWorkflow.isRepository(path.dirname(scratchWorkspaceRoot)).pipe(
+            Effect.map((isRepository) =>
+              !scratchThreadsOffered || isRepository ? undefined : scratchWorkspaceRoot,
+            ),
+            Effect.catchCause((cause) =>
+              Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(undefined),
+            ),
+          ),
+          Duration.infinity,
+        );
+      const resolveScratchWorkspaceRoot = cachedScratchWorkspaceRoot.pipe(
+        Effect.onInterrupt(() => invalidateScratchWorkspaceRoot),
+      );
+
+      const fileSystem = yield* FileSystem.FileSystem;
+      // Each Scratch thread gets its own folder under the Scratch root, named
+      // from its date, first words, and id. It rides in worktreePath like any
+      // thread that runs outside its project root, so the provider, terminal,
+      // and file tree all use it. Threads that already name a folder keep it.
+      const scratchThreadFolder = (input: {
+        readonly threadId: ThreadId;
+        readonly projectId: ProjectId;
+        readonly worktreePath: string | null;
+        readonly createdAt: string;
+        readonly text: string;
+      }): Effect.Effect<string | null, OrchestrationDispatchCommandError> =>
+        Effect.gen(function* () {
+          if (input.worktreePath !== null) return null;
+          const scratchRoot = yield* resolveScratchWorkspaceRoot;
+          if (scratchRoot === undefined) return null;
+          const project = yield* projectionSnapshotQuery.getProjectShellById(input.projectId).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationDispatchCommandError({
+                  message: "Failed to look up the thread's project.",
+                  cause,
+                }),
+            ),
+          );
+          if (
+            Option.isNone(project) ||
+            normalizeProjectPathForComparison(project.value.workspaceRoot) !==
+              normalizeProjectPathForComparison(scratchRoot)
+          ) {
+            return null;
+          }
+          // Only [a-z0-9] reaches the name, so it stays one path segment inside
+          // the scratch root, and the words are capped so pasted data cannot
+          // outgrow a file name. Each leaf is created without `recursive`, so
+          // the create itself claims it: a taken short name falls back to the
+          // full id, which only the same thread can already hold.
+          const words = input.text
+            .toLowerCase()
+            .split(/[^a-z0-9]+/)
+            .filter(Boolean)
+            .slice(0, 5)
+            .join("-")
+            .slice(0, 48)
+            .replace(/-+$/, "");
+          const id = input.threadId.toLowerCase().replace(/[^a-z0-9]/g, "");
+          const folderFor = (idPart: string) =>
+            path.join(
+              scratchRoot,
+              [input.createdAt.slice(0, 10), words, idPart].filter(Boolean).join("-"),
+            );
+          yield* fileSystem.makeDirectory(scratchRoot, { recursive: true }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationDispatchCommandError({
+                  message: "Failed to create the folder for threads without a project.",
+                  cause,
+                }),
+            ),
+          );
+          const claim = (folder: string) =>
+            fileSystem.makeDirectory(folder).pipe(
+              Effect.as(true),
+              Effect.catchIf(
+                (error) => error.reason._tag === "AlreadyExists",
+                () => Effect.succeed(false),
+              ),
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationDispatchCommandError({
+                    message: "Failed to create the thread's folder.",
+                    cause,
+                  }),
+              ),
+            );
+          const shortFolder = folderFor(id.slice(0, 8));
+          if (yield* claim(shortFolder)) return shortFolder;
+          const fullFolder = folderFor(id);
+          yield* claim(fullFolder);
+          return fullFolder;
+        });
+      const withScratchThreadFolder = (
+        command: OrchestrationCommand,
+      ): Effect.Effect<OrchestrationCommand, OrchestrationDispatchCommandError> => {
+        if (command.type === "thread.create") {
+          return scratchThreadFolder({ ...command, text: command.title }).pipe(
+            Effect.map((worktreePath) =>
+              worktreePath === null ? command : { ...command, worktreePath },
+            ),
+          );
+        }
+        if (command.type !== "thread.turn.start") return Effect.succeed(command);
+        const bootstrap = command.bootstrap;
+        const createThread = bootstrap?.createThread;
+        if (bootstrap === undefined || createThread === undefined) return Effect.succeed(command);
+        return scratchThreadFolder({
+          ...createThread,
+          threadId: command.threadId,
+          text: command.message.text,
+        }).pipe(
+          Effect.map((worktreePath) =>
+            worktreePath === null
+              ? command
+              : {
+                  ...command,
+                  bootstrap: { ...bootstrap, createThread: { ...createThread, worktreePath } },
+                },
+          ),
+        );
+      };
+
+      const dispatchPreparedCommand = (
         normalizedCommand: OrchestrationCommand,
-      ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> => {
+      ): Effect.Effect<
+        import("@t3tools/contracts").DispatchResult,
+        OrchestrationDispatchCommandError
+      > => {
         const dispatchEffect =
           normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
             ? dispatchBootstrapTurnStart(normalizedCommand)
@@ -2068,6 +2271,138 @@ const makeWsRpcLayer = (
           );
       };
 
+      const dispatchNormalizedCommand = (
+        command: OrchestrationCommand,
+      ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> =>
+        withScratchThreadFolder(command).pipe(Effect.flatMap(dispatchPreparedCommand));
+
+      // One Scratch project per environment, created the first time a client
+      // asks. Two clients racing the create both reach dispatch; the loser's
+      // duplicate-root rejection resolves to the project the winner made.
+      // The folder is (re)made on every call so a deleted Scratch still runs.
+      const ensureScratchProject = Effect.gen(function* () {
+        const workspaceRoot = yield* resolveScratchWorkspaceRoot;
+        if (workspaceRoot === undefined) {
+          return yield* new OrchestrationDispatchCommandError({
+            message: "Threads without a project are not available on this environment.",
+          });
+        }
+        yield* fileSystem.makeDirectory(workspaceRoot, { recursive: true }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestrationDispatchCommandError({
+                message: "Failed to create the folder for threads without a project.",
+                cause,
+              }),
+          ),
+        );
+        const findScratchProjectId = projectionSnapshotQuery
+          .getActiveProjectByWorkspaceRoot(workspaceRoot)
+          .pipe(
+            Effect.map(Option.map((project) => project.id)),
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationDispatchCommandError({
+                  message: "Failed to look up the home for threads without a project.",
+                  cause,
+                }),
+            ),
+          );
+        const existingProjectId = yield* findScratchProjectId;
+        if (Option.isSome(existingProjectId)) {
+          return { projectId: existingProjectId.value };
+        }
+        const projectId = ProjectId.make(yield* randomUUID);
+        return yield* Effect.gen(function* () {
+          const command = yield* normalizeDispatchCommand({
+            type: "project.create",
+            commandId: yield* serverCommandId("scratch-project-create"),
+            projectId,
+            title: "No project",
+            workspaceRoot,
+            createdAt: yield* nowIso,
+          });
+          yield* dispatchNormalizedCommand(command);
+          // A dashed chat bubble in neutral gray marks Scratch. Set once at
+          // create, so a user's own icon choice is never overwritten.
+          yield* dispatchNormalizedCommand(
+            yield* normalizeDispatchCommand({
+              type: "project.meta.update",
+              commandId: yield* serverCommandId("scratch-project-icon"),
+              projectId,
+              projectIcon: { kind: "lucide", name: "message-square-dashed", color: "gray" },
+            }),
+          );
+          return { projectId };
+        }).pipe(
+          Effect.catch((error) =>
+            findScratchProjectId.pipe(
+              Effect.flatMap(
+                Option.match({
+                  onNone: () => Effect.fail(error),
+                  onSome: (racedProjectId) => Effect.succeed({ projectId: racedProjectId }),
+                }),
+              ),
+            ),
+          ),
+        );
+      });
+
+      // Projects started from just a name live beside Scratch and worktrees,
+      // away from folders the user organizes by hand. A nested repository is
+      // fine here (unlike Scratch) because each project gets its own `git init`.
+      // SCIENT-FORK:START — Scient already creates a project from any typed
+      // path ("Create & Add"), and that path also runs Scient's project
+      // initialization. Upstream's name-only root skips all of that, so it stays
+      // unadvertised until the owner picks between the two paths.
+      const newProjectsRoot = SCIENT_DESKTOP_IDENTITY.createProjectFromNameEnabled
+        ? path.resolve(config.baseDir, "projects")
+        : undefined;
+      // SCIENT-FORK:END
+      const createNewProject = (input: ProjectCreateNewInput) =>
+        Effect.gen(function* () {
+          if (newProjectsRoot === undefined) {
+            return yield* new OrchestrationDispatchCommandError({
+              message: "Starting a project from just a name is not available on this environment.",
+            });
+          }
+          const folder = yield* NewProject.createNewProjectFolder({
+            root: newProjectsRoot,
+            name: input.name,
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationDispatchCommandError({
+                  message: "Failed to create the project folder.",
+                  cause,
+                }),
+            ),
+          );
+          const projectId = ProjectId.make(yield* randomUUID);
+          yield* Effect.gen(function* () {
+            const command = yield* normalizeDispatchCommand({
+              type: "project.create",
+              commandId: yield* serverCommandId("project-create-new"),
+              projectId,
+              title: input.name,
+              workspaceRoot: folder.workspaceRoot,
+              createdAt: yield* nowIso,
+            });
+            yield* dispatchNormalizedCommand(command);
+          }).pipe(
+            // Only a rejected command means no project uses the folder. An
+            // interrupt can land after the command is queued, so keep it then.
+            Effect.tapError(() =>
+              fileSystem.remove(folder.workspaceRoot, { recursive: true }).pipe(Effect.ignore),
+            ),
+          );
+          return {
+            projectId,
+            workspaceRoot: folder.workspaceRoot,
+            ...(folder.commitError === undefined ? {} : { commitError: folder.commitError }),
+          };
+        });
+
       // Only clients that answer /usage-limits themselves see it in the catalogs;
       // an older client would send the injected command to the provider.
       const loadServerConfig = (options: { readonly usageLimitsCommand: boolean }) =>
@@ -2084,6 +2419,7 @@ const makeWsRpcLayer = (
           );
           const environment = yield* serverEnvironment.getDescriptor;
           const auth = yield* serverAuth.getDescriptor();
+          const scratchWorkspaceRoot = yield* resolveScratchWorkspaceRoot;
           const availableEditors: ReadonlyArray<EditorId> = yield* resolveAvailableEditorsForConfig(
             externalLauncher.resolveAvailableEditors(),
           );
@@ -2132,6 +2468,8 @@ const makeWsRpcLayer = (
             threadResumeCompletionMarker: true,
             threadSnapshotPagination: true,
             reasoningMessages: true,
+            ...(scratchWorkspaceRoot === undefined ? {} : { scratchWorkspaceRoot }),
+            ...(newProjectsRoot === undefined ? {} : { newProjectsRoot }),
           };
         });
 
@@ -2147,6 +2485,10 @@ const makeWsRpcLayer = (
             Effect.gen(function* () {
               yield* requireQueueProtocol(command);
               yield* ProjectCloneTracker.rejectCommandsDuringClone(projectCloneTracker, command);
+              const accepted = yield* readAcceptedTurnReceipt(command).pipe(
+                Effect.provideService(SqlClient.SqlClient, sql),
+              );
+              if (accepted) return accepted;
               const normalizedCommand = yield* normalizeDispatchCommand(command);
               // Archive removes the thread from the client, so this transport
               // closes its session and terminals after the command lands.
@@ -2187,6 +2529,10 @@ const makeWsRpcLayer = (
                     : Effect.void,
                 ),
               );
+              if (normalizedCommand.type === "thread.turn.start")
+                yield* cleanupUnusedAttachments(normalizedCommand.message.attachments).pipe(
+                  Effect.provideService(SqlClient.SqlClient, sql),
+                );
               yield* recordClientCommandAnalytics(normalizedCommand);
               let forkAttachmentIdMap: Readonly<Record<string, string>> | void = undefined;
               // SCIENT-FORK:START — command persistence and workspace setup form
@@ -2748,6 +3094,7 @@ const makeWsRpcLayer = (
                 ? providerRegistry.refreshWorkspaceSnapshot({
                     instanceId: input.instanceId,
                     cwd: input.cwd,
+                    fresh: input.fresh === true,
                   })
                 : input.instanceId !== undefined
                   ? providerRegistry.refreshInstance(input.instanceId)
@@ -2916,6 +3263,20 @@ const makeWsRpcLayer = (
             providerAuth.complete(input, currentSessionId),
             { "rpc.aggregate": "provider" },
           ),
+        [WS_METHODS.chatGptReconnectProfile]: (input) =>
+          rejectCodexSubscriptionSharing(input.instanceId, "export"),
+        [WS_METHODS.chatGptImportProfile]: (input) =>
+          rejectCodexSubscriptionSharing(input.instanceId, "import"),
+        [WS_METHODS.chatGptHandoffSubscribe]: (input) =>
+          Stream.fromEffect(rejectCodexSubscriptionSharing(input.instanceId, "handoff")),
+        [WS_METHODS.codexAuthCallbackSubscribe]: (input) =>
+          observeRpcStream(
+            WS_METHODS.codexAuthCallbackSubscribe,
+            Stream.fromEffect(rejectCodexSubscriptionSharing(input.instanceId, "callback")),
+            {
+              "rpc.aggregate": "provider",
+            },
+          ),
         [WS_METHODS.providerAuthCancel]: (input) =>
           observeRpcEffect(
             WS_METHODS.providerAuthCancel,
@@ -3057,8 +3418,8 @@ const makeWsRpcLayer = (
                 modelSelection: createModelSelection(input.instanceId, slug),
               })
               .pipe(
-                Effect.timeout("45 seconds"),
-                Effect.mapError((cause) => customModelTestFailure(instance.driverKind, cause)),
+                Effect.timeout(Duration.seconds(CUSTOM_MODEL_TEST_TIMEOUT_SECONDS)),
+                Effect.mapError((cause) => customModelTestFailure(instance, cause)),
               );
             const latest = yield* serverSettings.getSettings;
             if (latest.customModels.revision !== input.revision)
@@ -3524,6 +3885,14 @@ const makeWsRpcLayer = (
             }),
             { "rpc.aggregate": "source-control" },
           ),
+        [WS_METHODS.projectsEnsureScratch]: () =>
+          observeRpcEffect(WS_METHODS.projectsEnsureScratch, ensureScratchProject, {
+            "rpc.aggregate": "orchestration",
+          }),
+        [WS_METHODS.projectsCreateNew]: (input) =>
+          observeRpcEffect(WS_METHODS.projectsCreateNew, createNewProject(input), {
+            "rpc.aggregate": "orchestration",
+          }),
         [WS_METHODS.projectCloneCancel]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectCloneCancel,
@@ -3623,7 +3992,9 @@ const makeWsRpcLayer = (
         [WS_METHODS.projectsReadFile]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsReadFile,
-            workspaceFileSystem.readFile(input).pipe(
+            // The viewer's read: a file is shown wherever it lives, read-only
+            // outside the project. Every other feature reads with readFile.
+            workspaceFileSystem.viewFile(input).pipe(
               Effect.map((result) => ({
                 ...result,
                 readOnly:
@@ -3888,6 +4259,12 @@ const makeWsRpcLayer = (
             prepareEnvironmentFileOpen(input),
             { "rpc.aggregate": "workspace" },
           ),
+        [WS_METHODS.filesystemResolveFileLink]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.filesystemResolveFileLink,
+            resolveEnvironmentFileLink(input),
+            { "rpc.aggregate": "workspace" },
+          ),
         [WS_METHODS.filesystemSubscribeFileChanges]: (input) =>
           observeRpcStream(WS_METHODS.filesystemSubscribeFileChanges, watchEnvironmentFile(input), {
             "rpc.aggregate": "workspace",
@@ -4073,11 +4450,18 @@ const makeWsRpcLayer = (
                     resource: input.resource,
                   });
                 }
+                // A cloned project exists before its files do. Clients ask again
+                // when the clone lands (see createProjectFaviconUrlAtomFamily).
+                const clone = yield* projectCloneTracker.get(project.value.id);
                 return yield* issueAssetUrl({
                   resource: input.resource,
                   ...(project.value.faviconPath
                     ? { projectFaviconPath: project.value.faviconPath }
                     : {}),
+                  projectCheckoutPending:
+                    clone !== null &&
+                    clone.phase !== "done" &&
+                    clone.destinationPath === project.value.workspaceRoot,
                 });
               }
               // SCIENT-WORKSPACE-ASSET: a workspace file is rooted in the

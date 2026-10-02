@@ -1,5 +1,11 @@
 import { enqueueQueue } from "../../scient/threadQueue/operations.ts";
-import { readQueue, writeQueue } from "../../scient/threadQueue/Ledger.ts";
+import {
+  readQueue,
+  writeQueue,
+  finalizeQueueTurn,
+  queueCommandItemId,
+  readAcceptedTurnReceipt,
+} from "../../scient/threadQueue/Ledger.ts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
@@ -2155,6 +2161,202 @@ describe("OrchestrationEngine", () => {
 });
 
 describe("Scient queue atomic engine boundary", () => {
+  async function setupQueueThread() {
+    const system = await createOrchestrationSystem();
+    const threadId = ThreadId.make("admission-thread");
+    const projectId = ProjectId.make("admission-project");
+    await system.run(
+      system.engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("admission-project"),
+        projectId,
+        title: "Queue",
+        workspaceRoot: "/tmp/queue-test",
+        createdAt: now(),
+      }),
+    );
+    await system.run(
+      system.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("admission-thread"),
+        threadId,
+        projectId,
+        title: "Queue",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: now(),
+      }),
+    );
+    return { system, threadId };
+  }
+  it("accepts Send in the ready/checkpoint gap, reconciles retries, and delivers the same message once", async () => {
+    const { system, threadId } = await setupQueueThread();
+    try {
+      await system.run(
+        writeQueue(threadId, {
+          ...(await system.run(readQueue(threadId))),
+          blocked: true,
+          turnId: "finishing",
+        }),
+      );
+      const command = {
+        type: "thread.turn.start" as const,
+        commandId: CommandId.make("gap-send"),
+        sendIntent: "normal" as const,
+        submissionId: "gap-submission",
+        threadId,
+        message: {
+          messageId: MessageId.make("gap-message"),
+          role: "user" as const,
+          text: "send once",
+          attachments: [],
+        },
+        runtimeMode: "approval-required" as const,
+        interactionMode: "plan" as const,
+        composerSnapshot: "draft context",
+        selectedScientSkillNames: ["skill"],
+        createdAt: now(),
+      };
+      const [first, duplicate] = await Promise.all([
+        system.run(system.engine.dispatch(command)),
+        system.run(system.engine.dispatch(command)),
+      ]);
+      expect(first).toEqual(duplicate);
+      expect(first.submission?.outcome).toBe("queued");
+      expect(await system.run(readAcceptedTurnReceipt(command))).toEqual(first);
+      let thread = await system.readThread(threadId);
+      expect(Option.isSome(thread) ? thread.value.messages.length : -1).toBe(0);
+      let doc = await system.run(readQueue(threadId));
+      expect(doc.items).toHaveLength(1);
+      expect(doc.items[0]).toMatchObject({
+        messageId: "gap-message",
+        runtimeMode: "approval-required",
+        interactionMode: "plan",
+        composerSnapshot: "draft context",
+        selectedScientSkillNames: ["skill"],
+      });
+      await system.run(finalizeQueueTurn(threadId, "finishing", true, "answer"));
+      expect((await system.run(readQueue(threadId))).blocked).toBe(true);
+      await system.run(finalizeQueueTurn(threadId, "finishing", true, "checkpoint"));
+      doc = await system.run(readQueue(threadId));
+      expect(doc.blocked).toBe(false);
+      const delivery = {
+        ...command,
+        commandId: CommandId.make(`delivery:${doc.revision}`),
+        queueItemId: queueCommandItemId(command),
+        queueRevision: doc.revision,
+      };
+      await system.run(system.engine.dispatch(delivery));
+      await system.run(system.engine.dispatch(delivery));
+      expect((await system.run(readQueue(threadId))).items).toHaveLength(0);
+      thread = await system.readThread(threadId);
+      expect(
+        Option.isSome(thread) ? thread.value.messages.map((message) => message.id) : [],
+      ).toEqual(["gap-message"]);
+      expect(Option.isSome(thread) && thread.value.runtimeMode).toBe("approval-required");
+      expect(Option.isSome(thread) && thread.value.interactionMode).toBe("plan");
+      expect((await system.run(system.engine.dispatch(command))).submission?.outcome).toBe(
+        "queued",
+      );
+    } finally {
+      await system.dispose();
+    }
+  });
+  it("hands bootstrap its own deferred message while queueing competing sends", async () => {
+    const { system, threadId } = await setupQueueThread();
+    try {
+      const messageId = MessageId.make("setup-message");
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.message.user.append",
+          commandId: CommandId.make("setup-append"),
+          threadId,
+          message: { messageId, text: "first", attachments: [] },
+          createdAt: now(),
+        }),
+      );
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("setup-session"),
+          threadId,
+          session: {
+            threadId,
+            status: "starting",
+            providerName: null,
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now(),
+          },
+          createdAt: now(),
+        }),
+      );
+      const command = {
+        type: "thread.turn.start" as const,
+        commandId: CommandId.make("setup-start"),
+        sendIntent: "normal" as const,
+        threadId,
+        message: { messageId, role: "user" as const, text: "first", attachments: [] },
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        createdAt: now(),
+      };
+      const competing = {
+        ...command,
+        commandId: CommandId.make("competing-start"),
+        message: {
+          ...command.message,
+          messageId: MessageId.make("competing-message"),
+          text: "second",
+        },
+      };
+      expect((await system.run(system.engine.dispatch(competing))).queued).toBe(true);
+      expect(
+        (await system.run(system.engine.dispatch(command, { bootstrapHandoff: messageId }))).queued,
+      ).toBe(false);
+      expect((await system.run(readQueue(threadId))).items.map((item) => item.text)).toEqual([
+        "second",
+      ]);
+      const thread = await system.readThread(threadId);
+      expect(
+        Option.isSome(thread) ? thread.value.messages.map((message) => message.text) : [],
+      ).toEqual(["first"]);
+    } finally {
+      await system.dispose();
+    }
+  });
+  it("applies ordinary composer settings atomically on immediate admission", async () => {
+    const { system, threadId } = await setupQueueThread();
+    try {
+      const result = await system.run(
+        system.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("idle-send"),
+          sendIntent: "normal",
+          threadId,
+          message: {
+            messageId: MessageId.make("idle-message"),
+            role: "user",
+            text: "idle",
+            attachments: [],
+          },
+          runtimeMode: "approval-required",
+          interactionMode: "plan",
+          createdAt: now(),
+        }),
+      );
+      expect(result.queued).toBe(false);
+      const thread = await system.readThread(threadId);
+      expect(Option.isSome(thread) && thread.value.runtimeMode).toBe("approval-required");
+      expect(Option.isSome(thread) && thread.value.interactionMode).toBe("plan");
+    } finally {
+      await system.dispose();
+    }
+  });
   it("commits queue consumption with exactly one user message and stable command receipt", async () => {
     const system = await createOrchestrationSystem();
     const threadId = ThreadId.make("queue-atomic-thread");

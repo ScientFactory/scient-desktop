@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
+import { ConnectionTransientError } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -15,6 +16,7 @@ vi.mock("../../state/use-atom-command", () => ({
 vi.mock("./forkViewContinuity", () => ({ stageForkViewContinuity: commands.panels }));
 
 import { useComposerDraftStore } from "~/composerDraftStore";
+import { FORK_RECONNECT_DELAYS_MS } from "./forkAttempt";
 import { useScientThreadFork } from "./useScientThreadFork";
 
 const environmentId = EnvironmentId.make("fork-lifecycle-env");
@@ -68,6 +70,62 @@ afterEach(async () => {
 });
 
 describe("fork lifecycle across navigation and remounts", () => {
+  it.each([true, false])(
+    "dispatches a missing-image fork only after confirmation (%s)",
+    async (proceed) => {
+      const userSource = {
+        kind: "user-message" as const,
+        messageId: MessageId.make("user-with-image"),
+        prompt: "Keep exact text",
+        attachments: [
+          {
+            type: "image" as const,
+            id: "missing",
+            name: "missing.png",
+            mimeType: "image/png",
+            sizeBytes: 1,
+          },
+        ],
+      };
+      commands.options.mockResolvedValue(
+        AsyncResult.success({
+          available: true,
+          localAvailable: true,
+          reason: null,
+          newWorktree: false,
+          sourceAssistantMessageId: null,
+          sourceUserMessageId: userSource.messageId,
+        }),
+      );
+      await render();
+      let outcome: unknown;
+      await act(async () => {
+        outcome = await hook.forkFromMessage(
+          userSource,
+          {
+            workspaceMode: "local",
+            confirmSkippedImages: async (names) => {
+              expect(names).toEqual(["missing.png"]);
+              expect(commands.dispatch).not.toHaveBeenCalled();
+              return proceed;
+            },
+          },
+          "/workspace",
+        );
+      });
+      expect(outcome).toBe(proceed ? "accepted" : "not-accepted");
+      expect(commands.dispatch).toHaveBeenCalledTimes(proceed ? 1 : 0);
+      if (proceed) {
+        const id = commands.dispatch.mock.calls[0]![0].input.newThreadId;
+        expect(
+          useComposerDraftStore.getState().draftsByThreadKey[
+            scopedThreadKey(scopeThreadRef(environmentId, id))
+          ]?.prompt,
+        ).toBe(userSource.prompt);
+      } else expect(Object.keys(useComposerDraftStore.getState().draftsByThreadKey)).toEqual([]);
+    },
+  );
+
   it.each([other, { ...origin, environmentId: EnvironmentId.make("another-environment") }])(
     "finishes without stealing navigation after switching to %j, then opens the same ready fork",
     async (nextOrigin) => {
@@ -153,6 +211,57 @@ describe("fork lifecycle across navigation and remounts", () => {
     expect(
       useComposerDraftStore.getState().draftsByThreadKey[scopedThreadKey(destination)]?.prompt,
     ).toBe(request.prompt);
+  });
+
+  it("opens the fork on its own after the request lost its connection", async () => {
+    vi.useFakeTimers();
+    try {
+      commands.dispatch.mockResolvedValueOnce(
+        AsyncResult.failure(
+          Cause.fail(
+            new ConnectionTransientError({ reason: "transport", detail: "Server disconnected." }),
+          ),
+        ),
+      );
+      await render();
+      let pending!: Promise<unknown>;
+      await act(async () => {
+        pending = hook.forkFromMessage(source, { workspaceMode: "local" }, "/workspace");
+      });
+      expect(hook.isForking).toBe(true);
+      expect(hook.errorUpdate).toBeNull();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(FORK_RECONNECT_DELAYS_MS[0]!);
+        await pending;
+      });
+
+      expect(commands.dispatch).toHaveBeenCalledTimes(2);
+      expect(commands.dispatch.mock.calls[1]![0].input).toEqual(
+        commands.dispatch.mock.calls[0]![0].input,
+      );
+      expect(hook.errorUpdate).toBeNull();
+      expect(navigate).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("names the fork point an error is about, so another point's dialog does not show it", async () => {
+    commands.dispatch.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("The workspace could not be prepared."))),
+    );
+    await render();
+    await act(() => hook.prepareFork(source));
+    const failedKey = hook.preview?.key;
+    await act(() => hook.forkFromMessage(source, { workspaceMode: "local" }, "/workspace"));
+    expect(hook.errorUpdate?.message).toContain("The workspace could not be prepared.");
+    expect(hook.errorUpdate?.key).toBe(failedKey);
+
+    await act(() =>
+      hook.prepareFork({ kind: "assistant-response", messageId: MessageId.make("other-answer") }),
+    );
+    expect(hook.preview?.key).not.toBe(failedKey);
+    expect(hook.errorUpdate).toBeNull();
   });
 
   it("does not move a draft edited while the fork request was in flight", async () => {

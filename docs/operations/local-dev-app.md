@@ -206,12 +206,11 @@ Each checkout and role has its own deterministic service label, state root,
 ports, app identity, and visible name. Different worktrees can therefore run
 concurrently, while a second instance of the same worktree is refused.
 `dev:app:logs` prints the last 200 background-launch lines. `dev:app:stop`
-validates and stops only that checkout's recorded service, runner, and every
-generation-scoped launcher, Electron app, and backend PID, waits for those
-processes to exit, and removes their launch records. Generation-scoped records
-remain recoverable if a runner exits during a desktop rebuild, and overlapping
-bundle writes are coalesced before the app is restarted. Never stop Electron,
-Node, pnpm, or ports by name or pattern.
+validates and stops only that checkout's recorded service, runner, Electron
+app, and backend PIDs, waits for those processes to exit, and removes its launch
+files. If any of them is still running after the forced stop, it fails with an
+error and keeps the launch records instead of reporting success. Never stop
+Electron, Node, pnpm, or ports by name or pattern.
 
 The desktop renderer hot-reloads, but its local backend runs from the server
 bundle built when the candidate starts. After changing `apps/server`, an HTTP
@@ -253,6 +252,21 @@ Concurrent candidates are supported by default. The stable role is identified
 by its `Scient (Dev) Stable` name; each candidate shows a short worktree label.
 Still confirm the worktree, state root, ports, and exact Git head before acting;
 never infer code or data ownership from a window title alone.
+
+### Scratch conversations in a dev candidate
+
+The dev runner derives `SCIENT_DEV_SCRATCH_ROOT` from the resolved candidate state
+root, overwriting any inherited value. Scratch files live under
+`~/.scient-next/dev-scratch/<sha256 of candidate state root>/scratch`, outside the
+checkout. Databases, settings, credentials, and Electron state keep their existing
+worktree-local locations; this does not move or import a profile.
+
+The desktop primary forwards this location only for development. WSL and production
+launches scrub it, and the server accepts it only with a dev URL and the candidate
+safety envelope. The selected scratch parent is still checked for Git inheritance;
+detection failures hide the option. Advertisement and Scient workspace admission
+use the same configured root, with each conversation scoped to its own direct
+canonical subfolder. Stop/restart the owning candidate after changing this setup.
 
 ## macOS Identity And Microphone Access
 

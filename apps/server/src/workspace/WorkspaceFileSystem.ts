@@ -169,9 +169,24 @@ export class WorkspaceFileSystem extends Context.Service<
   {
     /**
      * Read a UTF-8 text file relative to the workspace root, or any host file by
-     * absolute path.
+     * absolute path. A relative path stays inside the root, symlinks included:
+     * this is the read every feature that works on project files uses, and the
+     * one saves and renames confirm their target with.
      */
     readonly readFile: (
+      input: ProjectReadFileInput,
+    ) => Effect.Effect<
+      ProjectReadFileResult,
+      WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
+    >;
+    /**
+     * Read a file to show it. Viewing never depends on the project boundary: a
+     * relative path that climbs out of the root and a symlink that leads out of
+     * it are read in place, read-only, like an absolute host path. Only the
+     * file viewer uses this; nothing that changes or processes project files
+     * should.
+     */
+    readonly viewFile: (
       input: ProjectReadFileInput,
     ) => Effect.Effect<
       ProjectReadFileResult,
@@ -248,34 +263,66 @@ export const make = Effect.gen(function* () {
     revisionForBytes(new TextEncoder().encode(contents));
 
   /**
-   * Resolves the file a read targets. Workspace-relative paths must stay inside the
-   * root, symlinks included. An absolute path reads a host file in place, such as a
-   * report an agent wrote to a temp directory; it gets no root check.
+   * Resolves the file a read targets, for one of two purposes.
+   *
+   * - `view`: viewing never depends on the project boundary. An absolute path,
+   *   a relative path that climbs out of the root and a symlink that leads out
+   *   of it all read the host file in place, read-only.
+   * - `contained`: the read for anything that works on project files, and the
+   *   one a save or rename relies on to confirm what it is about to change. A
+   *   relative path stays inside the root, symlinks included, and fails
+   *   otherwise, exactly as writes do.
    */
   const resolveReadTarget = Effect.fn("WorkspaceFileSystem.resolveReadTarget")(function* (
     input: ProjectReadFileInput,
+    purpose: "view" | "contained",
   ) {
-    const requestedPath = input.relativePath.trim();
-    if (path.isAbsolute(requestedPath)) {
-      const realTargetPath = yield* Effect.tryPromise({
-        try: () => NodeFSP.realpath(requestedPath),
+    // A path names one exact file, whitespace included, so it is used as given.
+    const requestedPath = input.relativePath;
+    const isOutside = (realRoot: string, realTarget: string) => {
+      const relative = path.relative(realRoot, realTarget);
+      return relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+    };
+    // A host path is always read-only here. It is reported as outside the
+    // workspace only when it is: an absolute spelling of a workspace file is
+    // read-only for being addressed that way, not for where it lives.
+    const readHostFile = (hostPath: string) =>
+      Effect.tryPromise({
+        try: async () => {
+          const realTargetPath = await NodeFSP.realpath(hostPath);
+          const realRoot = await NodeFSP.realpath(input.cwd).catch(() => null);
+          return {
+            relativePath: requestedPath,
+            realTargetPath,
+            readOnly: true,
+            outsideWorkspace: realRoot !== null && isOutside(realRoot, realTargetPath),
+          };
+        },
         catch: (cause) =>
           new WorkspaceFileSystemOperationError({
             workspaceRoot: input.cwd,
             relativePath: input.relativePath,
-            resolvedPath: requestedPath,
-            operationPath: requestedPath,
+            resolvedPath: hostPath,
+            operationPath: hostPath,
             operation: "realpath-target",
             cause,
           }),
       });
-      return { relativePath: requestedPath, realTargetPath, readOnly: true };
+    if (path.isAbsolute(requestedPath)) {
+      return yield* readHostFile(requestedPath);
     }
 
-    const target = yield* workspacePaths.resolveRelativePathWithinRoot({
+    const resolveWithinRoot = workspacePaths.resolveRelativePathWithinRoot({
       workspaceRoot: input.cwd,
       relativePath: input.relativePath,
     });
+    if (purpose === "view") {
+      const containedTarget = yield* resolveWithinRoot.pipe(Effect.option);
+      if (containedTarget._tag === "None") {
+        return yield* readHostFile(path.resolve(input.cwd, requestedPath));
+      }
+    }
+    const target = yield* resolveWithinRoot;
     const realWorkspaceRoot = yield* Effect.tryPromise({
       try: () => NodeFSP.realpath(input.cwd),
       catch: (cause) =>
@@ -300,18 +347,23 @@ export const make = Effect.gen(function* () {
           cause,
         }),
     });
-    const relativeRealPath = path.relative(realWorkspaceRoot, realTargetPath);
-    if (
-      relativeRealPath.startsWith(`..${path.sep}`) ||
-      relativeRealPath === ".." ||
-      path.isAbsolute(relativeRealPath)
-    ) {
-      return yield* new WorkspaceFilePathEscapeError({
-        workspaceRoot: input.cwd,
-        relativePath: input.relativePath,
-        resolvedWorkspaceRoot: realWorkspaceRoot,
-        resolvedPath: realTargetPath,
-      });
+    if (isOutside(realWorkspaceRoot, realTargetPath)) {
+      if (purpose === "contained") {
+        return yield* new WorkspaceFilePathEscapeError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedWorkspaceRoot: realWorkspaceRoot,
+          resolvedPath: realTargetPath,
+        });
+      }
+      // A symlink inside the project that leads out of it: show the file it
+      // points to, but never edit it through the project.
+      return {
+        relativePath: target.relativePath,
+        realTargetPath,
+        readOnly: true,
+        outsideWorkspace: true,
+      };
     }
     const canonicalRelativePath = path
       .relative(realWorkspaceRoot, realTargetPath)
@@ -320,23 +372,31 @@ export const make = Effect.gen(function* () {
       relativePath: target.relativePath,
       realTargetPath,
       readOnly: canonicalRelativePath !== target.relativePath,
+      outsideWorkspace: false,
     };
   });
 
-  const readFile: WorkspaceFileSystem["Service"]["readFile"] = Effect.fn(
-    "WorkspaceFileSystem.readFile",
-  )(function* (input) {
-    const target = yield* resolveReadTarget(input);
+  const readResolvedFile = Effect.fn("WorkspaceFileSystem.readResolvedFile")(function* (
+    input: ProjectReadFileInput,
+    purpose: "view" | "contained",
+  ) {
+    const target = yield* resolveReadTarget(input, purpose);
     const realTargetPath = target.realTargetPath;
 
     return yield* Effect.acquireUseRelease(
       Effect.tryPromise({
         // Non-blocking so a FIFO cannot hang the open; the stat below rejects
-        // it. Regular files ignore the flag. Windows lacks it.
+        // it. Regular files ignore the flag. The target was already resolved,
+        // so its last component is not a link: refusing to follow one means a
+        // file swapped for a symlink after that check fails here instead of
+        // being read under the flags decided for the original. Windows lacks
+        // both flags.
         try: () =>
           NodeFSP.open(
             realTargetPath,
-            NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NONBLOCK ?? 0),
+            NodeFS.constants.O_RDONLY |
+              (NodeFS.constants.O_NONBLOCK ?? 0) |
+              (NodeFS.constants.O_NOFOLLOW ?? 0),
           ),
         catch: (cause) =>
           new WorkspaceFileSystemOperationError({
@@ -400,6 +460,7 @@ export const make = Effect.gen(function* () {
             truncated: stat.size > PROJECT_READ_FILE_MAX_BYTES,
             revision: revisionForBytes(fileBytes),
             ...(target.readOnly ? { readOnly: true } : {}),
+            ...(target.outsideWorkspace ? { outsideWorkspace: true } : {}),
           };
         }),
       (handle) =>
@@ -418,24 +479,32 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const readFile: WorkspaceFileSystem["Service"]["readFile"] = (input) =>
+    readResolvedFile(input, "contained");
+  const viewFile: WorkspaceFileSystem["Service"]["viewFile"] = (input) =>
+    readResolvedFile(input, "view");
+
+  // Watching is viewing: like reads, a watch follows the file wherever it lives,
+  // including absolute host paths, paths that climb out of the root and
+  // symlinks that lead out of it. Events carry the path exactly as requested.
   const resolveRealFileWatchTarget = Effect.fn("WorkspaceFileSystem.resolveRealFileWatchTarget")(
     function* (input: ProjectReadFileInput) {
-      const target = yield* workspacePaths.resolveRelativePathWithinRoot({
-        workspaceRoot: input.cwd,
-        relativePath: input.relativePath,
-      });
-      const realWorkspaceRoot = yield* Effect.tryPromise({
-        try: () => NodeFSP.realpath(input.cwd),
-        catch: (cause) =>
-          new WorkspaceFileSystemOperationError({
-            workspaceRoot: input.cwd,
-            relativePath: input.relativePath,
-            resolvedPath: target.absolutePath,
-            operationPath: input.cwd,
-            operation: "realpath-workspace-root",
-            cause,
-          }),
-      });
+      const requestedPath = input.relativePath;
+      const containedTarget = path.isAbsolute(requestedPath)
+        ? null
+        : yield* workspacePaths
+            .resolveRelativePathWithinRoot({
+              workspaceRoot: input.cwd,
+              relativePath: input.relativePath,
+            })
+            .pipe(Effect.option);
+      const target =
+        containedTarget !== null && containedTarget._tag === "Some"
+          ? containedTarget.value
+          : {
+              absolutePath: path.resolve(input.cwd, requestedPath),
+              relativePath: requestedPath,
+            };
       const resolvedParentDirectory = yield* Effect.tryPromise({
         try: () => NodeFSP.realpath(path.dirname(target.absolutePath)),
         catch: (cause) =>
@@ -448,19 +517,6 @@ export const make = Effect.gen(function* () {
             cause,
           }),
       });
-      const relativeWatchDirectory = path.relative(realWorkspaceRoot, resolvedParentDirectory);
-      if (
-        relativeWatchDirectory.startsWith(`..${path.sep}`) ||
-        relativeWatchDirectory === ".." ||
-        path.isAbsolute(relativeWatchDirectory)
-      ) {
-        return yield* new WorkspaceFilePathEscapeError({
-          workspaceRoot: input.cwd,
-          relativePath: input.relativePath,
-          resolvedWorkspaceRoot: realWorkspaceRoot,
-          resolvedPath: resolvedParentDirectory,
-        });
-      }
       const realTargetPath = yield* Effect.tryPromise({
         try: async () => {
           try {
@@ -482,19 +538,6 @@ export const make = Effect.gen(function* () {
             cause,
           }),
       });
-      const relativeRealPath = path.relative(realWorkspaceRoot, realTargetPath);
-      if (
-        relativeRealPath.startsWith(`..${path.sep}`) ||
-        relativeRealPath === ".." ||
-        path.isAbsolute(relativeRealPath)
-      ) {
-        return yield* new WorkspaceFilePathEscapeError({
-          workspaceRoot: input.cwd,
-          relativePath: input.relativePath,
-          resolvedWorkspaceRoot: realWorkspaceRoot,
-          resolvedPath: realTargetPath,
-        });
-      }
       // Existing file symlinks need to watch the resolved target's directory,
       // not merely the directory containing the link. Missing files already
       // resolve through their canonical parent above.
@@ -765,7 +808,10 @@ export const make = Effect.gen(function* () {
           });
         }
         if (input.expectedRevision !== undefined) {
-          const current = yield* readFile({ cwd: input.cwd, relativePath: input.relativePath });
+          const current = yield* readFile({
+            cwd: input.cwd,
+            relativePath: input.relativePath,
+          });
           // A lost response can leave the requested bytes on disk with a newer
           // revision. Converge without replacing that already-published file.
           // Truncated reads cannot establish equality with the entire file.
@@ -937,7 +983,10 @@ export const make = Effect.gen(function* () {
             destinationInput,
             initialDestination.realTargetPath,
           );
-          const current = yield* readFile({ cwd: input.cwd, relativePath: input.relativePath });
+          const current = yield* readFile({
+            cwd: input.cwd,
+            relativePath: input.relativePath,
+          });
           if (current.truncated || current.revision !== input.expectedRevision) {
             return yield* new WorkspaceFileRevisionConflictError({
               workspaceRoot: input.cwd,
@@ -1134,6 +1183,7 @@ export const make = Effect.gen(function* () {
     inspectWriteTarget,
     readFile,
     renameFile,
+    viewFile,
     watchFile,
     writeFile,
   });

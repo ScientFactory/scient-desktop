@@ -67,4 +67,98 @@ describe("files panel read failure", () => {
     }
     expect(container.textContent).toContain("Outside this project");
   });
+
+  const button = (label: string) =>
+    [...container.querySelectorAll("button")].find((candidate) =>
+      candidate.textContent?.includes(label),
+    );
+
+  it("names the missing location and lets the user pick which file was meant", () => {
+    const onOpenCandidate = vi.fn();
+    act(() =>
+      root.render(
+        <FileReadFailure
+          failure="operation_failed"
+          reason="not_found"
+          message="raw"
+          retrying={false}
+          onRetry={vi.fn()}
+          path="/Users/me/project/dup.md"
+          candidates={["reviews/a/dup.md", "reviews/b/dup.md"]}
+          onOpenCandidate={onOpenCandidate}
+        />,
+      ),
+    );
+    // A choice to make reads as a question, not as a broken link.
+    expect(container.textContent).toContain("Which file did you mean?");
+    expect(container.textContent).toContain("/Users/me/project/dup.md");
+    expect(container.textContent).toContain("These files in this project have the same name:");
+    expect(container.textContent).not.toContain("couldn't search the whole project");
+
+    act(() => button("reviews/b/dup.md")?.click());
+    expect(onOpenCandidate).toHaveBeenCalledExactlyOnceWith("reviews/b/dup.md");
+  });
+
+  it("says plainly when nothing was found, and when the search was incomplete", () => {
+    const render = (candidates: string[], candidatesIncomplete: boolean) =>
+      act(() =>
+        root.render(
+          <FileReadFailure
+            failure="operation_failed"
+            reason="not_found"
+            message="raw"
+            retrying={false}
+            onRetry={vi.fn()}
+            path="/Users/me/project/reviews/missing.md"
+            candidates={candidates}
+            candidatesIncomplete={candidatesIncomplete}
+            onOpenCandidate={vi.fn()}
+          />,
+        ),
+      );
+    render([], false);
+    expect(container.textContent).toContain("File not found");
+    expect(tryAgain()).toBeDefined();
+
+    render(["archive/missing.md"], true);
+    expect(container.textContent).toContain("One file in this project has the same name:");
+    expect(container.textContent).toContain("couldn't search the whole project");
+  });
+
+  it("offers no choices and no settings shortcut for a denied read", () => {
+    act(() =>
+      root.render(
+        <FileReadFailure
+          failure="operation_failed"
+          reason="permission_denied"
+          message={null}
+          retrying={false}
+          onRetry={vi.fn()}
+          path="/Users/me/private/notes.md"
+          candidates={["reviews/notes.md"]}
+          onOpenCandidate={vi.fn()}
+        />,
+      ),
+    );
+    expect(container.textContent).toContain("Access denied");
+    expect(button("reviews/notes.md")).toBeUndefined();
+    expect(button("Privacy")).toBeUndefined();
+  });
+
+  it("opens an older server's outside-the-project refusal read-only", () => {
+    const onOpenReadOnly = vi.fn();
+    act(() =>
+      root.render(
+        <FileReadFailure
+          failure="workspace_path_outside_root"
+          message="outside"
+          retrying={false}
+          onRetry={vi.fn()}
+          onOpenReadOnly={onOpenReadOnly}
+        />,
+      ),
+    );
+    act(() => button("Open read-only")?.click());
+    expect(onOpenReadOnly).toHaveBeenCalledOnce();
+  });
 });

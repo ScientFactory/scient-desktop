@@ -169,15 +169,24 @@ function AutocompleteEmpty({ className, ...props }: AutocompletePrimitive.Empty.
   );
 }
 
-function AutocompleteList({ className, ...props }: AutocompletePrimitive.List.Props) {
-  return (
+function AutocompleteList({
+  className,
+  scrollable = true,
+  ...props
+}: AutocompletePrimitive.List.Props & { scrollable?: boolean }) {
+  const list = (
+    <AutocompletePrimitive.List
+      className={cn("not-empty:scroll-py-1 not-empty:p-1", className)}
+      data-slot="autocomplete-list"
+      {...props}
+    />
+  );
+  return scrollable ? (
     <ScrollArea scrollbarGutter scrollFade>
-      <AutocompletePrimitive.List
-        className={cn("not-empty:scroll-py-1 not-empty:p-1", className)}
-        data-slot="autocomplete-list"
-        {...props}
-      />
+      {list}
     </ScrollArea>
+  ) : (
+    list
   );
 }
 

@@ -12,6 +12,140 @@ function workflow(name: string) {
   );
 }
 
+const repositoryRoot = NodePath.join(import.meta.dirname, "..");
+
+/**
+ * The publication guards (`if [condition &&] ! git diff --quiet A B -- ...`),
+ * each with the shell condition it runs under and its pathspecs as git reads
+ * them: a plain path covers the file or the whole folder, and a quoted
+ * `:(glob)` pattern matches with `*` staying inside one folder.
+ */
+function publicationGuards() {
+  const text = NodeFS.readFileSync(
+    NodePath.join(repositoryRoot, ".github/workflows/managed-provider-runtime-update-provider.yml"),
+    "utf8",
+  );
+  return [
+    ...text.matchAll(
+      /if (?:(\[\[[^\n]*?\]\]) && )?! git diff --quiet "\$SOURCE_SHA" refs\/remotes\/origin\/main -- \\\n([\s\S]*?); then/gu,
+    ),
+  ].map((match) => ({
+    condition: match[1],
+    pathspecs: match[2]!
+      .split("\n")
+      .map((line) => line.replace(/\\$/u, "").trim())
+      .filter((line) => line.length > 0)
+      .map((line) => {
+        // A pattern must be quoted, or the shell expands it against the old checkout
+        // and a file added on main since is never compared.
+        if (/[*?[]/u.test(line)) expect(line, line).toMatch(/^':\(glob\)[^']+'$/u);
+        return line.replace(/^'(.*)'$/u, "$1");
+      }),
+  }));
+}
+
+const GLOB_MAGIC = ":(glob)";
+const globPattern = (pathspec: string) =>
+  new RegExp(
+    `^${pathspec
+      .slice(GLOB_MAGIC.length)
+      .split("**/")
+      .map((part) =>
+        part
+          .split("*")
+          .map((literal) => literal.replace(/[.+^${}()|[\]\\?]/gu, "\\$&"))
+          .join("[^/]*"),
+      )
+      .join("(?:.*/)?")}$`,
+    "u",
+  );
+
+function pathspecCovers(pathspec: string, path: string): boolean {
+  return pathspec.startsWith(GLOB_MAGIC)
+    ? globPattern(pathspec).test(path)
+    : path === pathspec || path.startsWith(`${pathspec}/`);
+}
+
+function pathspecMatchesSomething(pathspec: string): boolean {
+  if (!pathspec.startsWith(GLOB_MAGIC)) {
+    return NodeFS.existsSync(NodePath.join(repositoryRoot, pathspec));
+  }
+  // Patterns here name files of one folder.
+  const folder = NodePath.dirname(pathspec.slice(GLOB_MAGIC.length));
+  return NodeFS.readdirSync(NodePath.join(repositoryRoot, folder)).some((name) =>
+    pathspecCovers(pathspec, `${folder}/${name}`),
+  );
+}
+
+/**
+ * What the given suites load when they run, from their import graph: static
+ * imports, re-exports and literal dynamic imports that carry values (a
+ * type-only import loads nothing). Relative imports are followed file by file.
+ * An import of a workspace package counts as the package's folder, plus the
+ * workspace packages it declares as dependencies. Each entry maps to one
+ * importer, for the failure message.
+ */
+function qualificationInputs(roots: ReadonlyArray<string>) {
+  const workspacePackages = new Map<
+    string,
+    { readonly folder: string; readonly dependencies: ReadonlyArray<string> }
+  >();
+  for (const parent of ["apps", "packages"]) {
+    for (const name of NodeFS.readdirSync(NodePath.join(repositoryRoot, parent))) {
+      const manifestPath = NodePath.join(repositoryRoot, parent, name, "package.json");
+      if (!NodeFS.existsSync(manifestPath)) continue;
+      const manifest = parse(NodeFS.readFileSync(manifestPath, "utf8")) as {
+        readonly name?: string;
+        readonly dependencies?: Record<string, string>;
+        readonly peerDependencies?: Record<string, string>;
+      };
+      if (manifest.name === undefined) continue;
+      workspacePackages.set(manifest.name, {
+        folder: `${parent}/${name}`,
+        dependencies: Object.entries({ ...manifest.dependencies, ...manifest.peerDependencies })
+          .filter(([, version]) => version.startsWith("workspace:"))
+          .map(([dependency]) => dependency),
+      });
+    }
+  }
+  const imports =
+    /(?:^|[\n;])\s*(?:import|export)\s+(type\s+)?(?:[^'";]*?\sfrom\s+)?["']([^"']+)["']|import\(\s*["']([^"']+)["']\s*\)/gu;
+  const modules = new Map<string, string>();
+  const packages = new Map<string, string>();
+  const addPackage = (name: string, importer: string) => {
+    const workspacePackage = workspacePackages.get(name);
+    if (workspacePackage === undefined || packages.has(workspacePackage.folder)) return;
+    packages.set(workspacePackage.folder, importer);
+    for (const dependency of workspacePackage.dependencies) addPackage(dependency, name);
+  };
+  const addModule = (path: string, importer: string) => {
+    if (modules.has(path)) return;
+    modules.set(path, importer);
+    if (!/\.tsx?$/u.test(path)) return;
+    const source = NodeFS.readFileSync(NodePath.join(repositoryRoot, path), "utf8");
+    for (const match of source.matchAll(imports)) {
+      const specifier = match[2] ?? match[3]!;
+      if (match[1] !== undefined) continue;
+      if (!specifier.startsWith(".")) {
+        const [scope, name] = specifier.split("/");
+        addPackage(specifier.startsWith("@") ? `${scope}/${name}` : scope!, path);
+        continue;
+      }
+      const target = NodePath.join(NodePath.dirname(path), specifier);
+      const resolved = [target, `${target}.ts`, `${target}.tsx`, `${target}/index.ts`].find(
+        (candidate) => {
+          const absolute = NodePath.join(repositoryRoot, candidate);
+          return NodeFS.existsSync(absolute) && NodeFS.statSync(absolute).isFile();
+        },
+      );
+      // An import written inside a string (a fixture's source) names no file here.
+      if (resolved !== undefined) addModule(resolved, path);
+    }
+  };
+  for (const root of roots) addModule(root, "the qualification");
+  return { modules, packages };
+}
+
 describe("managed provider runtime update workflow", () => {
   it("checks exactly the app-approved release families in both dispatch and the schedule", () => {
     const caller = workflow("managed-provider-runtime-updates.yml");
@@ -116,6 +250,110 @@ describe("managed provider runtime update workflow", () => {
     expect(exercise.run).toContain("set -euo pipefail");
     expect(exercise.run).toContain("args+=(--repair)");
     expect(exercise.run).toContain("attempt <= QUALIFICATION_RUNS");
+  });
+
+  it("proves Droid's protocol once against the candidate binary where its fixtures are verified", () => {
+    const reusable = workflow("managed-provider-runtime-update-provider.yml");
+    const dependencies = reusable.jobs.qualify.steps.find(
+      (step: { name: string }) => step.name === "Install Droid protocol qualification dependencies",
+    );
+    // The live fixtures drive POSIX shells and a private HOME; they are verified on macOS.
+    expect(dependencies.if).toBe("inputs.provider == 'droid' && runner.os == 'macOS'");
+    expect(dependencies.run).toBe("vp install --frozen-lockfile --ignore-scripts --filter=t3...");
+    const exercise = reusable.jobs.qualify.steps.find(
+      (step: { name: string }) =>
+        step.name === "Exercise download, verification, smoke, activation, and removal",
+    );
+    expect(exercise.run).toContain(
+      'if [[ "$PROVIDER" == droid && "$attempt" == 1 && "$RUNNER_OS" == macOS ]]; then args+=(--droid-live-tests); fi',
+    );
+    // The protocol suites and the binary they run must be the qualified ones.
+    const script = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "qualify-managed-runtime-catalog.ts"),
+      "utf8",
+    );
+    for (const suite of [
+      "DroidRuntime",
+      "DroidReasoning",
+      "DroidProviderStatus",
+      "DroidBackgroundGeneration",
+      "DroidKeyIsolation",
+      "DroidRequestLimits",
+    ]) {
+      expect(script).toContain(`apps/server/src/provider/droid/${suite}.live.test.ts`);
+      expect(
+        NodeFS.existsSync(
+          NodePath.join(
+            import.meta.dirname,
+            `../apps/server/src/provider/droid/${suite}.live.test.ts`,
+          ),
+        ),
+      ).toBe(true);
+    }
+    expect(script).toContain("SCIENT_DROID_TEST_BINARY: binary");
+    expect(script).toContain("SCIENT_DROID_TEST_VERSION: version");
+    expect(script).toContain("--droid-live-tests is valid only for Droid qualification.");
+  });
+
+  it("voids every provider's publication only for what its own qualification runs", () => {
+    const [everyProvider, droid, ...others] = publicationGuards();
+    expect(others).toEqual([]);
+    // Discovery, artifact qualification and publication: the same for every provider.
+    expect(everyProvider).toEqual({
+      condition: undefined,
+      pathspecs: [
+        ".github/workflows/managed-provider-runtime-update-provider.yml",
+        "apps/server/src/scient/providerLifecycle/ManagedRuntimeCatalog.ts",
+        "apps/server/src/scient/providerLifecycle/bundled-managed-runtime-catalog.json",
+        "apps/server/src/provider/AntigravityInstallation.ts",
+        "apps/server/src/provider/runtimeFilesystem.ts",
+        "apps/server/src/provider/antigravityRelease.ts",
+        "apps/server/src/provider/antigravityAuthSupport.ts",
+        "apps/server/src/provider/acp",
+        "apps/server/scripts/qualify-antigravity-acp-catalog.ts",
+        "apps/server/src/scient/providerLifecycle/antigravityAcpCatalog.ts",
+        "apps/server/package.json",
+        "packages/effect-acp",
+        "packages/scient-provider-runtime",
+        "pnpm-lock.yaml",
+        "scripts/package.json",
+        "scripts/lib/managed-runtime-catalog.ts",
+        "scripts/lib/antigravity-acp-artifact.ts",
+        "scripts/promote-managed-runtime-catalog.ts",
+        "scripts/qualify-managed-runtime-catalog.ts",
+        "scripts/update-managed-runtime-catalog.ts",
+      ],
+    });
+    // Only Droid's qualification runs protocol suites that load the server.
+    expect(droid?.condition).toBe('[[ "$PROVIDER" == droid ]]');
+  });
+
+  it("republishes nothing when what Droid's protocol qualification runs changed on main meanwhile", () => {
+    const guarded = publicationGuards().flatMap((guard) => guard.pathspecs);
+    expect(guarded.length).toBeGreaterThan(0);
+    // A renamed path or a pattern that matches nothing would silently stop guarding anything.
+    for (const pathspec of guarded) {
+      expect(pathspecMatchesSomething(pathspec), pathspec).toBe(true);
+    }
+    // The six suites the qualification runs are the roots of what it executes.
+    const script = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "qualify-managed-runtime-catalog.ts"),
+      "utf8",
+    );
+    const suites = [
+      ...script.matchAll(/"(apps\/server\/src\/provider\/droid\/[^"]+\.live\.test\.ts)"/gu),
+    ].map((match) => match[1]!);
+    expect(suites).toHaveLength(6);
+
+    // Every module the suites load, however indirectly, must void a run when it
+    // changes: the server modules file by file, the workspace packages by folder.
+    const inputs = qualificationInputs(suites);
+    expect(inputs.modules.size).toBeGreaterThan(suites.length);
+    const unguarded = [...inputs.modules, ...inputs.packages]
+      .filter(([path]) => !guarded.some((pathspec) => pathspecCovers(pathspec, path)))
+      .map(([path, importer]) => `${path} (imported by ${importer})`);
+    expect(unguarded).toEqual([]);
+    expect(guarded).toContain("scripts/qualify-managed-runtime-catalog.ts");
   });
 
   it("qualifies Pi on every official native target and proves its live integration once", () => {

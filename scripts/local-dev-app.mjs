@@ -7,18 +7,11 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import {
-  DEVELOPMENT_LAUNCH_HANDOFF_GRACE_MS,
-  findOwnedDevelopmentChildProcess,
   findOwnedDevelopmentProcesses,
-  inspectDevelopmentBackendOwnership,
-  listDevelopmentLaunchPaths,
   readOwnedDevelopmentAppProcess,
-  readOwnedDevelopmentLauncherProcess,
   removeDevelopmentLaunchFiles,
-  removeDevelopmentLaunchRecord,
   resolveDevelopmentAppDisplayName,
   resolveDevelopmentAppLabel,
-  writeDevelopmentProcessPid,
 } from "../apps/desktop/scripts/dev-app-process.mjs";
 import {
   readDevelopmentAppFailure,
@@ -398,27 +391,15 @@ export async function startAppInBackground({
   let started = false;
   try {
     const runner = clearRunner(paths);
+    const ownedAppCandidate = resolveOwnedApp(paths);
+    const ownedApp =
+      ownedAppCandidate?.pid === coldClaim?.receipt.coldPid ? null : ownedAppCandidate;
     // The validated Finder receiver may still be alive during the handshake;
     // exclude exactly that PID, never another app or backend process.
-    const coldPid = coldClaim?.receipt.coldPid;
-    const ownedAppCandidate = runner ? null : resolveOwnedApp(paths);
-    const ownedApp = ownedAppCandidate?.pid === coldPid ? null : ownedAppCandidate;
-    const ownedLaunches = runner
-      ? []
-      : resolveOwnedDevelopmentLaunches(paths).filter(
-          (launch) =>
-            launch.app?.pid !== coldPid ||
-            Boolean(launch.launcher || launch.backend || launch.pending),
-        );
-    const ownedApps = runner ? [] : resolveOwnedApps(paths).filter(({ pid }) => pid !== coldPid);
-    const ownedBackends = runner ? [] : resolveOwnedDevelopmentBackends(paths);
-    if (
-      runner ||
-      ownedApp ||
-      ownedLaunches.length > 0 ||
-      ownedApps.length > 0 ||
-      ownedBackends.length > 0
-    ) {
+    const ownedApps = resolveOwnedApps(paths).filter(
+      ({ pid }) => pid !== coldClaim?.receipt.coldPid,
+    );
+    if (runner || ownedApp || ownedApps.length > 0) {
       if (coldClaim) NodeFS.rmSync(coldClaim.path, { force: true });
       if (coldClaim) {
         throw new Error(
@@ -675,111 +656,27 @@ export function acquireRunner(paths, dependencies = {}) {
   return { acquired: true, state };
 }
 
-export function releaseRunner(paths, pid = process.pid) {
-  const state = readRunnerState(paths);
-  if (state?.pid !== pid) return false;
-  NodeFS.rmSync(paths.runnerDir, { recursive: true, force: true });
-  return true;
-}
-
-function resolveDevelopmentProcessIdentity(paths) {
+export function resolveOwnedDevelopmentApp(paths, { inspectCommand } = {}) {
   const environment =
     paths.role === "stable"
       ? { SCIENT_DEV_APP_ROLE: "stable" }
       : { SCIENT_DEV_APP_LABEL: resolveDevelopmentAppLabel(paths.root) };
   const displayName = resolveDevelopmentAppDisplayName(environment, paths.root);
-  const appBundlePath = NodePath.join(
+  const electronBinaryPath = NodePath.join(
     paths.root,
     "apps",
     "desktop",
     ".electron-runtime",
     `${displayName}.app`,
+    "Contents",
+    "MacOS",
+    "Electron",
   );
-  const electronBinaryPath = NodePath.join(appBundlePath, "Contents", "MacOS", "Electron");
-  const backendCommandPrefix = `${electronBinaryPath} ${NodePath.join(
-    paths.root,
-    "apps",
-    "server",
-    "dist",
-    "bin.mjs",
-  )}`;
-  return { appBundlePath, electronBinaryPath, backendCommandPrefix };
-}
-
-export function resolveOwnedDevelopmentLaunches(
-  paths,
-  {
-    inspectCommand,
-    inspectChildren,
-    preserveIncomplete = false,
-    now = Date.now,
-    listLaunchPaths = listDevelopmentLaunchPaths,
-    removeLaunchRecord = removeDevelopmentLaunchRecord,
-  } = {},
-) {
-  const { appBundlePath, electronBinaryPath, backendCommandPrefix } =
-    resolveDevelopmentProcessIdentity(paths);
-  const records = listLaunchPaths(paths.runtimeDir, {
-    legacyAppPidPath: paths.appPidPath,
-    legacyBackendPidPath: paths.backendPidPath,
+  return readOwnedDevelopmentAppProcess({
+    pidFilePath: paths.appPidPath,
+    electronBinaryPath,
+    ...(inspectCommand ? { inspectCommand } : {}),
   });
-  return records.flatMap((record) => {
-    const launcher = readOwnedDevelopmentLauncherProcess({
-      pidFilePath: record.launcherPidPath,
-      appBundlePath,
-      appPidFilePath: record.appPidPath,
-      ...(inspectCommand ? { inspectCommand } : {}),
-    });
-    const app = readOwnedDevelopmentAppProcess({
-      pidFilePath: record.appPidPath,
-      electronBinaryPath,
-      ...(inspectCommand ? { inspectCommand } : {}),
-    });
-    const backendOwnership = inspectDevelopmentBackendOwnership({
-      record,
-      pidFilePath: record.backendPidPath,
-      commandPrefix: backendCommandPrefix,
-      ...(inspectCommand ? { inspectCommand } : {}),
-      now,
-    });
-    const recordedBackend = backendOwnership.backend;
-    const backend =
-      recordedBackend ??
-      (app
-        ? findOwnedDevelopmentChildProcess({
-            parentPid: app.pid,
-            commandPrefix: backendCommandPrefix,
-            ...(inspectChildren ? { inspectChildren } : {}),
-          })
-        : null);
-    if (!recordedBackend && backend && record.backendPidPath) {
-      writeDevelopmentProcessPid(record.backendPidPath, backend.pid);
-    }
-    if (backend && record.backendPidPendingPath) {
-      removeDevelopmentLaunchFiles(record.backendPidPendingPath);
-    }
-    if (!launcher && !app && !backend) {
-      const handoff = backendOwnership.handoff;
-      if (
-        record.launchDir &&
-        (preserveIncomplete ||
-          (handoff !== null && handoff.ageMs < DEVELOPMENT_LAUNCH_HANDOFF_GRACE_MS))
-      ) {
-        return [{ record, launcher: null, app: null, backend: null, pending: true }];
-      }
-      removeLaunchRecord(record);
-      return [];
-    }
-    return [{ record, launcher, app, backend }];
-  });
-}
-
-export function resolveOwnedDevelopmentApp(paths, { inspectCommand } = {}) {
-  return (
-    resolveOwnedDevelopmentLaunches(paths, inspectCommand ? { inspectCommand } : {}).find(
-      (launch) => launch.app,
-    )?.app ?? null
-  );
 }
 
 function resolveOwnedDevelopmentAppCommandPrefix(paths) {
@@ -809,11 +706,26 @@ export function resolveOwnedDevelopmentApps(paths, { inspectAllProcesses } = {})
 }
 
 export function resolveOwnedDevelopmentBackend(paths, { inspectCommand } = {}) {
-  return (
-    resolveOwnedDevelopmentLaunches(paths, inspectCommand ? { inspectCommand } : {}).find(
-      (launch) => launch.backend,
-    )?.backend ?? null
-  );
+  const environment =
+    paths.role === "stable"
+      ? { SCIENT_DEV_APP_ROLE: "stable" }
+      : { SCIENT_DEV_APP_LABEL: resolveDevelopmentAppLabel(paths.root) };
+  const displayName = resolveDevelopmentAppDisplayName(environment, paths.root);
+  const commandPrefix = `${NodePath.join(
+    paths.root,
+    "apps",
+    "desktop",
+    ".electron-runtime",
+    `${displayName}.app`,
+    "Contents",
+    "MacOS",
+    "Electron",
+  )} ${NodePath.join(paths.root, "apps", "server", "dist", "bin.mjs")}`;
+  return readOwnedDevelopmentAppProcess({
+    pidFilePath: paths.backendPidPath,
+    electronBinaryPath: commandPrefix,
+    ...(inspectCommand ? { inspectCommand } : {}),
+  });
 }
 
 function resolveOwnedDevelopmentBackendCommandPrefix(paths) {
@@ -841,33 +753,30 @@ export function resolveOwnedDevelopmentBackends(paths, { inspectAllProcesses } =
   });
 }
 
-function signalOwnedDevelopmentLaunches(
-  paths,
-  signal,
-  {
-    killProcess = process.kill,
-    resolveOwnedLaunches = resolveOwnedDevelopmentLaunches,
-    preserveIncomplete = false,
-  } = {},
-) {
-  const launches = resolveOwnedLaunches(paths, { preserveIncomplete });
-  const signaled = new Set();
-  for (const kind of ["backend", "app", "launcher"]) {
-    for (const launch of launches) {
-      const currentLaunch = resolveOwnedLaunches(paths, { preserveIncomplete }).find(
-        (candidate) => candidate.record.generation === launch.record.generation,
-      );
-      const owned = currentLaunch?.[kind];
-      if (!owned || signaled.has(owned.pid)) continue;
-      try {
-        killProcess(owned.pid, signal);
-        signaled.add(owned.pid);
-      } catch (error) {
-        if (error?.code !== "ESRCH") throw error;
-      }
-    }
+function signalOwnedDevelopmentApp(paths, signal, killProcess = process.kill) {
+  const owned = resolveOwnedDevelopmentApp(paths);
+  if (!owned) return null;
+  try {
+    killProcess(owned.pid, signal);
+  } catch (error) {
+    if (error?.code !== "ESRCH") throw error;
+    removeDevelopmentLaunchFiles(paths.appPidPath);
+    return null;
   }
-  return launches;
+  return owned;
+}
+
+function signalOwnedDevelopmentBackend(paths, signal, killProcess = process.kill) {
+  const owned = resolveOwnedDevelopmentBackend(paths);
+  if (!owned) return null;
+  try {
+    killProcess(owned.pid, signal);
+  } catch (error) {
+    if (error?.code !== "ESRCH") throw error;
+    removeDevelopmentLaunchFiles(paths.backendPidPath);
+    return null;
+  }
+  return owned;
 }
 
 function signalOwnedDevelopmentProcesses(processes, signal, killProcess = process.kill) {
@@ -881,47 +790,14 @@ function signalOwnedDevelopmentProcesses(processes, signal, killProcess = proces
   return processes;
 }
 
-function signalEveryOwnedDevelopmentProcess(
-  paths,
-  signal,
-  {
-    killProcess = process.kill,
-    resolveOwnedLaunches = resolveOwnedDevelopmentLaunches,
-    resolveOwnedApps = resolveOwnedDevelopmentApps,
-    resolveOwnedBackends = resolveOwnedDevelopmentBackends,
-    preserveIncomplete = false,
-  } = {},
-) {
-  const launches = signalOwnedDevelopmentLaunches(paths, signal, {
-    killProcess,
-    resolveOwnedLaunches,
-    preserveIncomplete,
-  });
-  const launchPids = new Set(
-    launches.flatMap((launch) =>
-      [launch.launcher, launch.app, launch.backend].flatMap((owned) => (owned ? [owned.pid] : [])),
-    ),
-  );
-  const apps = signalOwnedDevelopmentProcesses(
-    resolveOwnedApps(paths).filter(({ pid }) => !launchPids.has(pid)),
-    signal,
-    killProcess,
-  );
-  const backends = signalOwnedDevelopmentProcesses(
-    resolveOwnedBackends(paths).filter(({ pid }) => !launchPids.has(pid)),
-    signal,
-    killProcess,
-  );
-  return { launches, apps, backends };
-}
-
 async function waitForStopped(
   paths,
   runnerPid,
   {
     timeoutMs = STOP_GRACE_MS,
     matchesRunner = processMatchesRunner,
-    resolveOwnedLaunches = resolveOwnedDevelopmentLaunches,
+    resolveOwnedApp = resolveOwnedDevelopmentApp,
+    resolveOwnedBackend = resolveOwnedDevelopmentBackend,
     resolveOwnedApps = resolveOwnedDevelopmentApps,
     resolveOwnedBackends = resolveOwnedDevelopmentBackends,
   } = {},
@@ -929,12 +805,11 @@ async function waitForStopped(
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     const runnerAlive = runnerPid ? matchesRunner(runnerPid, paths.root) : false;
-    const ownedLaunches = resolveOwnedLaunches(paths, {
-      preserveIncomplete: runnerAlive,
-    });
+    const appAlive = resolveOwnedApp(paths) !== null;
+    const backendAlive = resolveOwnedBackend(paths) !== null;
     const appsAlive = resolveOwnedApps(paths).length > 0;
     const backendsAlive = resolveOwnedBackends(paths).length > 0;
-    if (!runnerAlive && ownedLaunches.length === 0 && !appsAlive && !backendsAlive) return true;
+    if (!runnerAlive && !appAlive && !backendAlive && !appsAlive && !backendsAlive) return true;
     await new Promise((resolve) => setTimeout(resolve, STOP_POLL_MS));
   }
   return false;
@@ -984,10 +859,19 @@ async function runApp() {
     return;
   }
 
-  const cleanup = () => releaseRunner(paths, process.pid);
+  const cleanup = () => NodeFS.rmSync(paths.runnerDir, { recursive: true, force: true });
   process.once("exit", cleanup);
-  const orphaned = signalEveryOwnedDevelopmentProcess(paths, "SIGTERM");
-  if (orphaned.launches.length > 0 || orphaned.apps.length > 0 || orphaned.backends.length > 0) {
+  const orphan = signalOwnedDevelopmentApp(paths, "SIGTERM");
+  const orphanedBackend = signalOwnedDevelopmentBackend(paths, "SIGTERM");
+  const orphanedApps = signalOwnedDevelopmentProcesses(
+    resolveOwnedDevelopmentApps(paths).filter(({ pid }) => pid !== orphan?.pid),
+    "SIGTERM",
+  );
+  const orphanedBackends = signalOwnedDevelopmentProcesses(
+    resolveOwnedDevelopmentBackends(paths).filter(({ pid }) => pid !== orphanedBackend?.pid),
+    "SIGTERM",
+  );
+  if (orphan || orphanedBackend || orphanedApps.length > 0 || orphanedBackends.length > 0) {
     const stopped = await waitForStopped(paths, null);
     if (!stopped) {
       throw new Error(
@@ -1023,7 +907,8 @@ async function runApp() {
 
   for (const signal of ["SIGINT", "SIGTERM"]) {
     process.once(signal, () => {
-      signalEveryOwnedDevelopmentProcess(paths, "SIGTERM");
+      signalOwnedDevelopmentApp(paths, "SIGTERM");
+      signalOwnedDevelopmentBackend(paths, "SIGTERM");
       if (!child.killed) child.kill(signal);
     });
   }
@@ -1087,43 +972,20 @@ export function statusApp({
   paths = resolveLocalDevAppPaths(),
   matchesRunner = processMatchesRunner,
   serviceIsLoaded = localDevAppServiceIsLoaded,
-  resolveOwnedLaunches = resolveOwnedDevelopmentLaunches,
-  resolveOwnedApps = resolveOwnedDevelopmentApps,
-  resolveOwnedBackends = resolveOwnedDevelopmentBackends,
+  resolveOwnedApp = resolveOwnedDevelopmentApp,
+  resolveOwnedBackend = resolveOwnedDevelopmentBackend,
   writeLine = console.log,
 } = {}) {
   const appName = paths.appName ?? LOCAL_DEV_APP_NAME;
   const state = clearStaleRunner(paths, { matchesRunner });
-  const ownedLaunches = resolveOwnedLaunches(paths, {
-    preserveIncomplete: typeof state?.pid === "number",
-  });
-  const ownedApps = ownedLaunches.flatMap((launch) => (launch.app ? [launch.app] : []));
-  const ownedBackends = ownedLaunches.flatMap((launch) => (launch.backend ? [launch.backend] : []));
-  const ownedLaunchers = ownedLaunches.flatMap((launch) =>
-    launch.launcher ? [launch.launcher] : [],
-  );
-  const pendingLaunches = ownedLaunches.filter((launch) => launch.pending);
-  const recordedPids = new Set(
-    [...ownedApps, ...ownedBackends, ...ownedLaunchers].map(({ pid }) => pid),
-  );
-  const unrecordedApps = resolveOwnedApps(paths).filter(({ pid }) => !recordedPids.has(pid));
-  const unrecordedBackends = resolveOwnedBackends(paths).filter(
-    ({ pid }) => !recordedPids.has(pid),
-  );
-  const allOwnedApps = [...ownedApps, ...unrecordedApps];
-  const allOwnedBackends = [...ownedBackends, ...unrecordedBackends];
-  const ownedApp = allOwnedApps[0] ?? null;
-  const ownedBackend = allOwnedBackends[0] ?? null;
+  const ownedApp = resolveOwnedApp(paths);
+  const ownedBackend = resolveOwnedBackend(paths);
   if (!state) {
-    if (ownedLaunches.length > 0 || unrecordedApps.length > 0 || unrecordedBackends.length > 0) {
+    if (ownedApp || ownedBackend) {
       writeLine(
         `${appName} has an owned process without a runner for ${paths.root} (${[
-          ...allOwnedApps.map((owned) => `app PID ${String(owned.pid)}`),
-          ...allOwnedBackends.map((owned) => `backend PID ${String(owned.pid)}`),
-          ...ownedLaunchers.map((owned) => `launcher PID ${String(owned.pid)}`),
-          ...pendingLaunches.map(
-            (launch) => `pending generation ${String(launch.record.generation)}`,
-          ),
+          ownedApp ? `app PID ${String(ownedApp.pid)}` : null,
+          ownedBackend ? `backend PID ${String(ownedBackend.pid)}` : null,
         ]
           .filter(Boolean)
           .join(", ")}).`,
@@ -1146,21 +1008,7 @@ export function statusApp({
     );
     return;
   }
-  if (ownedLaunches.length > 1 || allOwnedApps.length > 1 || allOwnedBackends.length > 1) {
-    writeLine(
-      `${appName} has multiple owned launch generations for ${paths.root} (${[
-        ...allOwnedApps.map((owned) => `app PID ${String(owned.pid)}`),
-        ...allOwnedBackends.map((owned) => `backend PID ${String(owned.pid)}`),
-        ...ownedLaunchers.map((owned) => `launcher PID ${String(owned.pid)}`),
-        ...pendingLaunches.map(
-          (launch) => `pending generation ${String(launch.record.generation)}`,
-        ),
-      ].join(", ")}). Run pnpm dev:app:stop before starting it again.`,
-    );
-    return;
-  }
-  const completeLaunch = ownedLaunches.find((launch) => launch.app && launch.backend);
-  if (state.starting || !completeLaunch || !ownedApp || !ownedBackend) {
+  if (state.starting || !ownedApp || !ownedBackend) {
     writeLine(
       `${appName} is starting for ${paths.root}${state.pid ? ` (runner PID ${String(state.pid)}${ownedApp ? `, app PID ${String(ownedApp.pid)}` : ""})` : ""}.`,
     );
@@ -1185,7 +1033,8 @@ export async function stopApp({
   paths = resolveLocalDevAppPaths(),
   matchesRunner = processMatchesRunner,
   killProcess = process.kill,
-  resolveOwnedLaunches = resolveOwnedDevelopmentLaunches,
+  resolveOwnedApp = resolveOwnedDevelopmentApp,
+  resolveOwnedBackend = resolveOwnedDevelopmentBackend,
   resolveOwnedApps = resolveOwnedDevelopmentApps,
   resolveOwnedBackends = resolveOwnedDevelopmentBackends,
   waitUntilStopped = waitForStopped,
@@ -1195,16 +1044,10 @@ export async function stopApp({
 } = {}) {
   const appName = paths.appName ?? LOCAL_DEV_APP_NAME;
   const state = clearStaleRunner(paths, { matchesRunner });
-  const ownedLaunches = resolveOwnedLaunches(paths, {
-    preserveIncomplete: state !== null,
-  });
-  const recordedPids = new Set(
-    ownedLaunches.flatMap((launch) =>
-      [launch.launcher, launch.app, launch.backend].flatMap((owned) => (owned ? [owned.pid] : [])),
-    ),
-  );
-  const ownedApps = resolveOwnedApps(paths).filter(({ pid }) => !recordedPids.has(pid));
-  const ownedBackends = resolveOwnedBackends(paths).filter(({ pid }) => !recordedPids.has(pid));
+  const ownedApp = resolveOwnedApp(paths);
+  const ownedBackend = resolveOwnedBackend(paths);
+  const ownedApps = resolveOwnedApps(paths).filter(({ pid }) => pid !== ownedApp?.pid);
+  const ownedBackends = resolveOwnedBackends(paths).filter(({ pid }) => pid !== ownedBackend?.pid);
   const stopBackgroundService = async () => {
     const unloaded = unloadService(paths);
     if (unloaded && !(await waitForLocalDevAppServiceToUnload(paths, { serviceIsLoaded }))) {
@@ -1212,9 +1055,33 @@ export async function stopApp({
     }
     return unloaded;
   };
+  const resolvers = {
+    matchesRunner,
+    resolveOwnedApp,
+    resolveOwnedBackend,
+    resolveOwnedApps,
+    resolveOwnedBackends,
+  };
+  const forceStopRemaining = async (runnerPid) => {
+    const remainingApp = resolveOwnedApp(paths);
+    if (remainingApp) killProcess(remainingApp.pid, "SIGKILL");
+    const remainingBackend = resolveOwnedBackend(paths);
+    if (remainingBackend) killProcess(remainingBackend.pid, "SIGKILL");
+    signalOwnedDevelopmentProcesses(resolveOwnedApps(paths), "SIGKILL", killProcess);
+    signalOwnedDevelopmentProcesses(resolveOwnedBackends(paths), "SIGKILL", killProcess);
+    if (runnerPid && matchesRunner(runnerPid, paths.root)) killProcess(runnerPid, "SIGKILL");
+    return waitUntilStopped(paths, runnerPid, { ...resolvers, timeoutMs: 2_000 });
+  };
+  const failStop = async () => {
+    await stopBackgroundService();
+    throw new Error(
+      `Could not stop every owned ${appName} process for ${paths.root}; some are still running.`,
+    );
+  };
   if (
     !state &&
-    ownedLaunches.length === 0 &&
+    !ownedApp &&
+    !ownedBackend &&
     ownedApps.length === 0 &&
     ownedBackends.length === 0
   ) {
@@ -1226,67 +1093,73 @@ export async function stopApp({
     );
     return;
   }
-
-  let serviceStopped = false;
   if (state?.starting) {
-    serviceStopped = await stopBackgroundService();
-    if (!serviceStopped) {
-      writeLine(`${appName} is still starting for ${paths.root}; try again shortly.`);
+    if (await stopBackgroundService()) {
+      signalOwnedDevelopmentProcesses(
+        [ownedApp, ...ownedApps].filter(Boolean),
+        "SIGTERM",
+        killProcess,
+      );
+      signalOwnedDevelopmentProcesses(
+        [ownedBackend, ...ownedBackends].filter(Boolean),
+        "SIGTERM",
+        killProcess,
+      );
+      const stopped =
+        (await waitUntilStopped(paths, null, { ...resolvers, timeoutMs: 2_000 })) ||
+        (await forceStopRemaining(null));
+      if (!stopped) await failStop();
+      NodeFS.rmSync(paths.runnerDir, { recursive: true, force: true });
+      removeDevelopmentLaunchFiles(paths.appPidPath, paths.backendPidPath);
+      writeLine(`Stopped ${appName} while it was starting for ${paths.root}.`);
       return;
     }
+    writeLine(`${appName} is still starting for ${paths.root}; try again shortly.`);
+    return;
   }
-
-  const signalEveryOwnedProcess = (signal) =>
-    signalEveryOwnedDevelopmentProcess(paths, signal, {
-      killProcess,
-      resolveOwnedLaunches,
-      resolveOwnedApps,
-      resolveOwnedBackends,
-      preserveIncomplete: state !== null,
-    });
-
-  signalEveryOwnedProcess("SIGTERM");
-  if (state?.pid) {
+  if (ownedApp) {
     try {
-      killProcess(state.pid, "SIGTERM");
+      killProcess(ownedApp.pid, "SIGTERM");
     } catch (error) {
       if (error?.code !== "ESRCH") throw error;
-      releaseRunner(paths, state.pid);
+      removeDevelopmentLaunchFiles(paths.appPidPath);
     }
   }
-
-  let stopped = await waitUntilStopped(paths, state?.pid ?? null, {
-    matchesRunner,
-    resolveOwnedLaunches,
-    resolveOwnedApps,
-    resolveOwnedBackends,
-  });
-  if (!stopped) {
-    signalEveryOwnedProcess("SIGKILL");
-    if (state?.pid && matchesRunner(state.pid, paths.root)) killProcess(state.pid, "SIGKILL");
-    stopped = await waitUntilStopped(paths, state?.pid ?? null, {
-      timeoutMs: 2_000,
-      matchesRunner,
-      resolveOwnedLaunches,
-      resolveOwnedApps,
-      resolveOwnedBackends,
-    });
+  if (ownedBackend) {
+    try {
+      killProcess(ownedBackend.pid, "SIGTERM");
+    } catch (error) {
+      if (error?.code !== "ESRCH") throw error;
+      removeDevelopmentLaunchFiles(paths.backendPidPath);
+    }
   }
-  if (!stopped) {
-    throw new Error(`Could not stop every owned ${appName} process for ${paths.root}.`);
+  signalOwnedDevelopmentProcesses(ownedApps, "SIGTERM", killProcess);
+  signalOwnedDevelopmentProcesses(ownedBackends, "SIGTERM", killProcess);
+  if (!state) {
+    const stopped =
+      (await waitUntilStopped(paths, null, resolvers)) || (await forceStopRemaining(null));
+    if (!stopped) await failStop();
+    removeDevelopmentLaunchFiles(paths.appPidPath, paths.backendPidPath);
+    await stopBackgroundService();
+    writeLine(`Stopped orphaned ${appName} app process for ${paths.root}.`);
+    return;
   }
-
+  try {
+    killProcess(state.pid, "SIGTERM");
+  } catch (error) {
+    if (error?.code !== "ESRCH") throw error;
+    NodeFS.rmSync(paths.runnerDir, { recursive: true, force: true });
+    await stopBackgroundService();
+    writeLine(`${appName} is already stopped for ${paths.root}`);
+    return;
+  }
+  const stopped =
+    (await waitUntilStopped(paths, state.pid, resolvers)) || (await forceStopRemaining(state.pid));
+  if (!stopped) await failStop();
   clearStaleRunner(paths, { matchesRunner });
-  resolveOwnedLaunches(paths);
   removeDevelopmentLaunchFiles(paths.appPidPath, paths.backendPidPath);
-  if (!serviceStopped) await stopBackgroundService();
-  writeLine(
-    state?.starting
-      ? `Stopped ${appName} while it was starting for ${paths.root}.`
-      : !state
-        ? `Stopped orphaned ${appName} app processes for ${paths.root}.`
-        : `Stopped ${appName} for ${paths.root}.`,
-  );
+  await stopBackgroundService();
+  writeLine(`Stopped ${appName} for ${paths.root}.`);
 }
 
 function uninstallApp() {

@@ -29,7 +29,7 @@ import { SidebarSectionsToggle } from "./SidebarSectionsToggle";
 import { setSidebarSectionScope } from "./sidebarScope";
 import type { SidebarSectionsViewProps } from "./SidebarSectionsView";
 import { useEmptySectionCleanup } from "./useEmptySectionCleanup";
-import { createSectionAndFile, useNewSectionForThreads } from "./useNewSectionForThreads";
+import { useNewSectionForThreads } from "./useNewSectionForThreads";
 import { useThreadSectionMenu } from "./useThreadSectionMenu";
 
 const SIDEBAR_VIEW_MODE_KEY = "scient:sidebar:view-mode";
@@ -51,9 +51,7 @@ export type SidebarSectionsOwnViewProps = Pick<
   | "renamingSectionId"
   | "onRenamingSectionChange"
   | "onRenameSection"
-  | "creatingSection"
   | "onStartCreateSection"
-  | "onCancelCreateSection"
 >;
 
 /**
@@ -84,8 +82,7 @@ export function useSidebarSections(input: {
     scopeProjectRefs,
   } = input;
   const catalog = useThreadSectionCatalog();
-  const { moveThreadsToSection, setThreadSection } = useThreadSectionActions();
-  const newSectionDialog = useNewSectionForThreads();
+  const { setThreadSection } = useThreadSectionActions();
   // Section creation outside the sidebar records the same selected project.
   useEffect(() => {
     setSidebarSectionScope(scopeProjectRefs);
@@ -104,9 +101,13 @@ export function useSidebarSections(input: {
     CollapsedSectionIds,
   );
   const collapsedGroupIds = useMemo(() => new Set(collapsedIds), [collapsedIds]);
-  const [creating, setCreating] = useState<{
-    readonly threadRefs: readonly ScopedThreadRef[];
-  } | null>(null);
+  const onSectionCreated = useCallback(
+    (section: ThreadSection) => {
+      setCollapsedIds((current) => current.filter((id) => id !== section.id));
+    },
+    [setCollapsedIds],
+  );
+  const newSection = useNewSectionForThreads({ onCreated: onSectionCreated });
   const [renamingSectionId, setRenamingSectionId] = useState<string | null>(null);
 
   // The primary server stores the catalog; without it the sidebar stays in Status.
@@ -161,16 +162,7 @@ export function useSidebarSections(input: {
     [collapsedGroupIds, groups, routeThreadKey],
   );
 
-  // "New section…": inline in the Sections view, a dialog elsewhere.
-  const requestNewSectionDialog = newSectionDialog.request;
-  const requestNewSection = useCallback(
-    (threadRefs: readonly ScopedThreadRef[]) => {
-      if (sectionsView) setCreating({ threadRefs });
-      else requestNewSectionDialog(threadRefs);
-    },
-    [requestNewSectionDialog, sectionsView],
-  );
-  const { menuFor, handleMenuAction } = useThreadSectionMenu(requestNewSection);
+  const { menuFor, handleMenuAction } = useThreadSectionMenu(newSection.request);
 
   const applyPendingSection = useCallback(
     async (threadRef: ScopedThreadRef, sectionId: ThreadSectionId) =>
@@ -211,26 +203,6 @@ export function useSidebarSections(input: {
       });
     },
     [newThreadContext, onBeforeNewThread],
-  );
-
-  const submitNewSection = useCallback(
-    async (name: string) => {
-      const threadRefs = creating?.threadRefs ?? [];
-      setCreating(null);
-      const section = await createSectionAndFile({
-        name,
-        threadRefs,
-        scopeProjectRefs,
-        create: catalog.create,
-        moveThreadsToSection,
-      });
-      if (section === null) {
-        toastManager.add(stackedThreadToast({ type: "error", title: "Failed to create section" }));
-        return;
-      }
-      setCollapsedIds((current) => current.filter((id) => id !== section.id));
-    },
-    [catalog, creating, moveThreadsToSection, scopeProjectRefs, setCollapsedIds],
   );
 
   const renameSection = useCallback(
@@ -376,19 +348,14 @@ export function useSidebarSections(input: {
     renamingSectionId,
     onRenamingSectionChange: setRenamingSectionId,
     onRenameSection: renameSection,
-    creatingSection:
-      creating === null
-        ? null
-        : { onSubmit: submitNewSection, threadCount: creating.threadRefs.length },
-    onStartCreateSection: () => setCreating({ threadRefs: [] }),
-    onCancelCreateSection: () => setCreating(null),
+    onStartCreateSection: (anchor) => newSection.request([], anchor),
   };
 
   const toggle: ReactNode = supported ? (
     <SidebarSectionsToggle
       active={sectionsView}
       onActiveChange={(active) => {
-        setCreating(null);
+        newSection.close();
         setViewMode(active ? "sections" : "status");
       }}
     />
@@ -401,8 +368,8 @@ export function useSidebarSections(input: {
     viewProps,
     /** The header's grouping toggle; null when sections are unavailable. */
     toggle,
-    /** The "New section" dialog used outside the Sections view. */
-    dialog: newSectionDialog.dialog,
+    /** The anchored creation form shared by both sidebar modes. */
+    popover: newSection.popover,
     sectionMenuFor: menuFor,
     handleSectionMenuAction: handleMenuAction,
   };

@@ -268,7 +268,7 @@ describe("resolveMarkdownFileLinkTarget", () => {
     expect(
       resolveInlineCodeFileLinkMeta("./data/results.csv", "/tmp/report-pack", null),
     ).toMatchObject({
-      filePath: "/tmp/report-pack/./data/results.csv",
+      filePath: "/tmp/report-pack/data/results.csv",
       workspaceRelativePath: null,
     });
   });
@@ -370,6 +370,57 @@ describe("relative links inside a rendered host file", () => {
     ).toMatchObject({
       filePath: "/repo/docs/src/main.ts",
       workspaceRelativePath: "docs/src/main.ts",
+    });
+  });
+});
+
+describe("links that climb out of the workspace", () => {
+  it("name the host file they point to, not a workspace path starting with ..", () => {
+    expect(
+      resolveMarkdownFileLinkMeta(
+        "../reviews/document-editing/notes.md",
+        "/Users/me/ScientFactory",
+      ),
+    ).toMatchObject({
+      filePath: "/Users/me/reviews/document-editing/notes.md",
+      targetPath: "/Users/me/reviews/document-editing/notes.md",
+      workspaceRelativePath: null,
+      basename: "notes.md",
+    });
+    expect(
+      resolveMarkdownFileLinkMeta(
+        "/Users/me/ScientFactory/../notes.md:7",
+        "/Users/me/ScientFactory",
+      ),
+    ).toMatchObject({
+      filePath: "/Users/me/notes.md",
+      targetPath: "/Users/me/notes.md:7",
+      workspaceRelativePath: null,
+      line: 7,
+    });
+  });
+
+  it("stay workspace files when the dot segments resolve back inside", () => {
+    expect(
+      resolveMarkdownFileLinkMeta("../ScientFactory/reviews/notes.md", "/Users/me/ScientFactory"),
+    ).toMatchObject({
+      filePath: "/Users/me/ScientFactory/reviews/notes.md",
+      workspaceRelativePath: "reviews/notes.md",
+    });
+  });
+
+  it("resolve against a rendered file's own directory", () => {
+    expect(
+      resolveMarkdownFileLinkMeta("../../notes.md", "/repo", "/repo", "/repo/docs"),
+    ).toMatchObject({ filePath: "/notes.md", workspaceRelativePath: null });
+  });
+});
+
+describe("a POSIX workspace whose name ends in a backslash", () => {
+  it("keeps a plain relative link inside that workspace", () => {
+    expect(resolveMarkdownFileLinkMeta("notes.txt", "/tmp/project\\")).toMatchObject({
+      filePath: "/tmp/project\\/notes.txt",
+      workspaceRelativePath: "notes.txt",
     });
   });
 });
@@ -576,7 +627,11 @@ describe("markdownFileLinkRelativeCopyPath", () => {
     expect(relativeCopyPath("../outside.md:12", "/workspace/project")).toBeNull();
     expect(relativeCopyPath("/workspace/project/../outside.md", "/workspace/project")).toBeNull();
     expect(relativeCopyPath("C:/repo/../other/a.ts", "C:/repo")).toBeNull();
-    expect(relativeCopyPath("docs/..", "/workspace/project")).toBeNull();
+  });
+
+  it("copies workspace root links as the root directory", () => {
+    expect(relativeCopyPath("/workspace/project", "/workspace/project")).toBe(".");
+    expect(relativeCopyPath("docs/..", "/workspace/project")).toBe(".");
   });
 
   it("collapses dot segments that stay inside the workspace", () => {
@@ -584,5 +639,28 @@ describe("markdownFileLinkRelativeCopyPath", () => {
     expect(relativeCopyPath("C:/repo/../repo/src/a.ts", "C:/repo")).toBe("src/a.ts");
     expect(relativeCopyPath("docs/../src/./main.ts:3", "/workspace/project")).toBe("src/main.ts:3");
     expect(relativeCopyPath("./docs/report.md", "/workspace/project")).toBe("docs/report.md");
+  });
+});
+
+it("routes the project-root code link to the workspace explorer", () => {
+  const cwd = "/Users/saphid/.t3/worktrees/ov2-standalone-20260918";
+  expect(resolveInlineCodeFileLinkMeta(cwd, cwd)).toMatchObject({
+    workspaceRelativePath: ".",
+    filePath: cwd,
+  });
+});
+
+describe("home-relative file links", () => {
+  it("keeps the authored spelling so the environment that owns the files can place it", () => {
+    expect(resolveMarkdownFileLinkMeta("~/notes/today.md:12", "/srv/project")).toMatchObject({
+      homeRelativePath: "~/notes/today.md",
+      line: 12,
+    });
+    expect(
+      resolveMarkdownFileLinkMeta("~/My%20Notes.md", "/Users/ada/project")?.homeRelativePath,
+    ).toBe("~/My Notes.md");
+    expect(resolveMarkdownFileLinkMeta("notes/today.md", "/srv/project")).not.toHaveProperty(
+      "homeRelativePath",
+    );
   });
 });

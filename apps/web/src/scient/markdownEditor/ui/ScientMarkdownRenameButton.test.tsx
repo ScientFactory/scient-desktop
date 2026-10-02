@@ -145,6 +145,31 @@ describe("Markdown rename publication barrier", () => {
     expect(container.querySelector<HTMLButtonElement>("button[type=submit]")?.disabled).toBe(false);
   });
 
+  it("does not rename a file whose prefilled path is submitted untouched", async () => {
+    // The name ends in a space. Treated as typed text it would be trimmed to
+    // a different name, and the file renamed without anyone asking.
+    const beforeRename = vi.fn(() => vi.fn());
+    await act(async () =>
+      root.render(
+        <ScientMarkdownRenameButton
+          {...common}
+          relativePath="drafts/notes.md "
+          label="notes.md "
+          beforeRename={beforeRename}
+          onRenamed={vi.fn()}
+        />,
+      ),
+    );
+    await act(async () => container.querySelector<HTMLButtonElement>("button")!.click());
+    expect(container.querySelector<HTMLInputElement>("input")!.value).toBe("drafts/notes.md ");
+
+    await submit();
+
+    expect(beforeRename).not.toHaveBeenCalled();
+    expect(mocks.rename).not.toHaveBeenCalled();
+    expect(container.querySelector("input")).toBeNull();
+  });
+
   it("does not dispatch when the clean-state barrier cannot be acquired", async () => {
     const beforeRename = vi.fn(() => null);
     await act(async () =>

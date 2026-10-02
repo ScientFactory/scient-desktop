@@ -28,7 +28,10 @@ describe("Markdown persistence feedback", () => {
     vi.unstubAllGlobals();
     document.body.replaceChildren();
   });
-  function mount(coordinator: MarkdownPersistenceCoordinator) {
+  function mount(
+    coordinator: MarkdownPersistenceCoordinator,
+    extra: Partial<Parameters<typeof ScientMarkdownPersistenceNotice>[0]> = {},
+  ) {
     const persistence: MarkdownPersistenceLease = {
       target: {
         environmentId: EnvironmentId.make("test"),
@@ -55,7 +58,9 @@ describe("Markdown persistence feedback", () => {
     document.body.append(host);
     const root = createRoot(host);
     roots.push(root);
-    act(() => root.render(<ScientMarkdownPersistenceNotice persistence={persistence} />));
+    act(() =>
+      root.render(<ScientMarkdownPersistenceNotice persistence={persistence} {...extra} />),
+    );
     return host;
   }
   function click(host: HTMLElement, text: string) {
@@ -213,6 +218,47 @@ describe("Markdown persistence feedback", () => {
     await act(() => coordinator.change("B"));
     expect(host.textContent).toContain("Changes haven’t been saved");
     expect(host.querySelector("[role=status]")?.textContent).toBe("Changes haven’t been saved");
+  });
+
+  it("explains a moved file and offers the same-name files as other documents", async () => {
+    const onOpenFile = vi.fn();
+    const coordinator = new MarkdownPersistenceCoordinator({
+      source: "A",
+      revision: "rA",
+      write: async () => ({ revision: "unused" }),
+      read: async () => {
+        throw new Error("missing");
+      },
+      classifyFailure: () => "terminal",
+    });
+    const host = mount(coordinator, {
+      refreshCopy: {
+        title: "This file is no longer at this location",
+        description:
+          "It may have been moved, renamed, or deleted. The last confirmed version is still open.",
+      },
+      missingFileChoices: ["archive/notes.md", "drafts/notes.md", "old/notes.md"],
+      onOpenFile,
+    });
+    await act(async () => coordinator.noteFreshnessHint());
+
+    expect(host.textContent).toContain("This file is no longer at this location");
+    expect(host.textContent).toContain("The last confirmed version is still open.");
+    expect(host.textContent).not.toContain("couldn’t be refreshed");
+    // A choice opens another document; the open one keeps its draft.
+    await act(() => click(host, "archive/notes.md"));
+    expect(onOpenFile).toHaveBeenCalledExactlyOnceWith("archive/notes.md");
+    expect(coordinator.getSnapshot().draftSource).toBe("A");
+    expect([...host.querySelectorAll("button")].map((button) => button.textContent)).toEqual([
+      "archive/notes.md",
+      "drafts/notes.md",
+      "Retry",
+    ]);
+
+    // Unsaved edits are a different episode and keep their own explanation.
+    await act(() => coordinator.change("B"));
+    expect(host.textContent).toContain("Changes haven’t been saved");
+    expect(host.textContent).not.toContain("archive/notes.md");
   });
 
   it("returns focus to this source editor when resolving removes the focused action", async () => {

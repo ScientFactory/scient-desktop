@@ -52,6 +52,7 @@ import {
   GENERAL_SECTION_GROUP_ID,
   type SectionGroup,
   type SectionsDropTarget,
+  type SectionsDropPlacement,
   type SectionsLifecycle,
   type SectionsListItem,
   planSectionsThreadDrop,
@@ -63,8 +64,8 @@ import {
   sectionShifts,
   sectionGroupIdFromHeaderItemId,
   sectionHeaderItemId,
-  newSectionTitle,
 } from "./logic";
+import type { SectionCreateAnchor } from "./NewSectionPopover";
 import { readTypedSectionName } from "./sectionNameInput";
 
 type Shell = EnvironmentThreadShell;
@@ -115,18 +116,16 @@ export interface SidebarSectionsViewProps {
   readonly renamingSectionId: string | null;
   readonly onRenamingSectionChange: (sectionId: string | null) => void;
   readonly onRenameSection: (sectionId: string, name: string) => void;
-  /** Inline name input replacing the "New section" row; null when not creating. */
-  readonly creatingSection: {
-    readonly onSubmit: (name: string) => void;
-    /** Threads the section is being made for (0 from the "New section" row). */
-    readonly threadCount: number;
-  } | null;
-  readonly onStartCreateSection: () => void;
-  readonly onCancelCreateSection: () => void;
+  readonly onStartCreateSection: (anchor: SectionCreateAnchor) => void;
 }
 
 type DragState =
-  | { readonly kind: "thread"; readonly key: string; readonly target: SectionsDropTarget | null }
+  | {
+      readonly kind: "thread";
+      readonly key: string;
+      readonly target: SectionsDropTarget | null;
+      readonly placement: SectionsDropPlacement;
+    }
   | {
       readonly kind: "section";
       readonly groupId: string;
@@ -146,6 +145,14 @@ type SectionDragGeometry = {
   readonly scroller: HTMLElement | null;
   readonly scrollTop: number;
 };
+
+function threadDropPlacement(
+  event: Pick<DragMoveEvent, "over" | "collisions">,
+): SectionsDropPlacement {
+  const placement = event.collisions?.find((collision) => collision.id === event.over?.id)?.data
+    ?.placement;
+  return placement === "after" || placement === "before-header" ? placement : "before";
+}
 
 const SECTION_SLIDE = "transform 160ms ease";
 
@@ -289,16 +296,23 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
   const holding = items !== canonicalItems;
 
   const sortableIds = useMemo(() => items.map((item) => item.id), [items]);
-  // Rows slide to where a drop would land, so over a header the lifted row
-  // shows below it, in that header's section (see sectionsDropIndex).
+  // Rows and headers slide to the same insertion slot the drop will commit.
   const sortingStrategy = useCallback<SortingStrategy>(
     (args) =>
       verticalListSortingStrategy(
         args.activeIndex < 0 || args.overIndex < 0 || items[args.activeIndex]?.kind !== "thread"
           ? args
-          : { ...args, overIndex: sectionsDropIndex(items, args.activeIndex, args.overIndex) },
+          : {
+              ...args,
+              overIndex: sectionsDropIndex(
+                items,
+                args.activeIndex,
+                args.overIndex,
+                drag?.kind === "thread" ? drag.placement : "before",
+              ),
+            },
       ),
-    [items],
+    [drag, items],
   );
 
   const lifecycleByKey = useMemo(
@@ -332,7 +346,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
       const id = String(event.active.id);
       const groupId = sectionGroupIdFromHeaderItemId(id);
       if (groupId === null) {
-        setDrag({ kind: "thread", key: id, target: null });
+        setDrag({ kind: "thread", key: id, target: null, placement: "before" });
         return;
       }
       const groupIds = groups.map((group) => group.id);
@@ -356,25 +370,46 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
     [groups],
   );
 
-  const handleDragMove = useCallback((event: DragMoveEvent) => {
-    setDrag((current) => {
-      if (current?.kind !== "section") return current;
-      const { geometry } = current;
-      const scrolled = (geometry.scroller?.scrollTop ?? 0) - geometry.scrollTop;
-      const pointerY = geometry.pointerY + event.delta.y + scrolled;
-      const preview = resolveSectionDragOrder(geometry.blocks, current.groupId, pointerY);
-      return preview.every((groupId, position) => groupId === current.preview[position])
-        ? current
-        : { ...current, preview };
-    });
-  }, []);
-
-  // Section drags resolve against the frozen geometry, never dnd-kit's targets,
-  // so the sortable list leaves every row and header where it is.
+  // Measure against the untransformed droppable rects: preview animations must
+  // not change the insertion side beneath a stationary pointer. Use the pointer
+  // rather than the lifted card's centre so pickup position cannot bias the slot.
   const collisionDetection = useCallback<CollisionDetection>(
-    (args) =>
-      sectionGroupIdFromHeaderItemId(String(args.active.id)) === null ? closestCenter(args) : [],
-    [],
+    (args) => {
+      if (sectionGroupIdFromHeaderItemId(String(args.active.id)) !== null) return [];
+      const pointer = args.pointerCoordinates;
+      const rect = args.collisionRect;
+      const collisions = closestCenter(
+        pointer
+          ? {
+              ...args,
+              collisionRect: {
+                ...rect,
+                top: pointer.y - rect.height / 2,
+                bottom: pointer.y + rect.height / 2,
+              },
+            }
+          : args,
+      );
+      const nearest = collisions[0];
+      if (!nearest) return collisions;
+      const item = items.find((entry) => entry.id === nearest.id);
+      const targetRect = args.droppableRects.get(nearest.id);
+      const placement: SectionsDropPlacement =
+        pointer &&
+        targetRect &&
+        item?.kind === "header" &&
+        pointer.y < targetRect.top + targetRect.height / 2
+          ? "before-header"
+          : item?.kind === "thread" &&
+              item.groupId !== null &&
+              pointer &&
+              targetRect &&
+              pointer.y >= targetRect.top + targetRect.height / 2
+            ? "after"
+            : "before";
+      return [{ ...nearest, data: { ...nearest.data, placement } }, ...collisions.slice(1)];
+    },
+    [items],
   );
 
   const reportFailure = useCallback(
@@ -423,10 +458,10 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
 
   /** What dropping the lifted row over `overId` would do; null when nothing. */
   const planThreadDrop = useCallback(
-    (activeKey: string, overId: string) => {
+    (activeKey: string, overId: string, placement: SectionsDropPlacement) => {
       const thread = threadByKey.get(activeKey);
       const source = items.find((item) => item.id === activeKey);
-      const shown = resolveSectionsDropTarget(items, activeKey, overId);
+      const shown = resolveSectionsDropTarget(items, activeKey, overId, placement);
       if (thread === undefined || source?.kind !== "thread" || shown === null) return null;
       const fullOrder = shown.kind === "section" ? fullOrderByGroup.get(shown.groupId) : undefined;
       const target =
@@ -438,6 +473,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
                 fullOrder,
                 droppedId: activeKey,
                 onHeader: sectionGroupIdFromHeaderItemId(overId) === shown.groupId,
+                atEnd: placement === "before-header",
               }),
             }
           : shown;
@@ -470,22 +506,43 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
 
   // Only a drop that changes something highlights its section or shelf.
   const handleDragOver = useCallback(
-    (event: DragOverEvent) => {
+    (event: DragOverEvent | DragMoveEvent) => {
       const activeId = String(event.active.id);
       if (sectionGroupIdFromHeaderItemId(activeId) !== null) return;
+      const placement = threadDropPlacement(event);
       const target = event.over
-        ? (planThreadDrop(activeId, String(event.over.id))?.target ?? null)
+        ? (planThreadDrop(activeId, String(event.over.id), placement)?.target ?? null)
         : null;
       setDrag((current) =>
-        current?.kind === "thread" && current.key === activeId ? { ...current, target } : current,
+        current?.kind === "thread" && current.key === activeId
+          ? { ...current, target, placement }
+          : current,
       );
     },
     [planThreadDrop],
   );
 
+  const handleDragMove = useCallback(
+    (event: DragMoveEvent) => {
+      // The hovered id can stay the same while the pointer crosses its midpoint.
+      handleDragOver(event);
+      setDrag((current) => {
+        if (current?.kind !== "section") return current;
+        const { geometry } = current;
+        const scrolled = (geometry.scroller?.scrollTop ?? 0) - geometry.scrollTop;
+        const pointerY = geometry.pointerY + event.delta.y + scrolled;
+        const preview = resolveSectionDragOrder(geometry.blocks, current.groupId, pointerY);
+        return preview.every((groupId, position) => groupId === current.preview[position])
+          ? current
+          : { ...current, preview };
+      });
+    },
+    [handleDragOver],
+  );
+
   const dropThread = useCallback(
-    (activeKey: string, overId: string) => {
-      const planned = planThreadDrop(activeKey, overId);
+    (activeKey: string, overId: string, placement: SectionsDropPlacement) => {
+      const planned = planThreadDrop(activeKey, overId, placement);
       if (planned === null) return;
       const { thread, target, plan } = planned;
       const threadRef = scopeThreadRef(thread.environmentId, thread.id);
@@ -498,7 +555,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
         const activeIndex = items.findIndex((item) => item.id === activeKey);
         const overIndex = items.findIndex((item) => item.id === overId);
         const ids = items.map((item) => item.id).filter((id) => id !== activeKey);
-        ids.splice(sectionsDropIndex(items, activeIndex, overIndex), 0, activeKey);
+        ids.splice(sectionsDropIndex(items, activeIndex, overIndex, placement), 0, activeKey);
         setHeld({ ids, expiresAt: Date.now() + HELD_LAYOUT_MS });
       }
 
@@ -518,10 +575,13 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
             return reportFailure("Failed to wake thread", result);
           }
         }
-        const moved =
-          plan.sectionId !== undefined
-            ? moveThreadsToSection([threadRef], plan.sectionId)
-            : Promise.resolve(true);
+        if (
+          plan.sectionId !== undefined &&
+          !(await moveThreadsToSection([threadRef], plan.sectionId))
+        ) {
+          release();
+          return;
+        }
         // Stop on failure; each successful key write remains a valid placement.
         for (const assignment of plan.assignments) {
           const target = threadByKey.get(assignment.id);
@@ -539,7 +599,6 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
             break;
           }
         }
-        await moved;
         // Every write has been applied locally by now; show the store's order.
         release();
       })();
@@ -564,7 +623,8 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
       setDrag(null);
       if (current === null) return;
       if (current.kind === "section") dropSection(current.preview);
-      else if (event.over !== null) dropThread(current.key, String(event.over.id));
+      else if (event.over !== null)
+        dropThread(current.key, String(event.over.id), threadDropPlacement(event));
     },
     [drag, dropSection, dropThread],
   );
@@ -647,17 +707,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
               const firstShelf = items.findIndex((entry) => entry.kind === "shelf") === index;
               return (
                 <Fragment key={item.id}>
-                  {firstShelf ? (
-                    props.creatingSection !== null ? (
-                      <NewSectionRow
-                        threadCount={props.creatingSection.threadCount}
-                        onSubmit={props.creatingSection.onSubmit}
-                        onCancel={props.onCancelCreateSection}
-                      />
-                    ) : (
-                      <AddSectionRow onClick={props.onStartCreateSection} />
-                    )
-                  ) : null}
+                  {firstShelf ? <AddSectionRow onClick={props.onStartCreateSection} /> : null}
                   {props.renderShelfHeader(item.shelf, {
                     dragging: drag?.kind === "thread",
                     isDropTarget: item.shelf === "settled" && dragTarget?.kind === "settled",
@@ -687,14 +737,14 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
           {props.trailing}
         </ul>
       </SortableContext>
-      <DragOverlay dropAnimation={null}>
-        {liftedGroup ? (
+      {liftedGroup ? (
+        <DragOverlay dropAnimation={null}>
           <div className="flex h-8 items-center gap-2 rounded-md bg-sidebar-row-active px-2 text-xs font-medium text-sidebar-foreground/80 shadow-sm">
             <FadeTruncate text={liftedGroup.section?.name ?? "General"} className="shrink" />
             <span aria-hidden className="h-px min-w-6 flex-1 bg-sidebar-foreground/25" />
           </div>
-        ) : null}
-      </DragOverlay>
+        </DragOverlay>
+      ) : null}
     </DndContext>
   );
 }
@@ -929,40 +979,18 @@ function SectionNameInput(props: {
   );
 }
 
-function AddSectionRow(props: { onClick: () => void }) {
+function AddSectionRow(props: { onClick: (anchor: SectionCreateAnchor) => void }) {
   return (
     <li className="mx-0.5 h-8 list-none" data-sections-end>
       <button
         type="button"
-        onClick={props.onClick}
+        onClick={(event) => props.onClick(event.currentTarget)}
         data-testid="sidebar-add-section"
         className="flex h-full w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-xs font-medium text-sidebar-muted-foreground/60 hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
       >
         <PlusIcon aria-hidden className="size-3 shrink-0" />
         New section
       </button>
-    </li>
-  );
-}
-
-function NewSectionRow(props: {
-  threadCount: number;
-  onSubmit: (name: string) => void;
-  onCancel: () => void;
-}) {
-  return (
-    <li className="mx-0.5 h-8 list-none" data-testid="sidebar-new-section-row" data-sections-end>
-      <div className="flex h-full items-center px-2">
-        <SectionNameInput
-          initialName=""
-          ariaLabel={newSectionTitle(props.threadCount)}
-          placeholder={
-            props.threadCount === 0 ? "Section name" : `${newSectionTitle(props.threadCount)}…`
-          }
-          onSubmit={props.onSubmit}
-          onCancel={props.onCancel}
-        />
-      </div>
     </li>
   );
 }

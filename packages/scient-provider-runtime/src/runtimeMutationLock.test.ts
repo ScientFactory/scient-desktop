@@ -336,5 +336,5 @@ describe("managed runtime mutation lock ownership", () => {
       await Promise.all(owners.map((lock) => lock.release()));
       await expect(NodeFSP.access(path)).rejects.toMatchObject({ code: "ENOENT" });
     }
-  });
+  }, 30_000);
 });

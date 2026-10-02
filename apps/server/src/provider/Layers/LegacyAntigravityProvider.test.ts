@@ -101,7 +101,7 @@ describe("groupAntigravityModels", () => {
     const reasoning = model?.capabilities?.optionDescriptors?.find(
       (descriptor) => descriptor.id === "reasoning",
     );
-    expect(reasoning?.currentValue).toBe("medium");
+    expect(reasoning?.currentValue).toBe("high");
   });
 
   it("keeps effort ordering low→medium→high regardless of discovery order", () => {

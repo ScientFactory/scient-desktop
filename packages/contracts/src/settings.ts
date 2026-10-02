@@ -689,6 +689,9 @@ function makeProviderSettingsSchema<const Fields extends Schema.Struct.Fields>(
 
 export const CodexSettings = makeProviderSettingsSchema(
   {
+    setupMode: Schema.optionalKey(Schema.Literals(["managed", "existing"])).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
     enabled: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(true)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
@@ -949,9 +952,21 @@ export const DroidSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
+    // On leaves Droid's own `cloudSessionSync` setting alone (Scient writes
+    // nothing, so sync turned off in Droid stays off); off writes `false` for
+    // the processes Scient starts.
+    cloudSessionSync: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({
+        title: "Sync conversations to Factory",
+        description:
+          "On: Droid syncs conversations to Factory as its own settings say (messages and titles, also with your own custom models). Off: Scient stops Droid from syncing them; model and usage counts still reach Factory.",
+        providerSettingsForm: { control: "switch" },
+      }),
+    ),
   },
   {
-    order: ["binaryPath"],
+    order: ["binaryPath", "cloudSessionSync"],
   },
 );
 export type DroidSettings = typeof DroidSettings.Type;
@@ -1680,6 +1695,7 @@ const ModelSelectionPatch = Schema.Struct({
 });
 
 const CodexSettingsPatch = Schema.Struct({
+  setupMode: Schema.optionalKey(Schema.Literals(["managed", "existing"])),
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
   homePath: Schema.optionalKey(TrimmedString),
@@ -1736,6 +1752,7 @@ const DroidSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+  cloudSessionSync: Schema.optionalKey(Schema.Boolean),
 });
 
 const PiSettingsPatch = Schema.Struct({

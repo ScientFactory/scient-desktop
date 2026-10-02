@@ -180,7 +180,10 @@ export function AddProviderInstanceDialog({
     setHasAttemptedSubmit(true);
     if (instanceIdError !== null) return;
 
-    const config = configByDriver[driver] ?? {};
+    const config =
+      driver === "codex"
+        ? { ...configByDriver[driver], setupMode: "existing" }
+        : (configByDriver[driver] ?? {});
     const hasConfig = Object.keys(config).length > 0;
     const normalizedAccentColor = normalizeProviderAccentColor(accentColor);
 
@@ -219,15 +222,10 @@ export function AddProviderInstanceDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <WizardPopup>
+      <WizardPopup size="wide">
         <WizardHeader
           title="Add provider instance"
-          description={
-            <>
-              Configure an additional provider instance on {environmentLabel} — for example, a
-              second Codex install pointed at a different workspace.
-            </>
-          }
+          description={<>Add an account or configure a provider on {environmentLabel}.</>}
         >
           <AddProviderInstanceWizardSteps
             currentStep={wizardStep}
@@ -395,7 +393,7 @@ export function AddProviderInstanceDialog({
 
         <WizardFooter>
           <Button
-            variant="outline"
+            variant={wizardStep === 0 ? "ghost-muted" : "outline"}
             onClick={() => {
               if (wizardStep === 0) {
                 onOpenChange(false);

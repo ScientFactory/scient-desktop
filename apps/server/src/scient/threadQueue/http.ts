@@ -1,3 +1,5 @@
+import { cleanupUnusedAttachments } from "../../orchestration/Normalizer.ts";
+import * as FileSystem from "effect/FileSystem";
 import { importLegacyQueue } from "./migration.ts";
 import {
   enqueueQueue,
@@ -39,6 +41,7 @@ export const scientThreadQueueHttpApiLayer = HttpApiBuilder.group(
     const sql = yield* SqlClient.SqlClient;
     const query = yield* ProjectionSnapshotQuery;
     const config = yield* ServerConfig;
+    const fs = yield* FileSystem.FileSystem;
     const handle = (
       name: string,
       threadId: ThreadId,
@@ -68,16 +71,31 @@ export const scientThreadQueueHttpApiLayer = HttpApiBuilder.group(
           if (Option.isNone(thread) || thread.value.deletedAt !== null)
             return yield* Effect.fail(new QueueError({ message: "The thread no longer exists." }));
           yield* importLegacyQueue(threadId, yield* readQueue(threadId, thread.value.session));
-          return yield* sql.withTransaction(
+          const retired: Array<import("@t3tools/contracts").ChatAttachment> = [];
+          const result = yield* sql.withTransaction(
             Effect.gen(function* () {
               const currentThread = yield* query.getThreadDetailById(threadId);
               if (Option.isNone(currentThread) || currentThread.value.deletedAt !== null)
                 return yield* new QueueError({ message: "The thread no longer exists." });
               let doc = yield* readQueue(threadId, currentThread.value.session);
-              if (change) doc = yield* writeQueue(threadId, yield* change(doc));
+              if (change) {
+                const previous = doc;
+                doc = yield* writeQueue(threadId, yield* change(doc));
+                const retained = new Set(
+                  doc.items.flatMap((item) => item.attachments.map((attachment) => attachment.id)),
+                );
+                for (const item of previous.items)
+                  for (const attachment of item.attachments)
+                    if (!("dataUrl" in attachment) && !retained.has(attachment.id))
+                      retired.push(attachment);
+              }
               return snapshot(threadId, doc);
             }),
           );
+          yield* cleanupUnusedAttachments(retired).pipe(
+            Effect.provideService(FileSystem.FileSystem, fs),
+          );
+          return result;
         }).pipe(
           Effect.catch(
             (

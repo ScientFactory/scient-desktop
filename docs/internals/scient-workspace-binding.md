@@ -128,6 +128,23 @@ The existing environment Files RPC has a different contract: it contains paths
 inside a supplied root but does not prove the root belongs to the active thread.
 Do not expose its model-supplied cwd as agent workspace authority.
 
+### Scratch conversations
+
+The upstream alignment through `5cc99e1c23` enables **No project** after owner approval.
+These conversations still have a real owning project: the server's internal scratch
+project at `<baseDir>/scratch` in production. The dev runner selects a separate
+persistent scratch root outside the checkout; advertisement and authority use the
+same configured location. Each thread records its own plain subfolder in
+`worktreePath`; this does not reintroduce historical null-project Quick Chat threads.
+
+The shared resolver admits only a host-registered direct canonical child of this
+server's scratch root, with verified plain-folder evidence for both roots. It rejects
+the shared parent as a thread scope, nested descendants, Git-inherited directories,
+and symlinks escaping the canonical data directory or scratch root. Ordinary projects
+retain the existing Git worktree lineage checks. Binding IDs, filesystem identities,
+authority generations, and projection revisions remain the publication fences for
+Sources, Documents, and Compute; consumers need no scratch-specific adapters.
+
 ## Domain effects and persistence
 
 Sources and Documents consume the captured workspace instead of repeatedly

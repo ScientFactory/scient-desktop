@@ -1186,9 +1186,11 @@ export function resolveMacFileExclusions(arch?: typeof BuildArch.Type) {
 export const WINDOWS_SERVER_ASAR_RESOURCE = "server.asar";
 // dlopen/spawn need real files, so native modules, shared libraries, and
 // helper executables live in each archive's .unpacked sibling (the standard
-// asar redirect convention). Everything else stays packed.
+// asar redirect convention). Compute scripts are unpacked separately below.
 export const WINDOWS_NATIVE_ASAR_UNPACK_GLOB =
   "{**/*.node,**/*.dll,**/*.exe,**/*.so,**/*.so.*,**/*.dylib}";
+// Python reads these scripts directly, including MATLAB's shared protocol import.
+export const COMPUTE_BRIDGE_ASAR_UNPACK_DIR = "apps/server/dist/scient-compute-bridge";
 // Mirrors DESKTOP_FILE_EXCLUSIONS for the hand-packed sidecar: the Claude SDK
 // platform packages are dead weight (see above), and node_modules/.bin shims
 // are never spawned at runtime (and are symlinks on POSIX build hosts, which
@@ -2882,6 +2884,17 @@ export function resolveDesktopProductName(version: string): string {
   return SCIENT_DESKTOP_IDENTITY.baseName;
 }
 
+/** The reasons macOS shows before letting the app read files in protected locations. */
+export function macFileAccessUsageDescriptions(appName: string): Record<string, string> {
+  return {
+    NSDesktopFolderUsageDescription: `${appName} reads files on your Desktop that you open in it.`,
+    NSDocumentsFolderUsageDescription: `${appName} reads files in your Documents folder that you open in it.`,
+    NSDownloadsFolderUsageDescription: `${appName} reads files in your Downloads folder that you open in it.`,
+    NSRemovableVolumesUsageDescription: `${appName} reads files on external drives that you open in it.`,
+    NSNetworkVolumesUsageDescription: `${appName} reads files on network drives that you open in it.`,
+  };
+}
+
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -2939,8 +2952,11 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // metadata. Windows keeps those files archived so native dependencies do
     // not inflate the loose-file count and slow NSIS installation.
     ...(platform === "win"
-      ? { asar: { smartUnpack: false }, asarUnpack: [WINDOWS_NATIVE_ASAR_UNPACK_GLOB] }
-      : {}),
+      ? {
+          asar: { smartUnpack: false },
+          asarUnpack: [WINDOWS_NATIVE_ASAR_UNPACK_GLOB, `${COMPUTE_BRIDGE_ASAR_UNPACK_DIR}/**/*`],
+        }
+      : { asarUnpack: [`${COMPUTE_BRIDGE_ASAR_UNPACK_DIR}/**/*`] }),
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
       ...(platform === "win" && nativePreviewPath
@@ -2969,6 +2985,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       extendInfo: {
         NSMicrophoneUsageDescription: `${SCIENT_DESKTOP_IDENTITY.baseName} uses the microphone only while you dictate a message. Audio is transcribed on this device.`,
         NSScreenCaptureUsageDescription: `${SCIENT_DESKTOP_IDENTITY.baseName} captures the active window when you use the window capture shortcut.`,
+        // Files open wherever they live, so macOS needs a reason to show for
+        // each protected location instead of silently denying the read.
+        ...macFileAccessUsageDescriptions(SCIENT_DESKTOP_IDENTITY.baseName),
         // SCIENT-FORK:START — the `.scic` document type.
         CFBundleDocumentTypes: macConversationDocumentTypes(),
         UTExportedTypeDeclarations: DESKTOP_MAC_EXPORTED_TYPES,
@@ -3230,6 +3249,7 @@ export const packWindowsServerAsar = Effect.fn("packWindowsServerAsar")(function
       createPackageWithOptions(input.sourceDir, input.asarPath, {
         dot: true,
         unpack: WINDOWS_NATIVE_ASAR_UNPACK_GLOB,
+        unpackDir: COMPUTE_BRIDGE_ASAR_UNPACK_DIR,
         // glob 13 (via @electron/asar 4) matches `ignore` relative to `cwd`,
         // not against the absolute paths it crawls, so anchor it at the source.
         globOptions: {
@@ -3363,6 +3383,35 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
     `[desktop-artifact] Packed server.asar (${String(packedStat.size)} bytes) + unpacked natives.`,
   );
 });
+
+// Validate the final archive, not just the staging inputs or builder configuration.
+export const validatePackagedComputeBridges = Effect.fn("validatePackagedComputeBridges")(
+  function* (asarPath: string) {
+    const path = yield* Path.Path;
+    for (const name of ["scient_compute_bridge.py", "scient_matlab_engine_bridge.py"]) {
+      const relativePath = path.join(COMPUTE_BRIDGE_ASAR_UNPACK_DIR, name);
+      yield* Effect.tryPromise({
+        try: async () => {
+          const entry = statFile(asarPath, relativePath);
+          if (!("size" in entry) || !entry.unpacked || entry.size === 0) {
+            throw new Error(`${relativePath} must be a nonempty unpacked file.`);
+          }
+          // The OS-facing reader cannot follow Electron's virtual ASAR redirects.
+          const contents = await NodeFSP.readFile(path.join(`${asarPath}.unpacked`, relativePath));
+          if (contents.length !== entry.size) {
+            throw new Error(`${relativePath} is truncated in the unpacked payload.`);
+          }
+        },
+        catch: (cause) =>
+          new BuildCommandFailedError({
+            command: "verify packaged Compute bridges",
+            exitCode: 1,
+            stderrTail: `${asarPath}: ${String(cause)}`,
+          }),
+      });
+    }
+  },
+);
 
 function collectUnpackedAsarFiles(
   directory: DirectoryRecord,
@@ -4375,8 +4424,8 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   // missed a build that inlined `effect` while leaving `yaml` external. Node's
   // resolver has no such ambiguity: it either finds every import or it does not.
   //
-  // Only Windows unpacks anything; macOS and Linux keep the whole tree inside
-  // the app asar. Windows validates and executes the separately packed server
+  // macOS and Linux use app.asar with native files and Compute scripts unpacked.
+  // Windows validates and executes the separately packed server
   // sidecar after electron-builder copies it into the final payload.
   if (options.platform === "win") {
     // Native static dependencies ship their license notices beside the DLL.
@@ -4424,6 +4473,31 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   }
 
   const stageEntries = yield* fs.readDirectory(stageDistDir);
+  const packagedDirectories = stageEntries.filter((entry) =>
+    options.platform === "mac" ? /^mac(?:-|$)/u.test(entry) : entry.endsWith("-unpacked"),
+  );
+  if (packagedDirectories.length === 0) {
+    return yield* new BuildCommandFailedError({
+      command: "verify packaged Compute bridges",
+      exitCode: 1,
+      stderrTail: "No packaged application directory found.",
+    });
+  }
+  for (const directory of packagedDirectories) {
+    const resources =
+      options.platform === "mac"
+        ? path.join(
+            stageDistDir,
+            directory,
+            `${resolveDesktopProductName(appVersion)}.app`,
+            "Contents",
+            "Resources",
+          )
+        : path.join(stageDistDir, directory, "resources");
+    yield* validatePackagedComputeBridges(
+      path.join(resources, options.platform === "win" ? WINDOWS_SERVER_ASAR_RESOURCE : "app.asar"),
+    );
+  }
   yield* fs.makeDirectory(options.outputDir, { recursive: true });
 
   const copiedArtifacts: string[] = [];

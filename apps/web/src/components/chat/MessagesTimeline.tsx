@@ -3,16 +3,18 @@ import { useBoundedAnswerFollow } from "./useBoundedAnswerFollow";
 import { deriveTerminalAssistantMessageIds } from "@scientfactory/conversation/work-log-grouping";
 import { countUnreadBelow, unreadMessagesForThread } from "./unreadTimelineMessages";
 import {
+  readerAtReadingEnd,
+  readingEndAllowance,
   readingEndGapOnScreen,
   readingIdentity,
   resolveReadingRow,
-  withReadingEnd,
 } from "./readerScrollPolicy";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { useRightPanelStore } from "~/rightPanelStore";
 import {
   getQuestionAnswerPreview,
   getQuestionAnswerText,
+  getQuestionTextPreview,
   hasQuestionAnswer,
 } from "@t3tools/client-runtime/work-log/user-input";
 import {
@@ -187,7 +189,6 @@ import {
   liveWorkEntryLabel,
   workEntryIsActiveTurnActivity,
   resolveAssistantMessageCopyState,
-  resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapCurrentIndex,
   resolveTimelineMinimapHeightStyle,
@@ -257,7 +258,7 @@ import { ScientChatImageGallery } from "~/scient/images/ScientChatImageGallery";
 import { remoteImageAddress } from "~/scient/presentation/remoteImageAddress";
 // SCIENT-FORK:END
 import { SkillChipIcon, SkillInlineText } from "./SkillInlineText";
-import { deriveAgentSpawnSummary } from "./agentSpawnSummary";
+import { agentSpawnRowLabel, deriveAgentSpawnSummary } from "./agentSpawnSummary";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import {
   buildReviewCommentRenderablePatch,
@@ -384,8 +385,6 @@ function timelineRowsKey(data: readonly unknown[]) {
   const last = data.at(-1) as { id?: string } | undefined;
   return `${data.length}:${last?.id ?? ""}`;
 }
-/** How close the text end must be to the visible bottom for the reader to rest at it. */
-const READING_END_REST_PX = 40;
 /** Older-history pages a missing saved message may load before falling back. */
 const MAX_READING_HISTORY_PAGES = 2;
 // ---------------------------------------------------------------------------
@@ -550,6 +549,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ReadonlySet<string>
   >(() => rememberedPosition?.disclosures?.reasoningMessages ?? new Set());
   const [positionedThreadKey, setPositionedThreadKey] = useState<string | null>(null);
+  // Whether the latest turn is unfinished (running, or it ended interrupted or
+  // with an error): its latest content is then the reading end.
+  const turnUnfinished =
+    runningTurnId !== null || latestTurn?.state === "interrupted" || latestTurn?.state === "error";
+  const turnUnfinishedRef = useRef(turnUnfinished);
+  useLayoutEffect(() => {
+    turnUnfinishedRef.current = turnUnfinished;
+  });
   const [readingListLoaded, setReadingListLoaded] = useState(false);
   const requestedReadingPages = useRef({ key: listIdentityKey, cursors: new Set<string>() });
   if (requestedReadingPages.current.key !== listIdentityKey) {
@@ -659,8 +666,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           // Closing output can reveal the end without a scroll event.
           if (
             collapsed &&
-            resolveTimelineIsAtEnd(
-              withReadingEnd(listRef.current?.getState(), contentInsetEndAdjustment),
+            readerAtReadingEnd(
+              listRef.current?.getState(),
+              contentInsetEndAdjustment,
+              turnUnfinishedRef.current,
             ) === true
           ) {
             onToolOutputCollapsedAtEnd?.();
@@ -1220,7 +1229,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       offsetWithinRow: identity.rowId
         ? element.getBoundingClientRect().top - row.getBoundingClientRect().top
         : 0,
-      atEnd: resolveTimelineIsAtEnd(withReadingEnd(state, contentInsetEndAdjustment)) ?? false,
+      atEnd: readerAtReadingEnd(state, contentInsetEndAdjustment, turnUnfinished) ?? false,
       ...(anchorMessageId ? { anchorMessageId } : {}),
       disclosures: {
         turns: paintedExpandedTurnIds,
@@ -1238,6 +1247,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     citationPositioning,
     timelinePositioningPending,
     runningTurnId,
+    turnUnfinished,
     rows,
     listIdentityKey,
     anchorMessageId,
@@ -1316,11 +1326,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       // Removing a tail wholly below the viewport cannot clamp the reading position.
       if (bottom >= state.scroll + state.scrollLength) onReleaseUnusedAnchor?.();
     }
-    // The reader is at the bottom once the last message's text is in view:
-    // reserved anchor space and trailing file lists or tool groups are not
-    // unread content. Overflowing answers still show the end control.
-    const readingState = withReadingEnd(state, contentInsetEndAdjustment);
-    const isAtEnd = resolveTimelineIsAtEnd(readingState);
+    // The reader is at the bottom once the end's text is in view, but for at
+    // most its last three lines (readerAtReadingEnd: a running turn's latest
+    // content, otherwise the latest turn's answer). Reserved anchor space and
+    // what trails a finished answer are not unread content.
+    const isAtEnd = readerAtReadingEnd(state, contentInsetEndAdjustment, turnUnfinished);
     if (isAtEnd !== undefined && !citationPositioning) onIsAtEndChange(isAtEnd);
     // Whether the reader rests at the reading end, measured on screen (the
     // list's positions can trail the rendered rows by a frame).
@@ -1328,7 +1338,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       ? readingEndGapOnScreen(state, viewport, contentInsetEndAdjustment)
       : null;
     restingAtReadingEndRef.current =
-      restingGap !== null && viewport && restingGap <= READING_END_REST_PX
+      restingGap !== null && viewport && restingGap <= readingEndAllowance(state)
         ? {
             gap: restingGap,
             contentEnd: restingGap + viewport.scrollTop,
@@ -1405,6 +1415,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     timelinePositioningPending,
     onReleaseUnusedAnchor,
     contentInsetEndAdjustment,
+    runningTurnId,
+    turnUnfinished,
     minimapItems,
     minimapStripMap,
     onIsAtEndChange,
@@ -2713,6 +2725,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
               threadRef={ctx.threadRef ?? undefined}
               isStreaming={Boolean(row.message.streaming)}
               messageId={row.message.id}
+              changedFiles={row.assistantTurnChangedFiles}
               directionHint={row.assistantDirectionHint}
               lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
               skills={ctx.skills}
@@ -3376,6 +3389,42 @@ function WorkingTimer({ createdAt }: { createdAt: string }) {
   );
 }
 
+/** A step this young shows no timer: only one that runs long needs to prove it is alive. */
+const LIVE_STEP_TIMER_AFTER_MS = 10_000;
+
+function liveStepElapsedSuffix(startedAt: string): string {
+  const elapsedMs = Date.now() - Date.parse(startedAt);
+  return Number.isFinite(elapsedMs) && elapsedMs >= LIVE_STEP_TIMER_AFTER_MS
+    ? ` · ${formatWorkingTimerNow(startedAt)}`
+    : "";
+}
+
+/**
+ * How long a step that is still running has run, once it has run long enough
+ * to wonder. Ticks through DOM writes, like the turn's own timer.
+ */
+function LiveStepElapsed({ startedAt }: { startedAt: string }) {
+  const textRef = useRef<HTMLSpanElement>(null);
+  const initialText = liveStepElapsedSuffix(startedAt);
+
+  useEffect(() => {
+    const updateText = () => {
+      if (textRef.current) {
+        textRef.current.textContent = liveStepElapsedSuffix(startedAt);
+      }
+    };
+    updateText();
+    const id = setInterval(updateText, 1000);
+    return () => clearInterval(id);
+  }, [startedAt]);
+
+  return (
+    <span ref={textRef} className="shrink-0 whitespace-pre tabular-nums">
+      {initialText}
+    </span>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Extracted row sections — own their state / store subscriptions so changes
 // re-render only the affected row, not the entire list.
@@ -3707,7 +3756,10 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
       />
     );
   }
-  const label = liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
+  const questionHeading = row.entry.questionAnswer
+    ? getQuestionTextPreview(row.entry.questionAnswer)
+    : "";
+  const label = questionHeading || liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
   const failed = workEntryDisplayIndicatesToolFailure(row.entry);
 
   return (
@@ -3720,19 +3772,17 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
     >
       <LiveActivityRow
         label={
-          row.entry.questionAnswer ? (
+          row.entry.questionAnswer && hasQuestionAnswer(row.entry.questionAnswer) ? (
             <span className="flex min-w-0 gap-1.5">
-              <span className="shrink-0">{label}</span>
-              <span
-                className={cn(
-                  "truncate",
-                  !row.expanded && hasQuestionAnswer(row.entry.questionAnswer)
-                    ? "text-foreground"
-                    : "text-muted-foreground",
-                )}
-              >
+              <span className="min-w-0 truncate">{label}</span>
+              <span className="min-w-0 truncate text-foreground">
                 {getQuestionAnswerPreview(row.entry.questionAnswer)}
               </span>
+            </span>
+          ) : row.active && row.entry.toolLifecycleStatus === "inProgress" ? (
+            <span className="flex min-w-0">
+              <span className="min-w-0 truncate">{label}</span>
+              <LiveStepElapsed startedAt={row.entry.startedAt ?? row.entry.createdAt} />
             </span>
           ) : (
             label
@@ -4967,10 +5017,16 @@ const AgentSpawnRow = memo(function AgentSpawnRow(props: {
     agentCount,
     coordinatorStatus: workflowGroup?.workflow.status,
   });
-  const { live, lead } = summary;
+  const { live } = summary;
   const failed = summary.tone === "failed";
   const workflowName =
     workflowGroup?.workflow.workflowName ?? workflowGroup?.workflow.title ?? null;
+  const label = agentSpawnRowLabel(summary, workflowName);
+  // The longest-running agent still at work: a quiet row keeps counting.
+  const workingSince = agents
+    .filter((agent) => isActiveSubagentStatus(agent.status) && agent.startedAt !== null)
+    .map((agent) => agent.startedAt!)
+    .toSorted()[0];
   const toggleExpanded = () => {
     props.onToggleEntry?.(expanded);
     onToggleSpawnRow(workEntry.id, !expanded);
@@ -4985,7 +5041,19 @@ const AgentSpawnRow = memo(function AgentSpawnRow(props: {
         className="flex cursor-pointer select-none rounded-md text-left transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
         <LiveActivityRow
-          label={workflowName ? `${lead} · ${workflowName}` : lead}
+          label={
+            live && workingSince ? (
+              <span className="flex min-w-0">
+                <span className="min-w-0 truncate">{label}</span>
+                <span className="shrink-0 whitespace-pre tabular-nums">
+                  {" · "}
+                  <WorkingTimer createdAt={workingSince} />
+                </span>
+              </span>
+            ) : (
+              label
+            )
+          }
           iconName="bot"
           active={live && props.active !== false}
           failed={failed}
@@ -5106,7 +5174,14 @@ function AgentSpawnMemberRow({
           ) : null}
         </p>
         <span className="scient-reading-compact shrink-0 font-mono tabular-nums text-muted-foreground">
-          {statusLabel}
+          {activeStatus && agent.startedAt ? (
+            <>
+              {`${statusLabel} · `}
+              <WorkingTimer createdAt={agent.startedAt} />
+            </>
+          ) : (
+            statusLabel
+          )}
         </span>
       </div>
       {!open && firstLine ? (
@@ -5188,10 +5263,18 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
     showWarningIndicator || showDestructiveRowStyle
       ? undefined
       : (workEntry.toolIcon ?? workEntry.toolSource?.icon);
-  const previewText = displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot);
-  const answerPreview = workEntry.questionAnswer
-    ? getQuestionAnswerPreview(workEntry.questionAnswer)
-    : null;
+  // The question is the row's identity: a generic "User input submitted"
+  // label buries what was asked, so lead with the question text and keep the
+  // answer as the trailing preview.
+  const questionHeading = workEntry.questionAnswer
+    ? getQuestionTextPreview(workEntry.questionAnswer)
+    : "";
+  const previewText =
+    displayLabel ?? (questionHeading || workEntryDisplayLabel(workEntry, workspaceRoot));
+  const answerPreview =
+    workEntry.questionAnswer && hasQuestionAnswer(workEntry.questionAnswer)
+      ? getQuestionAnswerPreview(workEntry.questionAnswer)
+      : null;
   const viewedImagePath = workEntryViewedImagePath(workEntry);
   const viewedImage =
     viewedImagePath && threadRef
@@ -5292,7 +5375,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
             <p className="flex min-w-0 w-full items-baseline gap-1.5 text-sm leading-relaxed">
               <span
                 className={cn(
-                  answerPreview ? "shrink-0" : "min-w-0 flex-1",
+                  answerPreview ? "min-w-0" : "min-w-0 flex-1",
                   expanded ? "whitespace-pre-wrap break-words select-text" : "truncate",
                   headingClass,
                 )}

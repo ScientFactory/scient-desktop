@@ -91,6 +91,10 @@ export const traceMaxFilesConfig = Config.Int("T3CODE_TRACE_MAX_FILES").pipe(
 );
 
 const EnvServerConfig = Config.all({
+  developmentScratchRoot: Config.String("SCIENT_DEV_SCRATCH_ROOT").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   scientNextHome: Config.String("SCIENT_NEXT_HOME").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -355,6 +359,10 @@ export const resolveServerConfig = (
     const cwd = path.resolve(yield* expandHomePath(rawCwd.trim()));
     yield* fs.makeDirectory(cwd, { recursive: true });
     const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, devUrl, {
+      developmentScratchRoot:
+        devUrl !== undefined && env.scientNextSafetyEnvelope
+          ? env.developmentScratchRoot
+          : undefined,
       // The candidate runner supplies a candidate home to avoid ambient T3
       // state, but that is still implicit development state when a dev URL is
       // present. Keep it under the candidate development directory rather

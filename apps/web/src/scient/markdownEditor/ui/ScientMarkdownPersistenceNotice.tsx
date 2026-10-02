@@ -5,11 +5,38 @@ import { Button } from "~/components/ui/button";
 import type { MarkdownPersistenceLease } from "../persistence/markdownPersistenceRegistry";
 import { documentFailureReason } from "../persistence/documentFailureReason";
 
+// The same small number of same-name files the plain viewer offers inline.
+const MAX_MISSING_FILE_CHOICES = 2;
+const NO_MISSING_FILE_CHOICES: ReadonlyArray<string> = [];
+
+/** What the notice says when the open document could not be re-read from disk. */
+export interface MarkdownRefreshNoticeCopy {
+  readonly title: string;
+  readonly description: string;
+}
+
+const UNEXPLAINED_REFRESH_FAILURE: MarkdownRefreshNoticeCopy = {
+  title: "This file couldn’t be refreshed",
+  description:
+    "Scient could not check the latest disk version. The last confirmed version is still open. Retry to check it again.",
+};
+
 /** Routine persistence is silent. Only an actionable episode is announced. */
 export function ScientMarkdownPersistenceNotice({
   persistence,
+  refreshCopy = UNEXPLAINED_REFRESH_FAILURE,
+  missingFileChoices = NO_MISSING_FILE_CHOICES,
+  onOpenFile,
 }: {
   readonly persistence: MarkdownPersistenceLease;
+  /** Names why the last refresh read failed, when the operating system said. */
+  readonly refreshCopy?: MarkdownRefreshNoticeCopy;
+  /**
+   * Workspace files a missing path may have meant, given only when the file
+   * is missing; each opens as another document.
+   */
+  readonly missingFileChoices?: ReadonlyArray<string>;
+  readonly onOpenFile?: (relativePath: string) => void;
 }) {
   const snapshot = useSyncExternalStore(persistence.subscribe, persistence.getSnapshot);
   const titleId = useId();
@@ -32,8 +59,10 @@ export function ScientMarkdownPersistenceNotice({
     issue === "conflict"
       ? "This file was changed by another writer"
       : issue === "refresh"
-        ? "This file couldn’t be refreshed"
+        ? refreshCopy.title
         : "Changes haven’t been saved";
+  const choices =
+    issue === "refresh" && onOpenFile ? missingFileChoices.slice(0, MAX_MISSING_FILE_CHOICES) : [];
 
   const reason =
     issue === "failure" || issue === "refresh" ? documentFailureReason(snapshot.error) : null;
@@ -96,7 +125,7 @@ export function ScientMarkdownPersistenceNotice({
                   : issue === "conflict"
                     ? "Your edits are still open and have not overwritten the newer file on disk."
                     : issue === "refresh"
-                      ? "Scient could not check the latest disk version. The last confirmed version is still open. Retry to check it again."
+                      ? refreshCopy.description
                       : "Your edits are still open, but saving or checking the disk version could not finish. Keep this document open and retry."}
             </p>
             {reason !== null && confirmation === null ? (
@@ -161,14 +190,28 @@ export function ScientMarkdownPersistenceNotice({
                 </Button>
               </>
             ) : (
-              <Button
-                size="xs"
-                variant="outline"
-                disabled={busy}
-                onClick={() => void run(() => persistence.retry())}
-              >
-                Retry
-              </Button>
+              <>
+                {choices.map((choice) => (
+                  <Button
+                    key={choice}
+                    size="xs"
+                    variant="outline"
+                    className="max-w-48"
+                    title={`Open ${choice}`}
+                    onClick={() => onOpenFile?.(choice)}
+                  >
+                    <span className="truncate">{choice}</span>
+                  </Button>
+                ))}
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => void run(() => persistence.retry())}
+                >
+                  Retry
+                </Button>
+              </>
             )}
           </div>
         </div>

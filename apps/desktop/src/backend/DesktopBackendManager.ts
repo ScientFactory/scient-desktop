@@ -51,7 +51,6 @@ import {
 import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/httpReadiness";
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
-import type { DevelopmentBackendPidHandoff } from "../app/DesktopEnvironment.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 
@@ -98,8 +97,6 @@ export interface DesktopBackendStartConfig extends BackendProcessContext {
   readonly httpBaseUrl: URL;
   readonly captureOutput: boolean;
   readonly preflightFailure: Option.Option<PreflightFailure>;
-  // Present only for a validated, generation-scoped local development launch.
-  readonly developmentBackendPidHandoff?: DevelopmentBackendPidHandoff;
   // Present for a WSL run after the configured/default distro has been
   // resolved to the concrete distro passed to wsl.exe.
   readonly runningDistro?: string;
@@ -170,20 +167,6 @@ export class BackendProcessSpawnError extends Schema.TaggedError<BackendProcessS
   }
 }
 
-export class BackendProcessPidPublicationError extends Schema.TaggedError<BackendProcessPidPublicationError>()(
-  "BackendProcessPidPublicationError",
-  {
-    ...backendProcessContextSchema,
-    pid: Schema.Int.check(Schema.isGreaterThan(0)),
-    pidFilePath: Schema.String,
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    return `Failed to publish desktop backend process ${this.pid} to ${this.pidFilePath}.`;
-  }
-}
-
 export class BackendProcessOutputReadError extends Schema.TaggedError<BackendProcessOutputReadError>()(
   "BackendProcessOutputReadError",
   {
@@ -233,7 +216,6 @@ export class BackendProcessExitStatusError extends Schema.TaggedError<BackendPro
 export const BackendProcessError = Schema.Union([
   BackendProcessBootstrapEncodeError,
   BackendProcessSpawnError,
-  BackendProcessPidPublicationError,
   BackendProcessExitStatusError,
 ]);
 export type BackendProcessError = typeof BackendProcessError.Type;
@@ -245,7 +227,7 @@ interface RunBackendProcessOptions extends DesktopBackendStartConfig {
   ) => Effect.Effect<void>;
   readonly readinessTimeout?: Duration.Duration;
   readonly outputDrainTimeout?: Duration.Duration;
-  readonly onStarted?: (pid: number) => Effect.Effect<void, BackendProcessPidPublicationError>;
+  readonly onStarted?: (pid: number) => Effect.Effect<void>;
   readonly onExitObserved?: () => Effect.Effect<void>;
   readonly onReady?: () => Effect.Effect<void>;
   readonly onReadinessFailure?: (error: BackendReadinessTimeoutError) => Effect.Effect<void>;
@@ -454,35 +436,6 @@ const encodeBootstrapJson = Schema.encodeEffect(Schema.fromJsonString(DesktopBac
 const decodeDesktopTelemetryControlLine = Schema.decodeUnknownEffect(
   Schema.fromJsonString(DesktopTelemetryControlMessage),
 );
-
-const publishDevelopmentBackendPid = Effect.fn(
-  "desktop.backendInstance.publishDevelopmentBackendPid",
-)(function* (input: {
-  readonly fileSystem: FileSystem.FileSystem;
-  readonly handoff: DevelopmentBackendPidHandoff;
-  readonly pid: number;
-  readonly context: BackendProcessContext;
-}): Effect.fn.Return<void, BackendProcessPidPublicationError> {
-  const temporaryPath = `${input.handoff.pidFilePath}.${String(process.pid)}.${String(input.pid)}.tmp`;
-  const publicationError = (cause: unknown) =>
-    new BackendProcessPidPublicationError({
-      ...input.context,
-      pid: input.pid,
-      pidFilePath: input.handoff.pidFilePath,
-      cause,
-    });
-
-  yield* Effect.gen(function* () {
-    yield* input.fileSystem.writeFileString(temporaryPath, `${String(input.pid)}\n`, {
-      flag: "wx",
-      mode: 0o600,
-    });
-    yield* input.fileSystem.rename(temporaryPath, input.handoff.pidFilePath);
-  }).pipe(
-    Effect.mapError(publicationError),
-    Effect.ensuring(input.fileSystem.remove(temporaryPath, { force: true }).pipe(Effect.ignore)),
-  );
-});
 
 export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   options: RunBackendProcessOptions,
@@ -957,14 +910,6 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           onDesktopTelemetryControl: (message) =>
             desktopTelemetryPublisher.handleControlForSource(spec.id, message),
           onStarted: Effect.fn("desktop.backendInstance.onStarted")(function* (pid) {
-            if (config.value.developmentBackendPidHandoff !== undefined) {
-              yield* publishDevelopmentBackendPid({
-                fileSystem,
-                handoff: config.value.developmentBackendPidHandoff,
-                pid,
-                context: config.value,
-              });
-            }
             yield* updateActiveRun(runId, (run) => ({
               ...run,
               pid: Option.some(pid),

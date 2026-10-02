@@ -39,7 +39,7 @@ import {
 import { ScientForkCheckpointBaseline } from "../scient-fork/ForkCheckpointBaseline.ts";
 import { ScientForkContextDelivery } from "../scient-fork/ForkContextDelivery.ts";
 import { makeForkBoundaryResolver } from "../scient-fork/ForkBoundaryReadModel.ts";
-import { retainPrefixMessages } from "../scient-fork/forkDecider.ts";
+import { retainForkHistory } from "../scient-fork/forkDecider.ts";
 import { collectForkLiveTail } from "../scient-fork/forkLiveTail.ts";
 import { ScientLiveTurnFlush } from "../scient-fork/liveTurnFlush.ts";
 import {
@@ -64,7 +64,11 @@ const isScientForkAttachmentCopyError = Schema.is(ScientForkAttachmentCopyError)
 
 class ScientForkTerminalProvisioningError extends Schema.TaggedError<ScientForkTerminalProvisioningError>()(
   "ScientForkTerminalProvisioningError",
-  { detail: Schema.String },
+  {
+    detail: Schema.String,
+    /** The fork's worktree and branch may hold work: abandon the fork, keep them. */
+    keepWorkspace: Schema.optional(Schema.Boolean),
+  },
 ) {}
 
 const isScientForkTerminalProvisioningError = Schema.is(ScientForkTerminalProvisioningError);
@@ -114,7 +118,8 @@ function isTerminalForkFailure(cause: Cause.Cause<unknown>): boolean {
 const PROVISIONING_RETRIES = 3;
 const PROVISIONING_RETRY_BASE = Duration.millis(250);
 /** One attempt may not hold the serial fork worker indefinitely. */
-const PROVISIONING_ATTEMPT_TIMEOUT = Duration.minutes(3);
+// Git checkout has a five-minute deadline; leave room for the other provisioning stages.
+const PROVISIONING_ATTEMPT_TIMEOUT = Duration.minutes(7);
 const LEGACY_FORK_BOUNDARY_TURN_ID = "legacy-fork-boundary";
 
 function forkBranchName(threadId: string): string {
@@ -182,6 +187,21 @@ const make = Effect.gen(function* () {
     });
     const existing = exactRef(listed.refs, branch);
     if (existing?.worktreePath) {
+      const verified = yield* checkpointBaseline.verifyWorktree({
+        ...input,
+        path: existing.worktreePath,
+        branch,
+        checkpointRef: input.fromRef,
+        requireClean: true,
+      });
+      if (!verified) {
+        // Retrying would meet the same worktree again. End this fork so the
+        // next one starts fresh, and leave the files for the user to decide.
+        return yield* new ScientForkTerminalProvisioningError({
+          keepWorkspace: true,
+          detail: `An earlier attempt left this fork's worktree incomplete or changed, so the fork was cancelled. Fork again to get a fresh worktree. The old files were left in place at ${existing.worktreePath}; delete that folder if you do not need them.`,
+        });
+      }
       return { path: existing.worktreePath, refName: branch };
     }
 
@@ -195,6 +215,26 @@ const make = Effect.gen(function* () {
             path: null,
           },
     );
+    // Recorded before the check: a failed one must still find this folder to remove it.
+    provisioned.set(input.threadId, {
+      cwd: input.cwd,
+      worktreePath: created.worktree.path,
+      branch,
+    });
+    if (
+      !(yield* checkpointBaseline.verifyWorktree({
+        ...input,
+        path: created.worktree.path,
+        branch,
+        checkpointRef: input.fromRef,
+        requireClean: false,
+      }))
+    ) {
+      return yield* new ScientForkTerminalProvisioningError({
+        detail:
+          "The new fork worktree was not checked out at the saved checkpoint, so the fork was cancelled. Fork again.",
+      });
+    }
     return created.worktree;
   });
 
@@ -398,8 +438,9 @@ const make = Effect.gen(function* () {
    * fork-owned names are touched (its `scient/fork/<id>` branch, that branch's
    * worktree and its turn-zero ref), found from Git rather than from memory,
    * so a worktree created by an earlier attempt or before a restart is removed.
+   * `keepWorkspace` leaves the worktree and its branch for the user.
    */
-  const discardProvisioned = (payload: ThreadForkedPayload) =>
+  const discardProvisioned = (payload: ThreadForkedPayload, keepWorkspace: boolean) =>
     Effect.gen(function* () {
       const created = provisioned.get(payload.newThreadId);
       provisioned.delete(payload.newThreadId);
@@ -429,11 +470,24 @@ const make = Effect.gen(function* () {
         yield* checkpointBaseline.discard({
           cwd,
           checkpointRef: checkpointRefForThreadTurn(payload.newThreadId, 0),
-          worktreePath: existing?.worktreePath ?? created?.worktreePath ?? null,
-          branch: existing !== null ? branch : (created?.branch ?? null),
+          worktreePath: keepWorkspace
+            ? null
+            : (existing?.worktreePath ?? created?.worktreePath ?? null),
+          branch: keepWorkspace ? null : existing !== null ? branch : (created?.branch ?? null),
         });
       }
       if (yield* isForkThreadDeleted(sql, payload.newThreadId)) return;
+      if (keepWorkspace) {
+        // An earlier attempt may have recorded the worktree on the thread; a deleted
+        // thread's worktree can be cleaned up later, so let go of it first.
+        yield* orchestrationEngine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make(`server:scient-fork:release:${payload.newThreadId}`),
+          threadId: payload.newThreadId,
+          branch: null,
+          worktreePath: null,
+        });
+      }
       yield* orchestrationEngine.dispatch({
         type: "thread.delete",
         commandId: CommandId.make(`server:scient-fork:abandon:${payload.newThreadId}`),
@@ -465,12 +519,15 @@ const make = Effect.gen(function* () {
         }
         const error = forkFailureDetail(cause);
         const terminal = isTerminalForkFailure(cause);
+        const failure = forkFailure(cause);
+        const keepWorkspace =
+          isScientForkTerminalProvisioningError(failure) && failure.keepWorkspace === true;
         const logCause = Effect.logWarning("scient fork provisioning failure", {
           newThreadId: payload.newThreadId,
           cause: Cause.pretty(cause),
         });
         const persistFailure = terminal
-          ? discardProvisioned(payload).pipe(
+          ? discardProvisioned(payload, keepWorkspace).pipe(
               Effect.andThen(
                 nowIso.pipe(
                   Effect.flatMap((updatedAt) =>
@@ -742,30 +799,19 @@ const make = Effect.gen(function* () {
           0,
           resolved.boundaries.indexOf(resolved.selectedBoundary) + 1,
         );
-        const prefix = retainPrefixMessages(
-          origin.messages,
-          retained,
-          new Set(
-            retained.flatMap((boundary) => (boundary.turnId === null ? [] : [boundary.turnId])),
-          ),
-        );
-        const retainedAnswers = retainQuestionAnswers(
-          origin.activities,
-          new Set(
-            retained.flatMap((boundary) => (boundary.turnId === null ? [] : [boundary.turnId])),
-          ),
-        );
+        const prefix = retainForkHistory({
+          messages: origin.messages,
+          resolvedBoundaries: resolved,
+          retainedBoundaries: retained,
+        });
+        const retainedAnswers = retainQuestionAnswers(origin.activities, prefix.retainedTurnIds);
         if (retainedAnswers.error) return unavailable(retainedAnswers.error);
         const liveTail =
           forkPoint.kind === "running-turn"
             ? collectForkLiveTail({
                 origin,
                 retainedMessageIds: new Set(prefix.messages.map((message) => message.id)),
-                retainedTurnIds: new Set(
-                  retained.flatMap((boundary) =>
-                    boundary.turnId === null ? [] : [boundary.turnId],
-                  ),
-                ),
+                retainedTurnIds: prefix.retainedTurnIds,
                 runningTurnId: forkPoint.turnId,
                 turnRequests: resolved.turnRequests ?? [],
               })

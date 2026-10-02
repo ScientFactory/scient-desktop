@@ -1,4 +1,5 @@
 import {
+  EventId,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   MessageId,
@@ -7,10 +8,13 @@ import {
   ThreadId,
   TurnId,
   type VcsCreateWorktreeInput,
+  type VcsRef,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import { TestClock } from "effect/testing";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -33,6 +37,7 @@ import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ScientForkReactor } from "../Services/ScientForkReactor.ts";
+import { makeForkBoundaryResolver } from "../scient-fork/ForkBoundaryReadModel.ts";
 import { testLayer as ScientForkContextDeliveryTest } from "../scient-fork/ForkContextDelivery.ts";
 import {
   testLayer as ScientForkCheckpointBaselineTest,
@@ -90,6 +95,8 @@ function makeCheckpointBaselineFake(
 function makeGitWorkflowFake(
   worktreePath: string,
   createWorktreeCalls: Array<VcsCreateWorktreeInput>,
+  existingRefs: VcsRef[] = [],
+  beforeCheckout: () => Effect.Effect<void> = () => Effect.void,
 ) {
   return Layer.succeed(GitWorkflowService, {
     isRepository: () => Effect.die("unused in ScientForkReactor test"),
@@ -106,7 +113,7 @@ function makeGitWorkflowFake(
     preparePullRequestThread: () => Effect.die("unused in ScientForkReactor test"),
     listRefs: () =>
       Effect.succeed({
-        refs: [],
+        refs: existingRefs,
         isRepo: true,
         hasPrimaryRemote: true,
         nextCursor: null,
@@ -116,6 +123,7 @@ function makeGitWorkflowFake(
       Effect.sync(() => {
         createWorktreeCalls.push(input);
       }).pipe(
+        Effect.andThen(beforeCheckout()),
         Effect.as({
           worktree: { path: worktreePath, refName: input.newRefName ?? input.refName },
         }),
@@ -143,6 +151,8 @@ function makeHarnessLayer(
   baselineResult = true,
   attachmentCopierOverrides?: Partial<ScientForkAttachmentCopierShape>,
   baselineOverrides?: Partial<ScientForkCheckpointBaselineShape>,
+  existingRefs: VcsRef[] = [],
+  beforeCheckout: () => Effect.Effect<void> = () => Effect.void,
 ) {
   const orchestrationLayer = OrchestrationEngineLive.pipe(
     Layer.provide(OrchestrationProjectionSnapshotQueryLive),
@@ -169,7 +179,9 @@ function makeHarnessLayer(
     ),
     Layer.provideMerge(ScientForkAttachmentCopierTest(attachmentCopierOverrides)),
     Layer.provideMerge(ScientForkContextDeliveryTest()),
-    Layer.provideMerge(makeGitWorkflowFake(NEW_WORKTREE_FIXTURE, createWorktreeCalls)),
+    Layer.provideMerge(
+      makeGitWorkflowFake(NEW_WORKTREE_FIXTURE, createWorktreeCalls, existingRefs, beforeCheckout),
+    ),
     // Expose SqlClient (shared, memoized instance) so the test can read the
     // Scient lineage table directly.
     Layer.provideMerge(SqlitePersistenceMemory),
@@ -320,6 +332,8 @@ const readLineageRow = (sql: SqlClient.SqlClient) =>
   sql<LineageRow>`SELECT * FROM scient_thread_lineage WHERE thread_id = ${NEW}`.pipe(
     Effect.map((rows) => rows[0]),
   );
+
+const invalidCheckoutDiscards: unknown[] = [];
 
 describe("ScientForkReactor", () => {
   it.live(
@@ -861,6 +875,333 @@ describe("ScientForkReactor", () => {
       expect(lineage?.workspace_mode).toBe("new-worktree");
     }).pipe(Effect.provide(makeHarnessLayer(forkBaselineCalls, createWorktreeCalls)));
   });
+
+  it.effect("allows a four-minute checkout to finish before the provisioning deadline", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const reactor = yield* ScientForkReactor;
+        const sql = yield* SqlClient.SqlClient;
+        yield* reactor.start();
+        yield* seedOrigin();
+        yield* dispatchFork("new-worktree", "slow-checkout");
+        yield* Deferred.await(entered);
+        yield* TestClock.adjust("4 minutes");
+        yield* reactor.awaitCompletion(NEW);
+        yield* reactor.drain;
+        expect((yield* readLineageRow(sql))?.status).toBe("ready");
+        expect((yield* readLineageRow(sql))?.attempt_count).toBe(1);
+      }).pipe(
+        Effect.provide(
+          makeHarnessLayer([], [], true, undefined, undefined, [], () =>
+            Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.sleep("4 minutes"))),
+          ),
+        ),
+      );
+    }),
+  );
+
+  for (const verified of [true, false]) {
+    it.live(`reuses an existing worktree only after verification (${verified})`, () => {
+      const creates: VcsCreateWorktreeInput[] = [];
+      const discards: unknown[] = [];
+      return Effect.gen(function* () {
+        const reactor = yield* ScientForkReactor;
+        const sql = yield* SqlClient.SqlClient;
+        const snapshot = yield* ProjectionSnapshotQuery;
+        yield* reactor.start();
+        yield* seedOrigin();
+        yield* dispatchFork("new-worktree", `existing-checkout-${verified}`);
+        const result = yield* reactor.awaitCompletion(NEW).pipe(Effect.result);
+        yield* reactor.drain;
+        expect(result._tag).toBe(verified ? "Success" : "Failure");
+        expect(creates).toEqual([]);
+        const lineage = yield* readLineageRow(sql);
+        const threads = (yield* snapshot.getSnapshot()).threads;
+        if (verified) {
+          expect(lineage?.status).toBe("ready");
+          expect(discards).toEqual([]);
+          expect(threads.find((thread) => thread.id === NEW)?.worktreePath).toBe(
+            NEW_WORKTREE_FIXTURE,
+          );
+        } else {
+          // The fork ends for good, so the next one starts fresh instead of
+          // meeting this worktree again. Its files and branch are not removed.
+          expect(lineage?.status).toBe("abandoned");
+          expect(lineage?.last_error).toContain(NEW_WORKTREE_FIXTURE);
+          expect(lineage?.last_error).toContain("Fork again");
+          expect(discards).toEqual([expect.objectContaining({ worktreePath: null, branch: null })]);
+          expect(Option.isNone(yield* snapshot.getThreadDetailById(NEW))).toBe(true);
+          // Nothing may tie the kept folder to the deleted thread: cleanup of
+          // deleted threads' worktrees would otherwise remove it later.
+          expect(
+            (yield* snapshot.getDeletedWorktreeThreads()).some((thread) => thread.id === NEW),
+          ).toBe(false);
+        }
+        expect(threads.find((thread) => thread.id === ORIGIN)?.worktreePath).toBe(ORIGIN_WORKTREE);
+      }).pipe(
+        Effect.provide(
+          makeHarnessLayer(
+            [],
+            creates,
+            true,
+            undefined,
+            {
+              verifyWorktree: (input) =>
+                Effect.sync(() => {
+                  expect(input.path).toBe(NEW_WORKTREE_FIXTURE);
+                  expect(input.branch).toBe(`scient/fork/${NEW}`);
+                  expect(input.checkpointRef).toBe(checkpointRefForThreadTurn(NEW, 0));
+                  expect(input.requireClean).toBe(true);
+                  return verified;
+                }),
+              discard: (input) =>
+                Effect.sync(() => {
+                  discards.push(input);
+                }),
+            },
+            [
+              {
+                name: `scient/fork/${NEW}`,
+                current: false,
+                isDefault: false,
+                worktreePath: NEW_WORKTREE_FIXTURE,
+              },
+            ],
+          ),
+        ),
+      );
+    });
+  }
+
+  it.live("forks, forks again and reverts past a turn that ended without an answer", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const reactor = yield* ScientForkReactor;
+      const snapshot = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      const model = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" };
+      let tick = 0;
+      const now = () => `2026-01-01T00:00:${String(10 + tick++).padStart(2, "0")}.000Z`;
+      let command = 0;
+      const commandId = () => CommandId.make(`cmd-lost-${command++}`);
+      // One turn as the app records it: request, running session, optional
+      // work and answer, session back to ready, then the turn's checkpoint.
+      const turn = (count: number, request: string, answer: string | null) =>
+        Effect.gen(function* () {
+          const turnId = TurnId.make(`origin-turn-${count}`);
+          const session = (status: "running" | "ready") =>
+            engine.dispatch({
+              type: "thread.session.set",
+              commandId: commandId(),
+              threadId: ORIGIN,
+              session: {
+                threadId: ORIGIN,
+                status,
+                providerName: "codex",
+                runtimeMode: "approval-required",
+                activeTurnId: status === "running" ? turnId : null,
+                lastError: null,
+                updatedAt: now(),
+              },
+              createdAt: now(),
+            });
+          yield* engine.dispatch({
+            type: "thread.turn.start",
+            commandId: commandId(),
+            threadId: ORIGIN,
+            message: {
+              messageId: MessageId.make(`origin-user-${count}`),
+              role: "user",
+              text: request,
+              attachments: [],
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "approval-required",
+            createdAt: now(),
+          });
+          yield* session("running");
+          yield* engine.dispatch({
+            type: "thread.activity.append",
+            commandId: commandId(),
+            threadId: ORIGIN,
+            createdAt: now(),
+            activity: {
+              id: EventId.make(`origin-activity-${count}`),
+              tone: "tool",
+              kind: "tool.completed",
+              summary: `Work for: ${request}`,
+              turnId,
+              createdAt: now(),
+              payload: { toolCallId: `origin-call-${count}` },
+            },
+          });
+          const answerId = MessageId.make(
+            answer === null ? `assistant:${turnId}` : `origin-assistant-${count}`,
+          );
+          if (answer !== null) {
+            yield* engine.dispatch({
+              type: "thread.message.assistant.complete",
+              commandId: commandId(),
+              threadId: ORIGIN,
+              messageId: answerId,
+              text: answer,
+              turnId,
+              createdAt: now(),
+            });
+          }
+          yield* session("ready");
+          // A turn without an answer still records an answer id here; no message carries it.
+          yield* engine.dispatch({
+            type: "thread.turn.diff.complete",
+            commandId: commandId(),
+            threadId: ORIGIN,
+            turnId,
+            completedAt: now(),
+            checkpointRef: checkpointRefForThreadTurn(ORIGIN, count),
+            status: "ready",
+            files: [],
+            assistantMessageId: answerId,
+            checkpointTurnCount: count,
+            createdAt: now(),
+          });
+          return answerId;
+        });
+      const historyOf = (threadId: ThreadId) =>
+        snapshot.getThreadDetailById(threadId).pipe(
+          Effect.map(Option.getOrThrow),
+          Effect.map((thread) => ({
+            messages: thread.messages.map((message) => message.text),
+            workLog: thread.activities.map((activity) => activity.summary),
+          })),
+        );
+      const fork = (originThreadId: ThreadId, newThreadId: ThreadId, source: MessageId) =>
+        engine
+          .dispatch({
+            type: "thread.fork",
+            commandId: commandId(),
+            originThreadId,
+            newThreadId,
+            sourceAssistantMessageId: source,
+            workspaceMode: "local",
+          })
+          .pipe(Effect.andThen(reactor.awaitCompletion(newThreadId)));
+
+      yield* reactor.start();
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: commandId(),
+        projectId: PROJECT_ID,
+        title: "Fork Project",
+        workspaceRoot: WORKSPACE_ROOT,
+        defaultModelSelection: model,
+        createdAt: now(),
+      });
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: commandId(),
+        threadId: ORIGIN,
+        projectId: PROJECT_ID,
+        title: "Origin",
+        modelSelection: model,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: ORIGIN_WORKTREE,
+        createdAt: now(),
+      });
+      yield* turn(1, "Investigate", "Found it");
+      yield* turn(2, "Run the build", null);
+      const lastAnswer = yield* turn(3, "Summarise", "Summary");
+      const history = {
+        messages: ["Investigate", "Found it", "Run the build", "Summarise", "Summary"],
+        workLog: ["Work for: Investigate", "Work for: Run the build", "Work for: Summarise"],
+      };
+      expect(yield* historyOf(ORIGIN)).toEqual(history);
+
+      // The availability check selects history exactly as the fork does.
+      expect(
+        (yield* reactor.getOptions({
+          originThreadId: ORIGIN,
+          sourceAssistantMessageId: lastAnswer,
+        })).available,
+      ).toBe(true);
+      yield* fork(ORIGIN, NEW, lastAnswer);
+      expect(yield* historyOf(NEW)).toEqual(history);
+
+      // The fork offers only its answered turns as fork points, all of them inherited.
+      const forkBoundaries = (yield* makeForkBoundaryResolver(sql).resolve({
+        originThreadId: NEW,
+        threadCreatedAt: CREATED_AT,
+      })).boundaries;
+      expect(
+        forkBoundaries.map((boundary) => [
+          boundary.conversationTurnCount,
+          boundary.assistantMessageId !== null,
+        ]),
+      ).toEqual([
+        [0, false],
+        [0, true],
+        [0, true],
+      ]);
+
+      // A fork of the fork still carries the unanswered turn.
+      const again = ThreadId.make("new-thread-fork-again");
+      yield* fork(NEW, again, forkBoundaries.at(-1)!.assistantMessageId!);
+      expect(yield* historyOf(again)).toEqual(history);
+
+      // Reverting the fork to its start keeps all inherited history.
+      yield* engine.dispatch({
+        type: "thread.revert.complete",
+        commandId: commandId(),
+        threadId: NEW,
+        turnCount: 0,
+        createdAt: now(),
+      });
+      expect(yield* historyOf(NEW)).toEqual(history);
+      yield* reactor.drain;
+    }).pipe(Effect.provide(makeHarnessLayer([], []))),
+  );
+
+  it.live("does not publish an incomplete new checkout as ready", () =>
+    Effect.gen(function* () {
+      const reactor = yield* ScientForkReactor;
+      const sql = yield* SqlClient.SqlClient;
+      const snapshot = yield* ProjectionSnapshotQuery;
+      yield* reactor.start();
+      yield* seedOrigin();
+      yield* dispatchFork("new-worktree", "invalid-checkout");
+      const result = yield* reactor.awaitCompletion(NEW).pipe(Effect.result);
+      yield* reactor.drain;
+      expect(result._tag).toBe("Failure");
+      expect((yield* readLineageRow(sql))?.status).toBe("abandoned");
+      const threads = (yield* snapshot.getSnapshot()).threads;
+      expect(Option.isNone(yield* snapshot.getThreadDetailById(NEW))).toBe(true);
+      expect(threads.find((thread) => thread.id === ORIGIN)?.worktreePath).toBe(ORIGIN_WORKTREE);
+      // The folder is removed even when Git no longer lists it under the fork branch
+      // (a hook switched branches): the reactor remembers what it created.
+      expect(invalidCheckoutDiscards).toEqual([
+        expect.objectContaining({
+          worktreePath: NEW_WORKTREE_FIXTURE,
+          branch: `scient/fork/${NEW}`,
+        }),
+      ]);
+    }).pipe(
+      Effect.provide(
+        makeHarnessLayer([], [], true, undefined, {
+          verifyWorktree: (input) =>
+            Effect.sync(() => {
+              expect(input.requireClean).toBe(false);
+              return false;
+            }),
+          discard: (input) =>
+            Effect.sync(() => {
+              invalidCheckoutDiscards.push(input);
+            }),
+        }),
+      ),
+    ),
+  );
 
   it.live("leaves a user-message fork empty for an unsent client composer draft", () => {
     const forkBaselineCalls: Array<Parameters<ScientForkCheckpointBaselineShape["copy"]>[0]> = [];

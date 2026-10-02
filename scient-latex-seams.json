@@ -17,6 +17,7 @@
     "apps/server/src/provider/ScientToolProjection.ts",
     "apps/server/src/provider/ScientAwareness.ts",
     "apps/server/src/scient/skills/BuiltInSkillSources.ts",
+    "apps/web/src/scient/markdownEditor/persistence/markdownPersistenceRegistry.ts",
     "scripts/stage-synctex-runtime.ts",
     "scripts/lib/scient-synctex-build.ts",
     "packages/client-runtime/src/state/scientLatexHttp.ts",

@@ -1160,6 +1160,29 @@ describe("ProviderCommandReactor", () => {
     expect(harness.sendTurn).not.toHaveBeenCalled();
   });
 
+  it("keeps fork context pending without a turn-start error when the send never reached the agent", async () => {
+    const settleDelivery = vi.fn<ScientForkContextDeliveryShape["settleDelivery"]>(
+      () => Effect.void,
+    );
+    const harness = await createHarness({
+      forkLineage: true,
+      forkContextDelivery: { prepareTurn: () => Effect.succeed(deliverContext()), settleDelivery },
+      // Droid ends a send interrupted when Stop won before its prompt reached Droid.
+      sendTurnEffect: () => Effect.interrupt,
+    });
+
+    await startForkTurn(harness, "fork-stopped-before-prompt");
+    await waitFor(() => settleDelivery.mock.calls.length === 1);
+
+    expect(settleDelivery.mock.calls[0]?.[0].outcome).toEqual({ type: "maybeDelivered" });
+    const thread = (await harness.readModel()).threads.find(
+      (entry) => entry.id === ThreadId.make("thread-1"),
+    );
+    expect(
+      thread?.activities.some((activity) => activity.kind === "provider.turn.start.failed"),
+    ).toBe(false);
+  });
+
   it("settles a rejection that sent nothing as notSent, so the next message can retry", async () => {
     const settleDelivery = vi.fn<ScientForkContextDeliveryShape["settleDelivery"]>(
       () => Effect.void,

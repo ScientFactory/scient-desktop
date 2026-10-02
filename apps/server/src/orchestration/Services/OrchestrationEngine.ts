@@ -11,6 +11,7 @@
  * @module OrchestrationEngineService
  */
 import type {
+  DispatchResult,
   OrchestrationClientOrigin,
   OrchestrationCommand,
   OrchestrationEvent,
@@ -72,8 +73,8 @@ export interface OrchestrationEngineShape {
    */
   readonly dispatch: (
     command: OrchestrationCommand,
-    options?: { readonly origin?: OrchestrationClientOrigin },
-  ) => Effect.Effect<{ sequence: number }, OrchestrationDispatchError, never>;
+    options?: { readonly origin?: OrchestrationClientOrigin; readonly bootstrapHandoff?: string },
+  ) => Effect.Effect<DispatchResult, OrchestrationDispatchError, never>;
 
   /**
    * Stream persisted domain events in dispatch order.

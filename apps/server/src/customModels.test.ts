@@ -433,19 +433,127 @@ it.effect("rejects unsupported and missing agent instances", () =>
     );
   }),
 );
+it.effect("keeps saving a connection whose models name a removed or default-only agent", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    const removed = ProviderInstanceId.make("droid_work");
+    const droid = ProviderInstanceId.make("droid");
+    const saved: CustomModelConnection = {
+      ...connection,
+      credentialId: null,
+      models: [
+        { ...connection.models[0]!, instanceIds: [pi, removed] },
+        { ...connection.models[0]!, id: "other", modelId: "model/two", instanceIds: [droid] },
+      ],
+    };
+    // droid_work was deleted; "droid" runs from the legacy providers map after
+    // "Reset default instance" removed its providerInstances entry.
+    let committed: CustomModelsSettings | undefined;
+    yield* saveCustomModel(
+      { ...f.settings(), customModels: { revision: 3, connections: [saved] } },
+      { revision: 3, connection: { ...saved, name: "Renamed" } },
+      f.secrets,
+      (next) =>
+        Effect.sync(() => {
+          committed = next;
+        }),
+    );
+    // Nothing loads a removed agent's id; keeping it lets the editor show and detach it.
+    expect(committed?.connections[0]?.name).toBe("Renamed");
+    expect(committed?.connections[0]?.models[0]?.instanceIds).toEqual([pi, removed]);
+    // Attaching a model to an agent that does not exist is still refused.
+    yield* rejects(
+      saveCustomModel(
+        { ...f.settings(), customModels: { revision: 3, connections: [saved] } },
+        {
+          revision: 3,
+          connection: {
+            ...saved,
+            models: saved.models.map((model) => ({
+              ...model,
+              instanceIds: [...model.instanceIds, ProviderInstanceId.make("omp_gone")],
+            })),
+          },
+        },
+        f.secrets,
+        () => Effect.void,
+      ),
+      "does not support",
+    );
+  }),
+);
 it.effect("rejects malformed keys before persistence", () =>
   Effect.gen(function* () {
     const f = fixture();
-    for (const key of ["", " ", "key\nheader", "key\rheader", "key\0", "x".repeat(16385)]) {
+    for (const key of ["", " ", "x".repeat(16385)]) {
       yield* rejects(f.save({ apiKey: Redacted.make(key) }), "valid API key");
       expect(f.values.size).toBe(0);
     }
   }),
 );
+it.effect("rejects a key with a line break or NUL for every agent", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    for (const key of ["key\nheader", "key\rheader", "key\0"]) {
+      yield* rejects(f.save({ apiKey: Redacted.make(key) }), "valid API key");
+      expect(f.values.size).toBe(0);
+    }
+  }),
+);
+const UNUSUAL_KEYS = [
+  "sk-with\ttab",
+  "sk with space",
+  "sk\u00a0nbsp",
+  "sk\u0007bell",
+  "sk\u007fdel",
+];
+// Only Droid's key broker needs a key without them (see DroidCustomModels).
+it.effect("keeps a Pi key with a space or control character inside usable", () =>
+  Effect.gen(function* () {
+    for (const key of UNUSUAL_KEYS) {
+      const f = fixture();
+      const next = yield* f.save({ apiKey: Redacted.make(key) });
+      const resolved = yield* resolveCustomModels(next, pi, f.secrets);
+      expect(Redacted.value(resolved[0]!.apiKey!)).toBe(key);
+      const prepared = yield* prepareCustomModelSave(
+        f.settings(),
+        { revision: next.revision, connection },
+        f.secrets,
+      );
+      expect(prepared.connection.credentialError).toBeUndefined();
+    }
+  }),
+);
+it.effect("says a key with a space or control character inside cannot be used with Droid", () =>
+  Effect.gen(function* () {
+    const droid = ProviderInstanceId.make("droid");
+    const attached = {
+      ...connection,
+      models: [{ ...connection.models[0]!, instanceIds: [pi, droid] }],
+    };
+    for (const key of UNUSUAL_KEYS) {
+      const f = fixture();
+      yield* rejects(
+        f.save({ connection: attached, apiKey: Redacted.make(key) }),
+        "Droid can't use an API key that contains spaces, tabs or other control characters. Paste the key again without them, or remove Droid under Use with.",
+      );
+      expect(f.values.size).toBe(0);
+    }
+  }),
+);
+it.effect("trims whitespace around a saved key", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    const next = yield* f.save({ apiKey: Redacted.make("  sk-trimmed-0123\t\n") });
+    const resolved = yield* resolveCustomModels(next, pi, f.secrets);
+    expect(Redacted.value(resolved[0]!.apiKey!)).toBe("sk-trimmed-0123");
+    expect(next.connections[0]!.apiKeySuffix).toBe("0123");
+  }),
+);
 it.effect("never evaluates command or environment-shaped keys", () =>
   Effect.gen(function* () {
     const f = fixture();
-    for (const key of ["!echo test", "$SECRET", "${SECRET}"]) {
+    for (const key of ["!whoami", "$SECRET", "${SECRET}"]) {
       const next = yield* f.save({ apiKey: Redacted.make(key) });
       expect(Redacted.value((yield* resolveCustomModels(next, pi, f.secrets))[0]!.apiKey!)).toBe(
         key,
