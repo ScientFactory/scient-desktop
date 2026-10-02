@@ -17,7 +17,6 @@ import {
   ChevronRight,
   CircleAlert,
   Ellipsis,
-  FileDown,
   LoaderCircle,
   RotateCw,
   TriangleAlert,
@@ -1098,24 +1097,6 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           )}
         </div>
         <div className="scient-latex-actions">
-          <ScientTooltip content="Export to Word">
-            <button
-              type="button"
-              className="scient-latex-action scient-latex-word-export"
-              aria-label="Export to Word"
-              disabled={
-                target === null ||
-                sourcePending ||
-                visualProjectState.pending ||
-                hasLocalVisualDraft ||
-                buildBlocked
-              }
-              onClick={() => setWordExportOpen(true)}
-            >
-              <FileDown className="size-3.5" aria-hidden="true" />
-              <span>Export ▸ Word</span>
-            </button>
-          </ScientTooltip>
           {mode === "split" ? (
             <div
               className="scient-latex-modes scient-latex-split-modes"
