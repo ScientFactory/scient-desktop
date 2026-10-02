@@ -3681,14 +3681,14 @@ function ChatViewContent(props: ChatViewProps) {
     activeServerThread.id === routeThreadRef.threadId &&
     activeServerThread.latestTurn === null &&
     recordedWorktreeSetup?.phase === "running";
-  const isWorking =
+  const isOriginWorking =
     phase === "running" ||
     isSendBusy ||
     isConnecting ||
     isRevertingCheckpoint ||
     isCompacting ||
-    isForkingThread ||
     awaitingBootstrapTurn;
+  const isWorking = isOriginWorking || isForkingThread;
   // The latest turn is unfinished while it runs, or when it ended interrupted or
   // with an error; a fork, revert or send setup alone doesn't make it so.
   threadWorkingRef.current =
@@ -10883,7 +10883,7 @@ function ChatViewContent(props: ChatViewProps) {
                       ...(activeProject ? { onRunShellCommand: runShellCommand } : {}),
                     }
                   : {})}
-                isWorking={!paintOnlyDisplayedTimeline && isWorking}
+                isWorking={!paintOnlyDisplayedTimeline && isOriginWorking}
                 isPreparingWorktree={!paintOnlyDisplayedTimeline && isPreparingWorktree}
                 isCompacting={!paintOnlyDisplayedTimeline && isCompacting}
                 activeTurnStartedAt={paintOnlyDisplayedTimeline ? null : activeWorkStartedAt}
@@ -10912,7 +10912,10 @@ function ChatViewContent(props: ChatViewProps) {
                 onRevertToTurnCount={
                   paintOnlyDisplayedTimeline ? noopHeldRevert : onRevertTimelineTurn
                 }
-                isRevertingCheckpoint={!paintOnlyDisplayedTimeline && isRevertingCheckpoint}
+                // A fork being prepared copies this history: no rewinding until it is done.
+                isRevertingCheckpoint={
+                  !paintOnlyDisplayedTimeline && (isRevertingCheckpoint || isForkingThread)
+                }
                 {...(!paintOnlyDisplayedTimeline
                   ? {
                       hasForkBaseline: activeThread?.forkLineage != null,
@@ -11607,7 +11610,7 @@ function ChatViewContent(props: ChatViewProps) {
           // Closing while the fork is being made dismisses the dialog only.
           if (!open) setForkCommandTarget(null);
         }}
-        onConfirm={(confirmation, beforeNavigate) => {
+        onConfirm={(confirmation, beforeNavigate, confirmSkippedImages) => {
           const target = forkCommandTarget;
           if (
             !target ||
@@ -11621,6 +11624,7 @@ function ChatViewContent(props: ChatViewProps) {
             {
               ...confirmation,
               beforeNavigate,
+              confirmSkippedImages,
               ...(target.kind === "assistant-response" &&
               target.source === "switch-provider" &&
               activeThreadRef

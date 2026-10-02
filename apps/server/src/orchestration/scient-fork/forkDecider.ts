@@ -109,7 +109,7 @@ const withForkEventBase = (input: {
  * user ids on their boundaries, so the nearest unclaimed user message before
  * each boundary assistant is associated as a legacy fallback.
  */
-export function retainPrefixMessages(
+function retainPrefixMessages(
   messages: ReadonlyArray<OrchestrationMessage>,
   retainedBoundaries: ReadonlyArray<OrchestrationForkBoundary>,
   retainedTurnIds: ReadonlySet<string>,
@@ -178,6 +178,125 @@ export function retainPrefixMessages(
   return {
     messages: messages.filter((message) => retainedMessageIds.has(message.id)),
     sourceTurnIdByMessageId,
+  };
+}
+
+/**
+ * A turn can end without an answer: the provider failed or was stopped before
+ * replying. It is history all the same, so a fork keeps its request and work
+ * log when the turn sits before the fork point. In a conversation's own
+ * history such a turn is a boundary without an assistant message; in a fork it
+ * is an inherited turn that the copied-boundary manifest does not list.
+ *
+ * Returns the turn of every message to carry for those turns. A request that
+ * an older conversation never bound to its turn is not found, and is left out.
+ */
+function retainUnansweredTurns(input: {
+  readonly messages: ReadonlyArray<OrchestrationMessage>;
+  /** Every boundary of the conversation, and those up to the fork point. */
+  readonly boundaries: ReadonlyArray<OrchestrationForkBoundary>;
+  readonly retainedBoundaries: ReadonlyArray<OrchestrationForkBoundary>;
+  /** Inherited turns of the conversation, in history order. */
+  readonly inheritedTurnIds: ReadonlyArray<string>;
+  /** The turn the fork point belongs to; null when the conversation produced it itself. */
+  readonly forkPointTurnId: string | null;
+  /** Index of the first message that lies outside the forked history. */
+  readonly endIndex: number;
+}): ReadonlyMap<string, TurnId> {
+  const boundaryTurnIds = new Set<string | null>(
+    input.boundaries.map((boundary) => boundary.turnId),
+  );
+  // Inherited turns carry no boundary to order them by. Their recorded order
+  // does: one is part of the history when it comes before the fork point's
+  // turn, or when that turn is the conversation's own and so follows them all.
+  const forkPointOrder =
+    input.forkPointTurnId === null ? -1 : input.inheritedTurnIds.indexOf(input.forkPointTurnId);
+  const inheritedTurnIds = new Set(
+    (forkPointOrder < 0
+      ? input.inheritedTurnIds
+      : input.inheritedTurnIds.slice(0, forkPointOrder)
+    ).filter((turnId) => !boundaryTurnIds.has(turnId)),
+  );
+  // The conversation's own unanswered turns are ordered by their boundaries.
+  // A request is stored without a turn; its boundary names the turn it started.
+  const ownTurnIds = new Set<string>();
+  const turnIdByRequest = new Map<string, TurnId>();
+  for (const boundary of input.retainedBoundaries) {
+    if (boundary.turnId === null || boundary.assistantMessageId !== null) continue;
+    ownTurnIds.add(boundary.turnId);
+    if (boundary.userMessageId !== null) {
+      turnIdByRequest.set(boundary.userMessageId, boundary.turnId);
+    }
+  }
+  const turnIdByMessageId = new Map<string, TurnId>();
+  for (const [index, message] of input.messages.entries()) {
+    // An answer left unfinished is not history a fork can replay.
+    if (message.role === "system" || message.streaming) continue;
+    const turnId =
+      message.turnId !== null && inheritedTurnIds.has(message.turnId)
+        ? message.turnId
+        : index >= input.endIndex
+          ? undefined
+          : (turnIdByRequest.get(message.id) ??
+            (message.turnId !== null && ownTurnIds.has(message.turnId)
+              ? message.turnId
+              : undefined));
+    if (turnId !== undefined) turnIdByMessageId.set(message.id, turnId);
+  }
+  return turnIdByMessageId;
+}
+
+/**
+ * The origin history a fork carries up to its fork point: the turns that have
+ * an answer, and the turns that ended without one. The decider and the
+ * admission check both select with this, so they cannot disagree.
+ */
+export function retainForkHistory(input: {
+  readonly messages: ReadonlyArray<OrchestrationMessage>;
+  readonly resolvedBoundaries: ResolvedForkBoundaries;
+  readonly retainedBoundaries: ReadonlyArray<OrchestrationForkBoundary>;
+}): {
+  readonly messages: ReadonlyArray<OrchestrationMessage>;
+  /** Source turns whose work log and question answers the fork copies. */
+  readonly retainedTurnIds: ReadonlySet<string>;
+  readonly sourceTurnIdByMessageId: ReadonlyMap<string, TurnId>;
+  readonly unansweredTurnIdByMessageId: ReadonlyMap<string, TurnId>;
+} {
+  const { forkPoint } = input.resolvedBoundaries;
+  // Answered turns first; turns without an answer are carried separately.
+  const retainedTurnIds = new Set<string>(
+    input.retainedBoundaries.flatMap((boundary) =>
+      boundary.turnId === null || boundary.assistantMessageId === null ? [] : [boundary.turnId],
+    ),
+  );
+  const answered = retainPrefixMessages(input.messages, input.retainedBoundaries, retainedTurnIds);
+  const answeredMessageIds = new Set(answered.messages.map((message) => message.id));
+  const unansweredTurnIdByMessageId = retainUnansweredTurns({
+    messages: input.messages,
+    boundaries: input.resolvedBoundaries.boundaries,
+    retainedBoundaries: input.retainedBoundaries,
+    inheritedTurnIds: [...(input.resolvedBoundaries.inheritedTurnIds ?? [])],
+    forkPointTurnId:
+      forkPoint.kind === "assistant-response"
+        ? input.resolvedBoundaries.selectedBoundary.turnId
+        : forkPoint.kind === "user-message"
+          ? (input.messages.find((message) => message.id === forkPoint.messageId)?.turnId ?? null)
+          : null,
+    // A running-turn fork carries everything after its last answer as the live tail.
+    endIndex:
+      forkPoint.kind === "running-turn"
+        ? input.messages.findLastIndex((message) => answeredMessageIds.has(message.id)) + 1
+        : input.messages.findIndex((message) => message.id === forkPoint.messageId),
+  });
+  for (const turnId of unansweredTurnIdByMessageId.values()) retainedTurnIds.add(turnId);
+  return {
+    messages: input.messages.filter(
+      (message) =>
+        answeredMessageIds.has(message.id) || unansweredTurnIdByMessageId.has(message.id),
+    ),
+    retainedTurnIds,
+    sourceTurnIdByMessageId: answered.sourceTurnIdByMessageId,
+    unansweredTurnIdByMessageId,
   };
 }
 
@@ -349,10 +468,12 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
 
   const selectedBoundaryIndex = conversationBoundaries.indexOf(selectedBoundary);
   const retainedBoundaries = conversationBoundaries.slice(0, selectedBoundaryIndex + 1);
-  const retainedTurnIds = new Set<string>(
-    retainedBoundaries.flatMap((boundary) => (boundary.turnId === null ? [] : [boundary.turnId])),
-  );
-  const retainedPrefix = retainPrefixMessages(origin.messages, retainedBoundaries, retainedTurnIds);
+  const retainedPrefix = retainForkHistory({
+    messages: origin.messages,
+    resolvedBoundaries,
+    retainedBoundaries,
+  });
+  const { retainedTurnIds, unansweredTurnIdByMessageId } = retainedPrefix;
   const prefixMessages = retainedPrefix.messages;
   // A fork of the running turn also carries everything after the completed
   // prefix: the request, reasoning, tool work and partial text so far.
@@ -491,6 +612,13 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
   let baselineAssistantMessageId: MessageId | null = null;
   const importedTurnIds = new Map<string, TurnId>();
   const messageIdRemap = new Map<string, MessageId>();
+  // The fork's baseline is the newest inherited turn with an answer: the
+  // running turn for a running-turn fork, otherwise the last answered
+  // boundary (the selected one, unless that turn ended without an answer).
+  const baselineSourceTurnId =
+    liveBaselineTurnId ??
+    retainedBoundaries.findLast((boundary) => boundary.assistantMessageId !== null)?.turnId ??
+    null;
   // Every source turn maps to one destination turn, so a turn's user message,
   // reasoning, answer and work log stay grouped together in the fork.
   const importedTurnIdFor = Effect.fnUntraced(function* (
@@ -499,9 +627,6 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
   ) {
     const existing = importedTurnIds.get(sourceTurnKey);
     if (existing !== undefined) return existing;
-    // The fork's baseline is the newest inherited turn: the running turn for a
-    // running-turn fork, otherwise the selected completed boundary.
-    const baselineSourceTurnId = liveBaselineTurnId ?? selectedBoundary.turnId;
     const importedTurnId =
       sourceTurnId !== null && sourceTurnId === baselineSourceTurnId
         ? baselineTurnId
@@ -519,16 +644,20 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
     );
     const messageId = MessageId.make(freshMessageId);
     messageIdRemap.set(message.id, messageId);
-    if (message.role === "user") baselineUserMessageId = messageId;
+    const unansweredTurnId = unansweredTurnIdByMessageId.get(message.id);
+    if (message.role === "user" && unansweredTurnId === undefined) {
+      baselineUserMessageId = messageId;
+    }
     if (message.role === "assistant") baselineAssistantMessageId = messageId;
     // System messages stay turnless. Reasoning keeps its own turn so it folds
     // into the response it produced instead of floating detached.
     let importedTurnId: TurnId | null = null;
     if (message.role !== "system") {
       const sourceTurnId =
-        message.role === "user" || message.role === "assistant"
+        unansweredTurnId ??
+        (message.role === "user" || message.role === "assistant"
           ? (retainedPrefix.sourceTurnIdByMessageId.get(message.id) ?? message.turnId)
-          : message.turnId;
+          : message.turnId);
       importedTurnId = yield* importedTurnIdFor(
         sourceTurnId ?? `message:${message.id}`,
         sourceTurnId,
@@ -793,7 +922,17 @@ export const forkThread = Effect.fn("scientForkThread")(function* ({
       workspaceMode: command.workspaceMode,
       providerMode: "transcript-bootstrap",
       attachmentCopies,
-      inheritedTurnIds: [...new Set(importedTurnIds.values())],
+      // In history order: what the origin itself inherited keeps its recorded
+      // order (message positions can differ from it), then the origin's own turns.
+      inheritedTurnIds: [
+        ...new Set([
+          ...[...(resolvedBoundaries.inheritedTurnIds ?? [])].flatMap((sourceTurnId) => {
+            const turnId = importedTurnIds.get(sourceTurnId);
+            return turnId === undefined ? [] : [turnId];
+          }),
+          ...importedTurnIds.values(),
+        ]),
+      ],
       ...(sourceImport === undefined ? {} : { sourceImport }),
       ...(liveTail === null
         ? {}

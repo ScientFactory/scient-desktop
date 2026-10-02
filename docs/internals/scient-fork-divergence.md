@@ -141,8 +141,11 @@ Forking is a durable, restart-safe saga:
 6. The copied logical-boundary manifest records remapped turn and message IDs.
    It lets a fork be forked again directly, without walking ancestor threads or
    pretending copied transcript rows are provider-native turns.
-7. For a user-message fork, the web client prepares every authorized image,
-   persists the complete unsent destination draft, and flushes storage before
+7. For a user-message fork, the web client prepares readable images. If an image
+   cannot be read, the user must confirm continuing without it before any draft
+   or fork is created; a caller that cannot ask gets an error instead. Unsupported non-image files still prevent message editing;
+   inherited history attachments are never silently omitted. The client
+   persists the unsent destination draft and flushes storage before
    issuing the server command. Only a confirmed rejected or abandoned operation
    removes that staged draft; an interrupted connection does not.
 8. On the first provider turn, the fork's context transfer is resolved: a
@@ -154,6 +157,41 @@ Forking is a durable, restart-safe saga:
 9. Terminal failures such as a disappeared origin attachment or an unavailable
    required worktree checkpoint delete the unusable target thread and record an
    `abandoned` lineage state. Transient failures remain retryable.
+
+Dedicated worktrees are verified before publication or reuse: the worktree
+must be this repository's checkout of the fork branch at the frozen checkpoint,
+with no checkout still in progress. A reused worktree must also be clean; that
+scan reads the whole tree, so a worktree Git has just created is not scanned.
+A worktree that fails, or whose check cannot run, is never adopted. When it is a newly created one, the
+fork follows the terminal cleanup path. When it is one an earlier attempt left
+behind, the fork is abandoned but its worktree and branch are left in place, in
+case they hold work, and the error names the folder. Abandoning matters: a
+failed fork is retried with the same thread id and would meet that worktree
+again, while an abandoned one lets the next fork start fresh. The seven-minute
+provisioning budget exceeds Git's five-minute checkout deadline, allowing time
+for the other stages.
+
+A turn can record an answer id that no message carries. Its fork boundary then
+names the turn's own last completed answer or, when it has none, no answer: the
+turn ended without one. The resolver does not rewrite the origin or borrow
+another turn's answer.
+
+A turn without an answer is history all the same. When it sits before the fork
+point the fork carries its request and work log as an inherited turn, which
+revert keeps like any other. It is not a fork point and not the fork's baseline:
+the baseline stays the last turn that has an answer, while a new worktree still
+starts from the checkpoint of the turn at the fork point. The copied-boundary
+manifest lists answered turns only, so in a fork such a turn is an inherited
+turn the manifest does not name; forking the fork carries it again by that
+rule, which also covers unanswered turns of imported conversations. Such a
+turn has no boundary to order it by, so its place in the recorded inherited
+turn list decides: it is carried when it comes before the fork point's turn,
+or when the fork point is a turn the conversation produced itself. An
+answer left streaming in such a turn is not carried. A request that an older
+conversation never bound to its turn cannot be found, so that turn is left out.
+
+Fork preparation does not display the origin as an active agent turn. Rewinding
+the origin stays disabled until the fork is ready.
 
 The domain-event stream is only a wake-up signal. The lineage table remains the
 authority, so a restart or missed live event cannot lose the work.

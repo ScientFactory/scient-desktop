@@ -190,14 +190,41 @@ export async function stageUserForkDraft(input: {
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly fetchAsset?: typeof fetch;
   readonly readAsDataUrl?: (file: File) => Promise<string>;
-}): Promise<void> {
-  // Prepare every image before touching the store. A failed authorized read
-  // therefore cannot leave a partial destination draft behind.
-  const preparedAttachments = await prepareForkDraftAttachments(
-    input.attachments,
-    input.fetchAsset,
-    input.readAsDataUrl,
+  readonly confirmSkippedImages?: (names: ReadonlyArray<string>) => Promise<boolean>;
+}): Promise<boolean> {
+  // Unsupported files remain an error. Only unreadable images may be omitted,
+  // and only after confirmation, before any draft or command is created.
+  const unsupported = input.attachments.find((attachment) => !isImageAttachment(attachment));
+  if (unsupported) {
+    throw new Error(
+      `fork draft attachment '${unsupported.name}' is not a supported image attachment`,
+    );
+  }
+  const results = await Promise.all(
+    input.attachments.map(async (attachment) => {
+      try {
+        const prepared = await prepareForkDraftAttachments(
+          [attachment],
+          input.fetchAsset,
+          input.readAsDataUrl,
+        );
+        return { prepared, skipped: [] as string[] };
+      } catch {
+        return { prepared: [] as PreparedDraftAttachment[], skipped: [attachment.name] };
+      }
+    }),
   );
+  const skipped = results.flatMap((result) => result.skipped);
+  if (skipped.length > 0) {
+    // Without someone to ask, omitting an image would be silent: refuse instead.
+    if (input.confirmSkippedImages === undefined) {
+      throw new Error(
+        `These images could not be read: ${skipped.join(", ")}. Fork from another message, or try again when they are available.`,
+      );
+    }
+    if (!(await input.confirmSkippedImages(skipped))) return false;
+  }
+  const preparedAttachments = results.flatMap((result) => result.prepared);
   const drafts = useComposerDraftStore.getState();
   drafts.setPrompt(input.destinationRef, input.prompt);
   drafts.addImages(
@@ -211,6 +238,7 @@ export async function stageUserForkDraft(input: {
   // The server command can make the destination visible immediately. Flush
   // before issuing it so a route change or app restart cannot lose the draft.
   flushComposerDraftPersistence();
+  return true;
 }
 
 export function clearStagedUserForkDraft(destinationRef: ScopedThreadRef): void {
@@ -382,6 +410,7 @@ export function useScientThreadFork({
         readonly displayTitle?: string;
         /** Complete the source dialog exit before changing the conversation. */
         readonly beforeNavigate?: () => Promise<boolean>;
+        readonly confirmSkippedImages?: (names: ReadonlyArray<string>) => Promise<boolean>;
         /** Move only portable unsent text/images after the fork command is accepted. */
         readonly composerDraftSource?: ScopedThreadRef;
       },
@@ -415,12 +444,18 @@ export function useScientThreadFork({
                   "The saved checkpoint is unavailable. Choose the current workspace or another fork point.",
                 );
               const id = newThreadId();
-              if (source.kind === "user-message")
-                await stageUserForkDraft({
+              if (
+                source.kind === "user-message" &&
+                !(await stageUserForkDraft({
                   destinationRef: scopeThreadRef(environmentId, id),
                   prompt: source.prompt,
                   attachments: source.attachments,
-                });
+                  ...(options.confirmSkippedImages
+                    ? { confirmSkippedImages: options.confirmSkippedImages }
+                    : {}),
+                }))
+              )
+                return "not-accepted";
               attempt = {
                 environmentId,
                 ready: false,
