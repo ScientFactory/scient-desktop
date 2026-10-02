@@ -85,8 +85,18 @@
   box-shadow: 0 0 0 1px var(--ring);
 }
 
+/* Zoom out and in: slightly smaller, and close to the percentage between them. */
+.scient-pdf-toolbar-button.scient-pdf-action-zoom-step {
+  width: 22px;
+}
+
+.scient-pdf-toolbar-button.scient-pdf-action-zoom-step > svg {
+  width: 13px;
+  height: 13px;
+}
+
 .scient-pdf-zoom-label {
-  min-width: 44px;
+  min-width: 38px;
   border-radius: 5px;
   padding: 3px 4px;
   color: var(--muted-foreground);
