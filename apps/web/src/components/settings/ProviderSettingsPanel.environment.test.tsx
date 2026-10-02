@@ -216,6 +216,56 @@ describe("EnvironmentProviderSettings routing", () => {
     commands.updateProvider.mockReset().mockResolvedValue({ _tag: "Success" });
   });
 
+  it.each(["pi", "omp"])(
+    "shows %s curated defaults and persists enabling every model",
+    (driver) => {
+      const instanceId = ProviderInstanceId.make(driver);
+      const native = {
+        ...provider(),
+        instanceId,
+        driver: ProviderDriverKind.make(driver),
+        models: [
+          "anthropic/claude-haiku-4-5",
+          "anthropic/claude-opus-5-5",
+          "google-antigravity/claude-opus-4-5",
+          "google-antigravity/claude-opus-4-6",
+          "google-antigravity/gemini-3.8-flash",
+          "google-antigravity/gemini-3.1-pro",
+        ].map((slug) => ({
+          slug,
+          name: slug,
+          isCustom: false,
+          capabilities: {},
+        })),
+      };
+      settingsState.value = {
+        ...DEFAULT_UNIFIED_SETTINGS,
+        providerInstances: { [instanceId]: { driver: native.driver, enabled: true } },
+      };
+      atoms.providers = [native];
+      const editor = visitElements(
+        renderPanel({ targetInstanceId: instanceId }),
+        (element) => element.props.instanceId === instanceId && element.props.mode === "editor",
+      );
+      expect(editor?.props.hiddenModels).toEqual([
+        "anthropic/claude-haiku-4-5",
+        "google-antigravity/claude-opus-4-5",
+      ]);
+      if (!editor) throw new Error("Provider editor was not rendered");
+      (editor.props.onHiddenModelsChange as (models: string[]) => void)([]);
+      const saved = { [instanceId]: { hiddenModels: [], modelOrder: [] } };
+      expect(settingsState.updateClientSettings).toHaveBeenCalledExactlyOnceWith({
+        providerModelPreferences: saved,
+      });
+      settingsState.value = { ...settingsState.value, providerModelPreferences: saved };
+      const restored = visitElements(
+        renderPanel({ targetInstanceId: instanceId }),
+        (element) => element.props.instanceId === instanceId && element.props.mode === "editor",
+      );
+      expect(restored?.props.hiddenModels).toEqual([]);
+    },
+  );
+
   it("coalesces a nullable provider snapshot before rendering array-backed UI", () => {
     expect(() => renderPanel()).not.toThrow();
     expect(settingsState.readEnvironmentIds).toEqual([environmentId]);

@@ -1,6 +1,8 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   DROID_DEFAULT_MODEL,
+  OMP_DEFAULT_TEXT_GENERATION_MODEL,
+  PI_DEFAULT_TEXT_GENERATION_MODEL,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -72,6 +74,134 @@ function settingsWithProviderInstances(): UnifiedSettings {
 }
 
 describe("instance-scoped model selection", () => {
+  it.each(["pi", "omp"])(
+    "applies curated %s defaults without replacing saved visibility",
+    (kind) => {
+      const native = provider({
+        provider: ProviderDriverKind.make(kind),
+        instanceId: kind,
+        models: [
+          "google-antigravity/claude-opus-4-5",
+          "google-antigravity/claude-opus-4-6",
+          "google-antigravity/gemini-3.8-flash",
+          "google-antigravity/gemini-3.1-pro",
+          "anthropic/claude-haiku-4-5",
+          "anthropic/claude-sonnet-5-5",
+          "openai-codex/gpt-6-sol",
+          "openai-codex/gpt-6.1-sol",
+        ],
+      });
+      const entry = deriveProviderInstanceEntries([native])[0]!;
+      const selected = getAppModelOptionsForInstance(
+        DEFAULT_UNIFIED_SETTINGS,
+        entry,
+        "anthropic/claude-haiku-4-5",
+      );
+      expect(selected.map((model) => model.slug)).toEqual([
+        "anthropic/claude-sonnet-5-5",
+        "openai-codex/gpt-6.1-sol",
+        "google-antigravity/claude-opus-4-6",
+        "google-antigravity/gemini-3.8-flash",
+        "google-antigravity/gemini-3.1-pro",
+      ]);
+      expect(
+        resolveAppModelSelectionForInstance(
+          entry.instanceId,
+          DEFAULT_UNIFIED_SETTINGS,
+          [native],
+          "anthropic/claude-haiku-4-5",
+        ),
+      ).toBe("anthropic/claude-sonnet-5-5");
+      expect(
+        resolveAppModelSelection(
+          native.driver,
+          DEFAULT_UNIFIED_SETTINGS,
+          [native],
+          "anthropic/claude-haiku-4-5",
+        ),
+      ).toBe("anthropic/claude-sonnet-5-5");
+      expect(
+        resolveAppModelSelection(
+          native.driver,
+          DEFAULT_UNIFIED_SETTINGS,
+          [{ ...native, models: native.models.slice(0, 1) }],
+          null,
+        ),
+      ).toBe("");
+      expect(
+        resolveAppModelSelectionState(DEFAULT_UNIFIED_SETTINGS, [
+          { ...native, models: native.models.slice(0, 1) },
+        ]).model,
+      ).toBe("");
+
+      const saved = {
+        ...DEFAULT_UNIFIED_SETTINGS,
+        providerModelPreferences: { [entry.instanceId]: { hiddenModels: [], modelOrder: [] } },
+      };
+      expect(getAppModelOptionsForInstance(saved, entry).map((model) => model.slug)).toEqual([
+        "anthropic/claude-haiku-4-5",
+        "anthropic/claude-sonnet-5-5",
+        "openai-codex/gpt-6-sol",
+        "openai-codex/gpt-6.1-sol",
+        "google-antigravity/claude-opus-4-5",
+        "google-antigravity/claude-opus-4-6",
+        "google-antigravity/gemini-3.8-flash",
+        "google-antigravity/gemini-3.1-pro",
+      ]);
+    },
+  );
+  it.each(["pi", "omp", "claudeAgent"])(
+    "does not invent a default when every %s model is unavailable",
+    (kind) => {
+      const driver = ProviderDriverKind.make(kind);
+      const blocked: ServerProvider = {
+        ...provider({ provider: driver, instanceId: kind }),
+        models: [
+          {
+            slug: "native/blocked",
+            name: "Blocked",
+            isCustom: false,
+            unavailableReason: "Account access required.",
+            capabilities: null,
+          },
+        ],
+      };
+      expect(resolveAppModelSelection(driver, DEFAULT_UNIFIED_SETTINGS, [blocked], null)).toBe("");
+    },
+  );
+  it.each(["pi", "omp"])(
+    "excludes known unavailable %s models even when selected or configured as custom",
+    (kind) => {
+      const driver = ProviderDriverKind.make(kind);
+      const entry: ServerProvider = {
+        ...provider({ provider: driver, instanceId: kind }),
+        models: [
+          {
+            slug: "native/blocked",
+            name: "Blocked",
+            isCustom: false,
+            isDefault: true,
+            unavailableReason: "Account access required.",
+            capabilities: null,
+          },
+          { slug: "native/unknown", name: "Unverified", isCustom: false, capabilities: null },
+        ],
+      };
+      const settings = {
+        ...DEFAULT_UNIFIED_SETTINGS,
+        providerInstances: {
+          [entry.instanceId]: { driver, config: { customModels: ["native/blocked"] } },
+        },
+      };
+      const projected = deriveProviderInstanceEntries([entry])[0]!;
+      expect(
+        getAppModelOptionsForInstance(settings, projected, "native/blocked").map(
+          (option) => option.slug,
+        ),
+      ).toEqual(["native/unknown"]);
+      expect(getDefaultProviderInstanceModel([entry], entry.instanceId)).toBe("native/unknown");
+    },
+  );
   it.each(["droid", "pi", "omp"] as const)(
     "keeps %s discovered BYOK models selectable, scoped, hideable, and removable",
     (kind) => {
@@ -906,6 +1036,40 @@ describe("instance-scoped model selection", () => {
     expect(resolveAppModelSelectionState(settings, [droid]).model).toBe("gpt-6-sol");
     expect(getDefaultProviderInstanceModel([droid], instanceId)).toBe("gpt-6-sol");
   });
+
+  it.each([
+    ["pi", PI_DEFAULT_TEXT_GENERATION_MODEL],
+    ["omp", OMP_DEFAULT_TEXT_GENERATION_MODEL],
+  ] as const)(
+    "shows %s's automatic native model without changing stored settings",
+    (driver, marker) => {
+      const instanceId = ProviderInstanceId.make(`${driver}_work`);
+      const base = provider({
+        provider: ProviderDriverKind.make(driver),
+        instanceId,
+        models: ["openai/hosted", "local/team%2Fmodel"],
+      });
+      const discovered = {
+        ...base,
+        models: base.models.map((model) =>
+          model.slug === "local/team%2Fmodel" ? { ...model, isDefault: true } : model,
+        ),
+      };
+      const storedSelection = createModelSelection(instanceId, marker);
+      const settings = {
+        ...DEFAULT_UNIFIED_SETTINGS,
+        textGenerationModelSelection: storedSelection,
+      };
+      expect(resolveAppModelSelectionState(settings, [discovered]).model).toBe(
+        "local/team%2Fmodel",
+      );
+      expect(settings.textGenerationModelSelection).toBe(storedSelection);
+      expect(getDefaultProviderInstanceModel([discovered], instanceId)).toBe("local/team%2Fmodel");
+      expect(resolveAppModelSelectionState(settings, [{ ...discovered, models: [] }]).model).toBe(
+        "",
+      );
+    },
+  );
 
   it("does not select a provider that cannot generate system text", () => {
     const instanceId = ProviderInstanceId.make("antigravity");

@@ -16,6 +16,82 @@ import {
 } from "./modelOptions";
 
 describe("mobile model options", () => {
+  it.each(["pi", "omp"])(
+    "uses curated %s defaults and does not reinsert a hidden saved model",
+    (driver) => {
+      const config = {
+        providers: [
+          {
+            instanceId: driver,
+            driver,
+            enabled: true,
+            installed: true,
+            auth: { status: "unknown" },
+            models: [
+              "google-antigravity/claude-opus-4-5",
+              "google-antigravity/claude-opus-4-6",
+              "google-antigravity/gemini-3.8-flash",
+              "google-antigravity/gemini-3.1-pro",
+              "anthropic/claude-haiku-4-5",
+              "anthropic/claude-opus-5-5",
+              "openai-codex/gpt-6-sol",
+              "openai-codex/gpt-6-luna",
+            ].map((slug) => ({
+              slug,
+              name: slug,
+              isCustom: false,
+              capabilities: null,
+              isDefault: slug.includes("haiku"),
+            })),
+          },
+        ],
+      } as unknown as ServerConfig;
+      const saved = {
+        instanceId: ProviderInstanceId.make(driver),
+        model: "anthropic/claude-haiku-4-5",
+      };
+      const options = buildModelOptions(config, saved);
+      expect(options.map((model) => model.selection.model)).toEqual([
+        "anthropic/claude-opus-5-5",
+        "openai-codex/gpt-6-luna",
+        "google-antigravity/claude-opus-4-6",
+        "google-antigravity/gemini-3.8-flash",
+        "google-antigravity/gemini-3.1-pro",
+      ]);
+      expect(options.some((model) => model.isDefault)).toBe(true);
+      expect(resolveDefaultableModelSelection(config, saved)).toBeNull();
+    },
+  );
+  it("does not reinsert a known unavailable saved model into the mobile picker", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "omp",
+          driver: "omp",
+          enabled: true,
+          installed: true,
+          auth: { status: "unknown" },
+          models: [
+            {
+              slug: "native/blocked",
+              name: "Blocked",
+              unavailableReason: "Account access required.",
+              isDefault: true,
+              isCustom: false,
+              capabilities: null,
+            },
+            { slug: "native/unknown", name: "Unverified", isCustom: false, capabilities: null },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+    const saved = { instanceId: ProviderInstanceId.make("omp"), model: "native/blocked" };
+    expect(buildModelOptions(config, saved).map((option) => option.selection.model)).toEqual([
+      "native/unknown",
+    ]);
+    expect(isModelSelectionUnavailable(config, saved)).toBe(true);
+    expect(resolveDefaultableModelSelection(config, saved)).toBeNull();
+  });
   it.each(["droid", "pi"])(
     "consumes %s discovered connections without legacy model settings",
     (driver) => {

@@ -73,6 +73,41 @@ export interface ServerProviderPresentation {
 
 export type ServerProviderDraft = Omit<ServerProvider, "instanceId" | "driver">;
 
+/** Keep previously discovered Pi/OMP models visible in Settings after native discovery removes them. */
+export function retainUnavailableAgentModels(
+  previous: ServerProvider,
+  next: ServerProvider,
+): ServerProvider {
+  if (
+    (next.driver !== "pi" && next.driver !== "omp") ||
+    previous.instanceId !== next.instanceId ||
+    previous.driver !== next.driver ||
+    !next.enabled ||
+    !next.installed
+  )
+    return next;
+  // A failed probe says nothing about model access. Preserve the last catalog
+  // for Settings; the failed provider status already prevents picker admission.
+  if (next.status === "error") return { ...next, models: previous.models };
+  if (next.status !== "ready" && next.status !== "warning") return next;
+  if (previous.version && next.version && previous.version !== next.version) return next;
+  const reported = new Set(next.models.map((model) => model.slug));
+  const missing = previous.models.filter((model) => !model.isCustom && !reported.has(model.slug));
+  if (missing.length === 0) return next;
+  return {
+    ...next,
+    models: [
+      ...next.models,
+      ...missing.map((model) => ({
+        ...model,
+        isDefault: false,
+        unavailableReason:
+          "No longer reported as available by this provider. Check its account or model configuration, then refresh.",
+      })),
+    ],
+  };
+}
+
 export function nonEmptyTrimmed(value: string | undefined): string | undefined {
   if (!value) return undefined;
   const trimmed = value.trim();

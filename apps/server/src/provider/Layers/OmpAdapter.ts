@@ -12,6 +12,7 @@ import {
   ThreadId,
   TurnId,
   type ProviderRuntimeEvent,
+  type RuntimeItemStatus,
   type ProviderSession,
   type ProviderUserInputAnswers,
 } from "@t3tools/contracts";
@@ -221,6 +222,20 @@ interface SessionHandles {
   readonly runtime: OmpSessionRuntime;
 }
 
+interface OmpToolItem {
+  readonly itemId: RuntimeItemId;
+  readonly turnId?: TurnId;
+  readonly name: string;
+  readonly status: RuntimeItemStatus;
+  readonly input?: unknown;
+  readonly output?: {
+    readonly content: string;
+    readonly truncated?: boolean;
+    readonly originalBytes?: number;
+  };
+  readonly detail?: string;
+}
+
 /**
  * One owner for every resource of a conversation. The session scope holds, in
  * acquisition order, the lock, the process, and the runtime fibers; closing it
@@ -266,7 +281,7 @@ interface SessionContext {
   readonly assistantItemIds: Map<string, RuntimeItemId>;
   activeAssistantItemId: RuntimeItemId | undefined;
   readonly threadLock: Semaphore.Semaphore;
-  readonly toolItems: Map<string, RuntimeItemId>;
+  readonly toolItems: Map<string, OmpToolItem>;
   readonly knownModels: Set<string>;
   readonly imageSupport: Map<string, boolean>;
   /** Reasoning levels each known model lists (from `thinking.efforts`). */
@@ -615,24 +630,100 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       queued.bytes += bytes;
       return Queue.offer(events, { event, bytes }).pipe(Effect.asVoid);
     });
-  const clipToolData = (data: unknown): unknown => {
+  const clipToolData = (data: unknown, limit = toolDataByteLimit): unknown => {
     let text: string | undefined;
     try {
       text = JSON.stringify(data);
     } catch {
       text = undefined;
     }
-    if (text !== undefined && Buffer.byteLength(text) <= toolDataByteLimit) return data;
-    return {
+    if (text !== undefined && Buffer.byteLength(text) <= limit) return data;
+    let preview = text?.slice(0, OMP_TOOL_DATA_PREVIEW_CHARS) ?? "";
+    const clipped = () => ({
       truncated: true,
       ...(text === undefined
         ? {}
         : {
             originalBytes: Buffer.byteLength(text),
-            preview: text.slice(0, OMP_TOOL_DATA_PREVIEW_CHARS),
+            preview,
           }),
-    };
+    });
+    while (preview.length > 0 && Buffer.byteLength(JSON.stringify(clipped())) > limit) {
+      preview = preview.slice(0, Math.floor(preview.length / 2));
+    }
+    return clipped();
   };
+  const toolOutputText = (data: unknown): string | undefined => {
+    if (typeof data === "string") return data;
+    if (!isRecord(data)) return undefined;
+    for (const field of ["text", "message", "output", "content"] as const) {
+      if (typeof data[field] === "string") return data[field];
+    }
+    if (!Array.isArray(data.content)) return undefined;
+    const parts = data.content.flatMap((part) =>
+      isRecord(part) && typeof part.text === "string" ? [part.text] : [],
+    );
+    return parts.length > 0 ? parts.join("") : undefined;
+  };
+  const clipToolOutput = (content: string, limit: number): NonNullable<OmpToolItem["output"]> => {
+    if (Buffer.byteLength(JSON.stringify({ content })) <= limit) return { content };
+    let preview = content.slice(0, OMP_TOOL_DATA_PREVIEW_CHARS);
+    const clipped = () => ({
+      content: preview,
+      truncated: true,
+      originalBytes: Buffer.byteLength(content),
+    });
+    while (preview.length > 0 && Buffer.byteLength(JSON.stringify(clipped())) > limit) {
+      preview = preview.slice(0, Math.floor(preview.length / 2));
+    }
+    return clipped();
+  };
+  const toolPayload = (item: OmpToolItem) => ({
+    itemType: "dynamic_tool_call" as const,
+    status: item.status,
+    title: item.name,
+    ...(item.detail ? { detail: item.detail } : {}),
+    data: {
+      toolName: item.name,
+      ...(item.input !== undefined ? { input: item.input } : {}),
+      ...(item.output ? { rawOutput: item.output } : {}),
+    },
+  });
+  /** Compact terminal records fence duplicate and late frames until the next turn. */
+  const closeTool = (ctx: SessionContext, id: string, item: OmpToolItem) => {
+    ctx.toolItems.set(id, {
+      itemId: item.itemId,
+      ...(item.turnId ? { turnId: item.turnId } : {}),
+      name: item.name,
+      status: item.status,
+    });
+  };
+  const closeOpenTools = Effect.fnUntraced(function* (
+    ctx: SessionContext,
+    status: "failed" | "stopped",
+    detail: string,
+  ) {
+    for (const [id, current] of ctx.toolItems) {
+      if (current.status !== "inProgress") continue;
+      const item = {
+        ...current,
+        status,
+        detail: current.detail ? `${current.detail} · ${detail}` : detail,
+      };
+      closeTool(ctx, id, item);
+      const base = yield* eventBase(ctx, item.turnId);
+      yield* offer(
+        {
+          type: "item.completed",
+          ...base,
+          itemId: item.itemId,
+          ...refs(ctx, id),
+          payload: toolPayload(item),
+        },
+        "control",
+      );
+    }
+  });
   const eventBase = (ctx: SessionContext, turnId: TurnId | undefined = ctx.turnId) =>
     Effect.all({ eventId: Effect.map(uuid, EventId.make), createdAt: now }).pipe(
       Effect.map((stamp) => ({
@@ -814,6 +905,13 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         return;
       }
       if (update.type === "turn-outcome") {
+        yield* closeOpenTools(
+          ctx,
+          update.stopReason === "abort" ? "stopped" : "failed",
+          update.stopReason === "abort"
+            ? "Stopped by Oh My Pi."
+            : "Oh My Pi ended this turn without reporting the tool's outcome.",
+        );
         const turnId = claimTurn(ctx);
         if (!turnId) return;
         if (update.requestId) ctx.requestId = update.requestId;
@@ -917,29 +1015,55 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         return;
       }
       if (update.type === "tool") {
-        const itemId =
-          ctx.toolItems.get(update.toolCallId) ??
-          RuntimeItemId.make(`omp-tool:${ctx.turnId ?? "turn"}:${update.toolCallId}`);
-        ctx.toolItems.set(update.toolCallId, itemId);
-        const base = yield* eventBase(ctx);
-        const payload = {
-          itemType: "dynamic_tool_call" as const,
+        if (!ctx.turnId) return;
+        const previous = ctx.toolItems.get(update.toolCallId);
+        if (previous && previous.status !== "inProgress") return;
+        const input =
+          update.input !== undefined
+            ? clipToolData(ctx.redaction.exact(update.input), Math.floor(toolDataByteLimit / 2))
+            : previous?.input;
+        const target = isRecord(input) ? (input.path ?? input.file_path) : undefined;
+        const content = toolOutputText(ctx.redaction.exact(update.data));
+        const inputBytes = input === undefined ? 0 : Buffer.byteLength(encodeOmpJson(input));
+        const item: OmpToolItem = {
+          itemId:
+            previous?.itemId ?? RuntimeItemId.make(`omp-tool:${ctx.turnId}:${update.toolCallId}`),
+          turnId: previous?.turnId ?? ctx.turnId,
+          name: update.name === "tool" ? (previous?.name ?? update.name) : update.name,
           status: update.status,
-          title: update.name,
-          ...(update.detail ? { detail: update.detail } : {}),
-          ...(update.data !== undefined ? { data: clipToolData(update.data) } : {}),
+          ...(input !== undefined ? { input } : {}),
+          ...(content !== undefined
+            ? {
+                output: clipToolOutput(
+                  content,
+                  Math.max(128, toolDataByteLimit - inputBytes - 512),
+                ),
+              }
+            : previous?.output
+              ? { output: previous.output }
+              : {}),
+          ...(typeof target === "string"
+            ? { detail: target }
+            : update.detail
+              ? { detail: update.detail }
+              : previous?.detail
+                ? { detail: previous.detail }
+                : {}),
         };
+        if (item.status !== "inProgress") closeTool(ctx, update.toolCallId, item);
+        else ctx.toolItems.set(update.toolCallId, item);
+        const base = yield* eventBase(ctx, item.turnId);
         yield* offer({
           type:
-            update.phase === "started"
-              ? "item.started"
-              : update.phase === "updated"
-                ? "item.updated"
-                : "item.completed",
+            update.phase === "completed"
+              ? "item.completed"
+              : update.phase === "started" && !previous
+                ? "item.started"
+                : "item.updated",
           ...base,
-          itemId,
+          itemId: item.itemId,
           ...refs(ctx, update.toolCallId),
-          payload,
+          payload: toolPayload(item),
         });
         return;
       }
@@ -1187,6 +1311,17 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     return Effect.gen(function* () {
       yield* Deferred.succeed(ctx.closeStarted, undefined);
       yield* report(reportBackground(ctx, false, "stopped"));
+      const requested =
+        reason === "user-stop" || reason === "stop-all" || reason === "adapter-close";
+      yield* report(
+        closeOpenTools(
+          ctx,
+          requested ? "stopped" : "failed",
+          requested
+            ? "Stopped by your request."
+            : "Oh My Pi closed before the tool's outcome could be confirmed.",
+        ),
+      );
       yield* report(
         closeOpenSubagents(
           ctx,

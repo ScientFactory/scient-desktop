@@ -815,3 +815,140 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
     120_000,
   );
 });
+
+describe.runIf(binary)("native OMP ordinary tool activity", () => {
+  for (const mode of ["completion", "stop", "process-loss"] as const) {
+    it.effect(
+      mode === "completion"
+        ? "preserves shell and file inputs through native completion"
+        : mode === "stop"
+          ? "Stop settles an open foreground tool with its partial output"
+          : "process loss fails an open foreground tool and retains its partial output",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const root = yield* scopedRoot(`tool-${mode}`);
+            const filePath = NodePath.join(root, "cwd", "note.txt");
+            const releasePath = NodePath.join(root, "release");
+            NodeFS.writeFileSync(filePath, "OMP_FILE_RESULT\n");
+            const command =
+              mode !== "completion"
+                ? `printf 'OMP_TOOL_PARTIAL\\n'; while [ ! -f '${releasePath}' ]; do sleep 0.1; done; printf 'OMP_TOOL_DONE\\n'`
+                : "printf 'OMP_TOOL_RESULT\\n'";
+            const stub = makeScriptedStubModel([
+              { name: "bash", arguments: { command } },
+              ...(mode === "completion" ? [{ name: "read", arguments: { path: filePath } }] : []),
+            ]);
+            const port = yield* listen(stub.server);
+            const instanceId = ProviderInstanceId.make("omp-tools-live");
+            const factory = yield* makeStubModelFactory(
+              root,
+              `http://127.0.0.1:${port}/v1`,
+              instanceId,
+            );
+            let client: OmpRpcProcess | undefined;
+            const adapter = yield* makeOmpAdapter({
+              binaryPath: binary!,
+              providerInstanceId: instanceId,
+              stateDir: NodePath.join(root, "state"),
+              attachmentsDir: NodePath.join(root, "attachments"),
+              environment: yield* isolatedEnvironment(root),
+              makeProcess: (options) =>
+                factory(options).pipe(
+                  Effect.tap((started) => Effect.sync(() => (client = started))),
+                ),
+            });
+            const events: Array<ProviderRuntimeEvent> = [];
+            const wake = yield* Queue.unbounded<ProviderRuntimeEvent>();
+            yield* adapter.streamEvents.pipe(
+              Stream.runForEach((event) =>
+                Effect.sync(() => events.push(event)).pipe(
+                  Effect.andThen(Queue.offer(wake, event)),
+                ),
+              ),
+              Effect.forkScoped,
+            );
+            const until = Effect.fnUntraced(function* (
+              predicate: (event: ProviderRuntimeEvent) => boolean,
+            ) {
+              for (;;) {
+                const found = events.find(predicate);
+                if (found) return found;
+                yield* Queue.take(wake).pipe(Effect.timeout("30 seconds"));
+              }
+            });
+            const threadId = ThreadId.make("omp-tools-live");
+            yield* adapter.startSession({
+              threadId,
+              cwd: NodePath.join(root, "cwd"),
+              runtimeMode: "full-access",
+            });
+            const model = encodeOmpModelSlug(customModelProviderId("stub"), "stub-model");
+            if (!model) return yield* Effect.die(new Error("The fixture model did not encode."));
+            yield* adapter.sendTurn({
+              threadId,
+              input: "Run the fixture tools.",
+              modelSelection: createModelSelection(instanceId, model),
+            });
+            if (mode !== "completion") {
+              yield* until(
+                (event) =>
+                  event.type === "item.updated" &&
+                  JSON.stringify(event.payload).includes("OMP_TOOL_PARTIAL"),
+              );
+              if (mode === "stop") yield* adapter.stopSession(threadId);
+              else {
+                if (!client) return yield* Effect.die(new Error("Native process did not start."));
+                yield* client.shutdown;
+              }
+              yield* until((event) => event.type === "session.exited");
+            } else {
+              const terminal = yield* until((event) => event.type === "turn.completed");
+              expect(terminal.payload).toMatchObject({ state: "completed" });
+            }
+            const starts = events.flatMap((event) =>
+              event.type === "item.started" && event.payload.itemType === "dynamic_tool_call"
+                ? [event]
+                : [],
+            );
+            const bash = starts.find((event) => event.payload.title === "bash");
+            expect(bash, "native bash did not start").toBeDefined();
+            if (!bash) return yield* Effect.die(new Error("Native bash did not start."));
+            expect(bash.payload.data).toMatchObject({ toolName: "bash", input: { command } });
+            const completed = events.flatMap((event) =>
+              event.type === "item.completed" && event.payload.itemType === "dynamic_tool_call"
+                ? [event]
+                : [],
+            );
+            const bashEnds = completed.filter((event) => event.itemId === bash.itemId);
+            expect(bashEnds).toHaveLength(1);
+            expect(bashEnds[0]?.payload.title).toBe("bash");
+            expect(bashEnds[0]?.payload.status).toBe(
+              mode === "stop" ? "stopped" : mode === "process-loss" ? "failed" : "completed",
+            );
+            expect(bashEnds[0]?.payload.data).toMatchObject({
+              input: { command },
+              rawOutput: {
+                content: expect.stringContaining(
+                  mode !== "completion" ? "OMP_TOOL_PARTIAL" : "OMP_TOOL_RESULT",
+                ),
+              },
+            });
+            if (mode === "completion") {
+              const read = starts.find((event) => event.payload.title === "read");
+              expect(read, "native read did not start").toBeDefined();
+              expect(read?.payload.data).toMatchObject({ input: { path: filePath } });
+              const readEnds = completed.filter((event) => event.itemId === read?.itemId);
+              expect(readEnds).toHaveLength(1);
+              expect(readEnds[0]?.payload.detail).toContain(filePath);
+              expect(readEnds[0]?.payload.data).toMatchObject({
+                rawOutput: { content: expect.stringContaining("OMP_FILE_RESULT") },
+              });
+              yield* adapter.stopSession(threadId);
+            }
+          }),
+        ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer))),
+      120_000,
+    );
+  }
+});

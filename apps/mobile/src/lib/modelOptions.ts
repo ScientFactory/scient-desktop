@@ -13,7 +13,9 @@ import type {
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
+  getDefaultHiddenAgentModels,
   resolveAutomaticModel,
+  sortAgentModelsByAccount,
 } from "@t3tools/shared/model";
 
 export type ModelOption = {
@@ -84,6 +86,9 @@ export function isModelSelectionUnavailable(
   );
   const driver =
     provider?.driver ?? config.settings?.providerInstances[selection.instanceId]?.driver;
+  if (provider?.models.some((model) => model.slug === selection.model && model.unavailableReason)) {
+    return true;
+  }
   return (
     driver === "antigravity" &&
     (!provider ||
@@ -138,7 +143,12 @@ export function resolveDefaultableModelSelection(
   }
   const provider = config.providers.find((candidate) => candidate.instanceId === usable.instanceId);
   const model = provider?.models.find((candidate) => candidate.slug === usable.model);
-  return provider?.driver !== "antigravity" && model?.isLegacy === true ? null : usable;
+  return model?.unavailableReason ||
+    (provider &&
+      getDefaultHiddenAgentModels(provider.driver, provider.models).includes(usable.model)) ||
+    (provider?.driver !== "antigravity" && model?.isLegacy === true)
+    ? null
+    : usable;
 }
 
 export function resolveNewTaskModelSelection(input: {
@@ -167,6 +177,7 @@ export function buildModelOptions(
     if (
       !provider.enabled ||
       !provider.installed ||
+      provider.status === "error" ||
       provider.auth.status === "unauthenticated" ||
       (provider.driver === "antigravity" && provider.availability === "unavailable")
     ) {
@@ -174,9 +185,14 @@ export function buildModelOptions(
     }
 
     const providerLabel = providerDisplayLabel(provider);
+    const hiddenModels = new Set(getDefaultHiddenAgentModels(provider.driver, provider.models));
     const reasoningGroups = getAntigravityModelGroups(provider.driver, provider.models);
-    const automaticModel = resolveAutomaticModel(provider.driver, provider.models);
-    for (const model of provider.models) {
+    const automaticModel = resolveAutomaticModel(
+      provider.driver,
+      provider.models.filter((model) => !hiddenModels.has(model.slug)),
+    );
+    for (const model of sortAgentModelsByAccount(provider.driver, provider.models)) {
+      if (model.unavailableReason || hiddenModels.has(model.slug)) continue;
       const reasoningGroup = reasoningGroups.find((group) =>
         group.models.some(({ slug }) => slug === model.slug),
       );
@@ -223,6 +239,14 @@ export function buildModelOptions(
       const model = provider?.models.find(
         (candidate) => candidate.slug === fallbackModelSelection.model,
       );
+      if (model?.unavailableReason) return [...options.values()];
+      if (
+        provider &&
+        getDefaultHiddenAgentModels(provider.driver, provider.models).includes(
+          fallbackModelSelection.model,
+        )
+      )
+        return [...options.values()];
       const providerDriver =
         provider?.driver ?? instanceConfig?.driver ?? fallbackModelSelection.instanceId;
       const providerLabel = providerDisplayLabel({

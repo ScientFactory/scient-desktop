@@ -132,6 +132,61 @@ describe("work-log export projection", () => {
     expect(serialized).not.toContain("native-session-1");
   });
 
+  it("exports native tool inputs from raw history without depending on client projection", () => {
+    const { entries } = projectWorkLog([
+      activity({
+        id: "shell",
+        kind: "tool.completed",
+        turnId: "t1",
+        payload: {
+          itemType: "dynamic_tool_call",
+          toolCallId: "native-shell",
+          title: "bash",
+          status: "stopped",
+          data: {
+            toolName: "bash",
+            input: { command: "printf partial" },
+            rawOutput: { content: "partial" },
+            env: { TOKEN: SECRET },
+          },
+        },
+      }),
+      activity({
+        id: "read",
+        kind: "tool.completed",
+        turnId: "t1",
+        payload: {
+          itemType: "dynamic_tool_call",
+          toolCallId: "native-read",
+          title: "read",
+          detail: "note.txt",
+          status: "completed",
+          data: {
+            toolName: "read",
+            input: { path: "note.txt" },
+            rawOutput: { content: "file text" },
+          },
+        },
+      }),
+    ]);
+    expect(entries).toMatchObject([
+      {
+        title: "bash",
+        status: "stopped",
+        command: { text: "printf partial" },
+        output: { text: "partial" },
+      },
+      {
+        title: "read",
+        status: "completed",
+        detail: { text: "note.txt" },
+        output: { text: "file text" },
+        changedFiles: [],
+      },
+    ]);
+    expect(JSON.stringify(entries)).not.toContain(SECRET);
+  });
+
   it("includes nothing executable and nothing chat hides", () => {
     const { entries } = projectWorkLog([
       activity({

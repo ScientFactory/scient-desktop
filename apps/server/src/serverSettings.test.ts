@@ -974,6 +974,34 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }),
     );
 
+    for (const driver of ["pi", "omp"] as const) {
+      it.effect(`uses the automatic native model marker for ${driver}-only users`, () =>
+        Effect.gen(function* () {
+          assert.deepEqual(
+            yield* selectionWith({
+              providers: { ...builtInsDisabled, [driver]: { enabled: true } },
+            }),
+            { instanceId: ProviderInstanceId.make(driver), model: `${driver}-default` },
+          );
+        }),
+      );
+
+      it.effect(`uses the selected ${driver} instance without assuming a hosted model`, () =>
+        Effect.gen(function* () {
+          assert.deepEqual(
+            yield* selectionWith({
+              providers: builtInsDisabled,
+              providerInstances: {
+                [ProviderInstanceId.make(`${driver}_b`)]: named(driver),
+                [ProviderInstanceId.make(`${driver}_a`)]: named(driver),
+              },
+            }),
+            { instanceId: ProviderInstanceId.make(`${driver}_a`), model: `${driver}-default` },
+          );
+        }),
+      );
+    }
+
     it.effect("uses a named instance of any other provider, with that provider's model", () =>
       Effect.gen(function* () {
         assert.deepEqual(
