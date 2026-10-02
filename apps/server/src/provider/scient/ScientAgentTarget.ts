@@ -38,7 +38,7 @@ const isSupportedScientAgentVersion = (version: string): boolean =>
   Number(version.split(".")[0]) === SCIENT_AGENT_SUPPORTED_MAJOR;
 
 /**
- * Scient Agent: Scient's own agent, built from Oh My Pi. It speaks the same
+ * Scient Agent: ScientFactory's agent, built from Oh My Pi. It speaks the same
  * RPC protocol, and is a separate product with its own executable, state and
  * updates. Nothing here is shared with an Oh My Pi installation.
  */

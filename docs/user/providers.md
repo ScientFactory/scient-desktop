@@ -186,8 +186,8 @@ Linux, a Scient-managed private copy. Scient never runs `omp update` on your ins
 command when a newer release is available. Scient does not sign in to Oh My Pi. Full access is the
 only runtime mode, and Oh My Pi's own approval mode is explicit `yolo`.
 
-Scient Agent is Scient's own agent, built from Oh My Pi and kept entirely separate from it. It
-uses a `scient-agent` executable you point Scient at; Scient does not install it yet.
+Scient Agent is ScientFactory's agent. It uses a `scient-agent` executable you point Scient at; Scient
+does not install it yet. It is a fork of Oh My Pi and shares nothing with an Oh My Pi installation.
 
 OpenCode uses its own multi-provider credential and runtime configuration. Scient does not present
 one universal OpenCode account, sign-out action, or Scient-managed installation because its upstream

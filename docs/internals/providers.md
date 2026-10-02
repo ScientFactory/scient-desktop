@@ -682,7 +682,7 @@ orchestration types. The adapter owns the process and the turn mapping.
 
 ### Scient Agent driver
 
-Scient Agent is Scient's own agent, a fork of Oh My Pi that speaks the same RPC protocol.
+Scient Agent is ScientFactory's agent, a fork of Oh My Pi that speaks the same RPC protocol.
 [`ScientAgentDriver.ts`][scient-agent] runs it through the Oh My Pi adapter, RPC client, custom-model
 bridge and Scient tool extension. What makes it a separate product is an
 [`OmpTarget`](../../apps/server/src/provider/omp/OmpTarget.ts): every Oh My Pi module takes one,

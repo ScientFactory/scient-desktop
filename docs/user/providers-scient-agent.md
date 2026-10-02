@@ -1,13 +1,14 @@
 # Scient Agent in Scient
 
-Scient Agent is Scient's own agent. It is built from [Oh My Pi](./providers-omp.md) and keeps
-what Oh My Pi can do: read and edit files, run shell commands and code, use skills and MCP
-servers, delegate to subagents, and run work in the background. Scient's own tools, skills, and
-workspace awareness are available to it, as they are to Oh My Pi.
+Scient Agent is ScientFactory's agent. It reads and edits files, runs shell commands and code, uses
+skills and MCP servers, delegates to subagents, and runs work in the background. Scient's tools,
+skills, and workspace awareness are available to it.
 
-It is a separate product from Oh My Pi. It has its own executable, its own settings and sign-ins,
-and its own conversations. You can use both on the same computer; neither reads or changes the
-other's files, and a conversation started in one cannot be continued in the other.
+It has its own executable, its own settings and sign-ins, and its own conversations.
+
+Scient Agent is a fork of [Oh My Pi](./providers-omp.md). The two are separate products: you can
+use both on the same computer, neither reads or changes the other's files, and a conversation
+started in one cannot be continued in the other.
 
 ## Setup
 
@@ -21,14 +22,14 @@ shell and code can reach whatever your user account can.
 
 ## Models
 
-Scient Agent starts with no sign-ins of its own. It does not use Oh My Pi's.
+Scient Agent starts with no sign-ins. Give it a model in one of these ways:
 
 - **Custom models.** Attach an OpenAI-compatible, OpenAI Responses, or Anthropic Messages
   connection in Scient's **Custom models** settings. Scient passes the key to the agent privately
   for each process; it is never in the agent's environment or arguments.
 - **Local models.** A model server running on this computer, such as Ollama, is found on its own.
 - **Keys in your environment.** A provider key the server's environment already has, such as
-  `ANTHROPIC_API_KEY`, is used as Oh My Pi would use it.
+  `ANTHROPIC_API_KEY`, is used.
 
 Signing in to a model subscription from inside Scient is not available yet. Until it is, the
 agent's own terminal command works: run `scient-agent login` with `SCIENT_AGENT_ROOT` set to the
@@ -44,7 +45,7 @@ own data directory, not in your home directory. Removing Scient's data removes i
 creates go where the task puts them, usually your project.
 
 In a project, Scient Agent reads `AGENTS.md` (or `CLAUDE.md` when there is no `AGENTS.md`), its
-own `.scient-agent` folder, and other agents' project folders such as `.claude`, as Oh My Pi does.
+own `.scient-agent` folder, and other agents' project folders such as `.claude`.
 It reads another agent's folder in your home directory (`~/.claude`, `~/.codex`, and similar) only
 when you turn that on in the agent's own settings. It does not read `.omp` anywhere.
 

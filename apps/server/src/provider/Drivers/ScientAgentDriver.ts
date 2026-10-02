@@ -50,7 +50,7 @@ export type ScientAgentDriverEnv =
   | ServerSettingsService;
 
 /**
- * Scient Agent, Scient's own agent. It runs through the same adapter, RPC
+ * Scient Agent, ScientFactory's agent. It runs through the same adapter, RPC
  * client and Scient tool bridge as Oh My Pi, as a separate product: this
  * driver gives it its own executable, a config root inside Scient's state
  * directory, and its own session and extension folders. It never reads an
