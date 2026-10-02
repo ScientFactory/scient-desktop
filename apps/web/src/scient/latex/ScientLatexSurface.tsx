@@ -531,6 +531,20 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   }>({ pending: false, error: null });
   const [syncNotice, setSyncNotice] = useState<LatexSyncNotice | null>(null);
   const [wordExportOpen, setWordExportOpen] = useState(false);
+  // The build messages card is temporary: a click anywhere else closes it.
+  const diagnosticsCard = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!diagnosticsOpen) return;
+    const closeOnOutsidePress = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (diagnosticsCard.current?.contains(target)) return;
+      if (target.closest("[data-diagnostics-toggle]")) return;
+      setDiagnosticsOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePress, true);
+    return () => document.removeEventListener("pointerdown", closeOnOutsidePress, true);
+  }, [diagnosticsOpen]);
   // The reader controls (sidebar, page, zoom, search) join this header row in PDF and Visual.
   const [readerSlot, setReaderSlot] = useState<HTMLElement | null>(null);
   const [hostedReaders, setHostedReaders] = useState(0);
@@ -1160,6 +1174,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               <button
                 type="button"
                 className="scient-latex-action"
+                data-diagnostics-toggle=""
                 onClick={() => setDiagnosticsOpen((open) => !open)}
               >
                 Build failed · View details
@@ -1207,6 +1222,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               type="button"
               className="scient-latex-chip scient-latex-chip-error"
               aria-expanded={diagnosticsOpen}
+              data-diagnostics-toggle=""
               onClick={() => setDiagnosticsOpen((open) => !open)}
             >
               {status.errorCount} {status.errorCount === 1 ? "error" : "errors"}
@@ -1217,6 +1233,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               type="button"
               className="scient-latex-chip scient-latex-chip-warning"
               aria-expanded={diagnosticsOpen}
+              data-diagnostics-toggle=""
               onClick={() => setDiagnosticsOpen((open) => !open)}
             >
               {status.warningCount} {status.warningCount === 1 ? "warning" : "warnings"}
@@ -1261,6 +1278,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         // Floats over the document: opening it moves nothing underneath.
         <div className="scient-latex-diagnostics-anchor">
           <div
+            ref={diagnosticsCard}
             className="scient-latex-diagnostics"
             role="region"
             aria-label="Build messages"
@@ -1271,22 +1289,6 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               setDiagnosticsOpen(false);
             }}
           >
-            <div className="scient-latex-diagnostics-header">
-              <span className="scient-latex-diagnostics-summary">Build messages</span>
-              {diagnostics.length > 0 ? (
-                <span className="scient-latex-diagnostics-count">{diagnostics.length}</span>
-              ) : null}
-              <ScientTooltip content="Close">
-                <button
-                  type="button"
-                  className="scient-latex-diagnostics-close"
-                  aria-label="Close build messages"
-                  onClick={() => setDiagnosticsOpen(false)}
-                >
-                  <X className="size-3.5" aria-hidden="true" />
-                </button>
-              </ScientTooltip>
-            </div>
             {diagnosticsOpen ? (
               diagnostics.length === 0 ? (
                 <p className="scient-latex-diagnostic-message">
