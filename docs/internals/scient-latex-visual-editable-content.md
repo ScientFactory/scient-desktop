@@ -85,6 +85,57 @@ Separately, please render maths in locked bodies read-only, as requested in the 
 
 We agree the patch contract before step 0: source and context revisions, owned UTF-16 ranges, and ordering or rejection of coincident insertions. We agree the session hooks before step 1 and exercise them in the theorem prototype.
 
+## The edit contract
+
+This is our proposal for that contract. The implementation and tests are on [#415](https://github.com/ScientFactory/scient-desktop/pull/415): `sourcePatch.ts` defines the types and applies patches, `persistenceCoordinator.ts` checks versions and updates the draft, and `markdownPersistenceRegistry.ts` exposes `lease.applyEdit`. It is still a proposal: tell us what doesn't fit the planner and we change it before step 0.
+
+```ts
+interface DocumentSourcePatch {
+  start: number; // inclusive, UTF-16 offset as used by String#slice
+  end: number; // exclusive; equal to start for an insertion
+  replacement: string;
+  expected?: string; // the text the planner saw in [start, end)
+}
+
+interface DocumentSourceEdit {
+  basedOnVersion: number; // the session's editVersion the plan was made on
+  patches: ReadonlyArray<DocumentSourcePatch>;
+}
+
+type DocumentSourceEditOutcome =
+  | { accepted: true }
+  | {
+      accepted: false;
+      reason:
+        | "version"
+        | "unavailable"
+        | "offset"
+        | "bounds"
+        | "overlap"
+        | "surrogate"
+        | "crlf"
+        | "stale";
+    };
+```
+
+The planner hands one edit to a file's session (`lease.applyEdit(edit)`) and gets the outcome back at once. An edit carries no file identifier; the lease selects the file.
+
+- **All or nothing.** Every patch applies, or the working source is unchanged. A version, availability or patch refusal returns a reason; other exceptions propagate.
+- **One version.** Plan against `draftSource` and `editVersion` from the same `lease.getSnapshot()` result. The version belongs to that session owner's lifetime. A local change advances it once if the source changes; an accepted edit that changes nothing leaves it unchanged. Adopted or merged outside changes can also advance it. Any version mismatch is refused with `version`; to replan, read a fresh snapshot.
+- **Exact ranges.** Every patch's offsets refer to the same source snapshot, before any patches apply. They must be integer UTF-16 offsets with `0 <= start <= end <= source.length`; otherwise the edit is refused with `offset` or `bounds`. A boundary inside an existing surrogate pair or CRLF is refused. Replacement strings are inserted verbatim; these boundary checks do not validate their Unicode or line endings.
+- **`expected`.** When given, the patch applies only if the source still holds exactly that text in the range (`stale` otherwise). Please send it for every replacement and deletion. It guards the contents of the range; `basedOnVersion` guards everything around it.
+- **Order.** Patches may come in any order and must not overlap. Two insertions at one offset appear in the order given; an insertion at the start of a replaced range lands before the replacement.
+- **Accepted is not saved.** `accepted: true` means the edit was accepted into the working draft, not that it was saved. The session can accept edits during a conflict or connection failure; saving remains with us.
+- **`unavailable`** means the lease is inactive, the owner is disposed, or editing is held for a rename. It does not mean a save conflict or connection failure.
+- **No automatic retry.** The session does not retry a refused edit or widen its ranges. The caller decides whether to replan, wait and resubmit, or tell the writer.
+
+What the contract leaves with the planner: which ranges an edit owns, the three checks of rule 2, and everything that needs LaTeX knowledge. The session applies what it is given exactly; it does not know the format.
+
+What is not in it yet:
+
+- **Several files in one edit.** A change that touches the root and a chapter is two edits, and one can be accepted while the other is refused. We will propose the cross-file form with the project sessions, before step 5.
+- **The root and its context.** The current contract does not invalidate a plan when another file it depends on changes, such as the root file defining a macro. We still need to agree how context revisions fit before step 0, as stated above.
+
 ## Open questions
 
 - Which commands and macro signatures the ledger recognizes. This removes unnecessary locks; it doesn't make arbitrary TeX editable.
