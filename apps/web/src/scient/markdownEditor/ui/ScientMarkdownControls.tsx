@@ -52,6 +52,7 @@ import {
   useId,
   useLayoutEffect,
   useRef,
+  Fragment,
   useState,
   useSyncExternalStore,
   type FormEvent,
@@ -287,14 +288,19 @@ function StyleMenuItems({
       {STYLE_ITEMS.map((item) => {
         const shortcut = item.shortcut ? scientMarkdownShortcut(item.shortcut) : undefined;
         return (
-          <MenuRadioItem
-            key={item.command}
-            value={item.command}
-            aria-keyshortcuts={shortcut?.ariaKeyShortcuts}
-            onClick={() => controller.execute(item.command)}
-          >
-            <MenuRow icon={commandIcon(item.command)} label={item.label} shortcut={shortcut} />
-          </MenuRadioItem>
+          <Fragment key={item.command}>
+            {/* A thin line between body text, the headings and the quote. */}
+            {item.command === "heading-1" || item.command === "blockquote" ? (
+              <MenuSeparator />
+            ) : null}
+            <MenuRadioItem
+              value={item.command}
+              aria-keyshortcuts={shortcut?.ariaKeyShortcuts}
+              onClick={() => controller.execute(item.command)}
+            >
+              <MenuRow icon={commandIcon(item.command)} label={item.label} shortcut={shortcut} />
+            </MenuRadioItem>
+          </Fragment>
         );
       })}
     </MenuRadioGroup>

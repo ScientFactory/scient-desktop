@@ -84,8 +84,6 @@ import {
   MenuSubPopup,
   MenuRadioGroup,
   MenuCheckboxItem,
-  MenuGroup,
-  MenuGroupLabel,
   MenuSeparator,
 } from "~/components/ui/menu";
 import "../markdownEditor/scient-markdown-editor.css";
@@ -5567,8 +5565,27 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   const activeStyleLabel =
     activeHeading?.label ??
     (activeStyle === "quote" ? WRITING_COMMAND_LABELS.quote : WRITING_COMMAND_LABELS.text);
+  // Inside a list item the LaTeX source cannot hold a quote.
+  const quoteUnavailable = !textReadOnly && Boolean(listState?.type);
   const writingStyleItems = (
     <>
+      {/* Whether new headings are numbered: one quiet line at the top. */}
+      <MenuCheckboxItem
+        className="min-h-6 py-0.5 text-muted-foreground sm:min-h-6 sm:text-xs"
+        checked={headingNumbered}
+        disabled={textReadOnly}
+        closeOnClick={false}
+        onCheckedChange={(numbered) => {
+          if (textReadOnly) return;
+          setNewHeadingNumbered(numbered);
+          // Keep focus in the open menu while updating the selected heading.
+          if (editor?.isActive("heading"))
+            editor.commands.updateAttributes("heading", { unnumbered: !numbered });
+        }}
+      >
+        Numbered headings
+      </MenuCheckboxItem>
+      <MenuSeparator />
       <MenuRadioGroup value={activeStyle}>
         <DockCommandRadioItem value="paragraph" disabled={textReadOnly} onClick={setStandardStyle}>
           <MenuRow
@@ -5579,69 +5596,43 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         </DockCommandRadioItem>
       </MenuRadioGroup>
       <MenuSeparator />
-      <MenuGroup>
-        <MenuGroupLabel>Headings</MenuGroupLabel>
-        <div className="flex justify-center px-2 pb-2">
-          <ScientTooltip
-            side="right"
-            content={
-              textStyle?.numbered !== null && textStyle?.numbered !== undefined
-                ? headingNumbered
-                  ? "Numbering is on. Click to turn it off."
-                  : "Numbering is off. Click to turn it on."
-                : headingNumbered
-                  ? "New headings will be numbered. Click to turn numbering off."
-                  : "New headings will be unnumbered. Click to turn numbering on."
-            }
+      <MenuRadioGroup value={textStyle?.value ?? "paragraph"}>
+        {headingStyles.map(({ level, label, command }) => (
+          <DockCommandRadioItem
+            key={level}
+            value={String(level)}
+            disabled={textReadOnly}
+            onClick={() => setHeadingStyle(level, !headingNumbered)}
           >
-            <MenuCheckboxItem
-              variant="button"
-              checked={headingNumbered}
-              disabled={textReadOnly}
-              closeOnClick={false}
-              onCheckedChange={(numbered) => {
-                if (textReadOnly) return;
-                setNewHeadingNumbered(numbered);
-                // Keep focus in the open menu while updating the selected heading.
-                if (editor?.isActive("heading"))
-                  editor.commands.updateAttributes("heading", { unnumbered: !numbered });
-              }}
-            >
-              Numbered
-            </MenuCheckboxItem>
-          </ScientTooltip>
-        </div>
-        <MenuRadioGroup value={textStyle?.value ?? "paragraph"}>
-          {headingStyles.map(({ level, label, command }) => (
-            <DockCommandRadioItem
-              key={level}
-              value={String(level)}
-              disabled={textReadOnly}
-              onClick={() => setHeadingStyle(level, !headingNumbered)}
-            >
-              <MenuRow
-                icon={headingIcon(level)}
-                label={label}
-                // "paragraph" here is the Paragraph heading, not the Text style.
-                shortcut={
-                  command === "section" || command === "subsection" || command === "subsubsection"
-                    ? menuShortcut(`latex.${command}`)
-                    : undefined
-                }
-              />
-            </DockCommandRadioItem>
-          ))}
-        </MenuRadioGroup>
-      </MenuGroup>
+            <MenuRow
+              icon={headingIcon(level)}
+              label={label}
+              // "paragraph" here is the Paragraph heading, not the Text style.
+              shortcut={
+                command === "section" || command === "subsection" || command === "subsubsection"
+                  ? menuShortcut(`latex.${command}`)
+                  : undefined
+              }
+            />
+          </DockCommandRadioItem>
+        ))}
+      </MenuRadioGroup>
       <MenuSeparator />
       <MenuRadioGroup value={textStyle?.value ?? "paragraph"}>
-        <DockCommandRadioItem value="quote" disabled={textReadOnly} onClick={setQuoteStyle}>
+        <DockCommandRadioItem
+          value="quote"
+          disabled={textReadOnly || quoteUnavailable}
+          onClick={setQuoteStyle}
+        >
           <MenuRow
             icon={<WritingCommandIcon command="quote" />}
             label={WRITING_COMMAND_LABELS.quote}
           />
         </DockCommandRadioItem>
       </MenuRadioGroup>
+      {quoteUnavailable ? (
+        <p className="scient-latex-menu-note">A list item can't be a quote.</p>
+      ) : null}
     </>
   );
   const writingStyleTools = (
@@ -5656,8 +5647,8 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
           <WritingCommandIcon command={activeStyle === "quote" ? "quote" : "text"} />
         )
       }
-      groupLabel="Style"
-      popupClassName="w-52"
+      // Markdown's Style menu framing, a little wider for "Subsubsection".
+      popupClassName="w-56 p-0 [&>div]:px-0.5 [&_[data-slot=menu-radio-item]]:px-2.5"
     >
       {writingStyleItems}
     </DockMenu>

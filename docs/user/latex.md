@@ -45,7 +45,9 @@ label and pressed state. In ordinary
 text, choose numbering and then a heading level in the same menu. Changing
 heading level preserves the selected numbering setting; Text and Quote are
 unaffected. Ctrl/Cmd+Alt+0 is Text and Ctrl/Cmd+Alt+1, 2 and 3 are the first
-three heading levels. Chapter-based classes also offer Chapter. The toolbar button shows
+three heading levels. "Numbered headings" at the top of the Style menu decides
+whether new headings are numbered. Quote is not available inside a list item.
+Chapter-based classes also offer Chapter. The toolbar button shows
 the icon of the current style. The toolbar holds, in order: undo and redo; bold,
 italic, inline code (Ctrl/Cmd+E) and link (Ctrl/Cmd+K); Style; Lists; Insert;
 Math; and Document. Link is unavailable when the selection spans more than one
