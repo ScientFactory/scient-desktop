@@ -115,7 +115,7 @@ import {
   MenuRow,
   dockButtonClass,
   type DockGroup,
-} from "./dockChrome";
+} from "../../writing/dockChrome";
 import { ScientFindBar } from "./ScientFindBar";
 import { ScientWikiLinkPicker } from "./ScientWikiLinkPicker";
 

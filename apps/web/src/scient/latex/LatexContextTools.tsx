@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronUp } from "lucide-react";
-import { dockButtonClass } from "../markdownEditor/ui/dockChrome";
+import { dockButtonClass } from "../writing/dockChrome";
 import { isLatexContextEvent } from "./latexContextEvents";
 
 /** A stable portal destination keeps object fields mounted as the footer resizes. */

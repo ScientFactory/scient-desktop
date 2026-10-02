@@ -14,7 +14,7 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/in
 import { cn } from "~/lib/utils";
 
 import { scientMarkdownShortcut } from "../shortcuts";
-import { DockButton } from "./dockChrome";
+import { DockButton } from "../../writing/dockChrome";
 
 /** The find-state slice a surface must publish for the shared find bar. */
 export interface ScientFindBarState {

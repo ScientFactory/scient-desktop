@@ -60,7 +60,8 @@ import { LatexDocumentSettings, type LatexDocumentSettingsSection } from "./Late
 import { LatexContextTools } from "./LatexContextTools";
 import { DocumentReaderControls, DocumentSearchBar } from "../writing/DocumentReaderControls";
 import { ReaderBarHostContext } from "../writing/readerBarHost";
-import { scientCommandShortcut, scientMarkdownShortcut } from "../markdownEditor/shortcuts";
+import { commandShortcut } from "../keyboard/presentation";
+import { scientMarkdownShortcut } from "../markdownEditor/shortcuts";
 import {
   DockButton,
   DockOverflowRow,
@@ -69,7 +70,7 @@ import {
   DockMenu,
   DockCommandItem,
   DockCommandRadioItem,
-} from "../markdownEditor/ui/dockChrome";
+} from "../writing/dockChrome";
 import {
   MenuSub,
   MenuSubTrigger,
@@ -5566,7 +5567,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
           <DockButton
             key={item.label}
             label={item.label}
-            shortcut={scientCommandShortcut(item.label === "Bold" ? "latex.bold" : "latex.italic")}
+            shortcut={commandShortcut(item.label === "Bold" ? "latex.bold" : "latex.italic")}
             icon={item.icon}
             preserveIconWeight={item.label === "Bold"}
             disabled={textReadOnly || !editor}

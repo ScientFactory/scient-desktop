@@ -59,7 +59,7 @@ import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import { WordFileExportDialog } from "~/scient/wordExport/WordFileExportDialog";
 
 import { documentBindingChanges } from "./bindingChanges";
-import { DockCommandItem } from "../markdownEditor/ui/dockChrome";
+import { DockCommandItem } from "../writing/dockChrome";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "~/components/ui/menu";
 import { ReaderButton } from "../writing/DocumentReaderControls";
 import { DocumentExportMenuItems } from "../documentExport/DocumentExportMenuItems";

@@ -26,7 +26,8 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 
-import type { ScientMarkdownShortcutPresentation } from "../shortcuts";
+import type { ShortcutPresentation } from "../keyboard/presentation";
+import "./dockChrome.css";
 
 /**
  * Layout of a dock control. Hover, focus, pressed, and disabled visuals are
@@ -42,7 +43,7 @@ export function dockButtonClass(active?: boolean): string {
 
 export function DockTooltipContent(props: {
   readonly label: string;
-  readonly shortcut?: ScientMarkdownShortcutPresentation | undefined;
+  readonly shortcut?: ShortcutPresentation | undefined;
 }) {
   return (
     <span className="flex items-center gap-3 whitespace-nowrap">
@@ -68,7 +69,7 @@ export function DockButton(props: {
   readonly active?: boolean | undefined;
   readonly disabled?: boolean | undefined;
   readonly preserveIconWeight?: boolean | undefined;
-  readonly shortcut?: ScientMarkdownShortcutPresentation | undefined;
+  readonly shortcut?: ShortcutPresentation | undefined;
 }) {
   return (
     <Tooltip>
@@ -225,7 +226,7 @@ export function DockMenu(props: {
 export function MenuRow(props: {
   readonly icon?: ReactNode;
   readonly label: string;
-  readonly shortcut?: ScientMarkdownShortcutPresentation | undefined;
+  readonly shortcut?: ShortcutPresentation | undefined;
 }) {
   return (
     <span className="flex w-full items-center gap-2">

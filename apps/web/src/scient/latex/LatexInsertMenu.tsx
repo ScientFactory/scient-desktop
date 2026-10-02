@@ -11,7 +11,7 @@ import {
   MenuSubPopup,
 } from "~/components/ui/menu";
 import { DocumentTableSizeMenu } from "../writing/DocumentTableSizeMenu";
-import { dockButtonClass, DockCommandItem } from "../markdownEditor/ui/dockChrome";
+import { dockButtonClass, DockCommandItem } from "../writing/dockChrome";
 
 export interface LatexInsertAction {
   id: string;

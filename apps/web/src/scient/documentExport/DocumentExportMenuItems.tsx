@@ -1,6 +1,6 @@
 import { FileDown } from "lucide-react";
 import { MenuSub, MenuSubPopup, MenuSubTrigger } from "~/components/ui/menu";
-import { DockCommandItem } from "../markdownEditor/ui/dockChrome";
+import { DockCommandItem } from "../writing/dockChrome";
 
 /** Format-specific editors supply the export actions and availability. */
 export function DocumentExportMenuItems(props: {

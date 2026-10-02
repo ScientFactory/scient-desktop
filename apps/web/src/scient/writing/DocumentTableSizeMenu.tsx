@@ -8,7 +8,7 @@ import {
 } from "react";
 import { Table as TableIcon } from "lucide-react";
 import { MenuSub, MenuSubPopup, MenuSubTrigger } from "~/components/ui/menu";
-import { DockCommandItem as MenuItem } from "../markdownEditor/ui/dockChrome";
+import { DockCommandItem as MenuItem } from "./dockChrome";
 import {
   DEFAULT_SCIENT_MARKDOWN_TABLE_DIMENSIONS,
   MAX_SCIENT_MARKDOWN_TABLE_INSERT_DIMENSION,

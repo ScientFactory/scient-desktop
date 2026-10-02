@@ -1,0 +1,89 @@
+/* The writing bar shared by the document editors: the row, its buttons and
+   its dividers. Class names keep their original prefix. */
+
+/* Fixed height in both collapsed and expanded states so toggling the chrome
+   never shifts the document; overflow scrolls sideways instead of wrapping. */
+.scient-markdown-editor-dock {
+  position: relative;
+  z-index: 20;
+  /* Trim paint at the pane divider without changing control positions or sizing. */
+  clip-path: inset(0 0 0 1px);
+  display: flex;
+  max-width: 100%;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.15rem;
+  border: 0;
+  border-block-end: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--background);
+  padding: 0.25rem 0.65rem;
+  box-shadow: none;
+  height: 2.25rem;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.scient-markdown-command-button {
+  display: inline-flex;
+  flex-shrink: 0;
+  min-width: 1.65rem;
+  min-height: 1.65rem;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 0.3rem;
+  background: transparent;
+  padding: 0.2rem 0.42rem;
+  color: var(--contrast-muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* Keep the established button targets while making the primary toolbar glyphs
+   one pixel quieter. Menu chevrons retain their intentionally smaller size. */
+.scient-markdown-command-button > svg:first-child {
+  width: 0.9375rem;
+  height: 0.9375rem;
+}
+
+.scient-markdown-command-button:hover,
+.scient-markdown-command-button:focus-visible {
+  background: var(--accent);
+  color: var(--accent-foreground);
+  outline: none;
+}
+
+.scient-markdown-command-button[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-foreground);
+  font-weight: 600;
+}
+
+/* Keep idle toolbar glyphs a touch quieter than their labels. Hovered and
+   active controls still inherit the full foreground contrast above. */
+.scient-markdown-command-button:not(:hover):not(:focus-visible):not([aria-pressed="true"]) > svg {
+  color: color-mix(in oklab, var(--contrast-muted-foreground) 80%, transparent);
+}
+
+/* Most line icons read more naturally beside the app's quieter chrome at a
+   slightly lighter stroke. Semantic weight stays intact for Bold, Code, and
+   Link, whose glyph shape depends on the original stroke. */
+.scient-markdown-command-button:not([data-preserve-icon-weight="true"]) > svg {
+  stroke-width: 1.75;
+}
+
+.scient-markdown-command-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
+.scient-markdown-command-divider {
+  width: 1px;
+  height: 1.1rem;
+  margin-inline: 0.12rem;
+  background: var(--border);
+}

@@ -72,7 +72,7 @@ vi.mock("~/scient/pdf/ScientPdfReader", () => ({
   },
 }));
 vi.mock("~/scient/pdf/usePdfSaveCopy", () => ({ usePdfSaveCopy: () => savePdfCopy }));
-vi.mock("../markdownEditor/ui/dockChrome", () => ({
+vi.mock("../writing/dockChrome", () => ({
   DockMenu: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   DockCommandItem: ({ children, onClick }: { children: React.ReactNode; onClick: () => void }) => (
     <button onClick={onClick}>{children}</button>
