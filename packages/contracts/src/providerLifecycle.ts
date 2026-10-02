@@ -20,8 +20,32 @@ export const ProviderConnectionMethod = Schema.Literals([
   "grok_device_code",
   "droid_device_pairing",
   "cursor_browser",
+  "scient_agent_account",
 ]);
 export type ProviderConnectionMethod = typeof ProviderConnectionMethod.Type;
+
+/**
+ * One entry of a provider's own sign-in list, for a provider that connects to
+ * several model accounts (Scient Agent). The provider reports the list; Scient
+ * does not curate it.
+ */
+export const ProviderConnectionAccountId = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(128),
+  Schema.isPattern(/^[A-Za-z0-9._-]+$/),
+);
+export type ProviderConnectionAccountId = typeof ProviderConnectionAccountId.Type;
+
+export const ProviderConnectionAccount = Schema.Struct({
+  id: ProviderConnectionAccountId,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  /** `account` signs in through a browser or device flow; `key` asks for a pasted API key. */
+  kind: Schema.Literals(["account", "key"]),
+  /** Usable now, from a stored sign-in or from the provider's environment. */
+  connected: Schema.Boolean,
+  /** A sign-in is stored for it, so signing out has something to remove. */
+  canDisconnect: Schema.Boolean,
+});
+export type ProviderConnectionAccount = typeof ProviderConnectionAccount.Type;
 
 export const ProviderConnectionOperationStatus = Schema.Literals([
   "starting",
@@ -60,6 +84,10 @@ export const ProviderConnectionOperation = Schema.Struct({
   userCode: Schema.optionalKey(
     TrimmedNonEmptyString.check(Schema.isMaxLength(64), Schema.isPattern(/^[A-Za-z0-9-]+$/)),
   ),
+  /** Which entry of the provider's sign-in list this operation is for. */
+  account: Schema.optionalKey(ProviderConnectionAccountId),
+  /** What the provider asks the user to do or paste, in its own words. */
+  instructions: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
 });
 export type ProviderConnectionOperation = typeof ProviderConnectionOperation.Type;
 
@@ -152,13 +180,37 @@ export const ProviderConnectionSummary = Schema.Struct({
   canDisconnect: Schema.Boolean,
   operation: Schema.NullOr(ProviderConnectionOperation),
   runtime: Schema.optionalKey(ProviderRuntimeSummary),
+  /**
+   * The provider's own sign-in list. Present only for a provider that connects
+   * to several accounts; each sign-in and sign-out then names one entry.
+   */
+  accounts: Schema.optionalKey(Schema.Array(ProviderConnectionAccount)),
+  /**
+   * The sign-in to one of `accounts` that is running or last ended. It is
+   * published here and never in `operation`.
+   *
+   * Both account fields are optional keys on purpose: a client that predates
+   * them ignores them and keeps decoding the provider. For the same reason
+   * such a provider leaves `methods` empty (its list is what says sign-in is
+   * available), so the `scient_agent_account` method never reaches a field an
+   * older client decodes.
+   */
+  accountOperation: Schema.optionalKey(Schema.NullOr(ProviderConnectionOperation)),
 });
+
+/** The sign-in a provider is in or last ended, whichever field carries it. */
+export const publishedProviderConnectionOperation = (
+  connection: ProviderConnectionSummary | undefined,
+): ProviderConnectionOperation | null =>
+  connection?.accountOperation ?? connection?.operation ?? null;
 export type ProviderConnectionSummary = typeof ProviderConnectionSummary.Type;
 
 export const ProviderConnectionStartInput = Schema.Struct({
   instanceId: ProviderInstanceId,
   method: ProviderConnectionMethod,
   mode: Schema.optional(Schema.Literals(["connect", "reauthenticate"])),
+  /** Required when the provider lists accounts: the entry to sign in to. */
+  account: Schema.optionalKey(ProviderConnectionAccountId),
 });
 export type ProviderConnectionStartInput = typeof ProviderConnectionStartInput.Type;
 
@@ -191,6 +243,8 @@ export type ProviderConnectionSubmitAuthorizationCodeInput =
 
 export const ProviderConnectionDisconnectInput = Schema.Struct({
   instanceId: ProviderInstanceId,
+  /** Required when the provider lists accounts: the entry to sign out of. */
+  account: Schema.optionalKey(ProviderConnectionAccountId),
 });
 export type ProviderConnectionDisconnectInput = typeof ProviderConnectionDisconnectInput.Type;
 

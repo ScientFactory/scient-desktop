@@ -30,8 +30,10 @@ const withoutTransientProviderState = (provider: ServerProvider): ServerProvider
     updateState: _updateState,
     ...providerWithoutTransientState
   } = provider;
-  const connection = providerWithoutTransientState.connection;
-  if (!connection) return providerWithoutTransientState;
+  if (!providerWithoutTransientState.connection) return providerWithoutTransientState;
+  // An account sign-in is as transient as any other, and carries its link.
+  const { accountOperation: _accountOperation, ...connection } =
+    providerWithoutTransientState.connection;
 
   return {
     ...providerWithoutTransientState,
