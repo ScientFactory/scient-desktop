@@ -55,6 +55,7 @@ import { LatexInsertMenu, type LatexInsertAction } from "./LatexInsertMenu";
 import { LatexDocumentSettings } from "./LatexDocumentSettings";
 import { LatexContextTools } from "./LatexContextTools";
 import { DocumentReaderControls, DocumentSearchBar } from "../writing/DocumentReaderControls";
+import { ReaderBarHostContext } from "../writing/readerBarHost";
 import {
   DockButton,
   DockOverflowRow,
@@ -5081,6 +5082,29 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     </>
   );
 
+  const readerHost = useContext(ReaderBarHostContext);
+  const searchBar = find.open ? (
+    <DocumentSearchBar
+      label="Search this document"
+      query={find.snapshot.findQuery}
+      current={find.snapshot.findMatchCount ? find.snapshot.findActiveIndex + 1 : 0}
+      total={find.snapshot.findMatchCount}
+      notFound={Boolean(find.snapshot.findQuery) && find.snapshot.findMatchCount === 0}
+      focusRequest={find.snapshot.findFocusRequest}
+      onQuery={(query) =>
+        find.controller.configureFind({ query, caseSensitive: false, wholeWord: false })
+      }
+      onNavigate={(backwards) => find.controller.navigateFind(backwards ? -1 : 1)}
+      onClose={find.close}
+    />
+  ) : null;
+  const contextTools = (
+    <LatexContextTools>
+      {editor && !readOnly && editor.isActive("heading") ? (
+        <LatexHeadingToolbar editor={editor} draftKey={props.draftKey} />
+      ) : null}
+    </LatexContextTools>
+  );
   return (
     <LatexBlockSourceContext value={blockSourceContext}>
       <LatexRootContext value={props.rootRelativePath ?? null}>
@@ -5305,6 +5329,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                   }
                 />
               </div>
+              {readerHost ? searchBar : null}
               <LatexReferenceDialog
                 open={referenceOpen && !readOnly}
                 onOpenChange={setReferenceOpen}
@@ -5488,21 +5513,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                   </div>
                 </div>
               </div>
-              {find.open ? (
-                <DocumentSearchBar
-                  label="Search this document"
-                  query={find.snapshot.findQuery}
-                  current={find.snapshot.findMatchCount ? find.snapshot.findActiveIndex + 1 : 0}
-                  total={find.snapshot.findMatchCount}
-                  notFound={Boolean(find.snapshot.findQuery) && find.snapshot.findMatchCount === 0}
-                  focusRequest={find.snapshot.findFocusRequest}
-                  onQuery={(query) =>
-                    find.controller.configureFind({ query, caseSensitive: false, wholeWord: false })
-                  }
-                  onNavigate={(backwards) => find.controller.navigateFind(backwards ? -1 : 1)}
-                  onClose={find.close}
-                />
-              ) : null}
+              {readerHost ? null : searchBar}
               <footer
                 className="scient-latex-reader-footer"
                 data-recovery={recovery === null ? undefined : ""}
@@ -5526,13 +5537,8 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                   </ScientTooltip>
                 ) : null}
                 <DocumentReaderControls
-                  contextControls={
-                    <LatexContextTools>
-                      {editor && !readOnly && editor.isActive("heading") ? (
-                        <LatexHeadingToolbar editor={editor} draftKey={props.draftKey} />
-                      ) : null}
-                    </LatexContextTools>
-                  }
+                  // Hosted in the surface header, the bar leaves the footer to the object options.
+                  {...(readerHost ? {} : { contextControls: contextTools })}
                   label="Document"
                   ready={Boolean(editor)}
                   page={Math.min(currentPage, pageCount)}
@@ -5549,6 +5555,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                   onShowSearch={find.show}
                   shortcutLabel={shortcutLabel}
                 />
+                {readerHost ? contextTools : null}
               </footer>
               <span className="sr-only" role="status">
                 {readOnly ? "Read-only" : selectionContext}

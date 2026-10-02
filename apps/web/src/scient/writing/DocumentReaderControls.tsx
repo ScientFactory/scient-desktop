@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import {
   ChevronDown,
   ChevronLeft,
@@ -20,11 +21,13 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "~/components/ui/menu";
 import { cn } from "~/lib/utils";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 import { formatPdfZoom, parsePdfPageInput, stepPdfZoom } from "../pdf/pdfReaderModel";
+import { ReaderBarHostContext } from "./readerBarHost";
 import "./documentReaderControls.css";
 
 export function ReaderButton(
@@ -69,175 +72,193 @@ export function DocumentReaderControls(props: {
   const pendingSearch = useRef<(() => void) | null>(null);
   const searchOwnsFocus = useRef(false);
   useEffect(() => setPageInput(String(props.page)), [props.page]);
+  const host = useContext(ReaderBarHostContext);
+  const hostSlot = host?.slot ?? null;
+  const onHosted = host?.onHosted;
+  useLayoutEffect(() => {
+    if (!onHosted || hostSlot === null) return;
+    onHosted(true);
+    return () => onHosted(false);
+  }, [onHosted, hostSlot]);
   const commitPage = () => {
     const page = parsePdfPageInput(pageInput, props.pageCount);
     if (page === null) setPageInput(String(props.page));
     else props.onPage(page);
   };
-  return (
-    <div className="scient-document-controls">
-      <div className="scient-pdf-toolbar" role="toolbar" aria-label={props.label + " controls"}>
-        <ReaderButton
-          className="scient-pdf-action-sidebar"
-          label={
-            props.sidebarOpen
-              ? "Hide " + props.label + " sidebar"
-              : "Show " + props.label + " sidebar"
-          }
-          onClick={props.onToggleSidebar}
-        >
-          {props.sidebarOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
-        </ReaderButton>
-        <div className="scient-pdf-toolbar-separator" />
-        <ReaderButton
-          className="scient-pdf-action-page-step"
-          label="Previous page"
-          disabled={!props.ready || props.page <= 1}
-          onClick={() => props.onPage(props.page - 1)}
-        >
-          <ChevronLeft />
-        </ReaderButton>
-        <div className="scient-pdf-page-control">
-          <input
-            value={pageInput}
-            inputMode="numeric"
-            aria-label="Page number"
-            // As wide as the longest page number, with two digits as the minimum.
-            style={{ width: `calc(${Math.max(2, String(props.pageCount).length)}ch + 12px)` }}
-            disabled={!props.ready}
-            onChange={(event) => setPageInput(event.target.value)}
-            onBlur={commitPage}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") commitPage();
-            }}
-          />
-          <span aria-label={`${props.pageCount} pages`}>/ {props.pageCount || "–"}</span>
-        </div>
-        <ReaderButton
-          className="scient-pdf-action-page-step"
-          label="Next page"
-          disabled={!props.ready || props.page >= props.pageCount}
-          onClick={() => props.onPage(props.page + 1)}
-        >
-          <ChevronRight />
-        </ReaderButton>
-        <div className="scient-pdf-toolbar-separator" />
-        <ReaderButton
-          className="scient-pdf-action-zoom-step"
-          label={
-            "Zoom out" +
-            (props.shortcutLabel("pdf.zoomOut")
-              ? " (" + props.shortcutLabel("pdf.zoomOut") + ")"
-              : "")
-          }
+  const toolbar = (
+    <div
+      className={cn("scient-pdf-toolbar", host ? "scient-pdf-toolbar-hosted" : null)}
+      role="toolbar"
+      aria-label={props.label + " controls"}
+    >
+      <ReaderButton
+        className="scient-pdf-action-sidebar"
+        label={
+          props.sidebarOpen
+            ? "Hide " + props.label + " sidebar"
+            : "Show " + props.label + " sidebar"
+        }
+        onClick={props.onToggleSidebar}
+      >
+        {props.sidebarOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
+      </ReaderButton>
+      <div className="scient-pdf-toolbar-separator" />
+      <ReaderButton
+        className="scient-pdf-action-page-step"
+        label="Previous page"
+        disabled={!props.ready || props.page <= 1}
+        onClick={() => props.onPage(props.page - 1)}
+      >
+        <ChevronLeft />
+      </ReaderButton>
+      <div className="scient-pdf-page-control">
+        <input
+          value={pageInput}
+          inputMode="numeric"
+          aria-label="Page number"
+          // As wide as the longest page number, with two digits as the minimum.
+          style={{ width: `calc(${Math.max(2, String(props.pageCount).length)}ch + 12px)` }}
           disabled={!props.ready}
-          onClick={() => props.onZoom(stepPdfZoom(props.scale, "out"))}
-        >
-          <Minus />
-        </ReaderButton>
-        <ScientTooltip content="Fit width">
-          <button
-            type="button"
-            className="scient-pdf-zoom-label"
-            aria-label={"Fit width, zoom " + formatPdfZoom(props.scale)}
-            disabled={!props.ready}
-            onClick={() => props.onFitWidth()}
-          >
-            {formatPdfZoom(props.scale)}
-          </button>
-        </ScientTooltip>
-        <ReaderButton
-          className="scient-pdf-action-zoom-step"
-          label={
-            "Zoom in" +
-            (props.shortcutLabel("pdf.zoomIn")
-              ? " (" + props.shortcutLabel("pdf.zoomIn") + ")"
-              : "")
-          }
-          disabled={!props.ready}
-          onClick={() => props.onZoom(stepPdfZoom(props.scale, "in"))}
-        >
-          <Plus />
-        </ReaderButton>
-        {props.contextControls ?? <div className="min-w-1 flex-1" />}
-        <ReaderButton
-          className="scient-pdf-action-search"
-          label={
-            "Search " +
-            props.label +
-            (props.shortcutLabel("pdf.find") ? " (" + props.shortcutLabel("pdf.find") + ")" : "")
-          }
-          aria-pressed={props.searchOpen}
-          onClick={props.onToggleSearch}
-        >
-          <Search />
-        </ReaderButton>
-        <DropdownMenu
-          onOpenChange={(open) => {
-            if (open) searchOwnsFocus.current = false;
+          onChange={(event) => setPageInput(event.target.value)}
+          onBlur={commitPage}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") commitPage();
           }}
-          onOpenChangeComplete={(open) => {
-            if (open) return;
-            const action = pendingSearch.current;
-            pendingSearch.current = null;
-            action?.();
-          }}
-        >
-          <DropdownMenuTrigger render={<ReaderButton label={"More " + props.label + " actions"} />}>
-            <Ellipsis />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" finalFocus={() => !searchOwnsFocus.current}>
-            <DropdownMenuItem
-              disabled={!props.ready}
-              onClick={() => props.onZoom(stepPdfZoom(props.scale, "out"))}
-            >
-              <ZoomOut /> Zoom out
-            </DropdownMenuItem>
-            <DropdownMenuItem disabled={!props.ready} onClick={() => props.onActualSize()}>
-              <Scan /> Actual size
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={!props.ready}
-              onClick={() => props.onZoom(stepPdfZoom(props.scale, "in"))}
-            >
-              <ZoomIn /> Zoom in
-            </DropdownMenuItem>
-            <DropdownMenuItem disabled={!props.ready} onClick={() => props.onFitWidth()}>
-              <Maximize2 /> Fit width
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={props.onToggleSidebar}>
-              <ListTree /> {props.sidebarOpen ? "Hide sidebar" : "Show pages and outline"}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() => {
-                searchOwnsFocus.current = true;
-                pendingSearch.current = props.onShowSearch;
-              }}
-            >
-              <Search /> Search {props.label}
-            </DropdownMenuItem>
-            {props.contextControls ? (
-              <>
-                <DropdownMenuItem
-                  disabled={!props.ready || props.page <= 1}
-                  onClick={() => props.onPage(props.page - 1)}
-                >
-                  <ChevronLeft /> Previous page
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={!props.ready || props.page >= props.pageCount}
-                  onClick={() => props.onPage(props.page + 1)}
-                >
-                  <ChevronRight /> Next page
-                </DropdownMenuItem>
-              </>
-            ) : null}
-            {props.moreActions}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        />
+        <span aria-label={`${props.pageCount} pages`}>/ {props.pageCount || "–"}</span>
       </div>
+      <ReaderButton
+        className="scient-pdf-action-page-step"
+        label="Next page"
+        disabled={!props.ready || props.page >= props.pageCount}
+        onClick={() => props.onPage(props.page + 1)}
+      >
+        <ChevronRight />
+      </ReaderButton>
+      <div className="scient-pdf-toolbar-separator" />
+      <ReaderButton
+        className="scient-pdf-action-zoom-step"
+        label={
+          "Zoom out" +
+          (props.shortcutLabel("pdf.zoomOut")
+            ? " (" + props.shortcutLabel("pdf.zoomOut") + ")"
+            : "")
+        }
+        disabled={!props.ready}
+        onClick={() => props.onZoom(stepPdfZoom(props.scale, "out"))}
+      >
+        <Minus />
+      </ReaderButton>
+      <ScientTooltip content="Fit width">
+        <button
+          type="button"
+          className="scient-pdf-zoom-label"
+          aria-label={"Fit width, zoom " + formatPdfZoom(props.scale)}
+          disabled={!props.ready}
+          onClick={() => props.onFitWidth()}
+        >
+          {formatPdfZoom(props.scale)}
+        </button>
+      </ScientTooltip>
+      <ReaderButton
+        className="scient-pdf-action-zoom-step"
+        label={
+          "Zoom in" +
+          (props.shortcutLabel("pdf.zoomIn") ? " (" + props.shortcutLabel("pdf.zoomIn") + ")" : "")
+        }
+        disabled={!props.ready}
+        onClick={() => props.onZoom(stepPdfZoom(props.scale, "in"))}
+      >
+        <Plus />
+      </ReaderButton>
+      {(host ? null : props.contextControls) ?? <div className="min-w-1 flex-1" />}
+      <ReaderButton
+        className="scient-pdf-action-search"
+        label={
+          "Search " +
+          props.label +
+          (props.shortcutLabel("pdf.find") ? " (" + props.shortcutLabel("pdf.find") + ")" : "")
+        }
+        aria-pressed={props.searchOpen}
+        onClick={props.onToggleSearch}
+      >
+        <Search />
+      </ReaderButton>
+      {host?.trailing}
+      <DropdownMenu
+        onOpenChange={(open) => {
+          if (open) searchOwnsFocus.current = false;
+        }}
+        onOpenChangeComplete={(open) => {
+          if (open) return;
+          const action = pendingSearch.current;
+          pendingSearch.current = null;
+          action?.();
+        }}
+      >
+        <DropdownMenuTrigger render={<ReaderButton label={"More " + props.label + " actions"} />}>
+          <Ellipsis />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" finalFocus={() => !searchOwnsFocus.current}>
+          <DropdownMenuItem
+            disabled={!props.ready}
+            onClick={() => props.onZoom(stepPdfZoom(props.scale, "out"))}
+          >
+            <ZoomOut /> Zoom out
+          </DropdownMenuItem>
+          <DropdownMenuItem disabled={!props.ready} onClick={() => props.onActualSize()}>
+            <Scan /> Actual size
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={!props.ready}
+            onClick={() => props.onZoom(stepPdfZoom(props.scale, "in"))}
+          >
+            <ZoomIn /> Zoom in
+          </DropdownMenuItem>
+          <DropdownMenuItem disabled={!props.ready} onClick={() => props.onFitWidth()}>
+            <Maximize2 /> Fit width
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={props.onToggleSidebar}>
+            <ListTree /> {props.sidebarOpen ? "Hide sidebar" : "Show pages and outline"}
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onClick={() => {
+              searchOwnsFocus.current = true;
+              pendingSearch.current = props.onShowSearch;
+            }}
+          >
+            <Search /> Search {props.label}
+          </DropdownMenuItem>
+          {props.contextControls || host ? (
+            <>
+              <DropdownMenuItem
+                disabled={!props.ready || props.page <= 1}
+                onClick={() => props.onPage(props.page - 1)}
+              >
+                <ChevronLeft /> Previous page
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!props.ready || props.page >= props.pageCount}
+                onClick={() => props.onPage(props.page + 1)}
+              >
+                <ChevronRight /> Next page
+              </DropdownMenuItem>
+            </>
+          ) : null}
+          {props.moreActions}
+          {host?.moreActions ? (
+            <>
+              <DropdownMenuSeparator />
+              {host.moreActions}
+            </>
+          ) : null}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
+  // Hosted: the controls join the surface's own header row.
+  if (host) return hostSlot ? createPortal(toolbar, hostSlot) : null;
+  return <div className="scient-document-controls">{toolbar}</div>;
 }
 
 export function DocumentSearchBar(props: {

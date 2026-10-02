@@ -66,8 +66,11 @@ import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import { WordFileExportDialog } from "~/scient/wordExport/WordFileExportDialog";
 
 import { documentBindingChanges } from "./bindingChanges";
-import { DockCommandItem, DockMenu } from "../markdownEditor/ui/dockChrome";
+import { DockCommandItem } from "../markdownEditor/ui/dockChrome";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "~/components/ui/menu";
+import { ReaderButton } from "../writing/DocumentReaderControls";
 import { DocumentExportMenuItems } from "../documentExport/DocumentExportMenuItems";
+import { ReaderBarHostContext, type ReaderBarHost } from "../writing/readerBarHost";
 const LatexProjectVisualEditor = lazy(() =>
   import("./LatexProjectVisualEditor").then((module) => ({
     default: module.LatexProjectVisualEditor,
@@ -536,6 +539,13 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   }>({ pending: false, error: null });
   const [syncNotice, setSyncNotice] = useState<LatexSyncNotice | null>(null);
   const [wordExportOpen, setWordExportOpen] = useState(false);
+  // The reader controls (sidebar, page, zoom, search) join this header row in PDF and Visual.
+  const [readerSlot, setReaderSlot] = useState<HTMLElement | null>(null);
+  const [hostedReaders, setHostedReaders] = useState(0);
+  const onReaderHosted = useCallback(
+    (hosted: boolean) => setHostedReaders((count) => count + (hosted ? 1 : -1)),
+    [],
+  );
   const { persistence } = props;
   const sourceRecovery = useLatexSourceRecovery(persistence, visualDraftKey, preferredMode);
   // Unsaved, saving, or waiting on a conflict or a failed save.
@@ -961,6 +971,119 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     };
   }, [saveAndBuild, pdfVisible, build.toolchain?.kind]);
 
+  const mergesReaderBar = mode === "pdf" || mode === "visual";
+  const readerHosted = mergesReaderBar && hostedReaders > 0;
+  const buildButton = (
+    <ScientTooltip
+      content={
+        status.canCancel
+          ? "Cancel PDF build"
+          : status.busy
+            ? status.label
+            : status.state === "failed"
+              ? "Build failed. Rebuild PDF or open the log."
+              : "Save and rebuild the PDF"
+      }
+    >
+      <button
+        type="button"
+        className="scient-latex-action scient-latex-build-action"
+        aria-label={status.canCancel ? "Cancel PDF build" : "Rebuild PDF"}
+        disabled={target === null || (!status.canCancel && (!status.canRebuild || buildBlocked))}
+        onClick={() => {
+          if (status.canCancel && target) cancelLatexBuild(target);
+          else void saveAndBuild(true);
+        }}
+      >
+        {status.canCancel ? (
+          <X className="size-3.5" aria-hidden="true" />
+        ) : status.busy ? (
+          <LoaderCircle className="size-3.5" aria-hidden="true" />
+        ) : status.state === "failed" ? (
+          <CircleAlert className="size-3.5" aria-hidden="true" />
+        ) : (
+          <RotateCw className="size-3.5" aria-hidden="true" />
+        )}
+        <span>{status.canCancel ? "Cancel" : status.busy ? "Building…" : "Rebuild"}</span>
+      </button>
+    </ScientTooltip>
+  );
+  const documentMenuItems = (
+    <>
+      {diagnostics.length > 0 || status.state === "failed" ? (
+        <DockCommandItem onClick={() => setDiagnosticsOpen(true)}>
+          <CircleAlert /> Build messages
+        </DockCommandItem>
+      ) : null}
+      <DocumentExportMenuItems
+        onWordExport={() => setWordExportOpen(true)}
+        wordDisabled={
+          target === null ||
+          sourcePending ||
+          visualProjectState.pending ||
+          hasLocalVisualDraft ||
+          buildBlocked
+        }
+        pdfLabel={exportingPdf ? "Exporting\u2026" : "PDF"}
+        pdfDisabled={
+          descriptor === null ||
+          !pdfMatchesBuffer ||
+          status.stale ||
+          status.busy ||
+          sourcePending ||
+          visualProjectState.pending ||
+          hasLocalVisualDraft ||
+          buildBlocked ||
+          exportingPdf
+        }
+        pdfUnavailableReason="Rebuild PDF to export the current document."
+        onPdfExport={() => {
+          if (!descriptor || !pdfMatchesBuffer || status.stale || exportingPdf) return;
+          setExportingPdf(true);
+          setSyncNotice(null);
+          void (async () => {
+            const prepared = await prepareDocument();
+            if (!prepared?.isCurrent() || !target) return;
+            const snapshot = await readLatexBuildStatus(target.environmentId, {
+              workspaceRoot: target.cwd,
+              relativePath: target.relativePath,
+            });
+            if (!prepared.isCurrent()) return;
+            const current = { ...build, snapshot };
+            if (
+              !snapshot?.descriptor ||
+              latexStatusStripModel(current, props.cwd).stale ||
+              latexStatusStripModel(current, props.cwd).busy ||
+              [...prepared.revisions].some(
+                ([path, revision]) =>
+                  isLatexPreviewFile(path) && snapshot.visualSourceRevisions?.[path] !== revision,
+              )
+            ) {
+              setSyncNotice({
+                label: "Rebuild needed",
+                message: "Rebuild the PDF before exporting the current document.",
+              });
+              return;
+            }
+            await savePdfCopy(snapshot.descriptor);
+          })()
+            .catch((error: unknown) =>
+              setSyncNotice({
+                label: "Export failed",
+                message: error instanceof Error ? error.message : "Could not save the PDF copy.",
+              }),
+            )
+            .finally(() => setExportingPdf(false));
+        }}
+      />
+    </>
+  );
+  const readerBarHost = (slot: HTMLElement | null): ReaderBarHost => ({
+    slot,
+    trailing: buildButton,
+    moreActions: documentMenuItems,
+    onHosted: onReaderHosted,
+  });
   return (
     <div
       ref={surfaceRef}
@@ -969,7 +1092,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       dir="ltr"
       onInputCapture={() => setLastEditAt(Date.now())}
     >
-      <div className="scient-latex-toolbar">
+      <div className="scient-latex-toolbar" data-reader-hosted={readerHosted ? "" : undefined}>
         <div className="scient-latex-modes" role="group" aria-label="Document view">
           {LATEX_PREVIEW_MODES.map((candidate) => (
             <button
@@ -1096,6 +1219,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
             </ScientTooltip>
           )}
         </div>
+        <div ref={setReaderSlot} className="scient-latex-reader-slot" hidden={!mergesReaderBar} />
         <div className="scient-latex-actions">
           {mode === "split" ? (
             <div
@@ -1116,123 +1240,29 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               ))}
             </div>
           ) : null}
-          <ScientTooltip
-            content={
-              status.canCancel
-                ? "Cancel PDF build"
-                : status.busy
-                  ? status.label
-                  : status.state === "failed"
-                    ? "Build failed. Rebuild PDF or open the log."
-                    : "Save and rebuild the PDF"
-            }
-          >
-            <button
-              type="button"
-              className="scient-latex-action scient-latex-build-action"
-              aria-label={status.canCancel ? "Cancel PDF build" : "Rebuild PDF"}
-              disabled={
-                target === null || (!status.canCancel && (!status.canRebuild || buildBlocked))
-              }
-              onClick={() => {
-                if (status.canCancel && target) cancelLatexBuild(target);
-                else void saveAndBuild(true);
-              }}
-            >
-              {status.canCancel ? (
-                <X className="size-3.5" aria-hidden="true" />
-              ) : status.busy ? (
-                <LoaderCircle className="size-3.5" aria-hidden="true" />
-              ) : status.state === "failed" ? (
-                <CircleAlert className="size-3.5" aria-hidden="true" />
-              ) : (
-                <RotateCw className="size-3.5" aria-hidden="true" />
-              )}
-              <span>{status.canCancel ? "Cancel" : status.busy ? "Building…" : "Rebuild"}</span>
-            </button>
-          </ScientTooltip>
-          <DockMenu
-            label="More actions"
-            icon={<Ellipsis className="size-3.5" />}
-            chevron={false}
-            align="end"
-          >
-            {mode === "split"
-              ? LATEX_SPLIT_PREVIEWS.map((candidate) => (
-                  <DockCommandItem key={candidate} onClick={() => selectSplitPreview(candidate)}>
-                    Split preview: {LATEX_PREVIEW_MODE_LABELS[candidate]}
-                  </DockCommandItem>
-                ))
-              : null}
-            {diagnostics.length > 0 || status.state === "failed" ? (
-              <DockCommandItem onClick={() => setDiagnosticsOpen(true)}>
-                <CircleAlert /> Build messages
-              </DockCommandItem>
-            ) : null}
-            <DocumentExportMenuItems
-              onWordExport={() => setWordExportOpen(true)}
-              wordDisabled={
-                target === null ||
-                sourcePending ||
-                visualProjectState.pending ||
-                hasLocalVisualDraft ||
-                buildBlocked
-              }
-              pdfLabel={exportingPdf ? "Exporting\u2026" : "PDF"}
-              pdfDisabled={
-                descriptor === null ||
-                !pdfMatchesBuffer ||
-                status.stale ||
-                status.busy ||
-                sourcePending ||
-                visualProjectState.pending ||
-                hasLocalVisualDraft ||
-                buildBlocked ||
-                exportingPdf
-              }
-              pdfUnavailableReason="Rebuild PDF to export the current document."
-              onPdfExport={() => {
-                if (!descriptor || !pdfMatchesBuffer || status.stale || exportingPdf) return;
-                setExportingPdf(true);
-                setSyncNotice(null);
-                void (async () => {
-                  const prepared = await prepareDocument();
-                  if (!prepared?.isCurrent() || !target) return;
-                  const snapshot = await readLatexBuildStatus(target.environmentId, {
-                    workspaceRoot: target.cwd,
-                    relativePath: target.relativePath,
-                  });
-                  if (!prepared.isCurrent()) return;
-                  const current = { ...build, snapshot };
-                  if (
-                    !snapshot?.descriptor ||
-                    latexStatusStripModel(current, props.cwd).stale ||
-                    latexStatusStripModel(current, props.cwd).busy ||
-                    [...prepared.revisions].some(
-                      ([path, revision]) =>
-                        isLatexPreviewFile(path) &&
-                        snapshot.visualSourceRevisions?.[path] !== revision,
-                    )
-                  ) {
-                    setSyncNotice({
-                      label: "Rebuild needed",
-                      message: "Rebuild the PDF before exporting the current document.",
-                    });
-                    return;
-                  }
-                  await savePdfCopy(snapshot.descriptor);
-                })()
-                  .catch((error: unknown) =>
-                    setSyncNotice({
-                      label: "Export failed",
-                      message:
-                        error instanceof Error ? error.message : "Could not save the PDF copy.",
-                    }),
-                  )
-                  .finally(() => setExportingPdf(false));
-              }}
-            />
-          </DockMenu>
+          {readerHosted ? null : buildButton}
+          {readerHosted ? null : (
+            // The same button and menu the reader controls use, so Rebuild and
+            // More do not shift when the mode changes.
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<ReaderButton label="More actions" />}>
+                <Ellipsis />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {mode === "split"
+                  ? LATEX_SPLIT_PREVIEWS.map((candidate) => (
+                      <DockCommandItem
+                        key={candidate}
+                        onClick={() => selectSplitPreview(candidate)}
+                      >
+                        Split preview: {LATEX_PREVIEW_MODE_LABELS[candidate]}
+                      </DockCommandItem>
+                    ))
+                  : null}
+                {documentMenuItems}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
       </div>
 
@@ -1374,74 +1404,83 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
             ) : null}
             {showVisual || visualOpened ? (
               <div style={{ display: showVisual ? "contents" : "none" }}>
-                <Suspense fallback={<LatexPendingViewer label="Opening Visual view…" />}>
-                  <LatexProjectVisualEditor
-                    // The project's recovery copy is retired only when nothing is
-                    // unsaved, so a failed or queued save of this file counts too.
-                    selectedPending={sourcePending}
-                    fileTruncated={props.truncated}
-                    onSaved={() => {
-                      if (target) notifyLatexBindingChange(target);
-                    }}
-                    onProjectStateChange={setVisualProjectState}
-                    onOpenFileSource={(path, line) =>
-                      props.onOpenFileSource(
-                        path,
-                        line,
-                        resolvedRootRelativePath
-                          ? { latexRootRelativePath: resolvedRootRelativePath }
-                          : undefined,
-                      )
-                    }
-                    rootRelativePath={resolvedRootRelativePath}
-                    key={visualDraftKey}
-                    source={props.contents}
-                    onLocalDraftChange={reportLocalVisualDraft}
-                    draftKey={visualDraftKey}
-                    fileRevision={props.revision}
-                    environmentId={props.environmentId}
-                    cwd={props.cwd}
-                    relativePath={props.relativePath}
-                    disabled={props.truncated || persistence === null || sourceRecovery.blocked}
-                    onEdit={handleVisualEdit}
-                    onEditingChange={ignoreVisualEditing}
-                    onOpenSource={() => selectMode("source")}
-                    onOpenRoot={(mode = "source") => {
-                      if (
-                        !resolvedRootRelativePath ||
-                        resolvedRootRelativePath === props.relativePath
-                      )
-                        selectMode(mode);
-                      else
+                <ReaderBarHostContext
+                  // In Split each pane keeps its own bar for now.
+                  value={
+                    mode === "split" ? null : readerBarHost(mode === "visual" ? readerSlot : null)
+                  }
+                >
+                  <Suspense fallback={<LatexPendingViewer label="Opening Visual view…" />}>
+                    <LatexProjectVisualEditor
+                      // The project's recovery copy is retired only when nothing is
+                      // unsaved, so a failed or queued save of this file counts too.
+                      selectedPending={sourcePending}
+                      fileTruncated={props.truncated}
+                      onSaved={() => {
+                        if (target) notifyLatexBindingChange(target);
+                      }}
+                      onProjectStateChange={setVisualProjectState}
+                      onOpenFileSource={(path, line) =>
                         props.onOpenFileSource(
-                          resolvedRootRelativePath,
-                          mode === "source" ? 1 : undefined,
-                          mode === "visual" ? { latexPreviewMode: "visual" } : undefined,
-                        );
-                    }}
-                    registerFinishEditing={registerFinishVisualEditing}
-                  />
-                </Suspense>
+                          path,
+                          line,
+                          resolvedRootRelativePath
+                            ? { latexRootRelativePath: resolvedRootRelativePath }
+                            : undefined,
+                        )
+                      }
+                      rootRelativePath={resolvedRootRelativePath}
+                      key={visualDraftKey}
+                      source={props.contents}
+                      onLocalDraftChange={reportLocalVisualDraft}
+                      draftKey={visualDraftKey}
+                      fileRevision={props.revision}
+                      environmentId={props.environmentId}
+                      cwd={props.cwd}
+                      relativePath={props.relativePath}
+                      disabled={props.truncated || persistence === null || sourceRecovery.blocked}
+                      onEdit={handleVisualEdit}
+                      onEditingChange={ignoreVisualEditing}
+                      onOpenSource={() => selectMode("source")}
+                      onOpenRoot={(mode = "source") => {
+                        if (
+                          !resolvedRootRelativePath ||
+                          resolvedRootRelativePath === props.relativePath
+                        )
+                          selectMode(mode);
+                        else
+                          props.onOpenFileSource(
+                            resolvedRootRelativePath,
+                            mode === "source" ? 1 : undefined,
+                            mode === "visual" ? { latexPreviewMode: "visual" } : undefined,
+                          );
+                      }}
+                      registerFinishEditing={registerFinishVisualEditing}
+                    />
+                  </Suspense>
+                </ReaderBarHostContext>
               </div>
             ) : null}
             {activePreview === "pdf" ? (
-              <LatexViewerPane
-                descriptor={descriptor}
-                readerScope={
-                  typeof props.composerDraftTarget === "string"
-                    ? props.composerDraftTarget
-                    : props.composerDraftTarget.threadId
-                }
-                readerKey={readerKey}
-                viewer={status.viewer}
-                toolchainMissing={status.toolchainMissing}
-                failureLine={status.firstDiagnosticLine ?? build.snapshot?.failureSummary ?? null}
-                canInstallManaged={build.canInstallManaged}
-                managedInstall={build.managedInstall}
-                installRequesting={build.installRequesting}
-                onInstall={handleInstallToolchain}
-                {...(syncNavigation === undefined ? {} : { syncNavigation })}
-              />
+              <ReaderBarHostContext value={mode === "pdf" ? readerBarHost(readerSlot) : null}>
+                <LatexViewerPane
+                  descriptor={descriptor}
+                  readerScope={
+                    typeof props.composerDraftTarget === "string"
+                      ? props.composerDraftTarget
+                      : props.composerDraftTarget.threadId
+                  }
+                  readerKey={readerKey}
+                  viewer={status.viewer}
+                  toolchainMissing={status.toolchainMissing}
+                  failureLine={status.firstDiagnosticLine ?? build.snapshot?.failureSummary ?? null}
+                  canInstallManaged={build.canInstallManaged}
+                  managedInstall={build.managedInstall}
+                  installRequesting={build.installRequesting}
+                  onInstall={handleInstallToolchain}
+                  {...(syncNavigation === undefined ? {} : { syncNavigation })}
+                />
+              </ReaderBarHostContext>
             ) : null}
           </div>
         ) : null}

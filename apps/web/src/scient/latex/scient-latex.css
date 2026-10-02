@@ -3254,3 +3254,85 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   padding: 4px 8px;
   border-bottom: 1px solid var(--border);
 }
+
+/* Pilot: one height in every mode, and Rebuild and More at the same place. */
+.scient-latex-toolbar {
+  height: 36px;
+}
+.scient-latex-actions {
+  gap: 2px;
+}
+.scient-latex-toolbar .scient-latex-split-modes {
+  margin-inline-end: 4px;
+}
+
+/* Pilot: in PDF and Visual the reader controls join the document header row. */
+.scient-latex-reader-slot {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+}
+.scient-latex-reader-slot[hidden] {
+  display: none;
+}
+.scient-latex-toolbar[data-reader-hosted] > .scient-latex-status {
+  flex: 0 1 auto;
+}
+.scient-latex-toolbar[data-reader-hosted] > .scient-latex-actions {
+  display: none;
+}
+.scient-pdf-toolbar.scient-pdf-toolbar-hosted {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  border-bottom: 0;
+  padding: 0;
+  background: none;
+}
+/* The footer now holds only the selected object's options. */
+.scient-latex-reader-footer > .scient-latex-context-tools > .scient-latex-context-tools-slot {
+  border-inline-start: 0;
+  padding-inline-start: 2px;
+}
+
+/*
+ * Pilot: what the merged row gives up as the pane narrows, first to last.
+ * Everything that leaves the row stays in More.
+ */
+@container scient-latex-surface (max-width: 700px) {
+  .scient-latex-toolbar .scient-latex-build-action > span {
+    display: none;
+  }
+  .scient-latex-toolbar .scient-latex-build-action {
+    width: 28px;
+    padding: 0;
+    justify-content: center;
+  }
+}
+@container scient-latex-surface (max-width: 630px) {
+  .scient-pdf-toolbar-hosted .scient-pdf-action-page-step {
+    display: none;
+  }
+}
+@container scient-latex-surface (max-width: 580px) {
+  .scient-pdf-toolbar-hosted .scient-pdf-action-zoom-step {
+    display: none;
+  }
+}
+@container scient-latex-surface (max-width: 530px) {
+  .scient-pdf-toolbar-hosted .scient-pdf-action-sidebar,
+  .scient-pdf-toolbar-hosted .scient-pdf-toolbar-separator {
+    display: none;
+  }
+}
+@container scient-latex-surface (max-width: 470px) {
+  .scient-pdf-toolbar-hosted .scient-pdf-zoom-label {
+    display: none;
+  }
+}
+@container scient-latex-surface (max-width: 420px) {
+  .scient-pdf-toolbar-hosted .scient-pdf-page-control {
+    display: none;
+  }
+}
