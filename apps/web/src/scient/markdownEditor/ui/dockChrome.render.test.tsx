@@ -39,6 +39,57 @@ describe("DockOverflowRow", () => {
     vi.unstubAllGlobals();
   });
 
+  it("hides labels before overflowing groups and restores them when widened", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("ResizeObserver", TestResizeObserver);
+    let width = 200;
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.getAttribute("role") === "toolbar" ? width : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this.hasAttribute("data-dock-reserved")) return 30;
+      return this.closest("[data-dock-compact-labels]") ? 30 : 100;
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+    await act(() =>
+      root.render(
+        <DockOverflowRow
+          label="Writing tools"
+          fixed
+          compactLabels
+          expanded
+          onExpandedChange={vi.fn()}
+          groups={["text", "math", "insert"].map((id, index) => ({
+            id,
+            priority: 100 - index,
+            estimatedWidth: 100,
+            bar: <button type="button">{id}</button>,
+            overflow: <MenuItem>{id}</MenuItem>,
+          }))}
+          overflowItems={<MenuItem>Help</MenuItem>}
+        />,
+      ),
+    );
+    const toolbar = host.querySelector('[role="toolbar"]')!;
+    expect(toolbar.hasAttribute("data-dock-compact-labels")).toBe(true);
+    expect(toolbar.querySelectorAll("[data-dock-group]")).toHaveLength(3);
+    width = 105;
+    await act(() => TestResizeObserver.callback?.([], {} as ResizeObserver));
+    expect(toolbar.hasAttribute("data-dock-compact-labels")).toBe(true);
+    expect(toolbar.querySelectorAll("[data-dock-group]")).toHaveLength(2);
+    width = 500;
+    await act(() => TestResizeObserver.callback?.([], {} as ResizeObserver));
+    expect(toolbar.hasAttribute("data-dock-compact-labels")).toBe(false);
+    expect(toolbar.querySelectorAll("[data-dock-group]")).toHaveLength(3);
+  });
+
   it("keeps the formatting handle at the leading edge in both states", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const host = document.createElement("div");

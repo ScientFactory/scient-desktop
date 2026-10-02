@@ -222,3 +222,13 @@ it("saves the painted PDF while a newer source stages, is held, or fails", async
     refresh: refreshB,
   });
 });
+
+it("keeps a stale notice for generated PDFs outside the LaTeX header", async () => {
+  if (sourceA._tag !== "generated-pdf") throw new Error("Expected a generated fixture");
+  await render(
+    { ...sourceA, bindingStatus: "stale" },
+    assetA,
+    presentation("revision-a", assetA.url),
+  );
+  expect(mount.textContent).toContain("PDF is out of date. Showing the previous revision.");
+});
