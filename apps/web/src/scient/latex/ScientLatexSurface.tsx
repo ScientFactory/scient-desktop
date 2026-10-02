@@ -49,6 +49,7 @@ import { DIFF_SURFACE_THEME_UNSAFE_CSS, resolveDiffThemeName } from "~/lib/diffR
 import { cn } from "~/lib/utils";
 import type { LatexFilePresentationRequest, OpenFileOptions } from "~/rightPanelStore";
 import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
+import { registerShortcutClaim } from "~/scient/keyboard/ownership";
 import { useScientSplit } from "~/scient/layout/useScientSplit";
 import { documentWasSaved } from "~/scient/markdownEditor/persistence/documentPublication";
 import {
@@ -939,22 +940,26 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   });
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
+    const host = surfaceRef.current;
+    if (!host) return;
+    const ownsSave = (event: KeyboardEvent) =>
+      (event.ctrlKey || event.metaKey) &&
+      !event.altKey &&
+      !event.shiftKey &&
+      event.key.toLowerCase() === "s" &&
+      host.contains(document.activeElement);
+    const releaseClaim = registerShortcutClaim(host, ownsSave);
     const save = (event: KeyboardEvent) => {
-      if (
-        !(event.ctrlKey || event.metaKey) ||
-        event.altKey ||
-        event.shiftKey ||
-        event.key.toLowerCase() !== "s"
-      )
-        return;
-      const active = document.activeElement;
-      if (!surfaceRef.current?.contains(active)) return;
+      if (!ownsSave(event)) return;
       event.preventDefault();
       event.stopPropagation();
       void saveAndBuild(false, pdfVisible && !!build.toolchain?.kind);
     };
     window.addEventListener("keydown", save, true);
-    return () => window.removeEventListener("keydown", save, true);
+    return () => {
+      releaseClaim();
+      window.removeEventListener("keydown", save, true);
+    };
   }, [saveAndBuild, pdfVisible, build.toolchain?.kind]);
 
   return (

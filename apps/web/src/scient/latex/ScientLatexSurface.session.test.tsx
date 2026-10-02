@@ -2,6 +2,7 @@
 import { sha256 } from "@noble/hashes/sha2";
 import { EnvironmentId, type ProjectReadFileResult } from "@t3tools/contracts";
 import type { MarkdownSaveIntent } from "@scientfactory/scient-markdown";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { act, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -144,6 +145,7 @@ import {
   type MarkdownPersistenceLease,
 } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { createMarkdownPersistenceTransport } from "~/scient/markdownEditor/persistence/markdownPersistenceTransport";
+import { resolveShortcutCommand } from "~/keybindings";
 
 import { ScientLatexSurface } from "./ScientLatexSurface";
 import { flushVisualDraft, readPersistedVisualDraft } from "./visualDrafts";
@@ -213,7 +215,7 @@ describe("the LaTeX surface on a document session", () => {
   });
 
   // The panel re-renders the surface with the session's draft, as it does in the app.
-  function Host({ mode }: { mode: "split" | "visual" }) {
+  function Host({ mode }: { mode: "source" | "split" | "visual" }) {
     const snapshot = useSyncExternalStore(lease.subscribe, lease.getSnapshot);
     return (
       <ScientLatexSurface
@@ -237,7 +239,7 @@ describe("the LaTeX surface on a document session", () => {
       />
     );
   }
-  async function mount(mode: "split" | "visual" = "split") {
+  async function mount(mode: "source" | "split" | "visual" = "split") {
     await act(async () => root.render(<Host mode={mode} />));
     await act(async () => {
       await vi.dynamicImportSettled();
@@ -248,6 +250,62 @@ describe("the LaTeX surface on a document session", () => {
     flushVisualDraft(draftKey);
     return readPersistedVisualDraft(draftKey);
   };
+
+  it.each(["source", "visual"] as const)(
+    "owns Save in %s even when the composer's global listener mounted first",
+    async (mode) => {
+      const stash = vi.fn();
+      const composerShortcut = (event: KeyboardEvent) => {
+        const command = resolveShortcutCommand(event, DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform: "MacIntel",
+          context: { terminalFocus: false, terminalOpen: false, modelPickerOpen: false },
+        });
+        if (command !== "composer.stash") return;
+        event.preventDefault();
+        event.stopPropagation();
+        stash();
+      };
+      const composer = document.createElement("textarea");
+      document.body.append(composer);
+      window.addEventListener("keydown", composerShortcut, true);
+      try {
+        await mount(mode);
+        await act(async () => {
+          lease.change(typed("Save from the editor."), lease.getSnapshot().editVersion);
+        });
+        const editor = container.querySelector<HTMLElement>(
+          `[data-testid="${mode === "source" ? "source-pane" : "visual-editor"}"]`,
+        )!;
+        editor.tabIndex = 0;
+        editor.focus();
+        const save = () =>
+          new KeyboardEvent("keydown", {
+            key: "s",
+            metaKey: true,
+            bubbles: true,
+            cancelable: true,
+          });
+        await act(async () => {
+          editor.dispatchEvent(save());
+        });
+        expect(stash).not.toHaveBeenCalled();
+        expect(disk.source).toBe(typed("Save from the editor."));
+
+        await act(async () => {
+          lease.change(typed("Still pending in the editor."), lease.getSnapshot().editVersion);
+        });
+        composer.focus();
+        await act(async () => {
+          composer.dispatchEvent(save());
+        });
+        expect(stash).toHaveBeenCalledOnce();
+        expect(disk.source).toBe(typed("Save from the editor."));
+      } finally {
+        window.removeEventListener("keydown", composerShortcut, true);
+        composer.remove();
+      }
+    },
+  );
 
   it("gives the source pane the session, so every keystroke has one owner", async () => {
     await mount();
