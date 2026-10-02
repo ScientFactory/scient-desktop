@@ -67,6 +67,7 @@ describe("writing editor source transactions", () => {
     if (originalGetAnimations)
       Object.defineProperty(Element.prototype, "getAnimations", originalGetAnimations);
     else Reflect.deleteProperty(Element.prototype, "getAnimations");
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
   function editor(): Editor {
@@ -109,8 +110,8 @@ describe("writing editor source transactions", () => {
     await act(() => editor().commands.setNodeSelection(position));
     return position;
   }
-  async function mount(body = "Hello") {
-    current = tex(body);
+  async function mount(body = "Hello", preamble = "") {
+    current = tex(body).replace("\\begin{document}", preamble + "\\begin{document}");
     function Harness() {
       const [source, setSource] = useState(current);
       return (
@@ -138,6 +139,62 @@ describe("writing editor source transactions", () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
     });
   }
+
+  it("keeps writing tools in one permanent row and reader controls in the footer", async () => {
+    await mount();
+    const toolbar = container.querySelector('[role="toolbar"][aria-label="Writing tools"]')!;
+    expect(
+      [...toolbar.querySelectorAll("[data-dock-group]")].map((group) =>
+        group.getAttribute("data-dock-group"),
+      ),
+    ).toEqual(["history", "style", "format", "lists", "math", "insert", "document"]);
+    expect(toolbar.querySelector('button[aria-label="Style: Text"]')).not.toBeNull();
+    expect(toolbar.querySelector('[aria-label="Hide formatting tools"]')).toBeNull();
+    expect(toolbar.querySelector('input[aria-label="Page number"]')).toBeNull();
+    expect(
+      container.querySelector('.scient-latex-reader-footer input[aria-label="Page number"]'),
+    ).not.toBeNull();
+    expect(container.querySelector(".scient-latex-document-tools")).toBeNull();
+    const context = container.querySelector(".scient-latex-context-tools")!;
+    expect(context.previousElementSibling?.getAttribute("aria-label")).toBe("Fit width");
+    expect(context.nextElementSibling?.getAttribute("aria-label")).toMatch(/^Search Document/);
+    expect(context.querySelector(".scient-latex-context-tools-slot")).not.toBeNull();
+    expect(container.querySelector('[aria-label="Selected object properties"]')).toBeNull();
+  });
+  it("moves lower-priority writing groups into More on narrow panes", async () => {
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.getAttribute("role") === "toolbar" ? 230 : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.hasAttribute("data-dock-reserved") ? 36 : 70;
+    });
+    await mount();
+    const toolbar = container.querySelector('[role="toolbar"][aria-label="Writing tools"]')!;
+    expect(toolbar.querySelector('[data-dock-group="style"]')).not.toBeNull();
+    expect(toolbar.querySelector('[data-dock-group="history"]')).toBeNull();
+    await act(() =>
+      toolbar.querySelector<HTMLButtonElement>('button[aria-label="More actions"]')!.click(),
+    );
+    const menuItems = [
+      ...document.body.querySelectorAll<HTMLElement>('[role="menuitem"], [role="menuitemradio"]'),
+    ];
+    for (const label of [
+      "Undo",
+      "Redo",
+      "Bullet list",
+      "Theorem",
+      "Document settings",
+      "Keyboard shortcuts",
+    ])
+      expect(
+        menuItems.some((item) => item.textContent?.trim() === label),
+        label,
+      ).toBe(true);
+  });
 
   it.each([false, true])(
     "opens and applies an existing theorem's exact source after insertion=%s",
@@ -279,16 +336,15 @@ describe("writing editor source transactions", () => {
 
   it("zooms the fixed paper without changing LaTeX", async () => {
     await mount("Stable page");
-    const zoom = container.querySelector<HTMLInputElement>(
-      "input[aria-label='Document zoom percentage']",
-    )!;
-    await setField(zoom, "50");
-    expect(zoom.value).toBe("50");
+    await act(() => container.querySelector<HTMLButtonElement>(".scient-pdf-zoom-label")!.click());
+    await act(() =>
+      container.querySelector<HTMLButtonElement>('button[aria-label^="Zoom out"]')!.click(),
+    );
     expect(
       container
         .querySelector<HTMLElement>(".scient-latex-page-stage")
         ?.style.getPropertyValue("transform"),
-    ).toBe("scale(0.5)");
+    ).toBe("scale(0.95)");
     expect(writes).not.toHaveBeenCalled();
   });
 
@@ -582,12 +638,51 @@ Theory & Proofs \\\\
     expect(container.querySelector("button[aria-label='Insert']")).not.toBeNull();
     expect(container.querySelector("[aria-label='Document navigation']")).toBeNull();
     const outline = container.querySelector<HTMLButtonElement>(
-      "button[aria-label='Document outline']",
+      "button[aria-label='Show Document sidebar']",
     )!;
     await act(() => outline.click());
+    await act(() =>
+      [...container.querySelectorAll<HTMLButtonElement>(".scient-latex-navigation-tabs button")]
+        .find((button) => button.textContent === "Outline")!
+        .click(),
+    );
     expect(container.querySelector("[aria-label='Document navigation']")?.textContent).toContain(
       "Methods",
     );
+  });
+
+  it("moves a paragraph into the title and undoes the complete source change", async () => {
+    await mount("Energy estimate\n\nBody stays here");
+    const original = current;
+    await act(() => editor().commands.setTextSelection(1));
+    await act(() =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Style: Text"]')!.click(),
+    );
+    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (item) => item.textContent?.trim() === "Use as document title…",
+    )!;
+    await act(() => item.click());
+    expect(current).toContain("\\title{Energy estimate}");
+    expect(current).toContain("\\maketitle");
+    expect(current.match(/Energy estimate/gu)).toHaveLength(1);
+    const titled = current;
+    await act(() => editor().commands.undo());
+    expect(current).toBe(original);
+    await act(() => editor().commands.redo());
+    expect(current).toBe(titled);
+  });
+  it("editing a title never silently inserts a printed title block", async () => {
+    await mount("Body", "\\title{Existing metadata}\n");
+    const original = current;
+    await act(() =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Document"]')!.click(),
+    );
+    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (item) => item.textContent?.trim() === "Edit title",
+    )!;
+    await act(() => item.click());
+    expect(current).toBe(original);
+    expect(current).not.toContain("\\maketitle");
   });
 
   it("rejects a destructive transaction spanning protected source", async () => {

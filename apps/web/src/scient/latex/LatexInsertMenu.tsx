@@ -77,7 +77,7 @@ export function LatexInsertMenu(props: {
           render={
             <button type="button" aria-label="Insert" className={dockButtonClass()}>
               <Plus aria-hidden="true" />
-              <span className="scient-latex-insert-label">Insert</span>
+              <span className="scient-latex-insert-label scient-latex-tool-label">Insert</span>
             </button>
           }
         />

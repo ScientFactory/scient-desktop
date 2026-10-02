@@ -866,21 +866,87 @@ export function titleMetadata(source: string) {
 
 /** Restore the printed title without replacing existing document metadata. */
 export function ensureLatexTitleBlock(source: string, defaultTitle: string): string | null {
-  const begin = /\\begin\s*\{document\}/u.exec(source);
-  if (!begin) return null;
-  if (/\\maketitle\b/u.test(source.slice(begin.index + begin[0].length))) return source;
+  const marker = "\\begin{document}";
+  const begin = findDelimiter(source, marker, 0);
+  if (begin < 0) return null;
+  if (/\\maketitle\b/u.test(source.slice(begin + marker.length).replace(/(?<!\\)%[^\r\n]*/gu, "")))
+    return source;
   const eol = source.includes("\r\n") ? "\r\n" : "\n";
   let changed = source;
-  if (commandArgument(source.slice(0, begin.index), "title") === null)
+  if (commandArgument(source.slice(0, begin), "title") === null)
     changed =
       setPreambleCommandArgument(changed, "title", escapeText(defaultTitle), eol) ?? changed;
   for (const command of ["author", "date"]) {
-    if (commandArgument(source.slice(0, begin.index), command) === null)
+    if (commandArgument(source.slice(0, begin), command) === null)
       changed = setPreambleCommandArgument(changed, command, "", eol) ?? changed;
   }
-  const insertion = /\\begin\s*\{document\}/u.exec(changed)!;
-  const at = insertion.index + insertion[0].length;
+  const at = findDelimiter(changed, marker, 0) + marker.length;
   return changed.slice(0, at) + eol + "\\maketitle" + eol + changed.slice(at);
+}
+
+/** Explicit title creation/conversion. Imported custom title pages stay source-owned. */
+export function prepareLatexDocumentTitle(
+  source: string,
+  paragraphIndex?: number,
+): {
+  source: string;
+  previousTitle: string;
+  title: string;
+} | null {
+  const projected = projectLatexVisualDocument(source);
+  const printed = projected.blocks.filter((block) => block.node.attrs?.kind === "title");
+  const begin = findDelimiter(source, "\\begin{document}", 0);
+  if (begin < 0 || printed.length > 1) return null;
+  // A custom titlepage is not evidence that a standard title block is missing.
+  const uncommented = source.replace(/(?<!\\)%[^\r\n]*/gu, "");
+  if (/\\begin\s*\{titlepage\}/u.test(uncommented)) return null;
+  const body = source.slice(begin).replace(/(?<!\\)%[^\r\n]*/gu, "");
+  if (
+    /\\(?:title|author|date)\s*\{/u.test(body) ||
+    (printed.length === 0 && /\\maketitle\b/u.test(body))
+  )
+    return null;
+  const previous = titleMetadata(source);
+  if (previous.sourceMeta.titleEditable === false) return null;
+  let changed = source;
+  let title = String(previous.title ?? "");
+  if (paragraphIndex !== undefined) {
+    const paragraph = projected.blocks[paragraphIndex];
+    if (
+      !paragraph?.editable ||
+      paragraph.node.type !== "paragraph" ||
+      /(?<!\\)%/u.test(paragraph.source) ||
+      !paragraph.node.content?.length ||
+      paragraph.node.content.some((node) => node.type !== "text" || node.marks?.length)
+    )
+      return null;
+    title = paragraph.node.content
+      .map((node) => node.text ?? "")
+      .join("")
+      .trim();
+    if (!title) return null;
+    changed = source.slice(0, paragraph.from) + source.slice(paragraph.to);
+    changed =
+      setPreambleCommandArgument(
+        changed,
+        "title",
+        escapeText(title),
+        source.includes("\r\n") ? "\r\n" : "\n",
+      ) ?? changed;
+  }
+  changed = ensureLatexTitleBlock(changed, title || "Untitled") ?? changed;
+  return { source: changed, previousTitle: String(previous.title ?? ""), title };
+}
+
+/** Validate source snapshots carried by the title command's reversible history step. */
+export function projectLatexTitleSourceEdit(source: string, content: JSONContent) {
+  const projected = projectLatexVisualDocument(source);
+  if (roundTripSignature(projected.content) !== roundTripSignature(content)) return null;
+  return {
+    source,
+    structural: true,
+    projection: adoptLatexVisualContent(source, content, projected),
+  };
 }
 
 function parseDocumentFrontMatter(source: string, documentSource: string): JSONContent | null {

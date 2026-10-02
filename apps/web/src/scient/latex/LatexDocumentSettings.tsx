@@ -1,11 +1,11 @@
-import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import { useMemo, useState } from "react";
-import { Settings2 } from "lucide-react";
-import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "~/components/ui/popover";
+import { Dialog, DialogPopup, DialogTitle } from "~/components/ui/dialog";
 import { latexVisualLayoutProfile, type LatexVisualLayoutUpdate } from "./latexVisualDocument";
 import { LATEX_PAPER_SIZES } from "./latexVisualLayout";
 
 export function LatexDocumentSettings(props: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   source: string;
   disabled: boolean;
   titleAvailable?: boolean;
@@ -14,7 +14,8 @@ export function LatexDocumentSettings(props: {
   onOpenSource: () => void;
   onOpenTitle?: (() => void) | undefined;
 }) {
-  const [open, setOpen] = useState(false);
+  const open = props.open;
+  const setOpen = props.onOpenChange;
   const profile = useMemo(() => latexVisualLayoutProfile(props.source), [props.source]);
   const makeDraft = (): LatexVisualLayoutUpdate => ({
     paper: profile.paper,
@@ -33,7 +34,6 @@ export function LatexDocumentSettings(props: {
   const [error, setError] = useState<string | null>(null);
   const [changed, setChanged] = useState(false);
   const [changes, setChanges] = useState<Partial<LatexVisualLayoutUpdate>>({});
-  const [titleTarget, setTitleTarget] = useState<"title" | "author" | "date" | null>(null);
   const customClass = !["article", "report", "book"].includes(profile.documentClass);
   const update = (patch: Partial<LatexVisualLayoutUpdate>) => {
     setDraft((value) => ({ ...value, ...patch }));
@@ -42,7 +42,7 @@ export function LatexDocumentSettings(props: {
     setError(null);
   };
   return (
-    <Popover
+    <Dialog
       open={open}
       onOpenChange={(next) => {
         if (next) {
@@ -50,33 +50,12 @@ export function LatexDocumentSettings(props: {
           setError(null);
           setChanged(false);
           setChanges({});
-          setTitleTarget(null);
         }
         setOpen(next);
       }}
-      onOpenChangeComplete={(next) => {
-        if (!next && titleTarget) {
-          props.onTitle(titleTarget);
-          setTitleTarget(null);
-        }
-      }}
     >
-      <ScientTooltip content="Document settings">
-        <PopoverTrigger
-          render={
-            <button
-              type="button"
-              className="scient-latex-action"
-              aria-label="Document settings"
-              disabled={props.disabled}
-            >
-              <Settings2 className="size-3.5" />
-            </button>
-          }
-        />
-      </ScientTooltip>
-      <PopoverPopup width="sm" padding="comfortable" align="end" finalFocus={() => !titleTarget}>
-        <PopoverTitle size="compact">Document settings</PopoverTitle>
+      <DialogPopup>
+        <DialogTitle>Document settings</DialogTitle>
         <form
           className="scient-latex-document-settings"
           onSubmit={(event) => {
@@ -98,8 +77,8 @@ export function LatexDocumentSettings(props: {
                     type="button"
                     key={field}
                     onClick={() => {
-                      setTitleTarget(field);
                       setOpen(false);
+                      requestAnimationFrame(() => props.onTitle(field));
                     }}
                   >
                     {field === "title" ? "Title block" : field === "author" ? "Author" : "Date"}
@@ -207,7 +186,7 @@ export function LatexDocumentSettings(props: {
             </button>
           </fieldset>
         </form>
-      </PopoverPopup>
-    </Popover>
+      </DialogPopup>
+    </Dialog>
   );
 }

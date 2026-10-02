@@ -143,6 +143,7 @@ export function DockCommandRadioItem({
 /** A dock dropdown trigger with a tooltip and consistent popup framing. */
 export function DockMenu(props: {
   readonly label: string;
+  readonly commandScope?: string | undefined;
   readonly disabled?: boolean;
   readonly icon: ReactNode;
   readonly active?: boolean | undefined;
@@ -197,6 +198,7 @@ export function DockMenu(props: {
           align={props.align ?? "start"}
           className={cn("w-44", props.popupClassName)}
           data-keybinding-capture=""
+          data-dock-command-scope={props.commandScope}
           // Commands own focus (editor, nested editor, or a picker). Escape and
           // other dismissals retain the menu's standard accessible focus return.
           finalFocus={() => !closedByCommand.current}
@@ -317,12 +319,20 @@ export function DockOverflowRow(props: {
   readonly label: string;
   readonly expanded: boolean;
   readonly onExpandedChange: (expanded: boolean) => void;
+  /** Writing surfaces can keep the row visible and move every group into overflow. */
+  readonly fixed?: boolean;
+  /** Hide marked button labels before moving groups into More. */
+  readonly compactLabels?: boolean;
+  readonly commandScope?: string | undefined;
   readonly groups: readonly DockGroup[];
   /** Items that live in the overflow menu even when nothing is hidden. */
   readonly overflowItems?: ReactNode;
 }) {
   const dockRef = useRef<HTMLDivElement>(null);
   const widthsRef = useRef(new Map<string, number>());
+  const compactWidthsRef = useRef(new Map<string, number>());
+  const fixedRef = useRef(props.fixed);
+  fixedRef.current = props.fixed;
   const groupsRef = useRef(props.groups);
   groupsRef.current = props.groups;
   const [hiddenIds, setHiddenIds] = useState<ReadonlySet<string>>(EMPTY_GROUP_SET);
@@ -344,6 +354,8 @@ export function DockOverflowRow(props: {
     const dock = dockRef.current;
     // clientWidth is 0 without a layout engine (tests, hidden panes): show all.
     if (!dock || dock.clientWidth === 0) return;
+    // Measure the full labels first, including widths cached for hidden groups.
+    dock.removeAttribute("data-dock-compact-labels");
     for (const element of dock.querySelectorAll("[data-dock-group]")) {
       const id = element.getAttribute("data-dock-group");
       if (id !== null && element instanceof HTMLElement) {
@@ -358,22 +370,45 @@ export function DockOverflowRow(props: {
       dock.clientWidth -
       (parseFloat(style.paddingLeft) || 0) -
       (parseFloat(style.paddingRight) || 0);
+    const fullWidth = groupsRef.current.reduce(
+      (total, group) =>
+        total +
+        (widthsRef.current.get(group.id) ?? group.estimatedWidth) +
+        (fixedRef.current ? 2 : 0),
+      reservedWidth,
+    );
+    const compact = props.compactLabels && fullWidth > available - 6;
+    if (compact) {
+      dock.setAttribute("data-dock-compact-labels", "");
+      for (const element of dock.querySelectorAll<HTMLElement>("[data-dock-group]")) {
+        const id = element.getAttribute("data-dock-group");
+        if (id !== null) compactWidthsRef.current.set(id, element.offsetWidth);
+      }
+    }
+    const widths = compact ? compactWidthsRef.current : widthsRef.current;
     const next = collapseDockGroups({
       availableWidth: available,
       reservedWidth,
       groups: groupsRef.current.map((group) => ({
         id: group.id,
         priority: group.priority,
-        pinned: group.pinned,
-        width: widthsRef.current.get(group.id) ?? group.estimatedWidth,
+        pinned: fixedRef.current ? false : group.pinned,
+        width: (widths.get(group.id) ?? group.estimatedWidth) + (fixedRef.current ? 2 : 0),
       })),
     });
     setHiddenIds((previous) => (sameStringSet(previous, next) ? previous : next));
-  }, []);
+  }, [props.compactLabels]);
 
   useLayoutEffect(() => {
     recompute();
-  }, [layoutKey, props.expanded, recompute, showOverflowMenu, visibleLayoutKey]);
+  }, [
+    layoutKey,
+    props.expanded,
+    props.compactLabels,
+    recompute,
+    showOverflowMenu,
+    visibleLayoutKey,
+  ]);
 
   useEffect(() => {
     const dock = dockRef.current;
@@ -384,27 +419,37 @@ export function DockOverflowRow(props: {
       .querySelectorAll<HTMLElement>("[data-dock-group], [data-dock-reserved]")
       .forEach((element) => observer.observe(element));
     return () => observer.disconnect();
-  }, [layoutKey, props.expanded, recompute, showOverflowMenu, visibleLayoutKey]);
+  }, [
+    layoutKey,
+    props.expanded,
+    props.compactLabels,
+    recompute,
+    showOverflowMenu,
+    visibleLayoutKey,
+  ]);
 
   return (
     <div
       ref={dockRef}
       role="toolbar"
       aria-label={props.label}
+      data-fixed={props.fixed || undefined}
       className="scient-markdown-editor-dock flex items-center gap-0.5 border-b border-border/80 bg-background/95 px-2 py-1 backdrop-blur-xs"
     >
-      <div
-        className="flex shrink-0 items-center gap-0.5"
-        data-dock-reserved
-        data-dock-toggle-cluster
-      >
-        <DockCollapseHandle
-          expanded={props.expanded}
-          onToggle={() => props.onExpandedChange(!props.expanded)}
-        />
-        {props.expanded ? <DockDivider /> : null}
-      </div>
-      {props.expanded ? (
+      {props.fixed ? null : (
+        <div
+          className="flex shrink-0 items-center gap-0.5"
+          data-dock-reserved
+          data-dock-toggle-cluster
+        >
+          <DockCollapseHandle
+            expanded={props.expanded}
+            onToggle={() => props.onExpandedChange(!props.expanded)}
+          />
+          {props.expanded ? <DockDivider /> : null}
+        </div>
+      )}
+      {props.expanded || props.fixed ? (
         <>
           {visible.map((group) => (
             <span
@@ -419,6 +464,7 @@ export function DockOverflowRow(props: {
             {showOverflowMenu ? (
               <DockMenu
                 label="More actions"
+                commandScope={props.commandScope}
                 icon={<Ellipsis className="size-4" />}
                 chevron={false}
                 align="end"

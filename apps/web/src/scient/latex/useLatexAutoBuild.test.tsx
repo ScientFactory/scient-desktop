@@ -31,7 +31,6 @@ describe("PDF-visible automatic builds", () => {
       busy: false,
       toolchainReady: true,
       sourceKey: "r1",
-      lastEditAt: 0,
       requestBuild,
     };
     container = document.createElement("div");
@@ -62,24 +61,26 @@ describe("PDF-visible automatic builds", () => {
     await tick(10_000);
     expect(requestBuild).not.toHaveBeenCalled();
   });
-  it("waits 2.5 seconds from the final edit and waits for saves", async () => {
+  it("does not request timed builds after editing or saving", async () => {
     input = { ...input, needsBuild: false };
     await render();
-    input = { ...input, needsBuild: true, sourceKey: "r2", lastEditAt: Date.now(), blocked: true };
+    input = { ...input, needsBuild: true, sourceKey: "r2", blocked: true };
     await render();
     await tick(1000);
-    input = { ...input, sourceKey: "r3", lastEditAt: Date.now(), blocked: false };
+    input = { ...input, sourceKey: "r3", blocked: false };
     await render();
     await tick(2499);
     expect(requestBuild).not.toHaveBeenCalled();
     await tick(1);
-    expect(requestBuild).toHaveBeenCalledTimes(1);
+    expect(requestBuild).not.toHaveBeenCalled();
+    await tick(60_000);
+    expect(requestBuild).not.toHaveBeenCalled();
   });
   it("coalesces edits during a running build into one later build", async () => {
     input = { ...input, busy: true };
     await render();
     for (const key of ["r2", "r3", "r4"]) {
-      input = { ...input, sourceKey: key, lastEditAt: Date.now() };
+      input = { ...input, sourceKey: key };
       await render();
     }
     await tick(3000);

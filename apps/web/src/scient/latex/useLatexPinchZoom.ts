@@ -1,7 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from "react";
+import { normalizePdfZoom } from "../pdf/pdfReaderModel";
 
-export const MIN_VISUAL_ZOOM = 0.25;
-export const MAX_VISUAL_ZOOM = 4;
+export const MIN_VISUAL_ZOOM = normalizePdfZoom(0);
+export const MAX_VISUAL_ZOOM = normalizePdfZoom(Infinity);
 
 /** Chromium trackpad pinches arrive as Ctrl+wheel, just as in our PDF reader. */
 export function useLatexPinchZoom(
@@ -11,6 +12,30 @@ export function useLatexPinchZoom(
 ) {
   const latest = useRef({ zoom, onZoom });
   const anchor = useRef<{ x: number; y: number; clientX: number; clientY: number } | null>(null);
+  const changeZoom = useCallback(
+    (scale: number, apply?: () => void) => {
+      const current = latest.current.zoom;
+      const next = apply ? scale : normalizePdfZoom(scale);
+      const scroll = scrollRef.current;
+      const stage = scroll?.querySelector<HTMLElement>(".scient-latex-page-stage");
+      if (scroll && stage && current > 0 && next !== current) {
+        const bounds = stage.getBoundingClientRect();
+        const viewport = scroll.getBoundingClientRect();
+        // Like PDF.js's toolbar zoom, retain the visible document location.
+        const clientX = Math.max(bounds.left, viewport.left + scroll.clientLeft);
+        const clientY = Math.max(bounds.top, viewport.top + scroll.clientTop);
+        anchor.current = {
+          x: (clientX - bounds.left) / current,
+          y: (clientY - bounds.top) / current,
+          clientX,
+          clientY,
+        };
+      }
+      if (apply) apply();
+      else latest.current.onZoom(next);
+    },
+    [scrollRef],
+  );
   useLayoutEffect(() => {
     latest.current = { zoom, onZoom };
     const point = anchor.current;
@@ -35,21 +60,14 @@ export function useLatexPinchZoom(
       if (!event.ctrlKey) return;
       event.preventDefault();
       event.stopPropagation();
-      const pixels =
-        event.deltaY *
-        (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? scroll.clientHeight : 1);
-      factor *= Math.exp(Math.max(-0.5, Math.min(0.5, -pixels * 0.01)));
+      factor *= Math.exp(Math.max(-0.5, Math.min(0.5, -event.deltaY * 0.01)));
       clientX = event.clientX;
       clientY = event.clientY;
       if (frame) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
         const current = latest.current.zoom;
-        // Fit width can sit outside the manual range; enter it without a jump.
-        const next = Math.max(
-          Math.min(MIN_VISUAL_ZOOM, current),
-          Math.min(Math.max(MAX_VISUAL_ZOOM, current), current * factor),
-        );
+        const next = normalizePdfZoom(current * factor);
         factor = 1;
         if (next === current) return;
         const stage = scroll.querySelector<HTMLElement>(".scient-latex-page-stage");
@@ -72,4 +90,5 @@ export function useLatexPinchZoom(
       scroll.removeEventListener("wheel", wheel, true);
     };
   }, [scrollRef]);
+  return changeZoom;
 }

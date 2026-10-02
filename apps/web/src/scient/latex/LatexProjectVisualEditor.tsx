@@ -432,7 +432,7 @@ export function LatexProjectVisualEditor(props: Props) {
           disabled={props.disabled || !!error}
         />
       ) : (
-        <div className="scient-latex-empty" role="status">
+        <div className="scient-latex-placeholder" role="status">
           {readError ?? document?.errors[0] ?? "Loading the document and its included files…"}
         </div>
       )}
