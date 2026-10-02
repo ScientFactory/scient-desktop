@@ -261,6 +261,7 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
 
 /** Canonical first-party provider order across Settings, onboarding, and pickers. */
 export const PROVIDER_DISPLAY_ORDER: ReadonlyArray<ProviderDriverKind> = [
+  SCIENT_DRIVER_KIND,
   CODEX_DRIVER_KIND,
   CLAUDE_DRIVER_KIND,
   ANTIGRAVITY_DRIVER_KIND,
@@ -268,7 +269,6 @@ export const PROVIDER_DISPLAY_ORDER: ReadonlyArray<ProviderDriverKind> = [
   DROID_DRIVER_KIND,
   PI_DRIVER_KIND,
   OMP_DRIVER_KIND,
-  SCIENT_DRIVER_KIND,
   CURSOR_DRIVER_KIND,
   GROK_DRIVER_KIND,
 ];

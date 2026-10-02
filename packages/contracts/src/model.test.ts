@@ -10,6 +10,7 @@ import { ProviderDriverKind } from "./providerInstance.ts";
 describe("provider display order", () => {
   it("pins the canonical first-party order", () => {
     expect(PROVIDER_DISPLAY_ORDER).toEqual([
+      "scient",
       "codex",
       "claudeAgent",
       "antigravity",
@@ -17,7 +18,6 @@ describe("provider display order", () => {
       "droid",
       "pi",
       "omp",
-      "scient",
       "cursor",
       "grok",
     ]);

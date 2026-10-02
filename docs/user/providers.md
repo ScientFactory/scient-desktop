@@ -1,7 +1,7 @@
 # Providers in Scient
 
 A provider supplies the AI models that work inside Scient. For example, you
-can connect Codex, Claude, Cursor, Grok, Droid, Antigravity, Pi, Oh My Pi, or Scient Agent, then choose an
+can connect Scient Agent, Codex, Claude, Cursor, Grok, Droid, Antigravity, Pi, or Oh My Pi, then choose an
 available model for each conversation. Different providers can have different
 models, tools, account requirements, and usage limits.
 
@@ -167,6 +167,7 @@ You can still use an installation administered directly on the server when that 
 
 ## Provider guides
 
+- [Scient Agent](./providers-scient-agent.md)
 - [Codex](./providers-codex.md)
 - [Claude](./providers-claude.md)
 - [Antigravity](./providers-antigravity.md)
@@ -175,7 +176,6 @@ You can still use an installation administered directly on the server when that 
 - [Cursor](./providers-cursor.md)
 - [Pi](./providers-pi.md)
 - [Oh My Pi](./providers-omp.md)
-- [Scient Agent](./providers-scient-agent.md)
 
 Pi uses its own multi-provider model and credential configuration. Scient can manage its runtime
 on a qualified target, but does not offer a universal Pi account sign-in or sign-out action. Model
