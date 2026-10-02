@@ -232,7 +232,8 @@ describe("writing editor source transactions", () => {
           .querySelector<HTMLButtonElement>('button[aria-label^="Search Document"]')!
           .click(),
       );
-      const search = container.querySelector(".scient-pdf-searchbar")!;
+      // The same find and replace bar as the Markdown editor.
+      const search = container.querySelector(".scient-markdown-find-bar")!;
       expect(search).not.toBeNull();
       const toolbar = container.querySelector(".scient-latex-writing-toolbar")!;
       expect(
@@ -245,6 +246,37 @@ describe("writing editor source transactions", () => {
         search.compareDocumentPosition(container.querySelector(".scient-latex-visual-body")!) &
           Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
+    } finally {
+      headerSlot.remove();
+    }
+  });
+
+  it("finds and replaces text, writing the replacement to the source", async () => {
+    const headerSlot = document.createElement("div");
+    document.body.append(headerSlot);
+    try {
+      await mount("One cat, two cats, three Cats.", "", headerSlot);
+      await act(() =>
+        headerSlot
+          .querySelector<HTMLButtonElement>('button[aria-label^="Search Document"]')!
+          .click(),
+      );
+      const bar = container.querySelector(".scient-markdown-find-bar")!;
+      await setField(bar.querySelector<HTMLInputElement>("input[aria-label='Find text']")!, "cat");
+      expect(bar.textContent).toContain("1 of 3");
+      await act(() => bar.querySelector<HTMLButtonElement>("[aria-label='Show replace']")!.click());
+      const replace = bar.querySelector<HTMLInputElement>("input[aria-label='Replacement text']")!;
+      await setField(replace, "dog_100%");
+      await act(() =>
+        bar.querySelector<HTMLButtonElement>("[aria-label='Replace current match']")!.click(),
+      );
+      // Special characters are written the way typing them would write them.
+      expect(current).toContain("One dog\\_100\\%, two cats, three Cats.");
+      await act(() =>
+        bar.querySelector<HTMLButtonElement>("[aria-label='Replace all matches']")!.click(),
+      );
+      expect(current).toContain("One dog\\_100\\%, two dog\\_100\\%s, three dog\\_100\\%s.");
+      expect(current).toContain("\\begin{document}");
     } finally {
       headerSlot.remove();
     }

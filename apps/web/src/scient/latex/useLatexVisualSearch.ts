@@ -8,10 +8,7 @@ import {
   scientMarkdownSearchPlugin,
   scientMarkdownSearchState,
 } from "../markdownEditor/prosemirror/search";
-import type {
-  ScientFindBarController,
-  ScientFindBarState,
-} from "../markdownEditor/ui/ScientFindBar";
+import type { ScientFindBarController, ScientFindBarState } from "../writing/ScientFindBar";
 
 /** Reuse document-text search without sending search transactions through the save lane. */
 export const LatexVisualSearch = Extension.create({
@@ -19,7 +16,11 @@ export const LatexVisualSearch = Extension.create({
   addProseMirrorPlugins: () => [scientMarkdownSearchPlugin()],
 });
 
-export function useLatexVisualSearch(editor: Editor | null) {
+/**
+ * `editable` turns on Replace. A replacement is an ordinary text edit in the
+ * editor, so it is written to the LaTeX source the same way typing is.
+ */
+export function useLatexVisualSearch(editor: Editor | null, editable = false) {
   const [open, setOpen] = useState(false);
   const [focusRequest, setFocusRequest] = useState(0);
   const returnFocus = useRef<HTMLElement | null>(null);
@@ -66,13 +67,25 @@ export function useLatexVisualSearch(editor: Editor | null) {
       );
       revealMatch();
     },
-    // Search is navigation; source-safe replace can be added through the editing adapter later.
-    replaceFind: () => false,
+    replaceFind: (replacement, all) => {
+      if (!editor || !editable) return false;
+      const search = scientMarkdownSearchState(editor.state);
+      const targets = all ? search.matches : search.matches.slice(search.activeIndex).slice(0, 1);
+      if (targets.length === 0) return false;
+      let transaction = editor.state.tr;
+      // Last match first, so earlier positions stay valid.
+      for (let index = targets.length - 1; index >= 0; index -= 1) {
+        const match = targets[index]!;
+        transaction = transaction.insertText(replacement, match.from, match.to);
+      }
+      editor.view.dispatch(transaction.scrollIntoView());
+      return true;
+    },
     closeFind: close,
     setFindOpen: (value) => (value ? show() : close()),
   };
   const snapshot: ScientFindBarState = {
-    editable: false,
+    editable,
     findActiveIndex: search?.activeIndex ?? 0,
     findCaseSensitive: search?.caseSensitive ?? false,
     findFocusRequest: focusRequest,

@@ -58,7 +58,8 @@ import type { EditorView } from "@tiptap/pm/view";
 import { LatexInsertMenu, LatexInsertMenuContent, type LatexInsertAction } from "./LatexInsertMenu";
 import { LatexDocumentSettings, type LatexDocumentSettingsSection } from "./LatexDocumentSettings";
 import { LatexContextTools } from "./LatexContextTools";
-import { DocumentReaderControls, DocumentSearchBar } from "../writing/DocumentReaderControls";
+import { DocumentReaderControls } from "../writing/DocumentReaderControls";
+import { ScientFindBar } from "../writing/ScientFindBar";
 import { ReaderBarHostContext } from "../writing/readerBarHost";
 import { DocumentFooter } from "../writing/DocumentFooter";
 import { countWords } from "../writing/documentCounts";
@@ -4125,7 +4126,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   useLayoutEffect(() => {
     editorRef.current = editor;
   }, [editor]);
-  const find = useLatexVisualSearch(editor);
+  const find = useLatexVisualSearch(editor, !readOnly);
   const textStyle = useEditorState({
     editor,
     selector: ({ editor: current }) => ({
@@ -5940,20 +5941,9 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
           )
         : null,
   };
+  // The same find and replace bar as the Markdown editor.
   const searchBar = find.open ? (
-    <DocumentSearchBar
-      label="Search this document"
-      query={find.snapshot.findQuery}
-      current={find.snapshot.findMatchCount ? find.snapshot.findActiveIndex + 1 : 0}
-      total={find.snapshot.findMatchCount}
-      notFound={Boolean(find.snapshot.findQuery) && find.snapshot.findMatchCount === 0}
-      focusRequest={find.snapshot.findFocusRequest}
-      onQuery={(query) =>
-        find.controller.configureFind({ query, caseSensitive: false, wholeWord: false })
-      }
-      onNavigate={(backwards) => find.controller.navigateFind(backwards ? -1 : 1)}
-      onClose={find.close}
-    />
+    <ScientFindBar controller={find.controller} snapshot={find.snapshot} />
   ) : null;
   const contextTools = (
     <LatexContextTools>

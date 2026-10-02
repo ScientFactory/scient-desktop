@@ -111,7 +111,7 @@ import {
   dockButtonClass,
   type DockGroup,
 } from "../../writing/dockChrome";
-import { ScientFindBar } from "./ScientFindBar";
+import { ScientFindBar } from "../../writing/ScientFindBar";
 import { ScientWikiLinkPicker } from "./ScientWikiLinkPicker";
 
 const ignoreWikiLinkSelection = () => undefined;

@@ -937,25 +937,6 @@ sup.scient-markdown-reference {
   box-shadow: 0 0 0 1px color-mix(in oklab, var(--warning) 65%, var(--foreground));
 }
 
-.scient-markdown-find-bar {
-  position: relative;
-  z-index: 20;
-  display: flex;
-  width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  background: var(--background);
-  scrollbar-width: none;
-}
-
-.scient-markdown-find-bar::-webkit-scrollbar {
-  display: none;
-}
-
-.scient-markdown-find-bar > div {
-  min-width: max-content;
-}
-
 .scient-markdown-wiki-link.is-missing .scient-markdown-wiki-link-label {
   text-decoration: underline wavy color-mix(in oklab, var(--warning) 75%, currentColor);
   text-underline-offset: 0.2em;
