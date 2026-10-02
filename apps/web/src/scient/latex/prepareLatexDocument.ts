@@ -1,4 +1,7 @@
-import { getOptimisticProjectFileQueryData } from "~/components/files/projectFilesQueryState";
+import {
+  getOptimisticProjectFileQueryData,
+  getPendingOptimisticProjectFilePaths,
+} from "~/components/files/projectFilesQueryState";
 import {
   markdownPersistenceRegistry,
   type MarkdownPersistenceRegistry,
@@ -7,6 +10,7 @@ import {
 } from "../markdownEditor/persistence/markdownPersistenceRegistry";
 import { createMarkdownPersistenceTransport } from "../markdownEditor/persistence/markdownPersistenceTransport";
 import { assembleVisualProject, type VisualProjectFile } from "./latexProjectVisual";
+import { latexWithoutComments } from "./latexPackages";
 import { latexDocumentInputs, type LatexDocumentInputs } from "./latexDocumentInputs";
 
 interface PreparationOptions {
@@ -18,6 +22,7 @@ interface PreparationOptions {
     revision: string;
     truncated?: boolean;
   }>;
+  readonly pendingPaths?: (target: MarkdownPersistenceTarget) => readonly string[];
   readonly optimistic?: (target: MarkdownPersistenceTarget) => string | null;
 }
 
@@ -40,6 +45,9 @@ export async function prepareLatexDocument(
 ): Promise<LatexDocumentPreparation> {
   const registry = options.registry ?? markdownPersistenceRegistry;
   const inputs = options.inputs ?? latexDocumentInputs;
+  const pendingPaths =
+    options.pendingPaths ??
+    ((file) => getPendingOptimisticProjectFilePaths(file.environmentId, file.cwd));
   const read = options.read ?? ((file) => createMarkdownPersistenceTransport(file).read());
   const optimistic =
     options.optimistic ??
@@ -94,10 +102,20 @@ export async function prepareLatexDocument(
         await load(options.selected.target.relativePath);
         paths.add(options.selected.target.relativePath);
       }
+      // The Visual graph covers literal TeX includes. Ancillary file commands
+      // require TeX/recorder evidence; they cannot establish complete ownership.
+      const incomplete =
+        document.errors.length > 0 ||
+        [...files.values()].some((file) =>
+          /\\(?:bibliography|addbibresource|includegraphics|lstinputlisting|verbatiminput|inputminted|openin)\b/u.test(
+            latexWithoutComments(file.contents),
+          ),
+        );
       // Unknown dependencies must not silently skip independently pending work.
       const unknownPending = () =>
-        document.errors.length > 0 &&
-        (inputs.unknownPending(target, paths) ||
+        incomplete &&
+        (pendingPaths(target).some((path) => !paths.has(path)) ||
+          inputs.unknownPending(target, paths) ||
           registry
             .getSnapshot()
             .some(

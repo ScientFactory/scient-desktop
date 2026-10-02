@@ -13,6 +13,7 @@ vi.mock("../markdownEditor/persistence/markdownPersistenceTransport", () => ({
 }));
 vi.mock("~/components/files/projectFilesQueryState", () => ({
   getOptimisticProjectFileQueryData: () => null,
+  getPendingOptimisticProjectFilePaths: () => [],
 }));
 
 const target = {
@@ -64,6 +65,7 @@ function setup(initial: Record<string, string>) {
     registry,
     inputs,
     read,
+    pendingPaths: () => [...optimistic.keys()],
     optimistic: (file: MarkdownPersistenceTarget) => optimistic.get(file.relativePath) ?? null,
   };
   const open = (path: string) => registry.open({ ...target, relativePath: path });
@@ -222,6 +224,18 @@ describe("document preparation without a mounted Visual editor", () => {
       pending: () => true,
       finish: () => false,
     });
+    expect((await prepareLatexDocument(target, h.options)).ok).toBe(false);
+  });
+
+  it("refuses unknown generic writes while includes cannot be resolved statically", async () => {
+    const h = setup({ "main.tex": "\\input{\\chapter}" });
+    h.optimistic.set("chapter.txt", "new");
+    expect((await prepareLatexDocument(target, h.options)).ok).toBe(false);
+  });
+
+  it("does not claim a bibliography's pending bytes are included in the TeX graph", async () => {
+    const h = setup({ "main.tex": "\\bibliography{refs}" });
+    h.optimistic.set("refs.bib", "new reference");
     expect((await prepareLatexDocument(target, h.options)).ok).toBe(false);
   });
 
