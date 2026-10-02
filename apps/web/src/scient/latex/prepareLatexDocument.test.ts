@@ -97,6 +97,21 @@ describe("document preparation without a mounted Visual editor", () => {
     if (result.ok) expect(result.revisions.get("chapter.tex")).toBe(revision("new"));
   });
 
+  it("discovers an include added on disk before the root's watch hint arrives", async () => {
+    const h = setup({ "main.tex": "Original root", "chapter.tex": "old" });
+    const root = await h.open("main.tex");
+    const chapter = await h.open("chapter.tex");
+    chapter.change("new", chapter.getSnapshot().editVersion);
+    h.disk.set("main.tex", "\\input{chapter}");
+    const result = await prepareLatexDocument(target, h.options);
+    expect(result.ok).toBe(true);
+    expect(root.getSnapshot().draftSource).toBe("\\input{chapter}");
+    expect(h.disk.get("chapter.tex")).toBe("new");
+    if (result.ok) expect(result.revisions.has("chapter.tex")).toBe(true);
+    root.release();
+    chapter.release();
+  });
+
   it("ignores unrelated dirty files but refuses a failed included save", async () => {
     const h = setup({
       "main.tex": "\\input{chapter}",

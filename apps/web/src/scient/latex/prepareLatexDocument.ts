@@ -70,9 +70,20 @@ export async function prepareLatexDocument(
       const files = new Map<string, VisualProjectFile>();
       const load = async (path: string) => {
         const file = { ...target, relativePath: path };
-        if (registry.isOpening(file)) {
+        // A watcher hint may still be in flight when an outside edit introduces
+        // another chapter. Verify owned source before discovering its includes.
+        const selected = options.selected?.target.relativePath === path ? options.selected : null;
+        if (selected) {
+          if (!(await selected.refresh()))
+            throw new Error(`Resolve the unsaved changes in ${path} before continuing.`);
+        } else if (registry.has(file) || registry.isOpening(file)) {
           const lease = await registry.open(file);
-          lease.release();
+          try {
+            if (!(await lease.refresh()))
+              throw new Error(`Resolve the unsaved changes in ${path} before continuing.`);
+          } finally {
+            lease.release();
+          }
         }
         const snapshot = snapshotOf(file);
         if (snapshot) {
