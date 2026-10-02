@@ -12,9 +12,11 @@ import {
   ManagedProviderRuntime,
   ManagedRuntimeFileError,
   resolveReviewedClaudeArtifact,
+  resolveScientAgentArtifactPolicy,
   type ManagedRuntimeArtifact,
 } from "@scientfactory/provider-runtime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 import * as Stream from "effect/Stream";
 import { BUNDLED_MANAGED_RUNTIME_CATALOG, ManagedRuntimeCatalog } from "./ManagedRuntimeCatalog.ts";
@@ -301,6 +303,140 @@ describe("managed provider runtime policy", () => {
       expect(restoredResolution.effectiveBinaryPath).toBe(process.execPath);
       expect(restoredResolution.usesManagedPath).toBe(false);
       yield* Effect.promise(() => NodeFSP.access(process.execPath));
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("supports Scient's first install and offline repair without a bundled release", () =>
+    Effect.gen(function* () {
+      const baseDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-first-managed-release-")),
+      );
+      temporaryRoots.push(baseDir);
+      const policy = resolveScientAgentArtifactPolicy({ platform: "darwin", arch: "arm64" })!;
+      let downloads = 0;
+      const runtime = new ManagedProviderRuntime(
+        baseDir,
+        { providerDirectory: "scient", displayName: "Scient Agent" },
+        {
+          download: async ({ destination }) => {
+            downloads++;
+            await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
+            await NodeFSP.writeFile(destination, "synthetic download", { flag: "wx" });
+          },
+          verify: async () => undefined,
+          materialize: async ({ destination, executablePath }) => {
+            await NodeFSP.mkdir(destination, { recursive: true });
+            const executable = NodePath.join(destination, executablePath);
+            await NodeFSP.writeFile(executable, "synthetic runtime", { mode: 0o755 });
+            return executable;
+          },
+          smoke: async () => undefined,
+        },
+      );
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      let catalog = BUNDLED_MANAGED_RUNTIME_CATALOG;
+      const catalogService = ManagedRuntimeCatalog.of({
+        current: Effect.sync(() => catalog),
+        refresh: Effect.sync(() => catalog),
+        refreshNow: Effect.sync(() => catalog),
+        subscribeChanges: Effect.succeed(Stream.empty),
+      });
+      const resolve = (custom = false) =>
+        makeManagedProviderRuntimeResolution({
+          configuredBinaryPath: custom ? "/explicit/scient-agent" : "scient-agent",
+          defaultBinary: "scient-agent",
+          providerName: "Scient Agent",
+          providerSlug: "scient",
+          runtime,
+          bundledArtifact: undefined,
+          artifactPolicy: policy,
+          contractRevision: 1,
+          targetLabel: "darwin-arm64",
+          environment: {},
+          spawner,
+          probeConfiguredRuntime: () =>
+            Effect.succeed(custom ? Option.some("0.1.0") : Option.none()),
+          managedInstallationAllowed: true,
+          systemToManagedSwitchAllowed: true,
+          sourceLabel: "ScientFactory Scient Agent release",
+          managedInstallationLimitation: "Managed installation is unavailable here.",
+          diagnosticsHomePath: null,
+          diagnosticsBackend: "macOS native",
+        }).pipe(Effect.provideService(ManagedRuntimeCatalog, catalogService));
+      const missing = yield* resolve();
+      expect(missing.summary).toMatchObject({
+        source: "missing",
+        actions: [],
+        managedVersion: null,
+      });
+      expect(missing.effectiveBinaryPath).toBe("scient-agent");
+      yield* missing.actions.plan("install").pipe(Effect.flip);
+      expect(downloads).toBe(0);
+      expect((yield* resolve(true)).summary).toMatchObject({ source: "custom", actions: [] });
+
+      catalog = {
+        ...catalog,
+        providers: {
+          ...catalog.providers,
+          scient: {
+            contractRevision: 1,
+            channel: "stable",
+            version: "0.1.0",
+            artifacts: {
+              "darwin-arm64": {
+                artifactName: "scient-agent-darwin-arm64",
+                url: "https://github.com/ScientFactory/scient-agent/releases/download/v0.1.0/scient-agent-darwin-arm64",
+                checksum: { algorithm: "sha256", digest: "a".repeat(64) },
+                size: 100,
+              },
+            },
+          },
+        },
+      };
+      const available = yield* resolve();
+      expect(available.summary.actions).toEqual(["install"]);
+      const install = yield* available.actions.plan("install");
+      yield* available.actions.run("install", install.catalogRevision, () => Effect.void);
+      expect(downloads).toBe(1);
+
+      // Catalog loss on a fresh server must preserve selected runtime and receipt.
+      catalog = BUNDLED_MANAGED_RUNTIME_CATALOG;
+      const offline = yield* resolve();
+      expect(offline.summary).toMatchObject({
+        source: "scient_managed",
+        managedVersion: "0.1.0",
+        actions: ["repair", "remove"],
+      });
+      expect(offline.usesManagedPath).toBe(true);
+      yield* Effect.promise(() => NodeFSP.access(offline.effectiveBinaryPath));
+      // A missing executable is still repairable from the qualified receipt.
+      yield* Effect.promise(() => NodeFSP.rm(offline.effectiveBinaryPath));
+      const damaged = yield* resolve();
+      expect(damaged.summary.actions).toEqual(["repair", "remove"]);
+      expect(damaged.summary.diagnostics?.executable).toBe(damaged.effectiveBinaryPath);
+      const repair = yield* damaged.actions.plan("repair");
+      expect(repair.version).toBe("0.1.0");
+      yield* damaged.actions.run("repair", repair.catalogRevision, () => Effect.void);
+      expect(downloads).toBe(2);
+      yield* Effect.promise(() => NodeFSP.access(damaged.effectiveBinaryPath));
+
+      const custom = yield* resolve(true);
+      expect(custom.effectiveBinaryPath).toBe("/explicit/scient-agent");
+      expect(custom.summary).toMatchObject({ source: "custom", actions: [] });
+      const accountFile = NodePath.join(baseDir, "scient-agent", "instances", "scient", "account");
+      const otherRuntime = NodePath.join(baseDir, "provider-runtimes", "omp", "keep");
+      yield* Effect.promise(async () => {
+        for (const file of [accountFile, otherRuntime]) {
+          await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
+          await NodeFSP.writeFile(file, "preserve");
+        }
+      });
+      const remove = yield* damaged.actions.plan("remove");
+      yield* damaged.actions.run("remove", remove.catalogRevision, () => Effect.void);
+      for (const file of [accountFile, otherRuntime]) {
+        expect(yield* Effect.promise(() => NodeFSP.readFile(file, "utf8"))).toBe("preserve");
+      }
+      expect((yield* resolve()).summary).toMatchObject({ source: "missing", actions: [] });
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

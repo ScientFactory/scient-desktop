@@ -10,6 +10,7 @@ import {
   resolveReviewedGrokArtifact,
   resolveReviewedOmpArtifact,
   resolveReviewedPiArtifact,
+  resolveScientAgentArtifactPolicy,
   type ManagedRuntimeArtifact,
   type ManagedRuntimeProvider,
   type ManagedRuntimeTarget,
@@ -93,6 +94,25 @@ const remoteCatalog = (version = newerCodexVersion): ManagedRuntimeCatalogData =
   },
 });
 
+const scientCatalog = (version: string, digest = "a".repeat(64)): ManagedRuntimeCatalogData => ({
+  schemaVersion: 1,
+  providers: {
+    scient: {
+      contractRevision: MANAGED_RUNTIME_POLICY.scient.revision,
+      channel: "stable",
+      version,
+      artifacts: {
+        "darwin-arm64": {
+          artifactName: "scient-agent-darwin-arm64",
+          url: `https://github.com/ScientFactory/scient-agent/releases/download/v${version}/scient-agent-darwin-arm64`,
+          checksum: { algorithm: "sha256", digest },
+          size: 123_456,
+        },
+      },
+    },
+  },
+});
+
 const httpClientLayer = (handler: (request: HttpClientRequest.HttpClientRequest) => Response) =>
   Layer.succeed(
     HttpClient.HttpClient,
@@ -113,6 +133,101 @@ const serviceLayers = (input: {
   );
 
 describe("managed runtime catalog resolution", () => {
+  it("admits Scient's first qualified release using compiled policy without a bundled artifact", () => {
+    const policy = resolveScientAgentArtifactPolicy({ platform: "darwin", arch: "arm64" })!;
+    const release = scientCatalog("0.1.0");
+    const resolve = (catalog: ManagedRuntimeCatalogData) =>
+      resolveManagedRuntimeCatalogCandidate({
+        catalog,
+        bundledArtifact: undefined,
+        artifactPolicy: policy,
+        contractRevision: MANAGED_RUNTIME_POLICY.scient.revision,
+      });
+    assert.isUndefined(BUNDLED_MANAGED_RUNTIME_CATALOG.providers.scient);
+    assert.isUndefined(resolve(BUNDLED_MANAGED_RUNTIME_CATALOG));
+    const fetched = resolveFetchedManagedRuntimeCatalog(release);
+    assert.deepStrictEqual(fetched.providers.scient, release.providers.scient);
+    assert.deepStrictEqual(fetched.providers.omp, BUNDLED_MANAGED_RUNTIME_CATALOG.providers.omp);
+    assert.strictEqual(resolve(fetched)?.version, "0.1.0");
+    assert.deepStrictEqual(
+      mergeManagedRuntimeCatalogs(BUNDLED_MANAGED_RUNTIME_CATALOG, fetched).providers.scient,
+      release.providers.scient,
+    );
+  });
+
+  it("keeps Scient's known-good release for absence, downgrade, or same-version repack", () => {
+    const current = resolveFetchedManagedRuntimeCatalog(scientCatalog("0.2.0"));
+    for (const catalog of [
+      BUNDLED_MANAGED_RUNTIME_CATALOG,
+      scientCatalog("0.1.0"),
+      scientCatalog("0.2.0", "b".repeat(64)),
+    ]) {
+      assert.deepStrictEqual(
+        resolveFetchedManagedRuntimeCatalog(catalog, current).providers.scient,
+        current.providers.scient,
+      );
+      assert.deepStrictEqual(
+        mergeManagedRuntimeCatalogs(current, catalog).providers.scient,
+        current.providers.scient,
+      );
+    }
+    assert.strictEqual(
+      resolveFetchedManagedRuntimeCatalog(scientCatalog("0.3.0"), current).providers.scient
+        ?.version,
+      "0.3.0",
+    );
+  });
+
+  it("rejects unqualified Scient policy, target, version, and asset identities", () => {
+    const valid = scientCatalog("0.1.0").providers.scient!;
+    const artifact = valid.artifacts["darwin-arm64"]!;
+    const invalid = [
+      { ...valid, contractRevision: 999 },
+      scientCatalog("0.0.9").providers.scient!,
+      scientCatalog("0.1.0-beta.1").providers.scient!,
+      { ...valid, artifacts: { "darwin-x64": artifact } },
+      { ...valid, artifacts: { "darwin-arm64": artifact, "linux-x64": artifact } },
+      ...[
+        { ...artifact, artifactName: "omp-darwin-arm64" },
+        { ...artifact, checksum: { algorithm: "sha256" as const, digest: "a" } },
+        { ...artifact, url: artifact.url.replace("/v0.1.0/", "/v0.9.0/") },
+        {
+          ...artifact,
+          url: artifact.url.replace("ScientFactory/scient-agent", "can1357/oh-my-pi"),
+        },
+      ].map((entry) => ({ ...valid, artifacts: { "darwin-arm64": entry } })),
+    ];
+    for (const release of invalid) {
+      const catalog = { schemaVersion: 1 as const, providers: { scient: release } };
+      assert.isUndefined(resolveFetchedManagedRuntimeCatalog(catalog).providers.scient);
+      assert.isUndefined(
+        mergeManagedRuntimeCatalogs(BUNDLED_MANAGED_RUNTIME_CATALOG, catalog).providers.scient,
+      );
+    }
+  });
+
+  it("repairs Scient from its durable receipt when the catalog is unavailable", () => {
+    const policy = resolveScientAgentArtifactPolicy({ platform: "darwin", arch: "arm64" })!;
+    const artifact = resolveManagedRuntimeCatalogArtifact({
+      catalog: scientCatalog("0.2.0"),
+      policy,
+      contractRevision: 1,
+    })!;
+    const input = {
+      bundledArtifact: undefined,
+      artifactPolicy: policy,
+      candidateArtifact: undefined,
+      activeArtifact: managedRuntimeArtifactReceipt(artifact),
+    };
+    assert.deepStrictEqual(resolveManagedRuntimeRepairArtifact(input), artifact);
+    assert.isUndefined(
+      resolveManagedRuntimeRepairArtifact({
+        ...input,
+        activeArtifact: { ...input.activeArtifact, provider: "omp" },
+      }),
+    );
+  });
+
   it("protects revision 1 and 2 clients while accepting the new Codex contract", () => {
     const bundled = BUNDLED_MANAGED_RUNTIME_CATALOG;
     const codex = bundled.providers.codex!;

@@ -12,6 +12,7 @@ import type { BackgroundPolicy } from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { customModelDiscoverySnapshot } from "../../customModelCapabilities.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { makeScientAgentManagedRuntimeResolution } from "../../scient/providerLifecycle/ScientAgentManagedRuntimeActions.ts";
 import { makeOmpTextGeneration } from "../../textGeneration/OmpTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeOmpAdapter } from "../Layers/OmpAdapter.ts";
@@ -56,8 +57,8 @@ export type ScientAgentDriverEnv =
  * directory, and its own session and extension folders. It never reads an
  * Oh My Pi home, and an Oh My Pi conversation cannot resume in it.
  *
- * One instance for now, and no managed installation: the executable is the
- * configured path until Scient Agent publishes releases.
+ * One instance for now. Managed installation uses qualified ScientFactory
+ * releases; a configured executable remains usable before the first release.
  */
 export const ScientAgentDriver: ProviderDriver<ScientAgentSettings, ScientAgentDriverEnv> = {
   driverKind: DRIVER_KIND,
@@ -108,20 +109,40 @@ export const ScientAgentDriver: ProviderDriver<ScientAgentSettings, ScientAgentD
         instanceId,
         serverConfig.stateDir,
       ).pipe(Effect.mapError(failure("Could not prepare Scient Agent custom models.")));
+      const managedRuntime = yield* makeScientAgentManagedRuntimeResolution({
+        settings: effectiveConfig,
+        baseDir: serverConfig.baseDir,
+        environment: processEnv,
+        spawner,
+        managedInstallationAllowed: serverConfig.mode === "desktop",
+      });
+      const launchConfig = {
+        ...effectiveConfig,
+        binaryPath: managedRuntime.effectiveBinaryPath,
+      } satisfies ScientAgentSettings;
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
       });
-      const stamp: (snapshot: ServerProviderDraft) => ServerProvider = withInstanceIdentity({
+      const stampIdentity = withInstanceIdentity({
         instanceId,
         driverKind: DRIVER_KIND,
         displayName,
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
       });
+      const stamp = (snapshot: ServerProviderDraft): ServerProvider => ({
+        ...stampIdentity(snapshot),
+        connection: {
+          methods: [],
+          canDisconnect: false,
+          operation: null,
+          runtime: managedRuntime.summary,
+        },
+      });
       const adapter = yield* makeOmpAdapter({
         target: scientAgentTarget,
-        binaryPath: effectiveConfig.binaryPath,
+        binaryPath: launchConfig.binaryPath,
         providerInstanceId: instanceId,
         stateDir: serverConfig.stateDir,
         attachmentsDir: serverConfig.attachmentsDir,
@@ -136,7 +157,7 @@ export const ScientAgentDriver: ProviderDriver<ScientAgentSettings, ScientAgentD
       );
       const textGeneration = yield* makeOmpTextGeneration(
         scientAgentTarget,
-        effectiveConfig,
+        launchConfig,
         processEnv,
         makeRpcClient,
       ).pipe(
@@ -151,7 +172,7 @@ export const ScientAgentDriver: ProviderDriver<ScientAgentSettings, ScientAgentD
       const checkProvider = (cwd?: string) =>
         checkOmpProviderStatus(
           scientAgentTarget,
-          effectiveConfig,
+          launchConfig,
           processEnv,
           makeRpcClient,
           cwd,
@@ -196,6 +217,7 @@ export const ScientAgentDriver: ProviderDriver<ScientAgentSettings, ScientAgentD
         snapshotForCwd: checkProvider,
         adapter,
         textGeneration,
+        managedRuntimeActions: managedRuntime.actions,
       } satisfies ProviderInstance;
     }),
 };

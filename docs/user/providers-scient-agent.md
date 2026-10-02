@@ -13,10 +13,21 @@ started in one cannot be continued in the other.
 ## Setup
 
 Scient Agent is on by default and is the first provider in **Settings > Providers** and in the
-model picker. This version of Scient does not install it for you: build or download the
-`scient-agent` executable (0.1.0 or newer), and set **Binary path** if `scient-agent` is not on
-the server's `PATH`. Until Scient finds the executable and a model, a new conversation starts
-with the next provider that is ready.
+model picker. On macOS Apple silicon, **Install** is available when Scient has a qualified Scient
+Agent release. **Manage** provides update, repair, and removal for that private installation.
+Installing the executable does not connect a model account.
+
+Until the first qualified release is published, setup explains that no release is available.
+You can use a locally built `scient-agent` executable (0.1.0 or newer): set **Binary path** if it
+is not on the server's `PATH`. Scient preserves an explicit custom path rather than replacing
+it with a managed installation. Other platforms do not yet offer managed installation.
+
+Until Scient finds the executable and a model, a new conversation starts with the next provider
+that is ready.
+
+Updates wait for running work before activating the verified replacement. A failed check leaves
+the previous release in place. Removing the managed executable preserves model sign-ins,
+conversations, projects, and other agent installations.
 
 Scient starts one `scient-agent --mode rpc --approval-mode yolo` process for each conversation.
 **Full access** is the only runtime mode. It is not an operating-system sandbox: the agent's
@@ -70,4 +81,7 @@ Verified on macOS Apple silicon with Scient Agent 0.1.0 (built from Oh My Pi 18.
 - Scient Agent and a stock Oh My Pi 18.4.8 run at the same time; stopping one leaves the other
   running, and Oh My Pi's home is unchanged.
 
-Not claimed: Windows and Linux, hosted model accounts, and managed installation.
+The managed installer has automated coverage for qualification, failed activation, offline
+recovery, repair, and removal. Downloading a signed public Scient Agent release still requires
+the first release to be published and qualified. Windows, Linux, and hosted model accounts are
+not claimed by these checks.

@@ -21,6 +21,240 @@ import bundledCatalogJson from "../../apps/server/src/scient/providerLifecycle/b
 
 const currentCatalog: ManagedRuntimeCatalogData = validateManagedRuntimeCatalog(bundledCatalogJson);
 
+const scientApi = "https://api.github.com/repos/ScientFactory/scient-agent/releases/latest";
+const scientArtifactName = "scient-agent-darwin-arm64";
+const scientDigest = "a".repeat(64);
+function scientRelease(version = "0.1.0") {
+  const url = `https://github.com/ScientFactory/scient-agent/releases/download/v${version}/${scientArtifactName}`;
+  return {
+    tag_name: `v${version}`,
+    draft: false,
+    prerelease: false,
+    assets: [
+      {
+        name: scientArtifactName,
+        browser_download_url: url,
+        size: 123456,
+        digest: `sha256:${scientDigest}`,
+      },
+      {
+        name: `${scientArtifactName}.sha256`,
+        browser_download_url: `${url}.sha256`,
+        size: 94,
+        digest: null,
+      },
+    ],
+  };
+}
+function scientFetch(
+  input: {
+    release?: ReturnType<typeof scientRelease>;
+    checksum?: string;
+    size?: number;
+  } = {},
+) {
+  const release = input.release ?? scientRelease();
+  return async (url: URL, init?: RequestInit) => {
+    if (url.toString() === scientApi) return Response.json(release);
+    if (url.toString().endsWith(".sha256")) {
+      return new Response(input.checksum ?? `${scientDigest}  ${scientArtifactName}\n`);
+    }
+    expect(init?.method).toBe("HEAD");
+    return new Response(null, { headers: { "content-length": String(input.size ?? 123456) } });
+  };
+}
+
+describe("Scient Agent first managed release", () => {
+  it("keeps the family absent when no stable release is published", async () => {
+    const reports: string[] = [];
+    const result = await refreshManagedRuntimeProvider(
+      currentCatalog,
+      "scient",
+      async (url) => {
+        expect(url.toString()).toBe(scientApi);
+        return new Response(null, { status: 404 });
+      },
+      (message) => reports.push(message),
+    );
+    expect(result.catalog).toBe(currentCatalog);
+    expect(result.catalog.providers.scient).toBeUndefined();
+    expect(result.changedProviders).toEqual([]);
+    expect(reports.join("\n")).toContain("no published stable release");
+  });
+
+  it("discovers and promotes the first qualified release without a bundled placeholder", async () => {
+    const result = await refreshManagedRuntimeProvider(currentCatalog, "scient", scientFetch());
+    expect(result.changedProviders).toEqual(["scient"]);
+    expect(validateManagedRuntimeCandidate(result.catalog, "scient")).toMatchObject({
+      contractRevision: 1,
+      version: "0.1.0",
+      artifacts: {
+        "darwin-arm64": {
+          artifactName: scientArtifactName,
+          checksum: { algorithm: "sha256", digest: scientDigest },
+          size: 123456,
+        },
+      },
+    });
+    const promoted = mergeQualifiedManagedRuntimeProvider({
+      current: currentCatalog,
+      candidate: result.catalog,
+      provider: "scient",
+    });
+    expect(promoted.providers.scient).toEqual(result.catalog.providers.scient);
+    const { scient: _scient, ...otherProviders } = promoted.providers;
+    expect(otherProviders).toEqual(currentCatalog.providers);
+    expect(currentCatalog.providers.scient).toBeUndefined();
+    expect(
+      mergeQualifiedManagedRuntimeProvider({
+        current: promoted,
+        candidate: result.catalog,
+        provider: "scient",
+      }),
+    ).toBe(promoted);
+  });
+
+  it.each(["0.0.9", "1.0.0", "0.1.0-beta.1", "0.1.0+build", "latest"])(
+    "rejects unsupported stable pointer %s",
+    async (version) => {
+      await expect(
+        refreshManagedRuntimeProvider(
+          currentCatalog,
+          "scient",
+          scientFetch({ release: scientRelease(version) }),
+        ),
+      ).rejects.toThrow(/supported stable version/u);
+    },
+  );
+
+  it.each(["draft", "prerelease"] as const)("does not expose a %s release", async (flag) => {
+    await expect(
+      refreshManagedRuntimeProvider(
+        currentCatalog,
+        "scient",
+        scientFetch({ release: { ...scientRelease(), [flag]: true } }),
+      ),
+    ).rejects.toThrow(/not stable/u);
+  });
+
+  it("rejects missing, redirected, repacked, or inconsistent release metadata", async () => {
+    const release = scientRelease();
+    const malformed = [
+      scientFetch({ release: { ...release, assets: release.assets.slice(0, 1) } }),
+      scientFetch({
+        release: {
+          ...release,
+          assets: release.assets.map((asset) => ({
+            ...asset,
+            browser_download_url: asset.browser_download_url.replace("v0.1.0/", "v0.2.0/"),
+          })),
+        },
+      }),
+      scientFetch({ checksum: `${scientDigest}  omp-darwin-arm64\n` }),
+      scientFetch({ checksum: `${"b".repeat(64)}  ${scientArtifactName}\n` }),
+      scientFetch({ size: 654321 }),
+    ];
+    for (const fetch_ of malformed) {
+      await expect(refreshManagedRuntimeProvider(currentCatalog, "scient", fetch_)).rejects.toThrow(
+        /Scient Agent/u,
+      );
+    }
+  });
+
+  it("preserves first-release target, source, algorithm and policy revision admission", async () => {
+    const { catalog } = await refreshManagedRuntimeProvider(
+      currentCatalog,
+      "scient",
+      scientFetch(),
+    );
+    const release = catalog.providers.scient!;
+    const artifact = release.artifacts["darwin-arm64"]!;
+    const invalid = [
+      { ...release, contractRevision: 2 },
+      { ...release, artifacts: { "darwin-x64": artifact } },
+      {
+        ...release,
+        artifacts: {
+          "darwin-arm64": {
+            ...artifact,
+            checksum: { algorithm: "sha512", digest: "a".repeat(128) },
+          },
+        },
+      },
+      {
+        ...release,
+        artifacts: {
+          "darwin-arm64": { ...artifact, url: artifact.url.replace("v0.1.0/", "v0.2.0/") },
+        },
+      },
+    ];
+    for (const candidate of invalid) {
+      expect(() =>
+        validateManagedRuntimeCatalog({ ...catalog, providers: { scient: candidate } }),
+      ).toThrow();
+    }
+  });
+
+  it("retains immutability and downgrade guards after the first publication", async () => {
+    const first = (await refreshManagedRuntimeProvider(currentCatalog, "scient", scientFetch()))
+      .catalog;
+    const release = first.providers.scient!;
+    const artifact = release.artifacts["darwin-arm64"]!;
+    const repack = {
+      ...first,
+      providers: {
+        ...first.providers,
+        scient: {
+          ...release,
+          artifacts: { "darwin-arm64": { ...artifact, size: artifact.size + 1 } },
+        },
+      },
+    };
+    expect(() =>
+      mergeQualifiedManagedRuntimeProvider({
+        current: first,
+        candidate: repack,
+        provider: "scient",
+      }),
+    ).toThrow(/same-version catalog repack/u);
+    const newer = (
+      await refreshManagedRuntimeProvider(
+        first,
+        "scient",
+        scientFetch({ release: scientRelease("0.2.0") }),
+      )
+    ).catalog;
+    expect(
+      mergeQualifiedManagedRuntimeProvider({ current: first, candidate: newer, provider: "scient" })
+        .providers.scient?.version,
+    ).toBe("0.2.0");
+    expect(() =>
+      mergeQualifiedManagedRuntimeProvider({
+        current: newer,
+        candidate: first,
+        provider: "scient",
+      }),
+    ).toThrow(/not newer/u);
+    const missingPointer = await refreshManagedRuntimeProvider(
+      first,
+      "scient",
+      async () => new Response(null, { status: 404 }),
+    );
+    expect(missingPointer.catalog).toBe(first);
+    expect(missingPointer.changedProviders).toEqual([]);
+  });
+
+  it("does not treat metadata service failure as no release", async () => {
+    await expect(
+      refreshManagedRuntimeProvider(
+        currentCatalog,
+        "scient",
+        async () => new Response(null, { status: 500 }),
+      ),
+    ).rejects.toThrow();
+  });
+});
+
 const previousCodexCatalog = (): ManagedRuntimeCatalogData => ({
   ...currentCatalog,
   providers: {
@@ -33,7 +267,8 @@ describe("managed runtime policy transitions", () => {
   it("keeps every bundled family aligned with the shared policy registry", () => {
     for (const provider of MANAGED_RUNTIME_CATALOG_PROVIDERS) {
       const policy = MANAGED_RUNTIME_POLICY[provider];
-      expect(currentCatalog.providers[provider]?.contractRevision).toBe(policy.revision);
+      const bundled = currentCatalog.providers[provider];
+      if (bundled) expect(bundled.contractRevision).toBe(policy.revision);
       expect(
         policy.historicalRevisions.every((revision) => revision > 0 && revision < policy.revision),
       ).toBe(true);
@@ -282,6 +517,8 @@ function stableChannelFetch(codexVersion = bundledCatalogJson.providers.codex.ve
         draft: false,
         prerelease: false,
       });
+    if (url === "https://api.github.com/repos/ScientFactory/scient-agent/releases/latest")
+      return new Response(null, { status: 404 });
     throw new Error(`Unexpected release request: ${url}`);
   };
   return { fetch_, requested };
@@ -290,7 +527,10 @@ function stableChannelFetch(codexVersion = bundledCatalogJson.providers.codex.ve
 describe("managed runtime release discovery", () => {
   it("validates the generated catalog against every app-owned provider target", () => {
     const catalog = validateManagedRuntimeCatalog(bundledCatalogJson);
-    expect(Object.keys(catalog.providers)).toEqual([...MANAGED_RUNTIME_CATALOG_PROVIDERS]);
+    expect(Object.keys(catalog.providers)).toEqual(
+      MANAGED_RUNTIME_CATALOG_PROVIDERS.filter((provider) => provider !== "scient"),
+    );
+    expect(catalog.providers.scient).toBeUndefined();
     expect(catalog.providers.codex?.version).toBe(bundledCatalogJson.providers.codex.version);
     expect(() =>
       validateManagedRuntimeCatalog({
@@ -372,7 +612,7 @@ describe("managed runtime release discovery", () => {
     ).toEqual(bundledCatalogJson.providers.pi);
   });
 
-  it.each(MANAGED_RUNTIME_CATALOG_PROVIDERS)(
+  it.each(MANAGED_RUNTIME_CATALOG_PROVIDERS.filter((provider) => provider !== "scient"))(
     "bootstraps only the qualified missing %s entry",
     (provider) => {
       const current = validateManagedRuntimeCatalog(bundledCatalogJson);
@@ -604,7 +844,7 @@ describe("managed runtime release discovery", () => {
     const result = await refreshManagedRuntimeCatalog(currentCatalog, fetch_);
     expect(result.changedProviders).toEqual([]);
     expect(result.catalog).toEqual(currentCatalog);
-    expect(requested).toHaveLength(9);
+    expect(requested).toHaveLength(10);
   });
 
   it("discovers one provider without coupling it to another provider channel", async () => {

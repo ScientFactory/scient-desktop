@@ -720,8 +720,15 @@ Scient Agent.
   A later Scient subscription is a third source and uses that same private channel: Scient signs
   the user in, and hands the agent an endpoint and a token. Keep account state in Scient, never in
   the agent's root, and keep the provider id `scient` free for it.
-- Not yet: managed installation (the executable is the configured path until Scient Agent
-  publishes releases), more than one instance, and signing in to model subscriptions from Scient.
+- Installation. The driver resolves custom, system, or Scient-managed execution once, and uses
+  that executable for sessions, model probes, and text generation. Managed binaries live in
+  `<baseDir>/provider-runtimes/scient-agent`; account and session roots remain independent. The
+  macOS ARM64 packaging policy can discover the first qualified release without a fabricated
+  bundled artifact. Until publication, the configured executable remains the usable path.
+  Activation shares executable admission with sessions and probes, checks the exact Scient
+  identity/version and RPC v2 state, and preserves the previous version on failure. All installer
+  probes use throwaway state without credentials. See [runtime updates](../operations/managed-provider-runtime-updates.md).
+- Not yet: more than one instance, and signing in to model subscriptions from Scient.
 
 `provider/scient/ScientAgent.live.test.ts` is the opt-in suite against real executables
 (`SCIENT_AGENT_QUALIFY_BINARY`, with `OMP_QUALIFY_BINARY` for the coexistence cases and
@@ -731,7 +738,7 @@ Scient Agent.
 
 Codex, Claude, Cursor, Antigravity, Grok, and Droid optionally expose assisted runtime and account
 capabilities on their existing provider instances. OpenCode keeps its inherited multi-provider setup.
-Pi and Oh My Pi expose assisted runtime management, but leave model-specific credentials to the
+Pi, Oh My Pi, and Scient Agent expose assisted runtime management, but leave model-specific credentials to the
 agent rather than inventing a single account login or logout flow.
 The lifecycle extension does not create another provider registry, session router, model catalog,
 credential store, or updater.

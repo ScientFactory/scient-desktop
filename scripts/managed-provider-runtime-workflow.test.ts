@@ -236,10 +236,13 @@ describe("managed provider runtime update workflow", () => {
     const upload = reusable.jobs.discover.steps.find(
       (step: { name: string }) => step.name === "Upload immutable candidate",
     );
-    expect(upload.if).toBe("steps.catalog.outputs.changed == 'true' || !inputs.publish");
-    expect(reusable.jobs.qualify.if).toBe(
-      "needs.discover.outputs.changed == 'true' || !inputs.publish",
+    expect(upload.if).toBe(
+      "steps.catalog.outputs.available == 'true' && (steps.catalog.outputs.changed == 'true' || !inputs.publish)",
     );
+    expect(reusable.jobs.qualify.if).toBe(
+      "needs.discover.outputs.available == 'true' && (needs.discover.outputs.changed == 'true' || !inputs.publish)",
+    );
+    expect(reusable.jobs.discover.outputs.available).toBe("${{ steps.catalog.outputs.available }}");
     const exercise = reusable.jobs.qualify.steps.find(
       (step: { name: string }) =>
         step.name === "Exercise download, verification, smoke, activation, and removal",
@@ -250,6 +253,43 @@ describe("managed provider runtime update workflow", () => {
     expect(exercise.run).toContain("set -euo pipefail");
     expect(exercise.run).toContain("args+=(--repair)");
     expect(exercise.run).toContain("attempt <= QUALIFICATION_RUNS");
+  });
+
+  it("qualifies Scient only on its supported platform with the isolated app activation code", () => {
+    const reusable = workflow("managed-provider-runtime-update-provider.yml");
+    expect(reusable.jobs.qualify.strategy.matrix.runner).toContain(
+      "inputs.provider == 'scient' && '[\"macos-26\"]'",
+    );
+    const dependencies = reusable.jobs.qualify.steps.find(
+      (step: { name: string }) => step.name === "Install RPC qualification dependencies",
+    );
+    expect(dependencies.if).toBe("inputs.provider == 'omp' || inputs.provider == 'scient'");
+    const script = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "qualify-managed-runtime-catalog.ts"),
+      "utf8",
+    );
+    expect(script).toContain("apps/server/scripts/qualifyScientAgentManagedRuntime.ts");
+    expect(script).toContain('SCIENT_AGENT_ROOT: NodePath.join(home, "scient-agent")');
+    expect(script).toContain('verifyRpc("scient", executablePath, installed.version, signal)');
+    expect(script).toContain("...qualification");
+  });
+
+  it("invalidates Scient publication when any of its qualification inputs changes", () => {
+    const guarded = publicationGuards()
+      .filter(
+        (guard) =>
+          guard.condition === undefined || guard.condition === '[[ "$PROVIDER" == scient ]]',
+      )
+      .flatMap((guard) => guard.pathspecs);
+    const inputs = qualificationInputs([
+      "apps/server/scripts/qualifyScientAgentManagedRuntime.ts",
+      "apps/server/src/scient/providerLifecycle/ScientAgentManagedRuntimeActions.ts",
+    ]);
+    expect(inputs.modules.size).toBeGreaterThan(2);
+    const unguarded = [...inputs.modules, ...inputs.packages]
+      .filter(([path]) => !guarded.some((pathspec) => pathspecCovers(pathspec, path)))
+      .map(([path, importer]) => `${path} (imported by ${importer})`);
+    expect(unguarded).toEqual([]);
   });
 
   it("proves Droid's protocol once against the candidate binary where its fixtures are verified", () => {
@@ -296,7 +336,7 @@ describe("managed provider runtime update workflow", () => {
   });
 
   it("voids every provider's publication only for what its own qualification runs", () => {
-    const [everyProvider, droid, ...others] = publicationGuards();
+    const [everyProvider, droid, scient, ...others] = publicationGuards();
     expect(others).toEqual([]);
     // Discovery, artifact qualification and publication: the same for every provider.
     expect(everyProvider).toEqual({
@@ -326,6 +366,7 @@ describe("managed provider runtime update workflow", () => {
     });
     // Only Droid's qualification runs protocol suites that load the server.
     expect(droid?.condition).toBe('[[ "$PROVIDER" == droid ]]');
+    expect(scient?.condition).toBe('[[ "$PROVIDER" == scient ]]');
   });
 
   it("republishes nothing when what Droid's protocol qualification runs changed on main meanwhile", () => {
