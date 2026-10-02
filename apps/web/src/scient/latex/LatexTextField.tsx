@@ -99,6 +99,9 @@ export function LatexTextField({
       cancelJournal.current = null;
       composing.current = false;
       pending.current = null;
+      // The replaced text is no longer unfinished input: without this the
+      // document stays "editing" and cannot be saved, built or exported.
+      reportDraft(id, false);
       setDraft(event.detail);
       if (element) element.value = event.detail;
       if (draftKey) {
@@ -111,7 +114,7 @@ export function LatexTextField({
     };
     element?.addEventListener("scient-latex-replace-field-draft", replace);
     return () => element?.removeEventListener("scient-latex-replace-field-draft", replace);
-  }, [draftKey]);
+  }, [draftKey, id, reportDraft]);
   useEffect(() => {
     const persist = () => {
       cancelJournal.current?.();
