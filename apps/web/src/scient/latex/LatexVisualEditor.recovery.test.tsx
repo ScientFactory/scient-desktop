@@ -281,10 +281,18 @@ describe("recovering unsaved work", () => {
     await act(async () =>
       container.querySelector<HTMLElement>('[aria-label="Edit this block’s LaTeX"]')!.click(),
     );
-    noRoomToPark();
     const field = container.querySelector<HTMLTextAreaElement>(
       '[aria-label="Block LaTeX source"]',
     )!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), "value")!.set!.call(
+        field,
+        "Earlier durable raw draft",
+      );
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(parked()?.text).toBe("Earlier durable raw draft");
+    noRoomToPark();
     await act(async () => {
       Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), "value")!.set!.call(
         field,
@@ -299,6 +307,7 @@ describe("recovering unsaved work", () => {
     );
     await click("Discard");
     expect(bar()).toBeNull();
+    expect(parked()).toBeNull();
     expect(editable()).toBe(true);
     expect(writes).not.toHaveBeenCalled();
   });

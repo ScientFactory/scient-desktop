@@ -3145,6 +3145,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   const [notice, setNotice] = useState<string | null>(null);
   const [unsynced, setUnsynced] = useState(false);
   const rawInputRecovery = useRef<LatexVisualRecovery | null>(null);
+  const rawInputPersistedRecovery = useRef<LatexVisualRecovery | null>(null);
   const rawInputInteraction = useRef("");
   const [blockSource, setBlockSource] = useState<{
     id: string;
@@ -4689,6 +4690,9 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     // Remove only the record this bar shows; any other waiting work is shown next.
     const removed = removeRecovery(props.draftKey, recovery);
     if (removed && rawInputRecovery.current?.identity === recovery.identity) {
+      if (rawInputPersistedRecovery.current !== null)
+        removeRecovery(props.draftKey, rawInputPersistedRecovery.current);
+      rawInputPersistedRecovery.current = null;
       rawInputRecovery.current = null;
       reportDraft("block-source", false);
       setBlockSource(null);
@@ -4722,6 +4726,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       return;
     rawInputInteraction.current = randomUUID();
     rawInputRecovery.current = null;
+    rawInputPersistedRecovery.current = null;
     setBlockSource({
       id: block.id,
       position,
@@ -4738,6 +4743,9 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     const retained = rawInputRecovery.current;
     if (retained === null) return;
     removeRecovery(props.draftKey, retained);
+    if (rawInputPersistedRecovery.current !== null)
+      removeRecovery(props.draftKey, rawInputPersistedRecovery.current);
+    rawInputPersistedRecovery.current = null;
     rawInputRecovery.current = null;
     // A quota failure exposes the in-memory copy in the recovery bar.
     // Cancelling that exact draft must also release its read-only fallback.
@@ -4756,9 +4764,10 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
           props.draftKey,
           draft,
           rawInputInteraction.current,
-          rawInputRecovery.current,
+          rawInputPersistedRecovery.current,
         );
         rawInputRecovery.current = retained;
+        if (retained.parked) rawInputPersistedRecovery.current = retained;
         if (!retained.parked) setRecovery(retained);
       } else retireRawInput();
       reportDraft("block-source", changed);
@@ -4795,6 +4804,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       if (flushVisualDraft(props.draftKey) && rawInputRecovery.current !== null)
         removeRecovery(props.draftKey, rawInputRecovery.current);
       rawInputRecovery.current = null;
+      rawInputPersistedRecovery.current = null;
       currentSource.current = next;
       reportDraft("block-source", false);
       setBlockSource(null);
