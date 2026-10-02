@@ -63,6 +63,8 @@
   flex: none;
   align-items: center;
   gap: 3px;
+  /* Same visible distance to the arrows as the percentage has to its − and +. */
+  margin-inline: 3px;
   color: var(--muted-foreground);
   font-size: 11px;
   white-space: nowrap;
