@@ -18,6 +18,7 @@ import {
   ChevronRight,
   CircleAlert,
   Ellipsis,
+  FileDown,
   LoaderCircle,
   RotateCw,
   TriangleAlert,
@@ -62,7 +63,7 @@ import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import { WordFileExportDialog } from "~/scient/wordExport/WordFileExportDialog";
 
 import { documentBindingChanges } from "./bindingChanges";
-import { DockMenu } from "../markdownEditor/ui/dockChrome";
+import { DockCommandItem, DockMenu } from "../markdownEditor/ui/dockChrome";
 import { DocumentExportMenuItems } from "../documentExport/DocumentExportMenuItems";
 const LatexProjectVisualEditor = lazy(() =>
   import("./LatexProjectVisualEditor").then((module) => ({
@@ -410,6 +411,7 @@ const LatexViewerPane = memo(function LatexViewerPane({
       {descriptor !== null && readerKey !== null ? (
         <Suspense fallback={<LatexPendingViewer label="Opening PDF…" />}>
           <ScientPdfReader
+            showStaleNotice={false}
             key={readerKey}
             source={descriptor}
             readerScope={readerScope}
@@ -934,8 +936,6 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const [visualOpened, setVisualOpened] = useState(showVisual);
   if (showVisual && !visualOpened) setVisualOpened(true);
 
-  const [documentToolsHost, setDocumentToolsHost] = useState<HTMLDivElement | null>(null);
-
   const handleVisualEditingChange = useCallback((editing: boolean) => {
     visualEditingRef.current = editing;
   }, []);
@@ -983,7 +983,6 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     busy: status.busy,
     toolchainReady: !!build.toolchain?.kind,
     sourceKey: (target?.relativePath ?? "") + "\0" + props.revision + "\0" + lastEditAt,
-    lastEditAt,
     requestBuild: requestAutoBuild,
   });
   const surfaceRef = useRef<HTMLDivElement | null>(null);
@@ -1142,21 +1141,31 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           )}
         </div>
         <div className="scient-latex-actions">
-          <div className="scient-latex-document-tools" ref={setDocumentToolsHost} />
-          <span className="scient-latex-cancel-slot">
+          <ScientTooltip content="Export to Word">
             <button
               type="button"
-              className="scient-latex-action"
-              disabled={!status.canCancel || target === null}
-              onClick={() => {
-                if (target) cancelLatexBuild(target);
-              }}
+              className="scient-latex-action scient-latex-word-export"
+              aria-label="Export to Word"
+              disabled={
+                target === null ||
+                sourcePending ||
+                visualAwaitingSave ||
+                visualProjectState.pending ||
+                hasLocalVisualDraft ||
+                buildBlocked
+              }
+              onClick={() => setWordExportOpen(true)}
             >
-              <X className="size-3.5" aria-hidden="true" /> Cancel
+              <FileDown className="size-3.5" aria-hidden="true" />
+              <span>Export ▸ Word</span>
             </button>
-          </span>
+          </ScientTooltip>
           {mode === "split" ? (
-            <div className="scient-latex-modes" role="group" aria-label="Split right pane view">
+            <div
+              className="scient-latex-modes scient-latex-split-modes"
+              role="group"
+              aria-label="Split right pane view"
+            >
               {LATEX_SPLIT_PREVIEWS.map((candidate) => (
                 <button
                   key={candidate}
@@ -1172,27 +1181,37 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           ) : null}
           <ScientTooltip
             content={
-              status.busy
-                ? status.label
-                : status.state === "failed"
-                  ? "Build failed. Rebuild PDF or open the log."
-                  : "Save and rebuild the PDF"
+              status.canCancel
+                ? "Cancel PDF build"
+                : status.busy
+                  ? status.label
+                  : status.state === "failed"
+                    ? "Build failed. Rebuild PDF or open the log."
+                    : "Save and rebuild the PDF"
             }
           >
             <button
               type="button"
               className="scient-latex-action scient-latex-build-action"
-              disabled={target === null || !status.canRebuild || buildBlocked}
-              onClick={() => void saveAndBuild(true)}
+              aria-label={status.canCancel ? "Cancel PDF build" : "Rebuild PDF"}
+              disabled={
+                target === null || (!status.canCancel && (!status.canRebuild || buildBlocked))
+              }
+              onClick={() => {
+                if (status.canCancel && target) cancelLatexBuild(target);
+                else void saveAndBuild(true);
+              }}
             >
-              {status.busy ? (
+              {status.canCancel ? (
+                <X className="size-3.5" aria-hidden="true" />
+              ) : status.busy ? (
                 <LoaderCircle className="size-3.5" aria-hidden="true" />
               ) : status.state === "failed" ? (
                 <CircleAlert className="size-3.5" aria-hidden="true" />
               ) : (
                 <RotateCw className="size-3.5" aria-hidden="true" />
               )}
-              <span>{status.busy ? "Building PDF?" : "Rebuild PDF"}</span>
+              <span>{status.canCancel ? "Cancel" : status.busy ? "Building…" : "Rebuild"}</span>
             </button>
           </ScientTooltip>
           <DockMenu
@@ -1201,6 +1220,18 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
             chevron={false}
             align="end"
           >
+            {mode === "split"
+              ? LATEX_SPLIT_PREVIEWS.map((candidate) => (
+                  <DockCommandItem key={candidate} onClick={() => selectSplitPreview(candidate)}>
+                    Split preview: {LATEX_PREVIEW_MODE_LABELS[candidate]}
+                  </DockCommandItem>
+                ))
+              : null}
+            {diagnostics.length > 0 || status.state === "failed" ? (
+              <DockCommandItem onClick={() => setDiagnosticsOpen(true)}>
+                <CircleAlert /> Build messages
+              </DockCommandItem>
+            ) : null}
             <DocumentExportMenuItems
               onWordExport={() => setWordExportOpen(true)}
               wordDisabled={
@@ -1211,7 +1242,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                 hasLocalVisualDraft ||
                 buildBlocked
               }
-              pdfLabel={exportingPdf ? "Exporting?" : "PDF"}
+              pdfLabel={exportingPdf ? "Exporting\u2026" : "PDF"}
               pdfDisabled={
                 descriptor === null ||
                 !pdfMatchesBuffer ||
@@ -1367,7 +1398,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
             ) : null}
             {showVisual || visualOpened ? (
               <div style={{ display: showVisual ? "contents" : "none" }}>
-                <Suspense fallback={<div className="scient-latex-empty">Opening Visual view…</div>}>
+                <Suspense fallback={<LatexPendingViewer label="Opening Visual view…" />}>
                   <LatexProjectVisualEditor
                     selectedPending={visualAwaitingSave}
                     fileTruncated={props.truncated}
@@ -1392,7 +1423,6 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                     rootRelativePath={resolvedRootRelativePath}
                     key={visualDraftKey}
                     source={props.contents}
-                    documentToolsHost={showVisual ? documentToolsHost : null}
                     onLocalDraftChange={setHasLocalVisualDraft}
                     draftKey={visualDraftKey}
                     fileRevision={props.revision}

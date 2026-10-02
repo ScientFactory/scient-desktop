@@ -1,3 +1,4 @@
+import { isLatexContextEvent } from "./latexContextEvents";
 import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { Editor } from "@tiptap/core";
@@ -28,6 +29,7 @@ export function LatexObjectToolbar(props: {
       setActive(true);
     };
     const outside = (event: Event) => {
+      if (isLatexContextEvent(event, bar.current)) return;
       const path = event.composedPath();
       if (!path.includes(element!) && !path.includes(bar.current!)) setActive(false);
     };

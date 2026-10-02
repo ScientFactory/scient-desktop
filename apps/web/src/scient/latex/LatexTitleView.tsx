@@ -1,3 +1,4 @@
+import { isLatexContextEvent } from "./latexContextEvents";
 import * as Schema from "effect/Schema";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import {
@@ -99,10 +100,12 @@ export function LatexTitleView({
   useEffect(() => {
     if (!active) return;
     const outside = (event: PointerEvent) => {
+      if (isLatexContextEvent(event, toolbar.current)) return;
       const path = event.composedPath();
       if (!path.includes(root.current!) && !path.includes(toolbar.current!)) setActive(false);
     };
     const focusOutside = (event: globalThis.FocusEvent) => {
+      if (isLatexContextEvent(event, toolbar.current)) return;
       const path = event.composedPath();
       if (!path.includes(root.current!) && !path.includes(toolbar.current!)) setActive(false);
     };
