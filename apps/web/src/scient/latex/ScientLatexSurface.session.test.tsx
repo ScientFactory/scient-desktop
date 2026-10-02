@@ -59,6 +59,9 @@ vi.mock("~/scient/pdf/ScientPdfReader", () => ({
 vi.mock("~/scient/pdf/usePdfSaveCopy", () => ({ usePdfSaveCopy: () => () => {} }));
 vi.mock("../markdownEditor/ui/dockChrome", () => ({
   DockMenu: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  DockCommandItem: ({ children, onClick }: { children: React.ReactNode; onClick: () => void }) => (
+    <button onClick={onClick}>{children}</button>
+  ),
 }));
 vi.mock("../documentExport/DocumentExportMenuItems", () => ({
   DocumentExportMenuItems: (props: NonNullable<typeof exportMenu.props>) => {

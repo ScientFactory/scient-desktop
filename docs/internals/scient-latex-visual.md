@@ -307,8 +307,16 @@ confirming or discarding a draft judges the unwritten checkpoint and the stored
 record separately and removes each one that matches. A recovery copy is stamped with the
 revision of the source the editor actually holds, not the newest file revision
 it has seen. Storage failures are reported without blocking workspace saves.
-Consolidating the journal storage with the shared session remains a separate
-integration step; accepted-source saving already belongs to the session.
+The session owns workspace saving; the existing LaTeX journal retains the explicit
+Compare-first recovery policy. Consolidating stores remains a separate step.
+
+Unapplied raw-block input is stored separately as exact text, including incomplete
+LaTeX. Each editing interaction replaces only its own preceding record; another
+view's input survives. Reopening offers View/Copy without treating that fragment as
+a complete document. Cancel discards only the current interaction. Apply removes
+its fragment only after accepted source has a durable journal copy. Storage
+failure keeps the input in memory, reports the failure, and prevents further
+editing; the input remains available to copy or discard.
 Autosaving continues while the writing surface is focused. Conflicts use the
 existing explicit retry/discard workflow. Rebuild waits for document preparation and cannot run while a relevant save
 error, conflict, or unpublished field remains. Word export uses the same

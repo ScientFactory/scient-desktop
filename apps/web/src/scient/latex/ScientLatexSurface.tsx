@@ -107,7 +107,8 @@ import {
   type ScientLatexPreviewMode,
   type ScientLatexSplitPreview,
 } from "./scientLatexSurfaceModel";
-import { checkpointVisualDraft, confirmVisualDraft, discardVisualDraft } from "./visualDrafts";
+import { useLatexSourceRecovery } from "./useLatexSourceRecovery";
+import { LatexVisualRecoveryBar } from "./LatexVisualRecovery";
 import { useLatexSourceIdentity } from "./visualPdfPublication";
 import { prepareLatexDocument } from "./prepareLatexDocument";
 import { latexDocumentInputs } from "./latexDocumentInputs";
@@ -526,10 +527,6 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const [splitFraction, setSplitFraction] = useState(initialSplitFraction);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [hasLocalVisualDraft, setHasLocalVisualDraft] = useState(false);
-  // The accepted Visual source that is not on disk yet, and the revision it
-  // was first typed over: what the Visual recovery copy is kept against.
-  const visualPendingSourceRef = useRef<string | null>(null);
-  const visualPendingBaseRevisionRef = useRef<string | null>(null);
   const finishVisualEditingRef = useRef<(() => boolean) | null>(null);
   const localVisualDraftRef = useRef(false);
   const [lastEditAt, setLastEditAt] = useState(0);
@@ -540,6 +537,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const [syncNotice, setSyncNotice] = useState<LatexSyncNotice | null>(null);
   const [wordExportOpen, setWordExportOpen] = useState(false);
   const { persistence } = props;
+  const sourceRecovery = useLatexSourceRecovery(persistence, visualDraftKey, preferredMode);
   // Unsaved, saving, or waiting on a conflict or a failed save.
   const sourcePending = useSyncExternalStore(
     persistence?.subscribe ?? noSubscription,
@@ -593,8 +591,6 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   }, [bindingChange, target]);
 
   const { onOpenFileSource, revealLine, revealRequestId } = props;
-  // What the session reports about this file's saving, turned into what the
-  // Visual recovery copy and the PDF need to know.
   useEffect(() => {
     if (persistence === null) return;
     let previous = persistence.getSnapshot();
@@ -603,62 +599,9 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       const before = previous;
       previous = next;
       if (next.editVersion !== before.editVersion) setLastEditAt(Date.now());
-      if (documentWasSaved(before, next)) {
-        confirmVisualDraft(visualDraftKey, next.baselineSource);
-        if (visualPendingSourceRef.current === next.baselineSource) {
-          visualPendingSourceRef.current = null;
-          visualPendingBaseRevisionRef.current = null;
-        }
-        if (target !== null) notifyLatexBindingChange(target);
-        return;
-      }
-      const pendingSource = visualPendingSourceRef.current;
-      if (
-        pendingSource === null &&
-        before.recoverySource !== null &&
-        next.draftSource === before.recoverySource &&
-        next.draftSource !== before.draftSource &&
-        next.pending
-      ) {
-        // The writer took back edits they had given up: unsaved again, so kept again.
-        visualPendingSourceRef.current = next.draftSource;
-        visualPendingBaseRevisionRef.current = next.baselineRevision;
-        checkpointVisualDraft(
-          visualDraftKey,
-          next.draftSource,
-          before.draftSource,
-          next.draftSource,
-          next.baselineRevision,
-        );
-        return;
-      }
-      if (pendingSource === null || next.draftSource === pendingSource) return;
-      if (next.recoverySource === pendingSource && !next.pending) {
-        // The writer chose the version on disk over these edits: the session
-        // has set them aside and shows the file instead, whichever version of
-        // it that is, and whether or not it set the same text aside before.
-        if (visualPendingBaseRevisionRef.current !== null)
-          discardVisualDraft(visualDraftKey, {
-            source: pendingSource,
-            baseRevision: visualPendingBaseRevisionRef.current,
-          });
-        visualPendingSourceRef.current = null;
-        visualPendingBaseRevisionRef.current = null;
-        return;
-      }
-      if (next.pending && next.draftSource !== before.draftSource) {
-        // The Source editor changed text that Visual's edit had not saved yet.
-        checkpointVisualDraft(
-          visualDraftKey,
-          next.draftSource,
-          pendingSource,
-          next.draftSource,
-          visualPendingBaseRevisionRef.current ?? next.baselineRevision,
-        );
-        visualPendingSourceRef.current = next.draftSource;
-      }
+      if (documentWasSaved(before, next) && target !== null) notifyLatexBindingChange(target);
     });
-  }, [persistence, target, visualDraftKey]);
+  }, [persistence, target]);
   const handleInstallToolchain = useCallback(() => {
     if (target !== null) requestManagedLatexInstall(target);
   }, [target]);
@@ -670,27 +613,10 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       const snapshot = persistence.getSnapshot();
       if (snapshot.draftSource !== expected) return false;
       if (expected === next) return true;
-      const held = {
-        source: visualPendingSourceRef.current,
-        baseRevision: visualPendingBaseRevisionRef.current,
-      };
-      if (!snapshot.pending) visualPendingBaseRevisionRef.current = snapshot.baselineRevision;
-      visualPendingSourceRef.current = next;
-      if (!persistence.change(next, snapshot.editVersion)) {
-        visualPendingSourceRef.current = held.source;
-        visualPendingBaseRevisionRef.current = held.baseRevision;
-        return false;
-      }
-      checkpointVisualDraft(
-        visualDraftKey,
-        next,
-        expected,
-        next,
-        visualPendingBaseRevisionRef.current ?? snapshot.baselineRevision,
-      );
-      return true;
+      if (sourceRecovery.blocked) return false;
+      return persistence.change(next, snapshot.editVersion);
     },
-    [persistence, visualDraftKey],
+    [persistence, sourceRecovery.blocked],
   );
 
   // A reveal asks for a line of source, so a document parked on the PDF shows
@@ -1377,6 +1303,23 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         </div>
       ) : null}
 
+      {(showEditor || sourceRecovery.blocked) && sourceRecovery.recovery ? (
+        <LatexVisualRecoveryBar
+          key={sourceRecovery.recovery.identity}
+          recovery={sourceRecovery.recovery}
+          currentSource={props.contents}
+          applicable={true}
+          disabled={persistence === null}
+          onApply={sourceRecovery.apply}
+          onDiscard={sourceRecovery.discard}
+        />
+      ) : null}
+      {sourceRecovery.storageFailed ? (
+        <p role="status">
+          The local recovery copy could not be stored. Keep this document open until its workspace
+          save succeeds.
+        </p>
+      ) : null}
       <div className="scient-latex-content" ref={containerRef}>
         {showEditor ? (
           <ScientTooltip
@@ -1398,7 +1341,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                 if (position !== null) handleForwardSync(position);
               }}
             >
-              {persistence === null ? (
+              {persistence === null || sourceRecovery.blocked ? (
                 <LatexReadOnlyHalf
                   cwd={props.cwd}
                   relativePath={props.relativePath}
@@ -1473,7 +1416,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                     environmentId={props.environmentId}
                     cwd={props.cwd}
                     relativePath={props.relativePath}
-                    disabled={props.truncated || persistence === null}
+                    disabled={props.truncated || persistence === null || sourceRecovery.blocked}
                     onEdit={handleVisualEdit}
                     onEditingChange={ignoreVisualEditing}
                     onOpenSource={() => selectMode("source")}

@@ -367,6 +367,34 @@ export function parkUnpublishedSource(
   return offered(entry, UNSTORED + source, false);
 }
 
+/**
+ * Raw input has not become document source. Keep its exact text for View/Copy,
+ * replacing only this interaction's preceding record after the new one lands.
+ */
+export function parkUnappliedInput(
+  key: string,
+  text: string,
+  interactionId: string,
+  previous: LatexVisualRecovery | null,
+): LatexVisualRecovery {
+  const entry: ParkedEntry = {
+    origin: "typing",
+    source: null,
+    text,
+    baseRevision: null,
+    snapshot: JSON.stringify({ kind: "raw-input", interactionId }),
+  };
+  const identity = serialize(entry);
+  const remaining = readParked(key)
+    .map((item) => item.identity)
+    .filter((item) => item !== identity && item !== previous?.identity);
+  if (!writeParked(key, [identity, ...remaining])) {
+    window.dispatchEvent(new CustomEvent("scient-latex-recovery-error", { detail: key }));
+    return offered(entry, UNSTORED + serialize(entry), false);
+  }
+  return offered(entry, identity, true);
+}
+
 /** The parked unsaved work to offer for this document, newest first. */
 export function readStoredRecovery(key: string): LatexVisualRecovery | null {
   const first = readParked(key)[0];

@@ -61,6 +61,14 @@ describe("recovering unsaved work", () => {
   let shown: FileView;
   let show: (next: FileView) => void;
   let save: "completes" | "fails" | "waits";
+  let publicationGate: Promise<void> | null;
+  const pausePublication = () => {
+    let release!: () => void;
+    publicationGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return release;
+  };
   let singleFileDocument: boolean;
   let coordinator: FileSaveCoordinator<FileView, Error>;
   const writes = vi.fn();
@@ -70,6 +78,7 @@ describe("recovering unsaved work", () => {
     writes.mockReset();
     singleFileDocument = true;
     save = "completes";
+    publicationGate = null;
     localStorage.clear();
     clearVisualDraft(KEY);
     clearTypingDraft(KEY);
@@ -106,6 +115,7 @@ describe("recovering unsaved work", () => {
       debounceMs: SAVE_DELAY,
       initialRevision: `r${revision}`,
       persist: async (contents, expectedRevision) => {
+        if (publicationGate) await publicationGate;
         if (save === "waits") return new Promise(() => {});
         if (save === "fails" || expectedRevision !== `r${disk.revision}`)
           return AsyncResult.failure(Cause.fail(new Error("not saved")));
@@ -215,6 +225,113 @@ describe("recovering unsaved work", () => {
         .join(""),
     );
 
+  it("retains unapplied raw block input across outside updates and reopening", async () => {
+    const base = tex("\\unsupported{Original}");
+    const draft = "\\unsupported{Unfinished raw input 😀";
+    await mount(base, 1);
+    const raw = container.querySelector<HTMLElement>('[aria-label="Edit this block’s LaTeX"]')!;
+    expect(raw).not.toBeNull();
+    await act(async () => raw.click());
+    const field = container.querySelector<HTMLTextAreaElement>(
+      '[aria-label="Block LaTeX source"]',
+    )!;
+    expect(field).not.toBeNull();
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), "value")!.set!.call(
+        field,
+        draft,
+      );
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(writes).not.toHaveBeenCalled();
+    expect(parked()).toMatchObject({ source: null, text: draft });
+    await changeOutside(tex("Outside replacement"));
+    expect(parked()?.text).toBe(draft);
+    await reopen();
+    expect(message()).toBe("Unsaved text");
+    await click("View");
+    expect(container.querySelector('[aria-label="Recovered writing"]')?.textContent).toBe(draft);
+    expect(button("Use recovered")).toBeUndefined();
+    expect(writes).not.toHaveBeenCalled();
+  });
+
+  it("retires only its own unapplied raw input after Cancel", async () => {
+    await mount(tex("\\unsupported{Original}"), 1);
+    await act(async () =>
+      container.querySelector<HTMLElement>('[aria-label="Edit this block’s LaTeX"]')!.click(),
+    );
+    const field = container.querySelector<HTMLTextAreaElement>(
+      '[aria-label="Block LaTeX source"]',
+    )!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), "value")!.set!.call(
+        field,
+        "Raw draft",
+      );
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(parked()?.text).toBe("Raw draft");
+    await click("Cancel");
+    expect(parked()).toBeNull();
+    expect(writes).not.toHaveBeenCalled();
+  });
+
+  it("keeps raw input available after storage failure and releases it on Discard", async () => {
+    await mount(tex("\\unsupported{Original}"), 1);
+    await act(async () =>
+      container.querySelector<HTMLElement>('[aria-label="Edit this block’s LaTeX"]')!.click(),
+    );
+    noRoomToPark();
+    const field = container.querySelector<HTMLTextAreaElement>(
+      '[aria-label="Block LaTeX source"]',
+    )!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), "value")!.set!.call(
+        field,
+        "Raw draft after quota",
+      );
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(editable()).toBe(false);
+    await click("View");
+    expect(container.querySelector('[aria-label="Recovered writing"]')?.textContent).toBe(
+      "Raw draft after quota",
+    );
+    await click("Discard");
+    expect(bar()).toBeNull();
+    expect(editable()).toBe(true);
+    expect(writes).not.toHaveBeenCalled();
+  });
+
+  it("hands raw input to the accepted-source journal before retiring its fragment", async () => {
+    save = "waits";
+    const base = tex("\\unsupported{Original}");
+    await mount(base, 1);
+    await act(async () =>
+      container.querySelector<HTMLElement>('[aria-label="Edit this block’s LaTeX"]')!.click(),
+    );
+    const field = container.querySelector<HTMLTextAreaElement>(
+      '[aria-label="Block LaTeX source"]',
+    )!;
+    const draft = "\\unsupported{Changed}";
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), "value")!.set!.call(
+        field,
+        draft,
+      );
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click("Apply LaTeX");
+    const next = base.replace("\\unsupported{Original}", draft);
+    expect(writes).toHaveBeenCalledExactlyOnceWith(base, next);
+    expect(parked()).toBeNull();
+    expect(checkpoint()).toEqual({ source: next, baseRevision: "r1" });
+    expect(disk.source).toBe(base);
+    await reopen();
+    expect(message()).toBe("Unsaved changes");
+    expect(parked()?.source).toBe(next);
+  });
+
   it("sits in the footer as one line with plain actions", async () => {
     storeSourceDraft(MONDAY, "r1");
     await mount(tex("Monday base"), 1);
@@ -240,6 +357,7 @@ describe("recovering unsaved work", () => {
   });
 
   it("shows both sides and replaces the file only by the explicit choice", async () => {
+    const release = pausePublication();
     storeSourceDraft(MONDAY, "r1");
     await mount(AGENT, 2);
     await click("Compare");
@@ -256,6 +374,7 @@ describe("recovering unsaved work", () => {
     expect(parked()).toBeNull();
     expect(checkpoint()).toEqual({ source: MONDAY, baseRevision: "r2" });
     // The acknowledged save is what clears it.
+    release();
     await acknowledged();
     expect(disk).toEqual({ source: MONDAY, revision: 3 });
     expect(checkpoint()).toBeNull();
@@ -402,6 +521,7 @@ describe("recovering unsaved work", () => {
   });
 
   it("does not reinstall a typing snapshot over a newer file; it shows the file and offers the writing", async () => {
+    save = "waits";
     storeTypingDraft(tex("Old base"), [paragraph("Old base plus typed")]);
     const newer = tex("Old base\n\nAgent paragraph added on Tuesday.");
     await mount(newer, 2);
@@ -666,6 +786,7 @@ describe("recovering unsaved work", () => {
     });
 
     it("applies it from its slot by the same explicit choice", async () => {
+      const release = pausePublication();
       storeSourceDraft(MONDAY, "r1");
       noRoomToPark();
       await mount(AGENT, 2);
@@ -675,6 +796,7 @@ describe("recovering unsaved work", () => {
       expect(bar()).toBeNull();
       expect(editable()).toBe(true);
       expect(checkpoint()).toEqual({ source: MONDAY, baseRevision: "r2" });
+      release();
       await acknowledged();
       expect(disk.source).toBe(MONDAY);
       expect(checkpoint()).toBeNull();
