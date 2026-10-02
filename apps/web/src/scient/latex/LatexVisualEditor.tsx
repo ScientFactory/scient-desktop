@@ -62,7 +62,7 @@ import { DocumentReaderControls } from "../writing/DocumentReaderControls";
 import { ScientFindBar } from "../writing/ScientFindBar";
 import { ReaderBarHostContext } from "../writing/readerBarHost";
 import { DocumentFooter } from "../writing/DocumentFooter";
-import { countWords } from "../writing/documentCounts";
+import { countSelectedWords, tableCaretPosition } from "../writing/caretStatus";
 import { countLatexWords } from "./latexWordCount";
 import { commandShortcut } from "../keyboard/presentation";
 import { WritingCommandIcon } from "../writing/commandIcons";
@@ -5922,6 +5922,8 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     const selected = (editor?.state.selection as { readonly node?: ProseMirrorNode } | undefined)
       ?.node;
     if (selected?.type.name === "latexRawBlock") return "Source-only block";
+    const cell = editor ? tableCaretPosition(editor.state) : null;
+    if (cell) return cell;
     if (selectionContext === "Body text" || selectionContext === "List") {
       if (listState?.type === "bulletList") return WRITING_COMMAND_LABELS.bulletList;
       if (listState?.type === "orderedList") return WRITING_COMMAND_LABELS.numberedList;
@@ -5936,17 +5938,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     () => (hostsFooter ? countLatexWords(props.source) : 0),
     [hostsFooter, props.source],
   );
-  const footerSelection = editor?.state.selection;
-  // A selection of table cells is several ranges, not one.
-  const selectedWords =
-    editor && footerSelection && !footerSelection.empty
-      ? footerSelection.ranges.reduce(
-          (count, range) =>
-            count +
-            countWords(editor.state.doc.textBetween(range.$from.pos, range.$to.pos, " ", " ")),
-          0,
-        )
-      : null;
+  const selectedWords = editor ? countSelectedWords(editor.state) : null;
   const footerWords = {
     // The total is an estimate from the source; it never reads below the selection.
     total: Math.max(sourceWords, selectedWords ?? 0),

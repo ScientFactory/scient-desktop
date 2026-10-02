@@ -209,6 +209,7 @@ describe("the LaTeX surface on a document session", () => {
     visual.props = null;
     visual.host = null;
     visual.hosts = false;
+    reader.host = null;
     disk = { source: BASE, revision: revisionOf(BASE) };
     const registry = new MarkdownPersistenceRegistry({
       debounceMs: 250,
@@ -393,7 +394,6 @@ describe("the LaTeX surface on a document session", () => {
         toolchain: null,
         pendingRerun: false,
       };
-      reader.host = null;
       await mount("split");
       expect(slot().hidden).toBe(false);
       expect(reader.host?.slot).toBe(slot());

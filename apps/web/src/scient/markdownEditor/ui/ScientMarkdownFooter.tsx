@@ -4,6 +4,7 @@ import { useMemo, useSyncExternalStore } from "react";
 
 import { DocumentFooter } from "../../writing/DocumentFooter";
 import { WRITING_COMMAND_LABELS } from "../../writing/commandNames";
+import { countSelectedWords, tableCaretPosition } from "../../writing/caretStatus";
 import { countWords } from "../../writing/documentCounts";
 import { DockDivider, DockMenu } from "../../writing/dockChrome";
 import type { ScientMarkdownEditorSnapshot, ScientMarkdownEditorView } from "../prosemirror/view";
@@ -14,14 +15,7 @@ export function markdownCaretPosition(
   snapshot: ScientMarkdownEditorSnapshot,
   state: EditorState | null,
 ): string {
-  if (snapshot.inTable && state) {
-    const { $from } = state.selection;
-    for (let depth = $from.depth; depth > 0; depth -= 1) {
-      if ($from.node(depth).type.spec.tableRole === "row")
-        return `Table · row ${$from.index(depth - 1) + 1}, column ${$from.index(depth) + 1}`;
-    }
-    return "Table";
-  }
+  if (snapshot.inTable && state) return tableCaretPosition(state) ?? "Table";
   if (snapshot.blockType === "heading")
     return snapshot.headingLevel === null ? "Heading" : `Heading ${snapshot.headingLevel}`;
   if (snapshot.blockType === "code_block") return "Code block";
@@ -53,15 +47,7 @@ export function ScientMarkdownFooter({
     () => (document ? countWords(document.textBetween(0, document.content.size, " ", " ")) : 0),
     [document],
   );
-  // A selection of table cells is several ranges, not one.
-  const selected =
-    state && !state.selection.empty
-      ? state.selection.ranges.reduce(
-          (count, range) =>
-            count + countWords(state.doc.textBetween(range.$from.pos, range.$to.pos, " ", " ")),
-          0,
-        )
-      : null;
+  const selected = state ? countSelectedWords(state) : null;
   return (
     <DocumentFooter
       label="Document status"
