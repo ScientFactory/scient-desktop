@@ -435,7 +435,9 @@ export function resolveAppModelSelectionState(
       entry.models.find((model) => !model.unavailableReason)?.slug ??
       // Pi/OMP automatic markers are resolved from a discovered catalog. Do
       // not render one as a selectable native model before discovery succeeds.
-      (entry.driverKind === "pi" || entry.driverKind === "omp"
+      (entry.driverKind === "pi" ||
+      entry.driverKind === "omp" ||
+      (entry.models.length > 0 && entry.models.every((model) => model.unavailableReason))
         ? undefined
         : DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[entry.driverKind]);
     if (!model) {

@@ -100,6 +100,7 @@ export function getDefaultServerModel(
   provider: ProviderDriverKind,
 ): string {
   const models = getProviderModels(providers, provider);
+  if (models.length > 0 && models.every((model) => model.unavailableReason)) return "";
   return (
     resolveAutomaticModel(provider, models) ?? (provider === "antigravity" ? "" : DEFAULT_MODEL)
   );

@@ -74,6 +74,25 @@ function settingsWithProviderInstances(): UnifiedSettings {
 }
 
 describe("instance-scoped model selection", () => {
+  it.each(["pi", "omp", "claudeAgent"])(
+    "does not invent a default when every %s model is unavailable",
+    (kind) => {
+      const driver = ProviderDriverKind.make(kind);
+      const blocked: ServerProvider = {
+        ...provider({ provider: driver, instanceId: kind }),
+        models: [
+          {
+            slug: "native/blocked",
+            name: "Blocked",
+            isCustom: false,
+            unavailableReason: "Account access required.",
+            capabilities: null,
+          },
+        ],
+      };
+      expect(resolveAppModelSelection(driver, DEFAULT_UNIFIED_SETTINGS, [blocked], null)).toBe("");
+    },
+  );
   it.each(["pi", "omp"])(
     "excludes known unavailable %s models even when selected or configured as custom",
     (kind) => {
