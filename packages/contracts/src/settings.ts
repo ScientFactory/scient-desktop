@@ -939,12 +939,12 @@ export type OmpSettings = typeof OmpSettings.Type;
 
 /**
  * Scient Agent keeps its state in a directory this server assigns, so it has
- * no home or profile setting.
+ * no home or profile setting. It is Scient's own agent, so it is on by default.
  */
 export const ScientAgentSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.withDecodingDefault(Effect.succeed(true)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
     binaryPath: makeBinaryPathSetting("scient-agent").pipe(

@@ -12,9 +12,11 @@ started in one cannot be continued in the other.
 
 ## Setup
 
-Scient Agent is off by default. This version of Scient does not install it for you: build or
-download the `scient-agent` executable (0.1.0 or newer), then in **Settings > Providers** enable
-**Scient** and set **Binary path** if `scient-agent` is not on the server's `PATH`.
+Scient Agent is on by default and is the first provider in **Settings > Providers** and in the
+model picker. This version of Scient does not install it for you: build or download the
+`scient-agent` executable (0.1.0 or newer), and set **Binary path** if `scient-agent` is not on
+the server's `PATH`. Until Scient finds the executable and a model, a new conversation starts
+with the next provider that is ready.
 
 Scient starts one `scient-agent --mode rpc --approval-mode yolo` process for each conversation.
 **Full access** is the only runtime mode. It is not an operating-system sandbox: the agent's
