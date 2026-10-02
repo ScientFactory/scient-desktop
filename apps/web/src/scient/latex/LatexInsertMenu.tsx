@@ -69,9 +69,11 @@ export function LatexInsertMenuContent(props: {
   onInsertTable: (rows: number, columns: number) => void;
   unavailableReason?: string | undefined;
   onRun?: (command: () => void) => void;
+  searchTakesFocus?: boolean | undefined;
 }) {
   return (
     <InsertMenuContent
+      searchTakesFocus={props.searchTakesFocus}
       actions={props.actions}
       layout={latexInsertLayout(props.actions)}
       onInsertTable={props.onInsertTable}

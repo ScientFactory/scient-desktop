@@ -45,13 +45,16 @@ export function InsertMenuContent(props: {
   readonly unavailableReason?: string | undefined;
   /** Lets the menu close before the command runs. */
   readonly onRun?: ((command: () => void) => void) | undefined;
+  /** False where the content is one section of a larger menu. Default: true. */
+  readonly searchTakesFocus?: boolean | undefined;
 }) {
   const [query, setQuery] = useState("");
   const input = useRef<HTMLInputElement>(null);
   const content = useRef<HTMLDivElement>(null);
+  const searchTakesFocus = props.searchTakesFocus ?? true;
   useEffect(() => {
-    input.current?.focus();
-  }, []);
+    if (searchTakesFocus) input.current?.focus();
+  }, [searchTakesFocus]);
   const run = (command: () => void) => (props.onRun ? props.onRun(command) : command());
   const actionById = new Map(props.actions.map((action) => [action.id, action]));
   const renderAction = (id: string) => {
@@ -96,11 +99,16 @@ export function InsertMenuContent(props: {
           ref={input}
           aria-label="Search insert options"
           placeholder="Search insert options…"
+          // As one section of a larger menu it is reached by pointer or by
+          // moving through the items, so the menu opens on its first item.
+          tabIndex={searchTakesFocus ? undefined : -1}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Escape" || event.key === "Tab") return;
             event.stopPropagation();
+            // Enter that confirms composed text (IME) is not a command.
+            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
             const items = content.current?.querySelectorAll<HTMLElement>(
               '[role="menuitem"]:not([aria-disabled="true"]):not([data-disabled])',
             );

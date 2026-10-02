@@ -1,4 +1,3 @@
-import { DocumentTableSizeMenu } from "../../writing/DocumentTableSizeMenu";
 import {
   AlignCenter,
   AlignLeft,
@@ -13,7 +12,6 @@ import {
   BetweenHorizontalEnd,
   BetweenVerticalEnd,
   Brackets,
-  Code,
   Columns3,
   Copy,
   CornerDownLeft,
@@ -83,7 +81,12 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 import { WritingShortcutsDialog } from "../../keyboard/WritingShortcutsDialog";
 import { WritingCommandIcon } from "../../writing/commandIcons";
-import { InsertMenu, type InsertMenuAction, type InsertMenuLayout } from "../../writing/InsertMenu";
+import {
+  InsertMenu,
+  InsertMenuContent,
+  type InsertMenuAction,
+  type InsertMenuLayout,
+} from "../../writing/InsertMenu";
 import { WRITING_COMMAND_LABELS } from "../../writing/commandNames";
 
 import {
@@ -423,32 +426,6 @@ const INSERT_ITEMS: ReadonlyArray<{
   { command: "wiki-link", label: "Wiki link ([[note]])" },
   { command: "horizontal-rule", label: "Divider line" },
 ];
-
-function InsertBlockMenuItems({ controller }: { readonly controller: ScientMarkdownEditorView }) {
-  const hardBreakShortcut = scientMarkdownShortcut("hardBreak");
-  return (
-    <>
-      <DocumentTableSizeMenu onInsert={(dimensions) => controller.insertTable(dimensions)} />
-      {INSERT_ITEMS.map((item) => (
-        <MenuItem key={item.command} onClick={() => controller.execute(item.command)}>
-          {commandIcon(item.command)}
-          <span>{item.label}</span>
-        </MenuItem>
-      ))}
-      <MenuSeparator />
-      <MenuItem
-        aria-keyshortcuts={hardBreakShortcut.ariaKeyShortcuts}
-        onClick={() => controller.execute("hard-break")}
-      >
-        {commandIcon("hard-break")}
-        <span>Line break</span>
-        <MenuShortcut aria-hidden="true" dir="ltr">
-          {hardBreakShortcut.display}
-        </MenuShortcut>
-      </MenuItem>
-    </>
-  );
-}
 
 /** Markdown's actions for the shared Insert menu: only what a Markdown file can hold. */
 function markdownInsertActions(controller: ScientMarkdownEditorView): readonly InsertMenuAction[] {
@@ -1349,7 +1326,17 @@ export function ScientMarkdownControls({
             </>
           ),
           overflowLabel: "Insert",
-          overflow: <InsertBlockMenuItems controller={controller} />,
+          // The same searchable content as the bar's menu.
+          overflow: (
+            <InsertMenuContent
+              searchTakesFocus={false}
+              actions={markdownInsertActions(controller)}
+              layout={markdownInsertLayout}
+              onInsertTable={(rows, columns) => {
+                controller.insertTable({ rows, columns });
+              }}
+            />
+          ),
         },
         {
           id: "direction",

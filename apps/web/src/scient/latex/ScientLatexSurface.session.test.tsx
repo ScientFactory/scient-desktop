@@ -462,6 +462,28 @@ describe("the LaTeX surface on a document session", () => {
       expect(card()).toBeNull();
     });
 
+    it("closes on Escape from the count that opened it", async () => {
+      await mount("visual");
+      await act(async () => chip().click());
+      expect(card()).not.toBeNull();
+      await act(async () => {
+        chip().dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+        );
+      });
+      expect(card()).toBeNull();
+      // Escape in the document itself belongs to the editor, not to the card.
+      await act(async () => chip().click());
+      await act(async () => {
+        container
+          .querySelector('[data-testid="visual-editor"]')!
+          .dispatchEvent(
+            new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+          );
+      });
+      expect(card()).not.toBeNull();
+    });
+
     it("closes on Escape from inside the card", async () => {
       await mount("visual");
       await act(async () => chip().click());

@@ -72,6 +72,25 @@ describe("approximate LaTeX word count", () => {
     expect(performance.now() - started).toBeLessThan(1500);
   });
 
+  it("does not read the percent sign of an address as a comment", () => {
+    expect(countLatexWords("\\url{https://example.test/a%20b} after words.")).toBe(2);
+    expect(countLatexWords("\\href{https://example.test/a%20b}{the site} is here")).toBe(4);
+    expect(countLatexWords("See \\path{C:/a%b/c.tex} now")).toBe(2);
+  });
+
+  it("stays fast on one very long line of literal code or unfinished options", () => {
+    for (const source of [
+      "\\verb|x| word ".repeat(40000),
+      "\\verb|never closed ".repeat(40000),
+      "\\textbf[ word ".repeat(40000),
+      "\\url{never closed ".repeat(40000),
+    ]) {
+      const started = performance.now();
+      expect(countLatexWords(source)).toBeGreaterThan(30000);
+      expect(performance.now() - started).toBeLessThan(1500);
+    }
+  });
+
   it("counts a file without a document environment, such as an included chapter", () => {
     expect(countLatexWords("\\section{Method}\nTwo words. % not these")).toBe(3);
     expect(countLatexWords("")).toBe(0);

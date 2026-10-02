@@ -543,12 +543,27 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       if (target.closest("[data-diagnostics-toggle]")) return;
       setDiagnosticsOpen(false);
     };
+    // Opening the card leaves focus on the control that opened it, in the
+    // header row; Escape from there closes it, as it does from inside the card.
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      const target = event.target;
+      if (!(target instanceof Element) || !surfaceRef.current?.contains(target)) return;
+      if (!target.closest(".scient-latex-toolbar")) return;
+      event.preventDefault();
+      setDiagnosticsOpen(false);
+    };
     document.addEventListener("pointerdown", closeOnOutsidePress, true);
-    return () => document.removeEventListener("pointerdown", closeOnOutsidePress, true);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePress, true);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
   }, [diagnosticsOpen]);
   // The reader controls (sidebar, page, zoom, search) join this header row in PDF and Visual.
   const [readerSlot, setReaderSlot] = useState<HTMLElement | null>(null);
   const [hostedReaders, setHostedReaders] = useState(0);
+  const splitSwitchKeepsFocus = useRef(false);
   const onReaderHosted = useCallback(
     (hosted: boolean) => setHostedReaders((count) => count + (hosted ? 1 : -1)),
     [],
@@ -993,7 +1008,11 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
             type="button"
             className="scient-latex-mode-button"
             aria-pressed={splitPreview === candidate}
-            onClick={() => selectSplitPreview(candidate)}
+            onClick={(event) => {
+              // The switch is drawn with the pane it replaces; keep the place.
+              splitSwitchKeepsFocus.current = event.currentTarget === document.activeElement;
+              selectSplitPreview(candidate);
+            }}
           >
             {LATEX_PREVIEW_MODE_LABELS[candidate]}
           </button>
@@ -1001,6 +1020,18 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       </div>
     ) : null;
   const readerHosted = mergesReaderBar && hostedReaders > 0;
+  // Changing Split's right pane redraws the switch that had focus. Give focus
+  // to the same switch in the new pane's controls once they are in the row.
+  useEffect(() => {
+    if (!splitSwitchKeepsFocus.current || !readerHosted) return;
+    const current = surfaceRef.current?.querySelector<HTMLElement>(
+      '.scient-latex-split-modes [aria-pressed="true"]',
+    );
+    if (!current) return;
+    splitSwitchKeepsFocus.current = false;
+    const active = document.activeElement;
+    if (active === null || active === document.body || !active.isConnected) current.focus();
+  }, [splitPreview, readerHosted, hostedReaders, readerSlot]);
   const buildButton = (
     <ScientTooltip
       content={

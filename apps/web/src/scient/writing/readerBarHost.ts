@@ -1,4 +1,6 @@
-import { createContext, type ReactNode } from "react";
+import { createContext, useContext, useEffect, type ReactNode, type RefObject } from "react";
+
+import { attachShortcutHost } from "../keyboard/host";
 
 /**
  * A surface that already has a header row can host the reader controls
@@ -19,3 +21,24 @@ export interface ReaderBarHost {
 }
 
 export const ReaderBarHostContext = createContext<ReaderBarHost | null>(null);
+
+/**
+ * Hosted controls are drawn outside the pane they belong to, so a key pressed
+ * while one of them has focus never reaches that pane. This gives the hosted
+ * controls the pane's reader shortcuts (zoom, find) as well.
+ */
+export function useHostedReaderShortcuts(execute: RefObject<(command: string) => boolean>): void {
+  const slot = useContext(ReaderBarHostContext)?.slot ?? null;
+  useEffect(
+    () =>
+      slot
+        ? attachShortcutHost(slot, "pdf", {
+            execute: (command) => execute.current(command),
+            accepts: (event, command) =>
+              command === "pdf.find" ||
+              !(event.target instanceof Element && event.target.closest("input,textarea")),
+          })
+        : undefined,
+    [slot, execute],
+  );
+}

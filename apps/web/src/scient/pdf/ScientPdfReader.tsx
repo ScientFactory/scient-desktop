@@ -16,6 +16,7 @@ import { toastManager } from "~/components/ui/toast";
 import { ensureLocalApi } from "~/localApi";
 import { DocumentReaderControls, DocumentSearchBar } from "../writing/DocumentReaderControls";
 import { attachShortcutHost } from "../keyboard/host";
+import { useHostedReaderShortcuts } from "../writing/readerBarHost";
 import {
   commandKeys,
   getKeyboardPreferences,
@@ -249,6 +250,7 @@ function LoadedScientPdfReader(props: {
         })
       : undefined;
   }, []);
+  useHostedReaderShortcuts(keyboardAction);
   const sourceSyncHintShowTimerRef = useRef<number | null>(null);
   const sourceSyncHintHideTimerRef = useRef<number | null>(null);
   const [sourceSyncHintVisible, setSourceSyncHintVisible] = useState(false);

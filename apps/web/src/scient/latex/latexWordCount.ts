@@ -9,6 +9,11 @@ const SKIPPED_ENVIRONMENT =
 const ARGUMENT_ENVIRONMENTS =
   "tabular|tabularx|tabulary|longtable|array|minipage|thebibliography|multicols|wrapfigure|subfigure";
 
+/** Commands whose first argument is an address, where `%` is not a comment. */
+const ADDRESS_COMMANDS = ["\\url{", "\\href{", "\\path{", "\\nolinkurl{"];
+/** Literal code and addresses stay on one line; longer than this is not one. */
+const INLINE_LITERAL_LIMIT = 2000;
+
 /**
  * One pass over the text that drops what a reader does not read as words:
  * comments, mathematics and literal code. Each closing delimiter is searched
@@ -22,6 +27,17 @@ function stripNonProse(text: string): string {
     const at = text.indexOf(closer, from);
     if (at === -1) missing.add(closer);
     return at;
+  };
+  // The end of an inline literal that opens at `from` and closes with `closer`
+  // on the same line, or -1. The search is bounded, so many unclosed ones stay cheap.
+  const inlineEnd = (closer: string, from: number): number => {
+    const limit = Math.min(text.length, from + INLINE_LITERAL_LIMIT);
+    for (let at = from; at < limit; at += 1) {
+      const character = text[at];
+      if (character === "\n") return -1;
+      if (character === closer) return at;
+    }
+    return -1;
   };
   let out = "";
   let index = 0;
@@ -40,11 +56,23 @@ function stripNonProse(text: string): string {
       if (text.startsWith("\\verb", index) && !/[a-zA-Z]/u.test(text[index + 5] ?? "a")) {
         const delimiterAt = text[index + 5] === "*" ? index + 6 : index + 5;
         const delimiter = text[delimiterAt];
-        const lineEnd = text.indexOf("\n", delimiterAt);
-        const at = delimiter === undefined ? -1 : text.indexOf(delimiter, delimiterAt + 1);
-        if (at !== -1 && (lineEnd === -1 || at < lineEnd)) {
+        const at =
+          delimiter === undefined || delimiter === "\n"
+            ? -1
+            : inlineEnd(delimiter, delimiterAt + 1);
+        if (at !== -1) {
           // Literal code reads as one item.
           out += " x ";
+          index = at + 1;
+          continue;
+        }
+      }
+      const address = ADDRESS_COMMANDS.find((command) => text.startsWith(command, index));
+      if (address) {
+        const at = inlineEnd("}", index + address.length);
+        if (at !== -1) {
+          // An address is not prose; a link's visible text follows and is kept.
+          out += " ";
           index = at + 1;
           continue;
         }
@@ -112,7 +140,7 @@ export function countLatexWords(source: string): number {
     // Keys and file names are not words.
     .replace(
       new RegExp(
-        `\\\\(?:${SILENT_ARGUMENT_COMMANDS})\\*?(?:\\[[^\\]]*\\])*(?:\\{[^{}]*\\})*`,
+        `\\\\(?:${SILENT_ARGUMENT_COMMANDS})\\*?(?:\\[[^\\]\\[]*\\])*(?:\\{[^{}]*\\})*`,
         "gu",
       ),
       " ",
@@ -121,12 +149,12 @@ export function countLatexWords(source: string): number {
     .replace(/\\href\{[^{}]*\}/gu, " ")
     .replace(
       new RegExp(
-        `\\\\begin\\{(?:${ARGUMENT_ENVIRONMENTS})\\*?\\}(?:\\[[^\\]]*\\])?\\{[^{}]*\\}`,
+        `\\\\begin\\{(?:${ARGUMENT_ENVIRONMENTS})\\*?\\}(?:\\[[^\\]\\[]*\\])?\\{[^{}]*\\}`,
         "gu",
       ),
       " ",
     )
-    .replace(/\\(?:begin|end)\{[^{}]*\}(?:\[[^\]]*\])?/gu, " ")
+    .replace(/\\(?:begin|end)\{[^{}]*\}(?:\[[^\]\[]*\])?/gu, " ")
     // An accent belongs to its letter: caf\'e is one word.
     .replace(/\\['"`^~=.]\s*\{?\\?([a-zA-Z])\}?/gu, "$1")
     .replace(/\\[cHbdruvtk](?![a-zA-Z])\s*\{?([a-zA-Z])\}?/gu, "$1")
@@ -137,7 +165,7 @@ export function countLatexWords(source: string): number {
     .replace(/\\([%&$#_])/gu, "$1")
     .replace(/\\[{}]/gu, "")
     // Any other command: drop its name and optional arguments, keep its text.
-    .replace(/\\[a-zA-Z@]+\*?(?:\[[^\]]*\])*/gu, " ")
+    .replace(/\\[a-zA-Z@]+\*?(?:\[[^\]\[]*\])*/gu, " ")
     .replace(/\\./gu, " ")
     // Grouping braces do not split a word: co{oper}ate is one word.
     .replace(/[{}]/gu, "");
