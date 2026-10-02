@@ -1455,6 +1455,10 @@ export default function FilePreviewPanel({
   const isMarkdownPreview = relativePath ? isMarkdownPreviewFile(relativePath) : false;
   const isRichMarkdown = relativePath ? isScientMarkdownDocumentPath(relativePath) : false;
   const isMarkdownDocument = isMarkdownPreview || isRichMarkdown;
+  // Files whose saving belongs to a document session, not to this panel's
+  // generic saver: one owner per file for every view of it.
+  const usesDocumentSession =
+    !isHostFile && relativePath !== null && (isRichMarkdown || isLatexPreviewFile(relativePath));
   const {
     automaticRefreshUnavailable,
     cancelReloadNotice,
@@ -1479,7 +1483,7 @@ export default function FilePreviewPanel({
     // distinguished from a media or PDF file before choosing a preview.
     loadAsText: attachment === undefined,
     sourcePending: effectiveSourcePending,
-    surfaceOwnsConflictDetection: isRichMarkdown && !isHostFile,
+    surfaceOwnsConflictDetection: usesDocumentSession,
     workspaceMutationId,
     watchChanges:
       attachment === undefined && !isHostFile && !quietMarkdownPaths.has(relativePath ?? ""),
@@ -1564,9 +1568,7 @@ export default function FilePreviewPanel({
     retryAdmission,
   } = useMarkdownPersistenceLease({
     target:
-      isRichMarkdown && !isHostFile && relativePath !== null
-        ? { environmentId, cwd, relativePath }
-        : null,
+      usesDocumentSession && relativePath !== null ? { environmentId, cwd, relativePath } : null,
     authoritativeSnapshot: queriedFile.authoritativeData,
     workspaceMutationId,
   });
@@ -1600,8 +1602,7 @@ export default function FilePreviewPanel({
     !isMedia &&
     !isPdf;
   const awaitingMarkdownLease =
-    isRichMarkdown &&
-    !isHostFile &&
+    usesDocumentSession &&
     markdownLease === null &&
     queriedFile.authoritativeData !== null &&
     !queriedFile.authoritativeData.truncated &&
@@ -2050,7 +2051,7 @@ export default function FilePreviewPanel({
           ) : awaitingMarkdownLease ? (
             <div
               className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground"
-              aria-label="Opening Markdown editor"
+              aria-label="Opening editor"
             />
           ) : relativePath && file.error && file.data === null ? (
             <FileReadFailure
@@ -2117,20 +2118,16 @@ export default function FilePreviewPanel({
                   composerDraftTarget={composerDraftTarget}
                   contents={file.data.contents}
                   revision={file.data.revision}
-                  truncated={file.data.truncated}
+                  // Without a session the file is too large to edit completely.
+                  persistence={markdownLease}
                   resolvedTheme={resolvedTheme}
                   revealLine={revealLine}
                   revealRequestId={revealRequestId}
                   latexPresentationRequest={latexPresentationRequest}
                   wordWrap={wordWrap}
                   onPostRender={onFilePostRender}
-                  onPendingChange={handlePendingChange}
                   onOpenFileSource={onOpenFileSource}
                   onLatexPresentationRequestHandled={onLatexPresentationRequestHandled}
-                  onSaveFailure={handleSaveFailure}
-                  onSaveConfirmed={handleSaveConfirmed}
-                  onSaveResolutionApplied={handleSaveResolutionApplied}
-                  saveResolution={saveResolution}
                 />
               </Suspense>
             ) : computeSourceLanguage !== null && !file.data.truncated ? (

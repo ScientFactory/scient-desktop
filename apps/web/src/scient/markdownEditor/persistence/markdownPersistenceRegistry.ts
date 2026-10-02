@@ -14,6 +14,8 @@ import {
 import { projectFileOperationKey } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentId, ProjectReadFileResult } from "@t3tools/contracts";
 
+import { isLatexPreviewFile } from "~/components/files/filePreviewMode";
+
 import {
   createMarkdownPersistenceTransport,
   type MarkdownPersistenceTarget,
@@ -35,6 +37,23 @@ export type { MarkdownPersistenceTarget } from "./markdownPersistenceTransport";
  * is registered, whichever view or root opened it.
  */
 export type DocumentReconcileStrategy = ReconcileDocument<DocumentPatchReconciliation>;
+
+/**
+ * Never merge: an outside change over unsaved edits keeps both versions and
+ * asks. For formats that have no safe merge yet.
+ */
+export const keepBothVersions: DocumentReconcileStrategy = () => null;
+
+/**
+ * The strategy for each kind of file the registry owns. LaTeX has no merge
+ * yet: two changes that are far apart in the text can still depend on each
+ * other (a macro and its uses, a label and its references).
+ */
+export function documentReconcileStrategy(
+  target: MarkdownPersistenceTarget,
+): DocumentReconcileStrategy | undefined {
+  return isLatexPreviewFile(target.relativePath) ? keepBothVersions : undefined;
+}
 
 export interface MarkdownPersistenceRegistryState extends MarkdownPersistenceTarget {
   readonly pending: boolean;
@@ -476,6 +495,7 @@ const registryKey = Symbol.for("scient.markdown-persistence-registry.v1");
 const renderer = globalThis as typeof globalThis & { [registryKey]?: MarkdownPersistenceRegistry };
 /** HMR and view remounts keep the same owner and the same scheduled transport lane. */
 export const markdownPersistenceRegistry = (renderer[registryKey] ??=
-  new MarkdownPersistenceRegistry(
-    typeof indexedDB === "undefined" ? {} : { checkpointStore: indexedDbMarkdownDrafts },
-  ));
+  new MarkdownPersistenceRegistry({
+    reconcile: documentReconcileStrategy,
+    ...(typeof indexedDB === "undefined" ? {} : { checkpointStore: indexedDbMarkdownDrafts }),
+  }));
