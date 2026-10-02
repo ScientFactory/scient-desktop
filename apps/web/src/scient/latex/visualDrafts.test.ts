@@ -5,8 +5,8 @@ import {
   clearVisualDraft,
   confirmVisualDraft,
   discardVisualDraft,
-  readVisualDraft,
-  canRestoreVisualDraft,
+  flushVisualDraft,
+  readPersistedVisualDraft,
 } from "./visualDrafts";
 
 const keys = [
@@ -41,31 +41,29 @@ function retain(key: string, text: string, source: string, baseSource = before) 
   checkpointVisualDraft(key, text, baseSource, source, "disk-one");
 }
 
+// The copy that would be found on reopening: written out, then read from storage.
+function readVisualDraft(key: string) {
+  flushVisualDraft(key);
+  return readPersistedVisualDraft(key);
+}
+
 afterEach(() => {
   for (const key of keys) clearVisualDraft(key);
 });
 
 describe("Visual draft recovery", () => {
-  it("only restores a draft over its original disk revision", () => {
-    expect(canRestoreVisualDraft("versioned", "disk-one")).toBe(false);
-    checkpointVisualDraft("versioned", "new visual prose", before, after, "disk-one");
-    expect(canRestoreVisualDraft("versioned", "disk-one")).toBe(true);
-    expect(canRestoreVisualDraft("versioned", "disk-two")).toBe(false);
-    expect(readVisualDraft("versioned")).toBe(after);
-  });
-  it("keeps an optimistic complete-source checkpoint durable but silent until disk confirmation", () => {
+  it("keeps an optimistic complete-source checkpoint durable until disk confirmation", () => {
     retain("pending", "new visual prose", after);
     checkpointVisualDraft("pending", "new visual prose", before, after, "disk-one");
 
-    expect(readVisualDraft("pending", { source: after, revision: "disk-one" })).toBeNull();
-    expect(readVisualDraft("pending")).toBe(after);
+    expect(readVisualDraft("pending")).toEqual({ source: after, baseRevision: "disk-one" });
   });
 
   it("preserves the complete source when a save fails or confirms different contents", () => {
     checkpointVisualDraft("failed", "new visual prose", before, after, "disk-one");
 
     expect(confirmVisualDraft("failed", before)).toBe(false);
-    expect(readVisualDraft("failed", { source: before, revision: "disk-one" })).toBe(after);
+    expect(readVisualDraft("failed")?.source).toBe(after);
   });
 
   it("clears only after the exact complete checkpoint reaches a confirmed disk write", () => {
@@ -80,7 +78,7 @@ describe("Visual draft recovery", () => {
     retain("newer", "second block raw text", afterBoth);
 
     expect(confirmVisualDraft("newer", after)).toBe(false);
-    expect(readVisualDraft("newer")).toBe(afterBoth);
+    expect(readVisualDraft("newer")?.source).toBe(afterBoth);
   });
 
   it("fails closed instead of using a last-block proof for a nonexact save", () => {
@@ -88,7 +86,7 @@ describe("Visual draft recovery", () => {
     const later = `% unrelated edit\n${after}`;
 
     expect(confirmVisualDraft("nonexact", later)).toBe(false);
-    expect(readVisualDraft("nonexact")).toBe(after);
+    expect(readVisualDraft("nonexact")?.source).toBe(after);
   });
 
   it("retains the full latest source across multiple edited blocks", () => {
@@ -102,7 +100,7 @@ describe("Visual draft recovery", () => {
       "disk-one",
     );
 
-    expect(readVisualDraft("multiple", { source: before, revision: "disk-one" })).toBe(afterBoth);
+    expect(readVisualDraft("multiple")?.source).toBe(afterBoth);
     expect(confirmVisualDraft("multiple", afterBoth)).toBe(true);
   });
 
@@ -113,7 +111,7 @@ describe("Visual draft recovery", () => {
     expect(discardVisualDraft("discarded", { source: after, baseRevision: "wrong-revision" })).toBe(
       false,
     );
-    expect(readVisualDraft("discarded")).toBe(afterBoth);
+    expect(readVisualDraft("discarded")?.source).toBe(afterBoth);
     // Discard must match the latest accepted source.
     expect(discardVisualDraft("discarded", { source: after, baseRevision: "disk-one" })).toBe(
       false,
@@ -127,6 +125,40 @@ describe("Visual draft recovery", () => {
     expect(
       discardVisualDraft("wrong-discard", { source: afterBoth, baseRevision: "disk-one" }),
     ).toBe(false);
-    expect(readVisualDraft("wrong-discard")).toBe(after);
+    expect(readVisualDraft("wrong-discard")?.source).toBe(after);
+  });
+
+  it("judges this window's unwritten checkpoint and the stored record separately", () => {
+    const stored = "scient:latex-visual-draft:source:shared";
+    const other = JSON.stringify({ source: afterBoth, baseRevision: "disk-two" });
+    try {
+      // Another window stored its own copy; this window holds an unwritten one.
+      for (const act of [
+        () => confirmVisualDraft("shared", after),
+        () => discardVisualDraft("shared", { source: after, baseRevision: "disk-one" }),
+      ]) {
+        localStorage.setItem(stored, other);
+        checkpointVisualDraft("shared", "", before, after, "disk-one");
+        expect(act()).toBe(true);
+        // Ours is gone; the other window's record is not ours to remove.
+        expect(localStorage.getItem(stored)).toBe(other);
+        expect(flushVisualDraft("shared")).toBe(true);
+        expect(localStorage.getItem(stored)).toBe(other);
+      }
+      // A stored record that matches is removed even when ours does not match.
+      localStorage.setItem(stored, other);
+      checkpointVisualDraft("shared", "", before, after, "disk-one");
+      expect(confirmVisualDraft("shared", afterBoth)).toBe(true);
+      expect(localStorage.getItem(stored)).toBeNull();
+      expect(flushVisualDraft("shared")).toBe(true);
+      expect(JSON.parse(localStorage.getItem(stored)!).source).toBe(after);
+      // A stored record that matches is removed together with the unwritten one.
+      localStorage.setItem(stored, other);
+      checkpointVisualDraft("shared", "", before, afterBoth, "disk-two");
+      expect(confirmVisualDraft("shared", afterBoth)).toBe(true);
+      expect(localStorage.getItem(stored)).toBeNull();
+    } finally {
+      clearVisualDraft("shared");
+    }
   });
 });

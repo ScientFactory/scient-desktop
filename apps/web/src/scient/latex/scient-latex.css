@@ -3246,26 +3246,222 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   caret-color: var(--primary);
 }
 
+/*
+ * Recovered unsaved work: one line in the footer's free space, with details
+ * opening above the footer across its whole width.
+ */
 .scient-latex-visual-recovery {
-  position: absolute;
-  z-index: 9;
-  bottom: 48px;
-  left: 16px;
-  right: 16px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--background);
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding-inline-start: 4px;
   font-size: 12px;
+  color: var(--muted-foreground);
 }
-
-.scient-latex-visual-recovery textarea {
+.scient-latex-visual-recovery-message {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-right: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scient-latex-visual-recovery button {
+  flex: none;
+  border-radius: 4px;
+  padding: 2px 6px;
+  color: var(--muted-foreground);
+  font: inherit;
+  white-space: nowrap;
+}
+.scient-latex-visual-recovery button[data-primary] {
+  color: var(--foreground);
+}
+.scient-latex-visual-recovery button:hover:not(:disabled),
+.scient-latex-visual-recovery button[aria-expanded="true"] {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.scient-latex-visual-recovery button:disabled {
+  opacity: 0.5;
+}
+.scient-latex-visual-recovery > button[data-closed-label] {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.scient-latex-visual-recovery > button[data-closed-label]::after {
+  content: attr(data-closed-label);
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+}
+/*
+ * The footer's own controls leave room for the whole line only when it is
+ * wide. Below that the line is a single action that opens the comparison, and
+ * it gives way (shortens) before any footer control is pushed or covered.
+ */
+.scient-latex-visual-recovery [data-compact] {
+  display: none;
+}
+@container scient-document-controls (max-width: 699px) {
+  .scient-latex-visual-recovery > .scient-latex-visual-recovery-message,
+  .scient-latex-visual-recovery > button[data-wide] {
+    display: none;
+  }
+  .scient-latex-visual-recovery [data-compact] {
+    display: block;
+  }
+  .scient-latex-visual-recovery > button[data-compact] {
+    display: flex;
+    flex: 0 1 auto;
+    flex-wrap: wrap;
+    /* Never narrower than one whole word. */
+    min-width: min-content;
+    height: 22px;
+    overflow: hidden;
+    padding-inline: 4px;
+    line-height: 18px;
+  }
+  /* With nothing selected the tools' slot is empty and needs no room of its own. */
+  .scient-latex-visual-recovery
+    ~ .scient-latex-context-tools:not(:has(.scient-latex-context-toolbar)) {
+    padding-inline: 0;
+  }
+  .scient-latex-visual-recovery > button[data-compact] > span {
+    white-space: pre;
+  }
+}
+/*
+ * Narrower than one word needs (a small Split pane): the line is the dot that
+ * marks unsaved work elsewhere, still the same button with the same name.
+ */
+@container scient-document-controls (max-width: 287px) {
+  .scient-latex-visual-recovery {
+    flex: none;
+    padding-inline-start: 0;
+  }
+  .scient-latex-visual-recovery > button[data-compact] {
+    flex: none;
+    justify-content: center;
+    width: 14px;
+    min-width: 0;
+    padding-inline: 0;
+  }
+  .scient-latex-visual-recovery > button[data-compact] > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .scient-latex-visual-recovery > button[data-compact]::before {
+    /* Decoration only: the button's name stays the label's words. */
+    content: "•" / "";
+    font-size: 16px;
+  }
+}
+/*
+ * At the narrowest split the footer's own controls already run past its edge.
+ * The dot goes first there, so recovered work stays within reach.
+ */
+@container scient-document-controls (max-width: 139px) {
+  .scient-latex-visual-recovery {
+    order: -1;
+  }
+}
+/* Selection tools keep the room their own button needs beside the line. */
+.scient-latex-visual-recovery
+  ~ .scient-latex-context-tools[data-compact]:has(.scient-latex-context-toolbar) {
+  flex: 1 0 auto;
+}
+/* An open search bar sits just above the footer: the comparison opens above it. */
+.scient-document-controls:has(> .scient-pdf-searchbar)
+  + .scient-latex-reader-footer
+  .scient-latex-visual-recovery-panel {
+  bottom: calc(100% + 38px);
+}
+.scient-latex-visual-recovery-panel {
+  position: absolute;
+  /* Asked for by the writer, so above the side panels the document area can hold. */
+  z-index: 27;
+  right: 0;
+  bottom: 100%;
+  left: 0;
+  display: grid;
+  /* The pane's width, never the content's: nothing scrolls sideways. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  max-height: min(280px, 45vh);
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  padding: 8px 12px 6px;
+  background: var(--background);
+}
+.scient-latex-visual-recovery-panel ol {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.scient-latex-visual-recovery-panel pre {
+  margin: 0;
+  padding: 1px 6px;
+  font: 11px/1.6 var(--font-mono);
+  color: var(--foreground);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.scient-latex-visual-recovery-panel p {
+  margin: 0;
+}
+.scient-latex-visual-recovery-line {
   display: block;
-  width: 100%;
-  min-height: 64px;
-  padding: 6px;
+  margin-bottom: 2px;
+  font-size: 10px;
 }
-
+.scient-latex-visual-recovery-panel pre[data-side="current"] {
+  background: color-mix(in srgb, var(--destructive) 10%, transparent);
+}
+.scient-latex-visual-recovery-panel pre[data-side="recovered"] {
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+.scient-latex-visual-recovery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+}
+/* In a very narrow pane a two-word action breaks rather than widening the comparison. */
+.scient-latex-visual-recovery-actions > button {
+  max-width: 100%;
+  white-space: normal;
+  text-align: end;
+}
+.scient-latex-visual-recovery-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 10px;
+  margin-right: auto;
+}
+.scient-latex-visual-recovery-legend > span::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 4px;
+  border-radius: 2px;
+}
+.scient-latex-visual-recovery-legend > span[data-side="current"]::before {
+  background: color-mix(in srgb, var(--destructive) 35%, transparent);
+}
+.scient-latex-visual-recovery-legend > span[data-side="recovered"]::before {
+  background: color-mix(in srgb, var(--success) 40%, transparent);
+}
 .scient-latex-context-menu > summary {
   display: inline-flex;
   align-items: center;

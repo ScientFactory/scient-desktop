@@ -511,8 +511,12 @@ Dialogs retain the original insertion point. Cancelling inserts nothing; if the
 document changes while a picker is open, insertion asks you to choose the position
 again. An image already imported when this happens remains a project asset.
 
-Preamble, macro and global-layout edits show a rebuild notice. After a crash or interrupted save, a recovered draft is offered as
-copyable source, never automatically written over a newer file.
+Preamble, macro and global-layout edits show a rebuild notice. After a crash or
+interrupted save, your unsaved changes are offered in the footer when you reopen
+the document, and you can keep writing meanwhile. **Compare** shows them next to
+the file, and the file is replaced only if you choose **Use recovered** there.
+**Discard** removes the recovered copy. In a document made of several files, the
+recovered changes can be compared and copied, but are not applied for you.
 
 ## Edit LaTeX source
 
@@ -669,5 +673,5 @@ loaded through external class/style files are not expanded by the visual editor.
 
 Ordinary prose edits preserve unchanged `~`, dash spelling, emphasis commands and
 source line breaks. Unknown macros and unsupported syntax remain available through
-Source; Write is a bounded editor, not a complete TeX interpreter. Recovery offers
-**Restore recovered source**, which follows normal save/conflict handling.
+Source; Write is a bounded editor, not a complete TeX interpreter. Using
+recovered changes follows normal save and conflict handling.

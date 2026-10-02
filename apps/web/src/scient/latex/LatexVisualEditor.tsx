@@ -119,12 +119,19 @@ import {
   withMathReferenceLabel,
 } from "./latexMathNumbering";
 import { alignedMathBody, isAlignedMath } from "./latexMathLayout";
+import { LatexVisualRecoveryBar } from "./LatexVisualRecovery";
 import {
-  isOrdinaryTyping,
-  readTypingDraft,
-  retainTypingDraft,
-  clearTypingDraft,
-} from "./visualTyping";
+  canApplyRecovery,
+  isRecoveryStored,
+  journalAppliedRecovery,
+  parkUninstalledTypingDraft,
+  parkUnpublishedSource,
+  readStartupRecovery,
+  readStoredRecovery,
+  removeRecovery,
+  type LatexVisualRecovery,
+} from "./visualRecovery";
+import { discardTypingDraft, isOrdinaryTyping, retainTypingDraft } from "./visualTyping";
 import { LatexObjectToolbar } from "./LatexObjectToolbar";
 import { LatexHeadingToolbar } from "./LatexHeadingToolbar";
 import { LatexHeadingNumberButton, LatexNumberedLabel } from "./LatexHeadingNumberButton";
@@ -181,13 +188,7 @@ import {
 import "katex/dist/katex-swap.min.css";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import { useAssetUrlState } from "~/assets/assetUrls";
-import {
-  readVisualDraft,
-  clearVisualDraft,
-  checkpointVisualDraft,
-  canRestoreVisualDraft,
-  flushVisualDraft,
-} from "./visualDrafts";
+import { checkpointVisualDraft, flushVisualDraft } from "./visualDrafts";
 
 import {
   applyLatexVisualDocumentChange,
@@ -3975,6 +3976,8 @@ export interface LatexVisualEditorProps {
     originOffset?: number,
   ) => boolean;
   readonly canEditRoot?: boolean;
+  /** False when the document is assembled from several files; recovery is then offered to read and copy only. */
+  readonly singleFileDocument?: boolean;
   readonly onEditingChange: (editing: boolean) => void;
   readonly onOpenSource: () => void;
   readonly onOpenSourceAt?: (offset: number) => void;
@@ -4081,25 +4084,50 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   }, [hasLocalDraft, onLocalDraftChange]);
   useEffect(() => () => onLocalDraftChange?.(false), [onLocalDraftChange]);
 
-  const [typingRecovery] = useState(() => readTypingDraft(props.draftKey));
-  const [recovery, setRecovery] = useState(() =>
-    typingRecovery
-      ? null
-      : readVisualDraft(props.draftKey, { source: props.source, revision: props.fileRevision }),
-  );
-  const readOnly = props.disabled || recovery !== null;
+  // A typing snapshot is reinstalled only over the source it was typed on.
+  // Other unsaved work is parked apart from the live draft slots and waits for
+  // the user's choice, so writing continues meanwhile.
+  const [startup] = useState(() => readStartupRecovery(props.draftKey, { source: props.source }));
+  // A snapshot to put back, with the stored version it was read from, so this
+  // editor later removes exactly that version and no other.
+  const typingToReinstall = (next: typeof startup) =>
+    next.typing && next.typingIdentity !== null
+      ? { draft: next.typing, identity: next.typingIdentity }
+      : null;
+  const [typingRecovery, setTypingRecovery] = useState(() => typingToReinstall(startup));
+  const [recovery, setRecovery] = useState(startup.recovery);
+  // Set once work has been resolved from a live draft slot: whatever else waits
+  // in those slots is then read again, as on opening.
+  const [rereadStartup, setRereadStartup] = useState(false);
+  // Work that could not be parked is still in a live draft slot, which writing
+  // would replace, so the editor waits for the user's choice.
+  const readOnly = props.disabled || rereadStartup || (recovery !== null && !recovery.parked);
   const textReadOnly = readOnly || mathActive;
   const [initial] = useState(() =>
-    projectLatexVisualDocument(
-      typingRecovery?.baseSource ?? props.source,
-      0,
-      props.rootSource ?? typingRecovery?.baseSource ?? props.source,
-    ),
+    projectLatexVisualDocument(props.source, 0, props.rootSource ?? props.source),
   );
   const projection = useRef<LatexVisualDocument>(initial);
   const currentSource = useRef(initial.source);
   const referenceSource = useRef(props.rootSource ?? props.source);
   referenceSource.current = props.rootSource ?? props.source;
+  // The file revision that `currentSource` descends from. It moves only when
+  // the editor adopts a source, so a draft kept over an older source is never
+  // stamped with a newer file's revision.
+  const sourceRevision = useRef(props.fileRevision);
+  // The typing snapshot this editor last stored or put back. Another view of
+  // the document may have stored a different one since; only ours is removed.
+  const ownTyping = useRef<string | null>(null);
+  const draftKey = props.draftKey;
+  const retainOwnTyping = useCallback(
+    (baseSource: string, doc: ProseMirrorNode) => {
+      ownTyping.current = retainTypingDraft(draftKey, baseSource, doc) ?? ownTyping.current;
+    },
+    [draftKey],
+  );
+  const discardOwnTyping = useCallback(() => {
+    if (ownTyping.current !== null) discardTypingDraft(draftKey, ownTyping.current);
+    ownTyping.current = null;
+  }, [draftKey]);
   const onEdit = useRef(props.onEdit);
   const applying = useRef(false);
   // The ProseMirror plugins live for the editor's lifetime. Keep their source
@@ -4274,7 +4302,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
           change.source,
           expected,
           change.source,
-          props.fileRevision,
+          sourceRevision.current,
         );
         setUnsynced(false);
         return true;
@@ -4286,7 +4314,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       const doc = editorRef.current?.state.doc;
       if (doc) {
         pendingTyping.current = doc;
-        retainTypingDraft(props.draftKey, expected, doc);
+        retainOwnTyping(expected, doc);
         reportDraft("ordinary-text", true);
       }
       setUnsynced(true);
@@ -4295,7 +4323,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       );
       return false;
     },
-    [installProjection, reportDraft, props.draftKey, props.fileRevision],
+    [installProjection, reportDraft, props.draftKey],
   );
   const flushSourceEditRef = useRef(flushSourceEdit);
   useLayoutEffect(() => {
@@ -4363,7 +4391,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       setNotice(null);
       return true;
     },
-    [installProjection, reportDraft, props.draftKey, props.fileRevision],
+    [installProjection, reportDraft, props.draftKey],
   );
   const handleUpdateRef = useRef(handleUpdate);
   useLayoutEffect(() => {
@@ -4379,7 +4407,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     // Keep the immutable live document even if source conversion is rejected.
     const activeEditor = editorRef.current;
     if (activeEditor && !activeEditor.isDestroyed && activeEditor.view.composing) {
-      retainTypingDraft(props.draftKey, currentSource.current, doc);
+      retainOwnTyping(currentSource.current, doc);
       return false;
     }
     const base = pendingSourceEdit.current?.expected ?? currentSource.current;
@@ -4388,15 +4416,15 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       !handleUpdateRef.current(doc, true) ||
       !flushSourceEditRef.current(true)
     ) {
-      retainTypingDraft(props.draftKey, base, doc);
+      retainOwnTyping(base, doc);
       reportDraft("ordinary-text", true);
       return false;
     }
     pendingTyping.current = null;
     reportDraft("ordinary-text", false);
     // Transfer recovery to the validated source before removing the raw draft.
-    if (flushVisualDraft(props.draftKey)) clearTypingDraft(props.draftKey);
-    else retainTypingDraft(props.draftKey, base, doc);
+    if (flushVisualDraft(props.draftKey)) discardOwnTyping();
+    else retainOwnTyping(base, doc);
     return true;
   }, [props.draftKey, reportDraft]);
   useLayoutEffect(() => {
@@ -4801,24 +4829,25 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     },
   });
 
-  const restoredTyping = useRef(false);
+  const restoredTyping = useRef<typeof typingRecovery>(null);
   useLayoutEffect(() => {
-    if (!editor || !typingRecovery || restoredTyping.current) return;
-    restoredTyping.current = true;
+    if (!editor || !typingRecovery || restoredTyping.current === typingRecovery) return;
+    restoredTyping.current = typingRecovery;
     try {
-      const doc = editor.schema.nodeFromJSON(typingRecovery.content);
+      const doc = editor.schema.nodeFromJSON(typingRecovery.draft.content);
       doc.check();
       applying.current = true;
       editor.commands.setContent(doc.toJSON(), { emitUpdate: false });
+      ownTyping.current = typingRecovery.identity;
       queueTyping(editor.state.doc);
     } catch {
-      setNotice(
-        "The unsaved writing recovery could not be opened. Its recovery copy has been retained.",
-      );
+      // Not loadable into this editor: keep it as readable text in the
+      // recovery line, where ordinary editing cannot clear it.
+      setRecovery(parkUninstalledTypingDraft(props.draftKey));
     } finally {
       applying.current = false;
     }
-  }, [editor, queueTyping, typingRecovery]);
+  }, [editor, props.draftKey, queueTyping, typingRecovery]);
 
   useEffect(() => {
     if (!editor) return;
@@ -4850,11 +4879,17 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   }, [editor, readOnly]);
 
   useEffect(() => {
-    if (props.source === currentSource.current) return;
-    // An unrelated parent render can still carry the last acknowledged buffer.
-    if (props.source === pendingSourceEdit.current?.expected) return;
+    // The editor's own source, or the last acknowledged buffer carried by an
+    // unrelated parent render: the revision belongs to this editor's lineage.
+    if (
+      props.source === currentSource.current ||
+      props.source === pendingSourceEdit.current?.expected
+    ) {
+      sourceRevision.current = props.fileRevision;
+      return;
+    }
     if (pendingTyping.current) {
-      retainTypingDraft(props.draftKey, currentSource.current, pendingTyping.current);
+      retainOwnTyping(currentSource.current, pendingTyping.current);
       setNotice(
         "The source changed elsewhere. Your unsaved writing is retained here; resolve the source change before saving.",
       );
@@ -4862,9 +4897,17 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     }
     cancelSourcePublish.current?.();
     cancelSourcePublish.current = null;
+    // An edit the editor accepted but had not published yet has no stored copy.
+    // The outside source wins the page; the edit is kept as recovered work.
+    const unpublished = pendingSourceEdit.current;
+    if (unpublished && unpublished.change.source !== props.source)
+      setRecovery(
+        parkUnpublishedSource(props.draftKey, unpublished.change.source, sourceRevision.current),
+      );
     pendingSourceEdit.current = null;
     reportDraft("source-publication", false);
     currentSource.current = props.source;
+    sourceRevision.current = props.fileRevision;
     installProjection(
       projectLatexVisualDocument(props.source, 0, props.rootSource ?? props.source),
       true,
@@ -4889,7 +4932,25 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       });
     }
     setNotice(null);
-  }, [editor, installProjection, props.source, props.rootSource, props.draftKey, reportDraft]);
+  }, [
+    editor,
+    installProjection,
+    props.source,
+    props.fileRevision,
+    props.rootSource,
+    props.draftKey,
+    reportDraft,
+  ]);
+
+  // Runs after the effect above, so the editor has adopted the source that the
+  // stored work is judged against.
+  useEffect(() => {
+    if (!rereadStartup || props.source !== currentSource.current) return;
+    const next = readStartupRecovery(props.draftKey, { source: props.source });
+    setRereadStartup(false);
+    setTypingRecovery(typingToReinstall(next));
+    setRecovery(next.recovery);
+  }, [rereadStartup, props.draftKey, props.source]);
 
   const projectionParser = useRef(projectLatexVisualDocument);
   const projectionPreamble = useRef(projectionSetupKey);
@@ -6017,6 +6078,49 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     },
   ];
 
+  const singleFile = props.singleFileDocument !== false;
+  // Show what storage holds after a choice.
+  const settleRecovery = (shown: LatexVisualRecovery, resolved: boolean) => {
+    if (shown.parked) {
+      setRecovery(readStoredRecovery(props.draftKey));
+      return;
+    }
+    // Still waiting in its live slot: the editor stays read-only.
+    if (!resolved && isRecoveryStored(props.draftKey, shown)) return;
+    setRecovery(null);
+    setRereadStartup(true);
+  };
+  const applyRecovery = (comparedSource: string) => {
+    if (recovery?.source == null) return false;
+    // Another view may have resolved or replaced this entry meanwhile.
+    if (!isRecoveryStored(props.draftKey, recovery)) {
+      settleRecovery(recovery, false);
+      return false;
+    }
+    if (!canApplyRecovery(recovery, comparedSource, { source: props.source, singleFile }))
+      return false;
+    // Writing done since must be part of the source the user compared. If any
+    // of it was still unconverted or unpublished, the comparison is out of date.
+    if (!flushTypingRef.current() || !flushSourceEditRef.current()) return false;
+    if (currentSource.current !== comparedSource) return false;
+    // Saved against the exact source the user compared. If the file moved
+    // since, the revision-checked save refuses and the bar shows the new state.
+    if (!onEdit.current(comparedSource, recovery.source)) return false;
+    // The recovered work stays recoverable until its save is acknowledged.
+    const resolved = journalAppliedRecovery(
+      props.draftKey,
+      { ...recovery, source: recovery.source },
+      { source: comparedSource, revision: sourceRevision.current },
+    );
+    settleRecovery(recovery, resolved);
+    return true;
+  };
+  const discardRecovery = () => {
+    if (!recovery) return;
+    // Remove only the record this bar shows; any other waiting work is shown next.
+    settleRecovery(recovery, removeRecovery(props.draftKey, recovery));
+  };
+
   const openBlockSource = (position: number) => {
     if (
       blockSource &&
@@ -6493,38 +6597,6 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                     props.onEditingChange(false);
                 }}
               >
-                {recovery === null ? null : (
-                  <div className="scient-latex-visual-recovery" role="alert">
-                    <label>
-                      Recovered unsaved source — the file has not been replaced.
-                      <textarea
-                        aria-label="Recover unapplied visual source"
-                        readOnly
-                        value={recovery}
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      disabled={
-                        props.disabled || !canRestoreVisualDraft(props.draftKey, props.fileRevision)
-                      }
-                      onClick={() => {
-                        if (onEdit.current(currentSource.current, recovery)) setRecovery(null);
-                      }}
-                    >
-                      Restore recovered source
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        clearVisualDraft(props.draftKey);
-                        setRecovery(null);
-                      }}
-                    >
-                      Dismiss recovered draft
-                    </button>
-                  </div>
-                )}
                 <WritingShortcutsDialog
                   open={shortcutsOpen}
                   onOpenChange={setShortcutsOpen}
@@ -6868,7 +6940,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                             pendingSourceEdit.current = null;
                             reportDraft("ordinary-text", false);
                             reportDraft("source-publication", false);
-                            clearTypingDraft(props.draftKey);
+                            discardOwnTyping();
                             currentSource.current = props.source;
                             installProjection(
                               projectLatexVisualDocument(
@@ -7104,11 +7176,25 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                   ) : null}
                   <DocumentReaderControls
                     contextControls={
-                      <LatexContextTools>
-                        {editor && !readOnly && editor.isActive("heading") ? (
-                          <LatexHeadingToolbar editor={editor} draftKey={props.draftKey} />
-                        ) : null}
-                      </LatexContextTools>
+                      <>
+                        {/* Recovered work sits in the footer's free space, so no control moves. */}
+                        {recovery === null ? null : (
+                          <LatexVisualRecoveryBar
+                            key={recovery.identity}
+                            recovery={recovery}
+                            currentSource={props.source}
+                            applicable={singleFile}
+                            disabled={props.disabled}
+                            onApply={applyRecovery}
+                            onDiscard={discardRecovery}
+                          />
+                        )}
+                        <LatexContextTools>
+                          {editor && !readOnly && editor.isActive("heading") ? (
+                            <LatexHeadingToolbar editor={editor} draftKey={props.draftKey} />
+                          ) : null}
+                        </LatexContextTools>
+                      </>
                     }
                     label="Document"
                     ready={Boolean(editor)}

@@ -32,6 +32,11 @@ interface Props extends LatexVisualEditorProps {
   relativePath: string;
   rootRelativePath: string | null;
   selectedPending: boolean;
+  /**
+   * False until the open file's shared saver has reported the work it already
+   * holds. It reports from its mount effect, so the first render cannot know.
+   */
+  selectedSaverReady: boolean;
   fileTruncated: boolean;
   onOpenFileSource: (path: string, line?: number) => void;
   saveResolution: FileSaveResolution | null;
@@ -48,6 +53,7 @@ function ProjectFileSession(props: {
   update: (path: string, file: FileState) => void;
   pending: (path: string, value: boolean) => void;
   failure: (path: string, message: string | null) => void;
+  reported: (path: string, value: boolean) => void;
 }) {
   const { owner, path } = props;
   const query = useProjectFileQuery(owner.environmentId, owner.cwd, path);
@@ -94,6 +100,16 @@ function ProjectFileSession(props: {
       owner.onSaveResolutionApplied();
     },
   });
+  // Declared after the saver hook: the saver reports work it already holds
+  // from its own effect, so this report reaches the project in the same update.
+  // The open file's saver belongs to the surface, which reports for it.
+  const reported = props.reported;
+  const sessionReported = selected || (!!file && !file.truncated);
+  useEffect(() => {
+    if (!sessionReported) return;
+    reported(path, true);
+    return () => reported(path, false);
+  }, [path, sessionReported, reported]);
   const update = props.update;
   const contents = file?.contents,
     revision = file?.revision,
@@ -159,6 +175,20 @@ export function LatexProjectVisualEditor(props: Props) {
       }),
     [],
   );
+  // Files whose session has reported its saver's state since it mounted. Data
+  // kept from an earlier session of a file does not count.
+  const [reportedPaths, setReportedPaths] = useState(new Set<string>());
+  const reported = useCallback(
+    (path: string, value: boolean) =>
+      setReportedPaths((previous) => {
+        if (previous.has(path) === value) return previous;
+        const next = new Set(previous);
+        if (value) next.add(path);
+        else next.delete(path);
+        return next;
+      }),
+    [],
+  );
   const failure = useCallback(
     (path: string, message: string | null) =>
       setSaveErrors((previous) => {
@@ -193,10 +223,12 @@ export function LatexProjectVisualEditor(props: Props) {
     stateChanged({ pending: isPending, error: saveError });
   }, [stateChanged, isPending, saveError]);
   const draftKey = `${props.environmentId}\0${props.cwd}\0project-visual:${root ?? props.relativePath}`;
+  const saversReady = props.selectedSaverReady && paths.every((path) => reportedPaths.has(path));
   useEffect(() => {
-    if (document && !isPending && !error && !document.missing.length)
+    // Idle has to be an observed state, not the flags a component starts with.
+    if (document && saversReady && !isPending && !error && !document.missing.length)
       confirmVisualDraft(draftKey, document.source);
-  }, [document, draftKey, isPending, error]);
+  }, [document, draftKey, saversReady, isPending, error]);
   const snapshot = useRef({ document, files, states });
   useLayoutEffect(() => {
     snapshot.current = { document, files, states };
@@ -277,6 +309,7 @@ export function LatexProjectVisualEditor(props: Props) {
           update={update}
           pending={pending}
           failure={failure}
+          reported={reported}
         />
       ))}
       {ready && document ? (
@@ -286,6 +319,7 @@ export function LatexProjectVisualEditor(props: Props) {
           source={document.source}
           rootSource={document.source}
           canEditRoot={!error}
+          singleFileDocument={paths.length === 1}
           relativePath={root!}
           draftKey={draftKey}
           fileRevision={JSON.stringify(paths.map((path) => [path, files.get(path)?.revision]))}
