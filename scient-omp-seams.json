@@ -108,6 +108,16 @@
   ],
   "upstreamMounts": [
     {
+      "path": "apps/server/src/textGeneration/TextGeneration.ts",
+      "anchor": "OMP_DEFAULT_TEXT_GENERATION_MODEL",
+      "purpose": "Resolve automatic Oh My Pi metadata models from the selected instance's cached native catalog."
+    },
+    {
+      "path": "apps/web/src/modelSelection.ts",
+      "anchor": "entry.driverKind === \"pi\" || entry.driverKind === \"omp\"",
+      "purpose": "Keep automatic Pi and Oh My Pi metadata markers out of the model picker until discovery supplies a model."
+    },
+    {
       "path": "apps/mobile/src/components/ProviderIcon.tsx",
       "anchor": "props.provider === \"omp\"",
       "purpose": "Show the Oh My Pi mark in the mobile provider icon."

@@ -1,11 +1,17 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { ChatAttachment, ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
-import { TextGenerationError } from "@t3tools/contracts";
+import type { ChatAttachment, ModelSelection } from "@t3tools/contracts";
+import {
+  OMP_DEFAULT_TEXT_GENERATION_MODEL,
+  PI_DEFAULT_TEXT_GENERATION_MODEL,
+  TextGenerationError,
+} from "@t3tools/contracts";
+import { resolveAutomaticModel } from "@t3tools/shared/model";
 
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
+import { encodeAgentModelSlug, splitAgentModelSlug } from "../provider/agentModel.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ThreadTitleLinks from "./ThreadTitleLinks.ts";
 import type { TextGenerationPolicy } from "./TextGenerationPolicy.ts";
@@ -115,23 +121,57 @@ type TextGenerationOp =
   | "generateBranchName"
   | "generateThreadTitle";
 
-const resolveInstance = (
+const resolveGeneration = Effect.fn("TextGeneration.resolveGeneration")(function* (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
   operation: TextGenerationOp,
-  instanceId: ProviderInstanceId,
-): Effect.Effect<ProviderInstance["textGeneration"], TextGenerationError> =>
-  registry.getInstance(instanceId).pipe(
-    Effect.flatMap((instance) =>
-      instance
-        ? Effect.succeed(instance.textGeneration)
-        : Effect.fail(
-            new TextGenerationError({
-              operation,
-              detail: `No provider instance registered for id '${instanceId}'.`,
-            }),
-          ),
-    ),
-  );
+  selection: ModelSelection,
+): Effect.fn.Return<
+  { textGeneration: ProviderInstance["textGeneration"]; modelSelection: ModelSelection },
+  TextGenerationError
+> {
+  const instanceId = selection.instanceId;
+  const instance = yield* registry.getInstance(instanceId);
+  if (!instance) {
+    return yield* new TextGenerationError({
+      operation,
+      detail: `No provider instance registered for id '${instanceId}'.`,
+    });
+  }
+  const automatic =
+    (instance.driverKind === "pi" && selection.model === PI_DEFAULT_TEXT_GENERATION_MODEL) ||
+    (instance.driverKind === "omp" && selection.model === OMP_DEFAULT_TEXT_GENERATION_MODEL);
+  if (!automatic) return { textGeneration: instance.textGeneration, modelSelection: selection };
+
+  // Read the catalog already owned by discovery. Metadata generation must not
+  // launch another probe or silently replace an explicit model selection.
+  const snapshot = yield* instance.snapshot.getSnapshot;
+  const models = snapshot.models.filter((model) => {
+    const decoded = splitAgentModelSlug(model.slug);
+    return decoded && encodeAgentModelSlug(decoded.provider, decoded.modelId) === model.slug;
+  });
+  const model =
+    instance.enabled &&
+    snapshot.instanceId === instanceId &&
+    snapshot.driver === instance.driverKind &&
+    snapshot.enabled &&
+    snapshot.installed &&
+    snapshot.status === "ready" &&
+    !snapshot.probePending &&
+    snapshot.availability !== "unavailable" &&
+    snapshot.supportsTextGeneration !== false
+      ? resolveAutomaticModel(instance.driverKind, models)
+      : undefined;
+  if (!model) {
+    return yield* new TextGenerationError({
+      operation,
+      detail: `No supported automatic text-generation model is available for '${instanceId}'. Check this provider in Settings or select a supported text-generation model.`,
+    });
+  }
+  return {
+    textGeneration: instance.textGeneration,
+    modelSelection: { ...selection, model },
+  };
+});
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
@@ -139,20 +179,26 @@ export const make = Effect.gen(function* () {
   const sourceControl = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
   return TextGeneration.of({
     generateCommitMessage: (input) =>
-      resolveInstance(registry, "generateCommitMessage", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generateCommitMessage(input)),
+      resolveGeneration(registry, "generateCommitMessage", input.modelSelection).pipe(
+        Effect.flatMap(({ textGeneration, modelSelection }) =>
+          textGeneration.generateCommitMessage({ ...input, modelSelection }),
+        ),
       ),
     generatePrContent: (input) =>
-      resolveInstance(registry, "generatePrContent", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generatePrContent(input)),
+      resolveGeneration(registry, "generatePrContent", input.modelSelection).pipe(
+        Effect.flatMap(({ textGeneration, modelSelection }) =>
+          textGeneration.generatePrContent({ ...input, modelSelection }),
+        ),
       ),
     generateBranchName: (input) =>
-      resolveInstance(registry, "generateBranchName", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.generateBranchName(input)),
+      resolveGeneration(registry, "generateBranchName", input.modelSelection).pipe(
+        Effect.flatMap(({ textGeneration, modelSelection }) =>
+          textGeneration.generateBranchName({ ...input, modelSelection }),
+        ),
       ),
     generateThreadTitle: (input) =>
-      resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) =>
+      resolveGeneration(registry, "generateThreadTitle", input.modelSelection).pipe(
+        Effect.flatMap(({ textGeneration, modelSelection }) =>
           Effect.gen(function* () {
             const linkedContext =
               input.linkedContext ??
@@ -162,7 +208,11 @@ export const make = Effect.gen(function* () {
                   sourceControl,
                 ),
               ));
-            return yield* textGeneration.generateThreadTitle({ ...input, linkedContext });
+            return yield* textGeneration.generateThreadTitle({
+              ...input,
+              modelSelection,
+              linkedContext,
+            });
           }),
         ),
       ),

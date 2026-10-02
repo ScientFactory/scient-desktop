@@ -65,6 +65,16 @@ owned by their existing paths. Automatic Settings displays the effective model a
 its traits. These are conversation defaults; background text-generation preferences are
 unchanged. No stored thread, project, or draft selections are migrated.
 
+Automatic Pi/OMP metadata fallback uses separate text-generation markers (`pi-default` and
+`omp-default`), not conversation defaults or another driver's model slug. The shared
+`TextGeneration` entry point resolves them from the selected instance's cached, ready discovery
+snapshot through `resolveAutomaticModel`, after canonical native slug validation. This reads no
+new runtime process and follows the same reported-default/non-legacy ordering as the client.
+Pending, failed, unavailable, mismatched or empty catalogs produce a configuration error; native
+generation retains validation of the selected model. Concrete selections and their options pass
+through unchanged. Catalog price labels are not numeric costs, so this policy makes no cheapest-model
+claim. Settings displays the effective native model without replacing the stored automatic marker.
+
 ## Runtime context
 
 Every adapter uses `apps/server/src/provider/RuntimeInstructions.ts` to identify T3 Code and

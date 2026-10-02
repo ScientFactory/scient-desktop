@@ -1,6 +1,8 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   DROID_DEFAULT_MODEL,
+  OMP_DEFAULT_TEXT_GENERATION_MODEL,
+  PI_DEFAULT_TEXT_GENERATION_MODEL,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -906,6 +908,40 @@ describe("instance-scoped model selection", () => {
     expect(resolveAppModelSelectionState(settings, [droid]).model).toBe("gpt-6-sol");
     expect(getDefaultProviderInstanceModel([droid], instanceId)).toBe("gpt-6-sol");
   });
+
+  it.each([
+    ["pi", PI_DEFAULT_TEXT_GENERATION_MODEL],
+    ["omp", OMP_DEFAULT_TEXT_GENERATION_MODEL],
+  ] as const)(
+    "shows %s's automatic native model without changing stored settings",
+    (driver, marker) => {
+      const instanceId = ProviderInstanceId.make(`${driver}_work`);
+      const base = provider({
+        provider: ProviderDriverKind.make(driver),
+        instanceId,
+        models: ["openai/hosted", "local/team%2Fmodel"],
+      });
+      const discovered = {
+        ...base,
+        models: base.models.map((model) =>
+          model.slug === "local/team%2Fmodel" ? { ...model, isDefault: true } : model,
+        ),
+      };
+      const storedSelection = createModelSelection(instanceId, marker);
+      const settings = {
+        ...DEFAULT_UNIFIED_SETTINGS,
+        textGenerationModelSelection: storedSelection,
+      };
+      expect(resolveAppModelSelectionState(settings, [discovered]).model).toBe(
+        "local/team%2Fmodel",
+      );
+      expect(settings.textGenerationModelSelection).toBe(storedSelection);
+      expect(getDefaultProviderInstanceModel([discovered], instanceId)).toBe("local/team%2Fmodel");
+      expect(resolveAppModelSelectionState(settings, [{ ...discovered, models: [] }]).model).toBe(
+        "",
+      );
+    },
+  );
 
   it("does not select a provider that cannot generate system text", () => {
     const instanceId = ProviderInstanceId.make("antigravity");

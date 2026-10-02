@@ -427,7 +427,11 @@ export function resolveAppModelSelectionState(
         selectedModel,
       ) ??
       entry.models[0]?.slug ??
-      DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[entry.driverKind];
+      // Pi/OMP automatic markers are resolved from a discovered catalog. Do
+      // not render one as a selectable native model before discovery succeeds.
+      (entry.driverKind === "pi" || entry.driverKind === "omp"
+        ? undefined
+        : DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[entry.driverKind]);
     if (!model) {
       return createModelSelection(entry.instanceId, "", []);
     }
