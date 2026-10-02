@@ -544,61 +544,61 @@
     "omp": {
       "contractRevision": 1,
       "channel": "stable",
-      "version": "18.4.9",
+      "version": "18.4.10",
       "artifacts": {
         "darwin-arm64": {
           "artifactName": "omp-darwin-arm64",
-          "url": "https://github.com/can1357/oh-my-pi/releases/download/v18.4.9/omp-darwin-arm64",
+          "url": "https://github.com/can1357/oh-my-pi/releases/download/v18.4.10/omp-darwin-arm64",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "88c8ff6734bd62b9fe65004f265218eed8e5b8695e64da1172587f5aeb468681"
+            "digest": "23d3f9ab712fe700e80a43dbd1e8159dfea8e106bf717648a49b1bba1ad3e508"
           },
-          "size": 218707312
+          "size": 218920720
         },
         "darwin-x64": {
           "artifactName": "omp-darwin-x64",
-          "url": "https://github.com/can1357/oh-my-pi/releases/download/v18.4.9/omp-darwin-x64",
+          "url": "https://github.com/can1357/oh-my-pi/releases/download/v18.4.10/omp-darwin-x64",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "ac5b866d8e6f380836cc77c92253d6596e4b67932a95d02bd55a3ebc8c5c3845"
+            "digest": "88cb5bc7fc8a32a16276be3af3a7e9e9f195a4c994db75f15ee0bc24dd30928d"
           },
-          "size": 230920496
+          "size": 231118640
         },
         "linux-arm64-glibc": {
           "artifactName": "omp-linux-arm64",
-          "url": "https://github.com/can1357/oh-my-pi/releases/download/v18.4.9/omp-linux-arm64",
+          "url": "https://github.com/can1357/oh-my-pi/releases/download/v18.4.10/omp-linux-arm64",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "c86ac994dd9a99b1f8df28b85c9ccc909c81f64c68f9e30039ee980a05308438"
+            "digest": "8f6b0b6547b149b7f538d44848e80502f5895663ca9cef6b14c7337be2f4f617"
           },
-          "size": 241223976
+          "size": 241420584
         },
         "linux-x64-glibc": {
           "artifactName": "omp-linux-x64",
-          "url": "https://github.com/can1357/oh-my-pi/releases/download/v18.4.9/omp-linux-x64",
+          "url": "https://github.com/can1357/oh-my-pi/releases/download/v18.4.10/omp-linux-x64",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "fe1ec455e3aa4536efc8e28b1023113de94b97e7dd68c726964dadeb488a1753"
+            "digest": "e3f24c475d90b83acec05a26fd4499d2e6dffbf4ca3b0ee9e3e1bc1ab1a4e289"
           },
-          "size": 291247584
+          "size": 291501536
         },
         "win32-arm64": {
           "artifactName": "omp-windows-arm64.exe",
-          "url": "https://github.com/can1357/oh-my-pi/releases/download/v18.4.9/omp-windows-arm64.exe",
+          "url": "https://github.com/can1357/oh-my-pi/releases/download/v18.4.10/omp-windows-arm64.exe",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "35f5a68e0685fe50683ccab49f8e600af1eaeade390c323d14b1079afa2f18eb"
+            "digest": "21eba9799ba0310b94cc1937c092f3ad376c6608a9f5a30340b10ec8e7ecd817"
           },
-          "size": 234509312
+          "size": 234700800
         },
         "win32-x64": {
           "artifactName": "omp-windows-x64.exe",
-          "url": "https://github.com/can1357/oh-my-pi/releases/download/v18.4.9/omp-windows-x64.exe",
+          "url": "https://github.com/can1357/oh-my-pi/releases/download/v18.4.10/omp-windows-x64.exe",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "991348ba6dfec66a907cc42f8dec868029db906ba40910a566f63f659bdeede5"
+            "digest": "7232c209641f0cad7e20bdb3a074cdb2fb31ae2aa73d42c491c705d28e0d3895"
           },
-          "size": 245453312
+          "size": 245669888
         }
       }
     }
