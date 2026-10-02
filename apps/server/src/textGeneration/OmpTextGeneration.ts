@@ -1,4 +1,4 @@
-import { TextGenerationError, type ModelSelection, type OmpSettings } from "@t3tools/contracts";
+import { TextGenerationError, type ModelSelection } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import {
   getModelSelectionStringOptionValue,
@@ -26,6 +26,7 @@ import {
   type OmpRpcProcess,
   type OmpRpcProcessOptions,
 } from "../provider/omp/OmpRpcProcess.ts";
+import type { OmpLaunchSettings } from "../provider/Layers/OmpProvider.ts";
 import type { OmpTarget } from "../provider/omp/OmpTarget.ts";
 import type * as Scope from "effect/Scope";
 import {
@@ -110,7 +111,7 @@ const lastAssistantText = (messages: unknown): string | undefined => {
 
 export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function* (
   target: OmpTarget,
-  settings: OmpSettings,
+  settings: Pick<OmpLaunchSettings, "binaryPath">,
   environment: NodeJS.ProcessEnv = process.env,
   makeProcess: (
     options: OmpRpcProcessOptions,

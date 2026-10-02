@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import type { OmpTarget } from "./OmpTarget.ts";
+import { ompTarget, type OmpTarget } from "./OmpTarget.ts";
 
 const OMP_SESSION_CURSOR_VERSION = 4;
 const OMP_V3_SESSION_CURSOR_VERSION = 3;
@@ -16,6 +16,11 @@ const cursorFields = {
   providerInstanceId: Schema.String,
   sessionId: Schema.optional(Schema.String),
   relativeSessionFile: Schema.String,
+  /**
+   * The product that wrote the cursor. Absent on an Oh My Pi cursor: those
+   * predate a second product and keep their recorded shape.
+   */
+  driverKind: Schema.optional(Schema.String),
   ompVersion: Schema.String,
   rpcProtocolVersion: Schema.Finite,
   stateScopeFingerprint: Schema.String,
@@ -156,6 +161,11 @@ export const parseOmpSessionCursor = (
           `${input.target.name} resume cursor belongs to a different provider instance.`,
         );
       }
+      // The products share a session format, so nothing else in a cursor
+      // tells one's transcript from the other's.
+      if ((cursor.driverKind ?? ompTarget.driverKind) !== input.target.driverKind) {
+        return Effect.fail(`${input.target.name} resume cursor was written by a different agent.`);
+      }
       if (cursor.workspaceFingerprint !== ompWorkspaceFingerprint(input.identity.workspace)) {
         return Effect.fail(`${input.target.name} resume cursor belongs to a different workspace.`);
       }
@@ -208,6 +218,7 @@ export const parseOmpSessionCursor = (
   );
 
 export const makeOmpSessionCursor = (input: {
+  readonly target: OmpTarget;
   readonly identity: OmpResumeIdentity;
   readonly sessionFile: string;
   readonly sessionId?: string;
@@ -221,6 +232,9 @@ export const makeOmpSessionCursor = (input: {
     schemaVersion: OMP_SESSION_CURSOR_VERSION,
     providerInstanceId: input.identity.providerInstanceId,
     relativeSessionFile,
+    ...(input.target.driverKind === ompTarget.driverKind
+      ? {}
+      : { driverKind: input.target.driverKind }),
     ompVersion: input.ompVersion,
     rpcProtocolVersion: input.rpcProtocolVersion,
     stateScopeFingerprint: ompStateScopeFingerprint(input.identity),

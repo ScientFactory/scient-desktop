@@ -937,6 +937,32 @@ export const OmpSettings = makeProviderSettingsSchema(
 );
 export type OmpSettings = typeof OmpSettings.Type;
 
+/**
+ * Scient Agent keeps its state in a directory this server assigns, so it has
+ * no home or profile setting.
+ */
+export const ScientAgentSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: makeBinaryPathSetting("scient-agent").pipe(
+      Schema.annotateKey({
+        title: "Binary path",
+        description: "Path to the Scient Agent executable (0.1.0 or newer).",
+        providerSettingsForm: { placeholder: "scient-agent", clearWhenEmpty: "omit" },
+      }),
+    ),
+    customModels: Schema.Array(CustomModelSetting).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  { order: ["binaryPath"] },
+);
+export type ScientAgentSettings = typeof ScientAgentSettings.Type;
+
 export const DroidSettings = makeProviderSettingsSchema(
   {
     // Off by default (like Cursor, Grok, and OpenCode): the binding is not
@@ -1571,6 +1597,7 @@ export const ServerSettings = Schema.Struct({
     droid: DroidSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     pi: PiSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     omp: OmpSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    scient: ScientAgentSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     antigravity: AntigravitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
@@ -1773,6 +1800,11 @@ const OmpSettingsPatch = Schema.Struct({
   homePath: Schema.optionalKey(TrimmedString),
   profile: Schema.optionalKey(TrimmedString),
 });
+
+const ScientAgentSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(TrimmedString),
+});
 export const ServerSettingsPatch = Schema.Struct({
   // SCIENT-FORK:START — replaces the whole catalog; omitted leaves it alone.
   threadSections: Schema.optionalKey(ThreadSections),
@@ -1907,6 +1939,7 @@ export const ServerSettingsPatch = Schema.Struct({
       droid: Schema.optionalKey(DroidSettingsPatch),
       pi: Schema.optionalKey(PiSettingsPatch),
       omp: Schema.optionalKey(OmpSettingsPatch),
+      scient: Schema.optionalKey(ScientAgentSettingsPatch),
       antigravity: Schema.optionalKey(AntigravitySettingsPatch),
     }),
   ),

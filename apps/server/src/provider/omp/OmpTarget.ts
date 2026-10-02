@@ -21,6 +21,8 @@ export interface OmpExecutableIdentity {
  */
 export interface OmpTarget {
   readonly driverKind: ProviderDriverKind;
+  /** The provider's name in pickers and settings. */
+  readonly displayName: string;
   /** The product's name in messages shown to the user. */
   readonly name: string;
   /** The name after its indefinite article, as in "Ignored an Oh My Pi request". */
@@ -63,6 +65,7 @@ const parseOmpVersion = (output: string): string | undefined =>
 /** The official Oh My Pi executable, installed by the user or managed by Scient. */
 export const ompTarget: OmpTarget = {
   driverKind: ProviderDriverKind.make("omp"),
+  displayName: "Oh My Pi",
   name: "Oh My Pi",
   nameWithArticle: "an Oh My Pi",
   stateNamespace: "omp",

@@ -1,11 +1,16 @@
 {
   "schemaVersion": 2,
   "owner": "ScientFactory",
-  "purpose": "External Oh My Pi provider. The wire package has no Scient orchestration types. Desktop files own process, session cursor, and current turn mapping. Shared integration points are mounts; Scient-owned provider documentation and release copy are classified here when they name Oh My Pi.",
-  "ownedRoots": ["packages/effect-omp-rpc", "apps/server/src/provider/omp"],
+  "purpose": "External Oh My Pi provider, and Scient Agent, Scient's own fork of it, which runs through the same modules as a separate product. The wire package has no Scient orchestration types. Desktop files own process, session cursor, and current turn mapping. Shared integration points are mounts; Scient-owned provider documentation and release copy are classified here when they name Oh My Pi.",
+  "ownedRoots": [
+    "packages/effect-omp-rpc",
+    "apps/server/src/provider/omp",
+    "apps/server/src/provider/scient"
+  ],
   "ownedFiles": [
     "apps/server/scripts/qualify-omp-rpc.ts",
     "apps/server/src/provider/Drivers/OmpDriver.ts",
+    "apps/server/src/provider/Drivers/ScientAgentDriver.ts",
     "apps/server/src/provider/Layers/OmpAdapter.ts",
     "apps/server/src/provider/Layers/OmpProvider.ts",
     "apps/server/src/scient/providerLifecycle/OmpManagedRuntimeActions.ts",
@@ -16,6 +21,7 @@
     "apps/web/src/scient/providerConnection/OmpInlineSetup.tsx",
     "apps/web/src/scient/releaseNotes/catalog.ts",
     "docs/user/providers-omp.md",
+    "docs/user/providers-scient-agent.md",
     "packages/scient-provider-runtime/src/managedOmpRuntime.ts",
     "packages/scient-provider-runtime/src/ompManifest.ts"
   ],

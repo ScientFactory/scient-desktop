@@ -466,12 +466,16 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
           env,
           extendEnv: false,
         });
+        // The executable may not be the product it is configured as. One that
+        // reads its input, or ignores SIGTERM, must not hold this probe open.
         const result = yield* spawnAndCollect(
           resolvedBinary,
           ChildProcess.make(command.command, command.args, {
             shell: command.shell,
             env,
             extendEnv: false,
+            stdin: "ignore",
+            forceKillAfter: "1 second",
           }),
         );
         const identified = result.code === 0 ? target.identify(result.stdout) : undefined;

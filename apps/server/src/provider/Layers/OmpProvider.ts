@@ -1,4 +1,3 @@
-import { OmpSettings } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -35,7 +34,7 @@ import {
 
 const presentation = (target: OmpTarget) =>
   ({
-    displayName: target.name,
+    displayName: target.displayName,
     badgeLabel: "Early Access",
     reportsContextWindow: false,
     showInteractionModeToggle: false,
@@ -43,6 +42,12 @@ const presentation = (target: OmpTarget) =>
     supportsConversationRollback: false,
     requiresNewThreadForModelChange: false,
   }) as const;
+
+/** The settings every target's provider shares: whether it is on and what to run. */
+export interface OmpLaunchSettings {
+  readonly enabled: boolean;
+  readonly binaryPath: string;
+}
 
 export type OmpProcessFactory = (
   options: OmpRpcProcessOptions,
@@ -78,7 +83,7 @@ const discoveryMessage = (target: OmpTarget, error: unknown): string => {
 
 export const makePendingOmpProvider = (
   target: OmpTarget,
-  settings: OmpSettings,
+  settings: OmpLaunchSettings,
 ): Effect.Effect<ServerProviderDraft> =>
   checkedAt.pipe(
     Effect.map((at) =>
@@ -102,7 +107,7 @@ export const makePendingOmpProvider = (
 
 export const checkOmpProviderStatus = Effect.fn("checkOmpProviderStatus")(function* (
   target: OmpTarget,
-  settings: OmpSettings,
+  settings: OmpLaunchSettings,
   environment: NodeJS.ProcessEnv = process.env,
   makeProcess: OmpProcessFactory,
   cwd?: string,

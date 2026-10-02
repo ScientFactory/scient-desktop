@@ -816,6 +816,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       }).pipe(Effect.option);
       if (readable._tag === "None") return;
       const built = makeOmpSessionCursor({
+        target: options.target,
         identity: ctx.resumeIdentity,
         sessionFile,
         ...(sessionId ? { sessionId } : {}),

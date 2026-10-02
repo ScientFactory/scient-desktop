@@ -76,6 +76,7 @@ export const SCIENT_AWARENESS_DELIVERY = {
   opencode: "managed-server-per-message-system",
   omp: "before-agent-start-system-append",
   pi: "before-agent-start-system-append",
+  scient: "before-agent-start-system-append",
 } as const;
 
 export type ScientAwarenessProvider = keyof typeof SCIENT_AWARENESS_DELIVERY;

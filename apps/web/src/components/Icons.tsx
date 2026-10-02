@@ -812,6 +812,22 @@ export const OhMyPiIcon: Icon = ({ className, ...props }) => {
   );
 };
 
+// Scient's own symbol (apps/web/src/assets/scient-symbol-strong.svg), for Scient Agent.
+export const ScientAgentIcon: Icon = (props) => (
+  <svg viewBox="-78.67 -66.67 533.33 533.33" fill="none" {...props}>
+    <g fill="#46587E">
+      <rect x="92" y="92" width="200" height="16" />
+      <rect x="92" y="92" width="16" height="200" />
+    </g>
+    <g fill="#471A1A">
+      <rect x="201" y="200" width="175" height="16" />
+      <rect x="184" y="0" width="16" height="200" />
+      <rect x="0" y="184" width="200" height="16" />
+      <rect x="200" y="200" width="16" height="200" />
+    </g>
+  </svg>
+);
+
 // Official two-color mark from https://forgejo.org/favicon.svg.
 export const ForgejoIcon: Icon = (props) => (
   <svg viewBox="0 0 212 212" aria-hidden="true" {...props}>

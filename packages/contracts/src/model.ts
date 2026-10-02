@@ -157,6 +157,7 @@ const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
 const DROID_DRIVER_KIND = ProviderDriverKind.make("droid");
 const PI_DRIVER_KIND = ProviderDriverKind.make("pi");
 const OMP_DRIVER_KIND = ProviderDriverKind.make("omp");
+const SCIENT_DRIVER_KIND = ProviderDriverKind.make("scient");
 const ANTIGRAVITY_DRIVER_KIND = ProviderDriverKind.make("antigravity");
 
 export const DEFAULT_MODEL = "gpt-6.1-sol";
@@ -267,6 +268,7 @@ export const PROVIDER_DISPLAY_ORDER: ReadonlyArray<ProviderDriverKind> = [
   DROID_DRIVER_KIND,
   PI_DRIVER_KIND,
   OMP_DRIVER_KIND,
+  SCIENT_DRIVER_KIND,
   CURSOR_DRIVER_KIND,
   GROK_DRIVER_KIND,
 ];
@@ -295,5 +297,6 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [DROID_DRIVER_KIND]: "Droid",
   [PI_DRIVER_KIND]: "Pi",
   [OMP_DRIVER_KIND]: "Oh My Pi",
+  [SCIENT_DRIVER_KIND]: "Scient",
   [ANTIGRAVITY_DRIVER_KIND]: "Antigravity",
 };

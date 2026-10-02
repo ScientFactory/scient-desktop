@@ -11,6 +11,7 @@ const expectedOrder = [
   "droid",
   "pi",
   "omp",
+  "scient",
   "cursor",
   "grok",
 ];

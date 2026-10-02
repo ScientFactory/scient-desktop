@@ -6044,7 +6044,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 result.failure.message,
                 revision === 1
                   ? "Custom models changed. Test the updated configuration."
-                  : "Connect this model to an enabled Pi, Droid, or Oh My Pi agent first.",
+                  : "Connect this model to an enabled Pi, Droid, Oh My Pi, or Scient agent first.",
               );
             }
           }),

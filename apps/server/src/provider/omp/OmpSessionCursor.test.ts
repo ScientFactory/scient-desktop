@@ -30,6 +30,7 @@ const identity = (overrides: Partial<OmpResumeIdentity> = {}): OmpResumeIdentity
 describe("Oh My Pi session cursor", () => {
   it("keeps no executable identity in the cursor", () => {
     const cursor = makeOmpSessionCursor({
+      target: ompTarget,
       identity: identity(),
       sessionFile: "/state/omp/thread/session.jsonl",
       ompVersion: "18.2.8",
@@ -42,6 +43,7 @@ describe("Oh My Pi session cursor", () => {
   it.effect("rejects unverifiable legacy cursor identity", () =>
     Effect.gen(function* () {
       const cursor = makeOmpSessionCursor({
+        target: ompTarget,
         identity: identity(),
         sessionFile: "/state/omp/thread/session.jsonl",
         ompVersion: "18.2.8",
@@ -76,6 +78,7 @@ describe("Oh My Pi session cursor", () => {
     Effect.gen(function* () {
       const current = identity();
       const cursor = makeOmpSessionCursor({
+        target: ompTarget,
         identity: current,
         sessionFile: "/state/omp/thread/session.jsonl",
         sessionId: "session-1",
@@ -111,6 +114,7 @@ describe("Oh My Pi session cursor", () => {
     Effect.gen(function* () {
       const current = identity();
       const cursor = makeOmpSessionCursor({
+        target: ompTarget,
         identity: current,
         sessionFile: "/state/omp/thread/session.jsonl",
         ompVersion: "18.2.8",
@@ -142,6 +146,7 @@ describe("Oh My Pi session cursor", () => {
       Effect.gen(function* () {
         const current = identity();
         const v4 = makeOmpSessionCursor({
+          target: ompTarget,
           identity: current,
           sessionFile: "/state/omp/thread/session.jsonl",
           sessionId: "session-1",
@@ -197,6 +202,7 @@ describe("Oh My Pi session cursor", () => {
     Effect.gen(function* () {
       const current = identity();
       const cursor = makeOmpSessionCursor({
+        target: ompTarget,
         identity: current,
         sessionFile: "/state/omp/thread/session.jsonl",
         ompVersion: "18.2.8",
