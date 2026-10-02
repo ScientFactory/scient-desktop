@@ -8,6 +8,7 @@
  * - `SCIENT_AGENT_QUALIFY_FULL_TURN=1`: also run a turn against a real model
  *   (`OMP_QUALIFY_MODEL`, default a local Ollama model).
  */
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -261,6 +262,75 @@ describe.runIf(scientAgentBinary)("real Scient Agent", () => {
           NodeFS.rmSync(root, { recursive: true, force: true });
         }).pipe(Effect.provide(layer)),
       120_000,
+    );
+  });
+
+  describe.runIf(ompQualifyBinary)("under load beside a real Oh My Pi", () => {
+    it.effect(
+      "starts and stops many conversations of both products at once and leaves no process behind",
+      () =>
+        Effect.gen(function* () {
+          const { root, home, stateDir, attachmentsDir } = makeRoot("load");
+          const workspace = NodePath.join(root, "workspace");
+          NodeFS.mkdirSync(workspace);
+          const makeProcess = yield* gatedProcess;
+          const { environment, agentRoot } = scientAgentInstance(home, stateDir, "scient");
+          const scientAgent = yield* makeOmpAdapter({
+            target: scientAgentTarget,
+            binaryPath: binary,
+            providerInstanceId: ProviderInstanceId.make("scient"),
+            stateDir,
+            attachmentsDir,
+            environment,
+            homePath: agentRoot,
+            makeProcess,
+          });
+          const ompInstance = ompLiveInstance(NodePath.join(root, "omp"));
+          const omp = yield* makeOmpAdapter({
+            target: ompTarget,
+            binaryPath: ompQualifyBinary ?? "",
+            providerInstanceId: ProviderInstanceId.make("omp"),
+            stateDir,
+            attachmentsDir,
+            environment: ompInstance.environment,
+            homePath: ompInstance.homePath,
+            makeProcess,
+          });
+          const conversations = Array.from({ length: 6 }, (_, index) => index).flatMap((index) => [
+            { adapter: scientAgent, threadId: ThreadId.make(`load-scient-agent-${index}`) },
+            { adapter: omp, threadId: ThreadId.make(`load-omp-${index}`) },
+          ]);
+          const sessions = yield* Effect.all(
+            conversations.map(({ adapter, threadId }) =>
+              adapter.startSession({ threadId, cwd: workspace, runtimeMode: "full-access" }),
+            ),
+            { concurrency: "unbounded" },
+          );
+          expect(sessions.map((session) => session.status)).toEqual(
+            conversations.map(() => "ready"),
+          );
+          // Every session directory holds exactly one product's conversation.
+          expect(NodeFS.readdirSync(NodePath.join(stateDir, "scient-agent-sessions"))).toHaveLength(
+            6,
+          );
+          expect(NodeFS.readdirSync(NodePath.join(stateDir, "omp-sessions"))).toHaveLength(6);
+
+          // Each process was started with a session directory under this root.
+          const running = () =>
+            NodeChildProcess.spawnSync("pgrep", ["-f", stateDir], { encoding: "utf8" })
+              .stdout.split("\n")
+              .filter((pid) => pid.trim().length > 0);
+          expect(running().length).toBeGreaterThanOrEqual(conversations.length);
+
+          yield* Effect.all([scientAgent.stopAll(), omp.stopAll()], { concurrency: "unbounded" });
+          for (const { adapter, threadId } of conversations) {
+            expect(yield* adapter.hasSession(threadId)).toBe(false);
+          }
+          expect(running()).toEqual([]);
+          expect(homeEntries(home)).toEqual([]);
+          NodeFS.rmSync(root, { recursive: true, force: true });
+        }).pipe(Effect.provide(layer)),
+      180_000,
     );
   });
 
