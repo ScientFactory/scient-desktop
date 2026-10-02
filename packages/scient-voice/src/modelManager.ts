@@ -112,7 +112,8 @@ export class VoiceModelManager {
 
     const ready =
       (await this.hasVerifiedReceipt()) ||
-      (!this.sharedCopySkipped && (await this.takeSharedCopy()));
+      // A download may have started while the receipt was being read.
+      (!this.sharedCopySkipped && !this.activeDownload && (await this.takeSharedCopy()));
     if (ready) {
       await this.offerToShare();
       return {
@@ -168,6 +169,10 @@ export class VoiceModelManager {
     signal: AbortSignal,
     onProgress?: VoiceModelDownloadProgressCallback,
   ): Promise<string> {
+    if (this.activeDownload) {
+      throw new Error("The offline voice model is already downloading.");
+    }
+    await this.activeSharedCopy;
     if (this.activeDownload) {
       throw new Error("The offline voice model is already downloading.");
     }
@@ -371,9 +376,14 @@ export class VoiceModelManager {
         NodeFS.constants.COPYFILE_FICLONE,
       );
       await NodeFSP.chmod(this.sharedCopyPartialPath, 0o600);
+      // A transfer that began meanwhile owns the installation and its partial file.
+      if (this.activeDownload) {
+        await NodeFSP.rm(this.sharedCopyPartialPath, { force: true });
+        return false;
+      }
       await this.installVerified(this.sharedCopyPartialPath);
-      // A download that had only started is no longer needed.
-      await NodeFSP.rm(this.partialPath, { force: true });
+      // A download left unfinished earlier is no longer needed.
+      if (!this.activeDownload) await NodeFSP.rm(this.partialPath, { force: true });
       return true;
     } catch {
       // The shared folder is a convenience. A copy that cannot be read or
@@ -381,12 +391,16 @@ export class VoiceModelManager {
       // and a verified download then replaces the shared copy.
       this.sharedCopySkipped = true;
       this.sharedCopyFailedVerification = true;
+      this.offeredToShare = false;
       await NodeFSP.rm(this.sharedCopyPartialPath, { force: true }).catch(() => undefined);
       return false;
     }
   }
 
-  /** Adds this installation's verified model to the shared folder, once per process. */
+  /**
+   * Adds this installation's verified model to the shared folder: once per
+   * process, and again after a shared copy was found damaged.
+   */
   private async offerToShare(): Promise<void> {
     if (this.sharedModelPath === null || this.offeredToShare) return;
     this.offeredToShare = true;

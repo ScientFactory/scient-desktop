@@ -488,12 +488,28 @@ describe("DesktopVoice in development apps on one machine", () => {
     };
   }
 
-  it("has no shared folder in a released app", () => {
+  it("has no shared folder in a packaged app, even one pointed at a dev server", () => {
+    const homeDirectory = "/Users/a";
     expect(
-      resolveDevelopmentSharedVoiceDirectory({ isDevelopment: false, homeDirectory: "/Users/a" }),
+      resolveDevelopmentSharedVoiceDirectory({
+        isDevelopment: false,
+        isPackaged: true,
+        homeDirectory,
+      }),
     ).toBeNull();
     expect(
-      resolveDevelopmentSharedVoiceDirectory({ isDevelopment: true, homeDirectory: "/Users/a" }),
+      resolveDevelopmentSharedVoiceDirectory({
+        isDevelopment: true,
+        isPackaged: true,
+        homeDirectory,
+      }),
+    ).toBeNull();
+    expect(
+      resolveDevelopmentSharedVoiceDirectory({
+        isDevelopment: true,
+        isPackaged: false,
+        homeDirectory,
+      }),
     ).toBe("/Users/a/.scient-next/dev-shared/voice");
   });
 

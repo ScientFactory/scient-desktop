@@ -209,6 +209,58 @@ describe("the development runtime cache", () => {
     expect(await isStagedWhisperRuntime(entry, "mac", "arm64")).toBe(true);
   });
 
+  it("does not accept a runtime whose helper is a link to a file elsewhere", async () => {
+    const { cacheRoot, checkout } = await workspace();
+    await stage(checkout("first"));
+    const helper = NodePath.join(checkout("first"), "whisper-server");
+    const elsewhere = NodePath.join(NodePath.dirname(cacheRoot), "elsewhere");
+    await NodeFSP.rename(helper, elsewhere);
+    await NodeFSP.symlink(elsewhere, helper);
+    // The bytes match the receipt, but a copy of it would depend on `elsewhere`.
+    expect(await isStagedWhisperRuntime(checkout("first"), "mac", "arm64")).toBe(false);
+    expect(await sync(cacheRoot, checkout("first"))).toBe("missing");
+    await expect(NodeFSP.stat(cacheRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("lets several checkouts publish and restore at the same moment", async () => {
+    const { cacheRoot, checkout } = await workspace();
+    const publishers = ["a", "b", "c", "d"].map((name) => checkout(name));
+    await Promise.all(publishers.map((directory) => stage(directory)));
+    const published = await Promise.all(publishers.map((directory) => sync(cacheRoot, directory)));
+    // Each either shared its copy or found another checkout's identical one in place.
+    for (const outcome of published) expect(["cached", "current"]).toContain(outcome);
+    const entry = developmentRuntimeCacheEntry(cacheRoot, "mac", "arm64");
+    expect(await isStagedWhisperRuntime(entry, "mac", "arm64")).toBe(true);
+    expect(await NodeFSP.readdir(cacheRoot)).toEqual([NodePath.basename(entry)]);
+
+    const takers = ["e", "f", "g", "h"].map((name) => checkout(name));
+    expect(await Promise.all(takers.map((directory) => sync(cacheRoot, directory)))).toEqual([
+      "restored",
+      "restored",
+      "restored",
+      "restored",
+    ]);
+    for (const directory of takers)
+      expect(await isStagedWhisperRuntime(directory, "mac", "arm64")).toBe(true);
+    expect(await NodeFSP.readdir(cacheRoot)).toEqual([NodePath.basename(entry)]);
+  });
+
+  it("never gives a checkout a copy that does not verify", async () => {
+    const { cacheRoot, checkout } = await workspace();
+    const entry = developmentRuntimeCacheEntry(cacheRoot, "mac", "arm64");
+    await stage(entry);
+    // A checkout with a stale, incomplete runtime of its own takes the cached one whole.
+    await NodeFSP.mkdir(checkout("second"), { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(checkout("second"), "whisper-server"), "stale");
+    expect(await sync(cacheRoot, checkout("second"))).toBe("restored");
+    expect(
+      await NodeFSP.readFile(NodePath.join(checkout("second"), "whisper-server"), "utf8"),
+    ).toBe("helper");
+    expect(await NodeFSP.readdir(NodePath.dirname(checkout("second")))).toEqual([
+      "whisper-runtime",
+    ]);
+  });
+
   it("uses the cache only when asked: packaging stages from pinned sources", () => {
     expect(parseArguments(["--platform", "mac", "--arch", "arm64"]).developmentCache).toBe("off");
     expect(parseArguments(["--verbose", "--dev-cache"]).developmentCache).toBe("use");

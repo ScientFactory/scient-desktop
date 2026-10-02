@@ -225,13 +225,14 @@ export function recommendVoiceModel(
  * Where development apps on this machine keep what they can share for voice:
  * verified models, and the model last chosen in any of them. Each dev app has
  * its own state, so without this every new one downloads and sets up voice
- * again. A released app has no such folder.
+ * again. A packaged app has no such folder, even one pointed at a dev server.
  */
 export function resolveDevelopmentSharedVoiceDirectory(input: {
   readonly isDevelopment: boolean;
+  readonly isPackaged: boolean;
   readonly homeDirectory: string;
 }): string | null {
-  return input.isDevelopment
+  return input.isDevelopment && !input.isPackaged
     ? NodePath.join(input.homeDirectory, SCIENT_DESKTOP_IDENTITY.baseDirName, "dev-shared", "voice")
     : null;
 }

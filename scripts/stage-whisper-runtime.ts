@@ -422,10 +422,11 @@ export function developmentRuntimeCacheEntry(
 
 /**
  * Whether a folder holds this exact pinned runtime, complete: its receipt
- * names this version, commit, platform and architecture, and every file is
- * present with the recorded size and checksum. This catches a partial copy, a
- * damaged file and another version. It is not a defence against someone who
- * can already write to the user's files.
+ * names this version, commit, platform and architecture, and the folder holds
+ * exactly the recorded files, each an ordinary file of the recorded size and
+ * checksum. A link, a folder, a partial copy, a damaged file and another
+ * version all fail. It is not a defence against someone who can already write
+ * to the user's files.
  */
 export async function isStagedWhisperRuntime(
   directory: string,
@@ -448,6 +449,9 @@ export async function isStagedWhisperRuntime(
       !Array.isArray(files)
     )
       return false;
+    const entries = await NodeFSP.readdir(directory, { withFileTypes: true });
+    // A link would leave the copy depending on a file outside it.
+    if (!entries.every((entry) => entry.isFile())) return false;
     const actual = await collectFiles(directory);
     return (
       actual.some((file) => file.file === runtimeExecutableName(platform)) &&
@@ -466,23 +470,44 @@ export async function isStagedWhisperRuntime(
   }
 }
 
-async function replaceDirectoryWithCopy(source: string, destination: string): Promise<void> {
+/**
+ * Puts a verified copy of `source` at `destination`. The copy is checked
+ * before it is given its name, so the destination is this runtime, complete,
+ * or is left as it was. A destination that is already this runtime is kept:
+ * when two checkouts publish at once, either result is the same bytes.
+ */
+async function publishVerifiedCopy(input: {
+  readonly source: string;
+  readonly destination: string;
+  readonly platform: WhisperRuntimePlatform;
+  readonly arch: WhisperRuntimeArch;
+}): Promise<boolean> {
+  const { source, destination, platform, arch } = input;
   const pending = `${destination}.partial-${process.pid}-${NodeCrypto.randomBytes(4).toString("hex")}`;
   try {
     await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
-    await NodeFSP.cp(source, pending, { recursive: true, errorOnExist: true });
+    await NodeFSP.cp(source, pending, { recursive: true, errorOnExist: true, dereference: true });
+    if (!(await isStagedWhisperRuntime(pending, platform, arch))) return false;
+    if (await isStagedWhisperRuntime(destination, platform, arch)) return true;
     await NodeFSP.rm(destination, { recursive: true, force: true });
-    // Appears complete or not at all.
-    await NodeFSP.rename(pending, destination);
+    try {
+      await NodeFSP.rename(pending, destination);
+    } catch {
+      // Another checkout put its copy there between the two steps above.
+    }
+    return await isStagedWhisperRuntime(destination, platform, arch);
+  } catch {
+    return false;
   } finally {
-    await NodeFSP.rm(pending, { recursive: true, force: true });
+    await NodeFSP.rm(pending, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
 /**
  * Makes a checkout's runtime and the development cache agree without building
  * anything: a checkout that lacks the runtime takes the cached one, and a
- * checkout that has it adds it to the cache. Returns what it did.
+ * checkout that has it adds it to the cache. Returns what it did. The caller
+ * must own the checkout's runtime: no app of that checkout may be running.
  */
 export async function syncDevelopmentRuntimeCache(input: {
   readonly cacheRoot: string;
@@ -490,21 +515,22 @@ export async function syncDevelopmentRuntimeCache(input: {
   readonly platform: WhisperRuntimePlatform;
   readonly arch: WhisperRuntimeArch;
 }): Promise<"restored" | "cached" | "current" | "missing"> {
+  const { platform, arch } = input;
   const output = NodePath.resolve(input.output);
-  const entry = developmentRuntimeCacheEntry(input.cacheRoot, input.platform, input.arch);
-  const staged = await isStagedWhisperRuntime(output, input.platform, input.arch);
-  const cached = await isStagedWhisperRuntime(entry, input.platform, input.arch);
+  const entry = developmentRuntimeCacheEntry(input.cacheRoot, platform, arch);
+  const staged = await isStagedWhisperRuntime(output, platform, arch);
+  const cached = await isStagedWhisperRuntime(entry, platform, arch);
   if (staged && cached) return "current";
   if (staged) {
-    await replaceDirectoryWithCopy(output, entry);
-    return "cached";
+    // Not shared this time is not a failure: the checkout already has its runtime.
+    return (await publishVerifiedCopy({ source: output, destination: entry, platform, arch }))
+      ? "cached"
+      : "current";
   }
   if (!cached) return "missing";
-  await replaceDirectoryWithCopy(entry, output);
-  // The copy is checked too: another checkout may have replaced the entry meanwhile.
-  if (await isStagedWhisperRuntime(output, input.platform, input.arch)) return "restored";
-  await NodeFSP.rm(output, { recursive: true, force: true });
-  return "missing";
+  return (await publishVerifiedCopy({ source: entry, destination: output, platform, arch }))
+    ? "restored"
+    : "missing";
 }
 
 function hostPlatform(): WhisperRuntimePlatform {

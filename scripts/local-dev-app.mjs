@@ -829,7 +829,7 @@ export function shareDevelopmentVoiceRuntime({
     spawnSync(
       process.execPath,
       [NodePath.join(root, "scripts", "stage-whisper-runtime.ts"), "--dev-cache-only"],
-      { cwd: root, stdio: "ignore", timeout: 30_000 },
+      { cwd: root, stdio: "ignore", timeout: 10_000 },
     );
   } catch {
     // Voice then reports that it is unavailable, as it did before.
@@ -838,7 +838,6 @@ export function shareDevelopmentVoiceRuntime({
 
 async function runApp() {
   const paths = resolveLocalDevAppPaths();
-  shareDevelopmentVoiceRuntime({ root: paths.root });
   const coldClaimPath = process.env.SCIENT_DEV_COLD_CLAIM_PATH;
   let coldApprovedPath = null;
   if (coldClaimPath) {
@@ -903,6 +902,9 @@ async function runApp() {
   } else {
     removeDevelopmentLaunchFiles(paths.appPidPath, paths.backendPidPath);
   }
+  // Only the owning runner, with no app of this checkout running, may change
+  // the checkout's helper.
+  shareDevelopmentVoiceRuntime({ root: paths.root });
   const pnpmExecPath = process.env.npm_execpath?.trim();
   const devDesktopArgs = ["dev:desktop"];
   if (paths.role === "stable") {
