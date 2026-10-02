@@ -254,10 +254,7 @@ export async function readSharedVoiceSelection(directory: string): Promise<Voice
 }
 
 /** Best effort: a dev app that cannot record its choice still works. */
-export async function writeSharedVoiceSelection(
-  directory: string,
-  modelId: VoiceModelId,
-): Promise<void> {
+async function writeSharedVoiceSelection(directory: string, modelId: VoiceModelId): Promise<void> {
   const path = NodePath.join(directory, SHARED_SELECTION_FILE);
   const pendingPath = `${path}.tmp-${process.pid}`;
   try {
