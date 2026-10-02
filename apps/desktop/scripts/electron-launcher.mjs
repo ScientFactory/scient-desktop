@@ -43,7 +43,7 @@ const APP_BUNDLE_ID = isDevelopment
   ? `com.scientfactory.scient.next.dev.${devBundleIdSuffix || "local"}`
   : "com.scientfactory.scient.next";
 const APP_PROTOCOL_SCHEMES = isDevelopment ? ["scient-next-dev"] : ["scient-next"];
-const LAUNCHER_VERSION = 23;
+const LAUNCHER_VERSION = 24;
 const developmentMacIconPngPath = NodePath.join(
   repoRoot,
   "assets",
@@ -352,6 +352,17 @@ export function developmentBootstrapConfig({
   };
 }
 
+/**
+ * The package name of a dev bundle. Electron files the app's storage key in
+ * the macOS keychain under it ("<name> Safe Storage"), and macOS lets only the
+ * app that created an entry read it without asking. One name per bundle
+ * identity gives every candidate an entry of its own; a name shared by all of
+ * them made each new candidate ask for the login password.
+ */
+export function developmentBootstrapPackageName(bundleIdSuffix) {
+  return `scient-next-dev-${bundleIdSuffix || "local"}`;
+}
+
 function writeDevelopmentBootstrap(appBundlePath) {
   const resourcesAppPath = NodePath.join(appBundlePath, "Contents", "Resources", "app");
   NodeFS.mkdirSync(resourcesAppPath, { recursive: true });
@@ -362,7 +373,10 @@ function writeDevelopmentBootstrap(appBundlePath) {
       : NodePath.join(repoRoot, ".scient-next");
   NodeFS.writeFileSync(
     NodePath.join(resourcesAppPath, "package.json"),
-    `${JSON.stringify({ name: "scient-next-dev-bootstrap", main: "bootstrap.cjs" })}\n`,
+    `${JSON.stringify({
+      name: developmentBootstrapPackageName(devBundleIdSuffix),
+      main: "bootstrap.cjs",
+    })}\n`,
   );
   NodeFS.writeFileSync(
     NodePath.join(resourcesAppPath, "scient-dev-bootstrap.json"),
