@@ -174,7 +174,11 @@ describe("makeManagedServerProvider", () => {
             refreshOnInterval: false,
           });
           yield* provider.refresh;
-          yield* Ref.update(probe, (snapshot) => ({ ...snapshot, models: [], status: "warning" }));
+          yield* Ref.update(probe, (snapshot) => ({
+            ...snapshot,
+            models: [],
+            status: "warning" as const,
+          }));
           const missing = yield* provider.refresh;
           assert.isDefined(missing.models[0]?.unavailableReason);
           yield* Ref.set(settings, { account: "work" });
