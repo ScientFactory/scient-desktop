@@ -57,9 +57,17 @@ export function InsertMenuContent(props: {
   }, [searchTakesFocus]);
   const run = (command: () => void) => (props.onRun ? props.onRun(command) : command());
   const actionById = new Map(props.actions.map((action) => [action.id, action]));
-  const renderAction = (id: string) => {
+  // In the flat list of search results, rows without an icon keep its column,
+  // so every name starts at the same place.
+  const anyIcon = props.actions.some((action) => action.icon);
+  const renderAction = (id: string, keepIconColumn = false) => {
     const action = actionById.get(id);
     if (!action) return null;
+    const icon =
+      action.icon ??
+      (keepIconColumn && anyIcon ? (
+        <span className="-mx-0.5 size-4 shrink-0" aria-hidden="true" />
+      ) : null);
     const reason = props.unavailableReason ?? action.disabledReason;
     return (
       <DockCommandItem
@@ -70,7 +78,7 @@ export function InsertMenuContent(props: {
         title={reason}
         onClick={() => run(action.run)}
       >
-        <MenuRow icon={action.icon} label={action.label} shortcut={action.shortcut} />
+        <MenuRow icon={icon} label={action.label} shortcut={action.shortcut} />
       </DockCommandItem>
     );
   };
@@ -99,8 +107,8 @@ export function InsertMenuContent(props: {
           ref={input}
           aria-label="Search insert options"
           placeholder="Search insert options…"
-          // As one section of a larger menu it is reached by pointer or by
-          // moving through the items, so the menu opens on its first item.
+          // As one section of a larger menu it is a pointer convenience: the
+          // menu opens on its first item and the keyboard walks the items.
           tabIndex={searchTakesFocus ? undefined : -1}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -127,13 +135,13 @@ export function InsertMenuContent(props: {
         {needle ? (
           <>
             {tableMatches && table}
-            {filtered.map((action) => renderAction(action.id))}
+            {filtered.map((action) => renderAction(action.id, true))}
             {!filtered.length && !tableMatches && (
               <p className="scient-insert-empty">No matching elements.</p>
             )}
           </>
         ) : (
-          props.layout(renderAction, table)
+          props.layout((id) => renderAction(id), table)
         )}
       </div>
     </div>

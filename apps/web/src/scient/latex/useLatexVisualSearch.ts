@@ -17,19 +17,16 @@ export const LatexVisualSearch = Extension.create({
   addProseMirrorPlugins: () => [scientMarkdownSearchPlugin()],
 });
 
-interface Replacement {
-  readonly from: number;
-  readonly to: number;
-  /** What is replaced, to notice a document that changed in the meantime. */
-  readonly text: string;
-}
-
 /**
  * Replaces the matches one text block at a time, last block first so earlier
  * positions stay valid. `commit` writes a block to the source; the next block
  * waits for a paint, because the source owner takes one edit per update.
- * It stops at the first block the source refuses, and when the text is no
- * longer what was matched. Returns a function that stops the remaining work.
+ *
+ * The positions were found in one document. The work therefore stops as soon
+ * as the document is anything other than what the previous replacement left:
+ * typing, undo, or a newer file from disk all end it. It also stops at the
+ * first block the source refuses, and while text is being composed.
+ * Returns a function that stops the remaining work.
  */
 function replaceByBlock(
   editor: Editor,
@@ -39,31 +36,26 @@ function replaceByBlock(
 ): () => void {
   let cancel = () => {};
   // Pending typing goes to the source first, so each block below is one change.
-  if (!commit()) return cancel;
-  const blocks = new Map<number, Replacement[]>();
+  if (editor.view.composing || !commit()) return cancel;
+  const blocks = new Map<number, { readonly from: number; readonly to: number }[]>();
   for (const { from, to } of targets) {
     const block = editor.state.doc.resolve(from).start();
-    const text = editor.state.doc.textBetween(from, to);
-    blocks.set(block, [...(blocks.get(block) ?? []), { from, to, text }]);
+    blocks.set(block, [...(blocks.get(block) ?? []), { from, to }]);
   }
   const order = [...blocks.keys()].sort((a, b) => b - a);
+  let expected = editor.state.doc;
   const replaceBlock = (index: number) => {
     cancel = () => {};
     const matches = blocks.get(order[index]!);
-    if (!matches || editor.isDestroyed || !editor.isEditable) return;
-    const before = editor.state.doc;
-    if (
-      matches.some(
-        ({ from, to, text }) => to > before.content.size || before.textBetween(from, to) !== text,
-      )
-    )
-      return;
+    if (!matches || editor.isDestroyed || !editor.isEditable || editor.view.composing) return;
+    if (editor.state.doc !== expected) return;
     let transaction = editor.state.tr;
     for (const match of matches.toReversed())
       transaction = transaction.insertText(replacement, match.from, match.to);
     editor.view.dispatch(index === 0 ? transaction.scrollIntoView() : transaction);
     // The editor refuses an edit its source cannot hold.
-    if (editor.state.doc === before || !commit()) return;
+    if (editor.state.doc === expected || !commit()) return;
+    expected = editor.state.doc;
     if (index + 1 < order.length) cancel = afterEditorPaint(() => replaceBlock(index + 1));
   };
   replaceBlock(0);

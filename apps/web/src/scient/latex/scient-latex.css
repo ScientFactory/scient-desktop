@@ -3550,3 +3550,9 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   height: 22px;
   min-height: 0;
 }
+
+/* Build messages: the mark sits on the first line of its message. */
+.scient-latex-diagnostic > svg {
+  align-self: flex-start;
+  margin-top: 1px;
+}

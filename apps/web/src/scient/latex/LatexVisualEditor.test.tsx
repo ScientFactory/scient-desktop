@@ -338,6 +338,45 @@ describe("writing editor source transactions", () => {
     }
   });
 
+  it("stops replacing when the document changes under it, and never touches the new text", async () => {
+    const headerSlot = document.createElement("div");
+    document.body.append(headerSlot);
+    try {
+      await mount(
+        ["First cat and cat.", "", "Middle cat.", "", "Last cat."].join("\n"),
+        "",
+        headerSlot,
+      );
+      await act(() =>
+        headerSlot
+          .querySelector<HTMLButtonElement>('button[aria-label^="Search Document"]')!
+          .click(),
+      );
+      const bar = container.querySelector(".scient-markdown-find-bar")!;
+      await setField(bar.querySelector<HTMLInputElement>("input[aria-label='Find text']")!, "cat");
+      expect(bar.textContent).toContain("1 of 4");
+      await act(() => bar.querySelector<HTMLButtonElement>("[aria-label='Show replace']")!.click());
+      await setField(
+        bar.querySelector<HTMLInputElement>("input[aria-label='Replacement text']")!,
+        "dog",
+      );
+      await act(() => {
+        bar.querySelector<HTMLButtonElement>("[aria-label='Replace all matches']")!.click();
+        // The last paragraph is done; the others wait for a paint. The writer
+        // types the searched word at the very start before that paint.
+        editor().commands.insertContentAt(1, "cat ");
+      });
+      await act(() => {});
+      expect(current).toContain("Last dog.");
+      // The positions found earlier no longer point at the same words.
+      expect(current).toContain("cat First cat and cat.");
+      expect(current).toContain("Middle cat.");
+      expect(container.textContent).not.toContain("could not");
+    } finally {
+      headerSlot.remove();
+    }
+  });
+
   it("offers the Markdown bar's inline formatting in the same order, without strikethrough", async () => {
     await mount();
     const toolbar = container.querySelector('[role="toolbar"][aria-label="Writing tools"]')!;

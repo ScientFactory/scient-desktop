@@ -84,6 +84,8 @@ describe("approximate LaTeX word count", () => {
       "\\verb|never closed ".repeat(40000),
       "\\textbf[ word ".repeat(40000),
       "\\url{never closed ".repeat(40000),
+      "\\begin{never closed ".repeat(40000),
+      `${"\\url{one far closer ".repeat(40000)}}`,
     ]) {
       const started = performance.now();
       expect(countLatexWords(source)).toBeGreaterThan(30000);

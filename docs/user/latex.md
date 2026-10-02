@@ -93,8 +93,8 @@ to the pane width; the fit follows pane resizing automatically. Actual size is
 in More. Search opens a find and replace bar under the writing toolbar, with
 Replace and Replace all. Replace all works through the document one paragraph
 at a time, so a very long document takes a few seconds, and each paragraph is
-its own undo step. Text inside figures, tables and other objects is not
-searched.
+its own undo step. It stops if you type or undo while it is working. Text
+inside figures, tables and other objects is not searched.
 
 A thin footer stays under the document. On the left it shows the options of the
 selected object, such as a table, figure, equation or statement. On the right it

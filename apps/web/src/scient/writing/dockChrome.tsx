@@ -229,7 +229,8 @@ export function MenuRow(props: {
   readonly shortcut?: ShortcutPresentation | undefined;
 }) {
   return (
-    <span className="flex w-full items-center gap-2">
+    // The icon takes the same room as an icon placed directly in a menu item.
+    <span className="flex w-full items-center gap-2 [&>svg]:-mx-0.5">
       {props.icon}
       {props.label}
       {props.shortcut ? (

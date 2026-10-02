@@ -30,14 +30,17 @@ function stripNonProse(text: string): string {
   };
   // The end of an inline literal that opens at `from` and closes with `closer`
   // on the same line, or -1. The search is bounded, so many unclosed ones stay cheap.
-  const inlineEnd = (closer: string, from: number): number => {
-    const limit = Math.min(text.length, from + INLINE_LITERAL_LIMIT);
-    for (let at = from; at < limit; at += 1) {
-      const character = text[at];
-      if (character === "\n") return -1;
-      if (character === closer) return at;
-    }
-    return -1;
+  // A stretch already searched is not searched again, so many openers that
+  // share one far closer, or have none, cost one pass.
+  const searched = new Map<string, { readonly from: number; readonly to: number }>();
+  const inlineEnd = (closer: string, from: number, limit = INLINE_LITERAL_LIMIT): number => {
+    const stop = Math.min(text.length, from + limit);
+    const known = searched.get(closer);
+    const resumes = known !== undefined && from >= known.from && from <= known.to;
+    let at = resumes ? known.to : from;
+    while (at < stop && text[at] !== "\n" && text[at] !== closer) at += 1;
+    searched.set(closer, { from: resumes ? known.from : from, to: at });
+    return at < stop && text[at] === closer ? at : -1;
   };
   let out = "";
   let index = 0;
@@ -78,7 +81,7 @@ function stripNonProse(text: string): string {
         }
       }
       if (text.startsWith("\\begin{", index)) {
-        const nameEnd = text.indexOf("}", index + 7);
+        const nameEnd = inlineEnd("}", index + 7, 80);
         const name = nameEnd === -1 ? "" : text.slice(index + 7, nameEnd);
         if (SKIPPED_ENVIRONMENT.test(name)) {
           const closer = `\\end{${name}}`;
