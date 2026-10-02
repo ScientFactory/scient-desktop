@@ -88,13 +88,15 @@ rich or nested content that its adapter cannot preserve is disabled. Custom
 source-only lists remain editable in LaTeX source.
 
 PDF, Visual and Split use one header row. From the left it holds the sidebar
-button, the page number and arrows, the zoom, then the view switch; search,
-Rebuild and More are on the right. The view switch stays in the same place in
+button, the page number and arrows, the zoom, the view switch, then a search
+field; Rebuild and More are on the right. Click the search field and type: the
+count and two arrows appear at its end, Enter moves to the next result, and
+Escape clears it. Ctrl/Cmd+F puts the caret there. The view switch stays in the same place in
 Source, where the room before it is empty. Minus and plus sit on either side of the zoom percentage and use
 five-percent steps in the 25–500% range. Click the percentage to fit the page
 to the pane width; the fit follows pane resizing automatically. Actual size is
-in More. Search opens a find and replace bar under the writing toolbar, with
-Replace and Replace all. Replace all works through the document one paragraph
+in More. In Visual, **More > Find and replace** opens the full bar under the writing
+toolbar, with Replace and Replace all. Replace all works through the document one paragraph
 at a time, so a very long document takes a few seconds, and each paragraph is
 its own undo step. It stops if you type or undo while it is working. Text
 inside figures, tables and other objects is not searched.

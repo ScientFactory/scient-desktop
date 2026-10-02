@@ -96,15 +96,17 @@ afterEach(async () => {
   reloadKeyboardPreferences();
   vi.unstubAllGlobals();
 });
-it("find owns only its exact chord and closes with Escape", async () => {
+it("find owns only its exact chord and puts the caret in the search field", async () => {
   const target = host.querySelector<HTMLElement>(".scient-pdf-reader")!;
+  const field = () => host.querySelector<HTMLInputElement>('input[aria-label="Search PDF"]')!;
+  expect(field()).not.toBeNull();
   await act(() => target.dispatchEvent(key("f", { ctrlKey: true, shiftKey: true })));
-  expect(host.querySelector(".scient-pdf-searchbar")).toBeNull();
+  expect(document.activeElement).not.toBe(field());
   const event = key("f", { ctrlKey: true });
   await act(() => target.dispatchEvent(event));
   expect(event.defaultPrevented).toBe(true);
-  expect(host.querySelector(".scient-pdf-searchbar")).not.toBeNull();
-  await act(() => target.dispatchEvent(key("Escape")));
+  expect(document.activeElement).toBe(field());
+  // There is no separate search bar any more.
   expect(host.querySelector(".scient-pdf-searchbar")).toBeNull();
 });
 it("uses document zoom without claiming application zoom and updates active bindings", async () => {

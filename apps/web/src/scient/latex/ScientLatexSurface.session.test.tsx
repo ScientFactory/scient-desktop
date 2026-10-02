@@ -363,7 +363,7 @@ describe("the LaTeX surface on a document session", () => {
       expect(visual.host?.trailing).toBeTruthy();
       expect(visual.host?.moreActions).toBeTruthy();
       // Only Split has a second switch to offer.
-      expect(visual.host?.beforeSearch).toBeNull();
+      expect(visual.host?.beforeTrailing).toBeNull();
     });
 
     it("keeps its own Rebuild until some controls are drawn in the row", async () => {
@@ -402,7 +402,7 @@ describe("the LaTeX surface on a document session", () => {
       await mount("split");
       expect(slot().hidden).toBe(false);
       expect(reader.host?.slot).toBe(slot());
-      expect(reader.host?.beforeSearch).toBeTruthy();
+      expect(reader.host?.beforeTrailing).toBeTruthy();
       expect(reader.host?.trailing).toBeTruthy();
     });
 

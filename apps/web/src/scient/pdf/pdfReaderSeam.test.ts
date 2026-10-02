@@ -176,7 +176,7 @@ describe("Scient PDF reader source seam", () => {
     expect(source).toContain('className="scient-pdf-action-zoom-step"');
     expect(source).not.toContain('className="scient-pdf-action-fit"');
     expect(source).not.toContain('className="scient-pdf-action-rotate"');
-    expect(source).toContain('className="scient-pdf-action-search"');
+    expect(controlsSource).toContain('className="scient-reader-search"');
     expect(source).toContain("<ZoomOut /> Zoom out");
     expect(source).toContain("<Scan /> Actual size");
     expect(source).toContain("<ZoomIn /> Zoom in");

@@ -8,8 +8,7 @@
 .scient-document-controls button:not(:disabled) {
   cursor: pointer;
 }
-.scient-pdf-toolbar,
-.scient-pdf-searchbar {
+.scient-pdf-toolbar {
   display: flex;
   min-height: 36px;
   flex: none;
@@ -82,11 +81,6 @@
 }
 
 .scient-pdf-page-control input:focus,
-.scient-pdf-searchbar input:focus {
-  border-color: var(--ring);
-  box-shadow: 0 0 0 1px var(--ring);
-}
-
 /* Zoom out and in: slightly smaller, and close to the percentage between them. */
 .scient-pdf-toolbar-button.scient-pdf-action-zoom-step {
   width: 22px;
@@ -112,29 +106,6 @@
   color: var(--accent-foreground);
 }
 
-.scient-pdf-searchbar {
-  gap: 5px;
-  padding-inline-start: 12px;
-}
-
-.scient-pdf-searchbar input {
-  min-width: 80px;
-  flex: 1;
-  border: 0;
-  background: transparent;
-  color: var(--foreground);
-  font-size: 12px;
-  outline: none;
-}
-
-.scient-pdf-find-count {
-  min-width: 52px;
-  color: var(--muted-foreground);
-  text-align: end;
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-}
-
 @container scient-document-controls (max-width: 439px) {
   .scient-pdf-toolbar-separator,
   .scient-pdf-zoom-label {
@@ -150,19 +121,83 @@
 }
 
 @container scient-document-controls (max-width: 239px) {
-  .scient-pdf-action-search,
-  .scient-pdf-searchbar > svg,
-  .scient-pdf-find-count {
+  .scient-reader-search-count {
     display: none;
-  }
-
-  .scient-pdf-searchbar {
-    padding-inline: 8px;
   }
 }
 
-@container scient-document-controls (max-width: 199px) {
-  .scient-pdf-search-secondary {
-    display: none;
-  }
+/* Search rests like the sidebar's: an icon and "Search", no frame. */
+.scient-reader-search {
+  display: flex;
+  height: 26px;
+  /* The same width before and while searching, so nothing moves on the first
+     key; it takes free room up to a comfortable width. */
+  min-width: 150px;
+  max-width: 260px;
+  flex: 1 1 220px;
+  overflow: hidden;
+  align-items: center;
+  gap: 6px;
+  margin-inline: 2px;
+  border-radius: 6px;
+  padding-inline: 7px;
+  color: var(--muted-foreground);
+  cursor: text;
+}
+.scient-reader-search:hover,
+.scient-reader-search:focus-within {
+  background: color-mix(in srgb, var(--accent) 80%, transparent);
+}
+.scient-reader-search:focus-within,
+.scient-reader-search[data-searching] {
+  color: var(--foreground);
+}
+.scient-reader-search-icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+.scient-reader-search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.scient-reader-search input::placeholder {
+  color: var(--muted-foreground);
+}
+.scient-reader-search-count {
+  flex: none;
+  color: var(--muted-foreground);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.scient-reader-search button {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: var(--muted-foreground);
+}
+.scient-reader-search button:not(:disabled) {
+  cursor: pointer;
+}
+.scient-reader-search button:hover:not(:disabled) {
+  background: var(--background);
+  color: var(--foreground);
+}
+.scient-reader-search button:disabled {
+  opacity: 0.4;
+}
+.scient-reader-search button svg {
+  width: 13px;
+  height: 13px;
 }

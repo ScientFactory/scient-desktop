@@ -1321,10 +1321,10 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       <>
         <div className="scient-pdf-toolbar-separator" />
         {viewSwitch}
-        {statusStrip}
       </>
     ),
-    beforeSearch: splitPreviewSwitch,
+    afterSearch: statusStrip,
+    beforeTrailing: splitPreviewSwitch,
     trailing: buildButton,
     moreActions: documentMenuItems,
     onHosted: onReaderHosted,
@@ -1335,7 +1335,13 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       className="scient-latex-surface"
       data-latex-layout={mode}
       dir="ltr"
-      onInputCapture={() => setLastEditAt(Date.now())}
+      onInputCapture={(event) => {
+        // A one-line field in the chrome (search, page number) is not an edit
+        // of the document. Re-rendering here, between the key going in and the
+        // field reading it, also resets that field and swallows the key.
+        if (event.target instanceof HTMLInputElement) return;
+        setLastEditAt(Date.now());
+      }}
     >
       <div
         ref={headerRow}

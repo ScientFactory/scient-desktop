@@ -73,6 +73,19 @@ describe("writing editor source transactions", () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
+  // The full find and replace bar opens from the reader controls' More menu.
+  async function openFindAndReplace(headerSlot: HTMLElement) {
+    await act(() =>
+      headerSlot
+        .querySelector<HTMLButtonElement>('button[aria-label="More Document actions"]')!
+        .click(),
+    );
+    const item = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (element) => element.textContent?.trim() === "Find and replace",
+    )!;
+    expect(item).toBeDefined();
+    await act(() => item.click());
+  }
   function editor(): Editor {
     return (container.querySelector(".ProseMirror") as HTMLElement & { editor: Editor }).editor;
   }
@@ -196,8 +209,11 @@ describe("writing editor source transactions", () => {
     expect(container.querySelector(".scient-latex-document-tools")).toBeNull();
     const context = container.querySelector(".scient-latex-context-tools")!;
     // The percentage fits the width; there is no separate Fit width button.
-    expect(context.previousElementSibling?.getAttribute("aria-label")).toMatch(/^Zoom in/);
-    expect(context.nextElementSibling?.getAttribute("aria-label")).toMatch(/^Search Document/);
+    expect(
+      context.previousElementSibling?.previousElementSibling?.getAttribute("aria-label"),
+    ).toMatch(/^Zoom in/);
+    // Search is a field right after the zoom; the object options follow it.
+    expect(context.previousElementSibling?.className).toBe("scient-reader-search");
     expect(context.querySelector(".scient-latex-context-tools-slot")).not.toBeNull();
     expect(container.querySelector('[aria-label="Selected object properties"]')).toBeNull();
   });
@@ -227,11 +243,7 @@ describe("writing editor source transactions", () => {
         "2 of 4 words",
       );
       // Search opens under the writing row, next to the controls that opened it.
-      await act(() =>
-        headerSlot
-          .querySelector<HTMLButtonElement>('button[aria-label^="Search Document"]')!
-          .click(),
-      );
+      await openFindAndReplace(headerSlot);
       // The same find and replace bar as the Markdown editor.
       const search = container.querySelector(".scient-markdown-find-bar")!;
       expect(search).not.toBeNull();
@@ -256,11 +268,7 @@ describe("writing editor source transactions", () => {
     document.body.append(headerSlot);
     try {
       await mount("One cat, two cats, three Cats.", "", headerSlot);
-      await act(() =>
-        headerSlot
-          .querySelector<HTMLButtonElement>('button[aria-label^="Search Document"]')!
-          .click(),
-      );
+      await openFindAndReplace(headerSlot);
       const bar = container.querySelector(".scient-markdown-find-bar")!;
       await setField(bar.querySelector<HTMLInputElement>("input[aria-label='Find text']")!, "cat");
       expect(bar.textContent).toContain("1 of 3");
@@ -302,11 +310,7 @@ describe("writing editor source transactions", () => {
         "",
         headerSlot,
       );
-      await act(() =>
-        headerSlot
-          .querySelector<HTMLButtonElement>('button[aria-label^="Search Document"]')!
-          .click(),
-      );
+      await openFindAndReplace(headerSlot);
       const bar = container.querySelector(".scient-markdown-find-bar")!;
       await setField(bar.querySelector<HTMLInputElement>("input[aria-label='Find text']")!, "cat");
       expect(bar.textContent).toContain("1 of 5");
@@ -343,11 +347,7 @@ describe("writing editor source transactions", () => {
     document.body.append(headerSlot);
     try {
       await mount(["cat cat.", "", "Last cat."].join("\n"), "", headerSlot);
-      await act(() =>
-        headerSlot
-          .querySelector<HTMLButtonElement>('button[aria-label^="Search Document"]')!
-          .click(),
-      );
+      await openFindAndReplace(headerSlot);
       const bar = container.querySelector(".scient-markdown-find-bar")!;
       await setField(bar.querySelector<HTMLInputElement>("input[aria-label='Find text']")!, "cat");
       expect(bar.textContent).toContain("1 of 3");

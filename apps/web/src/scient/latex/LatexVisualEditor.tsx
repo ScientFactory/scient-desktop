@@ -58,7 +58,8 @@ import type { EditorView } from "@tiptap/pm/view";
 import { LatexInsertMenu, LatexInsertMenuContent, type LatexInsertAction } from "./LatexInsertMenu";
 import { LatexDocumentSettings, type LatexDocumentSettingsSection } from "./LatexDocumentSettings";
 import { LatexContextTools } from "./LatexContextTools";
-import { DocumentReaderControls } from "../writing/DocumentReaderControls";
+import { DocumentReaderControls, type ReaderSearch } from "../writing/DocumentReaderControls";
+import { DropdownMenuItem } from "~/components/ui/menu";
 import { ScientFindBar } from "../writing/ScientFindBar";
 import { ReaderBarHostContext, useHostedReaderShortcuts } from "../writing/readerBarHost";
 import { DocumentFooter } from "../writing/DocumentFooter";
@@ -148,6 +149,7 @@ import { clampPdfPage, stepPdfZoom } from "../pdf/pdfReaderModel";
 import { useLatexPinchZoom } from "./useLatexPinchZoom";
 import {
   LayoutList,
+  Replace,
   Heading1,
   Heading2,
   Heading3,
@@ -4147,6 +4149,34 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     [],
   );
   const find = useLatexVisualSearch(editor, !readOnly, commitTyping);
+  // Search is a field in the reader controls; the full find and replace bar
+  // opens from their More menu.
+  const [searchFocus, setSearchFocus] = useState(0);
+  const findSnapshot = find.snapshot;
+  const findController = find.controller;
+  const headerSearch: ReaderSearch = {
+    query: findSnapshot.findQuery,
+    current: findSnapshot.findMatchCount > 0 ? findSnapshot.findActiveIndex + 1 : 0,
+    total: findSnapshot.findMatchCount,
+    notFound: findSnapshot.findQuery !== "" && findSnapshot.findMatchCount === 0,
+    focusRequest: searchFocus,
+    onQuery: (query) =>
+      findController.configureFind({
+        query,
+        caseSensitive: findSnapshot.findCaseSensitive,
+        wholeWord: findSnapshot.findWholeWord,
+      }),
+    onNavigate: (backwards) => findController.navigateFind(backwards ? -1 : 1),
+    onClear: () =>
+      find.open
+        ? find.close()
+        : findController.configureFind({ query: "", caseSensitive: false, wholeWord: false }),
+  };
+  const findAndReplaceItem = readOnly ? undefined : (
+    <DropdownMenuItem onClick={find.show}>
+      <Replace /> Find and replace
+    </DropdownMenuItem>
+  );
   const textStyle = useEditorState({
     editor,
     selector: ({ editor: current }) => ({
@@ -5273,7 +5303,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     });
   };
   readerAction.current = (command) => {
-    if (command === "pdf.find") find.show();
+    if (command === "pdf.find") setSearchFocus((request) => request + 1);
     else if (command === "pdf.zoomIn") changeZoom(stepPdfZoom(zoom, "in"));
     else if (command === "pdf.zoomOut") changeZoom(stepPdfZoom(zoom, "out"));
     else if (command === "pdf.actualSize") changeZoom(1);
@@ -6569,7 +6599,9 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                           onFitWidth={fitWidth}
                           onToggleSidebar={() => setNavigationOpen(!navigationOpen)}
                           onToggleSearch={() => (find.open ? find.close() : find.show())}
-                          onShowSearch={find.show}
+                          onShowSearch={() => setSearchFocus((request) => request + 1)}
+                          search={headerSearch}
+                          moreActions={findAndReplaceItem}
                           shortcutLabel={shortcutLabel}
                         />
                       </>
@@ -6636,7 +6668,9 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                       onFitWidth={fitWidth}
                       onToggleSidebar={() => setNavigationOpen(!navigationOpen)}
                       onToggleSearch={() => (find.open ? find.close() : find.show())}
-                      onShowSearch={find.show}
+                      onShowSearch={() => setSearchFocus((request) => request + 1)}
+                      search={headerSearch}
+                      moreActions={findAndReplaceItem}
                       shortcutLabel={shortcutLabel}
                     />
                   </footer>

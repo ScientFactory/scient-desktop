@@ -14,7 +14,7 @@ import { Button } from "~/components/ui/button";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { toastManager } from "~/components/ui/toast";
 import { ensureLocalApi } from "~/localApi";
-import { DocumentReaderControls, DocumentSearchBar } from "../writing/DocumentReaderControls";
+import { DocumentReaderControls } from "../writing/DocumentReaderControls";
 import { attachShortcutHost } from "../keyboard/host";
 import { useHostedReaderShortcuts } from "../writing/readerBarHost";
 import {
@@ -214,6 +214,7 @@ function LoadedScientPdfReader(props: {
   });
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchFocus, setSearchFocus] = useState(0);
   const [savingCopy, setSavingCopy] = useState(false);
   const saveCopyPendingRef = useRef(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -228,8 +229,10 @@ function LoadedScientPdfReader(props: {
       .join(" / ");
   const keyboardAction = useRef<(command: string) => boolean>(() => false);
   keyboardAction.current = (command) => {
-    if (command === "pdf.find") setSearchOpen(true);
-    else if (state.phase !== "ready") return false;
+    if (command === "pdf.find") {
+      setSearchOpen(true);
+      setSearchFocus((request) => request + 1);
+    } else if (state.phase !== "ready") return false;
     else if (command === "pdf.zoomIn") reader.setZoom(stepPdfZoom(state.scale, "in"));
     else if (command === "pdf.zoomOut") reader.setZoom(stepPdfZoom(state.scale, "out"));
     else if (command === "pdf.actualSize") reader.setZoomMode("page-actual");
@@ -438,7 +441,25 @@ function LoadedScientPdfReader(props: {
         onFitWidth={() => reader.setZoomMode("page-width")}
         onToggleSidebar={() => setSidebar(sidebar === "closed" ? "thumbnails" : "closed")}
         onToggleSearch={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
-        onShowSearch={() => setSearchOpen(true)}
+        onShowSearch={() => {
+          setSearchOpen(true);
+          setSearchFocus((request) => request + 1);
+        }}
+        search={{
+          query: searchQuery,
+          current: state.findCount.current,
+          total: state.findCount.total,
+          notFound: state.findPhase === "not-found",
+          focusRequest: searchFocus,
+          onFocus: () => setSearchOpen(true),
+          onQuery: (value) => {
+            setSearchOpen(true);
+            setSearchQuery(value);
+            reader.setSearchQuery(value);
+          },
+          onNavigate: reader.findAgain,
+          onClear: closeSearch,
+        }}
         shortcutLabel={shortcutLabel}
         moreActions={
           <>
@@ -472,21 +493,6 @@ function LoadedScientPdfReader(props: {
           </>
         }
       />
-      {searchOpen ? (
-        <DocumentSearchBar
-          label="Search this PDF"
-          query={searchQuery}
-          current={state.findCount.current}
-          total={state.findCount.total}
-          notFound={state.findPhase === "not-found"}
-          onQuery={(value) => {
-            setSearchQuery(value);
-            reader.setSearchQuery(value);
-          }}
-          onNavigate={reader.findAgain}
-          onClose={closeSearch}
-        />
-      ) : null}
       {state.scanned === true && state.phase === "ready" ? (
         <div className="scient-pdf-notice">
           No selectable text was detected on the opening pages. Search and copying may be limited.

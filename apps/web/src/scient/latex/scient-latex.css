@@ -3350,12 +3350,12 @@ body:has(.scient-latex-mathfield math-field:focus-within)
     justify-content: center;
   }
 }
-@container scient-latex-surface (max-width: 630px) {
+@container scient-latex-surface (max-width: 690px) {
   .scient-pdf-toolbar-hosted .scient-pdf-action-page-step {
     display: none;
   }
 }
-@container scient-latex-surface (max-width: 580px) {
+@container scient-latex-surface (max-width: 660px) {
   .scient-pdf-toolbar-hosted .scient-pdf-action-zoom-step {
     display: none;
   }
@@ -3560,8 +3560,8 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 /* With reader controls in the row, the view switch and the build status follow
    the zoom, inside the same toolbar. */
 .scient-pdf-toolbar-hosted > .scient-latex-status {
-  flex: 0 1 auto;
-  min-width: 0;
+  /* A count such as "1 warning" is read whole or not at all. */
+  flex: none;
 }
 
 /* The room the reader controls take in the other views, kept empty in Source. */
@@ -3606,4 +3606,34 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   padding: 4px 8px;
   color: var(--muted-foreground);
   font-size: 11px;
+}
+
+/* Narrower panes. Rebuild gives up its word first, so search keeps room for
+   the query; then the count goes, then the arrows (Enter still moves). */
+@container scient-latex-surface (max-width: 860px) {
+  .scient-latex-toolbar .scient-latex-build-action > span {
+    display: none;
+  }
+  .scient-latex-toolbar .scient-latex-build-action {
+    width: 28px;
+  }
+  .scient-pdf-toolbar-hosted .scient-reader-search {
+    min-width: 128px;
+  }
+}
+@container scient-latex-surface (max-width: 720px) {
+  .scient-pdf-toolbar-hosted .scient-reader-search {
+    min-width: 96px;
+  }
+  .scient-pdf-toolbar-hosted .scient-reader-search-count {
+    display: none;
+  }
+}
+@container scient-latex-surface (max-width: 600px) {
+  .scient-pdf-toolbar-hosted .scient-reader-search {
+    min-width: 30px;
+  }
+  .scient-pdf-toolbar-hosted .scient-reader-search button {
+    display: none;
+  }
 }

@@ -13,7 +13,6 @@ import {
   Plus,
   Scan,
   Search,
-  X,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -48,6 +47,96 @@ export function ReaderButton(
   );
 }
 
+/** What the search field in the reader controls shows and does. */
+export interface ReaderSearch {
+  readonly query: string;
+  /** The active result, counted from 1; 0 when there is none. */
+  readonly current: number;
+  readonly total: number;
+  readonly notFound: boolean;
+  /** Raised to move focus into the field, for example by Cmd+F. */
+  readonly focusRequest: number;
+  readonly onQuery: (query: string) => void;
+  readonly onNavigate: (backwards: boolean) => void;
+  /** Escape: forget the search. */
+  readonly onClear: () => void;
+  readonly onFocus?: (() => void) | undefined;
+}
+
+/**
+ * A search field that rests as quietly as the sidebar's: an icon and "Search",
+ * no frame. Click and type. Once there is a query, the count and two small
+ * arrows appear at its end.
+ */
+export function ReaderSearchField(props: ReaderSearch & { readonly label: string }) {
+  const input = useRef<HTMLInputElement>(null);
+  const { focusRequest } = props;
+  useEffect(() => {
+    if (!focusRequest) return;
+    input.current?.focus();
+    input.current?.select();
+  }, [focusRequest]);
+  const searching = props.query !== "";
+  return (
+    <div
+      className="scient-reader-search"
+      data-searching={searching ? "" : undefined}
+      onMouseDown={(event) => {
+        // The whole field takes the click, not only the text.
+        if (event.target instanceof Element && event.target.closest("input, button")) return;
+        event.preventDefault();
+        input.current?.focus();
+      }}
+    >
+      <Search className="scient-reader-search-icon" aria-hidden="true" />
+      <input
+        ref={input}
+        value={props.query}
+        placeholder="Search"
+        aria-label={`Search ${props.label}`}
+        spellCheck={false}
+        onFocus={props.onFocus}
+        onChange={(event) => props.onQuery(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing) return;
+          if (event.key === "Enter" || event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            props.onNavigate(event.key === "ArrowUp" || (event.key === "Enter" && event.shiftKey));
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            if (searching) props.onClear();
+            else input.current?.blur();
+          }
+        }}
+      />
+      {searching ? (
+        <>
+          <span className="scient-reader-search-count" aria-live="polite">
+            {props.total > 0 ? `${props.current}/${props.total}` : props.notFound ? "0/0" : ""}
+          </span>
+          <button
+            type="button"
+            aria-label="Previous result"
+            disabled={props.total === 0}
+            onClick={() => props.onNavigate(true)}
+          >
+            <ChevronDown className="rotate-180" />
+          </button>
+          <button
+            type="button"
+            aria-label="Next result"
+            disabled={props.total === 0}
+            onClick={() => props.onNavigate(false)}
+          >
+            <ChevronDown />
+          </button>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 /** PDF and Visual supply navigation adapters; all control interactions live here. */
 export function DocumentReaderControls(props: {
   label: string;
@@ -67,6 +156,8 @@ export function DocumentReaderControls(props: {
   shortcutLabel: (command: string) => string;
   moreActions?: ReactNode;
   contextControls?: ReactNode;
+  /** When given, search is a field in the row instead of a button. */
+  search?: ReaderSearch | undefined;
 }) {
   const [pageInput, setPageInput] = useState(String(props.page));
   const pendingSearch = useRef<(() => void) | null>(null);
@@ -172,20 +263,24 @@ export function DocumentReaderControls(props: {
         <Plus />
       </ReaderButton>
       {host?.afterZoom}
+      {props.search ? <ReaderSearchField label={props.label} {...props.search} /> : null}
+      {host?.afterSearch}
       {(host ? null : props.contextControls) ?? <div className="min-w-1 flex-1" />}
-      {host?.beforeSearch}
-      <ReaderButton
-        className="scient-pdf-action-search"
-        label={
-          "Search " +
-          props.label +
-          (props.shortcutLabel("pdf.find") ? " (" + props.shortcutLabel("pdf.find") + ")" : "")
-        }
-        aria-pressed={props.searchOpen}
-        onClick={props.onToggleSearch}
-      >
-        <Search />
-      </ReaderButton>
+      {host?.beforeTrailing}
+      {props.search ? null : (
+        <ReaderButton
+          className="scient-pdf-action-search"
+          label={
+            "Search " +
+            props.label +
+            (props.shortcutLabel("pdf.find") ? " (" + props.shortcutLabel("pdf.find") + ")" : "")
+          }
+          aria-pressed={props.searchOpen}
+          onClick={props.onToggleSearch}
+        >
+          <Search />
+        </ReaderButton>
+      )}
       {host?.trailing}
       <DropdownMenu
         onOpenChange={(open) => {
@@ -261,83 +356,4 @@ export function DocumentReaderControls(props: {
   // Hosted: the controls join the surface's own header row.
   if (host) return hostSlot ? createPortal(toolbar, hostSlot) : null;
   return <div className="scient-document-controls">{toolbar}</div>;
-}
-
-export function DocumentSearchBar(props: {
-  label: string;
-  query: string;
-  current: number;
-  total: number;
-  notFound: boolean;
-  focusRequest?: number;
-  onQuery: (query: string) => void;
-  onNavigate: (backwards: boolean) => void;
-  onClose: () => void;
-}) {
-  const input = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    input.current?.focus();
-  }, [props.focusRequest]);
-  return (
-    <div className="scient-document-controls">
-      <form
-        className="scient-pdf-searchbar"
-        onSubmit={(event) => {
-          event.preventDefault();
-          props.onNavigate(false);
-        }}
-      >
-        <Search className="size-3.5 text-muted-foreground" aria-hidden="true" />
-        <input
-          ref={input}
-          value={props.query}
-          placeholder={props.label}
-          aria-label={props.label}
-          onChange={(event) => {
-            const value = event.target.value;
-            props.onQuery(value);
-          }}
-          onKeyDown={(event) => {
-            if (event.nativeEvent.isComposing) return;
-            if (event.key === "Escape") {
-              event.preventDefault();
-              event.stopPropagation();
-              props.onClose();
-            } else if (event.key === "Enter") {
-              event.preventDefault();
-              props.onNavigate(event.shiftKey);
-            } else if (event.key === "ArrowDown") {
-              event.preventDefault();
-              props.onNavigate(false);
-            } else if (event.key === "ArrowUp") {
-              event.preventDefault();
-              props.onNavigate(true);
-            }
-          }}
-        />
-        <span className="scient-pdf-find-count">
-          {props.total > 0 ? `${props.current} of ${props.total}` : props.notFound ? "0 of 0" : ""}
-        </span>
-        <ReaderButton
-          className="scient-pdf-search-secondary"
-          label="Previous result"
-          disabled={!props.query}
-          onClick={() => props.onNavigate(true)}
-        >
-          <ChevronDown className="rotate-180" />
-        </ReaderButton>
-        <ReaderButton
-          className="scient-pdf-search-secondary"
-          label="Next result"
-          disabled={!props.query}
-          onClick={() => props.onNavigate(false)}
-        >
-          <ChevronDown />
-        </ReaderButton>
-        <ReaderButton label="Close search" onClick={props.onClose}>
-          <X />
-        </ReaderButton>
-      </form>
-    </div>
-  );
 }
