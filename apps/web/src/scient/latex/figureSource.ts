@@ -31,7 +31,7 @@ export function latexFigureSource(input: {
   let label = `fig:${slug}`,
     suffix = 2;
   while (labels.has(label)) label = `fig:${slug}-${suffix++}`;
-  const caption = escapeDocumentText(input.caption || "Figure caption");
+  const caption = escapeDocumentText(input.caption ?? "");
   const path = relativeAsset(input.documentPath, input.assetPath);
-  return `\\begin{figure}[htbp]\n\\centering\n\\includegraphics[width=${(input.width ?? 80) / 100}\\textwidth]{${path}}\n\\caption{${caption}}\n\\label{${label}}\n\\end{figure}`;
+  return `\\begin{figure}[htbp]\n\\centering\n\\includegraphics[width=${(input.width ?? 80) / 100}\\textwidth]{${path}}${caption ? `\n\\caption{${caption}}\n\\label{${label}}` : ""}\n\\end{figure}`;
 }

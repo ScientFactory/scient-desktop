@@ -77,9 +77,23 @@ describe("writing editor source transactions", () => {
     await act(() =>
       container.querySelector<HTMLButtonElement>('button[aria-label="Insert"]')!.click(),
     );
-    const item = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
-      (element) => element.textContent?.trim() === name,
-    );
+    const find = () =>
+      [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+        (element) => element.textContent?.trim() === name,
+      );
+    if (!find()) {
+      const search = document.body.querySelector<HTMLInputElement>(
+        'input[aria-label="Search insert options"]',
+      )!;
+      await act(() => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+          search,
+          name,
+        );
+        search.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    }
+    const item = find();
     expect(item).toBeDefined();
     await act(() => item!.click());
     await act(() => {});
@@ -100,6 +114,20 @@ describe("writing editor source transactions", () => {
       );
     });
     await act(() => field.blur());
+  }
+  async function selectOption(label: string, optionLabel: string) {
+    const trigger = document.body.querySelector<HTMLButtonElement>(
+      `button[aria-label="${label}"]`,
+    )!;
+    expect(trigger).not.toBeNull();
+    const details = trigger.closest("details");
+    if (details && !details.open) await act(() => details.querySelector("summary")!.click());
+    await act(() => trigger.click());
+    const option = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find(
+      (item) => item.textContent?.trim() === optionLabel,
+    );
+    expect(option, optionLabel).toBeDefined();
+    await act(() => option!.click());
   }
   async function selectKind(kind: string) {
     let position = -1;
@@ -161,6 +189,28 @@ describe("writing editor source transactions", () => {
     expect(context.querySelector(".scient-latex-context-tools-slot")).not.toBeNull();
     expect(container.querySelector('[aria-label="Selected object properties"]')).toBeNull();
   });
+
+  it("puts plain-text shortcut help under Document without extra More actions", async () => {
+    await mount();
+    const toolbar = container.querySelector('[role="toolbar"][aria-label="Writing tools"]')!;
+    expect(toolbar.querySelector('button[aria-label="More actions"]')).toBeNull();
+    await act(() =>
+      toolbar.querySelector<HTMLButtonElement>('button[aria-label="Document"]')!.click(),
+    );
+    const items = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+    const shortcuts = items.find((item) => item.textContent?.trim() === "Keyboard shortcuts");
+    expect(shortcuts).toBeDefined();
+    expect(shortcuts!.querySelector("svg")).toBeNull();
+    expect(
+      items.some((item) =>
+        /Open LaTeX source|Next source-only block/u.test(item.textContent ?? ""),
+      ),
+    ).toBe(false);
+    await act(() => shortcuts!.click());
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain(
+      "Writing shortcuts",
+    );
+  });
   it("moves lower-priority writing groups into More on narrow panes", async () => {
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (
       this: HTMLElement,
@@ -185,9 +235,9 @@ describe("writing editor source transactions", () => {
     for (const label of [
       "Undo",
       "Redo",
-      "Bullet list",
-      "Theorem",
-      "Document settings",
+      "Bulleted list",
+      "Theorems & proofs",
+      "Page layout\u2026",
       "Keyboard shortcuts",
     ])
       expect(
@@ -397,8 +447,7 @@ describe("writing editor source transactions", () => {
     await act(async () => removeAuthor.click());
     expect(current).toContain("\\author{}");
     expect(container.querySelector("textarea[aria-label='Document author']")).toBeNull();
-    const hideDate = container.querySelector<HTMLSelectElement>("select[aria-label='Title date']")!;
-    await setField(hideDate, "hidden");
+    await selectOption("Title date", "Date: Hidden");
     expect(current).toContain("\\date{}");
     expect(container.querySelector("textarea[aria-label='Document date']")).toBeNull();
   });
@@ -426,16 +475,11 @@ describe("writing editor source transactions", () => {
     await selectKind("latexDisplayMath");
     const equation = container.querySelector(".scient-latex-visual-display-math") as HTMLElement;
     await act(async () => equation.click());
-    const type = document.body.querySelector<HTMLSelectElement>(
-      "select[aria-label='Equation type']",
-    )!;
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(
-        type,
-        "environment:equation",
-      );
-      type.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    await act(() =>
+      document.body
+        .querySelector<HTMLButtonElement>('[aria-label="Math tools"] [data-latex-number-toggle]')!
+        .click(),
+    );
     expect(current).toContain("\\begin{equation}\nx^2\n\\end{equation}");
   });
 
@@ -444,16 +488,7 @@ describe("writing editor source transactions", () => {
     await selectKind("latexDisplayMath");
     const equation = container.querySelector(".scient-latex-visual-display-math") as HTMLElement;
     await act(async () => equation.click());
-    const type = document.body.querySelector<HTMLSelectElement>(
-      "select[aria-label='Equation type']",
-    )!;
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(
-        type,
-        "inline-paren",
-      );
-      type.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    await selectOption("Equation placement", "Inline math");
     expect(current).toBe(tex("\\(x^2\\)"));
   });
 
@@ -539,14 +574,7 @@ Theory & Proofs \\\\
     )!;
     await act(async () => addColumn.click());
     expect(container.querySelector("textarea[aria-label='Table row 1 column 3']")).not.toBeNull();
-    const style = container.querySelector<HTMLSelectElement>("select[aria-label='Table style']")!;
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(
-        style,
-        "grid",
-      );
-      style.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    await selectOption("Table style", "Full grid");
     expect(current).toContain("\\hline");
     const reference = container.querySelector<HTMLInputElement>(
       "input[aria-label='Table reference label']",
@@ -621,7 +649,7 @@ Theory & Proofs \\\\
 
   it("inserts a source-backed reference from the writing toolbar", async () => {
     await mount("Target \\label{sec:target}");
-    await insertMenuItem("Citation or cross-reference");
+    await insertMenuItem("Cross-reference\u2026");
     const key = document.body.querySelector<HTMLInputElement>(
       ".scient-writing-reference-key input",
     )!;
@@ -656,10 +684,10 @@ Theory & Proofs \\\\
     const original = current;
     await act(() => editor().commands.setTextSelection(1));
     await act(() =>
-      container.querySelector<HTMLButtonElement>('button[aria-label="Style: Text"]')!.click(),
+      container.querySelector<HTMLButtonElement>('button[aria-label="Document"]')!.click(),
     );
     const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
-      (item) => item.textContent?.trim() === "Use as document title…",
+      (item) => item.textContent?.trim() === "Use paragraph as title…",
     )!;
     await act(() => item.click());
     expect(current).toContain("\\title{Energy estimate}");
@@ -677,6 +705,10 @@ Theory & Proofs \\\\
     await act(() =>
       container.querySelector<HTMLButtonElement>('button[aria-label="Document"]')!.click(),
     );
+    const titleGroup = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (item) => item.textContent?.trim() === "Title & authors",
+    )!;
+    await act(() => titleGroup.click());
     const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
       (item) => item.textContent?.trim() === "Edit title",
     )!;

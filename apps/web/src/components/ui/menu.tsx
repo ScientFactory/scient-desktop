@@ -149,8 +149,29 @@ function MenuCheckboxItem({
   variant = "default",
   ...props
 }: MenuPrimitive.CheckboxItem.Props & {
-  variant?: "default" | "switch";
+  variant?: "default" | "switch" | "button";
 }) {
+  if (variant === "button") {
+    return (
+      <MenuPrimitive.CheckboxItem
+        checked={checked}
+        className={cn(
+          buttonVariants({ size: "micro", variant: checked ? "selected-strong" : "outline" }),
+          "data-disabled:pointer-events-none data-disabled:opacity-64 data-highlighted:outline-1 data-highlighted:outline-ring",
+          className,
+        )}
+        data-slot="menu-checkbox-item"
+        {...props}
+      >
+        {children}
+        <span aria-hidden="true" className="flex size-3 shrink-0 items-center justify-center">
+          <MenuPrimitive.CheckboxItemIndicator>
+            <CheckIcon />
+          </MenuPrimitive.CheckboxItemIndicator>
+        </span>
+      </MenuPrimitive.CheckboxItem>
+    );
+  }
   return (
     <MenuPrimitive.CheckboxItem
       checked={checked}

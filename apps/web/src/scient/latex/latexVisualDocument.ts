@@ -1,5 +1,16 @@
 import type { JSONContent } from "@tiptap/core";
-import { patchNumberedMathSource, projectMathNumbering } from "./latexMathNumbering";
+import {
+  LATEX_INLINE_MARKS,
+  LATEX_TEXT_DECLARATIONS,
+  latexTextMarkSource,
+  withLatexTextMark,
+} from "./latexTextFormatting";
+import {
+  patchNumberedMathSource,
+  projectMathNumbering,
+  singleMathReferenceLabel,
+  withMathReferenceLabel,
+} from "./latexMathNumbering";
 import { MATH_SYMBOLS, newMathSymbolPackages } from "./mathSymbols";
 import {
   ensureLatexPackages,
@@ -53,7 +64,8 @@ export interface LatexVisualLayoutUpdate {
   readonly paper: LatexVisualLayoutProfile["paper"];
   readonly baseFontPt: 10 | 11 | 12;
   readonly margin: string;
-  readonly margins?: Record<"top" | "right" | "bottom" | "left", string>;
+  readonly orientation?: "portrait" | "landscape";
+  readonly margins?: Partial<Record<"top" | "right" | "bottom" | "left", string>>;
   readonly paragraphStyle: "indented" | "spaced";
 }
 
@@ -100,13 +112,15 @@ export function updateLatexVisualLayoutSource(
   if (
     update.baseFontPt !== undefined ||
     update.paper !== undefined ||
-    update.documentClass !== undefined
+    update.documentClass !== undefined ||
+    update.orientation !== undefined
   ) {
     const options = (documentClass[1] ?? "")
       .split(",")
       .filter(
         (option) =>
           !(update.baseFontPt !== undefined && /^(?:10|11|12)pt$/u.test(option.trim())) &&
+          !(update.orientation !== undefined && /^(?:landscape|portrait)$/u.test(option.trim())) &&
           !(
             update.paper !== undefined &&
             /^(?:a4|a5|b5|letter|legal|executive)paper$/u.test(option.trim())
@@ -114,6 +128,7 @@ export function updateLatexVisualLayoutSource(
       );
     if (update.baseFontPt !== undefined) options.push(`${update.baseFontPt}pt`);
     if (update.paper !== undefined) options.push(`${update.paper}paper`);
+    if (update.orientation === "landscape") options.push("landscape");
     const value = options.filter(Boolean).join(",");
     changed =
       source.slice(0, classAt) +
@@ -125,19 +140,27 @@ export function updateLatexVisualLayoutSource(
     (update.margin === undefined
       ? undefined
       : { top: update.margin, right: update.margin, bottom: update.margin, left: update.margin });
-  if (margins !== undefined || update.paper !== undefined) {
+  if (margins !== undefined || update.paper !== undefined || update.orientation !== undefined) {
     if (margins !== undefined) {
       const values = Object.values(margins).map((value) => latexLengthInches(value));
-      const paper = LATEX_PAPER_SIZES[update.paper ?? latexVisualLayoutProfile(source).paper];
+      const profile = latexVisualLayoutProfile(source);
+      const paper = LATEX_PAPER_SIZES[update.paper ?? profile.paper];
+      const landscape = update.orientation
+        ? update.orientation === "landscape"
+        : profile.paperWidthIn > profile.paperHeightIn;
+      const width = landscape ? paper.height : paper.width;
+      const height = landscape ? paper.width : paper.height;
       if (
         Object.values(margins).some(
           (value) => !/^(?:\d+(?:\.\d*)?|\.\d+)\s*(?:in|cm|mm|pt)$/u.test(value.trim()),
         ) ||
         values.some((value) => value === null || value <= 0) ||
-        (latexLengthInches(margins.left) ?? 0) + (latexLengthInches(margins.right) ?? 0) >=
-          paper.width ||
-        (latexLengthInches(margins.top) ?? 0) + (latexLengthInches(margins.bottom) ?? 0) >=
-          paper.height
+        (latexLengthInches(margins.left ?? "") ?? profile.marginLeftIn) +
+          (latexLengthInches(margins.right ?? "") ?? profile.marginRightIn) >=
+          width ||
+        (latexLengthInches(margins.top ?? "") ?? profile.marginTopIn) +
+          (latexLengthInches(margins.bottom ?? "") ?? profile.marginBottomIn) >=
+          height
       )
         return null;
     }
@@ -148,10 +171,20 @@ export function updateLatexVisualLayoutSource(
           .filter(
             (option) =>
               !(
-                margins !== undefined &&
+                update.margin !== undefined &&
                 /^(?:margin|hmargin|vmargin|top|right|bottom|left|inner|outer|textwidth|textheight|width|height|total|scale|hscale|vscale)\s*=/u.test(
                   option.trim(),
                 )
+              ) &&
+              !(
+                update.margins &&
+                Object.keys(update.margins).some((side) =>
+                  new RegExp(`^${side}\\s*=`).test(option.trim()),
+                )
+              ) &&
+              !(
+                update.orientation !== undefined &&
+                /^(?:landscape|portrait)(?:\s*=|$)/u.test(option.trim())
               ) &&
               !(
                 update.paper !== undefined &&
@@ -168,6 +201,7 @@ export function updateLatexVisualLayoutSource(
             ? [`margin=${update.margin.replace(/\s+/gu, "")}`]
             : []),
         ...(update.paper !== undefined ? [`${update.paper}paper`] : []),
+        ...(update.orientation !== undefined ? [update.orientation] : []),
       ]
         .filter(Boolean)
         .join(",");
@@ -191,10 +225,27 @@ export function updateLatexVisualLayoutSource(
       else if (updated === preamble) updated += `\\geometry{${options("")}}${eol}`;
       changed = updated + changed.slice(at);
     } else if (margins !== undefined) {
+      // Introducing geometry must retain the other standard-class margins.
+      const profile = latexVisualLayoutProfile(source);
+      if (!["article", "report", "book"].includes(profile.documentClass)) return null;
+      const retained = update.margins
+        ? (["top", "right", "bottom", "left"] as const)
+            .filter((side) => update.margins?.[side] === undefined)
+            .map((side) => {
+              const values = {
+                top: profile.marginTopIn,
+                right: profile.marginRightIn,
+                bottom: profile.marginBottomIn,
+                left: profile.marginLeftIn,
+              };
+              return `${side}=${values[side].toFixed(6)}in`;
+            })
+            .join(",")
+        : "";
       changed =
         preamble +
         (preamble.endsWith("\n") ? "" : eol) +
-        `\\usepackage[${options("")}]{geometry}${eol}` +
+        `\\usepackage[${[retained, options("")].filter(Boolean).join(",")}]{geometry}${eol}` +
         changed.slice(at);
     }
   }
@@ -215,16 +266,12 @@ export function updateLatexVisualLayoutSource(
   return changed;
 }
 
-const INLINE_MARKS: Readonly<Record<string, string>> = {
-  textbf: "bold",
-  textit: "italic",
-  emph: "italic",
-  texttt: "code",
-};
 const INLINE_ATOMS = new Set([
   "cite",
   "citep",
   "citet",
+  "parencite",
+  "textcite",
   "citeauthor",
   "citeyear",
   "ref",
@@ -234,6 +281,7 @@ const INLINE_ATOMS = new Set([
   "nameref",
   "label",
   "url",
+  "href",
   "footnote",
   "index",
 ]);
@@ -302,151 +350,368 @@ function closingBrace(source: string, opening: number): number | null {
   return null;
 }
 
+const TEXT_SYMBOLS: Readonly<Record<string, string>> = {
+  ss: "\u00df",
+  SS: "\u1e9e",
+  ae: "\u00e6",
+  AE: "\u00c6",
+  oe: "\u0153",
+  OE: "\u0152",
+  aa: "\u00e5",
+  AA: "\u00c5",
+  o: "\u00f8",
+  O: "\u00d8",
+  l: "\u0142",
+  L: "\u0141",
+  i: "\u0131",
+  j: "\u0237",
+  textbackslash: "\\",
+  textasciitilde: "~",
+  textasciicircum: "^",
+  textendash: "\u2013",
+  textemdash: "\u2014",
+  textellipsis: "\u2026",
+  dots: "\u2026",
+  ldots: "\u2026",
+  textquoteleft: "\u2018",
+  textquoteright: "\u2019",
+  textquotedblleft: "\u201c",
+  textquotedblright: "\u201d",
+  textquotesingle: "'",
+  textasciigrave: "`",
+  guillemotleft: "\u00ab",
+  guillemotright: "\u00bb",
+  guilsinglleft: "\u2039",
+  guilsinglright: "\u203a",
+  textless: "<",
+  textgreater: ">",
+  textbar: "|",
+  textbraceleft: "{",
+  textbraceright: "}",
+  textunderscore: "_",
+  textcopyright: "\u00a9",
+  copyright: "\u00a9",
+  textregistered: "\u00ae",
+  texttrademark: "\u2122",
+  textdegree: "\u00b0",
+  textdagger: "\u2020",
+  textdaggerdbl: "\u2021",
+  textbullet: "\u2022",
+  textsection: "\u00a7",
+  textparagraph: "\u00b6",
+  S: "\u00a7",
+  P: "\u00b6",
+  pounds: "\u00a3",
+  textsterling: "\u00a3",
+  textdollar: "$",
+};
+const textGraphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+const TEXT_ACCENTS: Readonly<Record<string, string>> = {
+  "'": "\u0301",
+  '"': "\u0308",
+  "`": "\u0300",
+  "^": "\u0302",
+  "~": "\u0303",
+  "=": "\u0304",
+  ".": "\u0307",
+  u: "\u0306",
+  v: "\u030c",
+  H: "\u030b",
+  c: "\u0327",
+  k: "\u0328",
+  r: "\u030a",
+  b: "\u0331",
+  d: "\u0323",
+};
+
 function textAccent(source: string): { source: string; text: string } | null {
-  const match = /^\\(['"`^~=.]|[uvHckr](?=\s*\{))(?:\s*\{([A-Za-z])\}|([A-Za-z]))/u.exec(source);
-  if (!match) return null;
-  const accents: Record<string, string> = {
-    "'": "\u0301",
-    '"': "\u0308",
-    "`": "\u0300",
-    "^": "\u0302",
-    "~": "\u0303",
-    "=": "\u0304",
-    ".": "\u0307",
-    u: "\u0306",
-    v: "\u030c",
-    H: "\u030b",
-    c: "\u0327",
-    k: "\u0328",
-    r: "\u030a",
+  const command = /^\\(['"`^~=.]|[uvHckrbd](?![A-Za-z]))/u.exec(source);
+  if (!command) return null;
+  const argument =
+    /^(?:[\t\r\n ]*\{([A-Za-z]|\\[ij])\}|[\t\r\n ]*([A-Za-z]|\\[ij](?![A-Za-z])))/u.exec(
+      source.slice(command[0].length),
+    );
+  if (!argument) return null;
+  const base = argument[1] ?? argument[2]!;
+  return {
+    source: command[0] + argument[0],
+    text: (
+      (base === "\\i" ? "i" : base === "\\j" ? "j" : base) + TEXT_ACCENTS[command[1]!]!
+    ).normalize("NFC"),
   };
-  const text = ((match[2] ?? match[3]!) + accents[match[1]!]).normalize("NFC");
-  // A single source token must map to one editor character for narrow edits.
-  return text.length === 1 ? { source: match[0], text } : null;
 }
 
-function parseInline(source: string, marks: readonly string[] = []): JSONContent[] | null {
-  const nodes: JSONContent[] = [];
-  let plain = "";
-  const flush = () => {
-    const node = textNode(plain, marks);
-    if (node) nodes.push(node);
-    plain = "";
-  };
-  for (let index = 0; index < source.length;) {
-    const char = source[index]!;
-    if (
-      char === "%" ||
-      char === "{" ||
-      char === "}" ||
-      char === "&" ||
-      char === "#" ||
-      char === "^" ||
-      char === "_"
-    ) {
-      return null;
-    }
-    if (char === "$" && source[index + 1] !== "$") {
-      const end = findDelimiter(source, "$", index + 1);
-      if (end < 0) return null;
-      flush();
-      nodes.push({
-        type: "latexInlineMath",
-        attrs: { tex: source.slice(index + 1, end), wrapper: "dollar" },
-      });
-      index = end + 1;
-      continue;
-    }
-    if (char === "\\") {
-      const accent = textAccent(source.slice(index));
-      if (accent) {
-        plain += accent.text;
-        index += accent.source.length;
-        continue;
-      }
-      const escaped = ESCAPES[source[index + 1] ?? ""];
-      if (escaped !== undefined) {
-        plain += escaped;
-        index += 2;
-        continue;
-      }
-      if (source.startsWith("\\(", index)) {
-        const end = findDelimiter(source, "\\)", index + 2);
-        if (end < 0) return null;
-        flush();
-        nodes.push({
-          type: "latexInlineMath",
-          attrs: { tex: source.slice(index + 2, end), wrapper: "paren" },
-        });
-        index = end + 2;
-        continue;
-      }
-      if (source.startsWith("\\\\", index)) {
-        flush();
-        nodes.push({ type: "hardBreak" });
-        index += 2;
-        if (source[index] === "\r") index++;
-        if (source[index] === "\n") index++;
-        continue;
-      }
-      const literal = /^\\(textbackslash|textasciitilde|textasciicircum)\{\}/u.exec(
-        source.slice(index),
-      );
-      if (literal) {
-        plain +=
-          literal[1] === "textbackslash" ? "\\" : literal[1] === "textasciitilde" ? "~" : "^";
-        index += literal[0].length;
-        continue;
-      }
-      const command = /^\\([A-Za-z]+)/u.exec(source.slice(index));
-      if (!command) return null;
-      const name = command[1]!;
-      const after = index + command[0].length;
-      if (source[after] !== "{") return null;
-      const close = closingBrace(source, after);
-      if (close === null) return null;
-      const raw = source.slice(index, close + 1);
-      const argument = source.slice(after + 1, close);
-      const mark = INLINE_MARKS[name];
-      if (mark !== undefined) {
-        const children = parseInline(argument, [...marks, mark]);
-        if (children === null) return null;
-        flush();
-        nodes.push(...children);
-      } else if (!SOURCE_ONLY_INLINE_COMMANDS.has(name) && INLINE_ATOMS.has(name)) {
-        flush();
-        nodes.push({ type: "latexInlineCommand", attrs: { name, argument, raw } });
-      } else {
-        return null;
-      }
-      index = close + 1;
-      continue;
-    }
-    if (char === "~") {
-      plain += "\u00a0";
-      index++;
-      continue;
-    }
-    const whitespace = /^\s+/u.exec(source.slice(index));
-    if (whitespace) {
-      plain += " ";
-      index += whitespace[0].length;
-      continue;
-    }
-    if (source.startsWith("---", index)) {
-      plain += "—";
-      index += 3;
-      continue;
-    }
-    if (source.startsWith("--", index)) {
-      plain += "–";
-      index += 2;
-      continue;
-    }
-    plain += char;
-    index++;
+/** TeX control words consume their delimiter spaces; an empty group ends the word. */
+function inlineTextToken(
+  source: string,
+  marks: readonly string[],
+): { source: string; text: string } | null {
+  const accent = textAccent(source);
+  if (accent) return accent;
+  const escaped = source[0] === "\\" ? ESCAPES[source[1] ?? ""] : undefined;
+  if (escaped !== undefined) return { source: source.slice(0, 2), text: escaped };
+  const controlSpace = /^\\(?:[ \t](?:[\t ]*)|\r?\n)/u.exec(source);
+  if (controlSpace) return { source: controlSpace[0], text: " " };
+  if (source.startsWith("\\,")) return { source: "\\,", text: "\u2009" };
+  const symbol = /^\\([A-Za-z]+)(?:\{\}|[\t\r\n ]*)/u.exec(source);
+  if (symbol && TEXT_SYMBOLS[symbol[1]!] !== undefined)
+    return { source: symbol[0], text: TEXT_SYMBOLS[symbol[1]!]! };
+  if (source[0] === "~") return { source: "~", text: "\u00a0" };
+  const whitespace = /^[\t\r\n ]+/u.exec(source);
+  if (whitespace) return { source: whitespace[0], text: " " };
+  for (const [token, text] of [
+    ["---", "\u2014"],
+    ["--", "\u2013"],
+    ["``", "\u201c"],
+    ["''", "\u201d"],
+    ["`", "\u2018"],
+    ["'", "\u2019"],
+  ] as const) {
+    if (!marks.includes("code") && source.startsWith(token)) return { source: token, text };
   }
-  flush();
+  if (/^[\\%{}&#^_$]/u.test(source)) return null;
+  // Ordinary ASCII avoids allocating a grapheme iterator for every keystroke.
+  if (/^[\x00-\x7f](?!\p{Mark})/u.test(source)) return { source: source[0]!, text: source[0]! };
+  const text = textGraphemes.segment(source)[Symbol.iterator]().next().value?.segment;
+  return text ? { source: text, text } : null;
+}
+
+interface InlineGroup {
+  readonly from: number;
+  readonly to: number;
+  readonly end: number;
+  readonly marks: readonly string[];
+  readonly prefix: string;
+}
+
+function inlineGroup(source: string, at: number, marks: readonly string[]): InlineGroup | null {
+  const rest = source.slice(at);
+  const command = /^\\([A-Za-z]+)[\t\r\n ]*\{/u.exec(rest);
+  const mark = command ? LATEX_INLINE_MARKS[command[1]!] : undefined;
+  if (rest[0] !== "{" && mark === undefined) return null;
+  const opening = mark === undefined ? at : at + command![0].length - 1;
+  const close = closingBrace(source, opening);
+  if (close === null) return null;
+  let from = opening + 1;
+  let nextMarks =
+    mark === undefined
+      ? marks
+      : withLatexTextMark(
+          marks,
+          command?.[1] === "emph" &&
+            marks.some((type) => type === "italic" || type === "latexSlanted")
+            ? "latexUpright"
+            : mark,
+        );
+  // Declarations affect the rest of this group and stop at its closing brace.
+  for (;;) {
+    const declaration = /^\\([A-Za-z]+)(?![A-Za-z])(?:\{\}|[\t\r\n ]*)/u.exec(
+      source.slice(from, close),
+    );
+    const declaredMark = declaration ? LATEX_TEXT_DECLARATIONS[declaration[1]!] : undefined;
+    if (declaredMark === undefined) break;
+    nextMarks = withLatexTextMark(nextMarks, declaredMark);
+    from += declaration![0].length;
+  }
+  return { from, to: close, end: close + 1, marks: nextMarks, prefix: source.slice(at, from) };
+}
+
+interface InlinePiece {
+  readonly end: number;
+  readonly node?: JSONContent;
+  readonly group?: InlineGroup;
+  readonly declaration?: string;
+  readonly ignored?: boolean;
+}
+
+function commentEnd(source: string, from: number): number {
+  const newline = source.indexOf("\n", from);
+  return newline < 0 ? source.length : newline + 1;
+}
+
+/** Comments are source trivia; percent signs in escaped or literal text are content. */
+function latexCommentRanges(source: string): { from: number; to: number }[] {
+  const ranges: { from: number; to: number }[] = [];
+  let cursor = 0;
+  for (const token of source.matchAll(/\\([A-Za-z]+|[^\r\n])|%/gu)) {
+    const from = token.index;
+    if (from < cursor) continue;
+    if (token[0] === "%") {
+      cursor = commentEnd(source, from);
+      ranges.push({ from, to: cursor });
+    } else if (token[1] === "verb") {
+      const opening = from + token[0].length + Number(source[from + token[0].length] === "*");
+      const delimiter = source[opening];
+      if (delimiter && !/\s/u.test(delimiter)) {
+        const closing = source.indexOf(delimiter, opening + 1);
+        const newline = source.indexOf("\n", opening + 1);
+        if (closing >= 0 && (newline < 0 || closing < newline)) cursor = closing + 1;
+      }
+    } else if (token[1] === "begin") {
+      const environment = /^\s*\{(verbatim\*?|Verbatim|alltt|lstlisting|minted)\}/u.exec(
+        source.slice(from + token[0].length),
+      );
+      if (environment) {
+        const closing = `\\end{${environment[1]}}`;
+        const end = source.indexOf(closing, from + token[0].length + environment[0].length);
+        cursor = end < 0 ? source.length : end + closing.length;
+      }
+    }
+  }
+  return ranges;
+}
+
+function withoutVisualComments(source: string): string {
+  if (!source.includes("%")) return source;
+  let result = "";
+  let cursor = 0;
+  for (const range of latexCommentRanges(source)) {
+    result += source.slice(cursor, range.from);
+    cursor = range.to;
+  }
+  return result + source.slice(cursor);
+}
+
+/** Retain hidden comments even when replacing or deleting their surrounding content. */
+function preserveSourceComments(original: string, replacement: string, eol: string): string {
+  if (!original.includes("%") && !replacement.includes("%")) return replacement;
+  const existing = new Map<string, number>();
+  const replacementRanges = latexCommentRanges(replacement);
+  for (const range of replacementRanges) {
+    const comment = replacement.slice(range.from, range.to).replace(/\r?\n$/u, "");
+    existing.set(comment, (existing.get(comment) ?? 0) + 1);
+  }
+  let result = replacement;
+  // A retained final comment must not swallow the following source or new text.
+  if (replacementRanges.at(-1)?.to === replacement.length && !replacement.endsWith("\n"))
+    result += eol;
+  for (const range of latexCommentRanges(original)) {
+    const comment = original.slice(range.from, range.to).replace(/\r?\n$/u, "");
+    const count = existing.get(comment) ?? 0;
+    if (count > 0) existing.set(comment, count - 1);
+    else result += comment + eol;
+  }
+  return result;
+}
+
+/** Rendering and source mapping use the same supported inline grammar. */
+function inlinePiece(
+  source: string,
+  at: number,
+  marks: readonly string[],
+  scoped = false,
+): InlinePiece | null {
+  const rest = source.slice(at);
+  if (rest[0] === "%") {
+    const end = commentEnd(source, at);
+    const indentation = /^[\t ]*/u.exec(source.slice(end))![0];
+    return { end: end + indentation.length, ignored: true };
+  }
+  const group = inlineGroup(source, at, marks);
+  if (group) return { end: group.end, group };
+  if (scoped) {
+    const declaration = /^\\([A-Za-z]+)(?![A-Za-z])(?:\{\}|[\t\r\n ]*)/u.exec(rest);
+    const mark = declaration ? LATEX_TEXT_DECLARATIONS[declaration[1]!] : undefined;
+    if (mark !== undefined) return { end: at + declaration![0].length, declaration: mark };
+  }
+  const marked = (node: JSONContent): JSONContent => ({
+    ...node,
+    ...(marks.length ? { marks: marks.map((type) => ({ type })) } : {}),
+  });
+  const math = rest.startsWith("\\(")
+    ? { open: "\\(", close: "\\)", wrapper: "paren" }
+    : rest.startsWith("$") && !rest.startsWith("$$")
+      ? { open: "$", close: "$", wrapper: "dollar" }
+      : null;
+  if (math) {
+    const close = findDelimiter(source, math.close, at + math.open.length);
+    if (close < 0) return null;
+    return {
+      end: close + math.close.length,
+      node: marked({
+        type: "latexInlineMath",
+        attrs: { tex: source.slice(at + math.open.length, close), wrapper: math.wrapper },
+      }),
+    };
+  }
+  const lineBreak = /^(?:\\\\|\\newline(?![A-Za-z]))[\t ]*(?:\r?\n[\t ]*)?/u.exec(rest);
+  if (lineBreak) {
+    // Optional lengths and starred breaks need their own layout support.
+    if (/^[*\[]/u.test(rest.slice(lineBreak[0].length))) return null;
+    return { end: at + lineBreak[0].length, node: marked({ type: "hardBreak" }) };
+  }
+  const text = inlineTextToken(rest, marks);
+  if (text) return { end: at + text.source.length, node: textNode(text.text, marks)! };
+  const command = /^\\([A-Za-z]+)[\t\r\n ]*\{/u.exec(rest);
+  if (!command || !INLINE_ATOMS.has(command[1]!) || SOURCE_ONLY_INLINE_COMMANDS.has(command[1]!))
+    return null;
+  const opening = at + command[0].length - 1;
+  const close = closingBrace(source, opening);
+  if (close === null) return null;
+  const name = command[1]!;
+  const argument = source.slice(opening + 1, close);
+  let end = close + 1;
+  let linkText: string | undefined;
+  if (name === "href") {
+    const gap = /^[\t\r\n ]*/u.exec(source.slice(end))![0];
+    const textOpening = end + gap.length;
+    if (source[textOpening] !== "{") return null;
+    const textEnd = closingBrace(source, textOpening);
+    if (textEnd === null) return null;
+    linkText = source.slice(textOpening + 1, textEnd);
+    if (parseInline(linkText) === null) return null;
+    end = textEnd + 1;
+  }
+  return {
+    end,
+    node: marked({
+      type: "latexInlineCommand",
+      attrs: {
+        name,
+        argument,
+        ...(linkText === undefined ? {} : { linkText }),
+        raw: source.slice(at, end),
+      },
+    }),
+  };
+}
+
+function parseInline(
+  source: string,
+  marks: readonly string[] = [],
+  scoped = false,
+): JSONContent[] | null {
+  const nodes: JSONContent[] = [];
+  let currentMarks = marks;
+  for (let at = 0; at < source.length;) {
+    const piece = inlinePiece(source, at, currentMarks, scoped);
+    if (!piece) return null;
+    if (piece.ignored) {
+      at = piece.end;
+      continue;
+    }
+    if (piece.declaration) {
+      currentMarks = withLatexTextMark(currentMarks, piece.declaration);
+      at = piece.end;
+      continue;
+    }
+    const children = piece.group
+      ? parseInline(source.slice(piece.group.from, piece.group.to), piece.group.marks, true)
+      : [piece.node!];
+    if (!children) return null;
+    for (const node of children) {
+      const previous = nodes.at(-1);
+      if (
+        node.type === "text" &&
+        previous?.type === "text" &&
+        JSON.stringify(node.marks ?? []) === JSON.stringify(previous.marks ?? [])
+      )
+        nodes[nodes.length - 1] = { ...previous, text: previous.text! + node.text! };
+      else nodes.push(node);
+    }
+    at = piece.end;
+  }
   return nodes;
 }
 
@@ -486,10 +751,12 @@ function parseHeading(source: string): JSONContent | null {
 
 function parseList(source: string, depth: number): JSONContent | null {
   if (depth > 32) return null;
-  const opening = /^\\begin\{(itemize|enumerate)\}(\[resume\])?\s*/u.exec(source);
+  const opening = /^\\begin\{(itemize|enumerate)\}(?:\[(resume|start=\d+)\])?\s*/u.exec(source);
   if (!opening) return null;
   const environment = opening[1]!;
   if (opening[2] && environment !== "enumerate") return null;
+  const start = opening[2]?.startsWith("start=") ? Number(opening[2].slice(6)) : 1;
+  if (!Number.isSafeInteger(start) || start < 1) return null;
   const closing = `\\end{${environment}}`;
   const close = source.lastIndexOf(closing);
   if (close < opening[0].length || source.slice(close + closing.length).trim() !== "") return null;
@@ -527,7 +794,8 @@ function parseList(source: string, depth: number): JSONContent | null {
   }
   return {
     type: environment === "itemize" ? "bulletList" : "orderedList",
-    ...(opening[2] ? { attrs: { resume: true } } : {}),
+    ...(opening[2] === "resume" ? { attrs: { resume: true } } : {}),
+    ...(start !== 1 ? { attrs: { start } } : {}),
     content: items,
   };
 }
@@ -611,10 +879,24 @@ function serializeNumberedMath(
   if (
     !original?.numberingSource ||
     original.environment !== (attributes.environment ?? undefined) ||
-    (original.wrapper ?? "bracket") !== (attributes.wrapper ?? "bracket") ||
-    JSON.stringify(original.numbering) !== JSON.stringify(attributes.numbering)
+    (original.wrapper ?? "bracket") !== (attributes.wrapper ?? "bracket")
   )
     return null;
+  if (JSON.stringify(original.numbering ?? null) !== JSON.stringify(attributes.numbering ?? null)) {
+    // Only the single outer reference label may change here. Row metadata and
+    // all other numbering commands still have to match the original source.
+    const desired = latexVisualMathSource(attributes, true);
+    const label = singleMathReferenceLabel(desired);
+    const relabeled = label === null ? null : withMathReferenceLabel(source, label);
+    if (relabeled === null) return null;
+    const parsed = parseLatexVisualMathSource(relabeled, true);
+    if (
+      !parsed ||
+      JSON.stringify(parsed.numbering ?? null) !== JSON.stringify(attributes.numbering ?? null)
+    )
+      return null;
+    return patchNumberedMathSource(relabeled, attributes.tex);
+  }
   return patchNumberedMathSource(source, attributes.tex);
 }
 
@@ -934,7 +1216,7 @@ export function prepareLatexDocumentTitle(
         source.includes("\r\n") ? "\r\n" : "\n",
       ) ?? changed;
   }
-  changed = ensureLatexTitleBlock(changed, title || "Untitled") ?? changed;
+  changed = ensureLatexTitleBlock(changed, title) ?? changed;
   return { source: changed, previousTitle: String(previous.title ?? ""), title };
 }
 
@@ -1682,8 +1964,6 @@ export function latexVisualFigureSource(): string {
     "\\begin{figure}[htbp]",
     "\\centering",
     "\\includegraphics[width=0.8\\textwidth]{figures/image.png}",
-    "\\caption{Figure caption}",
-    "\\label{fig:image}",
     "\\end{figure}",
   ].join("\n");
 }
@@ -1804,13 +2084,17 @@ export function projectLatexVisualDocument(source: string, depth = 0): LatexVisu
   const bodyFrom = begin < 0 ? 0 : begin + beginMarker.length;
   const body = source.slice(bodyFrom);
   const blocks: LatexVisualSourceBlock[] = [];
-  let dynamicSyntax = /\\catcode\b/u.test(source.slice(0, bodyFrom));
+  let dynamicSyntax = /\\catcode\b/u.test(withoutVisualComments(source.slice(0, bodyFrom)));
   let cursor = 0;
   while (cursor < body.length) {
     const whitespace = /^\s+/u.exec(body.slice(cursor));
     if (whitespace) cursor += whitespace[0].length;
     if (cursor >= body.length) break;
     if (body.startsWith(endMarker, cursor)) break;
+    if (body[cursor] === "%") {
+      cursor = commentEnd(body, cursor);
+      continue;
+    }
     const relativeEnd = nextBlockEnd(body, cursor);
     const rawEnd = Math.max(cursor + 1, relativeEnd);
     const raw = body.slice(cursor, rawEnd).replace(/[\r\n]+$/u, "");
@@ -1819,7 +2103,7 @@ export function projectLatexVisualDocument(source: string, depth = 0): LatexVisu
     const id = sourceId(blocks.length);
     dynamicSyntax ||=
       /\\(?:catcode|def|gdef|edef|xdef|let|newcommand|renewcommand|newenvironment|renewenvironment)\b/u.test(
-        raw,
+        withoutVisualComments(raw),
       );
     const classified = dynamicSyntax ? null : classifyBlock(raw, depth);
     const candidate = classified === null && !dynamicSyntax ? parseRichPreview(raw, source) : null;
@@ -1899,8 +2183,8 @@ export function projectLatexVisualDocument(source: string, depth = 0): LatexVisu
     const id = sourceId(0);
     blocks.push({
       id,
-      from: bodyFrom,
-      to: bodyFrom,
+      from: bodyFrom + cursor,
+      to: bodyFrom + cursor,
       source: "",
       editable: true,
       node: { type: "paragraph", attrs: { sourceId: id }, content: [] },
@@ -1928,8 +2212,19 @@ export function escapeText(text: string): string {
     "~": "\\textasciitilde{}",
     "^": "\\textasciicircum{}",
     "\u00a0": "~",
+    "\u2009": "\\,",
+    "'": "\\textquotesingle{}",
+    "`": "\\textasciigrave{}",
   };
-  return text.replace(/[\\%&_#${}~^\u00a0]/gu, (character) => escapes[character]!);
+  const escaped = text.replace(/[\\%&_#${}~^'`\u00a0\u2009]/gu, (character) => escapes[character]!);
+  // TeX engines need accent commands for graphemes without a precomposed letter.
+  return escaped.replace(
+    /([A-Za-z])([\u0300-\u036f])/gu,
+    (grapheme, base: string, accent: string) => {
+      const command = Object.entries(TEXT_ACCENTS).find(([, mark]) => mark === accent)?.[0];
+      return command ? `\\${command}{${base}}` : grapheme;
+    },
+  );
 }
 
 function serializeInline(nodes: readonly JSONContent[] | undefined): string {
@@ -1946,27 +2241,32 @@ function serializeInline(nodes: readonly JSONContent[] | undefined): string {
   }
   return merged
     .map((node) => {
-      if (node.type === "latexInlineMath")
-        return latexVisualMathSource(
+      let value: string;
+      if (node.type === "latexInlineMath") {
+        value = latexVisualMathSource(
           {
             tex: String(node.attrs?.tex ?? ""),
             wrapper: node.attrs?.wrapper === "dollar" ? "dollar" : "paren",
           },
           false,
         );
-      if (node.type === "latexInlineCommand") {
+      } else if (node.type === "latexInlineCommand") {
         const name = String(node.attrs?.name ?? "");
         if (!INLINE_ATOMS.has(name) || SOURCE_ONLY_INLINE_COMMANDS.has(name)) return "";
-        return "\\" + name + "{" + String(node.attrs?.argument ?? "") + "}";
-      }
-      if (node.type === "hardBreak") return "\\\\\n";
-      if (node.type !== "text") return "";
-      let value = escapeText(node.text ?? "");
-      for (const mark of (node.marks ?? []).toReversed()) {
-        if (mark.type === "bold") value = `\\textbf{${value}}`;
-        else if (mark.type === "italic") value = `\\emph{${value}}`;
-        else if (mark.type === "code") value = `\\texttt{${value}}`;
-      }
+        value =
+          "\\" +
+          name +
+          "{" +
+          String(node.attrs?.argument ?? "") +
+          "}" +
+          (name === "href" ? "{" + String(node.attrs?.linkText ?? "") + "}" : "");
+      } else if (node.type === "hardBreak") {
+        value = "\\\\\n";
+      } else if (node.type === "text") {
+        value = escapeText(node.text ?? "");
+      } else return "";
+      for (const mark of (node.marks ?? []).toReversed())
+        value = latexTextMarkSource(mark.type, value);
       return value;
     })
     .join("");
@@ -2027,10 +2327,8 @@ export function latexVisualTableSource(
 ): string {
   const safeRows = Math.max(1, Math.min(20, Math.trunc(rowCount)));
   const safeColumns = Math.max(1, Math.min(12, Math.trunc(columnCount)));
-  const rows = Array.from({ length: safeRows }, (_, rowIndex) =>
-    Array.from({ length: safeColumns }, (_, columnIndex) =>
-      rowIndex === 0 ? `Column ${columnIndex + 1}` : "",
-    ),
+  const rows = Array.from({ length: safeRows }, () =>
+    Array.from({ length: safeColumns }, () => ""),
   );
   const kind = preset === "stretch" ? "stretch" : "fixed";
   const style = preset === "stretch" ? "booktabs" : preset;
@@ -2044,12 +2342,39 @@ export function latexVisualTableSource(
   return [
     "\\begin{table}[htbp]",
     "\\centering",
-    "\\caption{Table title}",
     opening,
     canonicalTableBody(rows, style, true, "\n").trim(),
     `\\end{${environment}}`,
     "\\end{table}",
   ].join("\n");
+}
+
+export function latexVisualTableCellsClipboard(
+  node: JSONContent,
+  firstRow: number,
+  lastRow: number,
+  firstColumn: number,
+  lastColumn: number,
+): string | null {
+  const rows = tableRows(node.attrs?.rows);
+  if (
+    !rows ||
+    firstRow < 0 ||
+    firstColumn < 0 ||
+    lastRow >= rows.length ||
+    lastColumn >= rows[0]!.length ||
+    lastRow < firstRow ||
+    lastColumn < firstColumn
+  )
+    return null;
+  const cells = preservedTableCells(node, rows)
+    .slice(firstRow, lastRow + 1)
+    .map((row) => row.slice(firstColumn, lastColumn + 1));
+  const alignments = Array.from({ length: lastColumn - firstColumn + 1 }, (_, index) => {
+    const alignment = node.attrs?.columnAlignments?.[firstColumn + index];
+    return alignment === "center" ? "c" : alignment === "right" ? "r" : "l";
+  }).join(" ");
+  return `\\begin{tabular}{${alignments}}\n${cells.map((row) => `${row.join(" & ")} \\\\`).join("\n")}\n\\end{tabular}`;
 }
 
 function preservedTableCells(node: JSONContent, rows: string[][]): string[][] {
@@ -2612,7 +2937,16 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
       return `\\item ${children.join("\n\n")}`;
     });
     if (items.some((item) => item === null)) return null;
-    const options = environment === "enumerate" && node.attrs?.resume === true ? "[resume]" : "";
+    const start = Number(node.attrs?.start ?? 1);
+    if (!Number.isSafeInteger(start) || start < 1) return null;
+    const options =
+      environment !== "enumerate"
+        ? ""
+        : node.attrs?.resume === true
+          ? "[resume]"
+          : start !== 1
+            ? `[start=${start}]`
+            : "";
     return `\\begin{${environment}}${options}\n${items.join("\n")}\n\\end{${environment}}`;
   }
   return null;
@@ -2902,13 +3236,17 @@ function requiredObjectPackages(nodes: readonly JSONContent[]): Set<string> {
       (node.attrs.descriptionStyle === "nextline" || node.attrs.descriptionLeftMargin)
     )
       packages.add("enumitem");
-    if (node.type === "orderedList" && node.attrs?.resume === true) packages.add("enumitem");
+    if (
+      node.type === "orderedList" &&
+      (node.attrs?.resume === true || Number(node.attrs?.start ?? 1) !== 1)
+    )
+      packages.add("enumitem");
     if (node.attrs?.kind === "simple" && node.attrs.environment === "alltt") packages.add("alltt");
     if (node.attrs?.kind === "simple" && node.attrs.environment === "lstlisting")
       packages.add("listings");
     if (node.type === "latexInlineCommand") {
       if (node.attrs?.name === "eqref") packages.add("amsmath");
-      if (node.attrs?.name === "autoref") packages.add("hyperref");
+      if (["autoref", "href", "url"].includes(String(node.attrs?.name))) packages.add("hyperref");
     }
     requiredObjectPackages(node.content ?? []).forEach((name) => packages.add(name));
   }
@@ -3020,71 +3358,62 @@ function inlineSourceUnits(
   offset = 0,
   marks: readonly string[] = [],
   wrappers: readonly string[] = [],
+  scoped = false,
 ): InlineSourceUnit[] | null {
   const units: InlineSourceUnit[] = [];
+  let currentMarks = marks;
+  let currentWrappers = wrappers;
   for (let at = 0; at < source.length;) {
-    const rest = source.slice(at);
-    const wrapper = /^\\(textbf|textit|emph|texttt)\{/u.exec(rest);
-    if (wrapper) {
-      const open = at + wrapper[0].length - 1;
-      const close = closingBrace(source, open);
-      if (close === null) return null;
+    const piece = inlinePiece(source, at, currentMarks, scoped);
+    if (!piece) return null;
+    if (piece.ignored) {
+      at = piece.end;
+      continue;
+    }
+    if (piece.declaration) {
+      currentMarks = withLatexTextMark(currentMarks, piece.declaration);
+      currentWrappers = [
+        ...currentWrappers.slice(0, -1),
+        currentWrappers.at(-1)! + source.slice(at, piece.end),
+      ];
+      at = piece.end;
+      continue;
+    }
+    if (piece.group) {
+      const group = piece.group;
       const children = inlineSourceUnits(
-        source.slice(open + 1, close),
-        offset + open + 1,
-        [...marks, INLINE_MARKS[wrapper[1]!]!],
-        [...wrappers, wrapper[1]!],
+        source.slice(group.from, group.to),
+        offset + group.from,
+        group.marks,
+        [...currentWrappers, group.prefix],
+        true,
       );
       if (!children) return null;
       units.push(...children);
-      at = close + 1;
-      continue;
-    }
-    let end = at + 1;
-    const accent = textAccent(rest);
-    if (accent) {
-      end = at + accent.source.length;
-    } else if (rest.startsWith("\\(")) {
-      const close = findDelimiter(source, "\\)", at + 2);
-      if (close < 0) return null;
-      end = close + 2;
-    } else if (rest.startsWith("$")) {
-      const close = findDelimiter(source, "$", at + 1);
-      if (close < 0) return null;
-      end = close + 1;
     } else {
-      const token =
-        /^(?:\\(?:textbackslash|textasciitilde|textasciicircum)\{\}|\\[A-Za-z]+\{|\\\\(?:\r?\n)?|\\.|---|--|[\t\r\n ]+)/u.exec(
-          rest,
-        );
-      if (token) {
-        end = at + token[0].length;
-        if (token[0].endsWith("{") && !token[0].endsWith("{}")) {
-          const close = closingBrace(source, end - 1);
-          if (close === null) return null;
-          end = close + 1;
-        }
-      }
+      const node = piece.node!;
+      units.push({
+        key: latexVisualNodeSignature(node),
+        node,
+        from: offset + at,
+        to: offset + piece.end,
+        marks: currentMarks,
+        wrappers: currentWrappers,
+      });
     }
-    const parsed = parseInline(source.slice(at, end), marks);
-    if (!parsed || parsed.length !== 1) return null;
-    const node = parsed[0]!;
-    units.push({
-      key: latexVisualNodeSignature(node),
-      node,
-      from: offset + at,
-      to: offset + end,
-      marks,
-      wrappers,
-    });
-    at = end;
+    at = piece.end;
   }
   return units;
 }
 
 function inlineEditorUnits(nodes: readonly JSONContent[]): JSONContent[] {
   return nodes.flatMap((node) =>
-    node.type === "text" ? (node.text ?? "").split("").map((text) => ({ ...node, text })) : [node],
+    node.type === "text"
+      ? Array.from(textGraphemes.segment(node.text ?? ""), ({ segment: text }) => ({
+          ...node,
+          text,
+        }))
+      : [node],
   );
 }
 
@@ -3126,10 +3455,7 @@ function splitParagraphSource(
       )
         shared++;
       value += "}".repeat(wrappers.length - shared);
-      value += unit.wrappers
-        .slice(shared)
-        .map((name) => "\\" + name + "{")
-        .join("");
+      value += unit.wrappers.slice(shared).join("");
       value += block.source.slice(unit.from, unit.to);
       wrappers = unit.wrappers;
     }
@@ -3218,7 +3544,15 @@ function minimallyPatchedBlock(block: LatexVisualSourceBlock, next: JSONContent)
             marks: (node.marks ?? []).filter((mark) => !context.includes(mark.type)),
           })),
         );
-        const candidate = block.source.slice(0, start) + inserted + block.source.slice(end);
+        const before = block.source.slice(0, start);
+        const delimiter =
+          /\\[A-Za-z]+$/u.test(before) && /^[A-Za-z\t\r\n ]/u.test(inserted) ? "{}" : "";
+        const preserved = preserveSourceComments(
+          block.source.slice(start, end),
+          inserted,
+          block.source.includes("\r\n") ? "\r\n" : "\n",
+        );
+        const candidate = before + delimiter + preserved + block.source.slice(end);
         const reparsed = classifyBlock(candidate, 0);
         if (reparsed && roundTripSignature(reparsed) === roundTripSignature(next)) return candidate;
       }
@@ -3400,7 +3734,11 @@ export function applyLatexVisualDocumentChange(
         block.node.type === "latexDisplayMath" &&
         block.node.attrs?.numberingSource &&
         (newChanged[index]?.type !== "latexDisplayMath" ||
-          !newChanged[index]?.attrs?.numberingSource),
+          (!newChanged[index]?.attrs?.numberingSource &&
+            serializeNumberedMath(
+              { ...newChanged[index]?.attrs, tex: String(newChanged[index]?.attrs?.tex ?? "") },
+              block.source,
+            ) === null)),
     )
   )
     return null;
@@ -3438,6 +3776,7 @@ export function applyLatexVisualDocumentChange(
         previousBlock?.node.type === "latexDisplayMath" &&
         node.type === "latexDisplayMath" &&
         !previousBlock.node.attrs?.numberingSource &&
+        !node.attrs?.numberingSource &&
         previousBlock.node.attrs?.wrapper === node.attrs?.wrapper &&
         (previousBlock.node.attrs?.environment ?? null) === (node.attrs?.environment ?? null) &&
         typeof node.attrs?.tex === "string"
@@ -3495,6 +3834,15 @@ export function applyLatexVisualDocumentChange(
       if (before && from === before.to) replacement = gap + replacement;
       if (after && to === after.from) replacement += gap;
     } else if (before && after && from === before.to && to === after.from) replacement = gap;
+  }
+  replacement = preserveSourceComments(source.slice(from, to), replacement, eol);
+  if (replacement && from > 0 && source[from - 1] !== "\n") {
+    const precedingLine = source.slice(source.lastIndexOf("\n", from - 1) + 1, from);
+    if (
+      precedingLine.includes("%") &&
+      latexCommentRanges(precedingLine).at(-1)?.to === precedingLine.length
+    )
+      replacement = eol + replacement;
   }
   let changedSource = source.slice(0, from) + replacement + source.slice(to);
   let rootUpdate: LatexRootUpdate | undefined;
@@ -3556,9 +3904,8 @@ export function applyLatexVisualDocumentChange(
           ? {
               ...parsed.blocks[0]!,
               id: block.id,
-              from,
-              to: from + replacement.length,
-              source: replacement,
+              from: from + parsed.blocks[0]!.from,
+              to: from + parsed.blocks[0]!.to,
               node: newChanged[0]!,
             }
           : index > prefix

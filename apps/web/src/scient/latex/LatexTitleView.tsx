@@ -1,3 +1,4 @@
+import { LatexSelect } from "./LatexSelect";
 import { isLatexContextEvent } from "./latexContextEvents";
 import * as Schema from "effect/Schema";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -44,6 +45,7 @@ export function LatexTitleView({
   );
   const root = useRef<HTMLDivElement>(null);
   const toolbar = useRef<HTMLDivElement>(null);
+  const focusDateAfterSelect = useRef(false);
   const id = useId();
   const [active, setActive] = useState(false);
   const [addingAuthor, setAddingAuthor] = useState(false);
@@ -178,7 +180,6 @@ export function LatexTitleView({
         rows={1}
         disabled={!editable || sourceMeta?.titleEditable === false}
         draftKey={draftKey ? `${draftKey}:title` : undefined}
-        placeholder={active ? "Document title" : ""}
         value={String(node.attrs.title ?? "")}
         onValueChange={(title) => updateAttributes({ title })}
       />
@@ -188,7 +189,6 @@ export function LatexTitleView({
           rows={1}
           disabled={!editable || sourceMeta?.authorEditable === false}
           draftKey={draftKey ? `${draftKey}:author` : undefined}
-          placeholder={active ? "Author" : ""}
           value={String(node.attrs.author ?? "")}
           onValueChange={(author) => {
             setAddingAuthor(!author.trim());
@@ -202,7 +202,6 @@ export function LatexTitleView({
           rows={1}
           disabled={!editable || sourceMeta?.dateEditable === false}
           draftKey={draftKey ? `${draftKey}:date` : undefined}
-          placeholder={active ? "Date" : ""}
           value={String(node.attrs.date ?? "")}
           onValueChange={(date) => {
             if (date.trim()) updateAttributes({ date, dateEnabled: true, dateMode: "explicit" });
@@ -247,12 +246,12 @@ export function LatexTitleView({
                 />
                 Author
               </label>
-              <select
+              <LatexSelect
                 aria-label="Title date"
                 disabled={sourceMeta?.dateEditable === false}
                 value={dateMode}
-                onChange={(event) => {
-                  const mode = event.currentTarget.value;
+                onValueChange={(value) => {
+                  const mode = value;
                   setAddingDate(false);
                   updateAttributes(
                     mode === "hidden"
@@ -263,13 +262,20 @@ export function LatexTitleView({
                           dateMode: mode === "automatic" ? "today" : "explicit",
                         },
                   );
-                  if (mode === "explicit") focusField("date");
+                  focusDateAfterSelect.current = mode === "explicit";
                 }}
-              >
-                <option value="automatic">Date: Automatic</option>
-                <option value="explicit">Date: Custom</option>
-                <option value="hidden">Date: Hidden</option>
-              </select>
+                onClosed={() => {
+                  if (!focusDateAfterSelect.current) return;
+                  focusDateAfterSelect.current = false;
+                  focusField("date");
+                }}
+                size="compact"
+                options={[
+                  { value: "automatic", label: "Date: Automatic" },
+                  { value: "explicit", label: "Date: Custom" },
+                  { value: "hidden", label: "Date: Hidden" },
+                ]}
+              />
             </div>,
             host,
           )

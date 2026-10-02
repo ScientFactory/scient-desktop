@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
 } from "react";
 import { Table as TableIcon } from "lucide-react";
 import { MenuSub, MenuSubPopup, MenuSubTrigger } from "~/components/ui/menu";
@@ -149,8 +150,38 @@ function tableSizeLabel(dimensions: ScientMarkdownTableDimensions): string {
 
 export function DocumentTableSizeMenu({
   onInsert,
+  onCustomSize,
 }: {
   readonly onInsert: (dimensions: ScientMarkdownTableDimensions) => void;
+  readonly onCustomSize?: (() => void) | undefined;
+}) {
+  return (
+    <DocumentGridSizeMenu
+      label="Table"
+      icon={<TableIcon className="size-4" />}
+      onInsert={onInsert}
+      onCustomSize={onCustomSize}
+    />
+  );
+}
+
+/** Shared size picker for rectangular document objects. */
+export function DocumentGridSizeMenu({
+  label,
+  icon,
+  options,
+  commandScope,
+  disabled,
+  onInsert,
+  onCustomSize,
+}: {
+  readonly label: string;
+  readonly icon?: ReactNode;
+  readonly options?: ReactNode;
+  readonly commandScope?: string;
+  readonly disabled?: boolean;
+  readonly onInsert: (dimensions: ScientMarkdownTableDimensions) => void;
+  readonly onCustomSize?: (() => void) | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const [activeSize, setActiveSize] = useState<ScientMarkdownTableDimensions>(
@@ -387,9 +418,9 @@ export function DocumentTableSizeMenu({
         setVisibleSize(INITIAL_TABLE_SIZE_PICKER_DIMENSIONS);
       }}
     >
-      <MenuSubTrigger>
-        <TableIcon className="size-4" />
-        <span>Table</span>
+      <MenuSubTrigger disabled={disabled}>
+        {icon}
+        <span>{label}</span>
       </MenuSubTrigger>
       <MenuSubPopup
         className="w-auto max-w-(--available-width) [&>div]:max-h-none [&>div]:overflow-y-visible"
@@ -397,8 +428,10 @@ export function DocumentTableSizeMenu({
           placement.locked ? LOCKED_TABLE_SIZE_PICKER_COLLISION_AVOIDANCE : undefined
         }
         data-keybinding-capture=""
+        data-dock-command-scope={commandScope}
         side={placement.locked && placement.side ? placement.side : "inline-end"}
       >
+        {options}
         <div
           ref={setPickerElement}
           className="px-1.5 py-1"
@@ -416,7 +449,7 @@ export function DocumentTableSizeMenu({
           >
             <div
               role="group"
-              aria-label="Choose table size, columns by rows"
+              aria-label={`Choose ${label.toLowerCase()} size, columns by rows`}
               className="grid gap-[3px]"
               data-scient-table-size-columns={visibleSize.columns}
               data-scient-table-size-rows={visibleSize.rows}
@@ -430,18 +463,18 @@ export function DocumentTableSizeMenu({
               {tableSizeChoices(visibleSize).map((dimensions) => {
                 const selected =
                   dimensions.columns <= activeSize.columns && dimensions.rows <= activeSize.rows;
-                const label = `Insert table with ${tableSizeLabel(dimensions)}`;
+                const cellLabel = `Insert ${label.toLowerCase()} with ${tableSizeLabel(dimensions)}`;
                 return (
                   <MenuItem
                     key={`${dimensions.columns}×${dimensions.rows}`}
                     ref={(element) => {
                       cellRefs.current[tableSizePickerCellIndex(dimensions)] = element;
                     }}
-                    aria-label={label}
+                    aria-label={cellLabel}
                     data-scient-table-size-cell
                     data-scient-table-size-cell-column={dimensions.columns}
                     data-scient-table-size-cell-row={dimensions.rows}
-                    label={label}
+                    label={cellLabel}
                     active={selected}
                     variant="grid-cell"
                     onFocus={() => {
@@ -468,7 +501,7 @@ export function DocumentTableSizeMenu({
                     onKeyDown={(event) => handleCellKeyDown(event, dimensions)}
                     onClick={() => onInsert(dimensions)}
                   >
-                    <span className="sr-only">{label}</span>
+                    <span className="sr-only">{cellLabel}</span>
                   </MenuItem>
                 );
               })}
@@ -483,6 +516,7 @@ export function DocumentTableSizeMenu({
             {activeSize.columns} × {activeSize.rows}
           </div>
         </div>
+        {onCustomSize && <MenuItem onClick={onCustomSize}>Choose size…</MenuItem>}
       </MenuSubPopup>
     </MenuSub>
   );

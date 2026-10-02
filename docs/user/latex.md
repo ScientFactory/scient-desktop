@@ -36,22 +36,52 @@ service is required for the writing workflow.
 Write is a source-derived writing canvas, not an editable PDF. You can start
 writing before installing or running TeX. The canvas uses a document workspace
 with a compact toolbar, a collapsible outline, and a contextual
-status bar. The paragraph-style menu includes Text, heading levels, and Quote;
-chapter-based classes also offer
-Chapter. The toolbar supports bold, italic,
-lists, undo and redo. **Insert...** opens a searchable menu for equations, tables,
-statements, figures and page breaks. Heading styles live in the style menu rather
+status bar. The **Text** menu includes Text, heading levels, and Quote, using
+plain labels and a checkmark for the current style. Heading levels are grouped
+under **Headings**, with a centered **Numbered** button. A filled gray button
+with a checkmark means numbering is on; an outlined button without a checkmark means it is off. It updates the current
+heading immediately and keeps the menu open. The heading footer uses the same
+label and pressed state. In ordinary
+text, choose numbering and then a heading level in the same menu. Changing
+heading level preserves the selected numbering setting; Text and Quote are
+unaffected. Chapter-based classes also offer Chapter. The toolbar button always
+says Text (or T when narrow). The toolbar supports bold, italic,
+lists, undo and redo. **Insert** opens a searchable menu for figures, tables, citations, cross-references,
+footnotes, links and statements. Equations and structures live in **Math**. Heading styles live in the style menu rather
 than being duplicated in Insert. Type `/` on an empty
 paragraph or press Ctrl/Cmd+/ to open it; use the arrow keys and Enter to choose.
 The writing toolbar stays fixed at the top on one row. When the pane narrows,
 labels disappear first (Text becomes **T**); less-used groups then move into
 **More**. Insert holds elements and references; Lists holds list actions.
-**Document > Document settings** opens page settings, and **Outline** is a tab
+**Document > Page layout** and **Document > Document style** open two sections of
+one settings dialog. **Outline** is a tab
 in the footer's Pages sidebar. Selected-object options appear between **Fit
 width** and **Search** in the footer; narrow panes use an object-named menu.
-Title, author, and date remain editable on paper. **Document > Add title block**
-explicitly restores the standard block. **Text > Use as document title** moves a
+**Document > Title & authors** groups Edit title, Edit authors, Edit date and
+Add title block. Editing jumps to the corresponding on-paper field. A missing or
+custom title offers an explicit creation/source action instead of silently adding
+a block. Add title block is disabled when a title already exists. Date modes in
+the footer are Automatic (the compilation date), Custom and Hidden.
+Title, author, and date remain editable on paper. **Document > Title & authors > Add title block**
+explicitly restores the standard block. **Document > Use paragraph as title** moves a
 plain paragraph there, with confirmation before replacing an existing title.
+
+**Lists** offers Bulleted list, Numbered list, Description list, Indent item,
+Outdent item, and Remove list formatting. A checkmark identifies the current
+type. Choose a type on an empty paragraph to start writing, or select paragraphs
+to turn them into items. With a caret inside a list, changing type affects that
+list at its current nesting level; selecting particular items changes only those
+items. Choosing the active type leaves it unchanged. Remove list formatting
+keeps the content, including supported equations and description terms.
+
+In bulleted and numbered lists, Enter creates an item; Enter on an empty item
+leaves that level. Tab and Shift+Tab indent and outdent. Description lists have
+editable term and body fields: Enter in a term moves to its body, Enter in the
+body starts another item, and Enter in an empty item returns to ordinary text.
+New description lists use your selected paragraphs as bodies, with empty terms
+ready to fill in. Conversion to description currently supports plain paragraphs;
+rich or nested content that its adapter cannot preserve is disabled. Custom
+source-only lists remain editable in LaTeX source.
 
 The footer shares PDF's page navigation, zoom and search controls. Minus/plus
 use five-percent steps in the 25–500% range; click the percentage to reset to
@@ -74,11 +104,26 @@ empty cells rather than example expressions. Empty math slots appear as subtle
 dots while the formula is focused and disappear when it is inactive. They are
 caret targets and are never written into the compiled source.
 
-Inside a formula, **Insert** offers math actions. **Math symbols and structures**
-inserts at the current math caret, including inside a matrix or case cell.
+The **Math** menu offers six choices:
+
+| Option                | Behavior                                                                                                 |
+| --------------------- | -------------------------------------------------------------------------------------------------------- |
+| Inline math           | Insert math within a sentence, or move the active equation inline.                                       |
+| Display math          | Insert math on its own line, or move the active inline formula onto its own line.                        |
+| Aligned equations     | Start two rows aligned at a relation; an existing formula becomes the first row.                         |
+| Matrix                | Choose brackets using the compact selector above the table-style size grid, then click a size to insert. |
+| Cases                 | Insert a two-row piecewise expression with expression and condition columns.                             |
+| Symbols & structures… | Search for symbols or insert fractions, roots, accents, and other structures.                            |
+
+The current inline/display placement has a checkmark. Placement changes retain
+existing math; converting inline math to display math retains the surrounding text
+as paragraphs. Matrix and symbol pickers change nothing until an item is inserted.
+Symbols & structures opens above the footer at the same corner whether opened
+from Math or the footer, with no centered dialog.
+Inside math, insertion uses the current math selection/caret. Outside math,
+matrices and cases start display math; symbols start inline math.
 Text formatting controls are disabled while math has focus, and toolbar Undo/Redo
-uses the formula's editing history. Converting inline math to a centered equation
-retains the text before and after it as paragraphs.
+uses the formula's editing history.
 
 Type `\` followed by a command name directly in a formula to see local command
 suggestions with symbol previews. Up/Down changes the suggestion; Enter or Tab
@@ -86,18 +131,24 @@ inserts it and moves into its editable slot when applicable. In-progress command
 suggestions remain local until accepted, so ghost completions are not saved into
 the document. Clicking a suggestion keeps you inside the formula.
 
-Math controls appear within the editor's existing bottom status bar: equation
-type, **Symbols**, and **Code**. The footer keeps the same height when entering
-or leaving math. Structures and symbol categories live inside **Symbols**, which opens
-a compact visual palette with categories corresponding to LyX's math panels:
-Greek letters, arrows, relations, negated relations, operators, accents, delimiters,
-fonts, functions, spacing, and specialist symbols. Search by name, symbol, or LaTeX
-command across all categories. Hover or focus a tile to see its name and command.
-Arrow keys browse the grid; Enter inserts, and Escape returns to the formula.
-Recent symbols and starred favorites are saved locally on this device. Selecting
-a fraction, root, accent, or paired delimiter wraps the current math selection;
-without a selection, its entry slots are blank. **Structures** also offers blank
-matrices/cases and row/column editing at the current matrix cursor.
+The existing bottom bar holds **Placement**, **Numbered**, **Reference label**,
+**Symbols & structures**, and **Edit LaTeX**. Aligned equations use a **Numbering**
+menu with **None**, **Whole block**, and **Each row**. **Rows & columns** edits the
+structure at the math cursor; cases and aligned equations keep their two-column
+structure. The footer keeps its height when entering or leaving math.
+
+Imported equation labels, tags, and suppressed numbers remain protected. Their
+placement, numbering, and outer row structure are changed in Source. A single
+outer reference label can be edited directly; per-row labels remain in Source.
+**Edit LaTeX** edits the formula body, leaving its outer wrapper and metadata intact.
+
+**Symbols & structures** groups Common, Greek letters, Operators & relations,
+Arrows, Sums/integrals/limits, Brackets & accents, Functions & math alphabets, and
+More symbols. Search spans all categories. Hover or focus a tile to see its name
+and command. Arrow keys browse the grid; Enter inserts, and Escape returns to the
+formula. Recent symbols and starred favorites are saved locally on this device.
+A fraction, root, accent, or paired delimiter wraps the selected math; without a
+selection, entry slots are blank.
 
 The palette is bundled locally and needs no network. Known package requirements
 are added to the document root's preamble, including when editing an included
@@ -113,22 +164,18 @@ packages must be available in the local TeX installation. Commands without a
 browser glyph remain labeled LaTeX entries and render through their package in
 the compiled PDF. The editor never replaces them with a different source symbol.
 
-The bar changes between inline,
-centered, numbered, unnumbered, aligned, and gathered forms and inserts
-fractions, roots, scripts, operators, relations, Greek letters, matrices,
-cases, and aligned structures at the mathematical cursor. Choose **Code** in
-that bar to edit just the formula's code in a compact box above the bar. Supported
-edits update the equation and document as you type; there are no Apply or Cancel
-buttons. Escape or Ctrl/Cmd+Enter returns to the formula. The outer delimiters and
-equation environment are managed by the equation-type selector. Equations with
-`\label`, `\tag`, `\notag`, or `\nonumber` allow edits to the math in their existing
-rows. Those commands remain outside the formula field and keep their exact source.
-Change their labels, numbering, row count, or equation type in Source. Edits that
-cross a numbering command inside a formula, or numbering inside a nested
-environment or a commented equation, remain protected. Macro definitions belong
-in the document source. Edits that cannot
-round-trip remain local and are marked as unsaved. MathLive's separate virtual
-keyboard and menu are hidden.
+Choose **Edit LaTeX** to edit just the formula body in a compact box above the
+footer. Supported edits update the equation and document as you type; there are
+no Apply or Cancel buttons. Escape or Ctrl/Cmd+Enter returns to the formula.
+Placement and Numbering manage the outer delimiters and environment. Equations
+with `\label`, `\tag`, `\notag`, or `\nonumber` allow edits to the math in their
+existing rows. The commands remain outside the formula field and retain their
+source. The Reference label field edits a single outer label; per-row labels,
+numbering, row count, and placement remain protected and are changed in Source.
+Edits crossing an interior numbering command, nested numbering, and commented
+equations remain protected. Macro definitions belong in the document source.
+Edits that cannot round-trip remain local and are marked as unsaved. MathLive's
+separate virtual keyboard and menu are hidden.
 
 The formula field expands common typed shortcuts such as `sqrt`, `alpha`,
 `sum`, `->`, and `<=`. In the formula-code editor, starting a known command
@@ -136,7 +183,7 @@ such as `\fra` or an inner environment such as `\begin{bmat` shows bounded
 completions; Tab accepts the first suggestion. Unknown commands remain literal
 source; the TeX compiler determines whether their definitions are available.
 
-The Insert menu creates display equations, bracket or parenthesis matrices,
+The Math menu creates display equations, bracket or parenthesis matrices,
 cases, and aligned equations. You can also type a complete `matrix`, `bmatrix`,
 `pmatrix`, `vmatrix`, `Vmatrix`, `cases`, or `aligned` environment on an otherwise
 empty visual paragraph; Scient converts it only after the matching `\end{...}`
@@ -161,8 +208,13 @@ inspect exact output. A successful build never means the browser canvas is
 pixel-identical to that PDF. Compile errors preserve the last successful PDF.
 The canvas reads safe document-class, paper, base-font, `geometry`, paragraph
 indentation, paragraph spacing and line-spacing settings from the preamble.
-Use **Document settings** to change paper size, base font size, each of the four
-margins and paragraph style. In an included file, these settings update the root;
+Use **Document > Page layout** for paper size, orientation and individual margins.
+Use **Document > Document style** for standard document type, base font size and
+paragraph style. Both sections share one draft, with **Apply** and **Cancel**.
+Fields marked **Keep document setting** preserve the current source; blank margin
+fields do the same. Custom classes retain their class and text style in Source.
+**Edit settings in Source** opens the root setup. If the document changes while
+settings are open, close and reopen the dialog before applying. In an included file, these settings update the root;
 these controls update explicit LaTeX preamble settings rather than maintaining
 private visual-only state. Saving required root changes must finish before PDF
 build or export becomes available. A failed root save remains visible for resolution.
@@ -171,7 +223,7 @@ Math and object fields retain the exact text and caret locally. Source updates
 are coalesced during typing and flushed when leaving the field; page measurement
 waits briefly for typing to pause. These changes request a PDF build only when
 PDF is opened, or on Ctrl/Cmd+S while it is visible.
-**More > Keyboard shortcuts** opens **All writing shortcuts**, a searchable list covering
+**Document > Keyboard shortcuts** opens **All writing shortcuts**, a searchable list covering
 Write, Math and Tables. Filter by area when needed; shortcut editing, custom math
 actions and the printable reference remain in the same dialog.
 
@@ -241,35 +293,106 @@ file boundary. Click a source-only block or use **Edit LaTeX** to edit its exact
 source in place; **Apply LaTeX** checks that the document has not changed underneath
 the draft. **Source** opens the file that owns the block.
 
-The **Insert** menu inserts theorem, claim, lemma, proposition, corollary,
-definition, example, remark and proof environments. Their type, optional title,
-and structural options live in the contextual footbar. Ordinary prose,
-inline/display equations, and references in the body are editable on paper.
-Unknown commands or unsupported syntax retain exact-source editing. When a newly
-inserted statement has no preamble declaration, Scient adds a standard
-`\newtheorem` or `\newenvironment` declaration so the source remains compilable.
+### Selecting table and math cells
 
-The **Figure** action lets you select a project PNG, JPEG, or PDF image, caption,
-and width. It inserts a real `figure` and `\includegraphics` structure,
-adds `graphicx` when needed, and resolves its project-relative image through the
-workspace asset service. Edit its path, width, placement, alignment, caption and
-label from the contextual footbar, or delete the whole figure. Direct external-file import and
-asset deletion are separate workspace operations and are not implied by deleting
-the LaTeX figure.
+Drag across table cells, Shift+click another cell, or use Shift+Arrow at a cell
+boundary to select a rectangular area. Row and Column footer menus also offer
+Select row and Select column. Delete or Backspace clears all selected cells;
+the table structure stays in place. Ctrl/Cmd+C copies the selected cells as a
+LaTeX table fragment, and Ctrl/Cmd+X copies and clears them.
 
-**Cite / Refer...** searches labelled objects in the current file by their heading,
-caption, or key. Its Citations tab searches literal title, author, year, and key
-fields from linked local `.bib` files, plus inline `\bibitem` entries. You can also
-enter a known key. Bibliography configuration stays in LaTeX; the picker does not
-create a bibliography or resolve BibTeX string macros. The compiler determines
-final citation text and reference numbers. Preamble,
-macro and global-layout edits show a rebuild
-notice. After a crash or interrupted save, your unsaved changes are offered in
-the footer when you reopen the document, and you can keep writing meanwhile.
-**Compare** shows them next to the file, and the file is replaced only if you
-choose **Use recovered** there. **Discard** removes the recovered copy. In a
-document made of several files, the recovered changes can be compared and
-copied, but are not applied for you.
+Use Table > Select table to select the whole table. Ctrl/Cmd+A inside a cell
+first selects its text; pressing it again selects the table. Copy then includes
+the full table with its caption and settings. Delete, Backspace or Cut removes
+a selected whole table. Escape returns to editing a cell.
+
+Cell selections highlight complete cells. Whole-table selections highlight the
+table block and its caption together. Dragging from a cell out into surrounding
+text switches to document selection: Delete removes the table and any selected
+text. Dragging across a table from surrounding text also selects it as a complete
+block. Selecting the table does not move the caret into its first cell.
+
+In math, Delete or Backspace clears every cell in a rectangular selection without
+removing rows or columns. In an empty cell, deleting removes the nearest math
+wrapper and keeps its other contents; matrix contents continue in row order.
+
+### Empty elements and editing guides
+
+Newly inserted elements start without sample text: table cells, table captions,
+figure captions, title text and inserted headings are blank. Existing document
+text and explicitly chosen templates retain their content.
+
+While editing a table, description list or other structured block, empty fields
+show small, faint dashed guides. Math arrays show guides only in the array being
+edited, including nested cases and matrices. The markers are spaced apart and
+disappear when focus leaves the environment; hovering alone does not show them.
+Filled cells and ordinary empty paragraphs have no guide boxes. Click a blank
+cell or use the existing keyboard navigation to enter content. Click targets and
+document layout stay the same when guides appear or disappear.
+
+These guides are editor decorations. They are not added to LaTeX, copied content,
+or the compiled PDF, and do not alter printed table borders. Caption areas stay
+available for editing without adding a caption command until you enter text.
+
+### Insert document elements
+
+The Insert menu keeps the same choices while you work. Math-only insertion belongs
+in Math; finish editing a formula before inserting document elements.
+Search finds entries inside the submenus too.
+
+| Option            | Behavior                                                                                                                        |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Figure…           | Choose a project PNG, JPEG or PDF, or import a PNG/JPEG. Preview raster images, set an optional caption and width, then insert. |
+| Table             | Choose a size from the grid to insert a table.                                                                                  |
+| Citation…         | Select one or more bibliography sources and choose a citation form supported by the document.                                   |
+| Cross-reference…  | Find a labelled object in this file and insert its reference or page number.                                                    |
+| Footnote          | Insert a note at the cursor, or move selected inline content into a note.                                                       |
+| Link…             | Give selected text a web/email address, or enter new link text.                                                                 |
+| Theorems & proofs | Insert Theorem, Lemma, Proposition, Corollary, Claim, Definition, Example, Remark or Proof.                                     |
+| More              | Code block, Page break, Abstract, Table of contents, Bibliography and other specialized blocks.                                 |
+
+Block insertion preserves the surrounding text. Selecting ordinary prose before
+choosing a theorem wraps that selection; with a caret inside an existing theorem,
+a new theorem is inserted after it. Unsupported selections ask you to use ordinary
+text or Source. Edit statement prose, math and references on paper, with title and
+structural options in the footer. Missing standard statement declarations are
+added using the existing source adapter; custom definitions remain in Source.
+
+Figures use real `figure` and `\includegraphics` source and add `graphicx` when
+needed. Imports are saved only after choosing Insert (PNG/JPEG, up to 20 MB).
+An empty caption does not add a caption or reference label. PDF images can be
+selected but do not have a raster preview in the picker. Deleting a figure does
+not delete its image file. Use the footer for image path, width, placement,
+alignment and reference label; edit captions on paper.
+
+Citation search reads literal title, author, year and key fields from linked local
+`.bib` files, plus inline `\bibitem` entries. It does not resolve BibTeX string
+macros. Parenthetical and in-sentence forms are offered when natbib or biblatex is
+configured. A known citation key or reference label can also be entered directly.
+The compiler determines final citation text and reference numbers.
+
+**More > Bibliography** finds an existing bibliography, uses linked biblatex
+resources, or asks you to choose a BibTeX file/style or manual entries. It preserves
+an existing bibliography style. File paths are relative to the root document;
+file/style availability and the final bibliography are resolved during compilation.
+Abstract and Table of contents select an existing block in the open file instead
+of adding another one.
+
+Links use `\href` and the document's hyperlink setup. Click an existing link to
+edit its address and plain label in the footer; formatted labels keep their exact
+LaTeX and are edited in Source. Footnotes containing formatting retain their LaTeX;
+plain note text can be edited directly in the footer.
+
+Dialogs retain the original insertion point. Cancelling inserts nothing; if the
+document changes while a picker is open, insertion asks you to choose the position
+again. An image already imported when this happens remains a project asset.
+
+Preamble, macro and global-layout edits show a rebuild notice. After a crash or
+interrupted save, your unsaved changes are offered in the footer when you reopen
+the document, and you can keep writing meanwhile. **Compare** shows them next to
+the file, and the file is replaced only if you choose **Use recovered** there.
+**Discard** removes the recovered copy. In a document made of several files, the
+recovered changes can be compared and copied, but are not applied for you.
 
 ## Edit LaTeX source
 

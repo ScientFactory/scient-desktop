@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronUp } from "lucide-react";
 import { dockButtonClass } from "../markdownEditor/ui/dockChrome";
+import { isLatexContextEvent } from "./latexContextEvents";
 
 /** A stable portal destination keeps object fields mounted as the footer resizes. */
 export function LatexContextTools(props: { children: ReactNode }) {
@@ -45,7 +46,7 @@ export function LatexContextTools(props: { children: ReactNode }) {
     if (slot) mutation.observe(slot, { childList: true, subtree: true });
     selectionChanged();
     const close = (event: PointerEvent) => {
-      if (event.target instanceof Node && !element.contains(event.target)) setOpen(false);
+      if (event.target instanceof Node && !isLatexContextEvent(event, element)) setOpen(false);
     };
     document.addEventListener("pointerdown", close);
     return () => {

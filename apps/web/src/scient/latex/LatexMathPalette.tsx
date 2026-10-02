@@ -4,10 +4,46 @@ import { ChevronUp } from "lucide-react";
 import "mathlive/static.css";
 import { MATH_SYMBOL_CATEGORIES, MATH_SYMBOLS, type MathSymbol } from "./mathSymbols";
 import { mathSymbolPreview } from "./mathSymbolPresentation";
-import type { LatexMathFieldHandle } from "./LatexMathField";
 
 const STORAGE_KEY = "scient.latex.math-palette.v1";
 const byId = new Map(MATH_SYMBOLS.map((symbol) => [symbol.id, symbol]));
+const PALETTE_GROUPS = [
+  {
+    id: "common",
+    label: "Common",
+    icon: "√",
+    categories: ["structures", "frac-square", "sqrt-square"],
+  },
+  { id: "greek", label: "Greek letters", icon: "α", categories: ["latex_greek"] },
+  {
+    id: "operators",
+    label: "Operators & relations",
+    icon: "≤",
+    categories: ["latex_bop", "latex_brel", "latex_ams_ops", "latex_ams_rel", "latex_ams_nrel"],
+  },
+  { id: "arrows", label: "Arrows", icon: "→", categories: ["latex_arrow", "latex_ams_arrows"] },
+  { id: "large", label: "Sums, integrals & limits", icon: "∑", categories: ["latex_varsz"] },
+  {
+    id: "brackets",
+    label: "Brackets & accents",
+    icon: "[ ]",
+    categories: ["latex_delim", "latex_deco"],
+  },
+  {
+    id: "functions",
+    label: "Functions & math alphabets",
+    icon: "ℝ",
+    categories: ["functions", "font"],
+  },
+  {
+    id: "other",
+    label: "More symbols",
+    icon: "…",
+    categories: MATH_SYMBOL_CATEGORIES.map(([id]) => id).filter((id) =>
+      ["latex_dots", "space", "style", "latex_misc", "latex_ams_misc"].includes(id),
+    ),
+  },
+];
 
 function readPreferences(
   fallback: { recent: string[]; favorites: string[] } = { recent: [], favorites: [] },
@@ -39,21 +75,23 @@ function SymbolGlyph({ symbol }: { symbol: MathSymbol }) {
 
 export function LatexMathPalette({
   onInsert,
-  onCommand,
   onReturnToMath,
   sourceOpen,
   onOpen,
   openRequest = 0,
+  picker = false,
+  onDismiss,
 }: {
   onInsert: (symbol: MathSymbol) => void;
-  onCommand: LatexMathFieldHandle["command"];
   onReturnToMath: () => void;
   sourceOpen: boolean;
   onOpen: () => void;
   openRequest?: number;
+  picker?: boolean;
+  onDismiss?: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [category, setCategory] = useState("latex_greek");
+  const [open, setOpen] = useState(picker);
+  const [category, setCategory] = useState("common");
   const [query, setQuery] = useState("");
   const [preferences, setPreferences] = useState(readPreferences);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -70,10 +108,18 @@ export function LatexMathPalette({
   useEffect(() => {
     if (!open) return;
     const outside = (event: PointerEvent) => {
-      if (!event.composedPath().includes(root.current!)) setOpen(false);
+      if (!event.composedPath().includes(root.current!)) {
+        setOpen(false);
+        onDismiss?.();
+      }
     };
     document.addEventListener("pointerdown", outside, true);
     return () => document.removeEventListener("pointerdown", outside, true);
+  }, [open, onDismiss]);
+  useEffect(() => {
+    if (!open) return;
+    const frame = requestAnimationFrame(() => search.current?.focus());
+    return () => cancelAnimationFrame(frame);
   }, [open]);
   const symbols = useMemo(() => {
     if (query.trim()) {
@@ -82,7 +128,9 @@ export function LatexMathPalette({
     }
     if (category === "recent" || category === "favorites")
       return preferences[category].map((id) => byId.get(id)!).filter(Boolean);
-    return MATH_SYMBOLS.filter((symbol) => symbol.category === category);
+    return MATH_SYMBOLS.filter((symbol) =>
+      PALETTE_GROUPS.find((group) => group.id === category)?.categories.includes(symbol.category),
+    );
   }, [category, preferences, query]);
   const active = symbols.find((symbol) => symbol.id === activeId) ?? symbols[0];
   const activePreview = active ? mathSymbolPreview(active) : null;
@@ -142,24 +190,26 @@ export function LatexMathPalette({
     }
   };
   return (
-    <div ref={root} className="scient-latex-symbol-palette">
-      <button
-        type="button"
-        className="scient-latex-symbol-palette-trigger"
-        aria-expanded={open}
-        aria-controls={panelId}
-        onMouseDown={(event) => event.preventDefault()}
-        onClick={() => (open ? close() : show(category))}
-        onKeyDown={(event) => {
-          if (event.key === "ArrowUp" || event.key === "ArrowDown") {
-            event.preventDefault();
-            show(category);
-            requestAnimationFrame(() => search.current?.focus());
-          }
-        }}
-      >
-        Symbols <ChevronUp aria-hidden="true" />
-      </button>
+    <div ref={root} className="scient-latex-symbol-palette" data-dock-command-scope="latex">
+      {!picker && (
+        <button
+          type="button"
+          className="scient-latex-symbol-palette-trigger"
+          aria-expanded={open}
+          aria-controls={panelId}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => (open ? close() : show(category))}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+              event.preventDefault();
+              show(category);
+              requestAnimationFrame(() => search.current?.focus());
+            }
+          }}
+        >
+          Symbols & structures <ChevronUp aria-hidden="true" />
+        </button>
+      )}
       {open && (
         <section
           id={panelId}
@@ -207,7 +257,7 @@ export function LatexMathPalette({
               {[
                 ["recent", "Recent", "◷"],
                 ["favorites", "Favorites", "☆"],
-                ...MATH_SYMBOL_CATEGORIES,
+                ...PALETTE_GROUPS.map(({ id, label, icon }) => [id, label, icon]),
               ].map(([id, label, icon]) => (
                 <button
                   key={id}
@@ -232,7 +282,7 @@ export function LatexMathPalette({
                     ? "Recently used"
                     : category === "favorites"
                       ? "Favorites"
-                      : MATH_SYMBOL_CATEGORIES.find(([id]) => id === category)?.[1]}{" "}
+                      : PALETTE_GROUPS.find(({ id }) => id === category)?.label}{" "}
                 <span>{symbols.length}</span>
               </div>
               <div
@@ -259,34 +309,6 @@ export function LatexMathPalette({
                   </ScientTooltip>
                 ))}
               </div>
-              {category === "structures" && !query && (
-                <div
-                  className="scient-latex-symbol-palette-matrix-tools"
-                  aria-label="Edit current matrix"
-                >
-                  <span>At the matrix cursor</span>
-                  {(
-                    [
-                      ["addRowAfter", "+ Row"],
-                      ["addColumnAfter", "+ Column"],
-                      ["removeRow", "− Row"],
-                      ["removeColumn", "− Column"],
-                    ] as const
-                  ).map(([command, label]) => (
-                    <button
-                      key={command}
-                      type="button"
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => {
-                        onCommand(command);
-                        setOpen(false);
-                      }}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              )}
               {!symbols.length && (
                 <p className="scient-latex-symbol-palette-empty">
                   {query

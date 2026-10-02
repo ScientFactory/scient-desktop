@@ -1,6 +1,7 @@
 import type { MathfieldElement } from "mathlive";
 
 interface MathAtom {
+  readonly id?: string;
   readonly type?: string;
   readonly isRoot?: boolean;
   readonly environmentName?: string;
@@ -10,6 +11,14 @@ interface MathAtom {
   readonly rowCount?: number;
   readonly colCount?: number;
   readonly getCell?: (row: number, column: number) => readonly MathAtom[] | undefined;
+  readonly setCell?: (row: number, column: number, value: readonly MathAtom[]) => void;
+  readonly branches?: readonly unknown[];
+  readonly branch?: (name: unknown) => readonly MathAtom[] | undefined;
+  readonly addChildrenAfter?: (
+    children: readonly MathAtom[],
+    after: MathAtom,
+  ) => MathAtom | undefined;
+  readonly removeChild?: (child: MathAtom) => void;
 }
 
 interface MathModel {
@@ -22,6 +31,158 @@ interface MathModel {
   _position: number;
   _selection: { ranges: [number, number][]; direction: "forward" | "backward" | "none" };
   selectionDidChange(): void;
+  setState?: (
+    state: {
+      content: { type: "root"; mode: "math"; body: readonly unknown[] };
+      selection: { ranges: [number, number][] };
+      mode: "math";
+    },
+    options: { silenceNotifications: boolean },
+  ) => void;
+  contentWillChange?: (options: { inputType: string }) => boolean;
+  deferNotifications?: (
+    options: { content: boolean; selection: boolean; type: string },
+    action: () => void,
+  ) => boolean;
+}
+
+interface MathMutationController {
+  readonly model?: MathModel;
+  setValue?: (
+    value: string,
+    options: {
+      silenceNotifications: boolean;
+      insertionMode: "replaceAll";
+      selectionMode: "after";
+      format: "latex";
+      mode: "math";
+    },
+  ) => void;
+  snapshot?: () => void;
+  stopCoalescingUndo?: () => void;
+  flushInlineShortcutBuffer?: () => void;
+}
+
+/** Restore authoritative source without retaining empty arrays from the old model. */
+export function restoreMathFieldValue(math: MathfieldElement, value: string): void {
+  const controller = (math as unknown as { _mathfield?: MathMutationController })._mathfield;
+  const options = {
+    silenceNotifications: true,
+    insertionMode: "replaceAll" as const,
+    selectionMode: "after" as const,
+    format: "latex" as const,
+    mode: "math" as const,
+  };
+  if (!controller?.model?.setState || !controller.setValue) {
+    math.setValue(value, options);
+    return;
+  }
+  // MathLive's range deletion can retain an empty wrapper. Restore the entire
+  // model before parsing the replacement, including when the replacement is empty.
+  controller.model.setState(
+    {
+      content: { type: "root", mode: "math", body: [] },
+      selection: { ranges: [[0, 0]] },
+      mode: "math",
+    },
+    { silenceNotifications: true },
+  );
+  controller.setValue(value, options);
+}
+
+function mutateMath(math: MathfieldElement, action: (model: MathModel) => void): boolean {
+  const controller = (math as unknown as { _mathfield?: MathMutationController })._mathfield;
+  const model = mathModel(math);
+  const type = "deleteContentBackward";
+  if (
+    math.readOnly ||
+    !controller?.snapshot ||
+    !model?.deferNotifications ||
+    !model.contentWillChange?.({ inputType: type })
+  )
+    return false;
+  controller.flushInlineShortcutBuffer?.();
+  controller.stopCoalescingUndo?.();
+  controller.snapshot();
+  const changed = model.deferNotifications({ content: true, selection: true, type }, () =>
+    action(model),
+  );
+  if (changed) controller.snapshot();
+  return changed;
+}
+
+/** Clear every selected cell without merging rows or removing the array. */
+export function clearMathRectangle(
+  math: MathfieldElement,
+  rectangle: MathRectangleSelection,
+): boolean {
+  const array = rectangle.anchor.array;
+  if (!array.setCell) return false;
+  const firstRow = Math.min(rectangle.anchor.row, rectangle.focus.row);
+  const lastRow = Math.max(rectangle.anchor.row, rectangle.focus.row);
+  const firstColumn = Math.min(rectangle.anchor.column, rectangle.focus.column);
+  const lastColumn = Math.max(rectangle.anchor.column, rectangle.focus.column);
+  return mutateMath(math, (model) => {
+    for (let row = firstRow; row <= lastRow; row += 1)
+      for (let column = firstColumn; column <= lastColumn; column += 1)
+        array.setCell?.(row, column, []);
+    const first = array.getCell?.(firstRow, firstColumn)?.[0];
+    if (first) math.position = model.offsetOf(first);
+  });
+}
+
+/** Remove an empty cell's nearest wrapper, preserving its remaining atoms. */
+export function unwrapEmptyMathCell(math: MathfieldElement): boolean {
+  const model = mathModel(math);
+  if (!model) return false;
+  if (
+    !math.selectionIsCollapsed &&
+    math.getValue(math.selection, "latex-without-placeholders").trim()
+  )
+    return false;
+  let child = model.at(math.position);
+  let wrapper: MathAtom | null = null;
+  while (child.parent && !child.parent.isRoot) {
+    const parent: MathAtom = child.parent;
+    if (
+      ["array", "genfrac", "surd", "leftright", "overunder", "box", "enclose"].includes(
+        parent.type ?? "",
+      )
+    ) {
+      const branch = parent.branch?.(child.parentBranch);
+      if (branch?.length) {
+        const from = model.offsetOf(branch[0]!);
+        const to = model.offsetOf(branch[branch.length - 1]!);
+        if (
+          from >= 0 &&
+          to >= from &&
+          !math.getValue([from, to], "latex-without-placeholders").replace(/[{}\s]/gu, "")
+        ) {
+          wrapper = parent;
+          break;
+        }
+      }
+    }
+    child = parent;
+  }
+  if (!wrapper?.parent) return false;
+  const parent = wrapper.parent;
+  if (!parent.addChildrenAfter || !parent.removeChild) return false;
+  const target = wrapper;
+  const contents: MathAtom[] = [];
+  if (target.type === "array") {
+    for (let row = 0; row < (target.rowCount ?? 0); row += 1)
+      for (let column = 0; column < (target.colCount ?? 0); column += 1)
+        contents.push(...(target.getCell?.(row, column) ?? []));
+  }
+  for (const branch of target.branches ?? []) contents.push(...(target.branch?.(branch) ?? []));
+  const remaining = contents.filter((atom) => atom.type !== "first" && atom.type !== "placeholder");
+  const before = target.leftSibling;
+  return mutateMath(math, (current) => {
+    if (remaining.length) parent.addChildrenAfter?.(remaining, target);
+    parent.removeChild?.(target);
+    math.position = before ? Math.max(0, current.offsetOf(before)) : 0;
+  });
 }
 
 export interface MathCellSelection {
@@ -83,6 +244,23 @@ function mathModel(math: MathfieldElement): MathModel | null {
 export function mathSelectionEndpoints(math: MathfieldElement): readonly [number, number] | null {
   const model = mathModel(math);
   return model ? [model.anchor, model.position] : null;
+}
+
+/** Start a newly mounted structured formula at its first editable cell. */
+export function firstMathCell(math: MathfieldElement): MathCellSelection | null {
+  const model = mathModel(math);
+  if (!model) return null;
+  const arrays = model.atoms.filter((atom) => atom.type === "array" && !atom.isRoot);
+  const array = arrays.find(
+    (candidate) =>
+      !arrays.some((other) => {
+        for (let parent = candidate.parent; parent; parent = parent.parent) {
+          if (parent === other) return true;
+        }
+        return false;
+      }),
+  );
+  return array ? arrayCell(model, array, 0, 0) : null;
 }
 
 function arrayCell(
@@ -148,21 +326,44 @@ export function mathLeftCellBoundary(
   math: MathfieldElement,
   offset: number,
 ): MathCellSelection | null {
+  return mathHorizontalCellBoundary(math, offset, -1);
+}
+
+/** Find a row's right edge with the same exit rules as its left edge. */
+export function mathRightCellBoundary(
+  math: MathfieldElement,
+  offset: number,
+): MathCellSelection | null {
+  return mathHorizontalCellBoundary(math, offset, 1);
+}
+
+function mathHorizontalCellBoundary(
+  math: MathfieldElement,
+  offset: number,
+  direction: -1 | 1,
+): MathCellSelection | null {
+  const edge = direction === -1 ? 0 : 1;
+  const isEdgeColumn = (cell: MathCellSelection) =>
+    cell.column === (direction === -1 ? 0 : (cell.array.colCount ?? 0) - 1);
   const path = mathCellPathAt(math, offset);
-  const exact = [...path].reverse().find((cell) => cell.column === 0 && offset === cell.cell[0]);
+  const exact = [...path]
+    .reverse()
+    .find((cell) => isEdgeColumn(cell) && offset === cell.cell[edge]);
   if (exact) return exact;
   const caret = math.shadowRoot?.querySelector(".ML__caret, .ML__text-caret");
   if (!caret) return null;
   const bounds = caret.getBoundingClientRect();
-  const x = bounds.right;
+  const x = direction === -1 ? bounds.right : bounds.left;
   const y = bounds.top + bounds.height / 2;
-  const cell = [...mathSelectionPoint(math, x, y).path]
-    .reverse()
-    .find((candidate) => candidate.column === 0);
+  const cell = [...mathSelectionPoint(math, x, y).path].reverse().find(isEdgeColumn);
   if (!cell) return null;
-  for (let index = cell.cell[0] + 1; index <= cell.cell[1]; index += 1) {
-    const first = math.getElementInfo(index)?.bounds;
-    if (first) return x <= first.left + first.width / 2 ? cell : null;
+  const start = direction === -1 ? cell.cell[0] + 1 : cell.cell[1];
+  for (let index = start; index > cell.cell[0] && index <= cell.cell[1]; index -= direction) {
+    const atomBounds = math.getElementInfo(index)?.bounds;
+    if (atomBounds) {
+      const middle = atomBounds.left + atomBounds.width / 2;
+      return (direction === -1 ? x <= middle : x >= middle) ? cell : null;
+    }
   }
   return cell;
 }
@@ -493,4 +694,27 @@ export function selectMathRectangle(
   model._anchor = backward ? rectangle.anchor.cell[1] : rectangle.anchor.cell[0];
   model._position = backward ? rectangle.focus.cell[0] : rectangle.focus.cell[1];
   model.selectionDidChange();
+}
+
+/** Resolve a rendered empty-cell guide through the owning array's atom id. */
+export function focusMathCellGuide(
+  math: MathfieldElement,
+  table: Element,
+  row: number,
+  column: number,
+): boolean {
+  const model = mathModel(math);
+  if (!model || row < 0 || column < 0) return false;
+  for (let element: Element | null = table; element; element = element.parentElement) {
+    const id = element.getAttribute("data-atom-id");
+    if (!id) continue;
+    const array = model.atoms.find((atom) => atom.type === "array" && atom.id === id);
+    if (!array) continue;
+    const cell = arrayCell(model, array, row, column);
+    if (!cell) return false;
+    math.focus();
+    math.position = cell.cell[0];
+    return true;
+  }
+  return false;
 }

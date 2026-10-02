@@ -37,6 +37,35 @@ Navigation, zoom and search do not rewrite LaTeX. A PDF build consumes saved
 source and publishes a separate artifact; CSS page layout is never proof of
 compiled output.
 
+### Basic inline text
+
+The source adapter and its edit mapper share one inline grammar. Supported prose
+includes bold, italic/emphasis, typewriter text, small capitals and underlining;
+roman/sans families and scoped standard size/font declarations are also editable.
+`latexTextFormatting.ts` owns the command-to-mark mapping used by the canvas and
+serializer. Imported styling stays in the text; it does not add toolbar controls.
+Standard-class font metrics supply the scoped sizes, with CSS approximating TeX
+typography rather than promising identical glyphs or line wrapping.
+
+Text accents, common Latin letters and text symbols render as editable Unicode.
+The source map treats an accented grapheme as one token and retains the original
+command spelling during narrow edits. Control-word delimiter spaces, empty
+argument terminators, nonbreaking `~`, thin spaces, TeX quotes/dashes and explicit
+line breaks have distinct handling. `\\` and `\newline` insert a break inside a
+paragraph; a blank source line still starts a new paragraph. Unknown macros and
+breaks with unsupported spacing/placement options retain exact-source fallback.
+Automated regressions cover these source projections and edits. Human visual
+qualification remains pending.
+
+Visual choice fields use the shared themed Select primitives through
+`LatexSelect.tsx`, including matrix brackets, insertion dialogs, document settings
+and object footer choices. Their popups retain shared keyboard navigation and
+focus handling rather than using operating-system option lists. A popup carries
+the ID of its owning field: footer dismissal and table selection treat choices
+inside that popup as interactions with the same selected object, including in
+compact panes. Field drafts, disabled choices and source restrictions remain
+owned by each feature.
+
 ## Control map
 
 ### Document header
@@ -59,17 +88,17 @@ panes, remain one row and never require horizontal scrolling.
 
 ### Permanent writing row
 
-| Control               | Role and behavior                                                                                                                                                                                    |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Undo / Redo           | Use the active math field's history while editing math; otherwise use document history.                                                                                                              |
-| Text / T              | Change the current paragraph to Text, a supported heading level or Quote. The button name stays fixed; the menu marks the current style.                                                             |
-| Use as document title | Move a plain paragraph into the standard title block; confirm before replacing a nonempty title. One Undo reverses the conversion.                                                                   |
-| Bold / Italic         | Apply/remove marks on the prose selection. Additional formatting is available in More.                                                                                                               |
-| Lists                 | Bullet, numbered, continued-numbering and description lists; indent/outdent supported items.                                                                                                         |
-| Math                  | Insert supported inline/display equations and open the symbol tools.                                                                                                                                 |
-| Insert / +            | Search and insert tables, figures, statements, references, footnotes, bibliography, abstract, contents and page breaks where supported. Root declarations and source context can restrict insertion. |
-| Document              | Edit title/authors/date, explicitly add a standard title block, or open page/document settings.                                                                                                      |
-| More                  | Retain lower-priority groups as the pane narrows; expose additional formatting, source-only block navigation and writing shortcut help.                                                              |
+| Control       | Role and behavior                                                                                                                                                                                    |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Undo / Redo   | Use the active math field's history while editing math; otherwise use document history.                                                                                                              |
+| Text / T      | Change the current paragraph to Text, a supported heading level or Quote. The button name stays fixed; the menu marks the current style.                                                             |
+| Numbered      | Inside Text: update the current heading without closing the menu, or choose numbering before applying a heading to ordinary text.                                                                    |
+| Bold / Italic | Apply/remove marks on the prose selection. Additional formatting is available in More.                                                                                                               |
+| Lists         | Bulleted, numbered and description types; indent/outdent and remove formatting. Check the current type and disable unsupported conversions.                                                          |
+| Math          | Inline math, Display math, Aligned equations, Matrix, Cases, and Symbols & structures.                                                                                                               |
+| Insert / +    | Search and insert tables, figures, statements, references, footnotes, bibliography, abstract, contents and page breaks where supported. Root declarations and source context can restrict insertion. |
+| Document      | Edit title/authors/date, add a standard title block, use a plain paragraph as the document title, open page/document settings, or open Keyboard shortcuts (a plain text item without an icon).       |
+| More          | Retain lower-priority groups as the pane narrows. Contains only overflowed toolbar groups; no additional source or shortcut actions.                                                                 |
 
 The row stays at the top. Text labels disappear before action groups overflow:
 Text becomes **T**, Math keeps its sigma, Insert keeps its plus, and Document
@@ -88,9 +117,9 @@ in the footer, not in an extra row or on the document paper.
 | Search                                | Open shared find controls. Visual searches supported prose; math, title attributes and raw-source blocks are not indexed by this adapter.               |
 | Search previous / next / close        | Navigate matches or close find; Enter/Shift+Enter and Escape use the same shared interactions.                                                          |
 | More document actions                 | Alternate access to zoom, fit, sidebar, search and page navigation. PDF adds its format-specific actions.                                               |
-| Heading / Part                        | Numbered switch and reference label for the selected heading.                                                                                           |
+| Heading / Part                        | Numbered button and reference label for the selected heading.                                                                                           |
 | Title                                 | Author visibility and automatic/custom/hidden date. Title, author and date text are edited on the paper.                                                |
-| Equation                              | Equation type, symbol palette and Code editor. Protected numbering commands can prevent type/row-structure changes.                                     |
+| Equation                              | Placement, numbering, reference label, structure actions, Symbols & structures, and Edit LaTeX. Imported row metadata stays protected.                  |
 | Table                                 | Row and column insertion/deletion/movement, alignment, table style/width, header, caption, reference label and deletion, subject to source constraints. |
 | Figure                                | Alignment, width, placement, image path, reference label and deletion. Caption text is edited on the paper.                                             |
 | Statement                             | Supported theorem/proof/remark type, optional title and deletion. Supported body prose and math are edited inside the block.                            |
@@ -161,7 +190,7 @@ it to the destination without overwriting an existing file.
 
 The writing toolbar owns a searchable Insert menu, with `/` on an empty
 paragraph and Ctrl/Cmd+/ shortcuts. Actions use the existing source adapter and
-editor transactions. Figure selection lists project images. Pasting or dropping
+editor transactions. Figure selection lists project images and offers PNG/JPEG import. Windows file selection creates no asset until Insert is confirmed. Pasting or dropping
 one PNG or JPEG image in Write saves it to an `assets` folder beside the root
 document and inserts an editable figure at the original selection; the upload
 limit is 20 MB. Citation selection
@@ -171,6 +200,32 @@ references are scoped to the open file. PDF export delegates to
 the existing PDF save-copy hook and requires current revision/dependency evidence.
 These writing features introduce no hosted service, new compiler, or second save
 path. Project creation remains owned by the project sidebar.
+
+Insert uses `LatexInsertMenuContent` in both its regular and overflow menus.
+Its top level is Figure, Table, Citation, Cross-reference, Footnote, Link,
+Theorems & proofs and More. Search includes nested actions. Unsupported insertion
+contexts keep these choices visible with a reason instead of changing the menu.
+`DocumentTableSizeMenu` keeps the shared grid and exposes an optional custom-size
+callback used by Visual's numeric dialog; existing callers retain their behavior.
+
+`insertLatexBlock` preserves non-wrapping selections, groups insertion with
+`closeHistory`, and focuses the new block. Only explicit supported prose selections
+are wrapped in a new statement. Dialog workflows capture the document and selection,
+wait for close-complete before inserting, and refuse a stale document snapshot.
+Cancelling restores focus without an editor mutation. Figure import begins on
+confirmation and disables dismissal during the upload; uploaded assets survive a
+subsequent stale-document refusal.
+
+References and citations have separate pickers. Citation selection supports
+multiple keys; natbib/biblatex forms are offered only for detected package setup.
+Cross-references expose document-default, number and page-number forms without
+inventing rendered numbering. Links retain both `href` arguments in the inline
+schema and source-token map. Plain labels and addresses use footer fields;
+formatted labels remain source-editable. Bibliography setup preserves existing
+styles and delegates rendering to TeX. Abstract, contents and bibliography actions
+navigate existing open-file blocks; a bibliography already configured in the root
+is reported instead of duplicated. Cross-file discovery remains limited to the
+explicitly linked bibliography files and root setup.
 
 The Visual writing bar uses Markdown's button/menu primitives with its own
 LaTeX action groups: history, paragraph style, emphasis, lists, math, Insert,
@@ -182,10 +237,25 @@ under Document; keyboard shortcut help lives in More. The document header has
 no additional Visual-only controls. Its grouped view tabs and Export/Rebuild
 actions share one non-scrolling row; action labels yield to icons on narrow
 panes. Cancel reuses the build button while a build is running. The style menu contains Text, headings,
-Quote, and a separate Use as document title action. Heading numbering and other
-object controls sit directly between Fit width and Search in the fixed-height
-footer without changing page layout. Narrow panes use menus named for the
+and Quote with plain labels and a current-style checkmark. Heading levels are
+grouped under Headings with a small Numbered toggle button centered below the group label.
+Its filled gray pressed state and checkmark indicate numbering is enabled; the
+unchecked button is outlined. The menu and footer use the same state treatment. It changes the selected heading without closing the menu, or sets the
+numbering for the next heading chosen from ordinary text. The footer uses the
+same wording and reads the same heading attribute; tooltips explain the scope. Heading-level changes
+preserve that choice. Use paragraph as title lives under Document. Heading
+numbering is also available alongside other object controls between Fit width
+and Search in the fixed-height footer without changing page layout. Narrow panes use menus named for the
 selected object; previous/next page actions remain available in More.
+
+`latexListEditing.ts` owns list conversions and removal. A caret targets the
+current list; an explicit item selection splits the list around those items.
+Selecting the existing type is a no-op. Conversions retain supported child
+nodes, and removing a description list retains its terms as bold prose. The
+description adapter accepts plain paragraph conversion; unsupported rich or
+nested conversions are disabled. Splitting a numbered list preserves the
+remaining items' starting number through supported `enumerate[start=N]` source.
+Detailed list numbering and appearance controls in the footer remain deferred.
 
 PDF and Visual both render `DocumentReaderControls` and `DocumentSearchBar`.
 The bottom Visual controls use the same page input validation, five-percent
@@ -198,15 +268,49 @@ attributes, math fields and exact-source objects are not indexed by that plugin.
 Navigation does not edit LaTeX. The document header retains its PDF/Word Export menu.
 
 Title, author and date remain editable on paper. Editing existing metadata
-never inserts a title block. Document > Add title block explicitly creates or
-restores the standard block while preserving existing metadata. Text > Use as
-document title moves a standalone plain-text paragraph into that block, asks
+never inserts a title block. Document > Title & authors > Add title block explicitly creates or
+restores the standard block while preserving existing metadata. Document > Use paragraph as title moves a standalone plain-text paragraph into that block, asks
 before replacing a nonempty title, and preserves both the previous source and
 the new source in one reversible editor history step. External source adoption
 clears obsolete history as for other Visual edits. Custom title pages and
 unsupported title formatting remain source-owned. Standard article/report/book
-classes can be selected in Document settings; incompatible switches and custom
+classes can be selected in Document style; incompatible switches and custom
 classes stay protected.
+
+Document has four stable entries: Title & authors, Use paragraph as title,
+Page layout and Document style. The last two open sections of one settings dialog
+with a shared draft, explicit Apply/Cancel, and a source snapshot checked again
+before mutation. Unchanged fields remain source-controlled. Margin updates carry
+only edited sides; adding geometry to a standard class retains the other projected
+margins. Custom classes without an explicit geometry setup require Source for this
+operation. Orientation updates class/geometry options and the Visual layout reader.
+Title help and source actions finish their dialog close before transferring focus.
+
+### Empty editing positions
+
+Insertion helpers leave editable content empty instead of generating sample text.
+`LatexTextField` marks emptiness from its local draft, so guides update immediately
+while typing or composing. Description fields mark the same state. Small dashed
+background markers appear only in empty controls within the focused environment;
+hover, filled cells and ordinary empty paragraphs do not reveal guides. Tables
+retain minimum cell targets independently of markers and printed rules.
+Empty caption editors do not create source caption commands until edited.
+Caption markers follow the centered text position within the caption field.
+
+`mathEditingGuides` decorates MathLive 0.108's rendered array cell boxes inside
+its shadow root. Its bounded DOM observer and focus/selection listeners schedule
+updates when rendering or the active environment changes. The current array's
+atom ID limits dashed markers to its own empty cells, including when arrays are
+nested. Absolutely positioned pseudo-elements use the existing VBox strut to
+align with the row baseline. No inline guide nodes are inserted. Minimum cell
+targets apply through the structural selector from the first render, independent
+of observer attributes, focus and emptiness, so decorating a replacement render
+does not resize the formula. Markers disappear on blur without changing geometry.
+The adapter never modifies math atoms, selection history, or serialization.
+Empty-cell clicks resolve through the owning array's atom ID in the existing
+MathLive adapter. Native placeholder slots appear only in the focused formula;
+empty array cells suppress duplicate placeholder glyphs beneath their guides. Publication and copying continue to use
+`latex-without-placeholders`. Revisit the VBox selectors when upgrading MathLive.
 
 ### Source code editing
 
@@ -380,6 +484,28 @@ Commands without an editor glyph are explicit source entries. Palette preference
 contain symbol IDs only and live in local storage. Package additions pass through
 the same source transaction and projection guard as the math edit.
 
+The Math menu separates placement, equation layout, and insertion. Its six
+entries are Inline math, Display math, Aligned equations, Matrix, Cases,
+and Symbols & structures. The first two reflect current placement. With active
+math, the Math menu opens that field's existing footer symbol palette. Outside
+math, the same palette opens at the footer corner and retains the document and
+selection until insertion; a changed document cancels insertion. Matrix uses
+`DocumentGridSizeMenu`, the same expanding size grid as Table, with its bracket
+selector above the grid. The selector is compact and has no separate Brackets
+heading. Matrix and Table grids have no Choose size entry. Grid choices run after
+the writing menu closes. Opening or canceling a picker never creates a formula.
+Matrix insertion reuses the shared matrix source builder. `latexMathLayout.ts` preserves existing expressions when
+constructing aligned rows; numbering chooses an unnumbered outer environment,
+an equation containing aligned/gathered, or per-row align/gather numbering.
+
+Palette presentation groups the catalog into eight task-oriented categories;
+search, previews, recents, favorites, and package discovery keep using the same
+catalog. MathLive handles selection-aware insertion. Row/column controls target
+the active cell; cases/aligned/gathered do not offer column changes. New structured
+fields start at their first cell. The source adapter still owns the final edit guard.
+LaTeX insertion and settings dialogs use the shared DialogHeader and DialogPanel
+spacing so fields, focus rings and action buttons stay inside the rounded edges.
+
 Math, title, and table controls share a contextual slot in the document status footer,
 which keeps a constant height. A shared activation event closes the previous
 object's controls. `LatexTitleView.tsx` keeps native text editing on the paper;
@@ -392,7 +518,7 @@ preferences when no legacy comment is present. The palette uses LaTeX-specific C
 avoid collisions with the shared math-input popup. Its code popover is attached
 to the footer controls, outside the scaled document. It edits the formula body only and publishes
 supported changes through the existing source guard as the user types. Outer
-wrappers stay under the equation-type selector; rejected drafts are marked as
+wrappers stay under Placement and Numbering; rejected drafts are marked as
 unsaved. Inner-environment completions omit display wrappers.
 
 Labelled display math keeps `label`, `tag`, `notag`, and `nonumber` commands in
@@ -400,7 +526,11 @@ preserved source metadata outside MathLive. The adapter counts outer rows while
 ignoring row separators inside nested matrices and cases. Formula edits patch
 only their changed source range and retain the commands, whitespace, and row
 separators. Numbered formulas keep their outer row count and equation type;
-changes spanning an interior numbering command are refused. Comments, malformed
+changes spanning an interior numbering command are refused. Single outer equation
+labels have a narrowly scoped exception: the adapter patches only the label,
+requires every other numbering command and the wrapper to remain identical,
+and then applies the ordinary formula/round-trip guard. Per-row labels and
+numbering remain source-owned. Comments, malformed
 commands, and numbering inside a nested environment remain source-only.
 
 Item controls stay outside measured flow. Inline math uses MathLive's
@@ -412,6 +542,18 @@ and crossing the visible outer boundary of a nested array selects that array
 as a whole before continuing in the outer scope. Gaps inside an array resolve
 to the nearest cell. MathLive supplies symbol offsets and rendering;
 the scope boxes are used only for hit testing and are never drawn on the paper.
+The MathLive adapter clears selected cells through one deferred content edit,
+retaining array dimensions. Deleting in an empty cell unwraps its nearest
+structure and moves the remaining atoms into the parent in row/branch order.
+Native beforeinput, input notifications and undo snapshots remain in that path.
+When document Undo/Redo supplies a restored formula, the adapter silently resets
+the MathLive model before parsing that source into the existing field. This
+avoids retaining an empty array alongside the restored array. It also discards
+stale cell selections and pointer geometry; source acknowledgements still leave
+the live field intact.
+Left at the start of a row's first cell and Right at the end of its last cell
+move outside the owning array in their respective directions. Shift with either
+arrow selects that array at the boundary; nested arrays use the innermost scope.
 The MathLive dependency patch keeps command suggestion rows mounted while the
 highlight changes, reuses their rendered previews, and scrolls only the menu
 instead of the document. The menu appears synchronously without delayed callbacks
@@ -425,7 +567,36 @@ and object resizing, waits for composition to end, and preserves a visible text
 anchor during reflow. `LatexTableToolbar.tsx` keeps row, column, and table actions
 in footer menus, including caption and label fields. Activation spans the table
 and its portaled controls, so moving focus between them retains the active cell.
-Table selection adds no controls or visual decoration to the paper. Row and
+Table cell selection uses a background highlight without adding controls or changing geometry.
+Whole-table highlights include the caption; document ranges use node decorations
+from `latexDocumentObjectSelection.ts` to paint the block rather than isolated
+native text selections. Table node selection does not autofocus a cell.
+`useLatexTableSelection` owns rectangular drag/Shift selection, clipboard events
+and whole-table selection separately from each native field's text selection.
+Dragging out of a cell into surrounding prose hands the range to ProseMirror,
+so block deletion and mixed text/table copying follow the document selection.
+Tables and math share the object-range coverage check, pointer boundary resolution
+and window capture in `latexObjectSelection.ts`. Leaving either nested editor
+includes the whole object even when text endpoints snap past its boundaries;
+moving back inside returns to its local selection. The capture runs before native
+input trackers and releases only the pointer that began the drag.
+The document plugin also owns prose-origin drags after they cross a math or table
+object. Endpoints inside a nested editor include that entire object, and the
+document range includes every intervening object. Native DOM selection reads use
+the same range while the drag is active; release resynchronizes the DOM after the
+browser's mouse tracker finishes. Cell-local selections remain separate.
+
+Fit content uses intrinsic column widths without a page-percentage minimum or
+an arbitrary text-length cap. Standard intercolumn spacing belongs to the cells,
+not their text fields. Imported paragraph-column widths still constrain and wrap
+their text; stretch tables retain full-width layout. Empty targets reserve one
+character of width, with guides painted inside it without changing geometry.
+These selection and sizing changes await interaction and PDF comparison checks.
+
+Clearing a rectangle updates the rows in one history transaction and resets the
+selected field drafts after acceptance, so delayed native input cannot restore
+the cleared text. Selected cell copies use source-preserving table cell serialization;
+whole-table copies use the ordinary block serializer, including caption metadata. Row and
 column insertion avoids existing IDs; cell keys follow column IDs when reordered.
 Blank cell space forwards focus to the cell editor without resizing the table;
 clicks on text retain native caret placement. Empty cell insertion preserves a
@@ -513,9 +684,16 @@ Pagination waits 220 ms after input and maps existing decorations while waiting;
 measurements and resize-observer refreshes run after painting, not on every input.
 It never replaces the editable DOM. Layout profiles are cached by preamble.
 
+Unescaped percent comments are hidden in Visual, including standalone comment lines
+and comments inside supported prose. Their source remains intact during ordinary
+edits; replacements and deletions retain comments from the affected source span.
+Comment line endings do not add printed spaces. Escaped `\%` and percent signs in
+literal code remain content. An empty document containing only comments still has
+an editable paragraph, with new text inserted outside the comments.
+
 The parser intentionally leaves unknown commands, optional citation arguments,
-unsupported control symbols, comments inside prose, custom macros and unsupported
-table cells as source-only blocks. Simple templates do not establish arbitrary-paper coverage.
+unsupported control symbols, custom macros and unsupported table cells as source-only
+blocks. Simple templates do not establish arbitrary-paper coverage.
 
 ### Scientific statement coverage
 

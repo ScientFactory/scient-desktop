@@ -1,3 +1,4 @@
+import { LatexSelect } from "./LatexSelect";
 import { isLatexContextEvent } from "./latexContextEvents";
 import { useEffect, useId, useRef, useState, type RefObject, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -22,6 +23,11 @@ interface Props {
   captionEditable: boolean;
   labelEditable: boolean;
   onActiveChange: (active: boolean) => void;
+  hasCellSelection: boolean;
+  onSelectTable: () => void;
+  onSelectRow: () => void;
+  onSelectColumn: () => void;
+  onClearCells: () => void;
   onAddRow: (after: number) => void;
   onRemoveRow: () => void;
   onMoveRow: (direction: -1 | 1) => void;
@@ -144,6 +150,7 @@ export function LatexTableToolbar(props: Props) {
           {menu(
             "Row",
             <>
+              {action("Select row", props.onSelectRow)}
               {action("Insert row above", () => props.onAddRow(props.row - 1))}
               {action("Insert row below", () => props.onAddRow(props.row))}
               {action("Move row up", () => props.onMoveRow(-1), props.row === 0)}
@@ -154,6 +161,7 @@ export function LatexTableToolbar(props: Props) {
           {menu(
             "Column",
             <>
+              {action("Select column", props.onSelectColumn)}
               {action("Insert column left", () => props.onAddColumn(props.column - 1))}
               {action("Insert column right", () => props.onAddColumn(props.column))}
               {action("Move column left", () => props.onMoveColumn(-1), props.column === 0)}
@@ -165,45 +173,53 @@ export function LatexTableToolbar(props: Props) {
               {action("Delete column", props.onRemoveColumn, props.columnCount <= 1)}
               <label>
                 Alignment
-                <select
+                <LatexSelect
                   aria-label="Selected column alignment"
                   value={props.alignment}
-                  onChange={(event) => props.onAlignment(event.currentTarget.value)}
-                >
-                  <option value="left">Left</option>
-                  <option value="center">Center</option>
-                  <option value="right">Right</option>
-                </select>
+                  onValueChange={(value) => props.onAlignment(value)}
+                  size="compact"
+                  options={[
+                    { value: "left", label: "Left" },
+                    { value: "center", label: "Center" },
+                    { value: "right", label: "Right" },
+                  ]}
+                />
               </label>
             </>,
           )}
           {menu(
             "Table",
             <>
+              {action("Select table", props.onSelectTable)}
+              {action("Clear selected cells", props.onClearCells, !props.hasCellSelection)}
               <label>
                 Style
-                <select
+                <LatexSelect
                   aria-label="Table style"
                   value={props.style}
-                  onChange={(event) => props.onStyle(event.currentTarget.value)}
-                >
-                  <option value="plain">Simple</option>
-                  <option value="booktabs">Booktabs</option>
-                  <option value="grid">Full grid</option>
-                </select>
+                  onValueChange={(value) => props.onStyle(value)}
+                  size="compact"
+                  options={[
+                    { value: "plain", label: "Simple" },
+                    { value: "booktabs", label: "Booktabs" },
+                    { value: "grid", label: "Full grid" },
+                  ]}
+                />
               </label>
               <label>
                 Width
-                <select
+                <LatexSelect
                   aria-label="Table width behavior"
                   value={props.width}
                   disabled={props.width === "long"}
-                  onChange={(event) => props.onWidth(event.currentTarget.value)}
-                >
-                  <option value="fixed">Fit content</option>
-                  <option value="stretch">Fit page</option>
-                  {props.width === "long" ? <option value="long">Multipage</option> : null}
-                </select>
+                  onValueChange={(value) => props.onWidth(value)}
+                  size="compact"
+                  options={[
+                    { value: "fixed", label: "Fit content" },
+                    { value: "stretch", label: "Fit page" },
+                    ...(props.width === "long" ? [{ value: "long", label: "Multipage" }] : []),
+                  ]}
+                />
               </label>
               <label className="scient-latex-context-checkbox">
                 <input type="checkbox" checked={props.header} onChange={props.onHeader} />
@@ -232,6 +248,10 @@ export function LatexTableToolbar(props: Props) {
                 </label>
               ) : null}
               {action("Delete table", props.onDelete)}
+              <p>
+                Drag across cells or Shift+click to select. Copy with Ctrl/Cmd+C; Delete clears
+                cells. Select table to copy or delete the whole table.
+              </p>
               <p>Tab moves between cells. Tab in the last cell adds a row.</p>
             </>,
           )}

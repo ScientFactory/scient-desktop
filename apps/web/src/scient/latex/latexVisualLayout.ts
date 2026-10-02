@@ -21,6 +21,11 @@ export function latexVisualFontMetrics(base: 10 | 11 | 12) {
     ],
     small: [base === 10 ? 9 : base === 11 ? 10 : 10.95, base === 10 ? 11 : base === 11 ? 12 : 13.6],
     normalsize: [base === 11 ? 10.95 : base, base === 10 ? 12 : base === 11 ? 13.6 : 14.5],
+    large: [base === 12 ? 14.4 : 12, base === 12 ? 18 : 14],
+    Large: [base === 12 ? 17.28 : 14.4, base === 12 ? 22 : 18],
+    LARGE: [base === 12 ? 20.74 : 17.28, base === 12 ? 25 : 22],
+    huge: [base === 12 ? 24.88 : 20.74, base === 12 ? 30 : 25],
+    Huge: [24.88, 30],
   } as const;
 }
 
@@ -151,6 +156,8 @@ export function latexVisualLayoutProfile(source: string): LatexVisualLayoutProfi
         geometry.delete("paper");
         for (const name of Object.keys(LATEX_PAPER_SIZES)) geometry.delete(`${name}paper`);
       }
+      if ((key === "portrait" || key === "landscape") && value === "true")
+        geometry.delete(key === "portrait" ? "landscape" : "portrait");
       geometry.set(key, value);
       // Later shorthand assignments must override earlier individual margins.
       const sides =
@@ -167,7 +174,9 @@ export function latexVisualLayoutProfile(source: string): LatexVisualLayoutProfi
       if (key === "outer") geometry.set("right", value);
     }
   };
-  readGeometry(classOptions.filter((option) => /paper$|^landscape$/u.test(option)).join(","));
+  readGeometry(
+    classOptions.filter((option) => /paper$|^(?:landscape|portrait)$/u.test(option)).join(","),
+  );
   for (const match of topLevel(
     /\\(?:usepackage|RequirePackage)\s*(?:\[([^\]]*)\])?\s*\{([^{}]+)\}|\\geometry\s*\{((?:[^{}]|\{[^{}]*\})*)\}/gu,
   )) {

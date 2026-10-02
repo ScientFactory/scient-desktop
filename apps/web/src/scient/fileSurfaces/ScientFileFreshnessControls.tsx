@@ -230,7 +230,7 @@ export function ScientFileFreshnessStatus(
       <span className="sr-only" role="status">
         {status}
       </span>
-      <PopoverPopup align="end" padding="comfortable" className="w-96 max-w-[calc(100vw-24px)]">
+      <PopoverPopup align="end" width="lg" padding="comfortable">
         <PopoverTitle>File status</PopoverTitle>
         {props.sessionAttention ? (
           <p className="mt-2 text-xs text-muted-foreground">

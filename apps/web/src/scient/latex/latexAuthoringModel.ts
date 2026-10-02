@@ -40,10 +40,25 @@ export function documentReferenceChoices(source: string): LatexReferenceChoice[]
       /^(?:equation|align|gather|multline|flalign)\*?$/u.test(entry.name),
     );
     const float = environments.findLast((entry) => /^(?:figure|table)\*?$/u.test(entry.name));
+    const statement = environments.findLast((entry) =>
+      /^(?:theorem|lemma|proposition|corollary|claim|definition|example|remark|proof)\*?$/u.test(
+        entry.name,
+      ),
+    );
+    const statementType = statement
+      ? statement.name[0]!.toUpperCase() + statement.name.slice(1).replace(/\*$/u, "")
+      : null;
+    const statementTitle = statement
+      ? /^\\begin\s*\{[^{}]+\}\s*\[([^\]]+)\]/u.exec(before.slice(statement.index))?.[1]
+      : null;
     const nearest = float && caption && caption.index > float.index ? caption : heading;
     return {
       key: match[1]!,
-      title: equation ? "Equation" : (nearest?.[1] ?? match[1]!),
+      title: equation
+        ? "Equation"
+        : statementType
+          ? [statementType, statementTitle].filter(Boolean).join(": ")
+          : (nearest?.[1] ?? match[1]!),
       detail: match[1]!,
       command: equation ? "eqref" : "ref",
     };

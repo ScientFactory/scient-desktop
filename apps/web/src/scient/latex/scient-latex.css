@@ -14,6 +14,19 @@
 .scient-writing-dialog {
   font-family: var(--font-sans);
 }
+.scient-latex-insert-image-preview {
+  display: flex;
+  justify-content: center;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--background);
+}
+.scient-latex-insert-image-preview > img {
+  max-width: 100%;
+  max-height: 160px;
+  object-fit: contain;
+}
 .scient-writing-search {
   width: 100%;
   padding: 12px;
@@ -108,7 +121,7 @@
   margin-top: 15px;
 }
 .scient-writing-reference-key input,
-.scient-writing-field :is(input, select) {
+.scient-writing-field input {
   width: 100%;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -945,11 +958,72 @@
   font-style: italic;
 }
 .scient-latex-visual-document code {
-  font:
-    1em/1.2 "KaTeX_Typewriter",
-    var(--font-mono);
+  font-family: "KaTeX_Typewriter", var(--font-mono);
+  font-size: 1em;
+  line-height: 1.2;
   background: transparent;
   padding: 0;
+}
+.scient-latex-visual-document [data-latex-text-style="small-caps"] {
+  font-variant-caps: small-caps;
+  font-style: normal;
+}
+.scient-latex-visual-document [data-latex-text-style="roman"] {
+  font-family: "KaTeX_Main", "Cambria", "Times New Roman", serif;
+}
+.scient-latex-visual-document [data-latex-text-style="sans"] {
+  font-family: "KaTeX_SansSerif", var(--font-sans);
+}
+.scient-latex-visual-document [data-latex-text-style="slanted"] {
+  font-style: oblique;
+  font-variant-caps: normal;
+}
+.scient-latex-visual-document [data-latex-text-style="upright"] {
+  font-style: normal;
+  font-variant-caps: normal;
+}
+.scient-latex-visual-document [data-latex-text-style="medium"] {
+  font-weight: normal;
+}
+.scient-latex-visual-document [data-latex-text-style="tiny"] {
+  font-size: var(--scient-latex-size-tiny);
+  line-height: var(--scient-latex-baseline-tiny);
+}
+.scient-latex-visual-document [data-latex-text-style="scriptsize"] {
+  font-size: var(--scient-latex-size-scriptsize);
+  line-height: var(--scient-latex-baseline-scriptsize);
+}
+.scient-latex-visual-document [data-latex-text-style="footnotesize"] {
+  font-size: var(--scient-latex-size-footnotesize);
+  line-height: var(--scient-latex-baseline-footnotesize);
+}
+.scient-latex-visual-document [data-latex-text-style="small"] {
+  font-size: var(--scient-latex-size-small);
+  line-height: var(--scient-latex-baseline-small);
+}
+.scient-latex-visual-document [data-latex-text-style="normalsize"] {
+  font-size: var(--scient-latex-size-normalsize);
+  line-height: var(--scient-latex-baseline-normalsize);
+}
+.scient-latex-visual-document [data-latex-text-style="large"] {
+  font-size: var(--scient-latex-size-large);
+  line-height: var(--scient-latex-baseline-large);
+}
+.scient-latex-visual-document [data-latex-text-style="Large"] {
+  font-size: var(--scient-latex-size-Large);
+  line-height: var(--scient-latex-baseline-Large);
+}
+.scient-latex-visual-document [data-latex-text-style="LARGE"] {
+  font-size: var(--scient-latex-size-LARGE);
+  line-height: var(--scient-latex-baseline-LARGE);
+}
+.scient-latex-visual-document [data-latex-text-style="huge"] {
+  font-size: var(--scient-latex-size-huge);
+  line-height: var(--scient-latex-baseline-huge);
+}
+.scient-latex-visual-document [data-latex-text-style="Huge"] {
+  font-size: var(--scient-latex-size-Huge);
+  line-height: var(--scient-latex-baseline-Huge);
 }
 
 .scient-latex-visual-inline-math {
@@ -975,11 +1049,6 @@
 .scient-latex-visual-display-math[data-empty] math-field {
   min-width: 1ch;
   min-height: 1.2em;
-}
-.scient-latex-visual-inline-math[data-empty] math-field,
-.scient-latex-visual-display-math[data-empty] math-field {
-  outline: 1px dashed #c7d8ec;
-  outline-offset: 3px;
 }
 .scient-latex-visual-inline-math,
 .scient-latex-visual-display-math {
@@ -1017,7 +1086,7 @@
   --selection-background-color: transparent;
 }
 .scient-latex-mathfield math-field:focus-within {
-  --placeholder-opacity: 0.65;
+  --placeholder-opacity: 0.5;
 }
 .scient-latex-mathfield math-field::part(container) {
   padding: 0;
@@ -1174,6 +1243,22 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   color: var(--popover-foreground);
   font-size: 11px;
 }
+.scient-latex-select {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+}
+.scient-latex-select[data-compact] {
+  width: auto;
+}
+.scient-latex-context-toolbar > .scient-latex-select {
+  flex: 0 1 auto;
+  width: 132px;
+  min-width: 75px;
+}
+.scient-latex-status > .scient-latex-select {
+  max-width: min(240px, 40vw);
+}
 .scient-latex-context-toolbar {
   position: relative;
   z-index: 70;
@@ -1187,8 +1272,8 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   color: var(--foreground);
   font: 11px/1.3 var(--font-sans);
 }
-.scient-latex-context-toolbar button,
-.scient-latex-context-toolbar select {
+.scient-latex-context-toolbar
+  button:not([data-latex-number-toggle]):not([data-slot="select-trigger"]) {
   min-width: 24px;
   min-height: 24px;
   flex: none;
@@ -1199,31 +1284,13 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   color: inherit;
   font: inherit;
 }
-.scient-latex-context-toolbar select {
-  background: transparent;
-  color: var(--foreground);
-  color-scheme: light;
-}
-.scient-latex-context-toolbar > select {
-  flex: 0 1 auto;
-  width: 132px;
-  min-width: 75px;
-}
-.dark .scient-latex-context-toolbar select {
-  color-scheme: dark;
-}
-.scient-latex-context-toolbar select option,
-.scient-latex-context-toolbar select optgroup {
-  background: var(--popover);
-  color: var(--popover-foreground);
-}
-.scient-latex-context-toolbar button:hover,
-.scient-latex-context-toolbar select:hover {
+.scient-latex-context-toolbar
+  button:not([data-latex-number-toggle]):not([data-slot="select-trigger"]):hover {
   background: var(--accent);
   color: var(--accent-foreground);
 }
-.scient-latex-context-toolbar button:focus-visible,
-.scient-latex-context-toolbar select:focus-visible {
+.scient-latex-context-toolbar
+  button:not([data-latex-number-toggle]):not([data-slot="select-trigger"]):focus-visible {
   outline: 1px solid var(--ring);
   outline-offset: -1px;
 }
@@ -1240,8 +1307,8 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   flex: none;
   min-width: 0;
 }
-.scient-latex-context-toolbar > select,
-.scient-latex-context-toolbar > button,
+.scient-latex-context-toolbar
+  > button:not([data-latex-number-toggle]):not([data-slot="select-trigger"]),
 .scient-latex-symbol-palette > .scient-latex-symbol-palette-trigger {
   box-sizing: border-box;
   height: 24px;
@@ -1390,21 +1457,6 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   min-height: 64px;
   padding: 6px 10px;
   border-top: 1px solid var(--border);
-}
-.scient-latex-symbol-palette-matrix-tools {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 12px;
-}
-.scient-latex-symbol-palette-matrix-tools > span {
-  width: 100%;
-  color: var(--muted-foreground);
-  font-size: 11px;
-}
-.scient-latex-symbol-palette-matrix-tools > button {
-  border-color: var(--border);
-  font: 11px/1.3 var(--font-sans);
 }
 .scient-latex-symbol-palette-detail > div {
   display: grid;
@@ -1876,6 +1928,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 }
 .scient-latex-rich-preview figcaption input,
 .scient-latex-rich-preview figcaption textarea {
+  --scient-empty-guide-x: 50%;
   max-width: 620px;
   padding: 0;
   text-align: center;
@@ -1936,7 +1989,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 }
 .scient-latex-rich-preview table {
   width: auto;
-  min-width: 30%;
+  min-width: 0;
   max-width: 100%;
   margin-inline: auto;
   border-collapse: collapse;
@@ -1961,8 +2014,8 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 }
 .scient-latex-rich-preview th,
 .scient-latex-rich-preview td {
-  min-width: 2em;
-  padding: 0;
+  min-width: 0;
+  padding: 0 calc(6 * 96px / 72.27);
   border: 0;
   text-align: left;
   vertical-align: top;
@@ -1978,16 +2031,39 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-rich-preview th[data-align="right"] {
   text-align: right;
 }
+.scient-latex-rich-preview :is(td, th)[data-cell-selection] {
+  background: var(--scient-latex-selection-background);
+}
+.scient-latex-rich-preview[data-kind="table"] {
+  user-select: none;
+}
+.scient-latex-rich-preview[data-kind="table"] textarea {
+  user-select: text;
+}
+.scient-latex-rich-preview figure[data-table-selection="whole"],
+.scient-latex-rich-preview[data-kind="table"][data-document-selected] figure {
+  background: var(--scient-latex-selection-background);
+  border-radius: 3px;
+  box-shadow: 0 0 0 3px var(--scient-latex-selection-background);
+}
+.scient-latex-rich-preview figure[data-table-selection] ::selection,
+.scient-latex-rich-preview[data-kind="table"][data-document-selected] ::selection {
+  background: transparent;
+}
+.scient-latex-rich-preview figure[data-table-selection] {
+  outline: none;
+}
 .scient-latex-rich-preview td textarea,
 .scient-latex-rich-preview th textarea {
+  --scient-empty-guide-x: 0;
   display: block;
   width: auto;
   min-height: 1lh;
-  min-width: 3ch;
+  min-width: 1ch;
   max-width: 32ch;
   box-sizing: border-box;
   margin: 0;
-  padding: 0 calc(6 * 96px / 72.27);
+  padding: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -2000,14 +2076,24 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   overflow: hidden;
   field-sizing: content;
 }
+.scient-latex-rich-preview textarea[data-table-cell-width="content"] {
+  max-width: none;
+  white-space: pre;
+}
+.scient-latex-rich-preview :is(td, th)[data-align="center"] textarea {
+  margin-inline: auto;
+}
+.scient-latex-rich-preview :is(td, th)[data-align="right"] textarea {
+  margin-left: auto;
+}
 .scient-latex-rich-preview figure[data-table-kind="stretch"] :is(td, th) textarea {
   width: 100%;
   max-width: none;
 }
-.scient-latex-rich-preview table[data-trim-left] tr > :first-child textarea {
+.scient-latex-rich-preview table[data-trim-left] tr > :first-child {
   padding-left: 0;
 }
-.scient-latex-rich-preview table[data-trim-right] tr > :last-child textarea {
+.scient-latex-rich-preview table[data-trim-right] tr > :last-child {
   padding-right: 0;
 }
 .scient-latex-rich-preview td textarea:focus,
@@ -2330,16 +2416,6 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   font-size: 11px;
 }
 
-.scient-latex-root-choice {
-  max-width: min(320px, 40vw);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 2px 6px;
-  background: var(--background);
-  color: var(--foreground);
-  font-size: 11px;
-}
-
 .scient-latex-chip {
   flex: none;
   border-radius: 999px;
@@ -2359,16 +2435,6 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-chip-warning {
   background: var(--warning-surface, color-mix(in srgb, var(--warning) 16%, transparent));
   color: var(--warning-foreground, var(--warning));
-}
-
-.scient-latex-root-choice {
-  max-width: 240px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 1px 6px;
-  background: var(--background);
-  color: var(--foreground);
-  font-size: 10px;
 }
 
 .scient-latex-actions {
@@ -2820,7 +2886,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   gap: 4px;
   padding: 4px 7px;
 }
-.scient-latex-context-menu-panel :is(select, input, textarea) {
+.scient-latex-context-menu-panel :is(input, textarea) {
   min-width: 0;
   width: 100%;
   border: 1px solid var(--border);
@@ -2843,7 +2909,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   height: 12px;
   accent-color: var(--primary);
 }
-.scient-latex-context-menu-panel :disabled {
+.scient-latex-context-menu-panel :disabled:not([data-slot="select-trigger"]) {
   opacity: 0.4;
 }
 .scient-latex-context-menu-panel :is(input, textarea):focus-visible {
@@ -3001,7 +3067,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-title-preview textarea {
   white-space: pre-wrap;
 }
-.scient-latex-context-toolbar :is(input, select, textarea):focus-visible {
+.scient-latex-context-toolbar :is(input, textarea):focus-visible {
   outline: 1px solid var(--ring);
   outline-offset: -1px;
 }
@@ -3135,6 +3201,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-reader-footer .scient-pdf-toolbar {
   position: relative;
 }
+.scient-latex-reader-footer > .scient-latex-symbol-palette > .scient-latex-symbol-palette-panel,
 .scient-latex-context-tools
   :is(
     .scient-latex-context-menu-panel,
@@ -3361,4 +3428,57 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 }
 .scient-latex-diagnostics-anchor .scient-latex-diagnostics-list {
   padding: 8px 12px;
+}
+
+/* Empty-position guides are small decorations inside the active environment.
+   Keep hit targets stable and independent of the visible marker. */
+.scient-latex-visual-document[contenteditable="true"] {
+  --scient-empty-guide: #b8c7da;
+}
+.scient-latex-visual-document[contenteditable="true"] .scient-latex-rich-preview dt input {
+  min-width: 3ch;
+}
+.scient-latex-visual-document[contenteditable="true"]
+  :is(
+    .scient-latex-rich-preview,
+    .scient-latex-title-preview,
+    .scient-latex-abstract-preview,
+    .scient-latex-simple-preview
+  ):focus-within
+  :is(input, textarea)[data-empty]:enabled {
+  /* Native text controls cannot host pseudo-elements. Paint a single compact
+     dashed marker instead of outlining the full field or every table cell. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='16' viewBox='0 0 12 16'%3E%3Crect x='1' y='1' width='10' height='14' rx='3' fill='none' stroke='%23b8c7da' stroke-width='1' stroke-dasharray='2 2'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-size: 0.8em 1em;
+  background-position: var(--scient-empty-guide-x, 0.4em) center;
+}
+.scient-latex-visual-document[contenteditable="true"]
+  .scient-latex-rich-preview[data-kind="table"]:focus-within
+  textarea[data-table-cell][data-empty]:enabled {
+  background-size: 0.5em 1em;
+}
+.scient-latex-mathfield math-field[data-scient-empty]:not([read-only]) {
+  min-width: 1ch;
+  min-height: 1.2em;
+}
+.scient-latex-mathfield math-field[data-scient-empty]:not([read-only]):focus-within {
+  outline: 1px dashed var(--scient-empty-guide, #b8c7da);
+  outline-offset: -3px;
+}
+.scient-latex-mathfield math-field[read-only] {
+  --placeholder-opacity: 0;
+}
+@media print {
+  .scient-latex-visual-document :is(input, textarea)[data-empty] {
+    background-image: none !important;
+  }
+  .scient-latex-visual-document
+    :is(input, textarea, td, th, p, h1, h2, h3, h4, h5, h6, math-field) {
+    outline: none !important;
+    box-shadow: none !important;
+  }
+  .scient-latex-mathfield math-field {
+    --placeholder-opacity: 0 !important;
+  }
 }

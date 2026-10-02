@@ -160,3 +160,49 @@ export function patchNumberedMathSource(source: string, tex: string): string | n
   if (changed.some((row) => row === null)) return null;
   return head + changed.map((row, index) => row + rows[index]!.separator).join("") + tail;
 }
+
+function singleEquation(source: string) {
+  const environment = /^\\begin\{(equation\*?)\}/u.exec(source);
+  const head =
+    environment?.[0] ?? (source.startsWith("\\[") ? "\\[" : source.startsWith("$$") ? "$$" : null);
+  const tail = environment ? `\\end{${environment[1]}}` : head === "\\[" ? "\\]" : "$$";
+  if (!head || !source.endsWith(tail)) return null;
+  const rows = mathRows(source.slice(head.length, -tail.length));
+  if (rows?.length !== 1) return null;
+  const row = rows[0]!;
+  const labels = row.commands.filter((command) =>
+    /^\\label\b/u.test(row.source.slice(command.from, command.to)),
+  );
+  if (labels.length > 1) return null;
+  return { head, tail, row, label: labels[0] };
+}
+
+/** A null result means this equation needs its original per-row/source controls. */
+export function singleMathReferenceLabel(source: string): string | null {
+  const equation = singleEquation(source);
+  if (!equation) return null;
+  if (!equation.label) return "";
+  return (
+    /^\\label\s*\{([^{}\\%\s]+)\}$/u.exec(
+      equation.row.source.slice(equation.label.from, equation.label.to),
+    )?.[1] ?? null
+  );
+}
+
+/** Change just the single outer label, preserving tags, spacing, and the math. */
+export function withMathReferenceLabel(source: string, label: string): string | null {
+  const equation = singleEquation(source);
+  if (
+    !equation ||
+    singleMathReferenceLabel(source) === null ||
+    (label && !/^[^{}\\%\s]+$/u.test(label))
+  )
+    return null;
+  const command = label ? `\\label{${label}}` : "";
+  const body = equation.label
+    ? equation.row.source.slice(0, equation.label.from) +
+      command +
+      equation.row.source.slice(equation.label.to)
+    : equation.row.source + (command ? `\n${command}\n` : "");
+  return equation.head + body + equation.tail;
+}

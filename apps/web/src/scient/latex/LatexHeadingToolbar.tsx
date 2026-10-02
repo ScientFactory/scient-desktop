@@ -1,6 +1,7 @@
 import type { Editor } from "@tiptap/core";
 import { useEditorState } from "@tiptap/react";
 import { LatexTextField } from "./LatexTextField";
+import { LatexHeadingNumberButton } from "./LatexHeadingNumberButton";
 
 export function LatexHeadingToolbar({ editor, draftKey }: { editor: Editor; draftKey: string }) {
   const heading = useEditorState({
@@ -36,14 +37,11 @@ export function LatexHeadingToolbar({ editor, draftKey }: { editor: Editor; draf
       className="scient-latex-context-toolbar scient-latex-heading-bar"
     >
       <span className="scient-latex-context-label">Heading</span>
-      <label className="scient-latex-title-author-toggle">
-        <input
-          type="checkbox"
-          checked={heading.numbered}
-          onChange={(event) => updateHeading({ unnumbered: !event.currentTarget.checked })}
-        />
-        Numbered
-      </label>
+      <LatexHeadingNumberButton
+        checked={heading.numbered}
+        disabled={!editor.isEditable}
+        onCheckedChange={(checked) => updateHeading({ unnumbered: !checked })}
+      />
       <label className="scient-latex-heading-reference">
         Reference label
         <LatexTextField
