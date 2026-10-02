@@ -114,7 +114,7 @@
     },
     {
       "path": "apps/web/src/modelSelection.ts",
-      "anchor": "entry.driverKind === \"pi\" || entry.driverKind === \"omp\"",
+      "anchor": "entry.driverKind === \"omp\"",
       "purpose": "Keep automatic Pi and Oh My Pi metadata markers out of the model picker until discovery supplies a model."
     },
     {

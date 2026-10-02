@@ -456,7 +456,8 @@ export function resolveAppModelSelectionState(
         supportedProviders,
         selectedModel,
       ) ??
-      entry.models.find((model) => !model.unavailableReason)?.slug ??
+      getAppModelOptionsForInstance(settings, entry).find((model) => !model.unavailableReason)
+        ?.slug ??
       // Pi/OMP automatic markers are resolved from a discovered catalog. Do
       // not render one as a selectable native model before discovery succeeds.
       (entry.driverKind === "pi" ||

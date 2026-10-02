@@ -121,6 +121,11 @@ describe("instance-scoped model selection", () => {
           null,
         ),
       ).toBe("");
+      expect(
+        resolveAppModelSelectionState(DEFAULT_UNIFIED_SETTINGS, [
+          { ...native, models: native.models.slice(0, 1) },
+        ]).model,
+      ).toBe("");
 
       const saved = {
         ...DEFAULT_UNIFIED_SETTINGS,
