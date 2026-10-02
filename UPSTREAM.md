@@ -611,7 +611,11 @@ the undo-action union in `showThreadUndoNotice.ts`. New thread always opens the
 "New thread in…" picker (`shouldOpenNewThreadTargetPicker` changes in place), which
 keeps Add project above No project beneath the scrolling project list, so a project,
 including the first, can be added from New thread; Shift+click and ⇧⌘N still start directly in the current project. The
-Sections view reuses T3's rows, shelves and order keys and never changes pin state. If T3 ships its own
+Sections view reuses T3's rows, shelves and canonical manual order keys and never changes pin state.
+Its optional **Keep active threads near the top** presentation is client-local, lives
+in `apps/web/src/scient/sections`, and never writes order keys on status transitions.
+Manual drops update only the deliberate placement; Status view continues to use the
+canonical order. If T3 ships its own
 grouping or collapsible shelves, reconcile against these seams instead of layering a
 second grouping. Decisions, invariants and the full seam list are in
 [sidebar sections](docs/internals/scient-sidebar-sections.md).

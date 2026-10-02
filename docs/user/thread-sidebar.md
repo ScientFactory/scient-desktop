@@ -102,12 +102,44 @@ after the drop.
 
 New threads appear above the active threads you have arranged. Settling clears a thread's active
 position, so using **Un-settle** returns it to the top. Pinning and snoozing preserve its active
-position until you move it again. Thread activity does not change the order. The settled shelf
+position until you move it again. In Status view, thread activity does not change the order. Sections view can
+automatically place active threads as described below. The settled shelf
 continues to use the finished-work order described above.
 
 If dragging is unavailable for one environment, update the Scient server running in that
 environment. Pinned and active reordering require server support. Threads from older servers keep
 their default order until the server is updated.
+
+## Keep active threads near the top
+
+In **Sections** view, **Settings → General → Organization → Keep active threads near the top**
+is on by default. It applies separately inside every section, including General.
+Working, Monitoring, unread Done, approval or input requests, failed sessions, and
+unread Woke threads share one upper group. There is no priority between those states:
+a thread joining the group goes below its existing members, above ordinary inactive
+threads. Switching from Working to Monitoring or Done keeps its position. Pins remain
+above both groups; Snoozed and Settled keep their existing shelves.
+
+Opening a Done thread clears its unread status as usual but keeps its place while you
+read. Three seconds after you leave, an inactive thread moves to the first inactive
+position, below the upper group. Reopening it restarts that delay; new work cancels
+it. Other newly inactive threads can subsequently land above it.
+
+You can still drag threads within or between sections, and move whole sections. A
+manual drop keeps the exact place you choose, including an inactive thread above
+working threads. Automatic updates do not undo the drop. Its next entry into or exit
+from the upper group resumes automatic placement. For example, if no thread is active
+and you drag X first, a newly working Y goes above X. If you deliberately drag X above
+an already working A, a later working B joins after A, preserving your explicit move.
+Movement pauses during a drag or native context menu.
+
+Turning the setting off reveals the saved manual order and cancels pending movements.
+Manual moves made while it was on remain saved. Turning it back on groups current
+active threads in saved order, then follows subsequent transitions. The switch and
+automatic positions belong to this client; section membership and manual order remain
+shared through the server. Refresh preserves local positions, and revalidates current
+status before moving threads. Filtering projects or collapsing a section never counts
+as reading or removes a thread from its remembered position.
 
 ## Start a new thread
 

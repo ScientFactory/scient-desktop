@@ -340,6 +340,14 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   // SCIENT-FORK:START — optional empty-section cleanup (primary-only, shown at any selection).
   {
+    id: "automatic-thread-placement",
+    title: "Keep active threads near the top",
+    to: "/settings/general",
+    searchTerms: [
+      "sidebar sections automatic placement working monitoring unread done attention order",
+    ],
+  },
+  {
     id: "delete-empty-sections",
     title: "Delete empty sections",
     to: "/settings/general",
