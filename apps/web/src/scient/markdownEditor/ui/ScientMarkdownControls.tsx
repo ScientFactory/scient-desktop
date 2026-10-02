@@ -12,7 +12,6 @@ import {
   ArrowUpToLine,
   BetweenHorizontalEnd,
   BetweenVerticalEnd,
-  Bold,
   Brackets,
   Code,
   Columns3,
@@ -27,20 +26,16 @@ import {
   Heading5,
   Heading6,
   Image as ImageIcon,
-  Italic,
-  Link2,
   List,
   ListOrdered,
   ListTodo,
   ListTree,
-  ListX,
   Merge,
   Minus,
   NotebookText,
   PanelTop,
   PilcrowLeft,
   PilcrowRight,
-  Plus,
   Redo2,
   RemoveFormatting,
   Search,
@@ -87,6 +82,8 @@ import {
 } from "~/components/ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
+import { WritingCommandIcon } from "../../writing/commandIcons";
+import { WRITING_COMMAND_LABELS } from "../../writing/commandNames";
 
 import {
   filterScientMarkdownSlashCommands,
@@ -129,7 +126,7 @@ function commandIcon(command: ScientMarkdownCommand): ReactNode {
   const className = "size-4 text-muted-foreground";
   switch (command) {
     case "paragraph":
-      return <TextInitial className={className} />;
+      return <WritingCommandIcon command="text" className={className} />;
     case "heading-1":
       return <Heading1 className={className} />;
     case "heading-2":
@@ -143,15 +140,15 @@ function commandIcon(command: ScientMarkdownCommand): ReactNode {
     case "heading-6":
       return <Heading6 className={className} />;
     case "bullet-list":
-      return <List className={className} />;
+      return <WritingCommandIcon command="bulletList" className={className} />;
     case "ordered-list":
-      return <ListOrdered className={className} />;
+      return <WritingCommandIcon command="numberedList" className={className} />;
     case "task-list":
       return <ListTodo className={className} />;
     case "list-none":
-      return <ListX className={className} />;
+      return <WritingCommandIcon command="noList" className={className} />;
     case "blockquote":
-      return <TextQuote className={className} />;
+      return <WritingCommandIcon command="quote" className={className} />;
     case "code-block":
       return <SquareCode className={className} />;
     case "display-math":
@@ -211,14 +208,14 @@ const STYLE_ITEMS: ReadonlyArray<{
   readonly label: string;
   readonly shortcut?: ScientMarkdownShortcutId;
 }> = [
-  { command: "paragraph", label: "Paragraph", shortcut: "paragraph" },
+  { command: "paragraph", label: WRITING_COMMAND_LABELS.text, shortcut: "paragraph" },
   { command: "heading-1", label: "Heading 1", shortcut: "heading1" },
   { command: "heading-2", label: "Heading 2", shortcut: "heading2" },
   { command: "heading-3", label: "Heading 3", shortcut: "heading3" },
   { command: "heading-4", label: "Heading 4", shortcut: "heading4" },
   { command: "heading-5", label: "Heading 5", shortcut: "heading5" },
   { command: "heading-6", label: "Heading 6", shortcut: "heading6" },
-  { command: "blockquote", label: "Quote" },
+  { command: "blockquote", label: WRITING_COMMAND_LABELS.quote },
 ];
 
 function styleMenuLabel(snapshot: ScientMarkdownEditorSnapshot): string {
@@ -226,11 +223,11 @@ function styleMenuLabel(snapshot: ScientMarkdownEditorSnapshot): string {
     case "heading":
       return snapshot.headingLevel !== null ? `Heading ${snapshot.headingLevel}` : "Heading";
     case "blockquote":
-      return "Quote";
+      return WRITING_COMMAND_LABELS.quote;
     case "code_block":
       return "Code block";
     default:
-      return "Paragraph";
+      return WRITING_COMMAND_LABELS.text;
   }
 }
 
@@ -360,8 +357,8 @@ const LIST_ITEMS: ReadonlyArray<{
   readonly label: string;
   readonly shortcut: ScientMarkdownShortcutId;
 }> = [
-  { command: "bullet-list", label: "Bullet list", shortcut: "bulletList" },
-  { command: "ordered-list", label: "Numbered list", shortcut: "orderedList" },
+  { command: "bullet-list", label: WRITING_COMMAND_LABELS.bulletList, shortcut: "bulletList" },
+  { command: "ordered-list", label: WRITING_COMMAND_LABELS.numberedList, shortcut: "orderedList" },
   { command: "task-list", label: "Task list", shortcut: "taskList" },
 ];
 
@@ -389,7 +386,7 @@ function ListsMenuItems({
       })}
       <MenuSeparator />
       <MenuRadioItem value="list-none" onClick={() => controller.execute("list-none")}>
-        <MenuRow icon={commandIcon("list-none")} label="No list" />
+        <MenuRow icon={commandIcon("list-none")} label={WRITING_COMMAND_LABELS.noList} />
       </MenuRadioItem>
     </MenuRadioGroup>
   );
@@ -455,8 +452,8 @@ function InsertBlockMenuItems({ controller }: { readonly controller: ScientMarkd
 function InsertBlockMenu({ controller }: { readonly controller: ScientMarkdownEditorView }) {
   return (
     <DockMenu
-      label="Insert block or element"
-      icon={<Plus className="size-4" />}
+      label={WRITING_COMMAND_LABELS.insert}
+      icon={<WritingCommandIcon command="insert" />}
       groupLabel="Insert"
       popupClassName="w-52"
     >
@@ -710,14 +707,14 @@ function LinkEditorTrigger({
                 aria-keyshortcuts={shortcut.ariaKeyShortcuts}
                 data-preserve-icon-weight="true"
               >
-                <Link2 className="size-4" />
+                <WritingCommandIcon command="link" />
               </button>
             }
           />
         }
       />
       <TooltipPopup side="top">
-        <DockTooltipContent label="Link" shortcut={shortcut} />
+        <DockTooltipContent label={WRITING_COMMAND_LABELS.link} shortcut={shortcut} />
       </TooltipPopup>
     </Tooltip>
   );
@@ -1072,8 +1069,8 @@ function SelectionToolbar({
       <CommandButton
         controller={controller}
         command="bold"
-        label="Bold"
-        icon={<Bold className="size-4" strokeWidth={2.5} />}
+        label={WRITING_COMMAND_LABELS.bold}
+        icon={<WritingCommandIcon command="bold" />}
         preserveIconWeight
         shortcut="bold"
         active={active.has("strong")}
@@ -1081,16 +1078,16 @@ function SelectionToolbar({
       <CommandButton
         controller={controller}
         command="italic"
-        label="Italic"
-        icon={<Italic className="size-4" />}
+        label={WRITING_COMMAND_LABELS.italic}
+        icon={<WritingCommandIcon command="italic" />}
         active={active.has("em")}
         shortcut="italic"
       />
       <CommandButton
         controller={controller}
         command="inline-code"
-        label="Inline code"
-        icon={<Code className="size-4" />}
+        label={WRITING_COMMAND_LABELS.inlineCode}
+        icon={<WritingCommandIcon command="inlineCode" />}
         preserveIconWeight
         active={active.has("code")}
         shortcut="inlineCode"
@@ -1195,16 +1192,16 @@ export function ScientMarkdownControls({
               <CommandButton
                 controller={controller}
                 command="undo"
-                label="Undo"
-                icon={<Undo2 className="size-4" />}
+                label={WRITING_COMMAND_LABELS.undo}
+                icon={<WritingCommandIcon command="undo" />}
                 disabled={!snapshot.canUndo}
                 shortcut="undo"
               />
               <CommandButton
                 controller={controller}
                 command="redo"
-                label="Redo"
-                icon={<Redo2 className="size-4" />}
+                label={WRITING_COMMAND_LABELS.redo}
+                icon={<WritingCommandIcon command="redo" />}
                 disabled={!snapshot.canRedo}
                 shortcut="redo"
               />
@@ -1249,8 +1246,8 @@ export function ScientMarkdownControls({
               <CommandButton
                 controller={controller}
                 command="bold"
-                label="Bold"
-                icon={<Bold className="size-4" strokeWidth={2.5} />}
+                label={WRITING_COMMAND_LABELS.bold}
+                icon={<WritingCommandIcon command="bold" />}
                 preserveIconWeight
                 active={active.has("strong")}
                 shortcut="bold"
@@ -1258,8 +1255,8 @@ export function ScientMarkdownControls({
               <CommandButton
                 controller={controller}
                 command="italic"
-                label="Italic"
-                icon={<Italic className="size-4" />}
+                label={WRITING_COMMAND_LABELS.italic}
+                icon={<WritingCommandIcon command="italic" />}
                 active={active.has("em")}
                 shortcut="italic"
               />
@@ -1274,8 +1271,8 @@ export function ScientMarkdownControls({
               <CommandButton
                 controller={controller}
                 command="inline-code"
-                label="Inline code"
-                icon={<Code className="size-4" />}
+                label={WRITING_COMMAND_LABELS.inlineCode}
+                icon={<WritingCommandIcon command="inlineCode" />}
                 preserveIconWeight
                 active={active.has("code")}
                 shortcut="inlineCode"

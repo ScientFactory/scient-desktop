@@ -1,6 +1,6 @@
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, Plus } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import {
   Menu,
   MenuTrigger,
@@ -11,6 +11,8 @@ import {
   MenuSubPopup,
 } from "~/components/ui/menu";
 import { DocumentTableSizeMenu } from "../writing/DocumentTableSizeMenu";
+import { WritingCommandIcon } from "../writing/commandIcons";
+import { WRITING_COMMAND_LABELS } from "../writing/commandNames";
 import { dockButtonClass, DockCommandItem } from "../writing/dockChrome";
 
 export interface LatexInsertAction {
@@ -191,12 +193,16 @@ export function LatexInsertMenu(props: {
         command?.();
       }}
     >
-      <ScientTooltip content="Insert">
+      <ScientTooltip content={WRITING_COMMAND_LABELS.insert}>
         <MenuTrigger
           disabled={props.disabled}
           render={
-            <button type="button" aria-label="Insert" className={dockButtonClass()}>
-              <Plus className="size-4" aria-hidden="true" />
+            <button
+              type="button"
+              aria-label={WRITING_COMMAND_LABELS.insert}
+              className={dockButtonClass()}
+            >
+              <WritingCommandIcon command="insert" />
               <ChevronDown className="size-3 shrink-0 opacity-60" aria-hidden="true" />
             </button>
           }

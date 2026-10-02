@@ -61,6 +61,8 @@ import { LatexContextTools } from "./LatexContextTools";
 import { DocumentReaderControls, DocumentSearchBar } from "../writing/DocumentReaderControls";
 import { ReaderBarHostContext } from "../writing/readerBarHost";
 import { commandShortcut } from "../keyboard/presentation";
+import { WritingCommandIcon } from "../writing/commandIcons";
+import { WRITING_COMMAND_LABELS } from "../writing/commandNames";
 import { scientMarkdownShortcut } from "../markdownEditor/shortcuts";
 import {
   DockButton,
@@ -142,23 +144,13 @@ import { LatexVisualSearch, useLatexVisualSearch } from "./useLatexVisualSearch"
 import { clampPdfPage, stepPdfZoom } from "../pdf/pdfReaderModel";
 import { useLatexPinchZoom } from "./useLatexPinchZoom";
 import {
-  Bold,
-  Italic,
   List,
-  ListOrdered,
   Heading1,
   Heading2,
   Heading3,
   Heading4,
   Heading5,
   Heading6,
-  TextInitial,
-  TextQuote,
-  Code as CodeIcon,
-  Link2,
-  ListX,
-  Undo2,
-  Redo2,
   Sigma,
   FileText,
 } from "lucide-react";
@@ -5298,8 +5290,8 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   const formatActions = [
     {
       id: "latex.bold",
-      label: "Bold",
-      icon: <Bold className="size-4" strokeWidth={2.5} />,
+      label: WRITING_COMMAND_LABELS.bold,
+      icon: <WritingCommandIcon command="bold" />,
       action: () => toggleLatexProseMark(editor, "bold"),
       active: editor?.isActive("bold"),
       preserveIconWeight: true,
@@ -5308,8 +5300,8 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     },
     {
       id: "latex.italic",
-      label: "Italic",
-      icon: <Italic className="size-4" />,
+      label: WRITING_COMMAND_LABELS.italic,
+      icon: <WritingCommandIcon command="italic" />,
       action: () => toggleLatexProseMark(editor, "italic"),
       active: editor?.isActive("italic"),
       preserveIconWeight: false,
@@ -5318,8 +5310,8 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     },
     {
       id: "latex.inlineCode",
-      label: "Inline code",
-      icon: <CodeIcon className="size-4" />,
+      label: WRITING_COMMAND_LABELS.inlineCode,
+      icon: <WritingCommandIcon command="inlineCode" />,
       action: () => toggleLatexProseMark(editor, "code"),
       active: editor?.isActive("code"),
       preserveIconWeight: true,
@@ -5328,8 +5320,8 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     },
     {
       id: "latex.link",
-      label: "Link",
-      icon: <Link2 className="size-4" />,
+      label: WRITING_COMMAND_LABELS.link,
+      icon: <WritingCommandIcon command="link" />,
       action: () => linkAction?.run(),
       active: false,
       preserveIconWeight: true,
@@ -5511,13 +5503,18 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   };
   const activeStyle = textStyle?.value ?? "paragraph";
   const activeHeading = headingStyles.find((style) => String(style.level) === activeStyle);
-  const activeStyleLabel = activeHeading?.label ?? (activeStyle === "quote" ? "Quote" : "Text");
+  const activeStyleLabel =
+    activeHeading?.label ??
+    (activeStyle === "quote" ? WRITING_COMMAND_LABELS.quote : WRITING_COMMAND_LABELS.text);
   const writingStyleItems = (
     <>
       <MenuRadioGroup value={activeStyle}>
         <DockCommandRadioItem value="paragraph" disabled={textReadOnly} onClick={setStandardStyle}>
           <span className="flex items-center justify-between gap-2">
-            <MenuRow icon={<TextInitial className="size-4" />} label="Text" />
+            <MenuRow
+              icon={<WritingCommandIcon command="text" />}
+              label={WRITING_COMMAND_LABELS.text}
+            />
             <MenuRadioItemIndicator />
           </span>
         </DockCommandRadioItem>
@@ -5575,7 +5572,10 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       <MenuRadioGroup value={textStyle?.value ?? "paragraph"}>
         <DockCommandRadioItem value="quote" disabled={textReadOnly} onClick={setQuoteStyle}>
           <span className="flex items-center justify-between gap-2">
-            <MenuRow icon={<TextQuote className="size-4" />} label="Quote" />
+            <MenuRow
+              icon={<WritingCommandIcon command="quote" />}
+              label={WRITING_COMMAND_LABELS.quote}
+            />
             <MenuRadioItemIndicator />
           </span>
         </DockCommandRadioItem>
@@ -5590,10 +5590,8 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       icon={
         activeHeading ? (
           headingIcon(activeHeading.level)
-        ) : activeStyle === "quote" ? (
-          <TextQuote className="size-4" />
         ) : (
-          <TextInitial className="size-4" />
+          <WritingCommandIcon command={activeStyle === "quote" ? "quote" : "text"} />
         )
       }
       groupLabel="Style"
@@ -5626,11 +5624,15 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       <MenuRadioGroup value={listState?.type ?? ""}>
         {(
           [
-            { value: "bulletList", label: "Bullet list", icon: <List className="size-4" /> },
+            {
+              value: "bulletList",
+              label: WRITING_COMMAND_LABELS.bulletList,
+              icon: <WritingCommandIcon command="bulletList" />,
+            },
             {
               value: "orderedList",
-              label: "Numbered list",
-              icon: <ListOrdered className="size-4" />,
+              label: WRITING_COMMAND_LABELS.numberedList,
+              icon: <WritingCommandIcon command="numberedList" />,
             },
             { value: "description", label: "Description list", icon: <List className="size-4" /> },
           ] as const
@@ -5653,7 +5655,10 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         disabled={textReadOnly || !listState?.canRemove}
         onClick={() => setListStyle(null)}
       >
-        <MenuRow icon={<ListX className="size-4" />} label="No list" />
+        <MenuRow
+          icon={<WritingCommandIcon command="noList" />}
+          label={WRITING_COMMAND_LABELS.noList}
+        />
       </DockCommandItem>
     </>
   );
@@ -5671,11 +5676,9 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         commandScope="latex"
         label={`List: ${activeListLabel}`}
         icon={
-          listState?.type === "orderedList" ? (
-            <ListOrdered className="size-4" />
-          ) : (
-            <List className="size-4" />
-          )
+          <WritingCommandIcon
+            command={listState?.type === "orderedList" ? "numberedList" : "bulletList"}
+          />
         }
         groupLabel="Lists"
         disabled={textReadOnly}
@@ -5790,16 +5793,16 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   const writingHistoryTools = (
     <>
       <DockButton
-        label="Undo"
+        label={WRITING_COMMAND_LABELS.undo}
         shortcut={scientMarkdownShortcut("undo")}
-        icon={<Undo2 className="size-4" />}
+        icon={<WritingCommandIcon command="undo" />}
         disabled={readOnly || (!mathActive && !editor?.can().undo())}
         onClick={undo}
       />
       <DockButton
-        label="Redo"
+        label={WRITING_COMMAND_LABELS.redo}
         shortcut={scientMarkdownShortcut("redo")}
-        icon={<Redo2 className="size-4" />}
+        icon={<WritingCommandIcon command="redo" />}
         disabled={readOnly || (!mathActive && !editor?.can().redo())}
         onClick={redo}
       />
@@ -6066,13 +6069,13 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                             disabled={readOnly || (!mathActive && !editor?.can().undo())}
                             onClick={undo}
                           >
-                            <Undo2 /> Undo
+                            <WritingCommandIcon command="undo" /> {WRITING_COMMAND_LABELS.undo}
                           </DockCommandItem>
                           <DockCommandItem
                             disabled={readOnly || (!mathActive && !editor?.can().redo())}
                             onClick={redo}
                           >
-                            <Redo2 /> Redo
+                            <WritingCommandIcon command="redo" /> {WRITING_COMMAND_LABELS.redo}
                           </DockCommandItem>
                         </>
                       ),

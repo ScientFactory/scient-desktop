@@ -230,8 +230,8 @@ describe("formatting menu focus", () => {
     ["Style:", "Heading 2", "heading-2", "A paragraph\n"],
     ["List:", "Numbered list", "ordered-list", "A paragraph\n"],
     ["Text direction:", "Right-to-left", "direction-rtl", "A paragraph\n"],
-    ["Style:", "Paragraph", "paragraph", "A paragraph\n"],
-    ["Style:", "Paragraph", "paragraph", "> A quote\n"],
+    ["Style:", "Text", "paragraph", "A paragraph\n"],
+    ["Style:", "Text", "paragraph", "> A quote\n"],
   ])(
     "closes %s after %s and leaves the caret ready to type (%s, %s)",
     async (prefix, label, command, source) => {
@@ -320,9 +320,7 @@ describe("formatting menu focus", () => {
 
   it("inserts a paired footnote and leaves its one-line text editor ready", async () => {
     const { controller, controlsHost } = await fixture("A paragraph\n");
-    const trigger = controlsHost.querySelector<HTMLButtonElement>(
-      'button[aria-label="Insert block or element"]',
-    )!;
+    const trigger = controlsHost.querySelector<HTMLButtonElement>('button[aria-label="Insert"]')!;
     await act(() => trigger.click());
     const footnote = Array.from(
       document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'),
@@ -398,7 +396,7 @@ describe("formatting menu focus", () => {
     const { view, controller, controlsHost } = await fixture();
     const insertTable = vi.spyOn(controller, "insertTable");
     const insertTrigger = controlsHost.querySelector<HTMLButtonElement>(
-      'button[aria-label="Insert block or element"]',
+      'button[aria-label="Insert"]',
     )!;
     await act(() => insertTrigger.click());
     const tableTrigger = Array.from(
@@ -493,9 +491,7 @@ describe("formatting menu focus", () => {
     const before = controller.session.session.draftSource;
     const insertTable = vi.spyOn(controller, "insertTable");
     await act(() =>
-      controlsHost
-        .querySelector<HTMLButtonElement>('button[aria-label="Insert block or element"]')!
-        .click(),
+      controlsHost.querySelector<HTMLButtonElement>('button[aria-label="Insert"]')!.click(),
     );
     const tableTrigger = Array.from(
       document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'),
@@ -600,9 +596,7 @@ describe("formatting menu focus", () => {
     const { controller, controlsHost } = await fixture();
     const before = controller.session.session.draftSource;
     await act(() =>
-      controlsHost
-        .querySelector<HTMLButtonElement>('button[aria-label="Insert block or element"]')!
-        .click(),
+      controlsHost.querySelector<HTMLButtonElement>('button[aria-label="Insert"]')!.click(),
     );
     const tableTrigger = Array.from(
       document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'),
@@ -684,9 +678,7 @@ describe("formatting menu focus", () => {
   it("locks the initial collision side and mirrors physical arrow movement when placed left", async () => {
     const { controlsHost } = await fixture();
     await act(() =>
-      controlsHost
-        .querySelector<HTMLButtonElement>('button[aria-label="Insert block or element"]')!
-        .click(),
+      controlsHost.querySelector<HTMLButtonElement>('button[aria-label="Insert"]')!.click(),
     );
     const tableTrigger = Array.from(
       document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'),

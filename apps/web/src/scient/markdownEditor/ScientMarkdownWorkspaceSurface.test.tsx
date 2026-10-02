@@ -618,7 +618,7 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     };
 
     const paragraph = await renderExpandedSurface("Plain text.\n", "Paragraph fixture");
-    const paragraphStyle = paragraph.querySelector("[aria-label='Style: Paragraph']");
+    const paragraphStyle = paragraph.querySelector("[aria-label='Style: Text']");
     expect(paragraphStyle?.querySelector(".lucide-text-initial")).not.toBeNull();
 
     const quote = await renderExpandedSurface("> Quoted text.\n", "Quote fixture");
