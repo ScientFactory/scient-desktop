@@ -44,6 +44,19 @@ describe("workEntryIndicatesToolFailure", () => {
     ).toBe(true);
   });
 
+  it("keeps explicitly stopped tools neutral even when partial output resembles an error", () => {
+    const entry = {
+      ...base,
+      tone: "tool" as const,
+      toolLifecycleStatus: "stopped" as const,
+      detail: "exit code 130",
+    };
+    expect(workEntryIndicatesToolFailure(entry)).toBe(false);
+    expect(workEntryDisplayIndicatesToolFailure(entry)).toBe(false);
+    expect(workEntryIndicatesToolSuccess(entry)).toBe(false);
+    expect(workEntryIndicatesToolFailure({ ...entry, toolLifecycleStatus: "failed" })).toBe(true);
+  });
+
   it("detects file-not-found style tool output with completed lifecycle", () => {
     expect(
       workEntryIndicatesToolFailure({

@@ -85,6 +85,12 @@ holding the selected model opens with the picker, and searching lists every matc
   Pi's `read` tool opens them for the model (verified with Oh My Pi 18.3.1). An image above 10 MB
   is rejected with a message that states the limit.
 - Switch models in the same conversation when Oh My Pi reports them.
+- Inspect each tool's command or file target and its latest text output. Scient keeps that
+  information when Oh My Pi sends a progress update without repeating it, and bounds large
+  inputs and output previews. Stop marks unfinished tools as stopped and retains their partial
+  output. A lost process, or a turn that ends without reporting a tool's outcome, marks that tool
+  failed because its result cannot be confirmed. A tool that already reported its result keeps
+  that result; late or repeated updates do not reopen it.
 - Answer Oh My Pi's select, confirm, input, and editor questions in Scient. If Oh My Pi asks
   Scient to open a browser URL, the URL is shown as a safe clickable action in the thread; Scient
   does not open it automatically. The thread history keeps only the URL's address and path, not its
