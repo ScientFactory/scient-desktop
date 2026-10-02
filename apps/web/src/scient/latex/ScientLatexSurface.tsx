@@ -311,6 +311,16 @@ function LatexPendingViewer(props: { readonly label: string }) {
   );
 }
 
+const VIEW_SWITCH = ".scient-latex-modes:not(.scient-latex-split-modes)";
+/**
+ * Where the view switch starts in the header row while reader controls sit
+ * before it, measured from the row's edge. Source has no reader controls; it
+ * keeps the switch at this place so changing the view never moves it. The
+ * first value is an estimate, replaced as soon as a reader has been shown.
+ */
+let viewSwitchPlace = 292;
+const SPLIT_SWITCH = ".scient-latex-split-modes";
+
 function LatexDiagnosticsRow(props: {
   readonly diagnostic: ScientLatexDiagnostic;
   readonly workspaceRoot: string;
@@ -563,7 +573,16 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   // The reader controls (sidebar, page, zoom, search) join this header row in PDF and Visual.
   const [readerSlot, setReaderSlot] = useState<HTMLElement | null>(null);
   const [hostedReaders, setHostedReaders] = useState(0);
-  const splitSwitchKeepsFocus = useRef(false);
+  const switchKeepsFocus = useRef<string | null>(null);
+  const headerRow = useRef<HTMLDivElement>(null);
+  const [viewSwitchLead, setViewSwitchLead] = useState(0);
+  const rememberViewSwitchPlace = useCallback(() => {
+    const row = headerRow.current;
+    const place = row?.querySelector<HTMLElement>(VIEW_SWITCH);
+    if (!row || !place || !row.hasAttribute("data-reader-hosted")) return;
+    const start = place.getBoundingClientRect().left - row.getBoundingClientRect().left;
+    if (Number.isFinite(start) && start > 0) viewSwitchPlace = start;
+  }, []);
   const onReaderHosted = useCallback(
     (hosted: boolean) => setHostedReaders((count) => count + (hosted ? 1 : -1)),
     [],
@@ -1010,7 +1029,8 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
             aria-pressed={splitPreview === candidate}
             onClick={(event) => {
               // The switch is drawn with the pane it replaces; keep the place.
-              splitSwitchKeepsFocus.current = event.currentTarget === document.activeElement;
+              switchKeepsFocus.current =
+                event.currentTarget === document.activeElement ? SPLIT_SWITCH : null;
               selectSplitPreview(candidate);
             }}
           >
@@ -1020,18 +1040,30 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       </div>
     ) : null;
   const readerHosted = mergesReaderBar && hostedReaders > 0;
-  // Changing Split's right pane redraws the switch that had focus. Give focus
-  // to the same switch in the new pane's controls once they are in the row.
+  // Without reader controls the row leaves their room empty, so the view
+  // switch stays where it is in every view. The room gives way in a narrow pane.
+  useLayoutEffect(() => {
+    const row = headerRow.current;
+    if (!row) return;
+    if (readerHosted) {
+      rememberViewSwitchPlace();
+      return;
+    }
+    const style = getComputedStyle(row);
+    const edge = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.columnGap) || 0);
+    setViewSwitchLead(Math.max(0, Math.round((viewSwitchPlace - edge) * 10) / 10));
+  }, [mode, readerHosted, rememberViewSwitchPlace]);
+  // Changing the view, or Split's right pane, redraws the switch that had
+  // focus. Give focus to the same switch once it is back in the row.
   useEffect(() => {
-    if (!splitSwitchKeepsFocus.current || !readerHosted) return;
-    const current = surfaceRef.current?.querySelector<HTMLElement>(
-      '.scient-latex-split-modes [aria-pressed="true"]',
-    );
+    const kept = switchKeepsFocus.current;
+    if (kept === null) return;
+    const current = surfaceRef.current?.querySelector<HTMLElement>(`${kept} [aria-pressed="true"]`);
     if (!current) return;
-    splitSwitchKeepsFocus.current = false;
+    switchKeepsFocus.current = null;
     const active = document.activeElement;
     if (active === null || active === document.body || !active.isConnected) current.focus();
-  }, [splitPreview, readerHosted, hostedReaders, readerSlot]);
+  }, [mode, splitPreview, readerHosted, hostedReaders, readerSlot]);
   const buildButton = (
     <ScientTooltip
       content={
@@ -1144,8 +1176,154 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       />
     </>
   );
+  // The view switch and the build status. With reader controls in the row they
+  // follow the zoom, so the sidebar, page and zoom controls start the row.
+  const viewSwitch = (
+    <div className="scient-latex-modes" role="group" aria-label="Document view">
+      {LATEX_PREVIEW_MODES.map((candidate) => (
+        <button
+          key={candidate}
+          type="button"
+          className="scient-latex-mode-button"
+          aria-pressed={mode === candidate}
+          onClick={(event) => {
+            // The switch is drawn with the pane it replaces; keep the place.
+            switchKeepsFocus.current =
+              event.currentTarget === document.activeElement ? VIEW_SWITCH : null;
+            rememberViewSwitchPlace();
+            selectMode(candidate);
+          }}
+        >
+          {LATEX_PREVIEW_MODE_LABELS[candidate]}
+        </button>
+      ))}
+    </div>
+  );
+  const statusStrip = (
+    <div className="scient-latex-status">
+      {target === null ? (
+        <span className="scient-latex-status-label">
+          {resolution.pending
+            ? "Finding document"
+            : resolution.result?._tag === "ambiguous" ||
+                (resolution.result?._tag === "unresolved" &&
+                  resolution.result.candidates.length > 0)
+              ? "Choose the document to compile"
+              : (resolution.error ?? "No compiling document found")}
+        </span>
+      ) : status.toolchainMissing ? (
+        <ScientTooltip content={LATEX_TOOLCHAIN_MISSING_HINT}>
+          <span
+            className={cn(
+              "scient-latex-status-label",
+              status.state === "failed" ? "text-destructive" : undefined,
+            )}
+          >
+            {status.label}
+          </span>
+        </ScientTooltip>
+      ) : status.offline ? (
+        <span className="scient-latex-status-label">Build status unavailable</span>
+      ) : status.state === "failed" ? (
+        <ScientTooltip
+          content={
+            status.firstDiagnosticLine ?? build.snapshot?.failureSummary ?? "Open the build log"
+          }
+        >
+          <button
+            type="button"
+            className="scient-latex-action"
+            data-diagnostics-toggle=""
+            onClick={() => setDiagnosticsOpen((open) => !open)}
+          >
+            Build failed · View details
+          </button>
+        </ScientTooltip>
+      ) : null}
+      {target === null &&
+      (resolution.result?._tag === "ambiguous" || resolution.result?._tag === "unresolved") &&
+      resolution.result.candidates.length > 0 ? (
+        <LatexSelect
+          aria-label="Choose LaTeX document to compile"
+          value=""
+          onValueChange={(value) => {
+            if (value !== "") {
+              setManualRootSelection({
+                environmentId: props.environmentId,
+                workspaceRoot: props.cwd,
+                sourceRelativePath: props.relativePath,
+                carriedRootRelativePath: props.latexRootRelativePath,
+                selectedRootRelativePath: value,
+              });
+            }
+          }}
+          size="compact"
+          options={[
+            { value: "", label: "Choose document\u2026", disabled: true },
+            ...resolution.result.candidates.map((candidate) => ({
+              value: candidate.rootRelativePath,
+              label: candidate.rootRelativePath,
+            })),
+          ]}
+        />
+      ) : null}
+      {compiledFrom === null ? null : (
+        <ScientTooltip
+          content={`This file is part of ${compiledFrom}, which is what Scient compiles.`}
+        >
+          <span className="scient-latex-chip">Compiled from {compiledFrom}</span>
+        </ScientTooltip>
+      )}
+      {status.errorCount > 0 ? (
+        <button
+          type="button"
+          className="scient-latex-chip scient-latex-chip-error"
+          aria-expanded={diagnosticsOpen}
+          data-diagnostics-toggle=""
+          onClick={() => setDiagnosticsOpen((open) => !open)}
+        >
+          {status.errorCount} {status.errorCount === 1 ? "error" : "errors"}
+        </button>
+      ) : null}
+      {status.warningCount > 0 ? (
+        <button
+          type="button"
+          className="scient-latex-chip scient-latex-chip-warning"
+          aria-expanded={diagnosticsOpen}
+          data-diagnostics-toggle=""
+          onClick={() => setDiagnosticsOpen((open) => !open)}
+        >
+          {status.warningCount} {status.warningCount === 1 ? "warning" : "warnings"}
+        </button>
+      ) : null}
+      {visualProjectState.error === null ? null : (
+        <ScientTooltip content={visualProjectState.error}>
+          <span className="scient-latex-chip scient-latex-chip-error">Save failed</span>
+        </ScientTooltip>
+      )}
+      {syncNotice === null ? null : (
+        <ScientTooltip content={syncNotice.message}>
+          <span
+            className="scient-latex-chip scient-latex-chip-error"
+            role="status"
+            aria-live="polite"
+            aria-label={`${syncNotice.label}: ${syncNotice.message}`}
+          >
+            {syncNotice.label}
+          </span>
+        </ScientTooltip>
+      )}
+    </div>
+  );
   const readerBarHost = (slot: HTMLElement | null): ReaderBarHost => ({
     slot,
+    afterZoom: (
+      <>
+        <div className="scient-pdf-toolbar-separator" />
+        {viewSwitch}
+        {statusStrip}
+      </>
+    ),
     beforeSearch: splitPreviewSwitch,
     trailing: buildButton,
     moreActions: documentMenuItems,
@@ -1159,134 +1337,20 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       dir="ltr"
       onInputCapture={() => setLastEditAt(Date.now())}
     >
-      <div className="scient-latex-toolbar" data-reader-hosted={readerHosted ? "" : undefined}>
-        <div className="scient-latex-modes" role="group" aria-label="Document view">
-          {LATEX_PREVIEW_MODES.map((candidate) => (
-            <button
-              key={candidate}
-              type="button"
-              className="scient-latex-mode-button"
-              aria-pressed={mode === candidate}
-              onClick={() => selectMode(candidate)}
-            >
-              {LATEX_PREVIEW_MODE_LABELS[candidate]}
-            </button>
-          ))}
-        </div>
-        <div className="scient-latex-status">
-          {target === null ? (
-            <span className="scient-latex-status-label">
-              {resolution.pending
-                ? "Finding document"
-                : resolution.result?._tag === "ambiguous" ||
-                    (resolution.result?._tag === "unresolved" &&
-                      resolution.result.candidates.length > 0)
-                  ? "Choose the document to compile"
-                  : (resolution.error ?? "No compiling document found")}
-            </span>
-          ) : status.toolchainMissing ? (
-            <ScientTooltip content={LATEX_TOOLCHAIN_MISSING_HINT}>
-              <span
-                className={cn(
-                  "scient-latex-status-label",
-                  status.state === "failed" ? "text-destructive" : undefined,
-                )}
-              >
-                {status.label}
-              </span>
-            </ScientTooltip>
-          ) : status.offline ? (
-            <span className="scient-latex-status-label">Build status unavailable</span>
-          ) : status.state === "failed" ? (
-            <ScientTooltip
-              content={
-                status.firstDiagnosticLine ?? build.snapshot?.failureSummary ?? "Open the build log"
-              }
-            >
-              <button
-                type="button"
-                className="scient-latex-action"
-                data-diagnostics-toggle=""
-                onClick={() => setDiagnosticsOpen((open) => !open)}
-              >
-                Build failed · View details
-              </button>
-            </ScientTooltip>
-          ) : null}
-          {target === null &&
-          (resolution.result?._tag === "ambiguous" || resolution.result?._tag === "unresolved") &&
-          resolution.result.candidates.length > 0 ? (
-            <LatexSelect
-              aria-label="Choose LaTeX document to compile"
-              value=""
-              onValueChange={(value) => {
-                if (value !== "") {
-                  setManualRootSelection({
-                    environmentId: props.environmentId,
-                    workspaceRoot: props.cwd,
-                    sourceRelativePath: props.relativePath,
-                    carriedRootRelativePath: props.latexRootRelativePath,
-                    selectedRootRelativePath: value,
-                  });
-                }
-              }}
-              size="compact"
-              options={[
-                { value: "", label: "Choose document\u2026", disabled: true },
-                ...resolution.result.candidates.map((candidate) => ({
-                  value: candidate.rootRelativePath,
-                  label: candidate.rootRelativePath,
-                })),
-              ]}
-            />
-          ) : null}
-          {compiledFrom === null ? null : (
-            <ScientTooltip
-              content={`This file is part of ${compiledFrom}, which is what Scient compiles.`}
-            >
-              <span className="scient-latex-chip">Compiled from {compiledFrom}</span>
-            </ScientTooltip>
-          )}
-          {status.errorCount > 0 ? (
-            <button
-              type="button"
-              className="scient-latex-chip scient-latex-chip-error"
-              aria-expanded={diagnosticsOpen}
-              data-diagnostics-toggle=""
-              onClick={() => setDiagnosticsOpen((open) => !open)}
-            >
-              {status.errorCount} {status.errorCount === 1 ? "error" : "errors"}
-            </button>
-          ) : null}
-          {status.warningCount > 0 ? (
-            <button
-              type="button"
-              className="scient-latex-chip scient-latex-chip-warning"
-              aria-expanded={diagnosticsOpen}
-              data-diagnostics-toggle=""
-              onClick={() => setDiagnosticsOpen((open) => !open)}
-            >
-              {status.warningCount} {status.warningCount === 1 ? "warning" : "warnings"}
-            </button>
-          ) : null}
-          {visualProjectState.error === null ? null : (
-            <ScientTooltip content={visualProjectState.error}>
-              <span className="scient-latex-chip scient-latex-chip-error">Save failed</span>
-            </ScientTooltip>
-          )}
-          {syncNotice === null ? null : (
-            <ScientTooltip content={syncNotice.message}>
-              <span
-                className="scient-latex-chip scient-latex-chip-error"
-                role="status"
-                aria-live="polite"
-                aria-label={`${syncNotice.label}: ${syncNotice.message}`}
-              >
-                {syncNotice.label}
-              </span>
-            </ScientTooltip>
-          )}
-        </div>
+      <div
+        ref={headerRow}
+        className="scient-latex-toolbar"
+        data-reader-hosted={readerHosted ? "" : undefined}
+      >
+        {readerHosted ? null : (
+          <div
+            className="scient-latex-view-switch-lead"
+            style={{ flexBasis: viewSwitchLead }}
+            aria-hidden="true"
+          />
+        )}
+        {readerHosted ? null : viewSwitch}
+        {readerHosted ? null : statusStrip}
         <div ref={setReaderSlot} className="scient-latex-reader-slot" hidden={!mergesReaderBar} />
         <div className="scient-latex-actions">
           {readerHosted ? null : splitPreviewSwitch}

@@ -98,7 +98,8 @@
 }
 
 .scient-pdf-zoom-label {
-  min-width: 38px;
+  /* Wide enough for three digits, so what follows it does not move with the zoom. */
+  min-width: 40px;
   border-radius: 5px;
   padding: 3px 4px;
   color: var(--muted-foreground);

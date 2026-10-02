@@ -10,6 +10,8 @@ import { attachShortcutHost } from "../keyboard/host";
 export interface ReaderBarHost {
   /** Where the controls are drawn. Nothing is drawn while this is null. */
   readonly slot: HTMLElement | null;
+  /** Drawn after the zoom controls, before the row's free space. */
+  readonly afterZoom?: ReactNode;
   /** Drawn just before Search. */
   readonly beforeSearch?: ReactNode;
   /** Drawn between Search and More. */

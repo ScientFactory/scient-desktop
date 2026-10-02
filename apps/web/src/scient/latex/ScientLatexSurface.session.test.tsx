@@ -350,8 +350,12 @@ describe("the LaTeX surface on a document session", () => {
       await mount("visual");
       expect(slot().hidden).toBe(false);
       expect(slot().parentElement).toBe(toolbar());
-      expect(toolbar().querySelector('[aria-label="Document view"]')).not.toBeNull();
       expect(visual.host?.slot).toBe(slot());
+      // The view switch and the build status follow the zoom, inside the
+      // hosted controls; the row does not draw them a second time.
+      expect(visual.host?.afterZoom).toBeTruthy();
+      expect(toolbar().querySelector(":scope > .scient-latex-modes")).toBeNull();
+      expect(toolbar().querySelector(":scope > .scient-latex-status")).toBeNull();
       // Rebuild and the document's commands travel with the hosted controls,
       // so the row does not draw them a second time.
       expect(toolbar().hasAttribute("data-reader-hosted")).toBe(true);
@@ -366,6 +370,7 @@ describe("the LaTeX surface on a document session", () => {
       await mount("visual");
       expect(slot().hidden).toBe(false);
       expect(toolbar().hasAttribute("data-reader-hosted")).toBe(false);
+      expect(toolbar().querySelector(':scope > [aria-label="Document view"]')).not.toBeNull();
       expect(ownActions().querySelector("button")).not.toBeNull();
     });
 
@@ -405,6 +410,11 @@ describe("the LaTeX surface on a document session", () => {
       visual.hosts = true;
       await mount("source");
       expect(slot().hidden).toBe(true);
+      // The reader controls' room stays, empty, so the view switch does not move.
+      const lead = toolbar().querySelector<HTMLElement>(":scope > .scient-latex-view-switch-lead")!;
+      expect(lead).not.toBeNull();
+      expect(parseFloat(lead.style.flexBasis)).toBeGreaterThan(100);
+      expect(lead.nextElementSibling?.getAttribute("aria-label")).toBe("Document view");
       expect(toolbar().hasAttribute("data-reader-hosted")).toBe(false);
       expect(ownActions().querySelector("button")).not.toBeNull();
     });

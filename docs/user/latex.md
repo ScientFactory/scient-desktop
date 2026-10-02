@@ -85,9 +85,10 @@ ready to fill in. Conversion to description currently supports plain paragraphs;
 rich or nested content that its adapter cannot preserve is disabled. Custom
 source-only lists remain editable in LaTeX source.
 
-PDF, Visual and Split use one header row. It holds the view switch and the
-reader controls: sidebar, page number and arrows, zoom, search, Rebuild and
-More. Minus and plus sit on either side of the zoom percentage and use
+PDF, Visual and Split use one header row. From the left it holds the sidebar
+button, the page number and arrows, the zoom, then the view switch; search,
+Rebuild and More are on the right. The view switch stays in the same place in
+Source, where the room before it is empty. Minus and plus sit on either side of the zoom percentage and use
 five-percent steps in the 25–500% range. Click the percentage to fit the page
 to the pane width; the fit follows pane resizing automatically. Actual size is
 in More. Search opens a find and replace bar under the writing toolbar, with

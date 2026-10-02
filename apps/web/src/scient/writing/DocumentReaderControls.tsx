@@ -171,6 +171,7 @@ export function DocumentReaderControls(props: {
       >
         <Plus />
       </ReaderButton>
+      {host?.afterZoom}
       {(host ? null : props.contextControls) ?? <div className="min-w-1 flex-1" />}
       {host?.beforeSearch}
       <ReaderButton

@@ -3556,3 +3556,16 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   align-self: flex-start;
   margin-top: 1px;
 }
+
+/* With reader controls in the row, the view switch and the build status follow
+   the zoom, inside the same toolbar. */
+.scient-pdf-toolbar-hosted > .scient-latex-status {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* The room the reader controls take in the other views, kept empty in Source. */
+.scient-latex-view-switch-lead {
+  flex: 0 1 auto;
+  min-width: 0;
+}
