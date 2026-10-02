@@ -29,6 +29,7 @@ export interface KeyboardPreferencesSnapshot {
 export const DEFAULT_KEYBOARD_PREFERENCES: KeyboardPreferences = {
   version: 1,
   writingPresetVersion: 1,
+  customMath: [],
   overrides: {},
   mathPreset: "lyx",
   completion: "space-tab",
