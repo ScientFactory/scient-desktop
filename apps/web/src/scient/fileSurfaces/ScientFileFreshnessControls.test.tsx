@@ -72,5 +72,12 @@ describe("ScientFileFreshnessStatus", () => {
     );
     expect(failure).toContain('aria-label="File status: Changes have not been saved"');
     expect(failure).toContain("text-warning");
+
+    // Nothing unsaved: only the check of the disk version failed.
+    const refresh = renderToStaticMarkup(
+      <ScientFileFreshnessStatus {...quiet} pending={false} sessionAttention="refresh" />,
+    );
+    expect(refresh).toContain('aria-label="File status: The latest file could not be loaded"');
+    expect(refresh).not.toContain("Changes have not been saved");
   });
 });

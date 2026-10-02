@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { isLatexPreviewFile } from "~/components/files/filePreviewMode";
 import { useProjectFileQuery } from "~/components/files/projectFilesQueryState";
 import { documentFailureReason } from "~/scient/markdownEditor/persistence/documentFailureReason";
 import { onDocumentSaved } from "~/scient/markdownEditor/persistence/documentPublication";
@@ -29,6 +30,8 @@ interface FileState {
   error: string | null;
   /** The file's working source right now, or null while it cannot take an edit. */
   live: () => string | null;
+  /** Whether the file has unsaved work right now, read from its session, not from a render. */
+  unsaved: () => boolean;
   write: (contents: string) => boolean;
   flush: () => Promise<boolean>;
 }
@@ -48,13 +51,16 @@ interface Props extends LatexVisualEditorProps {
 }
 
 const notLive = () => null;
+const nothingUnsaved = () => false;
 const refuseWrite = () => false;
 const nothingToFlush = () => Promise.resolve(true);
 
 /**
  * One file of the document. The open file's session belongs to the surface;
- * every other file gets its own here, the same one any other view of that
- * file would get, so a file never has two savers.
+ * every other LaTeX file gets its own here, the same one any other view of
+ * that file would get, so a file never has two savers. A file of another kind
+ * (`\input{data.txt}`) is saved by the generic file editor when it is opened
+ * on its own, so here it is shown and never written.
  */
 function ProjectFileSession(props: {
   owner: Props;
@@ -63,14 +69,16 @@ function ProjectFileSession(props: {
   pending: (path: string, value: boolean) => void;
   failure: (path: string, message: string | null) => void;
   reported: (path: string, value: boolean) => void;
+  detach: (path: string) => void;
 }) {
   const { owner, path } = props;
   const { environmentId, cwd } = owner;
   const selected = path === owner.relativePath;
   const query = useProjectFileQuery(environmentId, cwd, path, !selected);
+  const ownsSession = !selected && isLatexPreviewFile(path);
   const target = useMemo(
-    () => (selected ? null : { environmentId, cwd, relativePath: path }),
-    [selected, environmentId, cwd, path],
+    () => (ownsSession ? { environmentId, cwd, relativePath: path } : null),
+    [ownsSession, environmentId, cwd, path],
   );
   const { lease, snapshot, admissionError, retryAdmission } = useMarkdownPersistenceLease({
     target,
@@ -84,21 +92,25 @@ function ProjectFileSession(props: {
   const change = Option.getOrNull(AsyncResult.value(changes));
   const refresh = query.refresh;
   const sessionOpen = lease !== null;
+  const seenChange = useRef(change);
   useEffect(() => {
-    if (!change || selected || sessionOpen) return;
+    if (change === seenChange.current) return;
+    seenChange.current = change;
+    if (selected || sessionOpen) return;
     refresh();
-    retryAdmission();
-  }, [change, selected, sessionOpen, refresh, retryAdmission]);
+    if (ownsSession) retryAdmission();
+  }, [change, selected, sessionOpen, ownsSession, refresh, retryAdmission]);
 
   const disk = query.authoritativeData;
-  // Too large or read-only: shown as it is on disk, never written.
-  const sessionless = disk !== null && (disk.truncated || disk.readOnly === true);
+  // Too large, read-only, or not a LaTeX file: shown, never written from here.
+  const sessionless =
+    !selected && (ownsSession ? disk !== null && (disk.truncated || disk.readOnly === true) : true);
   const file = selected
     ? { contents: owner.source, revision: owner.fileRevision, truncated: owner.fileTruncated }
     : snapshot
       ? { contents: snapshot.draftSource, revision: snapshot.baselineRevision, truncated: false }
       : sessionless
-        ? disk
+        ? query.data
         : null;
   const error = selected
     ? null
@@ -134,7 +146,7 @@ function ProjectFileSession(props: {
   // A file counts as observed once its saving state is known: the open file's
   // comes from the surface, a session's from its snapshot, and a file that
   // cannot be written has none.
-  const observed = selected || lease !== null || sessionless;
+  const observed = selected || lease !== null || (sessionless && query.data !== null);
   useEffect(() => {
     if (!observed) return;
     reported(path, true);
@@ -158,6 +170,10 @@ function ProjectFileSession(props: {
         : (contents: string) => lease.change(contents, lease.getSnapshot().editVersion),
     [lease],
   );
+  const unsaved = useMemo(
+    () => (lease === null ? nothingUnsaved : () => lease.getSnapshot().pending),
+    [lease],
+  );
   const flush = lease?.flushNow ?? nothingToFlush;
   const contents = file?.contents,
     revision = file?.revision,
@@ -170,10 +186,14 @@ function ProjectFileSession(props: {
           : { contents, revision, truncated: truncated === true },
       error,
       live,
+      unsaved,
       write,
       flush,
     });
-  }, [path, contents, revision, truncated, error, live, write, flush, update]);
+  }, [path, contents, revision, truncated, error, live, unsaved, write, flush, update]);
+  // The project keeps a removed file's last text. It must not keep its session.
+  const detach = props.detach;
+  useEffect(() => () => detach(path), [path, detach]);
   return null;
 }
 
@@ -204,6 +224,21 @@ export function LatexProjectVisualEditor(props: Props) {
       return new Map(previous).set(path, file);
     });
   }, []);
+  const detach = useCallback(
+    (path: string) =>
+      setStates((previous) => {
+        const current = previous.get(path);
+        if (!current) return previous;
+        return new Map(previous).set(path, {
+          ...current,
+          live: notLive,
+          unsaved: nothingUnsaved,
+          write: refuseWrite,
+          flush: nothingToFlush,
+        });
+      }),
+    [],
+  );
   const pending = useCallback(
     (path: string, value: boolean) =>
       setPendingPaths((previous) => {
@@ -266,9 +301,18 @@ export function LatexProjectVisualEditor(props: Props) {
   const saversReady = paths.every((path) => reportedPaths.has(path));
   useEffect(() => {
     // Idle has to be an observed state, not the flags a component starts with.
-    if (document && saversReady && !isPending && !error && !document.missing.length)
+    // Each session is also asked now: an edit accepted in this very update is
+    // in its session before any render reports it.
+    if (
+      document &&
+      saversReady &&
+      !isPending &&
+      !error &&
+      !document.missing.length &&
+      !paths.some((path) => states.get(path)?.unsaved())
+    )
       confirmVisualDraft(draftKey, document.source);
-  }, [document, draftKey, saversReady, isPending, error]);
+  }, [document, draftKey, saversReady, isPending, error, paths, states]);
   const snapshot = useRef({ document, files, states });
   useLayoutEffect(() => {
     snapshot.current = { document, files, states };
@@ -298,8 +342,12 @@ export function LatexProjectVisualEditor(props: Props) {
         const state = current.states.get(path);
         if (!state?.data || saveErrors.has(path)) return false;
         // The open file is checked by its own session when the edit reaches it.
-        if (path !== props.relativePath && state.live() !== current.files.get(path)?.contents)
+        if (path === props.relativePath) continue;
+        if (state.live === notLive) {
+          setEditError(`Open ${path} to edit it.`);
           return false;
+        }
+        if (state.live() !== current.files.get(path)?.contents) return false;
       }
       // Every working source was checked before any of them is changed.
       const selected = plan.changes.get(props.relativePath);
@@ -321,6 +369,7 @@ export function LatexProjectVisualEditor(props: Props) {
             file.revision,
           );
           state.write(contents);
+          pending(path, true);
         }
       }
       snapshot.current = {
@@ -332,7 +381,7 @@ export function LatexProjectVisualEditor(props: Props) {
       setEditError(null);
       return true;
     },
-    [root, props, saveErrors],
+    [root, props, saveErrors, pending],
   );
   const ready =
     !!document &&
@@ -351,6 +400,7 @@ export function LatexProjectVisualEditor(props: Props) {
           pending={pending}
           failure={failure}
           reported={reported}
+          detach={detach}
         />
       ))}
       {ready && document ? (

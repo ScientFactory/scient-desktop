@@ -390,6 +390,55 @@ describe("the LaTeX surface on a document session", () => {
     expect(visual.props!.disabled).toBe(false);
   });
 
+  it("drops it too when the file changed again before the writer chose the disk", async () => {
+    await mount("visual");
+    await act(async () => {
+      visual.props!.onEdit(BASE, typed("Mine."));
+    });
+    disk = { source: typed("Agent."), revision: revisionOf(typed("Agent.")) };
+    await act(async () => {
+      await lease.flushNow();
+    });
+    expect(lease.getSnapshot().conflict?.externalSource).toBe(typed("Agent."));
+    disk = { source: typed("Agent, again."), revision: revisionOf(typed("Agent, again.")) };
+    await act(async () => {
+      expect(await lease.resolveWithDisk()).toBe(true);
+    });
+    expect(lease.getSnapshot()).toMatchObject({
+      draftSource: typed("Agent, again."),
+      conflict: null,
+    });
+    expect(stored()).toBeNull();
+  });
+
+  it("keeps a recovery copy again for edits the writer takes back", async () => {
+    await mount("visual");
+    await act(async () => {
+      visual.props!.onEdit(BASE, typed("Mine."));
+    });
+    disk = { source: typed("Agent."), revision: revisionOf(typed("Agent.")) };
+    await act(async () => {
+      await lease.flushNow();
+    });
+    await act(async () => {
+      await lease.resolveWithDisk();
+    });
+    expect(stored()).toBeNull();
+    await act(async () => {
+      expect(lease.restoreRecovery()).toBe(true);
+    });
+    expect(lease.getSnapshot()).toMatchObject({ draftSource: typed("Mine."), pending: true });
+    expect(stored()).toEqual({
+      source: typed("Mine."),
+      baseRevision: revisionOf(typed("Agent.")),
+    });
+    await act(async () => {
+      expect(await lease.flushNow()).toBe(true);
+    });
+    expect(disk.source).toBe(typed("Mine."));
+    expect(stored()).toBeNull();
+  });
+
   it("keeps the recovery copy when the writer keeps their edits, until they are saved", async () => {
     await mount("visual");
     await act(async () => {

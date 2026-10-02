@@ -5,9 +5,18 @@ import { act, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const { disk } = vi.hoisted(() => ({
+const { disk, visual, saveProject } = vi.hoisted(() => ({
+  saveProject: { current: null as null | (() => Promise<boolean>) },
   // What is on disk for each file of the synthetic workspace.
   disk: new Map<string, { source: string; revision: string }>(),
+  visual: {
+    props: null as null | {
+      source: string;
+      disabled: boolean;
+      onEdit: (expected: string, next: string) => boolean;
+      sourceError: string | null;
+    },
+  },
 }));
 vi.mock("~/state/projects", () => ({
   projectEnvironment: { fileChanges: () => ({}) },
@@ -19,11 +28,13 @@ vi.mock("@effect/atom-react", async () => {
 vi.mock("~/components/files/projectFilesQueryState", () => ({
   useProjectFileQuery: (_environment: unknown, _cwd: unknown, file: string, enabled: boolean) => {
     const onDisk = enabled ? disk.get(file) : undefined;
+    const data =
+      onDisk === undefined
+        ? null
+        : { relativePath: file, contents: onDisk.source, revision: onDisk.revision };
     return {
-      authoritativeData:
-        onDisk === undefined
-          ? null
-          : { relativePath: file, contents: onDisk.source, revision: onDisk.revision },
+      data,
+      authoritativeData: data,
       error: null,
       refresh: () => {},
     };
@@ -32,7 +43,12 @@ vi.mock("~/components/files/projectFilesQueryState", () => ({
 vi.mock("~/scient/markdownEditor/persistence/markdownPersistenceTransport", () => ({
   createMarkdownPersistenceTransport: vi.fn(),
 }));
-vi.mock("./LatexVisualEditor", () => ({ LatexVisualEditor: () => null }));
+vi.mock("./LatexVisualEditor", () => ({
+  LatexVisualEditor: (props: NonNullable<typeof visual.props>) => {
+    visual.props = props;
+    return null;
+  },
+}));
 
 import {
   markdownPersistenceRegistry,
@@ -104,7 +120,7 @@ describe("retiring the project's recovery copy", () => {
     );
   }
   /** A surface whose open file is fixed text, for tests that only vary its includes. */
-  function FixedSurface(props: { source: string }) {
+  function FixedSurface(props: { source: string; onEdit?: () => boolean }) {
     return (
       <LatexProjectVisualEditor
         environmentId={environmentId}
@@ -117,7 +133,8 @@ describe("retiring the project's recovery copy", () => {
         selectedPending={false}
         draftKey="unused"
         disabled={false}
-        onEdit={() => true}
+        registerSaveProject={(save) => (saveProject.current = save)}
+        onEdit={props.onEdit ?? (() => true)}
         onEditingChange={() => {}}
         onOpenSource={() => {}}
         onOpenFileSource={() => {}}
@@ -136,13 +153,21 @@ describe("retiring the project's recovery copy", () => {
     localStorage.clear();
     clearVisualDraft(KEY);
     disk.clear();
+    visual.props = null;
     containers = [];
     roots = [];
     leases = [];
     writes = 0;
     vi.mocked(createMarkdownPersistenceTransport).mockImplementation((target) => ({
       write: (intent: MarkdownSaveIntent) =>
-        new Promise((resolve) => {
+        new Promise((resolve, reject) => {
+          // A session left unsaved by an earlier test belongs to another workspace.
+          if (target.cwd !== cwd) return;
+          // The workspace refuses a write planned over an older revision.
+          if (intent.expectedRevision !== disk.get(target.relativePath)!.revision) {
+            reject("conflict");
+            return;
+          }
           writes += 1;
           acknowledge = () => {
             const revision = `saved-${writes}`;
@@ -151,7 +176,7 @@ describe("retiring the project's recovery copy", () => {
           };
         }),
       read: async () => disk.get(target.relativePath)!,
-      classifyFailure: () => "terminal",
+      classifyFailure: (error) => (error === "conflict" ? "conflict" : "terminal"),
       subscribe: () => () => {},
       project: () => {},
     }));
@@ -259,5 +284,124 @@ describe("retiring the project's recovery copy", () => {
         ),
     ).toHaveLength(1);
     expect(chapter.getSnapshot().draftSource).toBe("Chapter text.\n");
+  });
+
+  describe("editing an included file from the root's Visual view", () => {
+    const root = tex("Root intro.\n\n\\input{chapter}");
+    const edited = (from: string, to: string) => visual.props!.source.replace(from, to);
+    let rootEdits: ReturnType<typeof vi.fn<() => boolean>>;
+
+    beforeEach(async () => {
+      disk.set("chapter.tex", { source: "Chapter text.\n", revision: "c1" });
+      rootEdits = vi.fn(() => true);
+      await mount(<FixedSurface source={root} onEdit={rootEdits} />);
+      await settle(20);
+      expect(visual.props!.source).toContain("Chapter text.");
+    });
+
+    it("changes that file's session and nothing else", async () => {
+      const chapter = acquire("chapter.tex");
+      let accepted = false;
+      await act(async () => {
+        accepted = visual.props!.onEdit(
+          visual.props!.source,
+          edited("Chapter text.", "Chapter text, edited."),
+        );
+      });
+      expect(accepted).toBe(true);
+      expect(chapter.getSnapshot()).toMatchObject({
+        draftSource: "Chapter text, edited.\n",
+        pending: true,
+      });
+      expect(rootEdits).not.toHaveBeenCalled();
+      // The assembled document follows the session's working source.
+      expect(visual.props!.source).toContain("Chapter text, edited.");
+    });
+
+    it("keeps the project's recovery copy until that file's save lands", async () => {
+      // The Visual editor stores its copy when an edit is accepted; the project
+      // must not retire it in the same update, before the session reports pending.
+      let accepted = false;
+      await act(async () => {
+        const next = edited("Chapter text.", "Chapter text, edited.");
+        accepted = visual.props!.onEdit(visual.props!.source, next);
+        localStorage.setItem(SLOT, JSON.stringify({ source: next, baseRevision: "r1" }));
+      });
+      expect(accepted).toBe(true);
+      expect(localStorage.getItem(SLOT)).not.toBeNull();
+      await settle(600);
+      expect(writes).toBe(1);
+      expect(localStorage.getItem(SLOT)).not.toBeNull();
+      await act(async () => acknowledge());
+      await settle(20);
+      expect(localStorage.getItem(SLOT)).toBeNull();
+    });
+
+    it("refuses an edit made on text another view has since changed", async () => {
+      const chapter = acquire("chapter.tex");
+      const stale = visual.props!.source;
+      // The same tick: the project has not rendered the other view's edit yet.
+      let accepted = true;
+      await act(async () => {
+        chapter.change("Chapter text, from its own tab.\n", chapter.getSnapshot().editVersion);
+        accepted = visual.props!.onEdit(stale, stale.replace("Chapter text.", "Visual."));
+      });
+      expect(accepted).toBe(false);
+      expect(chapter.getSnapshot().draftSource).toBe("Chapter text, from its own tab.\n");
+    });
+
+    it("stops editing while the file's save waits on a conflict", async () => {
+      const chapter = acquire("chapter.tex");
+      await act(async () => {
+        visual.props!.onEdit(visual.props!.source, edited("Chapter text.", "Mine."));
+      });
+      // An agent writes the chapter before the save lands; the save is refused.
+      disk.set("chapter.tex", { source: "Agent text.\n", revision: "c2" });
+      await act(async () => {
+        expect(await chapter.flushNow()).toBe(false);
+      });
+      expect(chapter.getSnapshot().conflict).not.toBeNull();
+      expect(visual.props!.disabled).toBe(true);
+      let accepted = true;
+      await act(async () => {
+        accepted = visual.props!.onEdit(visual.props!.source, edited("Mine.", "Mine again."));
+      });
+      expect(accepted).toBe(false);
+      expect(chapter.getSnapshot().draftSource).toBe("Mine.\n");
+      expect(disk.get("chapter.tex")!.source).toBe("Agent text.\n");
+    });
+  });
+
+  it("still saves and builds after an include is removed", async () => {
+    disk.set("chapter.tex", { source: "Chapter text.\n", revision: "c1" });
+    const render = await mount(<FixedSurface source={tex("Root intro.\n\n\\input{chapter}")} />);
+    await settle(20);
+    expect(await saveProject.current!()).toBe(true);
+    await render(<FixedSurface source={tex("Root intro.")} />);
+    await settle(20);
+    // The project keeps the chapter's last text, not a session it has let go of.
+    expect(await saveProject.current!()).toBe(true);
+  });
+
+  it("shows an included file of another kind without taking over its saving", async () => {
+    disk.set("data.txt", { source: "Plain data.\n", revision: "d1" });
+    await mount(<FixedSurface source={tex("Root intro.\n\n\\input{data.txt}")} />);
+    await settle(20);
+    expect(visual.props!.source).toContain("Plain data.");
+    // No session: opened on its own, the file is saved by the generic editor alone.
+    expect(
+      vi
+        .mocked(createMarkdownPersistenceTransport)
+        .mock.calls.filter(([target]) => target.cwd === cwd && target.relativePath === "data.txt"),
+    ).toHaveLength(0);
+    let accepted = true;
+    await act(async () => {
+      accepted = visual.props!.onEdit(
+        visual.props!.source,
+        visual.props!.source.replace("Plain data.", "Edited data."),
+      );
+    });
+    expect(accepted).toBe(false);
+    expect(visual.props!.sourceError).toBe("Open data.txt to edit it.");
   });
 });

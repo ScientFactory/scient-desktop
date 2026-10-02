@@ -14,7 +14,7 @@ import {
 import { projectFileOperationKey } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentId, ProjectReadFileResult } from "@t3tools/contracts";
 
-import { isLatexPreviewFile } from "~/components/files/filePreviewMode";
+import { isScientMarkdownDocumentPath } from "../markdownDocumentPaths";
 
 import {
   createMarkdownPersistenceTransport,
@@ -45,24 +45,25 @@ export type DocumentReconcileStrategy = ReconcileDocument<DocumentPatchReconcili
 export const keepBothVersions: DocumentReconcileStrategy = () => null;
 
 /**
- * The strategy for each kind of file the registry owns. LaTeX has no merge
- * yet: two changes that are far apart in the text can still depend on each
- * other (a macro and its uses, a label and its references).
+ * The strategy for each kind of file the registry owns. Only Markdown merges.
+ * LaTeX has no merge yet: two changes that are far apart in the text can still
+ * depend on each other (a macro and its uses, a label and its references). A
+ * file of any other kind is here only as part of a LaTeX document.
  */
-/**
- * Whether a file's unsaved draft is kept in the session's checkpoint store.
- * LaTeX is not: its recovery belongs to the Visual editor, which offers
- * recovered work for comparison and never applies it unasked. Two recovery
- * copies of one file would answer that question twice.
- */
-export function documentKeepsCheckpoint(target: MarkdownPersistenceTarget): boolean {
-  return !isLatexPreviewFile(target.relativePath);
-}
-
 export function documentReconcileStrategy(
   target: MarkdownPersistenceTarget,
 ): DocumentReconcileStrategy | undefined {
-  return isLatexPreviewFile(target.relativePath) ? keepBothVersions : undefined;
+  return isScientMarkdownDocumentPath(target.relativePath) ? undefined : keepBothVersions;
+}
+
+/**
+ * Whether a file's unsaved draft is kept in the session's checkpoint store.
+ * A LaTeX document's files are not: their recovery belongs to the Visual
+ * editor, which offers recovered work for comparison and never applies it
+ * unasked. Two recovery copies of one file would answer that question twice.
+ */
+export function documentKeepsCheckpoint(target: MarkdownPersistenceTarget): boolean {
+  return isScientMarkdownDocumentPath(target.relativePath);
 }
 
 export interface MarkdownPersistenceRegistryState extends MarkdownPersistenceTarget {
@@ -106,9 +107,9 @@ interface RegistryEntry {
 
 /**
  * Raised whenever a registry built from older code could not serve this code:
- * a new lease method, a new rule for which strategy a file gets.
+ * a new lease method, a new rule for which strategy or checkpoint a file gets.
  */
-const REGISTRY_GENERATION = 2;
+const REGISTRY_GENERATION = 3;
 
 export class MarkdownPersistenceRegistry {
   readonly generation = REGISTRY_GENERATION;

@@ -158,7 +158,7 @@ export function ScientFileFreshnessStatus(
      * What a file's document session is asking about. Its own notice, above
      * the document, carries the choices; this only keeps the status truthful.
      */
-    readonly sessionAttention?: "conflict" | "failure" | null;
+    readonly sessionAttention?: "conflict" | "failure" | "refresh" | null;
   },
 ) {
   const conflict =
@@ -167,7 +167,9 @@ export function ScientFileFreshnessStatus(
   const failed =
     props.sessionAttention === "failure" ||
     (props.saveError?.relativePath === props.relativePath && props.saveError !== null);
-  const readFailed = Boolean(props.relativePath && props.readError && props.hasFallbackData);
+  const readFailed =
+    props.sessionAttention === "refresh" ||
+    Boolean(props.relativePath && props.readError && props.hasFallbackData);
   const needsAttention = conflict || failed || readFailed;
   const status = conflict
     ? "File changed: review your save options"

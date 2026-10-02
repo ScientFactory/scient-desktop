@@ -6,6 +6,7 @@ vi.mock("./markdownPersistenceTransport", () => ({ createMarkdownPersistenceTran
 
 import { onDocumentSaved } from "./documentPublication";
 import {
+  documentKeepsCheckpoint,
   documentReconcileStrategy,
   keepBothVersions,
   MarkdownPersistenceRegistry,
@@ -115,19 +116,30 @@ describe("onDocumentSaved", () => {
 });
 
 describe("the strategy per kind of file", () => {
-  it.each(["paper.tex", "chapters/intro.TEX", "old.latex", "notes.ltx"])(
-    "keeps both versions of %s instead of merging",
+  // Everything but Markdown: LaTeX, and whatever else a LaTeX document includes.
+  it.each([
+    "paper.tex",
+    "chapters/intro.TEX",
+    "old.latex",
+    "notes.ltx",
+    "macros.sty",
+    "data.txt",
+    "README.mdx",
+  ])(
+    "keeps both versions of %s instead of merging, and leaves its recovery to its editor",
     (relativePath) => {
       const strategy = documentReconcileStrategy({ ...target, relativePath });
       expect(strategy).toBe(keepBothVersions);
       expect(strategy?.("base", "mine", "theirs")).toBeNull();
+      expect(documentKeepsCheckpoint({ ...target, relativePath })).toBe(false);
     },
   );
 
-  it.each(["notes.md", "README.mdx", "data.txt"])(
-    "leaves %s to the default merge",
+  it.each(["notes.md", "docs/README.MARKDOWN"])(
+    "leaves %s to Markdown's merge and checkpoint",
     (relativePath) => {
       expect(documentReconcileStrategy({ ...target, relativePath })).toBeUndefined();
+      expect(documentKeepsCheckpoint({ ...target, relativePath })).toBe(true);
     },
   );
 });

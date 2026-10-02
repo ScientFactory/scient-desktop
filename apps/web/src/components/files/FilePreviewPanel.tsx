@@ -1916,7 +1916,14 @@ export default function FilePreviewPanel({
               {...freshnessNoticeProps}
               pending={effectiveSourcePending}
               sessionAttention={
-                markdownSnapshot?.conflict ? "conflict" : markdownSnapshot?.error ? "failure" : null
+                // The same three cases the session's own notice tells apart.
+                markdownSnapshot?.conflict
+                  ? "conflict"
+                  : markdownSnapshot?.error
+                    ? markdownSnapshot.pending
+                      ? "failure"
+                      : "refresh"
+                    : null
               }
             />
           ) : null}

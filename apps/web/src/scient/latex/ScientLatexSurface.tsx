@@ -609,13 +609,29 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         return;
       }
       const pendingSource = visualPendingSourceRef.current;
-      if (pendingSource === null || next.draftSource === pendingSource) return;
       if (
-        before.conflict !== null &&
-        next.conflict === null &&
-        next.draftSource === before.conflict.externalSource
+        pendingSource === null &&
+        before.recoverySource !== null &&
+        next.draftSource === before.recoverySource &&
+        next.draftSource !== before.draftSource &&
+        next.pending
       ) {
-        // The writer chose the version on disk over these edits.
+        // The writer took back edits they had given up: unsaved again, so kept again.
+        visualPendingSourceRef.current = next.draftSource;
+        visualPendingBaseRevisionRef.current = next.baselineRevision;
+        checkpointVisualDraft(
+          visualDraftKey,
+          next.draftSource,
+          before.draftSource,
+          next.draftSource,
+          next.baselineRevision,
+        );
+        return;
+      }
+      if (pendingSource === null || next.draftSource === pendingSource) return;
+      if (next.recoverySource === pendingSource && before.recoverySource !== pendingSource) {
+        // The writer chose the version on disk over these edits. The session
+        // sets them aside at that moment, whichever disk version it then shows.
         if (visualPendingBaseRevisionRef.current !== null)
           discardVisualDraft(visualDraftKey, {
             source: pendingSource,
