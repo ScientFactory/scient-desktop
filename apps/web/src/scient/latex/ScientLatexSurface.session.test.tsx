@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { sha256 } from "@noble/hashes/sha2";
 import { EnvironmentId, type ProjectReadFileResult } from "@t3tools/contracts";
 import type { MarkdownSaveIntent } from "@scientfactory/scient-markdown";
 import { act, useSyncExternalStore } from "react";
@@ -7,6 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 const {
   notifyLatexBindingChange,
+  requestLatexRebuild,
+  readLatexBuildStatus,
+  savePdfCopy,
   sourcePane,
   exportDialog,
   exportMenu,
@@ -16,9 +20,19 @@ const {
   reader,
 } = vi.hoisted(() => ({
   notifyLatexBindingChange: vi.fn(),
+  requestLatexRebuild: vi.fn(),
+  readLatexBuildStatus: vi.fn(),
+  savePdfCopy: vi.fn(),
   sourcePane: { props: null as null | Record<string, unknown> },
   exportDialog: { savedRevision: null as null | (() => Promise<string | null>) },
-  exportMenu: { props: null as null | { wordDisabled?: boolean; onWordExport: () => void } },
+  exportMenu: {
+    props: null as null | {
+      wordDisabled?: boolean;
+      onWordExport: () => void;
+      pdfDisabled?: boolean;
+      onPdfExport: () => void;
+    },
+  },
   visual: {
     props: null as null | {
       onEdit: (expected: string, next: string) => boolean;
@@ -27,7 +41,7 @@ const {
       source: string;
     },
   },
-  build: { snapshot: null as unknown },
+  build: { snapshot: null as unknown, toolchain: null as unknown },
   sync: { forward: vi.fn(), inverse: vi.fn() },
   reader: {
     navigation: null as null | {
@@ -56,7 +70,7 @@ vi.mock("~/scient/pdf/ScientPdfReader", () => ({
     return <div data-testid="pdf-reader" />;
   },
 }));
-vi.mock("~/scient/pdf/usePdfSaveCopy", () => ({ usePdfSaveCopy: () => () => {} }));
+vi.mock("~/scient/pdf/usePdfSaveCopy", () => ({ usePdfSaveCopy: () => savePdfCopy }));
 vi.mock("../markdownEditor/ui/dockChrome", () => ({
   DockMenu: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   DockCommandItem: ({ children, onClick }: { children: React.ReactNode; onClick: () => void }) => (
@@ -77,6 +91,7 @@ vi.mock("./LatexProjectVisualEditor", () => ({
 }));
 vi.mock("./useLatexAutoBuild", () => ({ useLatexAutoBuild: () => {} }));
 vi.mock("./client", () => ({
+  readLatexBuildStatus,
   requestLatexForwardSync: sync.forward,
   requestLatexInverseSync: sync.inverse,
 }));
@@ -99,14 +114,14 @@ vi.mock("./useLatexDocumentResolution", () => ({
 vi.mock("./latexBuildStore", () => ({
   useLatexBuild: () => ({
     snapshot: build.snapshot,
-    toolchain: null,
+    toolchain: build.toolchain,
     canInstallManaged: false,
     managedInstall: null,
     installRequesting: false,
     error: null,
     requesting: false,
   }),
-  requestLatexRebuild: () => {},
+  requestLatexRebuild,
   startWatchingLatexBuild: () => () => {},
   notifyLatexBindingChange,
   cancelLatexBuild: () => {},
@@ -137,10 +152,9 @@ const environmentId = EnvironmentId.make("synthetic-environment");
 const cwd = "/synthetic-workspace";
 const relativePath = "paper.tex";
 const revisionOf = (source: string) =>
-  `sha256:${[...source]
-    .reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) % 0xffffffff, 7)
-    .toString(16)
-    .padStart(64, "0")}`;
+  `sha256:${[...sha256(new TextEncoder().encode(source))]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")}`;
 const BASE = "\\documentclass{article}\n\\begin{document}\nBase.\n\\end{document}\n";
 
 describe("the LaTeX surface on a document session", () => {
@@ -156,6 +170,7 @@ describe("the LaTeX surface on a document session", () => {
     localStorage.clear();
     notifyLatexBindingChange.mockReset();
     build.snapshot = null;
+    build.toolchain = null;
     sourcePane.props = null;
     exportDialog.savedRevision = null;
     exportMenu.props = null;
@@ -640,4 +655,313 @@ describe("navigation between LaTeX source and its PDF", () => {
     expect(opened).toEqual([]);
     expect(container.textContent).toContain("Unsaved changes");
   });
+});
+
+/** Exercise the real surface actions, dependency walker and global session registry. */
+describe("document actions before Visual has ever mounted", () => {
+  const PAPER = BASE.replace("Base.", "\\input{chapter}\n\\input{data.txt}");
+  const registry = markdownPersistenceRegistry;
+  let workspace = 0;
+  let cwd: string;
+  let root: ReturnType<typeof createRoot>;
+  let container: HTMLDivElement;
+  let selected: MarkdownPersistenceLease;
+  let chapter: MarkdownPersistenceLease;
+  let disk: Map<string, string>;
+  let writeGate: Promise<void> | undefined;
+  let writeStarted: ReturnType<typeof deferred<void>>;
+  let built: ReturnType<typeof deferred<void>>;
+  let statusRead: ReturnType<typeof deferred<void>>;
+  const writes = vi.fn();
+  const freshDescriptor = () =>
+    PdfSourceDescriptor.make({
+      _tag: "generated-pdf",
+      authority: ArtifactAuthority.make("environment-latex"),
+      logicalDocumentKey: LogicalDocumentKey.make("latex:paper.tex"),
+      artifactId: ArtifactId.make("document-actions-artifact"),
+      revisionId: ArtifactRevisionId.make("document-actions-revision"),
+      bindingGeneration: BindingGeneration.make(1),
+      bindingStatus: "current",
+      staleReason: null,
+      title: "paper",
+      fileName: "paper.pdf",
+      capabilities: { canSaveCopy: true, canRevealSource: false },
+    });
+  const buildSnapshot = () => ({
+    logicalDocumentKey: "latex:paper.tex",
+    rootRelativePath: "paper.tex",
+    state: "succeeded",
+    diagnostics: [],
+    descriptor: freshDescriptor(),
+    failureSummary: null,
+    startedAtEpochMs: null,
+    finishedAtEpochMs: null,
+    toolchain: null,
+    pendingRerun: false,
+    // The server's visual receipt covers TeX files only; recorder freshness
+    // covers data.txt through the descriptor returned by the fresh status call.
+    visualSourceRevisions: {
+      "paper.tex": revisionOf(disk.get("paper.tex")!),
+      "chapter.tex": revisionOf(disk.get("chapter.tex")!),
+    },
+  });
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
+  }
+  const acquire = (relativePath: string) => {
+    const source = disk.get(relativePath)!;
+    return registry.acquire(
+      { environmentId, cwd, relativePath },
+      {
+        relativePath,
+        contents: source,
+        revision: revisionOf(source),
+        byteLength: source.length,
+        truncated: false,
+      },
+    )!;
+  };
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    localStorage.clear();
+    cwd = `/synthetic-document-actions-${++workspace}`;
+    disk = new Map([
+      ["paper.tex", PAPER],
+      ["chapter.tex", "Original chapter."],
+      ["data.txt", "Original data."],
+    ]);
+    writeGate = undefined;
+    writeStarted = deferred<void>();
+    built = deferred<void>();
+    statusRead = deferred<void>();
+    writes.mockReset();
+    visual.props = null;
+    exportMenu.props = null;
+    exportDialog.savedRevision = null;
+    requestLatexRebuild.mockReset().mockImplementation(() => built.resolve());
+    savePdfCopy.mockReset().mockResolvedValue(undefined);
+    readLatexBuildStatus.mockReset().mockImplementation(async () => {
+      statusRead.resolve();
+      return buildSnapshot();
+    });
+    vi.mocked(createMarkdownPersistenceTransport).mockImplementation((target) => ({
+      read: async () => {
+        const source = disk.get(target.relativePath);
+        if (source === undefined) throw new Error(`Missing ${target.relativePath}`);
+        return { source, revision: revisionOf(source) };
+      },
+      write: async (intent) => {
+        writeStarted.resolve();
+        await writeGate;
+        if (intent.expectedRevision !== revisionOf(disk.get(target.relativePath)!))
+          throw "conflict";
+        writes(target.relativePath, intent.source);
+        disk.set(target.relativePath, intent.source);
+        return { revision: revisionOf(intent.source) };
+      },
+      classifyFailure: (error) => (error === "conflict" ? "conflict" : "terminal"),
+      subscribe: () => () => {},
+      project: () => {},
+    }));
+    selected = acquire("paper.tex");
+    chapter = acquire("chapter.tex");
+    build.snapshot = buildSnapshot();
+    build.toolchain = {
+      kind: "latexmk",
+      executable: "latexmk",
+      version: "test",
+      probedAtEpochMs: 1,
+    };
+    // Resolve the actual hash asynchronously but deterministically within act.
+    vi.spyOn(crypto.subtle, "digest").mockResolvedValue(
+      Uint8Array.from(sha256(new TextEncoder().encode(PAPER))).buffer,
+    );
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () =>
+      root.render(
+        <ScientLatexSurface
+          environmentId={environmentId}
+          cwd={cwd}
+          relativePath="paper.tex"
+          latexRootRelativePath={null}
+          composerDraftTarget={"draft" as never}
+          contents={PAPER}
+          revision={revisionOf(PAPER)}
+          truncated={false}
+          persistence={selected}
+          resolvedTheme="light"
+          revealLine={null}
+          revealRequestId={0}
+          latexPresentationRequest={{ mode: "split" } as never}
+          wordWrap={false}
+          onPostRender={() => {}}
+          onOpenFileSource={() => {}}
+          onLatexPresentationRequestHandled={() => {}}
+        />,
+      ),
+    );
+    await act(async () => {
+      await vi.dynamicImportSettled();
+    });
+    expect(visual.props).toBeNull();
+    expect(container.querySelector('[data-testid="visual-editor"]')).toBeNull();
+    expect(container.querySelector('[data-testid="source-pane"]')).not.toBeNull();
+  });
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    container.remove();
+    selected.release();
+    chapter.release();
+    vi.restoreAllMocks();
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+  const editChapter = () =>
+    act(async () => {
+      chapter.change("Unsaved chapter.", chapter.getSnapshot().editVersion);
+    });
+  const triggerBuild = (action: "keyboard" | "button") =>
+    act(async () => {
+      const button = container.querySelector<HTMLButtonElement>('[aria-label="Rebuild PDF"]')!;
+      if (action === "button") button.click();
+      else {
+        button.focus();
+        window.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "s", metaKey: true, bubbles: true }),
+        );
+      }
+    });
+  it.each(["keyboard", "button"] as const)(
+    "%s saves the independently edited chapter before requesting a build",
+    async (action) => {
+      const gate = deferred<void>();
+      writeGate = gate.promise;
+      await editChapter();
+      await triggerBuild(action);
+      expect(
+        await Promise.race([
+          writeStarted.promise.then(() => "write"),
+          built.promise.then(() => "build"),
+        ]),
+      ).toBe("write");
+      expect(requestLatexRebuild).not.toHaveBeenCalled();
+      expect(disk.get("chapter.tex")).toBe("Original chapter.");
+      await act(async () => {
+        gate.resolve();
+        await built.promise;
+      });
+      expect(writes).toHaveBeenCalledExactlyOnceWith("chapter.tex", "Unsaved chapter.");
+      expect(requestLatexRebuild).toHaveBeenCalledExactlyOnceWith(
+        { environmentId, cwd, relativePath: "paper.tex" },
+        { reprobeToolchain: action === "button" },
+      );
+      expect(visual.props).toBeNull();
+    },
+  );
+  it("Source-only Cmd+S saves the independent chapter without requesting a PDF build", async () => {
+    const sourceButton = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent === "Source",
+    )!;
+    await act(async () => sourceButton.click());
+    const gate = deferred<void>();
+    writeGate = gate.promise;
+    await editChapter();
+    await triggerBuild("keyboard");
+    await writeStarted.promise;
+    expect(requestLatexRebuild).not.toHaveBeenCalled();
+    await act(async () => {
+      gate.resolve();
+      expect(await chapter.flushNow()).toBe(true);
+    });
+    expect(disk.get("chapter.tex")).toBe("Unsaved chapter.");
+    expect(requestLatexRebuild).not.toHaveBeenCalled();
+    expect(visual.props).toBeNull();
+  });
+  it("Word export waits for the independent chapter save before returning the root revision", async () => {
+    const gate = deferred<void>();
+    writeGate = gate.promise;
+    await editChapter();
+    await act(async () => exportMenu.props!.onWordExport());
+    let result!: Promise<string | null>;
+    await act(async () => {
+      result = exportDialog.savedRevision!();
+    });
+    expect(
+      await Promise.race([writeStarted.promise.then(() => "write"), result.then(() => "export")]),
+    ).toBe("write");
+    expect(disk.get("chapter.tex")).toBe("Original chapter.");
+    let savedRevision: string | null = null;
+    await act(async () => {
+      gate.resolve();
+      savedRevision = await result;
+    });
+    expect(savedRevision).toBe(revisionOf(PAPER));
+    expect(disk.get("chapter.tex")).toBe("Unsaved chapter.");
+  });
+  it("Word export refuses a conflicting independent chapter and keeps both versions", async () => {
+    await editChapter();
+    disk.set("chapter.tex", "Outside chapter.");
+    await act(async () => exportMenu.props!.onWordExport());
+    let result: string | null = "unset";
+    await act(async () => {
+      result = await exportDialog.savedRevision!();
+    });
+    expect(result).toBeNull();
+    expect(chapter.getSnapshot()).toMatchObject({
+      draftSource: "Unsaved chapter.",
+      conflict: { externalSource: "Outside chapter." },
+    });
+    expect(disk.get("chapter.tex")).toBe("Outside chapter.");
+    expect(writes).not.toHaveBeenCalled();
+  });
+  it("PDF export permits a current server receipt with a clean non-TeX include", async () => {
+    expect(exportMenu.props!.pdfDisabled).toBe(false);
+    await act(async () => {
+      exportMenu.props!.onPdfExport();
+      await statusRead.promise;
+    });
+    expect(readLatexBuildStatus).toHaveBeenCalledExactlyOnceWith(environmentId, {
+      workspaceRoot: cwd,
+      relativePath: "paper.tex",
+    });
+    expect(savePdfCopy).toHaveBeenCalledExactlyOnceWith(freshDescriptor());
+    expect(registry.has({ environmentId, cwd, relativePath: "data.txt" })).toBe(false);
+  });
+  it.each(["tex", "nontex"] as const)(
+    "PDF export refuses refreshed %s evidence that no longer matches the document",
+    async (kind) => {
+      const status = buildSnapshot();
+      if (kind === "tex") {
+        status.visualSourceRevisions["chapter.tex"] = revisionOf("Older compiled chapter.");
+      } else {
+        disk.set("data.txt", "New data saved by another editor.");
+        status.descriptor = PdfSourceDescriptor.make({
+          ...freshDescriptor(),
+          bindingStatus: "stale",
+          staleReason: "Source changed",
+        });
+      }
+      readLatexBuildStatus.mockImplementation(async () => {
+        statusRead.resolve();
+        return status;
+      });
+      // The cached UI still looks current; only the fresh server check can refuse it.
+      expect(exportMenu.props!.pdfDisabled).toBe(false);
+      await act(async () => {
+        exportMenu.props!.onPdfExport();
+        await statusRead.promise;
+      });
+      expect(readLatexBuildStatus).toHaveBeenCalledOnce();
+      expect(savePdfCopy).not.toHaveBeenCalled();
+      expect(container.textContent).toContain("Rebuild needed");
+    },
+  );
 });
