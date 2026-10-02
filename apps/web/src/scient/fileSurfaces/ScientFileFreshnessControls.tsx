@@ -152,10 +152,21 @@ export function ScientFileFreshnessNotices(props: {
 
 /** A fixed toolbar slot keeps asynchronous save notices outside the document flow. */
 export function ScientFileFreshnessStatus(
-  props: Parameters<typeof ScientFileFreshnessNotices>[0] & { readonly pending: boolean },
+  props: Parameters<typeof ScientFileFreshnessNotices>[0] & {
+    readonly pending: boolean;
+    /**
+     * What a file's document session is asking about. Its own notice, above
+     * the document, carries the choices; this only keeps the status truthful.
+     */
+    readonly sessionAttention?: "conflict" | "failure" | null;
+  },
 ) {
-  const conflict = props.notice?.relativePath === props.relativePath && props.notice !== null;
-  const failed = props.saveError?.relativePath === props.relativePath && props.saveError !== null;
+  const conflict =
+    props.sessionAttention === "conflict" ||
+    (props.notice?.relativePath === props.relativePath && props.notice !== null);
+  const failed =
+    props.sessionAttention === "failure" ||
+    (props.saveError?.relativePath === props.relativePath && props.saveError !== null);
   const readFailed = Boolean(props.relativePath && props.readError && props.hasFallbackData);
   const needsAttention = conflict || failed || readFailed;
   const status = conflict
@@ -194,7 +205,11 @@ export function ScientFileFreshnessStatus(
       </span>
       <PopoverPopup align="end" className="w-96 max-w-[calc(100vw-24px)] p-3">
         <PopoverTitle>File status</PopoverTitle>
-        {needsAttention ? (
+        {props.sessionAttention ? (
+          <p className="mt-2 text-xs text-muted-foreground">
+            {status}. The notice above the document has the options.
+          </p>
+        ) : needsAttention ? (
           <div className="mt-2 [&>div]:flex-wrap [&>div]:rounded-md [&>div]:border-0 [&>div>span]:whitespace-normal [&>div>span]:overflow-visible">
             <ScientFileFreshnessNotices {...props} />
           </div>

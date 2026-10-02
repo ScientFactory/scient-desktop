@@ -3,14 +3,24 @@
 Scient owns desktop/web reader-position policy in `ChatView.tsx`,
 `MessagesTimeline.tsx`, and `chat/readerScrollPolicy.ts`. The outer timeline never
 maintains the live end during streaming, tool activity, completion, or queued
-sends. Preserve the existing first-message framing. Send eligibility allows at most two
+sends (LegendList `maintainScrollAtEnd` stays off). While idle and resting at the reading
+end, `MessagesTimeline` itself keeps that end in place through size changes of existing
+rows and viewport resizes (measured on screen, reacting only when content moves the
+text end), never for new rows or while the reader's own scrolling input is in motion,
+paused during disclosure toggles and briefly after any click or key in the timeline. Scroll bookkeeping runs once per frame. The end is the last message's text
+(`withReadingEnd`), not trailing changed files, tool groups or meta rows. Preserve
+the existing first-message framing. Send eligibility allows at most two
 rendered body-text lines below the reading edge; other end controls retain the
-inherited 40-pixel band. Eligible sends reveal the prompt and its answer through
-`chat/useBoundedAnswerFollow.ts`, capped at the sent prompt's first line reaching
-the top margin. Manual navigation cancels pending placement and bounded following.
-The existing Scroll to end button is a one-shot action with an
-unread-message badge, not a follow toggle. Do not add a second navigation button.
-Reading positions resolve by message/turn identity, load missing history, and
+inherited 40-pixel band. Eligible sends, and queued prompts the server delivers (`queue:` ids) while
+the reader is at the end, reveal the prompt and the start of its response's latest
+message through `chat/useBoundedAnswerFollow.ts`: capped at the prompt's first line
+reaching the top margin, past it only to show a message pushed below the fold, never
+past that message's top. Scrolling up by any means (wheel, keys, touch, scrollbar)
+cancels pending placement and bounded following; scrolling down, clicks and selection do not. `onIsAtEndChange` reacts to
+transitions only. The existing Scroll to end button is a one-shot action with an
+unread badge counting responses, not a follow toggle. Do not add a second navigation button.
+Reading positions resolve by message/turn identity, load up to two pages of missing
+history before falling back to a neighbor or the end, and
 survive same-window reloads; never restore an unrelated absolute pixel offset.
 Capture native scroll positions synchronously before Legend's deferred callbacks;
 debounce only session storage and flush captured positions on navigation/page exit.
@@ -32,9 +42,18 @@ actions. Its active states use a compact primary-colored button with Update,
 download percentage, Restart, or Retry copy. The labeled button is 28px tall and
 uses plain download/restart icons without status badges. Preserve the marked presentation
 seam in `SidebarUpdatePill.tsx` and `getScientDesktopUpdateLabel` in
-`desktopUpdate.logic.ts`; updater state, IPC, confirmation, release-note focus,
-and Electron installation remain inherited. Do not copy the updater into a
-second component or restore upstream's muted active-state styling during alignment.
+`desktopUpdate.logic.ts`; updater state, IPC, release-note focus, and Electron
+installation remain inherited. Do not copy the updater into a second component
+or restore upstream's muted active-state styling during alignment.
+Scient replaces upstream's restart flow: a finished download shows a notice
+anchored above the update control, with a **Restart now** action and a 5-second
+timeout, falling back to the corner stack when the control is off screen; and
+Restart installs without the confirmation dialog in the sidebar, the legacy
+sidebar and Settings. The notice and the shared install call live in
+`apps/web/src/scient/desktopUpdate/updateReadyNotice.tsx`; the three callers
+carry `SCIENT-FORK` markers. Upstream's `showDesktopUpdateDownloadedToast` and
+`getDesktopUpdateInstallConfirmationMessage` stay in place but unused by these
+callers; do not reintroduce the confirmation during alignment.
 `DesktopUpdates.ts` forwards every real download progress event to the UI instead
 of filtering at 10% boundaries; only logging retains the 10% milestones. Preserve
 this small marked exception without changing the downloader's event cadence.
@@ -696,6 +715,7 @@ validation, and publication must stay outside inherited T3 files. See
 [Scient document PDF export](docs/internals/scient-document-pdf-export.md).
 
 The rich Markdown editor is isolated under `packages/scient-markdown`,
+`packages/scient-document` (its format-neutral session and persistence coordinator),
 `apps/web/src/scient/markdownEditor`, `apps/web/src/scient/presentation`, and
 `apps/server/src/scient/markdown`, with `packages/contracts/src/scientMarkdown.ts`
 and `packages/client-runtime/src/state/scientMarkdownHttp.ts` as the owned files

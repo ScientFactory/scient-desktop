@@ -6,6 +6,8 @@ import type { MarkdownPersistenceTransport } from "./markdownPersistenceTranspor
 vi.mock("./markdownPersistenceTransport", () => ({ createMarkdownPersistenceTransport: vi.fn() }));
 
 import {
+  adoptRendererRegistry,
+  documentKeepsCheckpoint,
   MarkdownPersistenceRegistry,
   type MarkdownPersistenceTarget,
 } from "./markdownPersistenceRegistry";
@@ -462,6 +464,214 @@ describe("MarkdownPersistenceRegistry", () => {
   });
 });
 
+describe("a merge strategy per file", () => {
+  const texTarget: MarkdownPersistenceTarget = { ...target, relativePath: "paper.tex" };
+  const conflictOnly = vi.fn(() => null);
+  const transport = (disk: () => { source: string; revision: string }) => ({
+    read: async () => disk(),
+    write: vi.fn(async (intent: MarkdownSaveIntent) => {
+      if (intent.expectedRevision !== disk().revision) throw "conflict";
+      return { revision: "written" };
+    }),
+    classifyFailure: (error: unknown): "conflict" | "terminal" =>
+      error === "conflict" ? "conflict" : "terminal",
+    subscribe: () => () => {},
+    project: () => {},
+  });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    conflictOnly.mockClear();
+  });
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  it("uses the file's own strategy for an outside change, and Markdown's for other files", async () => {
+    const disk = { source: "First\n\nSecond\n", revision: "r0" };
+    const registry = new MarkdownPersistenceRegistry({
+      createTransport: () => transport(() => disk),
+      reconcile: (file) => (file.relativePath.endsWith(".tex") ? conflictOnly : undefined),
+    });
+    // The .tex file never merges: both versions are kept as a conflict.
+    const tex = await registry.open(texTarget);
+    tex.change("Local\n\nSecond\n", 0);
+    disk.source = "First\n\nSecond\n\nAgent\n";
+    disk.revision = "r1";
+    expect(await tex.flushNow()).toBe(false);
+    expect(conflictOnly).toHaveBeenCalledWith(
+      "First\n\nSecond\n",
+      "Local\n\nSecond\n",
+      "First\n\nSecond\n\nAgent\n",
+    );
+    expect(tex.getSnapshot()).toMatchObject({
+      draftSource: "Local\n\nSecond\n",
+      conflict: { externalSource: "First\n\nSecond\n\nAgent\n" },
+    });
+    tex.release();
+  });
+
+  it("falls back to Markdown's merge when no strategy is given for a file", async () => {
+    const disk = { source: "First\n\nSecond\n", revision: "r0" };
+    const registry = new MarkdownPersistenceRegistry({
+      createTransport: () => ({
+        ...transport(() => disk),
+        write: vi.fn(async (intent: MarkdownSaveIntent) => {
+          if (intent.expectedRevision !== disk.revision) throw "conflict";
+          disk.source = intent.source;
+          disk.revision = "r2";
+          return { revision: disk.revision };
+        }),
+      }),
+    });
+    const lease = await registry.open(target);
+    lease.change("Local\n\nSecond\n", 0);
+    disk.source = "First\n\nSecond\n\nAgent\n";
+    disk.revision = "r1";
+    expect(await lease.flushNow()).toBe(true);
+    expect(lease.getSnapshot().draftSource).toBe("Local\n\nSecond\n\nAgent\n");
+    lease.release();
+  });
+
+  it("uses the same strategy when a recovery checkpoint meets a changed file", async () => {
+    const checkpoint = {
+      token: "checkpoint",
+      baselineSource: "First\n\nSecond\n",
+      baselineRevision: "r0",
+      draftSource: "Local\n\nSecond\n",
+    };
+    const registry = new MarkdownPersistenceRegistry({
+      checkpointStore: { read: async () => checkpoint, replace: async () => true },
+      createTransport: () =>
+        transport(() => ({ source: "First\n\nSecond\n\nAgent\n", revision: "r1" })),
+      reconcile: () => conflictOnly,
+    });
+    const lease = await registry.open(texTarget);
+    // Markdown's merge would have combined these; this file's strategy keeps both.
+    expect(conflictOnly).toHaveBeenCalledOnce();
+    expect(lease.getSnapshot()).toMatchObject({
+      draftSource: "Local\n\nSecond\n",
+      baselineSource: "First\n\nSecond\n",
+      conflict: { externalSource: "First\n\nSecond\n\nAgent\n", externalRevision: "r1" },
+    });
+    lease.release();
+  });
+});
+
+describe("several projections and planned edits on one lease", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  it("asks every projection registered on one lease, and one veto stops them all", async () => {
+    const { registry, externalChange } = setup();
+    const base = "First\n\nSecond\n";
+    const lease = registry.acquire(target, { ...initial, contents: base })!;
+    const applySource = vi.fn();
+    const prepareSource = vi.fn(() => applySource);
+    const prepareRendered = vi.fn(() => null);
+    lease.registerExternalProjection(prepareSource);
+    const stopRendered = lease.registerExternalProjection(prepareRendered);
+    lease.change(base.replace("First", "Local"), 0);
+    externalChange(base + "\nAgent\n");
+    expect(await lease.flushNow()).toBe(false);
+    expect(prepareSource).toHaveBeenCalled();
+    expect(prepareRendered).toHaveBeenCalled();
+    expect(applySource).not.toHaveBeenCalled();
+    // Once the vetoing projection leaves, the other one alone decides.
+    stopRendered();
+    expect(await lease.resolveWithLocal(lease.getSnapshot().conflict!.externalRevision)).toBe(true);
+    lease.release();
+  });
+
+  it("keeps the other projection when one registered on the same lease is removed", async () => {
+    const { registry, externalChange } = setup();
+    const base = "First\n\nSecond\n";
+    const lease = registry.acquire(target, { ...initial, contents: base })!;
+    const apply = vi.fn();
+    const stopFirst = lease.registerExternalProjection(() => () => {});
+    lease.registerExternalProjection(() => apply);
+    stopFirst();
+    lease.change(base.replace("First", "Local"), 0);
+    externalChange(base + "\nAgent\n");
+    expect(await lease.flushNow()).toBe(true);
+    expect(apply).toHaveBeenCalledOnce();
+    lease.release();
+  });
+
+  it("takes a planned edit through a lease and refuses it on a released one", () => {
+    const { registry } = setup();
+    const lease = registry.acquire(target, { ...initial, contents: "one two" })!;
+    expect(
+      lease.applyEdit({
+        basedOnVersion: 0,
+        patches: [{ start: 4, end: 7, replacement: "2", expected: "two" }],
+      }),
+    ).toEqual({ accepted: true });
+    expect(lease.getSnapshot().draftSource).toBe("one 2");
+    expect(
+      lease.applyEdit({ basedOnVersion: 0, patches: [{ start: 0, end: 3, replacement: "1" }] }),
+    ).toEqual({ accepted: false, reason: "version" });
+    const successor = registry.acquire(target, null)!;
+    lease.release();
+    expect(
+      lease.applyEdit({ basedOnVersion: 1, patches: [{ start: 0, end: 3, replacement: "1" }] }),
+    ).toEqual({ accepted: false, reason: "unavailable" });
+    expect(successor.getSnapshot().draftSource).toBe("one 2");
+    successor.release();
+  });
+});
+
+describe("the registry a renderer keeps across hot reloads", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+  /** A registry as code from before per-format strategies would have left it. */
+  function earlier(registry: MarkdownPersistenceRegistry) {
+    Object.defineProperty(registry, "generation", { value: undefined });
+    return registry;
+  }
+  const create = () => new MarkdownPersistenceRegistry();
+
+  it("starts one when there is none, and keeps one from the same code", () => {
+    const first = adoptRendererRegistry(undefined, create);
+    expect(first.current).toBe(true);
+    expect(adoptRendererRegistry(first.registry, create)).toEqual({
+      registry: first.registry,
+      current: true,
+    });
+  });
+
+  it("replaces one from earlier code only while it owns no file", async () => {
+    const { registry, transport } = setup();
+    const lease = earlier(registry).acquire(target, initial)!;
+    lease.change("B", 0);
+    // It is still saving a file: a second registry would be a second writer.
+    expect(adoptRendererRegistry(registry, create)).toEqual({ registry, current: false });
+    expect(await lease.flushNow()).toBe(true);
+    expect(transport.write).toHaveBeenCalledOnce();
+    // Clean but still retained for its views: it remains the owner.
+    expect(adoptRendererRegistry(registry, create).registry).toBe(registry);
+    lease.release();
+    expect(registry.forgetClean(target)).toBe(true);
+    const next = adoptRendererRegistry(registry, create);
+    expect(next.current).toBe(true);
+    expect(next.registry).not.toBe(registry);
+  });
+
+  it("keeps one from earlier code while it is still opening a file", async () => {
+    const { registry } = setup();
+    const opening = earlier(registry).open(target);
+    expect(adoptRendererRegistry(registry, create)).toEqual({ registry, current: false });
+    (await opening).release();
+  });
+});
+
 describe("Markdown checkpoint admission", () => {
   it.each([
     ["A", "B", "B", false],
@@ -504,6 +714,40 @@ describe("Markdown checkpoint admission", () => {
       vi.useRealTimers();
     }
   });
+});
+
+it("keeps no checkpoint for a file whose recovery belongs elsewhere", async () => {
+  const store = { read: vi.fn(async () => undefined), replace: vi.fn(async () => true) };
+  const registry = new MarkdownPersistenceRegistry({
+    checkpointStore: store,
+    keepsCheckpoint: documentKeepsCheckpoint,
+    createTransport: () => ({
+      read: async () => ({ source: "A", revision: "rA" }),
+      write: () => new Promise(() => {}),
+      classifyFailure: () => "terminal",
+      subscribe: () => () => {},
+      project: () => {},
+    }),
+  });
+  vi.useFakeTimers();
+  try {
+    const latex = await registry.open({ ...target, relativePath: "paper.tex" });
+    latex.change("B", 0);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(store.read).not.toHaveBeenCalled();
+    expect(store.replace).not.toHaveBeenCalled();
+    // Markdown in the same registry is still checkpointed.
+    const markdown = await registry.open(target);
+    markdown.change("B", 0);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(store.read).toHaveBeenCalledOnce();
+    expect(store.replace).toHaveBeenCalled();
+    latex.release();
+    markdown.release();
+  } finally {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  }
 });
 
 it("recovers an undo that followed an ambiguously completed publication", async () => {

@@ -7,6 +7,10 @@ const panelSource = NodeFS.readFileSync(
   new URL("../../components/files/FilePreviewPanel.tsx", import.meta.url),
   "utf8",
 );
+const projectSource = NodeFS.readFileSync(
+  new URL("./LatexProjectVisualEditor.tsx", import.meta.url),
+  "utf8",
+);
 const surfaceSource = NodeFS.readFileSync(
   new URL("./ScientLatexSurface.tsx", import.meta.url),
   "utf8",
@@ -103,55 +107,51 @@ describe("Scient LaTeX file-preview seam", () => {
     expect(surfaceSource).toContain("build.snapshot?.visualSourceRevisions?.[props.relativePath]");
   });
 
-  it("hands the surface the save bindings the panel's own editor mount gets", () => {
-    // Without these the surface's editor cannot resolve a revision conflict:
-    // the coordinator refuses to advance and the panel's reload notice buttons
-    // have nothing to act on.
-    expect(mountedPropNames()).toEqual(
-      expect.arrayContaining([
-        "revision",
-        "saveResolution",
-        "onSaveConfirmed",
-        "onSaveFailure",
-        "onSaveResolutionApplied",
-      ]),
+  it("hands the surface the file's document session, not the panel's saver", () => {
+    // One owner saves a LaTeX file for every view of it. The panel's generic
+    // saver and its Discard/Retry resolution must not reach the surface again.
+    expect(mountedPropNames()).toEqual(expect.arrayContaining(["revision", "persistence"]));
+    for (const retired of [
+      "saveResolution",
+      "onSaveConfirmed",
+      "onSaveFailure",
+      "onSaveResolutionApplied",
+      "onPendingChange",
+    ])
+      expect(mountedPropNames()).not.toContain(retired);
+    expect(panelSource).toContain(
+      "isRichMarkdown || (documentSessionIsCurrent && isLatexPreviewFile(relativePath))",
     );
+    expect(panelSource).toContain("surfaceOwnsConflictDetection: usesDocumentSession");
   });
 
-  it("reuses the panel's controlled editor and one shared save owner across modes", () => {
-    expect(panelSource).toMatch(/^export function EditableFileSurface\(/mu);
+  it("edits source through the session's bindings instead of forking an editor or a saver", () => {
+    expect(panelSource).toMatch(/^export function MarkdownSourceSurface\(/mu);
     expect(surfaceSource).toMatch(
-      /import \{ EditableFileEditor \} from "~\/components\/files\/FilePreviewPanel"/u,
+      /import \{ MarkdownSourceSurface \} from "~\/components\/files\/FilePreviewPanel"/u,
     );
-    // The forked copy carried its own editor, save coordinator, and comment
-    // wiring. Any of them reappearing here is that fork growing back.
-    expect(surfaceSource).not.toMatch(/new FileSaveCoordinator/u);
+    expect(surfaceSource).not.toMatch(/EditableFileSurface/u);
+    expect(surfaceSource).not.toMatch(/useFileSaveCoordinator|new FileSaveCoordinator/u);
     expect(surfaceSource).not.toMatch(/new Editor</u);
     expect(surfaceSource).not.toMatch(/useProjectFileQuery/u);
-    expect(surfaceSource.match(/useFileSaveCoordinator\(/gu)).toHaveLength(1);
-    expect(surfaceSource).toContain("onContentsChange={handleContentsChange}");
+    expect(projectSource).not.toMatch(/useFileSaveCoordinator|new FileSaveCoordinator/u);
+    expect(projectSource).toContain("useMarkdownPersistenceLease({");
   });
 
-  it("routes the applied save-resolution action through the Visual hold policy", () => {
-    expect(surfaceSource).toContain("visualStateAfterSaveResolution(");
-    expect(surfaceSource).toContain("onSaveResolutionApplied: handleSaveResolutionApplied");
-    expect(surfaceSource).toContain("failedContents === sourceRef.current && !revisionConflict");
+  it("drops the Visual recovery copy only when the writer takes the version on disk", () => {
     expect(surfaceSource).toMatch(
-      /action === "discard"[\s\S]*?discardVisualDraft\(visualDraftKey,[\s\S]*?visualPendingSourceRef\.current[\s\S]*?visualPendingBaseRevisionRef\.current/u,
+      /next\.draftSource === before\.conflict\.externalSource[\s\S]*?discardVisualDraft\(visualDraftKey,[\s\S]*?source: pendingSource[\s\S]*?visualPendingBaseRevisionRef\.current/u,
     );
-    expect(surfaceSource).not.toMatch(
-      /useFileSaveCoordinator\(\{[\s\S]*?onSaveResolutionApplied: props\.onSaveResolutionApplied/u,
-    );
+    expect(surfaceSource).not.toContain("saveResolution");
   });
 
   it("owns one Visual journal base across intermediate save confirmations", () => {
     expect(surfaceSource).toContain(
-      "visualPendingBaseRevisionRef.current ?? visualConfirmedRevisionRef.current",
+      "if (!snapshot.pending) visualPendingBaseRevisionRef.current = snapshot.baselineRevision;",
     );
     expect(surfaceSource).toContain(
-      "visualPendingBaseRevisionRef.current = visualConfirmedRevisionRef.current",
+      "visualPendingBaseRevisionRef.current ?? snapshot.baselineRevision",
     );
-    expect(surfaceSource).toContain("visualConfirmedRevisionRef.current = revision");
     expect(surfaceSource).toContain("checkpointVisualDraft(");
   });
 
@@ -202,8 +202,8 @@ describe("Scient LaTeX file-preview seam", () => {
   it("counts this file's queued or failed save before the project retires its recovery copy", () => {
     // The project editor clears its stored recovery copy when nothing is
     // pending. A failed or queued save of the open file must hold that back.
-    expect(surfaceSource).toContain(
-      "selectedPending={visualAwaitingSave || sourcePending || saveError !== null}",
-    );
+    // The session's pending flag covers all three: unsaved, saving, and a
+    // save waiting on a conflict or a failure.
+    expect(surfaceSource).toContain("selectedPending={sourcePending}");
   });
 });

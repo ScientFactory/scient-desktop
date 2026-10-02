@@ -112,7 +112,7 @@ import {
 } from "../keybindings";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { useShortcutModifierState } from "../shortcutModifierState";
-import { ensureLocalApi, readLocalApi } from "../localApi";
+import { readLocalApi } from "../localApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useDesktopUpdateState } from "../state/desktopUpdate";
@@ -132,13 +132,16 @@ import { Kbd } from "./ui/kbd";
 import {
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
-  getDesktopUpdateInstallConfirmationMessage,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
   shouldToastDesktopUpdateActionResult,
 } from "./desktopUpdate.logic";
-import { showDesktopUpdateDownloadedToast } from "./desktopUpdate.toast";
+// SCIENT-FORK: a finished download offers Restart in place, and Restart needs no confirmation.
+import {
+  installDesktopUpdateNow,
+  showScientUpdateReadyNotice,
+} from "../scient/desktopUpdate/updateReadyNotice";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
 import {
@@ -3690,7 +3693,18 @@ export default function LegacySidebar() {
         .downloadUpdate()
         .then((result) => {
           if (result.completed) {
-            showDesktopUpdateDownloadedToast(bridge, result.state);
+            // SCIENT-FORK: the legacy footer has no anchor id, so the notice uses the corner stack.
+            showScientUpdateReadyNotice({
+              shell: bridge,
+              state: result.state,
+              anchor: null,
+              install: () => {
+                setDesktopUpdateActionPending(true);
+                return installDesktopUpdateNow(bridge).finally(() =>
+                  setDesktopUpdateActionPending(false),
+                );
+              },
+            });
           }
           if (!shouldToastDesktopUpdateActionResult(result)) return;
           const actionError = getDesktopUpdateActionError(result);
@@ -3717,50 +3731,8 @@ export default function LegacySidebar() {
     }
 
     if (desktopUpdateButtonAction === "install") {
-      let confirmed = false;
-      try {
-        confirmed = await ensureLocalApi().dialogs.confirm(
-          getDesktopUpdateInstallConfirmationMessage(desktopUpdateState),
-        );
-      } catch (error) {
-        setDesktopUpdateActionPending(false);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not confirm update",
-            description: error instanceof Error ? error.message : "Update confirmation failed.",
-          }),
-        );
-        return;
-      }
-      if (!confirmed) {
-        setDesktopUpdateActionPending(false);
-        return;
-      }
-      void bridge
-        .installUpdate()
-        .then((result) => {
-          if (!shouldToastDesktopUpdateActionResult(result)) return;
-          const actionError = getDesktopUpdateActionError(result);
-          if (!actionError) return;
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not install update",
-              description: actionError,
-            }),
-          );
-        })
-        .catch((error) => {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not install update",
-              description: error instanceof Error ? error.message : "An unexpected error occurred.",
-            }),
-          );
-        })
-        .finally(() => setDesktopUpdateActionPending(false));
+      // SCIENT-FORK: Restart is the user's explicit action; no second confirmation.
+      void installDesktopUpdateNow(bridge).finally(() => setDesktopUpdateActionPending(false));
     }
   }, [
     desktopUpdateActionPending,

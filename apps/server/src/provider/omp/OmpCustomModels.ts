@@ -937,6 +937,10 @@ export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeC
                 source: model.configurationMode === "automatic" ? "agent" : "manual",
               };
             }),
+          modelProviderLabel: (provider) =>
+            resolvedConnections.find(
+              (connection) => customModelProviderId(connection.id) === provider,
+            )?.name,
           refreshModels,
           // Built from the secrets passed above: the endpoint token and every
           // key this process received. Keys only change by retiring it.

@@ -241,6 +241,8 @@ it.effect(
         const client = yield* factory({ command: "fake-omp", env: { PATH: "" } });
 
         expect(bootstrap?.keys).toEqual({});
+        expect(client.modelProviderLabel?.("scient_local")).toBe("Local");
+        expect(client.modelProviderLabel?.("anthropic")).toBeUndefined();
         expect(client.assessModelConnections?.([])).toEqual([
           expect.objectContaining({
             connectionId: "local",

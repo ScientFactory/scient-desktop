@@ -45,6 +45,26 @@ function useWorkspaceFileChanges(
   };
 }
 
+/**
+ * A document session watches its own file, so this panel's watcher is off for
+ * it. This reads the health of that same subscription, and can restart it,
+ * without reacting to the changes it reports.
+ */
+export function useSessionFileWatch(
+  environmentId: EnvironmentId,
+  cwd: string,
+  relativePath: string | null,
+  enabled: boolean,
+) {
+  const { refresh, unavailable } = useWorkspaceFileChanges(
+    environmentId,
+    cwd,
+    relativePath,
+    enabled,
+  );
+  return { refresh, unavailable };
+}
+
 export interface FileSaveResolution {
   readonly id: number;
   readonly relativePath: string;

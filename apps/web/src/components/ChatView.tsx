@@ -1,4 +1,10 @@
-import { canApplySendAnchor, readSendScrollAllowance } from "./chat/readerScrollPolicy";
+import {
+  canApplySendAnchor,
+  readSendScrollAllowance,
+  savedPositionIsAtEnd,
+  shouldRevealArrivedPrompt,
+  withReadingEnd,
+} from "./chat/readerScrollPolicy";
 import { useAcknowledgeAnswer } from "../scient/answerAttention/useAcknowledgeAnswer";
 import { collectSelectedScientSkillNames } from "@t3tools/shared/composerInlineTokens";
 import {
@@ -108,7 +114,7 @@ import {
   nextTerminalId,
   resolveTerminalSessionLabel,
 } from "@t3tools/shared/terminalLabels";
-import { Debouncer } from "@tanstack/react-pacer";
+import { useTimelineEndControl } from "./chat/useTimelineEndControl";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/unstable/reactivity";
 import {
@@ -172,7 +178,6 @@ import {
 import { type LegendListRef } from "@legendapp/list/react";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
-  withRealTimelineEnd,
   readTimelinePosition,
   timelineContentOverflowsViewport,
   type TimelineScrollMode,
@@ -1843,8 +1848,6 @@ function ChatViewContent(props: ChatViewProps) {
     [composerRef],
   );
   const [isWorkspaceFileDragActive, setIsWorkspaceFileDragActive] = useState(false);
-  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
-  const [unreadBelowCount, setUnreadBelowCount] = useState(0);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   useEffect(() => {
     const item = expandedImage?.images[expandedImage.index];
@@ -2283,9 +2286,10 @@ function ChatViewContent(props: ChatViewProps) {
   }
   const timelineAnchorMessageId = timelineAnchor.messageId;
   const getTimelineReadingState = useCallback(() => {
-    const state = legendListRef.current?.getState();
-    return timelineAnchorMessageId ? withRealTimelineEnd(state, composerTimelineInset) : state;
-  }, [timelineAnchorMessageId, composerTimelineInset]);
+    // The bottom is the end of the last message's text, not trailing file
+    // lists, tool groups or reserved anchor space.
+    return withReadingEnd(legendListRef.current?.getState(), composerTimelineInset);
+  }, [composerTimelineInset]);
   const isTimelineAtLogicalEnd = useCallback(
     () => resolveTimelineIsAtEnd(getTimelineReadingState()) ?? isAtEndRef.current,
     [getTimelineReadingState],
@@ -6055,13 +6059,22 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
 
-  // Debounce *showing* the scroll-to-bottom pill so it doesn't flash during
-  // thread switches. LegendList fires scroll events with isAtEnd=false while
-  // initialScrollAtEnd is settling; hiding is always immediate.
-  const showScrollDebouncer = useRef(
-    new Debouncer(() => setShowScrollToBottom(true), { wait: 150 }),
-  );
   const timelineScrollIntentRef = useRef<"toward-end" | "away-from-end" | null>(null);
+  const {
+    showScrollToBottom,
+    unreadBelowCount,
+    setUnreadBelowCount,
+    onIsAtEndChange,
+    resetForThread: resetEndControlForThread,
+  } = useTimelineEndControl({
+    isAtEndRef,
+    // Arriving at the end by scrolling toward it brings back a collapsed composer.
+    onReachedEnd: () => {
+      if (timelineScrollIntentRef.current === "toward-end") {
+        composerRef.current?.restoreAfterTimelineReachedEnd();
+      }
+    },
+  });
   const timelineScrollModeRef = useRef<TimelineScrollMode>("free-scrolling");
   const [timelinePositioningPending, setTimelinePositioningPending] = useState(false);
   const [readingFollowPromptId, setReadingFollowPromptId] = useState<MessageId | null>(null);
@@ -6111,7 +6124,7 @@ function ChatViewContent(props: ChatViewProps) {
   const handlePageScrollStart = useEffectEvent((key: PageScrollKey) => {
     timelineScrollIntentRef.current = key === "PageUp" ? "away-from-end" : "toward-end";
     composerRef.current?.collapseForTimelineScrollKey(key);
-    cancelTimelinePositioning();
+    if (key === "PageUp") cancelTimelinePositioning();
   });
   useEffect(() => {
     const controller = createPageScrollController({
@@ -6174,8 +6187,12 @@ function ChatViewContent(props: ChatViewProps) {
     }),
     [isDraftHeroState, routeThreadKey, timelineMessages, activeLatestTurn, getTimelineReadingState],
   );
+  // Prompts this window sent frame themselves; a queued prompt the server
+  // delivered gets the same reveal when the reader is at the end.
+  const locallySentPromptIdsRef = useRef(new Set<string>());
   const frameSubmittedMessage = useCallback(
     (messageId: MessageId, snapshot: ReturnType<typeof captureSendReadingPosition>) => {
+      locallySentPromptIdsRef.current.add(messageId);
       if (
         !canApplySendAnchor({
           ...snapshot,
@@ -6200,6 +6217,30 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [activeThreadKey, cancelTimelinePositioning],
   );
+  const latestPromptId = useMemo(
+    () => timelineMessages.findLast((message) => message.role === "user")?.id ?? null,
+    [timelineMessages],
+  );
+  const latestPromptRef = useRef<{ threadKey: string | null; id: string | null } | null>(null);
+  // Runs before the timeline measures the new row, so the reader's end state
+  // is still the one from before the prompt arrived.
+  useLayoutEffect(() => {
+    const previous = latestPromptRef.current;
+    latestPromptRef.current = { threadKey: routeThreadKey, id: latestPromptId };
+    if (
+      !latestPromptId ||
+      !shouldRevealArrivedPrompt({
+        previous,
+        threadKey: routeThreadKey,
+        latestPromptId,
+        sentHere: locallySentPromptIdsRef.current.has(latestPromptId),
+        readerAtEnd: isAtEndRef.current,
+      })
+    )
+      return;
+    cancelTimelinePositioning();
+    setReadingFollowPromptId(latestPromptId as MessageId);
+  }, [routeThreadKey, latestPromptId, cancelTimelinePositioning]);
   useEffect(() => {
     let removeListeners: (() => void) | null = null;
     let frame: number | null = null;
@@ -6220,7 +6261,6 @@ function ChatViewContent(props: ChatViewProps) {
           cancelTimelinePositioningRef.current();
         };
         const contentScrollsUp = () => timelineRealContentOverflowsViewport();
-        const viewportIsAwayFromEnd = () => !isTimelineAtLogicalEnd();
         // Any outer-list navigation cancels pending placement. Nested scrolls keep their owner.
         const handleWheel = (event: WheelEvent) => {
           if (event.ctrlKey || !isTimelineScrollTarget(event.target, scrollNode, event.deltaY))
@@ -6233,27 +6273,49 @@ function ChatViewContent(props: ChatViewProps) {
           } else if (event.deltaY < 0) {
             timelineScrollIntentRef.current = "away-from-end";
           }
-          handleManualNavigation();
-        };
-        const handleTouchMove = () => {
-          handleManualNavigation();
-        };
-        // Scrollbar drags produce no wheel/touch events; they are the only
-        // pointerdowns whose target is the scroll node itself rather than a
-        // message row. Content clicks break follow only away from the end
-        // (reading or selecting up there must hold position); clicking near
-        // the live edge keeps following.
-        const handlePointerDown = (event: PointerEvent) => {
-          if (event.target === scrollNode) {
-            if (contentScrollsUp()) {
-              handleManualNavigation();
-            }
-            return;
-          }
-          if (viewportIsAwayFromEnd()) {
+          // Scrolling down, momentum toward the end and pinch never cancel a
+          // reveal; scrolling back up through content does.
+          if (event.deltaY < 0 && contentScrollsUp()) {
             handleManualNavigation();
           }
         };
+        // A finger moving down drags older content into view: that is scrolling
+        // back up, which cancels. Direction is read move by move, so reversing
+        // a drag counts. Dragging toward newer content never cancels.
+        let touchY: number | null = null;
+        const handleTouchStart = (event: TouchEvent) => {
+          touchY = event.touches[0]?.clientY ?? null;
+        };
+        const handleTouchMove = (event: TouchEvent) => {
+          const y = event.touches[0]?.clientY;
+          if (touchY === null || y === undefined) return;
+          const movedTowardOlder = y - touchY > 2;
+          touchY = y;
+          if (movedTowardOlder && contentScrollsUp()) {
+            handleManualNavigation();
+          }
+        };
+        // Pointer presses (content clicks, selection, padding) never cancel on
+        // their own. A scrollbar drag is a press on the scroll node itself;
+        // once it actually moves toward older content, it is scrolling up.
+        let scrollbarDrag: { top: number } | null = null;
+        const handlePointerDown = (event: PointerEvent) => {
+          scrollbarDrag = event.target === scrollNode ? { top: scrollNode.scrollTop } : null;
+        };
+        const handlePointerUp = () => {
+          scrollbarDrag = null;
+        };
+        const handleScrollbarScroll = () => {
+          if (!scrollbarDrag) return;
+          if (scrollNode.scrollTop < scrollbarDrag.top - 2) {
+            scrollbarDrag = null;
+            timelineScrollIntentRef.current = "away-from-end";
+            handleManualNavigation();
+          } else {
+            scrollbarDrag.top = Math.max(scrollbarDrag.top, scrollNode.scrollTop);
+          }
+        };
+
         // Keyboard scrolling (PageUp/Home/ArrowUp) bypasses wheel and
         // pointer events entirely; without this the timeline yanks back to
         // the end on the next stream chunk. Clicking message text can leave
@@ -6296,8 +6358,8 @@ function ChatViewContent(props: ChatViewProps) {
             case "PageDown":
             case "End":
             case "ArrowDown":
+              // Moving toward the end never cancels a reveal, like scrolling down.
               timelineScrollIntentRef.current = "toward-end";
-              handleManualNavigation();
               composerRef.current?.collapseForTimelineScrollKey(event.key);
               if (isTimelineAtLogicalEnd()) {
                 composerRef.current?.restoreAfterTimelineReachedEnd();
@@ -6310,17 +6372,28 @@ function ChatViewContent(props: ChatViewProps) {
         scrollNode.addEventListener("wheel", handleWheel, {
           passive: true,
         });
-        scrollNode.addEventListener("touchmove", handleTouchMove, {
+        scrollNode.addEventListener("pointerdown", handlePointerDown, { passive: true });
+        scrollNode.ownerDocument.addEventListener("pointerup", handlePointerUp);
+        scrollNode.ownerDocument.addEventListener("pointercancel", handlePointerUp);
+        // Some engines end a scrollbar drag with mouseup and no pointerup.
+        scrollNode.ownerDocument.addEventListener("mouseup", handlePointerUp);
+        scrollNode.addEventListener("scroll", handleScrollbarScroll, { passive: true });
+        scrollNode.addEventListener("touchstart", handleTouchStart, {
           passive: true,
         });
-        scrollNode.addEventListener("pointerdown", handlePointerDown, {
+        scrollNode.addEventListener("touchmove", handleTouchMove, {
           passive: true,
         });
         document.addEventListener("keydown", handleKeyDown);
         removeListeners = () => {
           scrollNode.removeEventListener("wheel", handleWheel);
-          scrollNode.removeEventListener("touchmove", handleTouchMove);
           scrollNode.removeEventListener("pointerdown", handlePointerDown);
+          scrollNode.ownerDocument.removeEventListener("pointerup", handlePointerUp);
+          scrollNode.ownerDocument.removeEventListener("pointercancel", handlePointerUp);
+          scrollNode.ownerDocument.removeEventListener("mouseup", handlePointerUp);
+          scrollNode.removeEventListener("scroll", handleScrollbarScroll);
+          scrollNode.removeEventListener("touchstart", handleTouchStart);
+          scrollNode.removeEventListener("touchmove", handleTouchMove);
           document.removeEventListener("keydown", handleKeyDown);
         };
       });
@@ -6392,35 +6465,20 @@ function ChatViewContent(props: ChatViewProps) {
     composerRef.current?.restoreAfterTimelineReachedEnd();
   }, []);
 
-  const onIsAtEndChange = useCallback((isAtEnd: boolean) => {
-    isAtEndRef.current = isAtEnd;
-    if (isAtEnd) {
-      if (timelineScrollIntentRef.current === "toward-end") {
-        composerRef.current?.restoreAfterTimelineReachedEnd();
-      }
-      showScrollDebouncer.current.cancel();
-      setShowScrollToBottom(false);
-      setUnreadBelowCount(0);
-    } else {
-      showScrollDebouncer.current.maybeExecute();
-    }
-  }, []);
-
   useEffect(() => {
     setPullRequestDialogState(null);
+    // A thread returned to mid-history shows the end control right away.
+    resetEndControlForThread(savedPositionIsAtEnd(readTimelinePosition(routeThreadKey)));
     timelineScrollIntentRef.current = null;
     timelineScrollModeRef.current = "free-scrolling";
     setReadingFollowPromptId(null);
     setTimelinePositioningPending(false);
     programmaticScrollPendingRef.current = false;
     positionedTimelineAnchorRef.current = null;
-    showScrollDebouncer.current.cancel();
-    setShowScrollToBottom(false);
-    setUnreadBelowCount(0);
     return () => {
       anchorUserScrollGenerationRef.current += 1;
     };
-  }, [routeThreadKey]);
+  }, [routeThreadKey, resetEndControlForThread]);
 
   useEffect(() => {
     if (!activeThread?.id || terminalUiState.terminalOpen) return;

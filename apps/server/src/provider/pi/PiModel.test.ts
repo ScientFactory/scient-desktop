@@ -62,6 +62,18 @@ describe("PiModel", () => {
     (slug) => expect(decodePiModelSlug(slug)).toBeUndefined(),
   );
 
+  it("shows a model connection's name in place of its provider id", () => {
+    expect(
+      mapPiDiscoveredModels([
+        { provider: "scient_openrouter", id: "glm", name: "GLM", providerLabel: "OpenRouter" },
+        { provider: "anthropic", id: "claude", name: "Claude", providerLabel: " " },
+      ]).map((model) => [model.slug, model.subProvider]),
+    ).toEqual([
+      ["scient_openrouter/glm", "OpenRouter"],
+      ["anthropic/claude", "anthropic"],
+    ]);
+  });
+
   it("maps Pi's configured model and thinking defaults", () => {
     expect(
       mapPiDiscoveredModels(

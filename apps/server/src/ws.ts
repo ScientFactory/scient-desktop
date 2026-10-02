@@ -9,7 +9,6 @@ import {
   TextGenerationError,
   supportsModelConnections,
 } from "@t3tools/contracts";
-import { MANAGED_RUNTIME_CATALOG_PROVIDERS } from "@scientfactory/provider-runtime";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as EffectAcpErrors from "effect-acp/errors";
 import { customModelProviderId } from "./customModels.ts";
@@ -2727,9 +2726,9 @@ const makeWsRpcLayer = (
                 );
                 const before = yield* managedRuntimeCatalog.current;
                 const after = yield* managedRuntimeCatalog.refreshNow;
-                const changedProviders = MANAGED_RUNTIME_CATALOG_PROVIDERS.filter(
-                  (provider) =>
-                    before.providers[provider]?.version !== after.providers[provider]?.version,
+                const changedProviders = ManagedRuntimeCatalog.changedManagedRuntimeProviders(
+                  before,
+                  after,
                 );
                 if (changedProviders.length > 0) {
                   // Refresh publishes an async event for the process

@@ -34,3 +34,22 @@ it("clears messages as reached without recounting them after scrolling up or str
   expect(countUnreadBelow(state, bounds, 1000, 1500)).toBe(0);
   expect(state.unread.size).toBe(0);
 });
+it("counts a response once: progress notes stop counting when a later message supersedes them", () => {
+  const state = updateUnreadMessages(undefined, [message("old")]);
+  const turn = [message("old"), message("prompt", "user")];
+  // Each note is the response's latest message when it arrives.
+  updateUnreadMessages(state, [...turn, message("note-1")], new Set(["note-1"]));
+  expect([...state.unread]).toEqual(["note-1"]);
+  updateUnreadMessages(
+    state,
+    [...turn, message("note-1"), message("note-2"), message("answer")],
+    new Set(["answer"]),
+  );
+  expect([...state.unread]).toEqual(["answer"]);
+  const bounds = [
+    { id: "note-1", top: 600, bottom: 700 },
+    { id: "note-2", top: 700, bottom: 800 },
+    { id: "answer", top: 800, bottom: 1200 },
+  ];
+  expect(countUnreadBelow(state, bounds, 0, 500)).toBe(1);
+});

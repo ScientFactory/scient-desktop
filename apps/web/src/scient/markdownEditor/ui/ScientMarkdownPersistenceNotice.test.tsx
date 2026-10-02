@@ -3,7 +3,8 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { MarkdownPersistenceCoordinator } from "@scientfactory/scient-markdown";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectWriteFileError } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import type { MarkdownPersistenceLease } from "../persistence/markdownPersistenceRegistry";
 import { ScientMarkdownPersistenceNotice } from "./ScientMarkdownPersistenceNotice";
 
@@ -37,6 +38,7 @@ describe("Markdown persistence feedback", () => {
       getSnapshot: coordinator.getSnapshot,
       subscribe: coordinator.subscribe,
       change: (source, version) => coordinator.change(source, version),
+      applyEdit: coordinator.applyEdit.bind(coordinator),
       noteFreshnessHint: () => coordinator.noteFreshnessHint(),
       flushNow: () => coordinator.flushNow(),
       retry: () => coordinator.retry(),
@@ -84,6 +86,53 @@ describe("Markdown persistence feedback", () => {
       write.resolve({ revision: "rB" });
     });
     expect(host.textContent).toBe("");
+  });
+
+  it("says why a save failed when the workspace gave a reason", async () => {
+    const failure = new ProjectWriteFileError({
+      cwd: "/synthetic",
+      relativePath: "notes.md",
+      failure: "read_only_in_files",
+    });
+    const coordinator = new MarkdownPersistenceCoordinator({
+      source: "A",
+      revision: "rA",
+      write: async () => {
+        throw Cause.fail(failure);
+      },
+      read: async () => ({ source: "A", revision: "rA" }),
+      classifyFailure: () => "terminal",
+    });
+    const host = mount(coordinator);
+    await act(async () => {
+      coordinator.change("B");
+      await coordinator.flushNow();
+    });
+    expect(host.querySelector("[role=region]")?.textContent).toContain(
+      "Changes haven’t been saved",
+    );
+    expect(host.querySelector("[data-persistence-reason]")?.textContent).toBe(failure.message);
+    // The reason is detail for the reader, not a second announcement.
+    expect(host.querySelector("[role=status]")?.textContent).toBe("Changes haven’t been saved");
+  });
+
+  it("adds nothing when a failure carries no reason", async () => {
+    const coordinator = new MarkdownPersistenceCoordinator({
+      source: "A",
+      revision: "rA",
+      write: async () => {
+        throw new Error("protocol failure");
+      },
+      read: async () => ({ source: "A", revision: "rA" }),
+      classifyFailure: () => "terminal",
+    });
+    const host = mount(coordinator);
+    await act(async () => {
+      coordinator.change("B");
+      await coordinator.flushNow();
+    });
+    expect(host.querySelector("[role=region]")).not.toBeNull();
+    expect(host.querySelector("[data-persistence-reason]")).toBeNull();
   });
 
   it("shows no conflict until ordered verification and keeps actions outside the live region", async () => {

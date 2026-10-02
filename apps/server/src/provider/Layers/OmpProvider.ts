@@ -133,6 +133,7 @@ export const checkOmpProviderStatus = Effect.fn("checkOmpProviderStatus")(functi
         models: models.models,
         commands: commands.commands,
         modelConnections: client.assessModelConnections?.(models.models),
+        providerLabel: client.modelProviderLabel,
       };
     }),
   ).pipe(Effect.exit);
@@ -156,7 +157,11 @@ export const checkOmpProviderStatus = Effect.fn("checkOmpProviderStatus")(functi
     });
   }
   const models = discovery.value.models.flatMap((model) => {
-    const mapped = ompModelToServerModel(model);
+    const mapped = ompModelToServerModel(
+      model,
+      undefined,
+      discovery.value.providerLabel?.(model.provider),
+    );
     return mapped ? [mapped] : [];
   });
   return buildServerProvider({

@@ -17,7 +17,7 @@ import { makeOmpRpcProcess } from "./OmpRpcProcess.ts";
 
 /**
  * Real managed-runtime qualification. It is intentionally opt-in because the
- * reviewed OMP artifact is a macOS ARM64 download. The normal unit suite only
+ * reviewed OMP artifact is a native download for this machine. The normal unit suite only
  * exercises the catalog and state-machine seams.
  */
 describe.runIf(ompQualifyManaged)("real Oh My Pi managed runtime qualification", () => {

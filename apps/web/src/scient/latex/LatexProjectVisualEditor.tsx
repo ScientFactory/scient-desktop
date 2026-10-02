@@ -2,14 +2,19 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useFileSaveCoordinator } from "~/components/files/useFileSaveCoordinator";
 import {
-  getOptimisticProjectFileQueryData,
-  setProjectFileQueryData,
-  useProjectFileQuery,
-} from "~/components/files/projectFilesQueryState";
-import type { FileSaveResolution } from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { useProjectFileQuery } from "~/components/files/projectFilesQueryState";
+import { documentFailureReason } from "~/scient/markdownEditor/persistence/documentFailureReason";
+import { onDocumentSaved } from "~/scient/markdownEditor/persistence/documentPublication";
+import { useMarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/useMarkdownPersistenceLease";
 import { projectEnvironment } from "~/state/projects";
 import { LatexVisualEditor, type LatexVisualEditorProps } from "./LatexVisualEditor";
 import {
@@ -22,7 +27,9 @@ import { checkpointVisualDraft, confirmVisualDraft } from "./visualDrafts";
 interface FileState {
   data: VisualProjectFile | null;
   error: string | null;
-  write: (contents: string) => void;
+  /** The file's working source right now, or null while it cannot take an edit. */
+  live: () => string | null;
+  write: (contents: string) => boolean;
   flush: () => Promise<boolean>;
 }
 interface Props extends LatexVisualEditorProps {
@@ -31,22 +38,24 @@ interface Props extends LatexVisualEditorProps {
   cwd: string;
   relativePath: string;
   rootRelativePath: string | null;
+  /** The open file is unsaved, saving, or waiting on a conflict or a failed save. */
   selectedPending: boolean;
-  /**
-   * False until the open file's shared saver has reported the work it already
-   * holds. It reports from its mount effect, so the first render cannot know.
-   */
-  selectedSaverReady: boolean;
   fileTruncated: boolean;
   onOpenFileSource: (path: string, line?: number) => void;
-  saveResolution: FileSaveResolution | null;
-  onPendingChange: (path: string, pending: boolean) => void;
-  onSaveConfirmed: (path: string, contents: string, revision: string) => void;
-  onSaveFailure: (path: string, error: unknown) => void;
-  onSaveResolutionApplied: () => void;
+  /** A save of one of the document's included files reached the disk. */
+  onSaved: () => void;
   onProjectStateChange: (state: { pending: boolean; error: string | null }) => void;
 }
 
+const notLive = () => null;
+const refuseWrite = () => false;
+const nothingToFlush = () => Promise.resolve(true);
+
+/**
+ * One file of the document. The open file's session belongs to the surface;
+ * every other file gets its own here, the same one any other view of that
+ * file would get, so a file never has two savers.
+ */
 function ProjectFileSession(props: {
   owner: Props;
   path: string;
@@ -56,61 +65,100 @@ function ProjectFileSession(props: {
   reported: (path: string, value: boolean) => void;
 }) {
   const { owner, path } = props;
-  const query = useProjectFileQuery(owner.environmentId, owner.cwd, path);
+  const { environmentId, cwd } = owner;
+  const selected = path === owner.relativePath;
+  const query = useProjectFileQuery(environmentId, cwd, path, !selected);
+  const target = useMemo(
+    () => (selected ? null : { environmentId, cwd, relativePath: path }),
+    [selected, environmentId, cwd, path],
+  );
+  const { lease, snapshot, admissionError, retryAdmission } = useMarkdownPersistenceLease({
+    target,
+    authoritativeSnapshot: query.authoritativeData,
+  });
+  // Until a session watches the file, a change to it is the only news that a
+  // missing or unreadable file may now be there.
   const changes = useAtomValue(
-    projectEnvironment.fileChanges({
-      environmentId: owner.environmentId,
-      input: { cwd: owner.cwd, relativePath: path },
-    }),
+    projectEnvironment.fileChanges({ environmentId, input: { cwd, relativePath: path } }),
   );
   const change = Option.getOrNull(AsyncResult.value(changes));
   const refresh = query.refresh;
+  const sessionOpen = lease !== null;
   useEffect(() => {
-    if (change) refresh();
-  }, [change, refresh]);
-  const selected = path === owner.relativePath;
+    if (!change || selected || sessionOpen) return;
+    refresh();
+    retryAdmission();
+  }, [change, selected, sessionOpen, refresh, retryAdmission]);
+
+  const disk = query.authoritativeData;
+  // Too large or read-only: shown as it is on disk, never written.
+  const sessionless = disk !== null && (disk.truncated || disk.readOnly === true);
   const file = selected
     ? { contents: owner.source, revision: owner.fileRevision, truncated: owner.fileTruncated }
-    : query.data;
-  const coordinator = useFileSaveCoordinator({
-    environmentId: owner.environmentId,
-    cwd: owner.cwd,
-    relativePath: path,
-    revision: file?.revision ?? "",
-    enabled: !selected && !!file && !file.truncated,
-    saveResolution: owner.saveResolution,
-    onPendingChange: (filePath, value) => {
-      props.pending(filePath, value);
-      owner.onPendingChange(filePath, value);
-    },
-    onSaveConfirmed: (filePath, contents, revision) => {
-      props.failure(filePath, null);
-      confirmVisualDraft(`${owner.environmentId}\0${owner.cwd}\0${filePath}`, contents);
-      owner.onSaveConfirmed(filePath, contents, revision);
-    },
-    onSaveFailure: (filePath, error) => {
-      props.failure(
-        filePath,
-        `Could not save ${filePath}. Open its Source view to resolve the save.`,
-      );
-      owner.onSaveFailure(filePath, error);
-    },
-    onSaveResolutionApplied: () => {
-      props.failure(path, null);
-      owner.onSaveResolutionApplied();
-    },
-  });
-  // Declared after the saver hook: the saver reports work it already holds
-  // from its own effect, so this report reaches the project in the same update.
-  // The open file's saver belongs to the surface, which reports for it.
-  const reported = props.reported;
-  const sessionReported = selected || (!!file && !file.truncated);
+    : snapshot
+      ? { contents: snapshot.draftSource, revision: snapshot.baselineRevision, truncated: false }
+      : sessionless
+        ? disk
+        : null;
+  const error = selected
+    ? null
+    : lease
+      ? null
+      : admissionError !== null
+        ? (documentFailureReason(admissionError) ??
+          (admissionError instanceof Error ? admissionError.message : `Could not open ${path}.`))
+        : query.error;
+
+  const { pending, failure, reported, update } = props;
+  const isPending = snapshot?.pending ?? false;
   useEffect(() => {
-    if (!sessionReported) return;
+    pending(path, isPending);
+    return () => pending(path, false);
+  }, [path, isPending, pending]);
+  const needsAttention =
+    snapshot !== null && (snapshot.conflict !== null || snapshot.error !== null);
+  useEffect(() => {
+    failure(
+      path,
+      needsAttention ? `Could not save ${path}. Open its Source view to resolve the save.` : null,
+    );
+  }, [path, needsAttention, failure]);
+  const saved = useEffectEvent((source: string) => {
+    confirmVisualDraft(`${environmentId}\0${cwd}\0${path}`, source);
+    owner.onSaved();
+  });
+  useEffect(
+    () => (lease === null ? undefined : onDocumentSaved(lease, ({ source }) => saved(source))),
+    [lease],
+  );
+  // A file counts as observed once its saving state is known: the open file's
+  // comes from the surface, a session's from its snapshot, and a file that
+  // cannot be written has none.
+  const observed = selected || lease !== null || sessionless;
+  useEffect(() => {
+    if (!observed) return;
     reported(path, true);
     return () => reported(path, false);
-  }, [path, sessionReported, reported]);
-  const update = props.update;
+  }, [path, observed, reported]);
+
+  const live = useMemo(
+    () =>
+      lease === null
+        ? notLive
+        : () => {
+            const current = lease.getSnapshot();
+            return current.editingBlocked ? null : current.draftSource;
+          },
+    [lease],
+  );
+  const write = useMemo(
+    () =>
+      lease === null
+        ? refuseWrite
+        : (contents: string) => lease.change(contents, lease.getSnapshot().editVersion),
+    [lease],
+  );
+  const flush = lease?.flushNow ?? nothingToFlush;
   const contents = file?.contents,
     revision = file?.revision,
     truncated = file?.truncated;
@@ -120,20 +168,12 @@ function ProjectFileSession(props: {
         contents === undefined || revision === undefined
           ? null
           : { contents, revision, truncated: truncated === true },
-      error: query.error,
-      write: coordinator.change,
-      flush: coordinator.flush,
+      error,
+      live,
+      write,
+      flush,
     });
-  }, [
-    path,
-    contents,
-    revision,
-    truncated,
-    query.error,
-    coordinator.change,
-    coordinator.flush,
-    update,
-  ]);
+  }, [path, contents, revision, truncated, error, live, write, flush, update]);
   return null;
 }
 
@@ -223,7 +263,7 @@ export function LatexProjectVisualEditor(props: Props) {
     stateChanged({ pending: isPending, error: saveError });
   }, [stateChanged, isPending, saveError]);
   const draftKey = `${props.environmentId}\0${props.cwd}\0project-visual:${root ?? props.relativePath}`;
-  const saversReady = props.selectedSaverReady && paths.every((path) => reportedPaths.has(path));
+  const saversReady = paths.every((path) => reportedPaths.has(path));
   useEffect(() => {
     // Idle has to be an observed state, not the flags a component starts with.
     if (document && saversReady && !isPending && !error && !document.missing.length)
@@ -255,11 +295,13 @@ export function LatexProjectVisualEditor(props: Props) {
         return false;
       }
       for (const [path] of plan.changes) {
-        if (!current.states.get(path)?.data || saveErrors.has(path)) return false;
-        const live = getOptimisticProjectFileQueryData(props.environmentId, props.cwd, path);
-        if (live && live.contents !== current.files.get(path)?.contents) return false;
+        const state = current.states.get(path);
+        if (!state?.data || saveErrors.has(path)) return false;
+        // The open file is checked by its own session when the edit reaches it.
+        if (path !== props.relativePath && state.live() !== current.files.get(path)?.contents)
+          return false;
       }
-      // Check every buffer before publishing any optimistic changes.
+      // Every working source was checked before any of them is changed.
       const selected = plan.changes.get(props.relativePath);
       if (selected !== undefined && !props.onEdit(props.source, selected)) return false;
       const nextFiles = new Map(current.files);
@@ -278,7 +320,6 @@ export function LatexProjectVisualEditor(props: Props) {
             contents,
             file.revision,
           );
-          setProjectFileQueryData(props.environmentId, props.cwd, path, contents, file.revision);
           state.write(contents);
         }
       }

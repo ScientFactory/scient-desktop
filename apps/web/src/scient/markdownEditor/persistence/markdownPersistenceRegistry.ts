@@ -1,5 +1,11 @@
 import {
-  MarkdownPersistenceCoordinator,
+  DocumentPersistenceCoordinator,
+  type DocumentPatchReconciliation,
+  type DocumentSourceEdit,
+  type DocumentSourceEditOutcome,
+  type ReconcileDocument,
+} from "@scientfactory/scient-document";
+import {
   reconcileMarkdown,
   type MarkdownExternalConflict,
   type MarkdownPersistenceSnapshot,
@@ -7,6 +13,8 @@ import {
 } from "@scientfactory/scient-markdown";
 import { projectFileOperationKey } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentId, ProjectReadFileResult } from "@t3tools/contracts";
+
+import { isLatexPreviewFile } from "~/components/files/filePreviewMode";
 
 import {
   createMarkdownPersistenceTransport,
@@ -23,6 +31,40 @@ import {
 
 export type { MarkdownPersistenceTarget } from "./markdownPersistenceTransport";
 
+/**
+ * How one file's unsaved draft is combined with a verified outside change. The
+ * strategy is chosen once per file and stays with it for as long as the file
+ * is registered, whichever view or root opened it.
+ */
+export type DocumentReconcileStrategy = ReconcileDocument<DocumentPatchReconciliation>;
+
+/**
+ * Never merge: an outside change over unsaved edits keeps both versions and
+ * asks. For formats that have no safe merge yet.
+ */
+export const keepBothVersions: DocumentReconcileStrategy = () => null;
+
+/**
+ * The strategy for each kind of file the registry owns. LaTeX has no merge
+ * yet: two changes that are far apart in the text can still depend on each
+ * other (a macro and its uses, a label and its references).
+ */
+/**
+ * Whether a file's unsaved draft is kept in the session's checkpoint store.
+ * LaTeX is not: its recovery belongs to the Visual editor, which offers
+ * recovered work for comparison and never applies it unasked. Two recovery
+ * copies of one file would answer that question twice.
+ */
+export function documentKeepsCheckpoint(target: MarkdownPersistenceTarget): boolean {
+  return !isLatexPreviewFile(target.relativePath);
+}
+
+export function documentReconcileStrategy(
+  target: MarkdownPersistenceTarget,
+): DocumentReconcileStrategy | undefined {
+  return isLatexPreviewFile(target.relativePath) ? keepBothVersions : undefined;
+}
+
 export interface MarkdownPersistenceRegistryState extends MarkdownPersistenceTarget {
   readonly pending: boolean;
   readonly attention: boolean;
@@ -33,6 +75,8 @@ export interface MarkdownPersistenceLease {
   readonly getSnapshot: () => MarkdownPersistenceSnapshot;
   readonly subscribe: (listener: () => void) => () => void;
   readonly change: (source: string, basedOnVersion: number) => boolean;
+  /** A planned edit; refused with a reason, and the draft untouched, when it no longer fits. */
+  readonly applyEdit: (edit: DocumentSourceEdit) => DocumentSourceEditOutcome;
   readonly noteFreshnessHint: (reason?: string) => void;
   readonly flushNow: () => Promise<boolean>;
   readonly retry: () => Promise<boolean>;
@@ -48,7 +92,8 @@ export interface MarkdownPersistenceLease {
 
 interface RegistryEntry {
   readonly target: MarkdownPersistenceTarget;
-  readonly coordinator: MarkdownPersistenceCoordinator;
+  readonly coordinator: DocumentPersistenceCoordinator<DocumentPatchReconciliation>;
+  readonly reconcile: DocumentReconcileStrategy;
   readonly transport: MarkdownPersistenceTransport;
   readonly leases: Set<object>;
   readonly projections: Map<object, PrepareMarkdownExternalUpdate>;
@@ -59,7 +104,14 @@ interface RegistryEntry {
   evictionTimer: ReturnType<typeof setTimeout> | undefined;
 }
 
+/**
+ * Raised whenever a registry built from older code could not serve this code:
+ * a new lease method, a new rule for which strategy a file gets.
+ */
+const REGISTRY_GENERATION = 2;
+
 export class MarkdownPersistenceRegistry {
+  readonly generation = REGISTRY_GENERATION;
   private readonly entries = new Map<string, RegistryEntry>();
   private readonly initializing = new Map<
     string,
@@ -78,6 +130,12 @@ export class MarkdownPersistenceRegistry {
         target: MarkdownPersistenceTarget,
       ) => MarkdownPersistenceTransport;
       readonly checkpointStore?: MarkdownDraftCheckpointStore;
+      /** Files whose unsaved draft is not kept in the checkpoint store. All are kept by default. */
+      readonly keepsCheckpoint?: (target: MarkdownPersistenceTarget) => boolean;
+      /** The merge strategy for a file; Markdown's block merge where it names none. */
+      readonly reconcile?: (
+        target: MarkdownPersistenceTarget,
+      ) => DocumentReconcileStrategy | undefined;
       readonly cleanTtlMs?: number;
       readonly cleanLimit?: number;
       readonly debounceMs?: number;
@@ -89,6 +147,18 @@ export class MarkdownPersistenceRegistry {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   };
+
+  private checkpointStoreFor(
+    target: MarkdownPersistenceTarget,
+  ): MarkdownDraftCheckpointStore | undefined {
+    return this.options.keepsCheckpoint?.(target) === false
+      ? undefined
+      : this.options.checkpointStore;
+  }
+
+  private strategyFor(target: MarkdownPersistenceTarget): DocumentReconcileStrategy {
+    return this.options.reconcile?.(target) ?? reconcileMarkdown;
+  }
 
   has(target: MarkdownPersistenceTarget): boolean {
     return this.entries.has(projectFileOperationKey(target));
@@ -105,10 +175,12 @@ export class MarkdownPersistenceRegistry {
         );
         opening = Promise.all([
           transport.read(),
-          this.options.checkpointStore?.read(key).catch((error: unknown) => {
-            console.error("Markdown recovery checkpoint could not be loaded:", error);
-            return undefined;
-          }),
+          this.checkpointStoreFor(target)
+            ?.read(key)
+            .catch((error: unknown) => {
+              console.error("Markdown recovery checkpoint could not be loaded:", error);
+              return undefined;
+            }),
         ]).then(([disk, checkpoint]) => {
           if (disk.truncated || disk.readOnly) {
             throw new Error(
@@ -146,7 +218,8 @@ export class MarkdownPersistenceRegistry {
                 ? checkpoint.draftSource
                 : checkpoint.baselineSource === checkpoint.draftSource
                   ? undefined
-                  : reconcileMarkdown(
+                  : // The same strategy that will own the file once it is open.
+                    this.strategyFor(target)(
                       checkpoint.baselineSource,
                       checkpoint.draftSource,
                       initial.contents,
@@ -183,8 +256,10 @@ export class MarkdownPersistenceRegistry {
     initialConflict?: MarkdownExternalConflict,
   ): RegistryEntry {
     const projections = new Map<object, PrepareMarkdownExternalUpdate>();
-    const coordinator = new MarkdownPersistenceCoordinator({
+    const reconcile = this.strategyFor(target);
+    const coordinator = new DocumentPersistenceCoordinator<DocumentPatchReconciliation>({
       ...(initialConflict === undefined ? {} : { initialConflict }),
+      reconcile,
       source: initial.contents,
       revision: initial.revision,
       ...(draftSource === undefined ? {} : { draftSource }),
@@ -201,17 +276,19 @@ export class MarkdownPersistenceRegistry {
       },
       ...(this.options.debounceMs === undefined ? {} : { debounceMs: this.options.debounceMs }),
     });
+    const checkpointStore = this.checkpointStoreFor(target);
     const entry: RegistryEntry = {
       target,
       coordinator,
+      reconcile,
       transport,
       leases: new Set(),
       projections,
       unsubscribe: coordinator.subscribe(() => this.changed(entry)),
-      checkpoint: this.options.checkpointStore
+      checkpoint: checkpointStore
         ? new MarkdownDraftCheckpointWriter(
             projectFileOperationKey(target),
-            this.options.checkpointStore,
+            checkpointStore,
             checkpoint,
           )
         : undefined,
@@ -237,6 +314,9 @@ export class MarkdownPersistenceRegistry {
     }
     const ownedEntry = entry;
     const token = {};
+    // One view may hold several projections on a lease (a source pane and a
+    // rendered pane). Each registration is its own participant.
+    const registrations = new Set<object>();
     let active = true;
     ownedEntry.leases.add(token);
     ownedEntry.lastUsed = Date.now();
@@ -252,13 +332,18 @@ export class MarkdownPersistenceRegistry {
         if (!active) return;
         active = false;
         ownedEntry.leases.delete(token);
-        ownedEntry.projections.delete(token);
+        for (const registration of registrations) ownedEntry.projections.delete(registration);
+        registrations.clear();
         ownedEntry.coordinator.resumeExternalUpdates();
         ownedEntry.lastUsed = Date.now();
         this.changed(ownedEntry);
       },
       change: (source, basedOnVersion) =>
         isActive() && ownedEntry.coordinator.change(source, basedOnVersion),
+      applyEdit: (edit) =>
+        isActive()
+          ? ownedEntry.coordinator.applyEdit(edit)
+          : { accepted: false, reason: "unavailable" },
       noteFreshnessHint: (reason) => {
         if (isActive()) ownedEntry.coordinator.noteFreshnessHint(reason);
       },
@@ -271,9 +356,14 @@ export class MarkdownPersistenceRegistry {
       restoreRecovery: () => isActive() && ownedEntry.coordinator.restoreRecovery(),
       holdForRename: () => (isActive() ? ownedEntry.coordinator.holdForRename() : null),
       registerExternalProjection: (prepare) => {
-        if (isActive()) ownedEntry.projections.set(token, prepare);
+        const registration = {};
+        if (isActive()) {
+          registrations.add(registration);
+          ownedEntry.projections.set(registration, prepare);
+        }
         return () => {
-          if (ownedEntry.projections.get(token) === prepare) ownedEntry.projections.delete(token);
+          registrations.delete(registration);
+          ownedEntry.projections.delete(registration);
           ownedEntry.coordinator.resumeExternalUpdates();
         };
       },
@@ -431,10 +521,46 @@ export class MarkdownPersistenceRegistry {
   }
 }
 
+/**
+ * The registry this renderer keeps across hot reloads and view remounts. One
+ * built from older code is replaced only while it owns no file; while it owns
+ * any, it stays the single owner and the caller is told it is not current.
+ */
+export function adoptRendererRegistry(
+  existing: MarkdownPersistenceRegistry | undefined,
+  create: () => MarkdownPersistenceRegistry,
+): { readonly registry: MarkdownPersistenceRegistry; readonly current: boolean } {
+  if (existing === undefined) return { registry: create(), current: true };
+  if (existing.generation === REGISTRY_GENERATION) return { registry: existing, current: true };
+  // Older code may predate any public way to ask, so its two maps are read directly.
+  const owned = existing as unknown as {
+    readonly entries?: ReadonlyMap<string, unknown>;
+    readonly initializing?: ReadonlyMap<string, unknown>;
+  };
+  return owned.entries?.size === 0 && owned.initializing?.size === 0
+    ? { registry: create(), current: true }
+    : { registry: existing, current: false };
+}
+
 const registryKey = Symbol.for("scient.markdown-persistence-registry.v1");
 const renderer = globalThis as typeof globalThis & { [registryKey]?: MarkdownPersistenceRegistry };
+const adopted = adoptRendererRegistry(
+  renderer[registryKey],
+  () =>
+    new MarkdownPersistenceRegistry({
+      reconcile: documentReconcileStrategy,
+      keepsCheckpoint: documentKeepsCheckpoint,
+      ...(typeof indexedDB === "undefined" ? {} : { checkpointStore: indexedDbMarkdownDrafts }),
+    }),
+);
+renderer[registryKey] = adopted.registry;
+if (!adopted.current)
+  console.warn("Document saving was updated while files were open. Reload the window to use it.");
+
 /** HMR and view remounts keep the same owner and the same scheduled transport lane. */
-export const markdownPersistenceRegistry = (renderer[registryKey] ??=
-  new MarkdownPersistenceRegistry(
-    typeof indexedDB === "undefined" ? {} : { checkpointStore: indexedDbMarkdownDrafts },
-  ));
+export const markdownPersistenceRegistry = adopted.registry;
+/**
+ * False only after a hot reload that left an older registry in charge. Formats
+ * that registry would merge as Markdown stay read-only until the window reloads.
+ */
+export const documentSessionIsCurrent = adopted.current;
