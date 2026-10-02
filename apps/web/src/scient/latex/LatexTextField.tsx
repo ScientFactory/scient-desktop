@@ -15,6 +15,11 @@ export const LatexDraftContext = createContext({
   undo: (_redo: boolean) => {},
 });
 
+/** Apply an accepted grouped edit without publishing each field separately. */
+export function replaceLatexFieldDraft(field: HTMLTextAreaElement, value: string): void {
+  field.dispatchEvent(new CustomEvent("scient-latex-replace-field-draft", { detail: value }));
+}
+
 type Props = Omit<ComponentPropsWithoutRef<"textarea">, "value" | "onChange"> & {
   value: string;
   onValueChange: (value: string) => void;
@@ -70,6 +75,28 @@ export function LatexTextField({
   const field = useRef<HTMLTextAreaElement>(null);
   const id = useId();
   const { reportDraft, undo } = useContext(LatexDraftContext);
+  useEffect(() => {
+    const element = field.current;
+    const replace = (event: Event) => {
+      if (!(event instanceof CustomEvent) || typeof event.detail !== "string") return;
+      clearTimeout(publishTimer.current);
+      cancelJournal.current?.();
+      cancelJournal.current = null;
+      composing.current = false;
+      pending.current = null;
+      setDraft(event.detail);
+      if (element) element.value = event.detail;
+      if (draftKey) {
+        try {
+          localStorage.removeItem(`scient.latex.field:${draftKey}`);
+        } catch {
+          /* Optional journal. */
+        }
+      }
+    };
+    element?.addEventListener("scient-latex-replace-field-draft", replace);
+    return () => element?.removeEventListener("scient-latex-replace-field-draft", replace);
+  }, [draftKey]);
   useEffect(() => {
     const persist = () => {
       cancelJournal.current?.();
@@ -142,6 +169,7 @@ export function LatexTextField({
       {...props}
       ref={field}
       value={draft}
+      data-empty={draft.trim() === "" || undefined}
       data-local-draft={draft !== value || undefined}
       onKeyDown={(event) => {
         const key = event.key.toLowerCase();

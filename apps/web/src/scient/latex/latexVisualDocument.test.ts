@@ -36,7 +36,7 @@ describe("source-derived writing projection", () => {
     const nodes = structuredClone(projected.content.content!);
     nodes[1] = paragraph("A better paragraph.");
     expect(edit(source, nodes)?.source).toBe(source.replace("Hello world.", "A better paragraph."));
-    expect(projected.rawBlocks).toBe(2);
+    expect(projected.rawBlocks).toBe(1);
   });
 
   it("accepts spaces while typing without losing session offsets", () => {
@@ -428,8 +428,8 @@ Theory & Proofs \\\\
       figureWidth: "0.8\\textwidth",
       figurePlacement: "htbp",
       figureAlignment: "center",
-      caption: "Figure caption",
-      label: "fig:image",
+      caption: "",
+      label: "",
       editable: true,
     });
     const nodes = structuredClone(projection.content.content!);

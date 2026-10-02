@@ -14,12 +14,18 @@ import {
 import { LatexDraftContext, restoredLatexFieldDraft } from "./LatexTextField";
 import { afterEditorPaint } from "./afterEditorPaint";
 import "mathlive/fonts.css";
+import { installMathEditingGuides } from "./mathEditingGuides";
 import { mathSymbolMacros } from "./mathSymbolPresentation";
 import {
   createMathSelectionGeometry,
+  restoreMathFieldValue,
+  clearMathRectangle,
+  unwrapEmptyMathCell,
+  firstMathCell,
   mathCellAtCoordinates,
   mathCellRectangle,
   mathLeftCellBoundary,
+  mathRightCellBoundary,
   mathSelectionAtOffset,
   mathSelectionPoint,
   mathSelectionEndpoints,
@@ -171,6 +177,17 @@ export const LatexMathField = forwardRef<
       command: (command) => {
         const math = field.current;
         if (!math || math.readOnly) return false;
+        if (["addRowAfter", "removeRow", "addColumnAfter", "removeColumn"].includes(command)) {
+          const cell = mathSelectionAtOffset(math, math.position).path.at(-1);
+          if (!cell) return false;
+          const column = command.includes("Column");
+          if (column && ["cases", "aligned", "gathered"].includes(cell.array.environmentName ?? ""))
+            return false;
+          if (command === "removeRow" && (cell.array.rowCount ?? 0) <= 1) return false;
+          if (command === "removeColumn" && (cell.array.colCount ?? 0) <= 1) return false;
+          if (command === "addRowAfter" && (cell.array.rowCount ?? 0) >= 20) return false;
+          if (command === "addColumnAfter" && (cell.array.colCount ?? 0) >= 20) return false;
+        }
         math.focus();
         if ((command === "undo" || command === "redo") && undo.current(command === "redo"))
           return true;
@@ -192,6 +209,7 @@ export const LatexMathField = forwardRef<
   useEffect(() => {
     const math = new MathfieldElement();
     host.current?.append(math);
+    const removeEditingGuides = installMathEditingGuides(math);
     // Use native caret placement and command completion inside the formula.
     // Scient supplies the surrounding toolbar instead of a second menu/keyboard.
     // MathLive's option setters require the custom element to be connected.
@@ -201,12 +219,14 @@ export const LatexMathField = forwardRef<
     math.macros = { ...math.macros, ...mathSymbolMacros() };
     const recovered = restoredLatexFieldDraft(journalKey.current, lastAcknowledged.current);
     math.setValue(recovered, { silenceNotifications: true });
+    const firstCell = firstMathCell(math);
+    if (firstCell) math.position = firstCell.cell[0];
     dirty.current = recovered !== lastAcknowledged.current;
     reportDraft(draftId, dirty.current);
     math.smartFence = true;
     math.smartSuperscript = true;
     // Slots are caret targets, never sample content in the document.
-    math.placeholderSymbol = "·";
+    math.placeholderSymbol = "\u25A2";
     const applyPreferences = () => {
       const preferences = getKeyboardPreferences().preferences;
       math.inlineShortcuts = preferences.automaticOperators ? INLINE_SHORTCUTS : {};
@@ -419,6 +439,20 @@ export const LatexMathField = forwardRef<
         // reach MathLive before any document-level navigation can take over.
         return;
       }
+      if (!modifier && !event.altKey && (event.key === "Backspace" || event.key === "Delete")) {
+        const selectedCells = rectangle;
+        applyingSelection = true;
+        const handled = selectedCells
+          ? clearMathRectangle(math, selectedCells)
+          : unwrapEmptyMathCell(math);
+        applyingSelection = false;
+        if (handled) {
+          rectangle = null;
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+      }
       if (
         displayMode.current &&
         !event.shiftKey &&
@@ -456,30 +490,43 @@ export const LatexMathField = forwardRef<
           }
         } else if (event.key === "ArrowLeft" && current.focus.column === 0) {
           selectEnvironment(current.anchor.environment, "backward");
+        } else if (
+          event.key === "ArrowRight" &&
+          current.focus.column === (current.focus.array.colCount ?? 0) - 1
+        ) {
+          selectEnvironment(current.anchor.environment, "forward");
         }
         event.preventDefault();
         event.stopPropagation();
         return;
       }
-      const leftBoundary =
-        event.key === "ArrowLeft" && !modifier && !event.altKey
-          ? mathLeftCellBoundary(math, math.position)
+      const horizontalDirection = event.key === "ArrowLeft" ? -1 : 1;
+      const cellBoundary =
+        !modifier && !event.altKey
+          ? event.key === "ArrowLeft"
+            ? mathLeftCellBoundary(math, math.position)
+            : event.key === "ArrowRight"
+              ? mathRightCellBoundary(math, math.position)
+              : null
           : null;
-      const selectionAnchor = leftBoundary ? mathSelectionEndpoints(math)?.[0] : undefined;
+      const selectionAnchor = cellBoundary ? mathSelectionEndpoints(math)?.[0] : undefined;
       const anchorInsideBoundary =
-        leftBoundary && selectionAnchor !== undefined
+        cellBoundary && selectionAnchor !== undefined
           ? mathSelectionAtOffset(math, selectionAnchor).path.some(
-              (cell) => cell.array === leftBoundary.array,
+              (cell) => cell.array === cellBoundary.array,
             )
           : false;
-      if (leftBoundary && (math.selectionIsCollapsed || (event.shiftKey && anchorInsideBoundary))) {
+      if (cellBoundary && (math.selectionIsCollapsed || (event.shiftKey && anchorInsideBoundary))) {
         event.preventDefault();
         event.stopPropagation();
         rectangle = null;
         applyingSelection = true;
         if (event.shiftKey)
-          math.selection = { ranges: [[...leftBoundary.environment]], direction: "backward" };
-        else math.position = leftBoundary.environment[0];
+          math.selection = {
+            ranges: [[...cellBoundary.environment]],
+            direction: horizontalDirection === -1 ? "backward" : "forward",
+          };
+        else math.position = cellBoundary.environment[horizontalDirection === -1 ? 0 : 1];
         applyingSelection = false;
         return;
       }
@@ -669,6 +716,13 @@ export const LatexMathField = forwardRef<
       event.preventDefault();
       event.stopImmediatePropagation();
     };
+    const cut = (event: ClipboardEvent) => {
+      if (!rectangle || math.readOnly || !event.clipboardData) return;
+      copied(event);
+      applyingSelection = true;
+      if (clearMathRectangle(math, rectangle)) rectangle = null;
+      applyingSelection = false;
+    };
     const pasted = (event: ClipboardEvent) => {
       collapseRectangle();
       const source = (
@@ -698,10 +752,12 @@ export const LatexMathField = forwardRef<
     math.addEventListener("selection-change", selectionChanged);
     math.addEventListener("pointerdown", pointerDown, true);
     math.addEventListener("copy", copied, true);
+    math.addEventListener("cut", cut, true);
     math.addEventListener("paste", pasted, true);
     window.addEventListener("pagehide", publish);
     field.current = math;
     return () => {
+      removeEditingGuides();
       stopPointerSelection();
       cancelPointerSelection.current = () => {};
       clearTimeout(publishTimer);
@@ -721,6 +777,7 @@ export const LatexMathField = forwardRef<
       math.removeEventListener("selection-change", selectionChanged);
       math.removeEventListener("pointerdown", pointerDown, true);
       math.removeEventListener("copy", copied, true);
+      math.removeEventListener("cut", cut, true);
       math.removeEventListener("paste", pasted, true);
       window.removeEventListener("pagehide", publish);
       math.remove();
@@ -740,7 +797,9 @@ export const LatexMathField = forwardRef<
       field.current.getValue("latex-without-placeholders") !== value
     ) {
       const selection = field.current.selection;
-      field.current.setValue(value, { silenceNotifications: true });
+      cancelPointerSelection.current();
+      clearSelection.current();
+      restoreMathFieldValue(field.current, value);
       field.current.resetUndo();
       const end = field.current.lastOffset;
       field.current.selection = {

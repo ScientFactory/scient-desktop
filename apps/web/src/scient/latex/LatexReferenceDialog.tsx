@@ -1,3 +1,5 @@
+import { Button } from "~/components/ui/button";
+import { LatexSelect } from "./LatexSelect";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -11,6 +13,7 @@ import {
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { projectEnvironment } from "~/state/projects";
 import {
+  withoutComments,
   bibliographyChoices,
   bibliographyPaths,
   documentReferenceChoices,
@@ -22,13 +25,34 @@ export function LatexReferenceDialog(props: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   source: string;
+  mode?: "reference" | "citation";
+  setupSource?: string;
+  onCancel?: () => void;
   environmentId?: EnvironmentId | undefined;
   cwd?: string | undefined;
   relativePath?: string | undefined;
   onInsert: (command: string, key: string) => void;
 }) {
   const [query, setQuery] = useState("");
-  const [mode, setMode] = useState<"reference" | "citation">("reference");
+  const mode = props.mode ?? "reference";
+  const [selected, setSelected] = useState<string[]>([]);
+  const [form, setForm] = useState("automatic");
+  const pendingInsert = useRef<{ command: string; key: string } | null>(null);
+  const setup = withoutComments(props.setupSource ?? props.source);
+  const biblatex = /\\(?:usepackage|RequirePackage)(?:\[[^\]]*\])?\s*\{[^{}]*\bbiblatex\b/u.test(
+    setup,
+  );
+  const natbib = /\\(?:usepackage|RequirePackage)(?:\[[^\]]*\])?\s*\{[^{}]*\bnatbib\b/u.test(setup);
+  const citationCommand =
+    form === "text"
+      ? biblatex
+        ? "textcite"
+        : "citet"
+      : form === "parenthetical"
+        ? biblatex
+          ? "parencite"
+          : "citep"
+        : "cite";
   const [references, setReferences] = useState<LatexReferenceChoice[]>([]);
   const [pending, setPending] = useState(false);
   const [unavailable, setUnavailable] = useState<string[]>([]);
@@ -39,17 +63,20 @@ export function LatexReferenceDialog(props: {
     refresh: true,
   });
   const paths = useMemo(
-    () => bibliographyPaths(props.source, props.relativePath ?? ""),
-    [props.source, props.relativePath],
+    () => bibliographyPaths(props.setupSource ?? props.source, props.relativePath ?? ""),
+    [props.source, props.setupSource, props.relativePath],
   );
   useEffect(() => {
     if (!props.open) return;
     let cancelled = false;
     setQuery("");
+    setSelected([]);
+    setForm("automatic");
+    pendingInsert.current = null;
     setKey("");
     setReferences([]);
     setUnavailable([]);
-    if (!props.environmentId || !props.cwd || !paths.length) {
+    if (mode !== "citation" || !props.environmentId || !props.cwd || !paths.length) {
       setPending(false);
       return;
     }
@@ -80,7 +107,7 @@ export function LatexReferenceDialog(props: {
     return () => {
       cancelled = true;
     };
-  }, [props.open, props.environmentId, props.cwd, paths, readFile]);
+  }, [props.open, props.environmentId, props.cwd, paths, readFile, mode]);
   const documentObjects = useMemo(
     () => (props.open ? documentReferenceChoices(props.source) : []),
     [props.open, props.source],
@@ -94,41 +121,53 @@ export function LatexReferenceDialog(props: {
     `${entry.title} ${entry.key} ${entry.detail}`.toLowerCase().includes(query.toLowerCase()),
   );
   const insert = (command: string, key: string) => {
+    pendingInsert.current = { command, key };
     props.onOpenChange(false);
-    requestAnimationFrame(() => props.onInsert(command, key));
   };
+  const validKeys = (value: string) =>
+    value.split(",").every((item) => Boolean(item.trim()) && !/[{}\\%\s]/u.test(item.trim()));
+  const selectedChoice = candidates.find((entry) => entry.key === selected[0]);
+  const command =
+    mode === "citation"
+      ? citationCommand
+      : form === "page"
+        ? "pageref"
+        : form === "number"
+          ? "ref"
+          : (selectedChoice?.command ?? "ref");
+  const keys = selected.join(",");
   return (
-    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+    <Dialog
+      open={props.open}
+      onOpenChange={props.onOpenChange}
+      onOpenChangeComplete={(open) => {
+        if (open) return;
+        const insertion = pendingInsert.current;
+        pendingInsert.current = null;
+        if (insertion) props.onInsert(insertion.command, insertion.key);
+        else props.onCancel?.();
+      }}
+    >
       <DialogPopup
         className="w-[min(560px,calc(100vw-32px))]"
         padding="none"
         gap="none"
         initialFocus={input}
+        finalFocus={false}
+        data-dock-command-scope="latex"
       >
         <DialogHeader>
-          <DialogTitle>Citations and references</DialogTitle>
+          <DialogTitle>
+            {mode === "citation" ? "Insert citation" : "Insert cross-reference"}
+          </DialogTitle>
           <DialogDescription>
-            Choose a labelled object in this file or a source from its linked bibliography.
+            {mode === "citation"
+              ? "Choose one or more sources from your bibliography."
+              : "Choose a labelled heading, equation, figure, table, or statement."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <div className="scient-writing-dialog">
-            <div className="scient-writing-dialog-tabs">
-              <button
-                type="button"
-                aria-pressed={mode === "reference"}
-                onClick={() => setMode("reference")}
-              >
-                Document objects
-              </button>
-              <button
-                type="button"
-                aria-pressed={mode === "citation"}
-                onClick={() => setMode("citation")}
-              >
-                Citations
-              </button>
-            </div>
             <input
               ref={input}
               className="scient-writing-search"
@@ -146,7 +185,16 @@ export function LatexReferenceDialog(props: {
                 <button
                   type="button"
                   key={`${entry.key}:${index}`}
-                  onClick={() => insert(entry.command, entry.key)}
+                  aria-pressed={selected.includes(entry.key)}
+                  onClick={() =>
+                    setSelected((current) =>
+                      mode === "reference"
+                        ? [entry.key]
+                        : current.includes(entry.key)
+                          ? current.filter((key) => key !== entry.key)
+                          : [...current, entry.key],
+                    )
+                  }
                 >
                   <span>
                     <strong>{entry.title}</strong>
@@ -169,25 +217,74 @@ export function LatexReferenceDialog(props: {
                 Could not read: {unavailable.join(", ")}. You can still insert a key.
               </p>
             ) : null}
+            <label className="scient-writing-field">
+              {mode === "citation" ? "Citation form" : "Display"}
+              <LatexSelect
+                value={form}
+                onValueChange={(value) => setForm(value)}
+                aria-label={mode === "citation" ? "Citation form" : "Reference display"}
+                options={[
+                  { value: "automatic", label: "Document default" },
+                  ...(mode === "citation"
+                    ? biblatex || natbib
+                      ? [
+                          { value: "parenthetical", label: "Parenthetical" },
+                          { value: "text", label: "In the sentence" },
+                        ]
+                      : []
+                    : [
+                        { value: "number", label: "Number" },
+                        { value: "page", label: "Page number" },
+                      ]),
+                ]}
+              />
+            </label>
+            {selected.length > 0 && (
+              <div className="grid gap-2">
+                <p>
+                  {mode === "citation"
+                    ? `${selected.length} source${selected.length === 1 ? "" : "s"} selected`
+                    : selectedChoice?.title}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {mode === "citation" ? `Citation keys: ${keys}` : `Reference label: ${keys}`}.
+                  Appearance follows the document; final numbers appear after compilation.
+                </p>
+                <Button disabled={!validKeys(keys)} onClick={() => insert(command, keys)}>
+                  {mode === "citation" ? "Insert citation" : "Insert reference"}
+                </Button>
+              </div>
+            )}
             <form
               className="scient-writing-reference-key"
               onSubmit={(event) => {
                 event.preventDefault();
-                if (key.trim() && !/[{}\\%\s]/u.test(key.trim()))
-                  insert(mode === "citation" ? "cite" : "ref", key.trim());
+                if (validKeys(key) && (mode === "citation" || !key.includes(",")))
+                  insert(
+                    mode === "reference" && form === "automatic"
+                      ? (candidates.find((entry) => entry.key === key.trim())?.command ?? "ref")
+                      : command,
+                    key
+                      .split(",")
+                      .map((item) => item.trim())
+                      .join(","),
+                  );
               }}
             >
               <label>
-                Known key
+                Known {mode === "citation" ? "keys (comma-separated)" : "label"}
                 <input
                   value={key}
                   onChange={(event) => setKey(event.target.value)}
                   placeholder={mode === "citation" ? "author2026" : "fig:result"}
                 />
               </label>
-              <button type="submit" disabled={!key.trim() || /[{}\\%\s]/u.test(key.trim())}>
+              <Button
+                type="submit"
+                disabled={!validKeys(key) || (mode === "reference" && key.includes(","))}
+              >
                 Insert
-              </button>
+              </Button>
             </form>
           </div>
         </DialogPanel>

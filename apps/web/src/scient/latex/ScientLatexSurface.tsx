@@ -1,3 +1,4 @@
+import { LatexSelect } from "./LatexSelect";
 import { File, type FileOptions, Virtualizer } from "@pierre/diffs/react";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -1069,31 +1070,29 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           {target === null &&
           (resolution.result?._tag === "ambiguous" || resolution.result?._tag === "unresolved") &&
           resolution.result.candidates.length > 0 ? (
-            <select
-              className="scient-latex-root-choice"
+            <LatexSelect
               aria-label="Choose LaTeX document to compile"
               value=""
-              onChange={(event) => {
-                if (event.target.value !== "") {
+              onValueChange={(value) => {
+                if (value !== "") {
                   setManualRootSelection({
                     environmentId: props.environmentId,
                     workspaceRoot: props.cwd,
                     sourceRelativePath: props.relativePath,
                     carriedRootRelativePath: props.latexRootRelativePath,
-                    selectedRootRelativePath: event.target.value,
+                    selectedRootRelativePath: value,
                   });
                 }
               }}
-            >
-              <option value="" disabled>
-                Choose document…
-              </option>
-              {resolution.result.candidates.map((candidate) => (
-                <option key={candidate.rootRelativePath} value={candidate.rootRelativePath}>
-                  {candidate.rootRelativePath}
-                </option>
-              ))}
-            </select>
+              size="compact"
+              options={[
+                { value: "", label: "Choose document\u2026", disabled: true },
+                ...resolution.result.candidates.map((candidate) => ({
+                  value: candidate.rootRelativePath,
+                  label: candidate.rootRelativePath,
+                })),
+              ]}
+            />
           ) : null}
           {compiledFrom === null ? null : (
             <ScientTooltip
