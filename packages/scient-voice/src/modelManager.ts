@@ -210,9 +210,10 @@ export class VoiceModelManager {
     if (this.activeDownload) {
       throw new Error("The offline voice model cannot be removed while it is downloading.");
     }
-    await this.activeSharedCopy;
-    // Removed on purpose: it does not come back from the shared folder until asked for.
+    // Removed on purpose: it does not come back from the shared folder until
+    // asked for. Set before waiting, so no status probe starts another copy.
     this.sharedCopySkipped = true;
+    while (this.activeSharedCopy) await this.activeSharedCopy;
     await Promise.all([
       NodeFSP.rm(this.sharedCopyPartialPath, { force: true }),
       NodeFSP.rm(this.modelPath, { force: true }),

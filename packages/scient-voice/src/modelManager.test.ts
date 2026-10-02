@@ -391,6 +391,28 @@ describe("VoiceModelManager with a shared models folder", () => {
     expect(await NodeFSP.readFile(sharedPath)).toEqual(MODEL_BYTES);
   });
 
+  it("stays removed when a status probe was about to copy the shared model again", async () => {
+    const { first, second } = await installations();
+    await first.ensureInstalled(signal());
+    const internals = second as unknown as {
+      activeSharedCopy: Promise<boolean> | null;
+      sharedCopySkipped: boolean;
+      takeSharedCopy: () => Promise<boolean>;
+    };
+    const probe = second.getStatus();
+    while (internals.activeSharedCopy === null)
+      await new Promise((resolve) => setImmediate(resolve));
+    // A second probe that has read the receipt and reaches its next step the
+    // moment the first copy finishes: the same check-then-copy step as getStatus.
+    const lateProbe = internals.activeSharedCopy.then(() =>
+      internals.sharedCopySkipped ? false : internals.takeSharedCopy(),
+    );
+    await second.remove();
+    await Promise.all([probe, lateProbe]);
+    expect((await second.getStatus()).state).toBe("missing");
+    expect(await NodeFSP.readdir(NodePath.dirname(second.modelPath))).toEqual([]);
+  });
+
   it("replaces a shared copy that was cut short, after it had already shared its own", async () => {
     const { sharedPath, first } = await installations();
     await first.ensureInstalled(signal());
