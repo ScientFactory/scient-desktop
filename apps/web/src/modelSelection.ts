@@ -15,6 +15,7 @@ import {
   normalizeCustomModelSlug,
   readCustomModelEntries,
   resolveAutomaticModel,
+  resolveProviderModelPreferences,
   resolveSelectableModel,
 } from "@t3tools/shared/model";
 import { getComposerProviderState } from "./components/chat/composerProviderState";
@@ -137,12 +138,13 @@ export function toAppModelOption(model: ServerProvider["models"][number]): AppMo
 function readInstanceModelPreferences(
   settings: UnifiedSettings,
   instanceId: ProviderInstanceId,
+  driver: ProviderDriverKind,
+  models: ServerProvider["models"],
 ): { readonly hiddenModels: ReadonlyArray<string>; readonly modelOrder: ReadonlyArray<string> } {
-  return (
-    settings.providerModelPreferences?.[instanceId] ?? {
-      hiddenModels: [],
-      modelOrder: [],
-    }
+  return resolveProviderModelPreferences(
+    driver,
+    models,
+    settings.providerModelPreferences?.[instanceId],
   );
 }
 
@@ -222,7 +224,12 @@ function getAppModelOptions(
     options.push({ slug: entry.slug, name: entry.name, isCustom: true });
   }
 
-  const preferences = readInstanceModelPreferences(settings, defaultInstanceId);
+  const preferences = readInstanceModelPreferences(
+    settings,
+    defaultInstanceId,
+    provider,
+    rawModels,
+  );
   return appendUnavailableDynamicModelSelection(
     applyInstanceModelPreferences(options, preferences),
     rawModels,
@@ -272,7 +279,12 @@ export function getAppModelOptionsForInstance(
     options.push({ slug: custom.slug, name: custom.name, isCustom: true });
   }
 
-  const preferences = readInstanceModelPreferences(settings, entry.instanceId);
+  const preferences = readInstanceModelPreferences(
+    settings,
+    entry.instanceId,
+    entry.driverKind,
+    entry.models,
+  );
   return appendUnavailableDynamicModelSelection(
     applyInstanceModelPreferences(options, preferences),
     entry.models,
@@ -290,6 +302,13 @@ export function resolveAppModelSelection(
 ): string {
   const resolvedProvider = resolveSelectableProvider(providers, provider);
   const options = getAppModelOptions(settings, providers, resolvedProvider, selectedModel);
+  if (resolvedProvider === "pi" || resolvedProvider === "omp") {
+    return (
+      resolveSelectableModel(resolvedProvider, selectedModel, options) ??
+      resolveAutomaticModel(resolvedProvider, options) ??
+      ""
+    );
+  }
   return (
     resolveSelectableModel(resolvedProvider, selectedModel, options) ??
     getDefaultServerModel(providers, resolvedProvider)
@@ -321,7 +340,12 @@ export function resolveAppModelSelectionForInstance(
     (entry.driverKind === "opencode" || entry.driverKind === "antigravity")
   ) {
     const unavailableSelection = normalizeCustomModelSlug(selectedModel);
-    const hiddenModels = readInstanceModelPreferences(settings, entry.instanceId).hiddenModels;
+    const hiddenModels = readInstanceModelPreferences(
+      settings,
+      entry.instanceId,
+      entry.driverKind,
+      entry.models,
+    ).hiddenModels;
     if (
       unavailableSelection &&
       !hiddenModels.includes(unavailableSelection) &&

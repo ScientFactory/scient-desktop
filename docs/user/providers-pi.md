@@ -6,6 +6,14 @@ extensions, and skills remain Pi-owned. Models added through Scient use separate
 
 ## Setup
 
+Pi shares Oh My Pi's initial model visibility: native Anthropic Sonnet 5.5, Opus 5.5
+and Fable 5.5, plus Codex GPT-6-Astra, GPT-6-Luna and GPT-6.1-Sol, are shown when
+reported. Other models in those two native groups start hidden. Google and other
+groups are unchanged. The defaults apply to the Anthropic group with OAuth or API-key
+authentication and do not verify subscription access. All discovered entries remain on
+the provider page, where visibility can be changed. An instance's saved visibility list
+takes precedence over the initial defaults; preferences belong to each client.
+
 Enable **Pi** in **Settings > Providers**. Pi is off by default. On supported macOS, Windows, and
 glibc-based Linux desktops, Scient can install a qualified private Pi runtime through the existing
 **Install** action. Repair, update, and remove affect only that private runtime, not your system

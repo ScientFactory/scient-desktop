@@ -49,6 +49,19 @@ see [Scient tools and skills](#scient-tools-and-skills).
 
 ## Custom models
 
+For an instance without saved model visibility preferences, the picker initially shows
+Anthropic Sonnet 5.5, Opus 5.5 and Fable 5.5, and Codex GPT-6-Astra, GPT-6-Luna and
+GPT-6.1-Sol, when the native runtime reports those IDs. Other Anthropic and Codex
+subscription catalog entries start hidden, including dated variants. Google and other
+model groups keep their existing visibility. This curation does not verify account access.
+The Anthropic catalog uses the same model IDs for OAuth and API-key accounts, so its
+visibility defaults apply to that group with either authentication method.
+
+All discovered models remain in **Settings > Providers > Oh My Pi**. Turn on a model's
+visibility switch to show it again. Once you customize the list, the saved list takes
+precedence over these initial defaults, including when you enable every model. Visibility
+preferences belong to the client; another device starts with its own defaults.
+
 Models known to be unavailable stay out of model selectors and automatic selection. They remain
 on this instance's provider page with an explanation and their picker switch off. During the server
 session, Scient remembers previously discovered models that disappear from a successful catalog

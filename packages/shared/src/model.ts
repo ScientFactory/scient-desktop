@@ -25,6 +25,44 @@ export interface SelectableModelOption {
   unavailableReason?: string | undefined;
 }
 
+const VISIBLE_AGENT_SUBSCRIPTION_MODELS = new Set([
+  "anthropic/claude-sonnet-5-5",
+  "anthropic/claude-opus-5-5",
+  "anthropic/claude-fable-5-5",
+  "openai-codex/gpt-6-astra",
+  "openai-codex/gpt-6-luna",
+  "openai-codex/gpt-6.1-sol",
+]);
+
+/** Curated picker defaults for native Pi/OMP catalogs, independent of account access. */
+export function getDefaultHiddenAgentModels(
+  driver: string,
+  models: ReadonlyArray<{ readonly slug: string; readonly isCustom?: boolean }>,
+): string[] {
+  if (driver !== "pi" && driver !== "omp") return [];
+  return models
+    .filter(
+      (model) =>
+        !model.isCustom &&
+        (model.slug.startsWith("anthropic/") || model.slug.startsWith("openai-codex/")) &&
+        !VISIBLE_AGENT_SUBSCRIPTION_MODELS.has(model.slug),
+    )
+    .map((model) => model.slug);
+}
+
+/** An instance's saved visibility list overrides the curated initial list. */
+export function resolveProviderModelPreferences(
+  driver: string,
+  models: ReadonlyArray<{ readonly slug: string; readonly isCustom?: boolean }>,
+  preferences:
+    | { readonly hiddenModels: ReadonlyArray<string>; readonly modelOrder: ReadonlyArray<string> }
+    | undefined,
+) {
+  return (
+    preferences ?? { hiddenModels: getDefaultHiddenAgentModels(driver, models), modelOrder: [] }
+  );
+}
+
 export function createModelCapabilities(input: {
   optionDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
 }): ModelCapabilities {

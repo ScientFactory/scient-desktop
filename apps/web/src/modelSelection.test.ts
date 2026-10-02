@@ -74,6 +74,63 @@ function settingsWithProviderInstances(): UnifiedSettings {
 }
 
 describe("instance-scoped model selection", () => {
+  it.each(["pi", "omp"])(
+    "applies curated %s defaults without replacing saved visibility",
+    (kind) => {
+      const native = provider({
+        provider: ProviderDriverKind.make(kind),
+        instanceId: kind,
+        models: [
+          "anthropic/claude-haiku-4-5",
+          "anthropic/claude-sonnet-5-5",
+          "openai-codex/gpt-6-sol",
+          "openai-codex/gpt-6.1-sol",
+        ],
+      });
+      const entry = deriveProviderInstanceEntries([native])[0]!;
+      const selected = getAppModelOptionsForInstance(
+        DEFAULT_UNIFIED_SETTINGS,
+        entry,
+        "anthropic/claude-haiku-4-5",
+      );
+      expect(selected.map((model) => model.slug)).toEqual([
+        "anthropic/claude-sonnet-5-5",
+        "openai-codex/gpt-6.1-sol",
+      ]);
+      expect(
+        resolveAppModelSelectionForInstance(
+          entry.instanceId,
+          DEFAULT_UNIFIED_SETTINGS,
+          [native],
+          "anthropic/claude-haiku-4-5",
+        ),
+      ).toBe("anthropic/claude-sonnet-5-5");
+      expect(
+        resolveAppModelSelection(
+          native.driver,
+          DEFAULT_UNIFIED_SETTINGS,
+          [native],
+          "anthropic/claude-haiku-4-5",
+        ),
+      ).toBe("anthropic/claude-sonnet-5-5");
+      expect(
+        resolveAppModelSelection(
+          native.driver,
+          DEFAULT_UNIFIED_SETTINGS,
+          [{ ...native, models: native.models.slice(0, 1) }],
+          null,
+        ),
+      ).toBe("");
+
+      const saved = {
+        ...DEFAULT_UNIFIED_SETTINGS,
+        providerModelPreferences: { [entry.instanceId]: { hiddenModels: [], modelOrder: [] } },
+      };
+      expect(getAppModelOptionsForInstance(saved, entry).map((model) => model.slug)).toEqual(
+        native.models.map((model) => model.slug),
+      );
+    },
+  );
   it.each(["pi", "omp", "claudeAgent"])(
     "does not invent a default when every %s model is unavailable",
     (kind) => {
