@@ -3336,3 +3336,57 @@ body:has(.scient-latex-mathfield math-field:focus-within)
     display: none;
   }
 }
+
+/* Pilot: build messages float over the document instead of pushing it down. */
+.scient-latex-diagnostics-anchor {
+  position: relative;
+  z-index: 30;
+  height: 0;
+  flex: none;
+}
+.scient-latex-diagnostics-anchor > .scient-latex-diagnostics {
+  position: absolute;
+  inset-block-start: 4px;
+  inset-inline-start: 8px;
+  width: min(680px, calc(100% - 16px));
+  max-height: min(300px, 50vh);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--popover);
+  box-shadow:
+    0 10px 30px -12px color-mix(in srgb, var(--foreground) 28%, transparent),
+    0 2px 6px -2px color-mix(in srgb, var(--foreground) 12%, transparent);
+}
+.scient-latex-diagnostics-header {
+  display: flex;
+  min-height: 30px;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 64%, transparent);
+  padding: 2px 4px 2px 10px;
+  color: var(--foreground);
+  font-size: 11px;
+  font-weight: 500;
+}
+.scient-latex-diagnostics-header > .scient-latex-diagnostics-summary {
+  flex: none;
+}
+.scient-latex-diagnostics-close {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  margin-inline-start: auto;
+  border-radius: 6px;
+  color: var(--muted-foreground);
+}
+.scient-latex-diagnostics-close:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+.scient-latex-diagnostics-anchor .scient-latex-diagnostics-list {
+  padding: 6px 10px 8px;
+}

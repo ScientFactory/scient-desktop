@@ -13,15 +13,7 @@ import {
   type ScientLatexSyncUnavailableReason,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import {
-  ChevronRight,
-  CircleAlert,
-  Ellipsis,
-  LoaderCircle,
-  RotateCw,
-  TriangleAlert,
-  X,
-} from "lucide-react";
+import { CircleAlert, Ellipsis, LoaderCircle, RotateCw, TriangleAlert, X } from "lucide-react";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -1168,7 +1160,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               <button
                 type="button"
                 className="scient-latex-action"
-                onClick={() => setDiagnosticsOpen(true)}
+                onClick={() => setDiagnosticsOpen((open) => !open)}
               >
                 Build failed · View details
               </button>
@@ -1215,7 +1207,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               type="button"
               className="scient-latex-chip scient-latex-chip-error"
               aria-expanded={diagnosticsOpen}
-              onClick={() => setDiagnosticsOpen(true)}
+              onClick={() => setDiagnosticsOpen((open) => !open)}
             >
               {status.errorCount} {status.errorCount === 1 ? "error" : "errors"}
             </button>
@@ -1225,7 +1217,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               type="button"
               className="scient-latex-chip scient-latex-chip-warning"
               aria-expanded={diagnosticsOpen}
-              onClick={() => setDiagnosticsOpen(true)}
+              onClick={() => setDiagnosticsOpen((open) => !open)}
             >
               {status.warningCount} {status.warningCount === 1 ? "warning" : "warnings"}
             </button>
@@ -1266,55 +1258,63 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       </div>
 
       {(diagnostics.length > 0 || status.state === "failed") && diagnosticsOpen ? (
-        <div className="scient-latex-diagnostics">
-          <button
-            type="button"
-            className="scient-latex-diagnostics-toggle"
-            aria-expanded={diagnosticsOpen}
-            onClick={() => setDiagnosticsOpen((current) => !current)}
+        // Floats over the document: opening it moves nothing underneath.
+        <div className="scient-latex-diagnostics-anchor">
+          <div
+            className="scient-latex-diagnostics"
+            role="region"
+            aria-label="Build messages"
+            onKeyDown={(event) => {
+              if (event.key !== "Escape" || event.defaultPrevented) return;
+              event.preventDefault();
+              event.stopPropagation();
+              setDiagnosticsOpen(false);
+            }}
           >
-            <ChevronRight
-              className={cn("size-3.5 shrink-0", diagnosticsOpen ? "rotate-90" : undefined)}
-              aria-hidden="true"
-            />
-            <span className="scient-latex-diagnostics-summary">
-              {status.firstDiagnosticLine ??
-                build.snapshot?.failureSummary ??
-                (diagnostics.length > 0
-                  ? `${diagnostics.length} build messages`
-                  : "Build failed without compiler diagnostics")}
-            </span>
-            {diagnostics.length > 1 ? (
-              <span className="scient-latex-diagnostics-count">{diagnostics.length}</span>
+            <div className="scient-latex-diagnostics-header">
+              <span className="scient-latex-diagnostics-summary">Build messages</span>
+              {diagnostics.length > 0 ? (
+                <span className="scient-latex-diagnostics-count">{diagnostics.length}</span>
+              ) : null}
+              <ScientTooltip content="Close">
+                <button
+                  type="button"
+                  className="scient-latex-diagnostics-close"
+                  aria-label="Close build messages"
+                  onClick={() => setDiagnosticsOpen(false)}
+                >
+                  <X className="size-3.5" aria-hidden="true" />
+                </button>
+              </ScientTooltip>
+            </div>
+            {diagnosticsOpen ? (
+              diagnostics.length === 0 ? (
+                <p className="scient-latex-diagnostic-message">
+                  {build.snapshot?.failureSummary ??
+                    "The build failed without compiler diagnostics. Check the LaTeX toolchain and rebuild."}
+                </p>
+              ) : (
+                <ul className="scient-latex-diagnostics-list">
+                  {diagnosticRows.map((row) => (
+                    <LatexDiagnosticsRow
+                      key={row.key}
+                      diagnostic={row.diagnostic}
+                      workspaceRoot={props.cwd}
+                      onNavigate={(relativePath, line) =>
+                        onOpenFileSource(
+                          relativePath,
+                          line,
+                          build.snapshot === null
+                            ? undefined
+                            : { latexRootRelativePath: build.snapshot.rootRelativePath },
+                        )
+                      }
+                    />
+                  ))}
+                </ul>
+              )
             ) : null}
-          </button>
-          {diagnosticsOpen ? (
-            diagnostics.length === 0 ? (
-              <p className="scient-latex-diagnostic-message">
-                {build.snapshot?.failureSummary ??
-                  "The build failed without compiler diagnostics. Check the LaTeX toolchain and rebuild."}
-              </p>
-            ) : (
-              <ul className="scient-latex-diagnostics-list">
-                {diagnosticRows.map((row) => (
-                  <LatexDiagnosticsRow
-                    key={row.key}
-                    diagnostic={row.diagnostic}
-                    workspaceRoot={props.cwd}
-                    onNavigate={(relativePath, line) =>
-                      onOpenFileSource(
-                        relativePath,
-                        line,
-                        build.snapshot === null
-                          ? undefined
-                          : { latexRootRelativePath: build.snapshot.rootRelativePath },
-                      )
-                    }
-                  />
-                ))}
-              </ul>
-            )
-          ) : null}
+          </div>
         </div>
       ) : null}
 
