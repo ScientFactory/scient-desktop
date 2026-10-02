@@ -77,6 +77,32 @@ const scientAgentInstance = (home: string, stateDir: string, instanceId: string)
 const settings = (binaryPath: string) => ({ enabled: true, binaryPath });
 
 /**
+ * One model that is never called, so a test that runs no turn starts on a
+ * machine with no model keys and no local model server.
+ */
+const writeStubModel = (agentRoot: string): void => {
+  const agentDir = NodePath.join(agentRoot, "agent");
+  NodeFS.mkdirSync(agentDir, { recursive: true });
+  NodeFS.writeFileSync(
+    NodePath.join(agentDir, "models.yml"),
+    [
+      "providers:",
+      "  scient-agent-live-test:",
+      "    baseUrl: http://127.0.0.1:9/v1",
+      "    api: openai-completions",
+      "    auth: none",
+      "    models:",
+      "      - id: stub",
+      "        name: Live test stub",
+      "        input: [text]",
+      "        contextWindow: 8192",
+      "        maxTokens: 1024",
+      "",
+    ].join("\n"),
+  );
+};
+
+/**
  * What the agent left in the user's home directory, apart from the Bun
  * runtime's own transpiler cache (`~/Library/Caches/bun` on macOS), which
  * every Bun program writes.
@@ -117,6 +143,7 @@ describe.runIf(scientAgentBinary)("real Scient Agent", () => {
       const { environment, agentRoot } = scientAgentInstance(home, stateDir, "scient");
       const workspace = NodePath.join(root, "workspace");
       NodeFS.mkdirSync(workspace);
+      writeStubModel(agentRoot);
       const adapter = yield* makeOmpAdapter({
         target: scientAgentTarget,
         binaryPath: binary,
@@ -147,6 +174,52 @@ describe.runIf(scientAgentBinary)("real Scient Agent", () => {
       expect(NodeFS.existsSync(NodePath.join(stateDir, "omp"))).toBe(false);
       // Starting a conversation writes nothing into the project.
       expect(NodeFS.readdirSync(workspace)).toEqual([]);
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("keeps its state under that root when a .env names another place", () =>
+    Effect.gen(function* () {
+      const { root, home, stateDir, attachmentsDir } = makeRoot("dotenv");
+      const { environment, agentRoot } = scientAgentInstance(home, stateDir, "scient");
+      const workspace = NodePath.join(root, "workspace");
+      const elsewhere = NodePath.join(root, "elsewhere");
+      NodeFS.mkdirSync(workspace);
+      // The agent loads the project's and the home directory's .env after launch,
+      // so these never pass through the environment Scient builds.
+      const dotenv = [
+        `SCIENT_AGENT_DIR=${NodePath.join(elsewhere, "agent")}`,
+        `SCIENT_AGENT_SESSION_DIR=${NodePath.join(elsewhere, "sessions")}`,
+        `SCIENT_AGENT_CONFIG_FILES=${NodePath.join(elsewhere, "overlay.yml")}`,
+        "SCIENT_AGENT_PROFILE=elsewhere",
+        "",
+      ].join("\n");
+      NodeFS.writeFileSync(NodePath.join(workspace, ".env"), dotenv);
+      NodeFS.writeFileSync(NodePath.join(home, ".env"), dotenv);
+      writeStubModel(agentRoot);
+      const adapter = yield* makeOmpAdapter({
+        target: scientAgentTarget,
+        binaryPath: binary,
+        providerInstanceId: ProviderInstanceId.make("scient"),
+        stateDir,
+        attachmentsDir,
+        environment,
+        homePath: agentRoot,
+        makeProcess: yield* gatedProcess,
+      });
+      const session = yield* adapter.startSession({
+        threadId: ThreadId.make("scient-agent-dotenv"),
+        cwd: workspace,
+        runtimeMode: "full-access",
+      });
+      expect(session.status).toBe("ready");
+      yield* adapter.stopAll();
+
+      expect(NodeFS.existsSync(NodePath.join(agentRoot, "agent", "agent.db"))).toBe(true);
+      expect(NodeFS.existsSync(NodePath.join(agentRoot, "profiles"))).toBe(false);
+      expect(NodeFS.existsSync(elsewhere)).toBe(false);
+      expect(homeEntries(home)).toEqual([".env"]);
+      expect(NodeFS.readdirSync(workspace)).toEqual([".env"]);
       NodeFS.rmSync(root, { recursive: true, force: true });
     }).pipe(Effect.provide(layer)),
   );
