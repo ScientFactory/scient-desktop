@@ -817,11 +817,13 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
 });
 
 describe.runIf(binary)("native OMP ordinary tool activity", () => {
-  for (const mode of ["completion", "stop"] as const) {
+  for (const mode of ["completion", "stop", "process-loss"] as const) {
     it.effect(
       mode === "completion"
         ? "preserves shell and file inputs through native completion"
-        : "Stop settles an open foreground tool with its partial output",
+        : mode === "stop"
+          ? "Stop settles an open foreground tool with its partial output"
+          : "process loss fails an open foreground tool and retains its partial output",
       () =>
         Effect.scoped(
           Effect.gen(function* () {
@@ -830,7 +832,7 @@ describe.runIf(binary)("native OMP ordinary tool activity", () => {
             const releasePath = NodePath.join(root, "release");
             NodeFS.writeFileSync(filePath, "OMP_FILE_RESULT\n");
             const command =
-              mode === "stop"
+              mode !== "completion"
                 ? `printf 'OMP_TOOL_PARTIAL\\n'; while [ ! -f '${releasePath}' ]; do sleep 0.1; done; printf 'OMP_TOOL_DONE\\n'`
                 : "printf 'OMP_TOOL_RESULT\\n'";
             const stub = makeScriptedStubModel([
@@ -844,13 +846,17 @@ describe.runIf(binary)("native OMP ordinary tool activity", () => {
               `http://127.0.0.1:${port}/v1`,
               instanceId,
             );
+            let client: OmpRpcProcess | undefined;
             const adapter = yield* makeOmpAdapter({
               binaryPath: binary!,
               providerInstanceId: instanceId,
               stateDir: NodePath.join(root, "state"),
               attachmentsDir: NodePath.join(root, "attachments"),
               environment: yield* isolatedEnvironment(root),
-              makeProcess: factory,
+              makeProcess: (options) =>
+                factory(options).pipe(
+                  Effect.tap((started) => Effect.sync(() => (client = started))),
+                ),
             });
             const events: Array<ProviderRuntimeEvent> = [];
             const wake = yield* Queue.unbounded<ProviderRuntimeEvent>();
@@ -884,13 +890,17 @@ describe.runIf(binary)("native OMP ordinary tool activity", () => {
               input: "Run the fixture tools.",
               modelSelection: createModelSelection(instanceId, model),
             });
-            if (mode === "stop") {
+            if (mode !== "completion") {
               yield* until(
                 (event) =>
                   event.type === "item.updated" &&
                   JSON.stringify(event.payload).includes("OMP_TOOL_PARTIAL"),
               );
-              yield* adapter.stopSession(threadId);
+              if (mode === "stop") yield* adapter.stopSession(threadId);
+              else {
+                if (!client) return yield* Effect.die(new Error("Native process did not start."));
+                yield* client.shutdown;
+              }
               yield* until((event) => event.type === "session.exited");
             } else {
               const terminal = yield* until((event) => event.type === "turn.completed");
@@ -911,12 +921,14 @@ describe.runIf(binary)("native OMP ordinary tool activity", () => {
             const bashEnds = completed.filter((event) => event.itemId === bash.itemId);
             expect(bashEnds).toHaveLength(1);
             expect(bashEnds[0]?.payload.title).toBe("bash");
-            expect(bashEnds[0]?.payload.status).toBe(mode === "stop" ? "stopped" : "completed");
+            expect(bashEnds[0]?.payload.status).toBe(
+              mode === "stop" ? "stopped" : mode === "process-loss" ? "failed" : "completed",
+            );
             expect(bashEnds[0]?.payload.data).toMatchObject({
               input: { command },
               rawOutput: {
                 content: expect.stringContaining(
-                  mode === "stop" ? "OMP_TOOL_PARTIAL" : "OMP_TOOL_RESULT",
+                  mode !== "completion" ? "OMP_TOOL_PARTIAL" : "OMP_TOOL_RESULT",
                 ),
               },
             });
