@@ -128,28 +128,31 @@
 
 /* Search rests like the sidebar's: an icon and "Search", no frame. */
 .scient-reader-search {
+  position: relative;
   display: flex;
   height: 26px;
-  /* The same width before and while searching, so nothing moves on the first
-     key; it takes free room up to a comfortable width. */
-  min-width: 150px;
-  max-width: 260px;
-  flex: 1 1 220px;
-  overflow: hidden;
+  min-width: 112px;
+  flex: 0 1 150px;
+  margin-inline: 2px;
+  cursor: text;
+}
+.scient-reader-search-box {
+  display: flex;
+  width: 100%;
+  min-width: 0;
   align-items: center;
   gap: 6px;
-  margin-inline: 2px;
+  overflow: hidden;
   border-radius: 6px;
   padding-inline: 7px;
   color: var(--muted-foreground);
-  cursor: text;
 }
-.scient-reader-search:hover,
-.scient-reader-search:focus-within {
+.scient-reader-search:hover .scient-reader-search-box,
+.scient-reader-search:focus-within .scient-reader-search-box {
   background: color-mix(in srgb, var(--accent) 80%, transparent);
 }
-.scient-reader-search:focus-within,
-.scient-reader-search[data-searching] {
+.scient-reader-search:focus-within .scient-reader-search-box,
+.scient-reader-search[data-searching] .scient-reader-search-box {
   color: var(--foreground);
 }
 .scient-reader-search-icon {

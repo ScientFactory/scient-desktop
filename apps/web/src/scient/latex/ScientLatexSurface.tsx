@@ -1234,9 +1234,11 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
             type="button"
             className="scient-latex-action"
             data-diagnostics-toggle=""
+            aria-label="Build failed · View details"
             onClick={() => setDiagnosticsOpen((open) => !open)}
           >
-            Build failed · View details
+            <CircleAlert className="scient-latex-chip-icon" aria-hidden="true" />
+            <span className="scient-latex-chip-text">Build failed · View details</span>
           </button>
         </ScientTooltip>
       ) : null}
@@ -1278,22 +1280,30 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         <button
           type="button"
           className="scient-latex-chip scient-latex-chip-error"
+          aria-label={`${status.errorCount} ${status.errorCount === 1 ? "error" : "errors"}`}
           aria-expanded={diagnosticsOpen}
           data-diagnostics-toggle=""
           onClick={() => setDiagnosticsOpen((open) => !open)}
         >
-          {status.errorCount} {status.errorCount === 1 ? "error" : "errors"}
+          <CircleAlert className="scient-latex-chip-icon" aria-hidden="true" />
+          <span className="scient-latex-chip-text">
+            {status.errorCount} {status.errorCount === 1 ? "error" : "errors"}
+          </span>
         </button>
       ) : null}
       {status.warningCount > 0 ? (
         <button
           type="button"
           className="scient-latex-chip scient-latex-chip-warning"
+          aria-label={`${status.warningCount} ${status.warningCount === 1 ? "warning" : "warnings"}`}
           aria-expanded={diagnosticsOpen}
           data-diagnostics-toggle=""
           onClick={() => setDiagnosticsOpen((open) => !open)}
         >
-          {status.warningCount} {status.warningCount === 1 ? "warning" : "warnings"}
+          <TriangleAlert className="scient-latex-chip-icon" aria-hidden="true" />
+          <span className="scient-latex-chip-text">
+            {status.warningCount} {status.warningCount === 1 ? "warning" : "warnings"}
+          </span>
         </button>
       ) : null}
       {visualProjectState.error === null ? null : (

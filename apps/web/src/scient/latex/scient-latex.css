@@ -3340,42 +3340,6 @@ body:has(.scient-latex-mathfield math-field:focus-within)
  * Pilot: what the merged row gives up as the pane narrows, first to last.
  * Everything that leaves the row stays in More.
  */
-@container scient-latex-surface (max-width: 700px) {
-  .scient-latex-toolbar .scient-latex-build-action > span {
-    display: none;
-  }
-  .scient-latex-toolbar .scient-latex-build-action {
-    width: 28px;
-    padding: 0;
-    justify-content: center;
-  }
-}
-@container scient-latex-surface (max-width: 690px) {
-  .scient-pdf-toolbar-hosted .scient-pdf-action-page-step {
-    display: none;
-  }
-}
-@container scient-latex-surface (max-width: 660px) {
-  .scient-pdf-toolbar-hosted .scient-pdf-action-zoom-step {
-    display: none;
-  }
-}
-@container scient-latex-surface (max-width: 530px) {
-  .scient-pdf-toolbar-hosted .scient-pdf-action-sidebar,
-  .scient-pdf-toolbar-hosted .scient-pdf-toolbar-separator {
-    display: none;
-  }
-}
-@container scient-latex-surface (max-width: 470px) {
-  .scient-pdf-toolbar-hosted .scient-pdf-zoom-label {
-    display: none;
-  }
-}
-@container scient-latex-surface (max-width: 420px) {
-  .scient-pdf-toolbar-hosted .scient-pdf-page-control {
-    display: none;
-  }
-}
 
 /* Pilot: build messages float over the document instead of pushing it down. */
 .scient-latex-diagnostics-anchor {
@@ -3608,32 +3572,308 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   font-size: 11px;
 }
 
-/* Narrower panes. Rebuild gives up its word first, so search keeps room for
-   the query; then the count goes, then the arrows (Enter still moves). */
-@container scient-latex-surface (max-width: 860px) {
-  .scient-latex-toolbar .scient-latex-build-action > span {
+/* Status icons, shown only when the row is short of room (step 4 below). */
+.scient-latex-chip {
+  display: inline-flex;
+  align-items: center;
+}
+.scient-latex-chip-icon {
+  display: none;
+  width: 13px;
+  height: 13px;
+}
+
+/* When the header row runs short of room, controls give way in this order.
+   Split has its PDF/Visual switch as well, so each step comes earlier there
+   (until 650px, where that switch moves into More).
+   1. the zoom steps; the percentage stays: 800px, Split 892px.
+   2. the page arrows: 752px, Split 844px.
+   3. the sidebar button: 708px, Split 800px.
+   4. build messages and Rebuild keep only their icons: 670px, Split 762px.
+   5. search keeps only its icon and opens over its neighbours when clicked: 573px, Split 665px.
+   6. the separators: 500px, Split 500px.
+   7. the percentage: 460px, Split 460px.
+   8. the page number: 410px, Split 410px.
+*/
+@container scient-latex-surface (max-width: 800px) {
+  .scient-latex-surface:not([data-latex-layout="split"])
+    .scient-pdf-toolbar-hosted
+    .scient-pdf-action-zoom-step {
     display: none;
   }
-  .scient-latex-toolbar .scient-latex-build-action {
+}
+@container scient-latex-surface (max-width: 892px) {
+  .scient-latex-surface[data-latex-layout="split"]
+    .scient-pdf-toolbar-hosted
+    .scient-pdf-action-zoom-step {
+    display: none;
+  }
+}
+@container scient-latex-surface (max-width: 752px) {
+  .scient-latex-surface:not([data-latex-layout="split"])
+    .scient-pdf-toolbar-hosted
+    .scient-pdf-action-page-step {
+    display: none;
+  }
+}
+@container scient-latex-surface (max-width: 844px) {
+  .scient-latex-surface[data-latex-layout="split"]
+    .scient-pdf-toolbar-hosted
+    .scient-pdf-action-page-step {
+    display: none;
+  }
+}
+@container scient-latex-surface (max-width: 708px) {
+  .scient-latex-surface:not([data-latex-layout="split"])
+    .scient-pdf-toolbar-hosted
+    .scient-pdf-action-sidebar,
+  .scient-latex-surface:not([data-latex-layout="split"])
+    .scient-pdf-toolbar-hosted
+    .scient-pdf-action-sidebar
+    + .scient-pdf-toolbar-separator {
+    display: none;
+  }
+}
+@container scient-latex-surface (max-width: 800px) {
+  .scient-latex-surface[data-latex-layout="split"]
+    .scient-pdf-toolbar-hosted
+    .scient-pdf-action-sidebar,
+  .scient-latex-surface[data-latex-layout="split"]
+    .scient-pdf-toolbar-hosted
+    .scient-pdf-action-sidebar
+    + .scient-pdf-toolbar-separator {
+    display: none;
+  }
+}
+@container scient-latex-surface (max-width: 670px) {
+  .scient-latex-surface:not([data-latex-layout="split"])
+    .scient-latex-toolbar
+    .scient-latex-chip-text,
+  .scient-latex-surface:not([data-latex-layout="split"])
+    .scient-latex-toolbar
+    .scient-latex-build-action
+    > span {
+    display: none;
+  }
+  .scient-latex-surface:not([data-latex-layout="split"])
+    .scient-latex-toolbar
+    .scient-latex-chip-icon {
+    display: block;
+  }
+  .scient-latex-surface:not([data-latex-layout="split"]) .scient-latex-toolbar .scient-latex-chip {
+    padding: 4px;
+  }
+  .scient-latex-surface:not([data-latex-layout="split"])
+    .scient-latex-toolbar
+    .scient-latex-build-action {
     width: 28px;
-  }
-  .scient-pdf-toolbar-hosted .scient-reader-search {
-    min-width: 128px;
+    padding: 0;
+    justify-content: center;
   }
 }
-@container scient-latex-surface (max-width: 720px) {
-  .scient-pdf-toolbar-hosted .scient-reader-search {
-    min-width: 96px;
+@container scient-latex-surface (max-width: 762px) {
+  .scient-latex-surface[data-latex-layout="split"] .scient-latex-toolbar .scient-latex-chip-text,
+  .scient-latex-surface[data-latex-layout="split"]
+    .scient-latex-toolbar
+    .scient-latex-build-action
+    > span {
+    display: none;
   }
-  .scient-pdf-toolbar-hosted .scient-reader-search-count {
+  .scient-latex-surface[data-latex-layout="split"] .scient-latex-toolbar .scient-latex-chip-icon {
+    display: block;
+  }
+  .scient-latex-surface[data-latex-layout="split"] .scient-latex-toolbar .scient-latex-chip {
+    padding: 4px;
+  }
+  .scient-latex-surface[data-latex-layout="split"]
+    .scient-latex-toolbar
+    .scient-latex-build-action {
+    width: 28px;
+    padding: 0;
+    justify-content: center;
+  }
+}
+@container scient-latex-surface (max-width: 573px) {
+  .scient-latex-surface:not([data-latex-layout="split"])
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search {
+    min-width: 28px;
+    flex: 0 0 28px;
+  }
+  .scient-latex-surface:not([data-latex-layout="split"])
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search-box {
+    position: absolute;
+    z-index: 30;
+    top: 0;
+    left: 0;
+    width: 28px;
+    height: 26px;
+  }
+  .scient-latex-surface:not([data-latex-layout="split"])
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search
+    input,
+  .scient-latex-surface:not([data-latex-layout="split"])
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search-count,
+  .scient-latex-surface:not([data-latex-layout="split"])
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search
+    button {
+    display: none;
+  }
+  .scient-latex-surface:not([data-latex-layout="split"])
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search[data-searching]
+    .scient-reader-search-box {
+    background: color-mix(in srgb, var(--accent) 80%, transparent);
+  }
+  .scient-latex-surface:not([data-latex-layout="split"])
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search:focus-within
+    .scient-reader-search-box {
+    width: 230px;
+    border: 1px solid var(--border);
+    background: var(--popover);
+    box-shadow: 0 6px 18px -8px rgb(0 0 0 / 0.35);
+  }
+  .scient-latex-surface:not([data-latex-layout="split"])
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search:focus-within
+    input,
+  .scient-latex-surface:not([data-latex-layout="split"])
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search:focus-within
+    button {
+    display: inline-flex;
+  }
+  .scient-latex-surface:not([data-latex-layout="split"])
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search:focus-within
+    .scient-reader-search-count {
+    display: inline;
+  }
+}
+@container scient-latex-surface (max-width: 665px) {
+  .scient-latex-surface[data-latex-layout="split"]
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search {
+    min-width: 28px;
+    flex: 0 0 28px;
+  }
+  .scient-latex-surface[data-latex-layout="split"]
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search-box {
+    position: absolute;
+    z-index: 30;
+    top: 0;
+    left: 0;
+    width: 28px;
+    height: 26px;
+  }
+  .scient-latex-surface[data-latex-layout="split"]
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search
+    input,
+  .scient-latex-surface[data-latex-layout="split"]
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search-count,
+  .scient-latex-surface[data-latex-layout="split"]
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search
+    button {
+    display: none;
+  }
+  .scient-latex-surface[data-latex-layout="split"]
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search[data-searching]
+    .scient-reader-search-box {
+    background: color-mix(in srgb, var(--accent) 80%, transparent);
+  }
+  .scient-latex-surface[data-latex-layout="split"]
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search:focus-within
+    .scient-reader-search-box {
+    width: 230px;
+    border: 1px solid var(--border);
+    background: var(--popover);
+    box-shadow: 0 6px 18px -8px rgb(0 0 0 / 0.35);
+  }
+  .scient-latex-surface[data-latex-layout="split"]
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search:focus-within
+    input,
+  .scient-latex-surface[data-latex-layout="split"]
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search:focus-within
+    button {
+    display: inline-flex;
+  }
+  .scient-latex-surface[data-latex-layout="split"]
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search:focus-within
+    .scient-reader-search-count {
+    display: inline;
+  }
+}
+@container scient-latex-surface (max-width: 500px) {
+  .scient-latex-surface .scient-pdf-toolbar-hosted .scient-pdf-toolbar-separator {
     display: none;
   }
 }
-@container scient-latex-surface (max-width: 600px) {
-  .scient-pdf-toolbar-hosted .scient-reader-search {
-    min-width: 30px;
-  }
-  .scient-pdf-toolbar-hosted .scient-reader-search button {
+@container scient-latex-surface (max-width: 460px) {
+  .scient-latex-surface .scient-pdf-toolbar-hosted .scient-pdf-zoom-label {
     display: none;
+  }
+}
+@container scient-latex-surface (max-width: 410px) {
+  .scient-latex-surface .scient-pdf-toolbar-hosted .scient-pdf-page-control {
+    display: none;
+  }
+}
+
+/* Step 5: the field collapses rather than disappearing, so the icon can still
+   take the click and the caret, and then open. */
+@container scient-latex-surface (max-width: 573px) {
+  .scient-latex-surface:not([data-latex-layout="split"])
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search
+    .scient-reader-search-box
+    > input {
+    display: block;
+    width: 0;
+    flex: 0 0 0;
+    opacity: 0;
+  }
+  .scient-latex-surface:not([data-latex-layout="split"])
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search:focus-within
+    .scient-reader-search-box
+    > input {
+    width: auto;
+    flex: 1;
+    opacity: 1;
+  }
+}
+@container scient-latex-surface (max-width: 665px) {
+  .scient-latex-surface[data-latex-layout="split"]
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search
+    .scient-reader-search-box
+    > input {
+    display: block;
+    width: 0;
+    flex: 0 0 0;
+    opacity: 0;
+  }
+  .scient-latex-surface[data-latex-layout="split"]
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search:focus-within
+    .scient-reader-search-box
+    > input {
+    width: auto;
+    flex: 1;
+    opacity: 1;
   }
 }

@@ -88,51 +88,55 @@ export function ReaderSearchField(props: ReaderSearch & { readonly label: string
         input.current?.focus();
       }}
     >
-      <Search className="scient-reader-search-icon" aria-hidden="true" />
-      <input
-        ref={input}
-        value={props.query}
-        placeholder="Search"
-        aria-label={`Search ${props.label}`}
-        spellCheck={false}
-        onFocus={props.onFocus}
-        onChange={(event) => props.onQuery(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.nativeEvent.isComposing) return;
-          if (event.key === "Enter" || event.key === "ArrowDown" || event.key === "ArrowUp") {
-            event.preventDefault();
-            props.onNavigate(event.key === "ArrowUp" || (event.key === "Enter" && event.shiftKey));
-          } else if (event.key === "Escape") {
-            event.preventDefault();
-            event.stopPropagation();
-            if (searching) props.onClear();
-            else input.current?.blur();
-          }
-        }}
-      />
-      {searching ? (
-        <>
-          <span className="scient-reader-search-count" aria-live="polite">
-            {props.total > 0 ? `${props.current}/${props.total}` : props.notFound ? "0/0" : ""}
-          </span>
-          <button
-            type="button"
-            aria-label="Previous result"
-            disabled={props.total === 0}
-            onClick={() => props.onNavigate(true)}
-          >
-            <ChevronDown className="rotate-180" />
-          </button>
-          <button
-            type="button"
-            aria-label="Next result"
-            disabled={props.total === 0}
-            onClick={() => props.onNavigate(false)}
-          >
-            <ChevronDown />
-          </button>
-        </>
-      ) : null}
+      <div className="scient-reader-search-box">
+        <Search className="scient-reader-search-icon" aria-hidden="true" />
+        <input
+          ref={input}
+          value={props.query}
+          placeholder="Search"
+          aria-label={`Search ${props.label}`}
+          spellCheck={false}
+          onFocus={props.onFocus}
+          onChange={(event) => props.onQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing) return;
+            if (event.key === "Enter" || event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              props.onNavigate(
+                event.key === "ArrowUp" || (event.key === "Enter" && event.shiftKey),
+              );
+            } else if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              if (searching) props.onClear();
+              else input.current?.blur();
+            }
+          }}
+        />
+        {searching ? (
+          <>
+            <span className="scient-reader-search-count" aria-live="polite">
+              {props.total > 0 ? `${props.current}/${props.total}` : props.notFound ? "0/0" : ""}
+            </span>
+            <button
+              type="button"
+              aria-label="Previous result"
+              disabled={props.total === 0}
+              onClick={() => props.onNavigate(true)}
+            >
+              <ChevronDown className="rotate-180" />
+            </button>
+            <button
+              type="button"
+              aria-label="Next result"
+              disabled={props.total === 0}
+              onClick={() => props.onNavigate(false)}
+            >
+              <ChevronDown />
+            </button>
+          </>
+        ) : null}
+      </div>
     </div>
   );
 }
