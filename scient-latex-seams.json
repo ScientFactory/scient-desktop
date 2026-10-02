@@ -10,7 +10,6 @@
     "packages/scient-pdf-validation"
   ],
   "ownedFiles": [
-    "packages/shared/src/latexVisual.ts",
     "apps/server/src/mcp/toolkits/documents/handlers.ts",
     "apps/server/src/mcp/toolkits/documents/latexHandler.ts",
     "apps/server/src/mcp/toolkits/documents/tools.ts",
@@ -94,11 +93,6 @@
       "path": "apps/web/src/components/files/useFileSaveCoordinator.ts",
       "anchor": "debounceMs = FILE_SAVE_DEBOUNCE_MS",
       "purpose": "Permit a LaTeX-specific save debounce while preserving the default for other file editors."
-    },
-    {
-      "path": "packages/shared/package.json",
-      "anchor": "./latexVisual",
-      "purpose": "Expose the pure source-preserving prose projection for editing and real-engine conformance tests."
     },
     {
       "path": "packages/client-runtime/src/rpc/client.ts",

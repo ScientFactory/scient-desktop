@@ -340,6 +340,12 @@ export function LatexProjectVisualEditor(props: Props) {
         setEditError(plan.error);
         return false;
       }
+      if (plan.changes.size > 1) {
+        setEditError(
+          "This edit also changes another file. Add the required declaration in Source, then retry the edit.",
+        );
+        return false;
+      }
       for (const [path] of plan.changes) {
         const state = current.states.get(path);
         if (!state?.data || saveErrors.has(path)) return false;
@@ -363,6 +369,7 @@ export function LatexProjectVisualEditor(props: Props) {
         nextFiles.set(path, data);
         nextStates.set(path, { ...state, data });
         if (path !== props.relativePath) {
+          if (!state.write(contents)) return false;
           checkpointVisualDraft(
             `${props.environmentId}\0${props.cwd}\0${path}`,
             contents,
@@ -370,7 +377,6 @@ export function LatexProjectVisualEditor(props: Props) {
             contents,
             file.revision,
           );
-          state.write(contents);
         }
       }
       snapshot.current = {

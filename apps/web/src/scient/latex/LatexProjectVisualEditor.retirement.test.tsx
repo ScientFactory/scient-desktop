@@ -304,6 +304,22 @@ describe("retiring the project's recovery copy", () => {
       expect(visual.props!.source).toContain("Chapter text.");
     });
 
+    it("refuses a root declaration plus chapter edit before changing either file", async () => {
+      const chapter = acquire("chapter.tex");
+      const before = visual.props!.source;
+      const next = before
+        .replace("\\begin{document}", "\\usepackage{amsmath}\n\\begin{document}")
+        .replace("Chapter text.", "Chapter text, edited.");
+      await act(async () => {
+        expect(visual.props!.onEdit(before, next)).toBe(false);
+      });
+      expect(rootEdits).not.toHaveBeenCalled();
+      expect(chapter.getSnapshot().draftSource).toBe("Chapter text.\n");
+      expect(visual.props!.source).toBe(before);
+      expect(visual.props!.sourceError).toContain("another file");
+      expect(writes).toBe(0);
+    });
+
     it("changes that file's session and nothing else", async () => {
       const chapter = acquire("chapter.tex");
       let accepted = false;

@@ -86,10 +86,13 @@ The opened source remains the editor and save owner. Build watching,
 coalescing, status, cancellation, generated-PDF identity, and rebuilds are all
 keyed by the resolved root. Consequently, opening `sections/introduction.tex`
 can show and edit that source while the typeset page comes from `main.tex`.
-Visual edits the opened source through its structured canvas. Split displays
-source beside the actual PDF with navigation, not an editing overlay. Editing
-another included file requires opening that source; root resolution does not
-grant cross-file writes.
+Visual assembles supported literal includes and routes each accepted edit to
+one physical file's shared session. Split displays Source beside PDF or Visual.
+The document save barrier discovers includes without requiring Visual to be
+mounted. A single operation that changes both a root declaration and a chapter
+is refused until the declaration is added in Source; root resolution alone
+does not authorize a multi-file write. See [saving and recovery](scient-latex-visual.md)
+for preparation and recovery behavior.
 
 **Logical document key.** Every build, status, and cancel call resolves to
 `latex:<sha256-of-normalized-workspace-root>:<root-relative-path>`, capped at 1,024

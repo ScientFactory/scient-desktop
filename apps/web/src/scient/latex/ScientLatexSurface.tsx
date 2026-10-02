@@ -41,6 +41,7 @@ import {
 } from "react";
 
 import { MarkdownSourceSurface } from "~/components/files/FilePreviewPanel";
+import { isLatexPreviewFile } from "~/components/files/filePreviewMode";
 import { projectFileCacheKey } from "~/components/files/fileContentRevision";
 import { type DraftId } from "~/composerDraftStore";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
@@ -48,7 +49,6 @@ import { DIFF_SURFACE_THEME_UNSAFE_CSS, resolveDiffThemeName } from "~/lib/diffR
 import { cn } from "~/lib/utils";
 import type { LatexFilePresentationRequest, OpenFileOptions } from "~/rightPanelStore";
 import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
-import { savedMarkdownRevision } from "~/scient/documentExport/markdownSavedRevision";
 import { useScientSplit } from "~/scient/layout/useScientSplit";
 import { documentWasSaved } from "~/scient/markdownEditor/persistence/documentPublication";
 import {
@@ -74,7 +74,7 @@ const LatexProjectVisualEditor = lazy(() =>
   })),
 );
 import { LatexToolchainSetupCard } from "./LatexToolchainSetupCard";
-import { requestLatexForwardSync, requestLatexInverseSync } from "./client";
+import { readLatexBuildStatus, requestLatexForwardSync, requestLatexInverseSync } from "./client";
 import { useLatexDocumentResolution } from "./useLatexDocumentResolution";
 import {
   cancelLatexBuild,
@@ -109,6 +109,8 @@ import {
 } from "./scientLatexSurfaceModel";
 import { checkpointVisualDraft, confirmVisualDraft, discardVisualDraft } from "./visualDrafts";
 import { useLatexSourceIdentity } from "./visualPdfPublication";
+import { prepareLatexDocument } from "./prepareLatexDocument";
+import { latexDocumentInputs } from "./latexDocumentInputs";
 import { useLatexAutoBuild } from "./useLatexAutoBuild";
 
 import "./scient-latex.css";
@@ -528,8 +530,8 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   // was first typed over: what the Visual recovery copy is kept against.
   const visualPendingSourceRef = useRef<string | null>(null);
   const visualPendingBaseRevisionRef = useRef<string | null>(null);
-  const finishVisualEditingRef = useRef<(() => void) | null>(null);
-  const saveProjectRef = useRef<(() => Promise<boolean>) | null>(null);
+  const finishVisualEditingRef = useRef<(() => boolean) | null>(null);
+  const localVisualDraftRef = useRef(false);
   const [lastEditAt, setLastEditAt] = useState(0);
   const [visualProjectState, setVisualProjectState] = useState<{
     pending: boolean;
@@ -940,12 +942,39 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const [visualOpened, setVisualOpened] = useState(showVisual);
   if (showVisual && !visualOpened) setVisualOpened(true);
 
-  const registerFinishVisualEditing = useCallback((finish: (() => void) | null) => {
+  const registerFinishVisualEditing = useCallback((finish: (() => boolean) | null) => {
     finishVisualEditingRef.current = finish;
   }, []);
-  const registerSaveProject = useCallback((save: (() => Promise<boolean>) | null) => {
-    saveProjectRef.current = save;
+  const reportLocalVisualDraft = useCallback((pending: boolean) => {
+    localVisualDraftRef.current = pending;
+    setHasLocalVisualDraft(pending);
   }, []);
+  useLayoutEffect(
+    () =>
+      latexDocumentInputs.register({
+        target: {
+          environmentId: props.environmentId,
+          cwd: props.cwd,
+          relativePath: props.relativePath,
+        },
+        root: target?.relativePath ?? props.relativePath,
+        finish: () => finishVisualEditingRef.current?.() ?? !localVisualDraftRef.current,
+        pending: () => localVisualDraftRef.current,
+      }),
+    [props.environmentId, props.cwd, props.relativePath, target?.relativePath],
+  );
+  const prepareDocument = useCallback(async () => {
+    if (!target || props.truncated) return null;
+    const result = await prepareLatexDocument(target, {
+      ...(persistence ? { selected: persistence } : {}),
+    });
+    if (!result.ok) {
+      setSyncNotice({ label: "Document not ready", message: result.message });
+      return null;
+    }
+    setSyncNotice(null);
+    return result;
+  }, [target, props.truncated, persistence]);
   const pdfVisible = activePreview === "pdf";
   const buildBlocked = props.truncated || sourceNeedsAttention || visualProjectState.error !== null;
   const buildRequestInFlight = useRef(false);
@@ -954,21 +983,18 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       if (buildRequestInFlight.current || buildBlocked) return;
       buildRequestInFlight.current = true;
       try {
-        finishVisualEditingRef.current?.();
-        // A file without a session is read-only: there is nothing of it to save.
-        const clean = persistence === null || (await persistence.flushNow());
-        const projectClean = await (saveProjectRef.current?.() ?? Promise.resolve(true));
-        if (clean && projectClean && compile && target !== null)
+        const prepared = await prepareDocument();
+        if (prepared?.isCurrent() && compile && target !== null)
           requestLatexRebuild(target, { reprobeToolchain: reprobe });
       } finally {
         buildRequestInFlight.current = false;
       }
     },
-    [buildBlocked, persistence, target],
+    [buildBlocked, prepareDocument, target],
   );
   const requestAutoBuild = useCallback(() => {
-    if (target) requestLatexRebuild(target);
-  }, [target]);
+    void saveAndBuild();
+  }, [saveAndBuild]);
   useLatexAutoBuild({
     visible: pdfVisible,
     needsBuild:
@@ -1149,7 +1175,6 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               disabled={
                 target === null ||
                 sourcePending ||
-                visualAwaitingSave ||
                 visualProjectState.pending ||
                 hasLocalVisualDraft ||
                 buildBlocked
@@ -1258,7 +1283,33 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                 if (!descriptor || !pdfMatchesBuffer || status.stale || exportingPdf) return;
                 setExportingPdf(true);
                 setSyncNotice(null);
-                void savePdfCopy(descriptor)
+                void (async () => {
+                  const prepared = await prepareDocument();
+                  if (!prepared?.isCurrent() || !target) return;
+                  const snapshot = await readLatexBuildStatus(target.environmentId, {
+                    workspaceRoot: target.cwd,
+                    relativePath: target.relativePath,
+                  });
+                  if (!prepared.isCurrent()) return;
+                  const current = { ...build, snapshot };
+                  if (
+                    !snapshot?.descriptor ||
+                    latexStatusStripModel(current, props.cwd).stale ||
+                    latexStatusStripModel(current, props.cwd).busy ||
+                    [...prepared.revisions].some(
+                      ([path, revision]) =>
+                        isLatexPreviewFile(path) &&
+                        snapshot.visualSourceRevisions?.[path] !== revision,
+                    )
+                  ) {
+                    setSyncNotice({
+                      label: "Rebuild needed",
+                      message: "Rebuild the PDF before exporting the current document.",
+                    });
+                    return;
+                  }
+                  await savePdfCopy(snapshot.descriptor);
+                })()
                   .catch((error: unknown) =>
                     setSyncNotice({
                       label: "Export failed",
@@ -1416,7 +1467,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                     rootRelativePath={resolvedRootRelativePath}
                     key={visualDraftKey}
                     source={props.contents}
-                    onLocalDraftChange={setHasLocalVisualDraft}
+                    onLocalDraftChange={reportLocalVisualDraft}
                     draftKey={visualDraftKey}
                     fileRevision={props.revision}
                     environmentId={props.environmentId}
@@ -1440,7 +1491,6 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                         );
                     }}
                     registerFinishEditing={registerFinishVisualEditing}
-                    registerSaveProject={registerSaveProject}
                   />
                 </Suspense>
               </div>
@@ -1475,16 +1525,12 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           rootRelativePath={target.relativePath}
           // Export reads the file on disk: flush first, and refuse while a
           // conflict or a failed save keeps the draft ahead of it.
-          savedRevision={async () =>
-            // Without a session the file is shown as it is on disk.
-            persistence === null
-              ? props.revision
-              : visualProjectState.pending ||
-                  hasLocalVisualDraft ||
-                  visualProjectState.error !== null
-                ? null
-                : savedMarkdownRevision(persistence)
-          }
+          savedRevision={async () => {
+            const prepared = await prepareDocument();
+            return prepared?.isCurrent()
+              ? (prepared.revisions.get(props.relativePath) ?? null)
+              : null;
+          }}
           onClose={() => setWordExportOpen(false)}
         />
       ) : null}

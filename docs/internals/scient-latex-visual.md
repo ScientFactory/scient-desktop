@@ -28,7 +28,7 @@ that every operation preserves every supported LaTeX construct.
 | Writing chrome                | `markdownEditor/ui/dockChrome.tsx`                      | Shared button/menu styling and priority overflow. Visual opts into a permanent row and labels-before-overflow compression; other consumers retain their defaults. |
 | Reading controls              | `writing/DocumentReaderControls.tsx`                    | Shared PDF/Visual page, zoom, fit and search controls. Format adapters supply navigation and search operations.                                                   |
 | Contextual footer             | `LatexContextTools.tsx`, heading/table/object toolbars  | Stable portal destination between Fit width and Search; keeps fields mounted while switching between inline controls and a compact menu.                          |
-| Persistence                   | Existing file save coordinator and Visual draft paths   | Publish accepted source with revision checks. Pending/refused input is not silently treated as saved source. Shared-session migration is outstanding.             |
+| Persistence                   | Shared document sessions and LaTeX recovery journal     | One saver per physical file across Source and Visual. Pending fields are settled before document save/build/export; recovery remains comparison-first.            |
 
 A supported edit passes from the canvas transaction to the source adapter, then
 to the project/file save path. Accepted source is projected back into the editor;
@@ -247,8 +247,36 @@ distinguishes uncommitted field text from saved source, and PDF rebuild/export
 wait for active field drafts to be resolved. Custom formatted metadata remains
 protected rather than being flattened into plain text.
 
-Source and Visual use one `useFileSaveCoordinator` and its existing compare-and-set
-writes, with the existing 500 ms debounce for both views. The recovery journal
+Source and Visual use the same physical-file session and compare-and-set writes.
+An included LaTeX file shares that session with its own tab. Non-LaTeX includes
+remain read-only in Visual and retain their existing editor's save owner.
+Outside changes over unsaved source keep both versions; LaTeX does not use
+Markdown's automatic merge.
+
+Unfinished fields retain their original source and field identity. An outside
+update waits while those fields, composition, or raw text own input; a delayed
+field callback cannot adopt a newer base silently. Rejected input remains in
+recovery. Document preparation synchronously asks every relevant mounted view
+to finish input, discovers literal includes from current working sources, and
+flushes their actual sessions even when Visual was never opened. Clean unopened
+files receive ordered reads, not additional savers. A conflict, failed save,
+unresolved field, or unsaved generic include prevents the action. When includes
+need TeX to resolve them, independently pending workspace files also prevent
+preparation because ownership cannot be established. The receipt is rechecked
+immediately before build/export. Unrelated files do not block a fully resolved
+document.
+
+A Visual operation that requires changing a root declaration and a chapter is
+refused before either changes. Add the declaration in Source first. General
+multi-file transactions remain future work.
+
+The accepted-source journal observes Source-only edits as well as Visual edits.
+Source/Split exposes the same comparison-first recovery offer. Raw-block input
+has an identity-checked journal before Apply, and reopens as text to view/copy;
+Cancel removes only that interaction's record. Applying raw text retires it only
+after the accepted-source checkpoint is durable. This bridge keeps the existing
+recovery format and user choice; it does not enable silent session restoration.
+The recovery journal
 retains one accepted source copy and its base revision in memory, then coalesces
 local storage writes on a 200 ms leading deadline. There is no synchronous
 document hash on the input path or migration chain for retired overlay formats.
@@ -279,11 +307,13 @@ confirming or discarding a draft judges the unwritten checkpoint and the stored
 record separately and removes each one that matches. A recovery copy is stamped with the
 revision of the source the editor actually holds, not the newest file revision
 it has seen. Storage failures are reported without blocking workspace saves.
-Moving this remaining journal onto the shared document session is a
-separate integration step in the proposed editing foundation.
+Consolidating the journal storage with the shared session remains a separate
+integration step; accepted-source saving already belongs to the session.
 Autosaving continues while the writing surface is focused. Conflicts use the
-existing explicit retry/discard workflow. Rebuild is disabled until saves
-finish, and cannot run while a known save error or conflict is unresolved.
+existing explicit retry/discard workflow. Rebuild waits for document preparation and cannot run while a relevant save
+error, conflict, or unpublished field remains. Word export uses the same
+preparation. PDF export also requests fresh server dependency evidence and
+compares the receipt with the build revisions before saving a copy.
 
 `LatexBuildService.status` verifies dependency evidence but never starts a
 compiler. A stale status keeps the old artifact readable, marks its descriptor

@@ -109,7 +109,7 @@ interface RegistryEntry {
  * Raised whenever a registry built from older code could not serve this code:
  * a new lease method, a new rule for which strategy or checkpoint a file gets.
  */
-const REGISTRY_GENERATION = 3;
+const REGISTRY_GENERATION = 4;
 
 export class MarkdownPersistenceRegistry {
   readonly generation = REGISTRY_GENERATION;
@@ -163,6 +163,15 @@ export class MarkdownPersistenceRegistry {
 
   has(target: MarkdownPersistenceTarget): boolean {
     return this.entries.has(projectFileOperationKey(target));
+  }
+
+  /** Read current ownership without admitting a second writer for a clean dependency. */
+  getTargetSnapshot(target: MarkdownPersistenceTarget): MarkdownPersistenceSnapshot | null {
+    return this.entries.get(projectFileOperationKey(target))?.coordinator.getSnapshot() ?? null;
+  }
+
+  isOpening(target: MarkdownPersistenceTarget): boolean {
+    return this.initializing.has(projectFileOperationKey(target));
   }
 
   /** New documents are admitted from an ordered read, never an SWR/optimistic cache. */
