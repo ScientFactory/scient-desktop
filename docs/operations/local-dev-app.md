@@ -292,6 +292,16 @@ bundle there has its own build record, so a production-mode smoke build in the
 same checkout does not invalidate the dev app. A rebuild is staged beside the
 bundle and replaces it only after signing succeeds.
 
+Each bundle identity also has its own storage key in the login keychain,
+`scient-next-dev-<worktree> Safe Storage`, which the app creates on its first
+launch. macOS lets an app read an entry it created without asking, so a new
+candidate does not ask for the login password. The key protects that
+candidate's saved connections and browser sign-ins, so it stays in the keychain
+when the app is uninstalled; remove it in Keychain Access once the worktree and
+its state are gone. A candidate last built before this rule shared one key with
+every other candidate: its first launch afterwards starts a fresh key, and
+sign-ins it saved under the shared key have to be made again.
+
 Grant microphone access to the visible `Scient (Dev) · <label>` entry in
 System Settings when macOS asks. Reloading the renderer cannot repair an
 incorrect app identity or permission grant; stop and start the exact candidate
