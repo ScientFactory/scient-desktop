@@ -40,7 +40,10 @@ import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLangua
 import { savedMarkdownRevision } from "~/scient/documentExport/markdownSavedRevision";
 import { useScientSplit } from "~/scient/layout/useScientSplit";
 import { onDocumentSaved } from "~/scient/markdownEditor/persistence/documentPublication";
-import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
+import {
+  markdownPersistenceRegistry,
+  type MarkdownPersistenceLease,
+} from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { ResizeSeparator } from "~/scient/layout/ResizeSeparator";
 import type {
   PdfForwardSyncTarget,
@@ -132,6 +135,11 @@ interface LatexSyncNotice {
   readonly label: string;
   readonly message: string;
 }
+
+const UNSAVED_SYNC_NOTICE: LatexSyncNotice = {
+  label: "Unsaved changes",
+  message: "Navigation between source and PDF is available once changes are saved and built.",
+};
 
 function syncUnavailableLabel(reason: ScientLatexSyncUnavailableReason): string {
   switch (reason) {
@@ -515,7 +523,9 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   }, [bindingChange, target]);
 
   const { onOpenFileSource, revealLine, revealRequestId } = props;
-  // The PDF follows the file on disk, so it is rebuilt when a save lands.
+  // The PDF follows the file on disk, so it is rebuilt when a save lands while
+  // this view is open. A save that lands with no view open is picked up by the
+  // build store's own status checks.
   useEffect(() => {
     if (persistence === null || target === null) return;
     return onDocumentSaved(persistence, () => requestLatexRebuild(target));
@@ -562,6 +572,18 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     setSyncNotice(null);
   }, [descriptorRevision]);
 
+  // An answer computed for one draft is not an answer for the next.
+  useEffect(() => {
+    if (persistence === null) return;
+    let editVersion = persistence.getSnapshot().editVersion;
+    return persistence.subscribe(() => {
+      const next = persistence.getSnapshot().editVersion;
+      if (next === editVersion) return;
+      editVersion = next;
+      syncRequestRef.current += 1;
+    });
+  }, [persistence]);
+
   const handlePdfPageChange = useCallback((page: number) => {
     pdfPageRef.current = page;
   }, []);
@@ -580,6 +602,11 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           label: "Build required",
           message: "Source-to-PDF navigation is available after the current build succeeds.",
         });
+        return;
+      }
+      // Positions are those of the compiled file, and a draft has moved on from it.
+      if (persistence?.getSnapshot().pending) {
+        setSyncNotice(UNSAVED_SYNC_NOTICE);
         return;
       }
       const issued = syncRequestRef.current + 1;
@@ -616,7 +643,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           });
         });
     },
-    [build.snapshot, descriptor, props.cwd, props.environmentId, props.relativePath],
+    [build.snapshot, descriptor, persistence, props.cwd, props.environmentId, props.relativePath],
   );
 
   const handleInverseSync = useCallback(
@@ -651,6 +678,21 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           if (syncRequestRef.current !== issued) return;
           if (result._tag === "unavailable") {
             setSyncNotice({ label: syncUnavailableLabel(result.reason), message: result.message });
+            return;
+          }
+          // The line belongs to the compiled file; an unsaved draft of it has other lines.
+          if (
+            markdownPersistenceRegistry
+              .getSnapshot()
+              .some(
+                (entry) =>
+                  entry.pending &&
+                  entry.environmentId === props.environmentId &&
+                  entry.cwd === props.cwd &&
+                  entry.relativePath === result.relativePath,
+              )
+          ) {
+            setSyncNotice(UNSAVED_SYNC_NOTICE);
             return;
           }
           onOpenFileSource(result.relativePath, result.line, {

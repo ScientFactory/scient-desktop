@@ -3,6 +3,7 @@ import { AlertTriangle } from "lucide-react";
 
 import { Button } from "~/components/ui/button";
 import type { MarkdownPersistenceLease } from "../persistence/markdownPersistenceRegistry";
+import { documentFailureReason } from "../persistence/documentFailureReason";
 
 /** Routine persistence is silent. Only an actionable episode is announced. */
 export function ScientMarkdownPersistenceNotice({
@@ -33,6 +34,9 @@ export function ScientMarkdownPersistenceNotice({
       : issue === "refresh"
         ? "This file couldn’t be refreshed"
         : "Changes haven’t been saved";
+
+  const reason =
+    issue === "failure" || issue === "refresh" ? documentFailureReason(snapshot.error) : null;
 
   useEffect(() => {
     if (issue === previousIssue.current) return;
@@ -95,6 +99,11 @@ export function ScientMarkdownPersistenceNotice({
                       ? "Scient could not check the latest disk version. The last confirmed version is still open. Retry to check it again."
                       : "Your edits are still open, but saving or checking the disk version could not finish. Keep this document open and retry."}
             </p>
+            {reason !== null && confirmation === null ? (
+              <p className="opacity-80" data-persistence-reason>
+                {reason}
+              </p>
+            ) : null}
           </div>
           <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">
             {confirmation ? (

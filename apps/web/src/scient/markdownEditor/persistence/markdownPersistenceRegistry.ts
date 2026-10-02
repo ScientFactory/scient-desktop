@@ -94,7 +94,14 @@ interface RegistryEntry {
   evictionTimer: ReturnType<typeof setTimeout> | undefined;
 }
 
+/**
+ * Raised whenever a registry built from older code could not serve this code:
+ * a new lease method, a new rule for which strategy a file gets.
+ */
+const REGISTRY_GENERATION = 2;
+
 export class MarkdownPersistenceRegistry {
+  readonly generation = REGISTRY_GENERATION;
   private readonly entries = new Map<string, RegistryEntry>();
   private readonly initializing = new Map<
     string,
@@ -491,11 +498,45 @@ export class MarkdownPersistenceRegistry {
   }
 }
 
+/**
+ * The registry this renderer keeps across hot reloads and view remounts. One
+ * built from older code is replaced only while it owns no file; while it owns
+ * any, it stays the single owner and the caller is told it is not current.
+ */
+export function adoptRendererRegistry(
+  existing: MarkdownPersistenceRegistry | undefined,
+  create: () => MarkdownPersistenceRegistry,
+): { readonly registry: MarkdownPersistenceRegistry; readonly current: boolean } {
+  if (existing === undefined) return { registry: create(), current: true };
+  if (existing.generation === REGISTRY_GENERATION) return { registry: existing, current: true };
+  // Older code may predate any public way to ask, so its two maps are read directly.
+  const owned = existing as unknown as {
+    readonly entries?: ReadonlyMap<string, unknown>;
+    readonly initializing?: ReadonlyMap<string, unknown>;
+  };
+  return owned.entries?.size === 0 && owned.initializing?.size === 0
+    ? { registry: create(), current: true }
+    : { registry: existing, current: false };
+}
+
 const registryKey = Symbol.for("scient.markdown-persistence-registry.v1");
 const renderer = globalThis as typeof globalThis & { [registryKey]?: MarkdownPersistenceRegistry };
+const adopted = adoptRendererRegistry(
+  renderer[registryKey],
+  () =>
+    new MarkdownPersistenceRegistry({
+      reconcile: documentReconcileStrategy,
+      ...(typeof indexedDB === "undefined" ? {} : { checkpointStore: indexedDbMarkdownDrafts }),
+    }),
+);
+renderer[registryKey] = adopted.registry;
+if (!adopted.current)
+  console.warn("Document saving was updated while files were open. Reload the window to use it.");
+
 /** HMR and view remounts keep the same owner and the same scheduled transport lane. */
-export const markdownPersistenceRegistry = (renderer[registryKey] ??=
-  new MarkdownPersistenceRegistry({
-    reconcile: documentReconcileStrategy,
-    ...(typeof indexedDB === "undefined" ? {} : { checkpointStore: indexedDbMarkdownDrafts }),
-  }));
+export const markdownPersistenceRegistry = adopted.registry;
+/**
+ * False only after a hot reload that left an older registry in charge. Formats
+ * that registry would merge as Markdown stay read-only until the window reloads.
+ */
+export const documentSessionIsCurrent = adopted.current;

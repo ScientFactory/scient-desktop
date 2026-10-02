@@ -84,7 +84,9 @@ describe("Scient LaTeX file-preview seam", () => {
       "onPendingChange",
     ])
       expect(mountedPropNames()).not.toContain(retired);
-    expect(panelSource).toContain("isRichMarkdown || isLatexPreviewFile(relativePath)");
+    expect(panelSource).toContain(
+      "isRichMarkdown || (documentSessionIsCurrent && isLatexPreviewFile(relativePath))",
+    );
     expect(panelSource).toContain("surfaceOwnsConflictDetection: usesDocumentSession");
   });
 

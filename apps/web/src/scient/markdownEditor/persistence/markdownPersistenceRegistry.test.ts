@@ -6,6 +6,7 @@ import type { MarkdownPersistenceTransport } from "./markdownPersistenceTranspor
 vi.mock("./markdownPersistenceTransport", () => ({ createMarkdownPersistenceTransport: vi.fn() }));
 
 import {
+  adoptRendererRegistry,
   MarkdownPersistenceRegistry,
   type MarkdownPersistenceTarget,
 } from "./markdownPersistenceRegistry";
@@ -620,6 +621,53 @@ describe("several projections and planned edits on one lease", () => {
     ).toEqual({ accepted: false, reason: "unavailable" });
     expect(successor.getSnapshot().draftSource).toBe("one 2");
     successor.release();
+  });
+});
+
+describe("the registry a renderer keeps across hot reloads", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+  /** A registry as code from before per-format strategies would have left it. */
+  function earlier(registry: MarkdownPersistenceRegistry) {
+    Object.defineProperty(registry, "generation", { value: undefined });
+    return registry;
+  }
+  const create = () => new MarkdownPersistenceRegistry();
+
+  it("starts one when there is none, and keeps one from the same code", () => {
+    const first = adoptRendererRegistry(undefined, create);
+    expect(first.current).toBe(true);
+    expect(adoptRendererRegistry(first.registry, create)).toEqual({
+      registry: first.registry,
+      current: true,
+    });
+  });
+
+  it("replaces one from earlier code only while it owns no file", async () => {
+    const { registry, transport } = setup();
+    const lease = earlier(registry).acquire(target, initial)!;
+    lease.change("B", 0);
+    // It is still saving a file: a second registry would be a second writer.
+    expect(adoptRendererRegistry(registry, create)).toEqual({ registry, current: false });
+    expect(await lease.flushNow()).toBe(true);
+    expect(transport.write).toHaveBeenCalledOnce();
+    // Clean but still retained for its views: it remains the owner.
+    expect(adoptRendererRegistry(registry, create).registry).toBe(registry);
+    lease.release();
+    expect(registry.forgetClean(target)).toBe(true);
+    const next = adoptRendererRegistry(registry, create);
+    expect(next.current).toBe(true);
+    expect(next.registry).not.toBe(registry);
+  });
+
+  it("keeps one from earlier code while it is still opening a file", async () => {
+    const { registry } = setup();
+    const opening = earlier(registry).open(target);
+    expect(adoptRendererRegistry(registry, create)).toEqual({ registry, current: false });
+    (await opening).release();
   });
 });
 

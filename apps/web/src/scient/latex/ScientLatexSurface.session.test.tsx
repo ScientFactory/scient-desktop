@@ -5,10 +5,18 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const { requestLatexRebuild, sourcePane, exportDialog } = vi.hoisted(() => ({
+const { requestLatexRebuild, sourcePane, exportDialog, build, sync, reader } = vi.hoisted(() => ({
   requestLatexRebuild: vi.fn(),
   sourcePane: { props: null as null | Record<string, unknown> },
   exportDialog: { savedRevision: null as null | (() => Promise<string | null>) },
+  build: { snapshot: null as unknown },
+  sync: { forward: vi.fn(), inverse: vi.fn() },
+  reader: {
+    navigation: null as null | {
+      readonly forwardTarget: unknown;
+      readonly onInverseSearch?: (point: { page: number; x: number; y: number }) => void;
+    },
+  },
 }));
 
 vi.mock("@effect/atom-react", async () => {
@@ -18,11 +26,21 @@ vi.mock("@effect/atom-react", async () => {
 vi.mock("~/components/files/FilePreviewPanel", () => ({
   MarkdownSourceSurface: (props: Record<string, unknown>) => {
     sourcePane.props = props;
-    return <div data-testid="source-pane" />;
+    return <div data-testid="source-pane" data-line="3" />;
   },
 }));
 vi.mock("~/scient/markdownEditor/persistence/markdownPersistenceTransport", () => ({
   createMarkdownPersistenceTransport: vi.fn(),
+}));
+vi.mock("~/scient/pdf/ScientPdfReader", () => ({
+  ScientPdfReader: (props: { syncNavigation?: typeof reader.navigation }) => {
+    reader.navigation = props.syncNavigation ?? null;
+    return <div data-testid="pdf-reader" />;
+  },
+}));
+vi.mock("./client", () => ({
+  requestLatexForwardSync: sync.forward,
+  requestLatexInverseSync: sync.inverse,
 }));
 vi.mock("~/scient/wordExport/WordFileExportDialog", () => ({
   WordFileExportDialog: (props: { savedRevision: () => Promise<string | null> }) => {
@@ -42,7 +60,7 @@ vi.mock("./useLatexDocumentResolution", () => ({
 }));
 vi.mock("./latexBuildStore", () => ({
   useLatexBuild: () => ({
-    snapshot: null,
+    snapshot: build.snapshot,
     toolchain: null,
     canInstallManaged: false,
     managedInstall: null,
@@ -58,10 +76,21 @@ vi.mock("./latexBuildStore", () => ({
 }));
 
 import {
+  ArtifactAuthority,
+  ArtifactId,
+  ArtifactRevisionId,
+  BindingGeneration,
+  LogicalDocumentKey,
+  PdfSourceDescriptor,
+} from "@scientfactory/document-artifacts";
+
+import {
   documentReconcileStrategy,
+  markdownPersistenceRegistry,
   MarkdownPersistenceRegistry,
   type MarkdownPersistenceLease,
 } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
+import { createMarkdownPersistenceTransport } from "~/scient/markdownEditor/persistence/markdownPersistenceTransport";
 
 import { ScientLatexSurface } from "./ScientLatexSurface";
 
@@ -85,6 +114,7 @@ describe("the LaTeX surface on a document session", () => {
     vi.useFakeTimers();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     requestLatexRebuild.mockReset();
+    build.snapshot = null;
     sourcePane.props = null;
     exportDialog.savedRevision = null;
     disk = { source: BASE, revision: revisionOf(BASE) };
@@ -219,5 +249,163 @@ describe("the LaTeX surface on a document session", () => {
     });
     expect(disk.source).toBe(typed("Agent."));
     expect(requestLatexRebuild).not.toHaveBeenCalled();
+  });
+});
+
+describe("navigation between LaTeX source and its PDF", () => {
+  // The registry the app uses, so a draft of another open file is visible too.
+  const registry = markdownPersistenceRegistry;
+  let workspace = 0;
+  let cwd = "";
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+  let lease: MarkdownPersistenceLease;
+  let chapter: MarkdownPersistenceLease;
+  let opened: Array<[string, number | undefined]>;
+
+  const acquire = (relativePath: string) =>
+    registry.acquire(
+      { environmentId, cwd, relativePath },
+      {
+        relativePath,
+        contents: BASE,
+        revision: revisionOf(BASE),
+        byteLength: BASE.length,
+        truncated: false,
+      },
+    )!;
+  const typed = (body: string) => BASE.replace("Base.", body);
+  const edit = (target: MarkdownPersistenceLease, body: string) =>
+    act(async () => {
+      target.change(typed(body), target.getSnapshot().editVersion);
+    });
+  const doubleClickSource = () =>
+    act(async () => {
+      container
+        .querySelector('[data-testid="source-pane"]')!
+        .dispatchEvent(new MouseEvent("dblclick", { bubbles: true, composed: true }));
+    });
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    sync.forward.mockReset();
+    sync.inverse.mockReset();
+    reader.navigation = null;
+    opened = [];
+    cwd = `/synthetic-navigation-${(workspace += 1)}`;
+    vi.mocked(createMarkdownPersistenceTransport).mockImplementation(() => ({
+      // Saving never finishes here: each draft stays ahead of the compiled file.
+      write: () => new Promise(() => {}),
+      read: async () => ({ source: BASE, revision: revisionOf(BASE) }),
+      classifyFailure: () => "terminal",
+      subscribe: () => () => {},
+      project: () => {},
+    }));
+    build.snapshot = {
+      logicalDocumentKey: "latex:paper.tex",
+      rootRelativePath: "paper.tex",
+      state: "succeeded",
+      diagnostics: [],
+      descriptor: PdfSourceDescriptor.make({
+        _tag: "generated-pdf",
+        authority: ArtifactAuthority.make("environment-latex"),
+        logicalDocumentKey: LogicalDocumentKey.make("latex:paper.tex"),
+        artifactId: ArtifactId.make("artifact-1"),
+        revisionId: ArtifactRevisionId.make("revision-1"),
+        bindingGeneration: BindingGeneration.make(1),
+        bindingStatus: "current",
+        staleReason: null,
+        title: "paper",
+        fileName: "paper.pdf",
+        capabilities: { canSaveCopy: true, canRevealSource: false },
+      }),
+      failureSummary: null,
+      startedAtEpochMs: null,
+      finishedAtEpochMs: null,
+      toolchain: null,
+      pendingRerun: false,
+    };
+    lease = acquire(relativePath);
+    chapter = acquire("chapter.tex");
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <ScientLatexSurface
+          environmentId={environmentId}
+          cwd={cwd}
+          relativePath={relativePath}
+          latexRootRelativePath={null}
+          composerDraftTarget={"draft" as never}
+          contents={BASE}
+          revision={revisionOf(BASE)}
+          persistence={lease}
+          resolvedTheme="light"
+          revealLine={null}
+          revealRequestId={0}
+          latexPresentationRequest={{ mode: "split" } as never}
+          wordWrap={false}
+          onPostRender={() => {}}
+          onOpenFileSource={(path, line) => opened.push([path, line])}
+          onLatexPresentationRequestHandled={() => {}}
+        />,
+      );
+    });
+    await act(async () => {
+      await vi.dynamicImportSettled();
+    });
+    expect(reader.navigation).not.toBeNull();
+  });
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    container.remove();
+    lease.release();
+    chapter.release();
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("finds a saved line in the PDF", async () => {
+    sync.forward.mockResolvedValue({ _tag: "found", page: 2, x: 10, y: 20 });
+    await doubleClickSource();
+    expect(sync.forward).toHaveBeenCalledOnce();
+    expect(sync.forward.mock.calls[0]![1]).toMatchObject({ line: 3 });
+    expect(reader.navigation!.forwardTarget).toMatchObject({ page: 2 });
+  });
+
+  it("does not look up a line of an unsaved draft", async () => {
+    await edit(lease, "One.\nTwo.");
+    await doubleClickSource();
+    expect(sync.forward).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Unsaved changes");
+  });
+
+  it("drops an answer that arrives after the draft has moved on", async () => {
+    let answer!: (result: unknown) => void;
+    sync.forward.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    await doubleClickSource();
+    await edit(lease, "One.\nTwo.");
+    await act(async () => answer({ _tag: "found", page: 2, x: 10, y: 20 }));
+    expect(reader.navigation!.forwardTarget).toBeNull();
+  });
+
+  it("opens the source a place in the PDF came from", async () => {
+    sync.inverse.mockResolvedValue({ _tag: "found", relativePath: "chapter.tex", line: 7 });
+    await act(async () => reader.navigation!.onInverseSearch!({ page: 1, x: 1, y: 1 }));
+    expect(opened).toEqual([["chapter.tex", 7]]);
+  });
+
+  it.each([
+    ["this file", () => lease, relativePath],
+    ["another file of the document", () => chapter, "chapter.tex"],
+  ])("does not open a compiled line in an unsaved draft of %s", async (_name, target, path) => {
+    await edit(target(), "One.\nTwo.");
+    sync.inverse.mockResolvedValue({ _tag: "found", relativePath: path, line: 7 });
+    await act(async () => reader.navigation!.onInverseSearch!({ page: 1, x: 1, y: 1 }));
+    expect(opened).toEqual([]);
+    expect(container.textContent).toContain("Unsaved changes");
   });
 });
