@@ -218,7 +218,7 @@ describe("recovering unsaved work", () => {
   it("sits in the footer as one line with plain actions", async () => {
     storeSourceDraft(MONDAY, "r1");
     await mount(tex("Monday base"), 1);
-    const footer = container.querySelector("footer.scient-latex-visual-summary");
+    const footer = container.querySelector("footer.scient-latex-reader-footer");
     expect(bar()?.parentElement).toBe(footer);
     expect(message()).toBe("Unsaved changes");
     expect([...bar()!.querySelectorAll(":scope > button")].map((b) => b.textContent)).toEqual([
@@ -651,9 +651,7 @@ describe("recovering unsaved work", () => {
       await mount(AGENT, 2);
       expect(message()).toBe("Unsaved changes");
       expect(editable()).toBe(false);
-      expect(container.querySelector(".scient-latex-selection-status")?.textContent).toBe(
-        "Read-only",
-      );
+      expect(container.querySelector('.sr-only[role="status"]')?.textContent).toBe("Read-only");
       // Still in its live slot, exactly as it was found.
       expect(parked()).toBeNull();
       expect(checkpoint()).toEqual({ source: MONDAY, baseRevision: "r1" });

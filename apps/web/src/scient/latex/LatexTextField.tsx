@@ -54,7 +54,7 @@ export function LatexTextField({
 }: Props) {
   const [draft, setDraft] = useState(() => restoredLatexFieldDraft(draftKey, value));
   const previousValue = useRef(value);
-  const pending = useRef<string | null>(draft === value ? null : draft);
+  const pending = useRef(draft === value ? null : { key: draftKey, base: value, text: draft });
   const composing = useRef(false);
   const publishTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const cancelJournal = useRef<(() => void) | null>(null);
@@ -63,9 +63,24 @@ export function LatexTextField({
     publish.current = onValueChange;
   }, [onValueChange]);
   useEffect(() => () => clearTimeout(publishTimer.current), []);
-  const schedule = (text: string) => {
+  const owner = useRef({ key: draftKey, value });
+  useLayoutEffect(() => {
+    owner.current = { key: draftKey, value };
+  }, [draftKey, value]);
+  const publishPending = () => {
+    const entry = pending.current;
+    if (
+      !entry ||
+      composing.current ||
+      entry.key !== owner.current.key ||
+      entry.base !== owner.current.value
+    )
+      return;
+    publish.current(entry.text);
+  };
+  const schedule = () => {
     clearTimeout(publishTimer.current);
-    publishTimer.current = setTimeout(() => publish.current(text), 180);
+    publishTimer.current = setTimeout(publishPending, 180);
   };
   const field = useRef<HTMLTextAreaElement>(null);
   const id = useId();
@@ -74,11 +89,12 @@ export function LatexTextField({
     const persist = () => {
       cancelJournal.current?.();
       cancelJournal.current = null;
-      if (!draftKey || pending.current === null) return;
+      const entry = pending.current;
+      if (!entry?.key) return;
       try {
         localStorage.setItem(
-          `scient.latex.field:${draftKey}`,
-          JSON.stringify({ base: previousValue.current, text: pending.current }),
+          `scient.latex.field:${entry.key}`,
+          JSON.stringify({ base: entry.base, text: entry.text }),
         );
       } catch {
         /* Keep the live field if storage is unavailable. */
@@ -89,14 +105,21 @@ export function LatexTextField({
       window.removeEventListener("pagehide", persist);
       persist();
     };
-  }, [draftKey]);
-  useEffect(() => {
-    reportDraft(id, draft !== value);
-  }, [draft, value, id, reportDraft]);
+  }, []);
+  useLayoutEffect(() => {
+    reportDraft(id, pending.current !== null || composing.current);
+  }, [id, reportDraft]);
   useEffect(() => () => reportDraft(id, false), [id, reportDraft]);
   useLayoutEffect(() => {
-    if (value === pending.current && draft === value) {
+    if (
+      pending.current !== null &&
+      pending.current.key === draftKey &&
+      value === pending.current.text &&
+      draft === value &&
+      !composing.current
+    ) {
       pending.current = null;
+      reportDraft(id, false);
       if (draftKey) {
         try {
           localStorage.removeItem(`scient.latex.field:${draftKey}`);
@@ -117,19 +140,32 @@ export function LatexTextField({
       }
     }
     previousValue.current = value;
-  }, [draft, draftKey, value]);
+  }, [draft, draftKey, value, id, reportDraft]);
   const retain = (text: string) => {
-    pending.current = text;
+    const entry = pending.current ?? { key: draftKey, base: value, text };
+    pending.current =
+      !composing.current && entry.key === draftKey && entry.base === value && text === value
+        ? null
+        : { ...entry, text };
+    if (pending.current === null && draftKey) {
+      try {
+        localStorage.removeItem(`scient.latex.field:${draftKey}`);
+      } catch {
+        /* Optional journal. */
+      }
+    }
+    reportDraft(id, pending.current !== null || composing.current);
     setDraft(text);
     if (draftKey) {
       cancelJournal.current?.();
       cancelJournal.current = afterEditorPaint(() => {
         cancelJournal.current = null;
-        if (pending.current === null) return;
+        const entry = pending.current;
+        if (!entry?.key) return;
         try {
           localStorage.setItem(
-            `scient.latex.field:${draftKey}`,
-            JSON.stringify({ base: previousValue.current, text: pending.current }),
+            `scient.latex.field:${entry.key}`,
+            JSON.stringify({ base: entry.base, text: entry.text }),
           );
         } catch {
           /* Keep the live draft if storage is full. */
@@ -163,23 +199,23 @@ export function LatexTextField({
       onChange={(event) => {
         const text = event.currentTarget.value;
         retain(text);
-        if (!composing.current) schedule(text);
+        if (!composing.current) schedule();
       }}
       onCompositionStart={(event) => {
         composing.current = true;
+        reportDraft(id, true);
         clearTimeout(publishTimer.current);
         onCompositionStart?.(event);
       }}
       onCompositionEnd={(event) => {
         composing.current = false;
         retain(event.currentTarget.value);
-        schedule(event.currentTarget.value);
+        schedule();
         onCompositionEnd?.(event);
       }}
       onBlur={(event) => {
-        composing.current = false;
         clearTimeout(publishTimer.current);
-        if (pending.current !== null) onValueChange(event.currentTarget.value);
+        publishPending();
         onBlur?.(event);
       }}
     />
