@@ -60,6 +60,9 @@ import { LatexDocumentSettings, type LatexDocumentSettingsSection } from "./Late
 import { LatexContextTools } from "./LatexContextTools";
 import { DocumentReaderControls, DocumentSearchBar } from "../writing/DocumentReaderControls";
 import { ReaderBarHostContext } from "../writing/readerBarHost";
+import { DocumentFooter } from "../writing/DocumentFooter";
+import { countWords } from "../writing/documentCounts";
+import { countLatexWords } from "./latexWordCount";
 import { commandShortcut } from "../keyboard/presentation";
 import { WritingCommandIcon } from "../writing/commandIcons";
 import { WRITING_COMMAND_LABELS } from "../writing/commandNames";
@@ -4679,6 +4682,13 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       editor.state.selection instanceof NodeSelection)
       ? "Place the cursor in ordinary text to insert this item."
       : undefined;
+  // A link wraps text inside one paragraph; the button, the menu entry and the
+  // shortcut all refuse the same selections the action itself would refuse.
+  const linkUnavailableReason =
+    inlineInsertReason ??
+    (editor && !editor.state.selection.$from.sameParent(editor.state.selection.$to)
+      ? "Select text within one paragraph to link it."
+      : undefined);
   const insertActions: LatexInsertAction[] = [
     ...LATEX_HEADING_STYLES.map(({ level, label }) => ({
       id: `heading-${level}`,
@@ -4691,7 +4701,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     })),
     {
       id: "paragraph",
-      label: "Paragraph",
+      label: WRITING_COMMAND_LABELS.text,
       description: "Continue with ordinary text",
       group: "Text",
       run: () => {
@@ -4818,8 +4828,8 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     },
     {
       id: "link",
-      disabledReason: inlineInsertReason,
-      label: "Link…",
+      disabledReason: linkUnavailableReason,
+      label: `${WRITING_COMMAND_LABELS.link}…`,
       description: "Link text to a web or email address",
       group: "References",
       run: () => {
@@ -5903,6 +5913,25 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   );
 
   const readerHost = useContext(ReaderBarHostContext);
+  // The footer follows the caret: where it is, and how much has been written.
+  const footerPosition = (() => {
+    const heading = /^Heading (\d+)$/u.exec(selectionContext);
+    if (heading)
+      return headingStyles.find((style) => String(style.level) === heading[1])?.label ?? "Heading";
+    if (selectionContext === "Body text") return WRITING_COMMAND_LABELS.text;
+    return selectionContext.slice(0, 1).toUpperCase() + selectionContext.slice(1);
+  })();
+  const sourceWords = useMemo(() => countLatexWords(props.source), [props.source]);
+  const footerSelection = editor?.state.selection;
+  const footerWords = {
+    total: sourceWords,
+    selected:
+      editor && footerSelection && !footerSelection.empty
+        ? countWords(
+            editor.state.doc.textBetween(footerSelection.from, footerSelection.to, " ", " "),
+          )
+        : null,
+  };
   const searchBar = find.open ? (
     <DocumentSearchBar
       label="Search this document"
@@ -6427,69 +6456,142 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                 </div>
               </div>
               {readerHost ? null : searchBar}
-              <footer
-                className="scient-latex-reader-footer"
-                data-recovery={recovery === null ? undefined : ""}
-              >
-                {recovery === null ? null : (
-                  <LatexVisualRecoveryBar
-                    key={recovery.identity}
-                    recovery={recovery}
-                    currentSource={props.source}
-                    applicable={singleFile}
-                    disabled={props.disabled}
-                    onApply={applyRecovery}
-                    onDiscard={discardRecovery}
+              {readerHost ? (
+                <DocumentFooter
+                  label="Document status"
+                  className="scient-latex-reader-footer"
+                  dataRecovery={recovery !== null}
+                  position={readOnly ? "Read-only" : footerPosition}
+                  words={footerWords}
+                  leading={
+                    <>
+                      {recovery === null ? null : (
+                        <LatexVisualRecoveryBar
+                          key={recovery.identity}
+                          recovery={recovery}
+                          currentSource={props.source}
+                          applicable={singleFile}
+                          disabled={props.disabled}
+                          onApply={applyRecovery}
+                          onDiscard={discardRecovery}
+                        />
+                      )}
+                      {mathPicker === "symbols" && !readOnly && (
+                        <LatexMathPalette
+                          picker
+                          sourceOpen={false}
+                          onOpen={() => {}}
+                          onDismiss={() => {
+                            setMathPicker(null);
+                            mathPickerTarget.current = null;
+                            pendingMathInsert.current = null;
+                          }}
+                          onReturnToMath={() => {
+                            setMathPicker(null);
+                            mathPickerClosed(false);
+                          }}
+                          onInsert={(symbol) => {
+                            finishMathPicker(symbol.latex, false, symbol.action);
+                            mathPickerClosed(false);
+                          }}
+                        />
+                      )}
+                      {hasLocalDraft ? (
+                        <ScientTooltip content="Editing draft: complete the field to update the LaTeX source.">
+                          <span className="scient-latex-footer-draft" aria-label="Editing draft">
+                            •
+                          </span>
+                        </ScientTooltip>
+                      ) : null}
+                      {/* Drawn in the surface header; nothing appears here. */}
+                      <DocumentReaderControls
+                        // Hosted in the surface header, the bar leaves the footer to the object options.
+                        {...(readerHost ? {} : { contextControls: contextTools })}
+                        label="Document"
+                        ready={Boolean(editor)}
+                        page={Math.min(currentPage, pageCount)}
+                        pageCount={pageCount}
+                        scale={zoom}
+                        sidebarOpen={navigationOpen}
+                        searchOpen={find.open}
+                        onPage={goToPage}
+                        onZoom={changeZoom}
+                        onActualSize={() => changeZoom(1)}
+                        onFitWidth={fitWidth}
+                        onToggleSidebar={() => setNavigationOpen(!navigationOpen)}
+                        onToggleSearch={() => (find.open ? find.close() : find.show())}
+                        onShowSearch={find.show}
+                        shortcutLabel={shortcutLabel}
+                      />
+                    </>
+                  }
+                >
+                  {contextTools}
+                </DocumentFooter>
+              ) : (
+                <footer
+                  className="scient-latex-reader-footer"
+                  data-recovery={recovery === null ? undefined : ""}
+                >
+                  {recovery === null ? null : (
+                    <LatexVisualRecoveryBar
+                      key={recovery.identity}
+                      recovery={recovery}
+                      currentSource={props.source}
+                      applicable={singleFile}
+                      disabled={props.disabled}
+                      onApply={applyRecovery}
+                      onDiscard={discardRecovery}
+                    />
+                  )}
+                  {mathPicker === "symbols" && !readOnly && (
+                    <LatexMathPalette
+                      picker
+                      sourceOpen={false}
+                      onOpen={() => {}}
+                      onDismiss={() => {
+                        setMathPicker(null);
+                        mathPickerTarget.current = null;
+                        pendingMathInsert.current = null;
+                      }}
+                      onReturnToMath={() => {
+                        setMathPicker(null);
+                        mathPickerClosed(false);
+                      }}
+                      onInsert={(symbol) => {
+                        finishMathPicker(symbol.latex, false, symbol.action);
+                        mathPickerClosed(false);
+                      }}
+                    />
+                  )}
+                  {hasLocalDraft ? (
+                    <ScientTooltip content="Editing draft: complete the field to update the LaTeX source.">
+                      <span className="scient-latex-footer-draft" aria-label="Editing draft">
+                        •
+                      </span>
+                    </ScientTooltip>
+                  ) : null}
+                  <DocumentReaderControls
+                    // Hosted in the surface header, the bar leaves the footer to the object options.
+                    {...(readerHost ? {} : { contextControls: contextTools })}
+                    label="Document"
+                    ready={Boolean(editor)}
+                    page={Math.min(currentPage, pageCount)}
+                    pageCount={pageCount}
+                    scale={zoom}
+                    sidebarOpen={navigationOpen}
+                    searchOpen={find.open}
+                    onPage={goToPage}
+                    onZoom={changeZoom}
+                    onActualSize={() => changeZoom(1)}
+                    onFitWidth={fitWidth}
+                    onToggleSidebar={() => setNavigationOpen(!navigationOpen)}
+                    onToggleSearch={() => (find.open ? find.close() : find.show())}
+                    onShowSearch={find.show}
+                    shortcutLabel={shortcutLabel}
                   />
-                )}
-                {mathPicker === "symbols" && !readOnly && (
-                  <LatexMathPalette
-                    picker
-                    sourceOpen={false}
-                    onOpen={() => {}}
-                    onDismiss={() => {
-                      setMathPicker(null);
-                      mathPickerTarget.current = null;
-                      pendingMathInsert.current = null;
-                    }}
-                    onReturnToMath={() => {
-                      setMathPicker(null);
-                      mathPickerClosed(false);
-                    }}
-                    onInsert={(symbol) => {
-                      finishMathPicker(symbol.latex, false, symbol.action);
-                      mathPickerClosed(false);
-                    }}
-                  />
-                )}
-                {hasLocalDraft ? (
-                  <ScientTooltip content="Editing draft: complete the field to update the LaTeX source.">
-                    <span className="scient-latex-footer-draft" aria-label="Editing draft">
-                      •
-                    </span>
-                  </ScientTooltip>
-                ) : null}
-                <DocumentReaderControls
-                  // Hosted in the surface header, the bar leaves the footer to the object options.
-                  {...(readerHost ? {} : { contextControls: contextTools })}
-                  label="Document"
-                  ready={Boolean(editor)}
-                  page={Math.min(currentPage, pageCount)}
-                  pageCount={pageCount}
-                  scale={zoom}
-                  sidebarOpen={navigationOpen}
-                  searchOpen={find.open}
-                  onPage={goToPage}
-                  onZoom={changeZoom}
-                  onActualSize={() => changeZoom(1)}
-                  onFitWidth={fitWidth}
-                  onToggleSidebar={() => setNavigationOpen(!navigationOpen)}
-                  onToggleSearch={() => (find.open ? find.close() : find.show())}
-                  onShowSearch={find.show}
-                  shortcutLabel={shortcutLabel}
-                />
-                {readerHost ? contextTools : null}
-              </footer>
+                </footer>
+              )}
               <span className="sr-only" role="status">
                 {readOnly ? "Read-only" : selectionContext}
                 {hasLocalDraft ? ". Editing draft" : ""}

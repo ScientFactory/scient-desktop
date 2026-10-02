@@ -151,6 +151,40 @@ describe("portable keyboard preferences", () => {
     expect(getKeyboardPreferences().preferences).toEqual(defaults);
     expect(localStorage.getItem("scient.mathInputBindings.v1")).toBe(legacy);
   });
+  it("keeps preferences saved before Inline code and Link got default shortcuts", () => {
+    // Valid when it was saved: Bold on mod+e, a spare command on mod+k, one custom key kept.
+    const stored = JSON.stringify({
+      ...defaults,
+      writingPresetVersion: 1,
+      overrides: {
+        "latex.bold": ["mod+e"],
+        "latex.figure": ["mod+k"],
+        "latex.table": ["alt+shift+t"],
+      },
+    });
+    const imported = importKeyboardPreferences(stored);
+    expect(imported.overrides["latex.bold"]).toEqual(["mod+e"]);
+    expect(imported.overrides["latex.figure"]).toEqual(["mod+k"]);
+    expect(imported.overrides["latex.table"]).toEqual(["alt+shift+t"]);
+    // The new defaults step aside instead of invalidating the file.
+    expect(imported.overrides["latex.inlineCode"]).toEqual([]);
+    expect(imported.overrides["latex.link"]).toEqual([]);
+    expect(imported.writingPresetVersion).toBe(defaults.writingPresetVersion);
+    // Importing the migrated result again changes nothing.
+    expect(importKeyboardPreferences(JSON.stringify(imported))).toEqual(imported);
+
+    localStorage.setItem(KEYBOARD_PREFERENCES_KEY, stored);
+    reloadKeyboardPreferences();
+    expect(getKeyboardPreferences().error).toBe("");
+    expect(getKeyboardPreferences().preferences.overrides["latex.bold"]).toEqual(["mod+e"]);
+  });
+  it("gives older preferences without conflicts the new default shortcuts", () => {
+    const imported = importKeyboardPreferences(
+      JSON.stringify({ ...defaults, writingPresetVersion: 1, overrides: {} }),
+    );
+    expect(imported.overrides).toEqual({});
+    expect(imported.writingPresetVersion).toBe(defaults.writingPresetVersion);
+  });
   it("strips unknown top-level properties and rejects unknown commands", () => {
     expect(importKeyboardPreferences(JSON.stringify({ ...defaults, unexpected: 123 }))).toEqual(
       defaults,

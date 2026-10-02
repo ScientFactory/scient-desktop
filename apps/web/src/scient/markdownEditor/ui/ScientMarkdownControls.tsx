@@ -36,7 +36,6 @@ import {
   PanelTop,
   PilcrowLeft,
   PilcrowRight,
-  Redo2,
   RemoveFormatting,
   Search,
   Sigma,
@@ -47,7 +46,6 @@ import {
   TextInitial,
   TextQuote,
   Trash2,
-  Undo2,
   Rows3,
 } from "lucide-react";
 import {
@@ -791,7 +789,7 @@ function LinkEditorPopup({
         <div className="p-2">
           <form className="flex flex-col gap-2" onSubmit={submit}>
             <div className="flex items-center justify-between px-1">
-              <PopoverTitle size="compact">Link</PopoverTitle>
+              <PopoverTitle size="compact">{WRITING_COMMAND_LABELS.link}</PopoverTitle>
               {active ? (
                 <button
                   type="button"
@@ -1216,8 +1214,8 @@ export function ScientMarkdownControls({
                 disabled={!snapshot.canUndo}
                 onClick={() => controller.execute("undo")}
               >
-                <Undo2 />
-                <span>Undo</span>
+                <WritingCommandIcon command="undo" />
+                <span>{WRITING_COMMAND_LABELS.undo}</span>
                 <MenuShortcut aria-hidden="true" dir="ltr">
                   {undoShortcut.display}
                 </MenuShortcut>
@@ -1227,8 +1225,8 @@ export function ScientMarkdownControls({
                 disabled={!snapshot.canRedo}
                 onClick={() => controller.execute("redo")}
               >
-                <Redo2 />
-                <span>Redo</span>
+                <WritingCommandIcon command="redo" />
+                <span>{WRITING_COMMAND_LABELS.redo}</span>
                 <MenuShortcut aria-hidden="true" dir="ltr">
                   {redoShortcut.display}
                 </MenuShortcut>

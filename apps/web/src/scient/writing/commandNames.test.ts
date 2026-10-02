@@ -28,8 +28,12 @@ describe("shared writing command names", () => {
     (_name, source) => {
       expect(source).toContain("WRITING_COMMAND_LABELS");
       for (const label of Object.values(WRITING_COMMAND_LABELS)) {
-        // A shared name written out again as a label is how two editors drift apart.
-        expect(source, label).not.toMatch(new RegExp(`label[=:]\\s*\\{?"${label}"`, "u"));
+        // A shared name written out again is how two editors drift apart: as a
+        // label, as an accessible name, with an ellipsis, or as menu text.
+        expect(source, label).not.toMatch(
+          new RegExp(`(?:label|aria-label)[=:]\\s*\\{?["\`]${label}…?["\`]`, "u"),
+        );
+        expect(source, label).not.toMatch(new RegExp(`>\\s*${label}\\s*</`, "u"));
       }
     },
   );

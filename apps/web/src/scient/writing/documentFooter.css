@@ -1,0 +1,73 @@
+/* The strip under a document editor: one line, always the same height. */
+.scient-document-footer {
+  container-name: scient-document-footer;
+  container-type: inline-size;
+  position: relative;
+  display: flex;
+  height: 28px;
+  min-width: 0;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 64%, transparent);
+  background: var(--background);
+  padding-inline: 10px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* The selected object's options take what the status leaves. */
+.scient-document-footer-options {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 2px;
+}
+
+.scient-document-footer-status {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.scient-document-footer-position {
+  overflow: hidden;
+  max-width: 16rem;
+  text-overflow: ellipsis;
+}
+
+/* Buttons placed in the footer are smaller than the bar's and never boxed. */
+.scient-document-footer .scient-markdown-command-button {
+  min-width: 1.4rem;
+  min-height: 1.4rem;
+  height: 22px;
+  padding: 0.1rem 0.3rem;
+  font-size: 11px;
+}
+
+.scient-document-footer .scient-markdown-command-button > svg:first-child {
+  width: 0.8125rem;
+  height: 0.8125rem;
+}
+
+.scient-document-footer .scient-markdown-command-divider {
+  height: 0.9rem;
+}
+
+/* Narrow panes: the word count goes first, then the position. */
+@container scient-document-footer (max-width: 420px) {
+  .scient-document-footer-count {
+    display: none;
+  }
+}
+
+@container scient-document-footer (max-width: 300px) {
+  .scient-document-footer-status {
+    display: none;
+  }
+}

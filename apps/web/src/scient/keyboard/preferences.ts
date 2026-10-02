@@ -10,9 +10,16 @@ import {
 
 export const KEYBOARD_PREFERENCES_KEY = "scient.authoringKeyboard.v1";
 const LEGACY_KEY = "scient.mathInputBindings.v1";
+/**
+ * Raised whenever default shortcuts are added. Stored preferences from an
+ * older preset keep every custom key; a new default that would collide with
+ * one of them is switched off instead of invalidating the whole file.
+ * 2: Inline code (mod+e) and Link (mod+k) in the LaTeX editor.
+ */
+const WRITING_PRESET_VERSION = 2;
 export interface KeyboardPreferences {
   readonly version: 1;
-  readonly writingPresetVersion?: 1;
+  readonly writingPresetVersion?: 1 | 2;
   readonly customMath?: readonly CustomMathCommand[];
   readonly overrides: Readonly<Record<string, readonly string[]>>;
   readonly mathPreset: "lyx" | "minimal";
@@ -28,7 +35,7 @@ export interface KeyboardPreferencesSnapshot {
 }
 export const DEFAULT_KEYBOARD_PREFERENCES: KeyboardPreferences = {
   version: 1,
-  writingPresetVersion: 1,
+  writingPresetVersion: WRITING_PRESET_VERSION,
   customMath: [],
   overrides: {},
   mathPreset: "lyx",
@@ -87,7 +94,9 @@ export function validateKeyboardPreferences(
   const v = value as KeyboardPreferences;
   if (
     v.version !== 1 ||
-    (v.writingPresetVersion !== undefined && v.writingPresetVersion !== 1) ||
+    (v.writingPresetVersion !== undefined &&
+      v.writingPresetVersion !== 1 &&
+      v.writingPresetVersion !== WRITING_PRESET_VERSION) ||
     !v.overrides ||
     typeof v.overrides !== "object" ||
     Array.isArray(v.overrides) ||
@@ -123,7 +132,7 @@ export function validateKeyboardPreferences(
   }
   const preferences: KeyboardPreferences = {
     version: 1,
-    writingPresetVersion: 1,
+    writingPresetVersion: WRITING_PRESET_VERSION,
     customMath,
     overrides,
     mathPreset: v.mathPreset,
@@ -177,7 +186,9 @@ export function importKeyboardPreferences(
       typeof value === "object" &&
       "version" in value &&
       value.version === 1 &&
-      !("writingPresetVersion" in value) &&
+      (!("writingPresetVersion" in value) ||
+        (typeof value.writingPresetVersion === "number" &&
+          value.writingPresetVersion < WRITING_PRESET_VERSION)) &&
       "overrides" in value &&
       value.overrides &&
       typeof value.overrides === "object"
@@ -203,7 +214,10 @@ export function importKeyboardPreferences(
         );
         if (remaining.length !== defaults.length) overrides[command.id] = remaining;
       }
-      return validateKeyboardPreferences({ ...old, overrides, writingPresetVersion: 1 }, mac);
+      return validateKeyboardPreferences(
+        { ...old, overrides, writingPresetVersion: WRITING_PRESET_VERSION },
+        mac,
+      );
     }
     return validateKeyboardPreferences(value, mac);
   }

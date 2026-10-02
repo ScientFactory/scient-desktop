@@ -3357,9 +3357,9 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   background: none;
 }
 /* The footer now holds only the selected object's options. */
-.scient-latex-reader-footer > .scient-latex-context-tools > .scient-latex-context-tools-slot {
+.scient-document-footer .scient-latex-context-tools > .scient-latex-context-tools-slot {
   border-inline-start: 0;
-  padding-inline-start: 2px;
+  padding-inline-start: 0;
 }
 
 /*
@@ -3481,4 +3481,65 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   .scient-latex-mathfield math-field {
     --placeholder-opacity: 0 !important;
   }
+}
+
+/* The Visual footer follows the shared footer's rules when the reader controls
+   live in the header: one compact line for the selected object's options. */
+.scient-latex-reader-footer.scient-document-footer {
+  height: 28px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 64%, transparent);
+}
+.scient-latex-reader-footer.scient-document-footer[data-recovery] {
+  height: auto;
+  min-height: 28px;
+  padding-block-end: 2px;
+}
+.scient-document-footer .scient-latex-context-tools {
+  padding-inline: 0;
+}
+.scient-document-footer .scient-latex-context-tools > button {
+  height: 22px;
+}
+/* Object options in the compact footer: one quiet line, nothing boxed at rest. */
+.scient-document-footer .scient-latex-context-toolbar {
+  height: 24px;
+  color: var(--muted-foreground);
+}
+/* A caption above a control would not fit the line; the control names itself. */
+.scient-document-footer .scient-latex-context-toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  font-size: 0;
+}
+.scient-document-footer .scient-latex-context-toolbar label > * {
+  font-size: 11px;
+}
+.scient-document-footer .scient-latex-context-toolbar .scient-latex-select {
+  width: auto;
+}
+.scient-document-footer .scient-latex-context-toolbar [data-slot="select-trigger"],
+.scient-document-footer .scient-latex-context-toolbar [data-latex-number-toggle] {
+  height: 22px;
+  min-height: 0;
+  border-color: transparent;
+  border-radius: 4px;
+  background: transparent;
+  box-shadow: none;
+  padding-inline: 6px;
+  color: inherit;
+  font-size: 11px;
+}
+.scient-document-footer .scient-latex-context-toolbar [data-slot="select-trigger"]::before,
+.scient-document-footer .scient-latex-context-toolbar [data-latex-number-toggle]::before {
+  display: none;
+}
+.scient-document-footer .scient-latex-context-toolbar [data-slot="select-trigger"]:hover,
+.scient-document-footer .scient-latex-context-toolbar [data-latex-number-toggle]:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+.scient-document-footer .scient-latex-context-toolbar :is(input, textarea) {
+  height: 22px;
+  min-height: 0;
 }
