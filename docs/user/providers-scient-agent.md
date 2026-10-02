@@ -30,7 +30,12 @@ Scient Agent starts with no sign-ins of its own. It does not use Oh My Pi's.
 - **Keys in your environment.** A provider key the server's environment already has, such as
   `ANTHROPIC_API_KEY`, is used as Oh My Pi would use it.
 
-Signing in to a model subscription from inside Scient is not available yet.
+Signing in to a model subscription from inside Scient is not available yet. Until it is, the
+agent's own terminal command works: run `scient-agent login` with `SCIENT_AGENT_ROOT` set to the
+agent's folder in Scient's data directory (`scient-agent/instances/<instance id>`), so the
+sign-in is stored where Scient runs the agent.
+
+When Scient Agent has no model at all, its provider card says so and how to add one.
 
 ## Where it keeps things
 
