@@ -14,7 +14,9 @@ import type {
 import {
   makeWithDependencies,
   projectVoiceModelState,
+  readSharedVoiceSelection,
   recommendVoiceModel,
+  resolveDevelopmentSharedVoiceDirectory,
   resolveVoiceModelFreeBytes,
   toVoiceModelRequestError,
   type DesktopVoiceDependencies,
@@ -119,15 +121,15 @@ function makeFakeEngine(options?: {
   };
 }
 
-function environmentLayer() {
+function environmentLayer(development?: { readonly homeDirectory: string }) {
   return DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
-    homeDirectory: "/tmp/scient-voice-desktop-test",
+    homeDirectory: development?.homeDirectory ?? "/tmp/scient-voice-desktop-test",
     platform: "darwin",
     processArch: "arm64",
     appVersion: "0.0.1",
     appPath: "/repo",
-    isPackaged: true,
+    isPackaged: development === undefined,
     resourcesPath: "/resources",
     runningUnderArm64Translation: false,
   }).pipe(
@@ -161,6 +163,7 @@ function withVoice<A, E>(
     settings: DesktopAppSettings.DesktopAppSettings["Service"],
   ) => Effect.Effect<A, E>,
   initialSettings = DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+  development?: { readonly homeDirectory: string },
 ) {
   return Effect.gen(function* () {
     const voice = yield* makeWithDependencies(dependencyOverrides);
@@ -168,7 +171,7 @@ function withVoice<A, E>(
     return yield* use(voice, settings);
   }).pipe(
     Effect.provide(
-      Layer.mergeAll(DesktopAppSettings.layerTest(initialSettings), environmentLayer()),
+      Layer.mergeAll(DesktopAppSettings.layerTest(initialSettings), environmentLayer(development)),
     ),
     Effect.scoped,
   );
@@ -463,6 +466,139 @@ describe("DesktopVoice model lifecycle", () => {
       },
     );
   });
+});
+
+describe("DesktopVoice in development apps on one machine", () => {
+  const makeHome = Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    return yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-voice-dev-home-" });
+  });
+  /** An engine whose construction options are recorded. */
+  function recordingDependencies(harness: FakeEngineHarness) {
+    const created: Array<{ readonly modelDir: string; readonly sharedModelDir?: string }> = [];
+    return {
+      created,
+      dependencies: {
+        ...dependencies(harness),
+        createEngine: (options) => {
+          created.push(options);
+          return harness.engine;
+        },
+      } satisfies DesktopVoiceDependencies,
+    };
+  }
+
+  it("has no shared folder in a released app", () => {
+    expect(
+      resolveDevelopmentSharedVoiceDirectory({ isDevelopment: false, homeDirectory: "/Users/a" }),
+    ).toBeNull();
+    expect(
+      resolveDevelopmentSharedVoiceDirectory({ isDevelopment: true, homeDirectory: "/Users/a" }),
+    ).toBe("/Users/a/.scient-next/dev-shared/voice");
+  });
+
+  it.effect("gives a released app's engine no shared models folder", () => {
+    const { created, dependencies: recording } = recordingDependencies(makeFakeEngine());
+    return withVoice(recording, () =>
+      Effect.sync(() => {
+        expect(created).toHaveLength(1);
+        expect(created[0]).not.toHaveProperty("sharedModelDir");
+      }),
+    );
+  });
+
+  it.effect("shares models between dev apps but keeps each app's own models folder", () =>
+    Effect.gen(function* () {
+      const homeDirectory = yield* makeHome;
+      const { created, dependencies: recording } = recordingDependencies(makeFakeEngine());
+      yield* withVoice(recording, () => Effect.void, undefined, { homeDirectory });
+      expect(created[0]?.sharedModelDir).toBe(
+        `${homeDirectory}/.scient-next/dev-shared/voice/models`,
+      );
+      expect(created[0]?.modelDir).not.toContain("dev-shared");
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("starts a new dev app from the model last chosen in another one", () =>
+    Effect.gen(function* () {
+      const homeDirectory = yield* makeHome;
+      const shared = `${homeDirectory}/.scient-next/dev-shared/voice`;
+      const bothReady = {
+        states: {
+          [SMALL_MODEL_ID]: ready(SMALL_MODEL_ID),
+          [TURBO_MODEL_ID]: ready(TURBO_MODEL_ID),
+        },
+      } as const;
+
+      // The first dev app has two models and no choice: nothing is guessed.
+      yield* withVoice(
+        dependencies(makeFakeEngine(bothReady)),
+        (voice, settings) =>
+          Effect.gen(function* () {
+            expect((yield* voice.getModelsState).selectedModelId).toBeNull();
+            yield* voice.selectModel({ modelId: TURBO_MODEL_ID });
+            expect((yield* settings.get).voiceSelectedModelId).toBe(TURBO_MODEL_ID);
+          }),
+        undefined,
+        { homeDirectory },
+      );
+      expect(yield* Effect.promise(() => readSharedVoiceSelection(shared))).toBe(TURBO_MODEL_ID);
+
+      // A second dev app, with its own empty settings, starts from that choice.
+      yield* withVoice(
+        dependencies(makeFakeEngine(bothReady)),
+        (voice, settings) =>
+          Effect.gen(function* () {
+            expect((yield* voice.getModelsState).selectedModelId).toBe(TURBO_MODEL_ID);
+            expect((yield* settings.get).voiceSelectedModelId).toBe(TURBO_MODEL_ID);
+          }),
+        undefined,
+        { homeDirectory },
+      );
+
+      // Its own choice is kept over the shared one.
+      yield* withVoice(
+        dependencies(makeFakeEngine(bothReady)),
+        (voice) =>
+          Effect.gen(function* () {
+            expect((yield* voice.getModelsState).selectedModelId).toBe(SMALL_MODEL_ID);
+          }),
+        { ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS, voiceSelectedModelId: SMALL_MODEL_ID },
+        { homeDirectory },
+      );
+
+      // A shared choice this app does not have installed is not selected.
+      yield* withVoice(
+        dependencies(
+          makeFakeEngine({
+            states: {
+              [SMALL_MODEL_ID]: ready(SMALL_MODEL_ID),
+              [MEDIUM_MODEL_ID]: ready(MEDIUM_MODEL_ID),
+            },
+          }),
+        ),
+        (voice) =>
+          Effect.gen(function* () {
+            expect((yield* voice.getModelsState).selectedModelId).toBeNull();
+          }),
+        undefined,
+        { homeDirectory },
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("ignores a shared choice that is unreadable or names an unknown model", () =>
+    Effect.gen(function* () {
+      const homeDirectory = yield* makeHome;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const shared = `${homeDirectory}/.scient-next/dev-shared/voice`;
+      yield* fileSystem.makeDirectory(shared, { recursive: true });
+      for (const contents of ["not json", '{"modelId":"some-other-model"}', "null"]) {
+        yield* fileSystem.writeFileString(`${shared}/selected-model.json`, contents);
+        expect(yield* Effect.promise(() => readSharedVoiceSelection(shared))).toBeNull();
+      }
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
 });
 
 describe("DesktopVoice transcription ownership", () => {

@@ -815,8 +815,30 @@ async function waitForStopped(
   return false;
 }
 
+/**
+ * Voice needs a native helper that is built once per machine, not stored in
+ * Git. A checkout that lacks it takes the one another checkout staged, and a
+ * checkout that has it shares it; nothing is built or downloaded here, and a
+ * failure never stops the app from starting.
+ */
+export function shareDevelopmentVoiceRuntime({
+  root,
+  spawnSync = NodeChildProcess.spawnSync,
+} = {}) {
+  try {
+    spawnSync(
+      process.execPath,
+      [NodePath.join(root, "scripts", "stage-whisper-runtime.ts"), "--dev-cache-only"],
+      { cwd: root, stdio: "ignore", timeout: 30_000 },
+    );
+  } catch {
+    // Voice then reports that it is unavailable, as it did before.
+  }
+}
+
 async function runApp() {
   const paths = resolveLocalDevAppPaths();
+  shareDevelopmentVoiceRuntime({ root: paths.root });
   const coldClaimPath = process.env.SCIENT_DEV_COLD_CLAIM_PATH;
   let coldApprovedPath = null;
   if (coldClaimPath) {

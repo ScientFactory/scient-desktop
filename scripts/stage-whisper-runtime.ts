@@ -58,6 +58,15 @@ interface StageOptions {
   readonly verbose: boolean;
 }
 
+interface CliOptions extends StageOptions {
+  /**
+   * How a development checkout uses the runtimes other checkouts on this
+   * machine have staged: not at all, before building, or without ever building.
+   * Packaging never uses it.
+   */
+  readonly developmentCache: "off" | "use" | "only";
+}
+
 interface RunOptions {
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;
@@ -394,19 +403,128 @@ export async function stageWhisperRuntime(options: StageOptions): Promise<void> 
   }
 }
 
+/** Where development checkouts on one machine keep staged runtimes for each other. */
+export function resolveDevelopmentRuntimeCache(homeDirectory = NodeOS.homedir()): string {
+  return NodePath.join(homeDirectory, ".scient-next", "dev-shared", "voice", "whisper-runtime");
+}
+
+/** One entry for each pinned build, so a checkout never takes another version's helper. */
+export function developmentRuntimeCacheEntry(
+  cacheRoot: string,
+  platform: WhisperRuntimePlatform,
+  arch: WhisperRuntimeArch,
+): string {
+  return NodePath.join(
+    cacheRoot,
+    `${WHISPER_CPP_VERSION}-${WHISPER_CPP_COMMIT.slice(0, 12)}-${platform}-${arch}`,
+  );
+}
+
+/**
+ * Whether a folder holds this exact pinned runtime, complete: its receipt
+ * names this version, commit, platform and architecture, and every file is
+ * present with the recorded size and checksum. This catches a partial copy, a
+ * damaged file and another version. It is not a defence against someone who
+ * can already write to the user's files.
+ */
+export async function isStagedWhisperRuntime(
+  directory: string,
+  platform: WhisperRuntimePlatform,
+  arch: WhisperRuntimeArch,
+): Promise<boolean> {
+  try {
+    const receipt: unknown = JSON.parse(
+      await NodeFSP.readFile(NodePath.join(directory, "provenance.json"), "utf8"),
+    );
+    if (typeof receipt !== "object" || receipt === null) return false;
+    const { component, version, source, files } = receipt as Record<string, unknown>;
+    const recorded = receipt as { readonly platform?: unknown; readonly arch?: unknown };
+    if (
+      component !== "whisper.cpp" ||
+      version !== WHISPER_CPP_VERSION ||
+      recorded.platform !== platform ||
+      recorded.arch !== arch ||
+      (source as { readonly commit?: unknown } | null)?.commit !== WHISPER_CPP_COMMIT ||
+      !Array.isArray(files)
+    )
+      return false;
+    const actual = await collectFiles(directory);
+    return (
+      actual.some((file) => file.file === runtimeExecutableName(platform)) &&
+      actual.length === files.length &&
+      actual.every((file, index) => {
+        const expected = files[index] as Record<string, unknown> | null;
+        return (
+          expected?.file === file.file &&
+          expected.sha256 === file.sha256 &&
+          expected.size === file.size
+        );
+      })
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function replaceDirectoryWithCopy(source: string, destination: string): Promise<void> {
+  const pending = `${destination}.partial-${process.pid}-${NodeCrypto.randomBytes(4).toString("hex")}`;
+  try {
+    await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
+    await NodeFSP.cp(source, pending, { recursive: true, errorOnExist: true });
+    await NodeFSP.rm(destination, { recursive: true, force: true });
+    // Appears complete or not at all.
+    await NodeFSP.rename(pending, destination);
+  } finally {
+    await NodeFSP.rm(pending, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Makes a checkout's runtime and the development cache agree without building
+ * anything: a checkout that lacks the runtime takes the cached one, and a
+ * checkout that has it adds it to the cache. Returns what it did.
+ */
+export async function syncDevelopmentRuntimeCache(input: {
+  readonly cacheRoot: string;
+  readonly output: string;
+  readonly platform: WhisperRuntimePlatform;
+  readonly arch: WhisperRuntimeArch;
+}): Promise<"restored" | "cached" | "current" | "missing"> {
+  const output = NodePath.resolve(input.output);
+  const entry = developmentRuntimeCacheEntry(input.cacheRoot, input.platform, input.arch);
+  const staged = await isStagedWhisperRuntime(output, input.platform, input.arch);
+  const cached = await isStagedWhisperRuntime(entry, input.platform, input.arch);
+  if (staged && cached) return "current";
+  if (staged) {
+    await replaceDirectoryWithCopy(output, entry);
+    return "cached";
+  }
+  if (!cached) return "missing";
+  await replaceDirectoryWithCopy(entry, output);
+  // The copy is checked too: another checkout may have replaced the entry meanwhile.
+  if (await isStagedWhisperRuntime(output, input.platform, input.arch)) return "restored";
+  await NodeFSP.rm(output, { recursive: true, force: true });
+  return "missing";
+}
+
 function hostPlatform(): WhisperRuntimePlatform {
   if (process.platform === "darwin") return "mac";
   if (process.platform === "win32") return "win";
   return "linux";
 }
 
-function parseArguments(args: readonly string[]): StageOptions {
+export function parseArguments(args: readonly string[]): CliOptions {
   const values = new Map<string, string>();
   let verbose = false;
+  let developmentCache: CliOptions["developmentCache"] = "off";
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--verbose") {
       verbose = true;
+      continue;
+    }
+    if (argument === "--dev-cache" || argument === "--dev-cache-only") {
+      developmentCache = argument === "--dev-cache-only" ? "only" : "use";
       continue;
     }
     const value = args[index + 1];
@@ -423,13 +541,25 @@ function parseArguments(args: readonly string[]): StageOptions {
   const output = values.get("--output") ?? defaultOutput;
   if (!["linux", "mac", "win"].includes(platform)) throw new Error("Invalid platform.");
   if (!["arm64", "x64", "universal"].includes(arch)) throw new Error("Invalid architecture.");
-  return { arch, output, platform, verbose };
+  return { arch, output, platform, verbose, developmentCache };
+}
+
+async function runCli(options: CliOptions): Promise<void> {
+  if (options.developmentCache === "off") return stageWhisperRuntime(options);
+  const cache = { ...options, cacheRoot: resolveDevelopmentRuntimeCache() };
+  const before = await syncDevelopmentRuntimeCache(cache);
+  if (before === "restored")
+    console.log(`[voice-runtime] Copied ${WHISPER_CPP_VERSION} from this machine's dev cache.`);
+  if (before !== "missing" || options.developmentCache === "only") return;
+  await stageWhisperRuntime(options);
+  // The runtime is staged either way; sharing it is a convenience.
+  await syncDevelopmentRuntimeCache(cache).catch(() => undefined);
 }
 
 const isEntrypoint =
   process.argv[1] && NodePath.resolve(process.argv[1]) === NodeURL.fileURLToPath(import.meta.url);
 if (isEntrypoint) {
-  stageWhisperRuntime(parseArguments(process.argv.slice(2))).catch((error: unknown) => {
+  runCli(parseArguments(process.argv.slice(2))).catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
   });

@@ -1,7 +1,18 @@
-import { describe, expect, it } from "vite-plus/test";
+// @effect-diagnostics nodeBuiltinImport:off - exercises real filesystem I/O.
+import * as NodeCrypto from "node:crypto";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
+import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
   assertPinnedWhisperServerSource,
+  developmentRuntimeCacheEntry,
+  isStagedWhisperRuntime,
+  parseArguments,
+  resolveDevelopmentRuntimeCache,
+  syncDevelopmentRuntimeCache,
   resolveArchiveExtractionPlan,
   resolvePrebuiltArtifact,
   runtimeExecutableName,
@@ -87,5 +98,121 @@ describe("stage-whisper-runtime", () => {
       args: ["-xf", "/tmp/whisper-bin-x64.zip", "-C", "/tmp/prebuilt"],
       command: "tar",
     });
+  });
+});
+
+describe("the development runtime cache", () => {
+  const temporary: string[] = [];
+  afterEach(async () => {
+    await Promise.all(
+      temporary.splice(0).map((path) => NodeFSP.rm(path, { recursive: true, force: true })),
+    );
+  });
+  async function workspace() {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-voice-cache-"));
+    temporary.push(root);
+    return {
+      cacheRoot: NodePath.join(root, "cache"),
+      checkout: (name: string) => NodePath.join(root, name, "native", "whisper-runtime"),
+    };
+  }
+  const sha256 = (value: string) => NodeCrypto.createHash("sha256").update(value).digest("hex");
+  /** A staged runtime as the script writes it, with a stand-in for the helper. */
+  async function stage(
+    directory: string,
+    overrides: { version?: string; commit?: string; arch?: string } = {},
+  ) {
+    await NodeFSP.mkdir(directory, { recursive: true });
+    const files = { "LICENSE.whisper.cpp": "license", "whisper-server": "helper" };
+    for (const [file, contents] of Object.entries(files))
+      await NodeFSP.writeFile(NodePath.join(directory, file), contents);
+    await NodeFSP.writeFile(
+      NodePath.join(directory, "provenance.json"),
+      JSON.stringify({
+        component: "whisper.cpp",
+        version: overrides.version ?? WHISPER_CPP_VERSION,
+        platform: "mac",
+        arch: overrides.arch ?? "arm64",
+        source: { commit: overrides.commit ?? WHISPER_CPP_COMMIT },
+        files: Object.entries(files).map(([file, contents]) => ({
+          file,
+          sha256: sha256(contents),
+          size: contents.length,
+        })),
+      }),
+    );
+  }
+  const sync = (cacheRoot: string, output: string) =>
+    syncDevelopmentRuntimeCache({ cacheRoot, output, platform: "mac", arch: "arm64" });
+
+  it("lives beside, not inside, any checkout, with one entry for each pinned build", () => {
+    const root = resolveDevelopmentRuntimeCache("/Users/someone");
+    expect(root).toBe("/Users/someone/.scient-next/dev-shared/voice/whisper-runtime");
+    const entry = developmentRuntimeCacheEntry(root, "mac", "arm64");
+    expect(NodePath.basename(entry)).toBe(
+      `${WHISPER_CPP_VERSION}-${WHISPER_CPP_COMMIT.slice(0, 12)}-mac-arm64`,
+    );
+    expect(developmentRuntimeCacheEntry(root, "mac", "x64")).not.toBe(entry);
+  });
+
+  it("gives a checkout without the runtime the one another checkout staged", async () => {
+    const { cacheRoot, checkout } = await workspace();
+    await stage(checkout("first"));
+    expect(await sync(cacheRoot, checkout("second"))).toBe("missing");
+    expect(await sync(cacheRoot, checkout("first"))).toBe("cached");
+    expect(await sync(cacheRoot, checkout("second"))).toBe("restored");
+    expect(await isStagedWhisperRuntime(checkout("second"), "mac", "arm64")).toBe(true);
+    expect((await NodeFSP.readdir(checkout("second"))).toSorted()).toEqual([
+      "LICENSE.whisper.cpp",
+      "provenance.json",
+      "whisper-server",
+    ]);
+    expect(await sync(cacheRoot, checkout("second"))).toBe("current");
+    // Nothing is left half-written beside either folder.
+    expect(await NodeFSP.readdir(NodePath.dirname(checkout("second")))).toEqual([
+      "whisper-runtime",
+    ]);
+    expect(await NodeFSP.readdir(cacheRoot)).toHaveLength(1);
+  });
+
+  it.each([
+    ["another version", { version: "v0.0.0" }],
+    ["another commit", { commit: "0".repeat(40) }],
+    ["another architecture", { arch: "x64" }],
+  ])("does not share or accept a runtime of %s", async (_name, overrides) => {
+    const { cacheRoot, checkout } = await workspace();
+    await stage(checkout("first"), overrides);
+    expect(await isStagedWhisperRuntime(checkout("first"), "mac", "arm64")).toBe(false);
+    expect(await sync(cacheRoot, checkout("first"))).toBe("missing");
+    await expect(NodeFSP.stat(cacheRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("does not accept a cached runtime with a changed, missing or extra file", async () => {
+    const { cacheRoot, checkout } = await workspace();
+    const entry = developmentRuntimeCacheEntry(cacheRoot, "mac", "arm64");
+    for (const damage of [
+      () => NodeFSP.writeFile(NodePath.join(entry, "whisper-server"), "hacked"),
+      () => NodeFSP.rm(NodePath.join(entry, "LICENSE.whisper.cpp")),
+      () => NodeFSP.writeFile(NodePath.join(entry, "extra.dylib"), "extra"),
+    ]) {
+      await NodeFSP.rm(entry, { recursive: true, force: true });
+      await stage(entry);
+      expect(await isStagedWhisperRuntime(entry, "mac", "arm64")).toBe(true);
+      await damage();
+      expect(await isStagedWhisperRuntime(entry, "mac", "arm64")).toBe(false);
+      expect(await sync(cacheRoot, checkout("second"))).toBe("missing");
+      await expect(NodeFSP.stat(checkout("second"))).rejects.toMatchObject({ code: "ENOENT" });
+    }
+    // A checkout that has a good runtime replaces the damaged entry.
+    await stage(checkout("first"));
+    expect(await sync(cacheRoot, checkout("first"))).toBe("cached");
+    expect(await isStagedWhisperRuntime(entry, "mac", "arm64")).toBe(true);
+  });
+
+  it("uses the cache only when asked: packaging stages from pinned sources", () => {
+    expect(parseArguments(["--platform", "mac", "--arch", "arm64"]).developmentCache).toBe("off");
+    expect(parseArguments(["--verbose", "--dev-cache"]).developmentCache).toBe("use");
+    expect(parseArguments(["--dev-cache-only"]).developmentCache).toBe("only");
+    expect(parseArguments(["--dev-cache", "--output", "/tmp/out"]).output).toBe("/tmp/out");
   });
 });
