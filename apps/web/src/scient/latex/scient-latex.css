@@ -3474,25 +3474,38 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-document-footer .scient-latex-context-tools > button {
   height: 22px;
 }
-/* Object options in the compact footer: one quiet line, nothing boxed at rest. */
+/* Object options in the compact footer: one quiet line, nothing boxed at rest.
+   These rules reach the strip's own controls only, never the panels a control
+   opens (figure options, the equation's source, the symbol palette). */
 .scient-document-footer .scient-latex-context-toolbar {
   height: 24px;
   color: var(--muted-foreground);
 }
 /* A caption above a control would not fit the line; the control names itself. */
-.scient-document-footer .scient-latex-context-toolbar label {
+.scient-document-footer .scient-latex-context-toolbar > label {
   display: inline-flex;
   align-items: center;
   gap: 0;
   font-size: 0;
 }
-.scient-document-footer .scient-latex-context-toolbar label > * {
+.scient-document-footer .scient-latex-context-toolbar > label > * {
   font-size: 11px;
 }
-.scient-document-footer .scient-latex-context-toolbar .scient-latex-select {
+.scient-document-footer .scient-latex-context-toolbar > .scient-latex-select,
+.scient-document-footer .scient-latex-context-toolbar > label > .scient-latex-select {
   width: auto;
 }
-.scient-document-footer .scient-latex-context-toolbar [data-slot="select-trigger"],
+.scient-document-footer
+  .scient-latex-context-toolbar
+  > :is(.scient-latex-select, label, div)
+  [data-slot="select-trigger"]:not(
+    :is(
+        .scient-latex-context-menu-panel,
+        .scient-latex-math-source-popover,
+        .scient-latex-symbol-palette-panel
+      )
+      *
+  ),
 .scient-document-footer .scient-latex-context-toolbar [data-latex-number-toggle] {
   height: 22px;
   min-height: 0;
@@ -3504,16 +3517,36 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   color: inherit;
   font-size: 11px;
 }
-.scient-document-footer .scient-latex-context-toolbar [data-slot="select-trigger"]::before,
+.scient-document-footer
+  .scient-latex-context-toolbar
+  > :is(.scient-latex-select, label, div)
+  [data-slot="select-trigger"]:not(
+    :is(
+        .scient-latex-context-menu-panel,
+        .scient-latex-math-source-popover,
+        .scient-latex-symbol-palette-panel
+      )
+      *
+  )::before,
 .scient-document-footer .scient-latex-context-toolbar [data-latex-number-toggle]::before {
   display: none;
 }
-.scient-document-footer .scient-latex-context-toolbar [data-slot="select-trigger"]:hover,
+.scient-document-footer
+  .scient-latex-context-toolbar
+  > :is(.scient-latex-select, label, div)
+  [data-slot="select-trigger"]:not(
+    :is(
+        .scient-latex-context-menu-panel,
+        .scient-latex-math-source-popover,
+        .scient-latex-symbol-palette-panel
+      )
+      *
+  ):hover,
 .scient-document-footer .scient-latex-context-toolbar [data-latex-number-toggle]:hover {
   background: var(--accent);
   color: var(--accent-foreground);
 }
-.scient-document-footer .scient-latex-context-toolbar :is(input, textarea) {
+.scient-document-footer .scient-latex-context-toolbar > label > :is(input, textarea) {
   height: 22px;
   min-height: 0;
 }

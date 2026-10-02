@@ -6,8 +6,8 @@ import {
   ArrowDown,
   ArrowDownToLine,
   ArrowLeftToLine,
-  ArrowRightToLine,
   ArrowRightLeft,
+  ArrowRightToLine,
   ArrowUp,
   ArrowUpToLine,
   BetweenHorizontalEnd,
@@ -26,6 +26,7 @@ import {
   Heading5,
   Heading6,
   Image as ImageIcon,
+  Keyboard,
   List,
   ListOrdered,
   ListTodo,
@@ -37,6 +38,7 @@ import {
   PilcrowLeft,
   PilcrowRight,
   RemoveFormatting,
+  Rows3,
   Search,
   Sigma,
   Split,
@@ -46,7 +48,6 @@ import {
   TextInitial,
   TextQuote,
   Trash2,
-  Rows3,
 } from "lucide-react";
 import {
   useEffect,
@@ -80,6 +81,7 @@ import {
 } from "~/components/ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
+import { WritingShortcutsDialog } from "../../keyboard/WritingShortcutsDialog";
 import { WritingCommandIcon } from "../../writing/commandIcons";
 import { InsertMenu, type InsertMenuAction, type InsertMenuLayout } from "../../writing/InsertMenu";
 import { WRITING_COMMAND_LABELS } from "../../writing/commandNames";
@@ -1178,6 +1180,7 @@ export function ScientMarkdownControls({
   );
   const redoShortcut = scientMarkdownShortcut("redo");
   const [linkEditorHandle] = useState(createLinkEditorHandle);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const dockLinkEditorTriggerId = `scient-markdown-link-dock-${useId()}`;
   const selectionLinkEditorTriggerId = `scient-markdown-link-selection-${useId()}`;
   const slashItems =
@@ -1374,9 +1377,18 @@ export function ScientMarkdownControls({
                 {documentActions}
               </>
             ) : null}
+            <MenuSeparator />
+            {/* The same list of writing shortcuts the LaTeX editor opens. */}
+            <MenuItem onClick={() => setShortcutsOpen(true)}>
+              <Keyboard />
+              <span>Keyboard shortcuts</span>
+            </MenuItem>
           </>
         }
       />
+      {shortcutsOpen ? (
+        <WritingShortcutsDialog open onOpenChange={setShortcutsOpen} initialScope="markdown" />
+      ) : null}
 
       {snapshot.findOpen ? <ScientFindBar controller={controller} snapshot={snapshot} /> : null}
 

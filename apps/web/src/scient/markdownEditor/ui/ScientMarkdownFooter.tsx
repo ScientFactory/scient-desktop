@@ -53,9 +53,14 @@ export function ScientMarkdownFooter({
     () => (document ? countWords(document.textBetween(0, document.content.size, " ", " ")) : 0),
     [document],
   );
+  // A selection of table cells is several ranges, not one.
   const selected =
     state && !state.selection.empty
-      ? countWords(state.doc.textBetween(state.selection.from, state.selection.to, " ", " "))
+      ? state.selection.ranges.reduce(
+          (count, range) =>
+            count + countWords(state.doc.textBetween(range.$from.pos, range.$to.pos, " ", " ")),
+          0,
+        )
       : null;
   return (
     <DocumentFooter

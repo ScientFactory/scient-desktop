@@ -5930,16 +5930,27 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     }
     return selectionContext.slice(0, 1).toUpperCase() + selectionContext.slice(1);
   })();
-  const sourceWords = useMemo(() => countLatexWords(props.source), [props.source]);
+  // Counted only where the footer shows it.
+  const hostsFooter = readerHost !== null;
+  const sourceWords = useMemo(
+    () => (hostsFooter ? countLatexWords(props.source) : 0),
+    [hostsFooter, props.source],
+  );
   const footerSelection = editor?.state.selection;
+  // A selection of table cells is several ranges, not one.
+  const selectedWords =
+    editor && footerSelection && !footerSelection.empty
+      ? footerSelection.ranges.reduce(
+          (count, range) =>
+            count +
+            countWords(editor.state.doc.textBetween(range.$from.pos, range.$to.pos, " ", " ")),
+          0,
+        )
+      : null;
   const footerWords = {
-    total: sourceWords,
-    selected:
-      editor && footerSelection && !footerSelection.empty
-        ? countWords(
-            editor.state.doc.textBetween(footerSelection.from, footerSelection.to, " ", " "),
-          )
-        : null,
+    // The total is an estimate from the source; it never reads below the selection.
+    total: Math.max(sourceWords, selectedWords ?? 0),
+    selected: selectedWords,
   };
   // The same find and replace bar as the Markdown editor.
   const searchBar = find.open ? (
@@ -6459,7 +6470,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                   label="Document status"
                   className="scient-latex-reader-footer"
                   dataRecovery={recovery !== null}
-                  position={readOnly ? "Read-only" : footerPosition}
+                  position={footerPosition}
                   words={footerWords}
                   leading={
                     <>
@@ -6591,7 +6602,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                 </footer>
               )}
               <span className="sr-only" role="status">
-                {readOnly ? "Read-only" : selectionContext}
+                {readOnly ? "Read-only" : ""}
                 {hasLocalDraft ? ". Editing draft" : ""}
                 {shortcutHint ? ". " + shortcutHint : ""}
               </span>

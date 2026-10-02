@@ -196,6 +196,11 @@ export function importKeyboardPreferences(
       const old = value as KeyboardPreferences;
       const overrides = { ...old.overrides };
       const commands = surfaceCommands(mac);
+      // Custom keys can also belong to the writer's own math commands.
+      const owners = authoringCommands(
+        { ...old, customMath: Array.isArray(old.customMath) ? old.customMath : [] },
+        mac,
+      );
       for (const command of commands) {
         if (Object.hasOwn(overrides, command.id)) continue;
         const defaults = effectiveSurfaceBindings({ ...old, overrides: {} }, mac)
@@ -203,8 +208,9 @@ export function importKeyboardPreferences(
           .map((entry) => entry.keys);
         const remaining = defaults.filter(
           (key) =>
-            !commands.some(
+            !owners.some(
               (other) =>
+                typeof other.id === "string" &&
                 scopesOverlap(command.scope, other.scope) &&
                 Array.isArray(old.overrides[other.id]) &&
                 old.overrides[other.id]!.some(

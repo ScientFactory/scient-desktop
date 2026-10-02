@@ -59,15 +59,14 @@
   height: 0.9rem;
 }
 
-/* Narrow panes: the word count goes first, then the position. */
-@container scient-document-footer (max-width: 420px) {
-  .scient-document-footer-count {
-    display: none;
-  }
+/* Narrow panes: where the caret is stays; only the count leaves, and late. */
+.scient-document-footer-position {
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 @container scient-document-footer (max-width: 300px) {
-  .scient-document-footer-status {
+  .scient-document-footer-count {
     display: none;
   }
 }

@@ -46,6 +46,32 @@ describe("approximate LaTeX word count", () => {
     expect(countLatexWords(source)).toBe(12);
   });
 
+  it("keeps a word whole across accents, grouping braces and escaped characters", () => {
+    expect(countLatexWords("caf\\'e")).toBe(1);
+    expect(countLatexWords('na\\"{\\i}ve Erd\\H{o}s Fran\\c{c}ois')).toBe(3);
+    expect(countLatexWords("co{oper}ate")).toBe(1);
+    expect(countLatexWords("a rate of 100\\% is \\$5 well spent")).toBe(8);
+    expect(countLatexWords("\\begin{document}{Hello world}\\end{document}")).toBe(2);
+  });
+
+  it("treats literal code as code, not as comments or prose", () => {
+    // \verb|a%| is one item, and the percent sign in it starts no comment.
+    expect(countLatexWords("\\verb|a%| tail words")).toBe(3);
+    expect(
+      countLatexWords(
+        "Before.\n\\begin{lstlisting}[language=Python]\nx = 1 % not a comment\n\\end{lstlisting}\nAfter.",
+      ),
+    ).toBe(2);
+    expect(countLatexWords("Price \\$5 and $x = \\$ + 1$ done")).toBe(4);
+  });
+
+  it("stays fast when many delimiters are never closed", () => {
+    const source = `${"Some words here \\[ never closed \\begin{equation} $ \n".repeat(20000)}`;
+    const started = performance.now();
+    expect(countLatexWords(source)).toBeGreaterThan(40000);
+    expect(performance.now() - started).toBeLessThan(1500);
+  });
+
   it("counts a file without a document environment, such as an included chapter", () => {
     expect(countLatexWords("\\section{Method}\nTwo words. % not these")).toBe(3);
     expect(countLatexWords("")).toBe(0);

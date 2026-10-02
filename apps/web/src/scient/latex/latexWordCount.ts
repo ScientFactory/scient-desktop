@@ -2,31 +2,113 @@ import { countWords } from "../writing/documentCounts";
 
 const SILENT_ARGUMENT_COMMANDS =
   "label|ref|eqref|pageref|autoref|cref|Cref|cite[a-zA-Z]*|nocite|includegraphics|input|include|bibliography|bibliographystyle|usepackage|documentclass|url|hypersetup|newcommand|renewcommand|newtheorem|theoremstyle|setlength|vspace|hspace";
-const MATH_ENVIRONMENTS =
-  "equation|align|gather|multline|eqnarray|displaymath|math|alignat|flalign";
+/** Environments whose body is not prose: mathematics and literal code. */
+const SKIPPED_ENVIRONMENT =
+  /^(?:equation|align|gather|multline|eqnarray|displaymath|math|alignat|flalign|verbatim|Verbatim|lstlisting|minted)\*?$/u;
+/** Environments whose `\begin` is followed by a braced argument that is not prose. */
+const ARGUMENT_ENVIRONMENTS =
+  "tabular|tabularx|tabulary|longtable|array|minipage|thebibliography|multicols|wrapfigure|subfigure";
+
+/**
+ * One pass over the text that drops what a reader does not read as words:
+ * comments, mathematics and literal code. Each closing delimiter is searched
+ * for at most once after it is known to be missing, so many unmatched openers
+ * cannot make the scan slow.
+ */
+function stripNonProse(text: string): string {
+  const missing = new Set<string>();
+  const closerAfter = (closer: string, from: number): number => {
+    if (missing.has(closer)) return -1;
+    const at = text.indexOf(closer, from);
+    if (at === -1) missing.add(closer);
+    return at;
+  };
+  let out = "";
+  let index = 0;
+  while (index < text.length) {
+    const character = text[index]!;
+    if (character === "\\") {
+      const next = text[index + 1];
+      if (next === "[" || next === "(") {
+        const at = closerAfter(next === "[" ? "\\]" : "\\)", index + 2);
+        if (at !== -1) {
+          out += " ";
+          index = at + 2;
+          continue;
+        }
+      }
+      if (text.startsWith("\\verb", index) && !/[a-zA-Z]/u.test(text[index + 5] ?? "a")) {
+        const delimiterAt = text[index + 5] === "*" ? index + 6 : index + 5;
+        const delimiter = text[delimiterAt];
+        const lineEnd = text.indexOf("\n", delimiterAt);
+        const at = delimiter === undefined ? -1 : text.indexOf(delimiter, delimiterAt + 1);
+        if (at !== -1 && (lineEnd === -1 || at < lineEnd)) {
+          // Literal code reads as one item.
+          out += " x ";
+          index = at + 1;
+          continue;
+        }
+      }
+      if (text.startsWith("\\begin{", index)) {
+        const nameEnd = text.indexOf("}", index + 7);
+        const name = nameEnd === -1 ? "" : text.slice(index + 7, nameEnd);
+        if (SKIPPED_ENVIRONMENT.test(name)) {
+          const closer = `\\end{${name}}`;
+          const at = closerAfter(closer, nameEnd + 1);
+          if (at !== -1) {
+            out += " ";
+            index = at + closer.length;
+            continue;
+          }
+        }
+      }
+      // An escaped character, such as \% or \$, is kept for the later steps.
+      out += character + (next ?? "");
+      index += 2;
+      continue;
+    }
+    if (character === "%") {
+      const lineEnd = text.indexOf("\n", index);
+      index = lineEnd === -1 ? text.length : lineEnd;
+      continue;
+    }
+    if (character === "$") {
+      const display = text[index + 1] === "$";
+      const closer = display ? "$$" : "$";
+      if (!missing.has(closer)) {
+        let at = index + closer.length;
+        while (at < text.length) {
+          if (text[at] === "\\") at += 2;
+          else if (text[at] === "$" && (!display || text[at + 1] === "$")) break;
+          else at += 1;
+        }
+        if (at < text.length) {
+          out += " ";
+          index = at + closer.length;
+          continue;
+        }
+        missing.add(closer);
+      }
+    }
+    out += character;
+    index += 1;
+  }
+  return out;
+}
 
 /**
  * An approximate count of the words a reader would see in a LaTeX file: the
- * preamble, comments, mathematics, commands and reference keys are left out;
- * headings, captions, table cells and theorem text are counted. It is a
- * writing aid for the footer, not a submission-grade count.
+ * preamble, comments, mathematics, literal code, commands and reference keys
+ * are left out; headings, captions, table cells and theorem text are counted.
+ * It is a writing aid for the footer, not a submission-grade count.
  */
 export function countLatexWords(source: string): number {
-  const begin = source.indexOf("\\begin{document}");
+  const opening = "\\begin{document}";
+  const begin = source.indexOf(opening);
   const end = source.lastIndexOf("\\end{document}");
-  let text = begin === -1 ? source : source.slice(begin, end === -1 ? undefined : end);
-  text = text
-    // Comments: an unescaped % to the end of the line.
-    .replace(/(^|[^\\])%.*$/gmu, "$1")
-    // Mathematics is not prose.
-    .replace(
-      new RegExp(`\\\\begin\\{(${MATH_ENVIRONMENTS})\\*?\\}[\\s\\S]*?\\\\end\\{\\1\\*?\\}`, "gu"),
-      " ",
-    )
-    .replace(/\\\[[\s\S]*?\\\]/gu, " ")
-    .replace(/\\\([\s\S]*?\\\)/gu, " ")
-    .replace(/\$\$[\s\S]*?\$\$/gu, " ")
-    .replace(/(^|[^\\])\$[^$]*\$/gu, "$1 ")
+  const body =
+    begin === -1 ? source : source.slice(begin + opening.length, end > begin ? end : undefined);
+  const text = stripNonProse(body)
     // Keys and file names are not words.
     .replace(
       new RegExp(
@@ -37,11 +119,28 @@ export function countLatexWords(source: string): number {
     )
     // A link keeps its visible text only.
     .replace(/\\href\{[^{}]*\}/gu, " ")
-    .replace(/\\(?:begin|end)\{[^{}]*\}(?:\[[^\]]*\])?(?:\{[^{}]*\})?/gu, " ")
+    .replace(
+      new RegExp(
+        `\\\\begin\\{(?:${ARGUMENT_ENVIRONMENTS})\\*?\\}(?:\\[[^\\]]*\\])?\\{[^{}]*\\}`,
+        "gu",
+      ),
+      " ",
+    )
+    .replace(/\\(?:begin|end)\{[^{}]*\}(?:\[[^\]]*\])?/gu, " ")
+    // An accent belongs to its letter: caf\'e is one word.
+    .replace(/\\['"`^~=.]\s*\{?\\?([a-zA-Z])\}?/gu, "$1")
+    .replace(/\\[cHbdruvtk](?![a-zA-Z])\s*\{?([a-zA-Z])\}?/gu, "$1")
+    // Column separators, ties and line breaks separate words.
+    .replace(/\\\\/gu, " ")
+    .replace(/(^|[^\\])[&~]/gu, "$1 ")
+    // An escaped special character is the character itself.
+    .replace(/\\([%&$#_])/gu, "$1")
+    .replace(/\\[{}]/gu, "")
     // Any other command: drop its name and optional arguments, keep its text.
     .replace(/\\[a-zA-Z@]+\*?(?:\[[^\]]*\])*/gu, " ")
     .replace(/\\./gu, " ")
-    .replace(/[{}&~^_]/gu, " ");
+    // Grouping braces do not split a word: co{oper}ate is one word.
+    .replace(/[{}]/gu, "");
   // What is left may still hold bare punctuation; a word has a letter or digit.
   return countWords(text.replace(/(^|\s)[^\p{L}\p{N}\s]+(?=\s|$)/gu, "$1"));
 }

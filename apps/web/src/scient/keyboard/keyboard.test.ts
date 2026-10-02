@@ -178,6 +178,23 @@ describe("portable keyboard preferences", () => {
     expect(getKeyboardPreferences().error).toBe("");
     expect(getKeyboardPreferences().preferences.overrides["latex.bold"]).toEqual(["mod+e"]);
   });
+  it("keeps a writer's own math command on a key a new default would take", () => {
+    const stored = JSON.stringify({
+      ...defaults,
+      writingPresetVersion: 1,
+      customMath: [{ id: "math.custom.flux", label: "Flux", latex: "\\mathbf{q}" }],
+      overrides: { "markdown.inlineCode": [], "math.custom.flux": ["mod+e"] },
+    });
+    const imported = importKeyboardPreferences(stored);
+    expect(imported.overrides["math.custom.flux"]).toEqual(["mod+e"]);
+    expect(imported.overrides["latex.inlineCode"]).toEqual([]);
+    expect(imported.customMath).toHaveLength(1);
+    // The same file saved before presets were versioned at all.
+    const { writingPresetVersion: _version, ...unversioned } = JSON.parse(stored);
+    expect(
+      importKeyboardPreferences(JSON.stringify(unversioned)).overrides["latex.inlineCode"],
+    ).toEqual([]);
+  });
   it("gives older preferences without conflicts the new default shortcuts", () => {
     const imported = importKeyboardPreferences(
       JSON.stringify({ ...defaults, writingPresetVersion: 1, overrides: {} }),
