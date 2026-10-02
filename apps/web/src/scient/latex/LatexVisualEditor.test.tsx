@@ -453,10 +453,33 @@ describe("writing editor source transactions", () => {
       "Page layout\u2026",
       "Keyboard shortcuts",
     ])
+      // A row may end with its shortcut.
       expect(
-        menuItems.some((item) => item.textContent?.trim() === label),
+        menuItems.some((item) => item.textContent?.trim().startsWith(label)),
         label,
       ).toBe(true);
+  });
+
+  it("shows the list menu in the Markdown menu's shape, with its shortcuts", async () => {
+    await mount("A paragraph.");
+    const toolbar = container.querySelector('[role="toolbar"][aria-label="Writing tools"]')!;
+    await act(() =>
+      toolbar.querySelector<HTMLButtonElement>('button[aria-label="List: None"]')!.click(),
+    );
+    const rows = [...document.body.querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
+    expect(rows.map((row) => row.textContent?.trim().replace(/\s+/gu, " "))).toEqual([
+      expect.stringMatching(/^Bullet list.+/u),
+      expect.stringMatching(/^Numbered list.+/u),
+      "Description list",
+      "No list",
+    ]);
+    // Outside a list, "No list" is the current state, as in Markdown.
+    expect(rows[3]!.getAttribute("aria-checked")).toBe("true");
+    expect(rows[0]!.getAttribute("aria-keyshortcuts")).toBeTruthy();
+    // The current kind is shown by the row itself, not by a separate mark.
+    expect(document.body.querySelector('[data-slot="menu-radio-item-indicator"]')).toBeNull();
+    await act(() => rows[0]!.click());
+    expect(current).toContain("\\begin{itemize}");
   });
 
   it.each([false, true])(

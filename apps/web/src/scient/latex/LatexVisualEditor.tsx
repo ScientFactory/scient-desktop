@@ -64,7 +64,7 @@ import { ReaderBarHostContext, useHostedReaderShortcuts } from "../writing/reade
 import { DocumentFooter } from "../writing/DocumentFooter";
 import { countSelectedWords } from "../writing/caretStatus";
 import { countLatexWords } from "./latexWordCount";
-import { commandShortcut } from "../keyboard/presentation";
+import { commandShortcut, menuShortcut } from "../keyboard/presentation";
 import { WritingCommandIcon } from "../writing/commandIcons";
 import { WRITING_COMMAND_LABELS } from "../writing/commandNames";
 import { scientMarkdownShortcut } from "../markdownEditor/shortcuts";
@@ -85,7 +85,6 @@ import {
   MenuCheckboxItem,
   MenuGroup,
   MenuGroupLabel,
-  MenuRadioItemIndicator,
   MenuSeparator,
 } from "~/components/ui/menu";
 import "../markdownEditor/scient-markdown-editor.css";
@@ -148,7 +147,7 @@ import { LatexVisualSearch, useLatexVisualSearch } from "./useLatexVisualSearch"
 import { clampPdfPage, stepPdfZoom } from "../pdf/pdfReaderModel";
 import { useLatexPinchZoom } from "./useLatexPinchZoom";
 import {
-  List,
+  LayoutList,
   Heading1,
   Heading2,
   Heading3,
@@ -5542,13 +5541,11 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     <>
       <MenuRadioGroup value={activeStyle}>
         <DockCommandRadioItem value="paragraph" disabled={textReadOnly} onClick={setStandardStyle}>
-          <span className="flex items-center justify-between gap-2">
-            <MenuRow
-              icon={<WritingCommandIcon command="text" />}
-              label={WRITING_COMMAND_LABELS.text}
-            />
-            <MenuRadioItemIndicator />
-          </span>
+          <MenuRow
+            icon={<WritingCommandIcon command="text" />}
+            label={WRITING_COMMAND_LABELS.text}
+            shortcut={menuShortcut("latex.paragraph")}
+          />
         </DockCommandRadioItem>
       </MenuRadioGroup>
       <MenuSeparator />
@@ -5585,17 +5582,23 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
           </ScientTooltip>
         </div>
         <MenuRadioGroup value={textStyle?.value ?? "paragraph"}>
-          {headingStyles.map(({ level, label }) => (
+          {headingStyles.map(({ level, label, command }) => (
             <DockCommandRadioItem
               key={level}
               value={String(level)}
               disabled={textReadOnly}
               onClick={() => setHeadingStyle(level, !headingNumbered)}
             >
-              <span className="flex items-center justify-between gap-2">
-                <MenuRow icon={headingIcon(level)} label={label} />
-                <MenuRadioItemIndicator />
-              </span>
+              <MenuRow
+                icon={headingIcon(level)}
+                label={label}
+                // "paragraph" here is the Paragraph heading, not the Text style.
+                shortcut={
+                  command === "section" || command === "subsection" || command === "subsubsection"
+                    ? menuShortcut(`latex.${command}`)
+                    : undefined
+                }
+              />
             </DockCommandRadioItem>
           ))}
         </MenuRadioGroup>
@@ -5603,13 +5606,10 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       <MenuSeparator />
       <MenuRadioGroup value={textStyle?.value ?? "paragraph"}>
         <DockCommandRadioItem value="quote" disabled={textReadOnly} onClick={setQuoteStyle}>
-          <span className="flex items-center justify-between gap-2">
-            <MenuRow
-              icon={<WritingCommandIcon command="quote" />}
-              label={WRITING_COMMAND_LABELS.quote}
-            />
-            <MenuRadioItemIndicator />
-          </span>
+          <MenuRow
+            icon={<WritingCommandIcon command="quote" />}
+            label={WRITING_COMMAND_LABELS.quote}
+          />
         </DockCommandRadioItem>
       </MenuRadioGroup>
     </>
@@ -5651,47 +5651,67 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       <DockDivider />
     </>
   );
+  // Some places cannot hold a list (a statement's title, a selected figure).
+  const listsUnavailable =
+    !textReadOnly &&
+    listState !== null &&
+    listState !== undefined &&
+    listState.type === null &&
+    !listState.available.bulletList &&
+    !listState.available.orderedList;
   const writingListItems = (
     <>
-      <MenuRadioGroup value={listState?.type ?? ""}>
+      <MenuRadioGroup value={listState?.type ?? "none"}>
         {(
           [
             {
               value: "bulletList",
               label: WRITING_COMMAND_LABELS.bulletList,
               icon: <WritingCommandIcon command="bulletList" />,
+              shortcut: menuShortcut("latex.bulletList"),
             },
             {
               value: "orderedList",
               label: WRITING_COMMAND_LABELS.numberedList,
               icon: <WritingCommandIcon command="numberedList" />,
+              shortcut: menuShortcut("latex.orderedList"),
             },
-            { value: "description", label: "Description list", icon: <List className="size-4" /> },
+            {
+              value: "description",
+              label: "Description list",
+              icon: <LayoutList className="size-4" />,
+              shortcut: undefined,
+            },
           ] as const
-        ).map(({ value, label, icon }) => (
+        ).map(({ value, label, icon, shortcut }) => (
           <DockCommandRadioItem
             key={value}
             value={value}
             disabled={textReadOnly || !listState?.available[value]}
+            aria-keyshortcuts={shortcut?.ariaKeyShortcuts}
             onClick={() => setListStyle(value)}
           >
-            <span className="flex items-center justify-between gap-2">
-              <MenuRow icon={icon} label={label} />
-              <MenuRadioItemIndicator />
-            </span>
+            <MenuRow icon={icon} label={label} shortcut={shortcut} />
           </DockCommandRadioItem>
         ))}
+        <MenuSeparator />
+        <DockCommandRadioItem
+          value="none"
+          disabled={textReadOnly || (Boolean(listState?.type) && !listState?.canRemove)}
+          onClick={() => {
+            // Outside a list this is the current state, not a change.
+            if (listState?.type) setListStyle(null);
+          }}
+        >
+          <MenuRow
+            icon={<WritingCommandIcon command="noList" />}
+            label={WRITING_COMMAND_LABELS.noList}
+          />
+        </DockCommandRadioItem>
       </MenuRadioGroup>
-      <MenuSeparator />
-      <DockCommandItem
-        disabled={textReadOnly || !listState?.canRemove}
-        onClick={() => setListStyle(null)}
-      >
-        <MenuRow
-          icon={<WritingCommandIcon command="noList" />}
-          label={WRITING_COMMAND_LABELS.noList}
-        />
-      </DockCommandItem>
+      {listsUnavailable ? (
+        <p className="scient-latex-menu-note">A list can't be started at this place.</p>
+      ) : null}
     </>
   );
   const activeListLabel =
@@ -5763,10 +5783,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                 if (mathMenu?.placement !== action.id) action.run();
               }}
             >
-              <span className="flex items-center justify-between gap-2">
-                {action.label}
-                <MenuRadioItemIndicator />
-              </span>
+              {action.label}
             </DockCommandRadioItem>
           ))}
       </MenuRadioGroup>

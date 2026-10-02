@@ -3569,3 +3569,41 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   flex: 0 1 auto;
   min-width: 0;
 }
+
+/* A quiet line under a menu's items, saying why they are unavailable. */
+.scient-latex-menu-note {
+  margin: 2px 0 0;
+  border-top: 1px solid var(--border);
+  padding: 6px 8px 4px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+/* Recovered work offered by the surface itself (Source and Split): one quiet
+   line under the header, never a share of the document's height. Its details
+   open downward, over the document. */
+.scient-latex-surface > .scient-latex-visual-recovery {
+  position: relative;
+  flex: none;
+  min-height: 28px;
+  border-bottom: 1px solid var(--border);
+  padding: 2px 8px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 16px;
+}
+.scient-latex-surface > .scient-latex-visual-recovery > .scient-latex-visual-recovery-panel {
+  top: 100%;
+  bottom: auto;
+  border-top: 0;
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 8px 20px -12px rgb(0 0 0 / 0.35);
+}
+.scient-latex-surface > p[role="status"] {
+  flex: none;
+  border-bottom: 1px solid var(--border);
+  padding: 4px 8px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}

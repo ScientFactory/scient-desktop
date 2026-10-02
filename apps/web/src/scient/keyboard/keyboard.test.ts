@@ -195,6 +195,20 @@ describe("portable keyboard preferences", () => {
       importKeyboardPreferences(JSON.stringify(unversioned)).overrides["latex.inlineCode"],
     ).toEqual([]);
   });
+  it("keeps a custom key from the second preset when the third adds a default on it", () => {
+    const imported = importKeyboardPreferences(
+      JSON.stringify({
+        ...defaults,
+        writingPresetVersion: 2,
+        overrides: { "latex.bold": ["mod+shift+8"] },
+      }),
+    );
+    expect(imported.overrides["latex.bold"]).toEqual(["mod+shift+8"]);
+    // The new default on that key is switched off; the key sequence stays.
+    expect(imported.overrides["latex.bulletList"]).toEqual(["alt+p b"]);
+    expect(imported.overrides["latex.orderedList"]).toBeUndefined();
+    expect(imported.writingPresetVersion).toBe(defaults.writingPresetVersion);
+  });
   it("gives older preferences without conflicts the new default shortcuts", () => {
     const imported = importKeyboardPreferences(
       JSON.stringify({ ...defaults, writingPresetVersion: 1, overrides: {} }),

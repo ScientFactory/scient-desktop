@@ -102,3 +102,12 @@ export function commandShortcut(
     ? presentCommandKeys(commandId, platform)
     : undefined;
 }
+
+/** For a menu row: the first key only. The shortcuts list shows every key. */
+export function menuShortcut(
+  commandId: string,
+  platform = runtimePlatform(),
+): ShortcutPresentation | undefined {
+  const shortcut = commandShortcut(commandId, platform);
+  return shortcut ? { ...shortcut, display: shortcut.display.split(" / ")[0]! } : undefined;
+}

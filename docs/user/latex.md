@@ -44,7 +44,8 @@ heading immediately and keeps the menu open. The heading footer uses the same
 label and pressed state. In ordinary
 text, choose numbering and then a heading level in the same menu. Changing
 heading level preserves the selected numbering setting; Text and Quote are
-unaffected. Chapter-based classes also offer Chapter. The toolbar button shows
+unaffected. Ctrl/Cmd+Alt+0 is Text and Ctrl/Cmd+Alt+1, 2 and 3 are the first
+three heading levels. Chapter-based classes also offer Chapter. The toolbar button shows
 the icon of the current style. The toolbar holds, in order: undo and redo; bold,
 italic, inline code (Ctrl/Cmd+E) and link (Ctrl/Cmd+K); Style; Lists; Insert;
 Math; and Document. Link is unavailable when the selection spans more than one
@@ -68,9 +69,10 @@ Title, author, and date remain editable on paper. **Document > Title & authors >
 explicitly restores the standard block. **Document > Use paragraph as title** moves a
 plain paragraph there, with confirmation before replacing an existing title.
 
-**Lists** offers Bullet list, Numbered list, Description list, and No list. A
-checkmark identifies the current
-type. Choose a type on an empty paragraph to start writing, or select paragraphs
+**Lists** offers Bullet list, Numbered list, Description list, and No list. The
+current type is highlighted, and each row shows its shortcut: Ctrl/Cmd+Shift+8
+for a bullet list, Ctrl/Cmd+Shift+7 for a numbered list. Where a list cannot
+start, such as on a selected figure, the menu says so. Choose a type on an empty paragraph to start writing, or select paragraphs
 to turn them into items. With a caret inside a list, changing type affects that
 list at its current nesting level; selecting particular items changes only those
 items. Choosing the active type leaves it unchanged. No list

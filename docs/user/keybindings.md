@@ -92,7 +92,10 @@ its type. Operating-system reservations still apply. Matrix copy/swap actions re
 
 Write has configurable formatting, heading, list, insertion, and outline
 shortcuts. For example, Alt+P then 1/2/3 chooses a section level, and Alt+P
-then B/N chooses a bullet/numbered list. Ctrl/Cmd+B and I format text. Inside
+then B/N chooses a bullet/numbered list. The Markdown editor's keys work too:
+Ctrl/Cmd+Alt+0 for Text, Ctrl/Cmd+Alt+1/2/3 for the section levels,
+Ctrl/Cmd+Shift+8 and 7 for a bullet or numbered list. Ctrl/Cmd+B and I format
+text; Ctrl/Cmd+E is inline code and Ctrl/Cmd+K is a link. Inside
 a visual equation, math commands operate on the mathematical selection. Table
 shortcuts act while a table cell has focus: Alt+T then R,A adds a row, and C,A
 adds a column. The matching D sequences remove a row or column while keeping

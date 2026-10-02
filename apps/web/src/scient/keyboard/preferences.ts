@@ -15,11 +15,13 @@ const LEGACY_KEY = "scient.mathInputBindings.v1";
  * older preset keep every custom key; a new default that would collide with
  * one of them is switched off instead of invalidating the whole file.
  * 2: Inline code (mod+e) and Link (mod+k) in the LaTeX editor.
+ * 3: the Markdown editor's keys for Text, the first three headings and the
+ *    two lists, beside the key sequences.
  */
-const WRITING_PRESET_VERSION = 2;
+const WRITING_PRESET_VERSION = 3;
 export interface KeyboardPreferences {
   readonly version: 1;
-  readonly writingPresetVersion?: 1 | 2;
+  readonly writingPresetVersion?: 1 | 2 | 3;
   readonly customMath?: readonly CustomMathCommand[];
   readonly overrides: Readonly<Record<string, readonly string[]>>;
   readonly mathPreset: "lyx" | "minimal";
@@ -95,8 +97,11 @@ export function validateKeyboardPreferences(
   if (
     v.version !== 1 ||
     (v.writingPresetVersion !== undefined &&
-      v.writingPresetVersion !== 1 &&
-      v.writingPresetVersion !== WRITING_PRESET_VERSION) ||
+      !(
+        Number.isInteger(v.writingPresetVersion) &&
+        v.writingPresetVersion >= 1 &&
+        v.writingPresetVersion <= WRITING_PRESET_VERSION
+      )) ||
     !v.overrides ||
     typeof v.overrides !== "object" ||
     Array.isArray(v.overrides) ||
