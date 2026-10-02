@@ -4,7 +4,7 @@ Use the LaTeX workspace to write a paper, report, thesis, or other scientific
 document while seeing the compiled PDF beside its source. Opening a `.tex` file
 offers Source, Split, Visual, and PDF across the top. Split places Source on the
 left and your last chosen PDF or Visual view on the right. PDF is the initial
-right-side choice. Use the PDF/Visual selector beside Update PDF to
+right-side choice. Use the PDF/Visual selector in the same header row to
 change it, and drag the divider to resize either side.
 
 ## Start a document
@@ -36,7 +36,7 @@ service is required for the writing workflow.
 Write is a source-derived writing canvas, not an editable PDF. You can start
 writing before installing or running TeX. The canvas uses a document workspace
 with a compact toolbar, a collapsible outline, and a contextual
-status bar. The **Text** menu includes Text, heading levels, and Quote, using
+status bar. The **Style** menu includes Text, heading levels, and Quote, using
 plain labels and a checkmark for the current style. Heading levels are grouped
 under **Headings**, with a centered **Numbered** button. A filled gray button
 with a checkmark means numbering is on; an outlined button without a checkmark means it is off. It updates the current
@@ -44,19 +44,21 @@ heading immediately and keeps the menu open. The heading footer uses the same
 label and pressed state. In ordinary
 text, choose numbering and then a heading level in the same menu. Changing
 heading level preserves the selected numbering setting; Text and Quote are
-unaffected. Chapter-based classes also offer Chapter. The toolbar button always
-says Text (or T when narrow). The toolbar supports bold, italic,
-lists, undo and redo. **Insert** opens a searchable menu for figures, tables, citations, cross-references,
+unaffected. Chapter-based classes also offer Chapter. The toolbar button shows
+the icon of the current style. The toolbar holds, in order: undo and redo; bold,
+italic, inline code (Ctrl/Cmd+E) and link (Ctrl/Cmd+K); Style; Lists; Insert;
+Math; and Document. Link is unavailable when the selection spans more than one
+paragraph. **Insert** opens a searchable menu for figures, tables, citations, cross-references,
 footnotes, links and statements. Equations and structures live in **Math**. Heading styles live in the style menu rather
 than being duplicated in Insert. Type `/` on an empty
 paragraph or press Ctrl/Cmd+/ to open it; use the arrow keys and Enter to choose.
 The writing toolbar stays fixed at the top on one row. When the pane narrows,
-labels disappear first (Text becomes **T**); less-used groups then move into
+labels disappear first (Math keeps its sigma); less-used groups then move into
 **More**. Insert holds elements and references; Lists holds list actions.
 **Document > Page layout** and **Document > Document style** open two sections of
 one settings dialog. **Outline** is a tab
-in the footer's Pages sidebar. Selected-object options appear between **Fit
-width** and **Search** in the footer; narrow panes use an object-named menu.
+in the sidebar, which opens from the header row. Selected-object options appear
+on the left of the footer; narrow panes use an object-named menu.
 **Document > Title & authors** groups Edit title, Edit authors, Edit date and
 Add title block. Editing jumps to the corresponding on-paper field. A missing or
 custom title offers an explicit creation/source action instead of silently adding
@@ -66,12 +68,12 @@ Title, author, and date remain editable on paper. **Document > Title & authors >
 explicitly restores the standard block. **Document > Use paragraph as title** moves a
 plain paragraph there, with confirmation before replacing an existing title.
 
-**Lists** offers Bulleted list, Numbered list, Description list, Indent item,
-Outdent item, and Remove list formatting. A checkmark identifies the current
+**Lists** offers Bullet list, Numbered list, Description list, and No list. A
+checkmark identifies the current
 type. Choose a type on an empty paragraph to start writing, or select paragraphs
 to turn them into items. With a caret inside a list, changing type affects that
 list at its current nesting level; selecting particular items changes only those
-items. Choosing the active type leaves it unchanged. Remove list formatting
+items. Choosing the active type leaves it unchanged. No list
 keeps the content, including supported equations and description terms.
 
 In bulleted and numbered lists, Enter creates an item; Enter on an empty item
@@ -83,10 +85,23 @@ ready to fill in. Conversion to description currently supports plain paragraphs;
 rich or nested content that its adapter cannot preserve is disabled. Custom
 source-only lists remain editable in LaTeX source.
 
-The footer shares PDF's page navigation, zoom and search controls. Minus/plus
-use five-percent steps in the 25–500% range; click the percentage to reset to
-actual size. **Fit width** fills the available pane and follows
-pane resizing automatically. Zoom changes only the on-screen view, not the LaTeX
+PDF, Visual and Split use one header row. It holds the view switch and the
+reader controls: sidebar, page number and arrows, zoom, search, Rebuild and
+More. Minus and plus sit on either side of the zoom percentage and use
+five-percent steps in the 25–500% range. Click the percentage to fit the page
+to the pane width; the fit follows pane resizing automatically. Actual size is
+in More. Search opens a find and replace bar under the writing toolbar, with
+Replace and Replace all.
+
+A thin footer stays under the document. On the left it shows the options of the
+selected object, such as a table, figure, equation or statement. On the right it
+shows where the caret is, for example "Section" or "Table · row 3, column 2",
+and the word count:
+"1,284 words", or "12 of 1,284 words" while text is selected. The count is an
+estimate from the source; math, code, comments, commands and reference keys are
+left out.
+
+Zoom changes only the on-screen view, not the LaTeX
 page dimensions or PDF layout. Pinch with two fingers on a trackpad, or hold Ctrl
 while scrolling, to zoom smoothly around the pointer without fixed percentage
 steps. Ordinary two-finger scrolling continues to move through the document.
@@ -231,8 +246,8 @@ The writing surface uses a vertical stack of pages. Paragraphs can continue
 across sheets, headings stay with following text when space allows, and tall
 supported tables continue at row boundaries. Description lists and the contents
 list can also continue between entries. These are live editor page breaks;
-the compiler still determines final PDF pagination. **Fit width** adjusts to the
-available workspace, and the status bar
+the compiler still determines final PDF pagination. Clicking the zoom percentage
+fits the page to the available workspace, and the page number in the header row
 shows the visible page. Choose **Outline** to open document navigation.
 Table tools appear in the existing footer; selecting a table does not add
 controls, labels, or empty caption fields to the paper.
@@ -242,6 +257,8 @@ taller than a page still need review in the compiled PDF.
 
 Write and PDF preview keep build messages closed until you select the warning
 or error badge in the header. This includes the shell-escape-disabled notice.
+The messages open as a card over the document and do not move it. Select the
+badge again, press Escape, or click anywhere else to close the card.
 
 Standard `\title`, `\author`, and `\date` metadata appears as the document's
 title block at `\maketitle` and can be edited directly on the page. Fields size
@@ -408,12 +425,13 @@ Opening a stale PDF requests a build. While PDF is visible, Scient also rebuilds
 on Ctrl/Cmd+S. Typing alone does not request a build. Builds wait for saves,
 and keep the last successful PDF readable while building.
 A failed revision requires an explicit rebuild instead of repeated automatic attempts.
-**Export → PDF** saves a
+**More → Export → PDF** saves a
 copy only when the latest PDF matches the saved buffer and build dependencies.
 Update the PDF first if export is unavailable.
 
 An agent can still explicitly request a build through the existing tools. Errors and
-warnings from the build can be opened from the status chips above the document; each one shows
+warnings from the build can be opened from the error and warning counts in the
+header row, or from **Build failed · View details**; each one shows
 the file and line it came from when the compiler reported one. Click a message
 that names a project file to open that file at the reported line.
 
@@ -427,7 +445,8 @@ visual quality matters.
 ## Export to Word
 
 Save the source, choose the document root in the LaTeX toolbar if Scient has not
-found one, then select **Export ▸ Word**. Scient converts the selected LaTeX
+found one, then open **More** in the header row and select **Export ▸ Word**.
+Scient converts the selected LaTeX
 document to a `.docx` file; the first export offers to install Pandoc if it is
 not yet available. The export uses the root file and its literal `\input`,
 `\include`, and `\subfile` references. As in LaTeX, these resolve from the root

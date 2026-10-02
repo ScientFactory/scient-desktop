@@ -62,7 +62,17 @@ relocate an already open file automatically.
   line can be shown. Relative image paths resolve from the Markdown file's
   folder, including nested folders; inline sizes and alignment are preserved.
 - In an editable table cell, **Enter** starts a new line in the same cell without
-  paragraph spacing. **Tab** and **Shift-Tab** move between cells.
+  paragraph spacing. **Tab** and **Shift-Tab** move between cells. While the
+  caret is in a table, the footer shows the table actions (add row, add column,
+  column alignment) and a **More table actions** menu, which includes **Select
+  whole table**.
+- A thin footer stays under an editable Markdown document. On the right it
+  shows where the caret is, for example "Heading 2" or "Table · row 3,
+  column 2", and the word count: "1,284 words", or "12 of 1,284 words" while
+  text is selected.
+- In the formatting tools, **Insert** has a search field. **More actions** holds
+  **Find & Replace**, which opens a bar under the formatting tools, and
+  **Keyboard shortcuts**, which opens the list of writing shortcuts.
 - Code blocks and HTML/YAML/TOML source boxes stay directly editable and offer
   **Wrap lines** and **Copy code** in their headers, matching chat. Wrapping
   follows **Settings → Word wrap**, which defaults on. A block's wrap button

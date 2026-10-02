@@ -69,8 +69,19 @@ formatting controls preserves scroll and selection where the surfaces allow.
   `t3code.renderMarkdown` preference). Formatting controls live in the rich surface and remain
   collapsed until the user opens them or begins editing.
 - The editing controls provide text formatting, lists, headings, links, and an overflow home for
-  block insertion and less common actions. Find and replace moves to the editor's native search
-  panel now; a redesigned Scient search surface is a follow-up, not part of this control row.
+  block insertion and less common actions. The row, its buttons, menus and overflow are the shared
+  kit in `apps/web/src/scient/writing/dockChrome.tsx` (styles in `dockChrome.css`), which the LaTeX
+  Visual editor also uses. Command names and icons that both editors offer come from
+  `writing/commandNames.ts` and `writing/commandIcons.tsx`. Insert is the shared
+  `writing/InsertMenu.tsx` with a search field; Markdown supplies its own items. Find and replace
+  is the shared `writing/ScientFindBar.tsx`, shown under this row. **More actions** ends with
+  **Keyboard shortcuts**, which opens the writing shortcuts dialog. Shortcut presentation helpers
+  live in `apps/web/src/scient/keyboard/presentation.ts`.
+- A thin footer (`ui/ScientMarkdownFooter.tsx` over the shared `writing/DocumentFooter.tsx`) is
+  always present under the document: one 28px line, so selecting something never moves the
+  document. Its left side holds the options of the selected object, which today means a table.
+  Its right side shows where the caret is ("Heading 2", "Table · row 3, column 2") and the word
+  count ("1,284 words", or "12 of 1,284 words" while text is selected).
 - Table insertion opens the existing nested-menu surface with a compact 8-by-8 visual size picker.
   Pointer hover and two-dimensional keyboard focus preview the selected rectangle without touching
   the document. Approaching an edge expands that axis progressively, up to 15-by-15. The card grows
@@ -378,8 +389,10 @@ wide tables scroll within their existing wrapper. Keep this adapter limited to i
 paragraph-based cells should use the upstream handler.
 
 The active table has a small, out-of-flow select button only in write mode, plus the same action
-in the dock's unified **More actions** menu. The dock keeps only the common add-row, add-column,
-and alignment controls visible; it does not add a second table-specific ellipsis. Both table
+(**Select whole table**) in the footer's **More table actions** menu. While the caret is in a
+table, the footer shows the common add-row, add-column, and alignment controls, followed by that
+menu with the remaining row, column, alignment and delete actions. The dock has no table group
+and does not expand when the caret enters a table. Both table
 selection actions create the upstream `CellSelection` spanning every cell: selection
 does not modify source, create an undo step, or start a save. The chrome wraps `TableView` without
 replacing its content or column machinery. The handle and unselected table cells also open one
@@ -588,9 +601,18 @@ apps/web/src/scient/markdownEditor/
   prosemirror/   Schema, source projection, commands, plugins, session, controller
   nodes/         Owned math, code, image, reference, raw, task, and wiki NodeViews
   persistence/   Renderer registry, leases, ordered transport, watcher/cache adapters
-  ui/            Formatting, find, lifecycle, exceptional recovery, and wiki-link controls
+  ui/            Formatting, footer, lifecycle, exceptional recovery, and wiki-link controls
   assets/        Authenticated image-upload client
   *.tsx          File/workspace lifetime adapters
+
+apps/web/src/scient/writing/
+  dockChrome.tsx, dockChrome.css  Bar row, buttons, menus and overflow shared with LaTeX
+  commandNames.ts, commandIcons.tsx  One name and icon per command both editors offer
+  InsertMenu.tsx, ScientFindBar.tsx, DocumentFooter.tsx  Shared Insert menu, find and replace
+                   bar, and footer
+
+apps/web/src/scient/keyboard/
+  presentation.ts  How a shortcut is shown next to a command
 
 apps/server/src/scient/markdown/
   WorkspaceMarkdownFiles.ts  Atomic create, rename, binary asset operations
