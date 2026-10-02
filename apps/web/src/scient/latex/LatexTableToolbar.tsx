@@ -10,6 +10,7 @@ interface Props {
   tableRoot: RefObject<HTMLElement | null>;
   selected: boolean;
   editable: boolean;
+  structureEditable: boolean;
   row: number;
   column: number;
   rowCount: number;
@@ -151,30 +152,67 @@ export function LatexTableToolbar(props: Props) {
             "Row",
             <>
               {action("Select row", props.onSelectRow)}
-              {action("Insert row above", () => props.onAddRow(props.row - 1))}
-              {action("Insert row below", () => props.onAddRow(props.row))}
-              {action("Move row up", () => props.onMoveRow(-1), props.row === 0)}
-              {action("Move row down", () => props.onMoveRow(1), props.row >= props.rowCount - 1)}
-              {action("Delete row", props.onRemoveRow, props.rowCount <= 1)}
+              {action(
+                "Insert row above",
+                () => props.onAddRow(props.row - 1),
+                !props.structureEditable,
+              )}
+              {action(
+                "Insert row below",
+                () => props.onAddRow(props.row),
+                !props.structureEditable,
+              )}
+              {action(
+                "Move row up",
+                () => props.onMoveRow(-1),
+                !props.structureEditable || props.row === 0,
+              )}
+              {action(
+                "Move row down",
+                () => props.onMoveRow(1),
+                !props.structureEditable || props.row >= props.rowCount - 1,
+              )}
+              {action(
+                "Delete row",
+                props.onRemoveRow,
+                !props.structureEditable || props.rowCount <= 1,
+              )}
             </>,
           )}
           {menu(
             "Column",
             <>
               {action("Select column", props.onSelectColumn)}
-              {action("Insert column left", () => props.onAddColumn(props.column - 1))}
-              {action("Insert column right", () => props.onAddColumn(props.column))}
-              {action("Move column left", () => props.onMoveColumn(-1), props.column === 0)}
+              {action(
+                "Insert column left",
+                () => props.onAddColumn(props.column - 1),
+                !props.structureEditable,
+              )}
+              {action(
+                "Insert column right",
+                () => props.onAddColumn(props.column),
+                !props.structureEditable,
+              )}
+              {action(
+                "Move column left",
+                () => props.onMoveColumn(-1),
+                !props.structureEditable || props.column === 0,
+              )}
               {action(
                 "Move column right",
                 () => props.onMoveColumn(1),
-                props.column >= props.columnCount - 1,
+                !props.structureEditable || props.column >= props.columnCount - 1,
               )}
-              {action("Delete column", props.onRemoveColumn, props.columnCount <= 1)}
+              {action(
+                "Delete column",
+                props.onRemoveColumn,
+                !props.structureEditable || props.columnCount <= 1,
+              )}
               <label>
                 Alignment
                 <LatexSelect
                   aria-label="Selected column alignment"
+                  disabled={!props.structureEditable}
                   value={props.alignment}
                   onValueChange={(value) => props.onAlignment(value)}
                   size="compact"
@@ -196,6 +234,7 @@ export function LatexTableToolbar(props: Props) {
                 Style
                 <LatexSelect
                   aria-label="Table style"
+                  disabled={!props.structureEditable}
                   value={props.style}
                   onValueChange={(value) => props.onStyle(value)}
                   size="compact"
@@ -211,7 +250,7 @@ export function LatexTableToolbar(props: Props) {
                 <LatexSelect
                   aria-label="Table width behavior"
                   value={props.width}
-                  disabled={props.width === "long"}
+                  disabled={!props.structureEditable || props.width === "long"}
                   onValueChange={(value) => props.onWidth(value)}
                   size="compact"
                   options={[
@@ -222,7 +261,12 @@ export function LatexTableToolbar(props: Props) {
                 />
               </label>
               <label className="scient-latex-context-checkbox">
-                <input type="checkbox" checked={props.header} onChange={props.onHeader} />
+                <input
+                  type="checkbox"
+                  checked={props.header}
+                  disabled={!props.structureEditable}
+                  onChange={props.onHeader}
+                />
                 Header row
               </label>
               {props.captionEditable ? (
@@ -252,7 +296,11 @@ export function LatexTableToolbar(props: Props) {
                 Drag across cells or Shift+click to select. Copy with Ctrl/Cmd+C; Delete clears
                 cells. Select table to copy or delete the whole table.
               </p>
-              <p>Tab moves between cells. Tab in the last cell adds a row.</p>
+              <p>
+                {props.structureEditable
+                  ? "Tab moves between cells. Tab in the last cell adds a row."
+                  : "Tab moves between cells. Merged cells, shading and rules are preserved; change the table structure in Source."}
+              </p>
             </>,
           )}
         </>

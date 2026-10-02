@@ -3,8 +3,9 @@ import { focusMathCellGuide, mathSelectionAtOffset } from "./mathLiveSelection";
 
 // MathLive 0.108 lays out array columns with a VBox. Decorate its rendered
 // cell boxes, never its atoms: empty guides must not enter source or undo.
-const cellSelector =
+export const mathArrayCellSelector =
   ".ML__mtable > :is(.col-align-l,.col-align-c,.col-align-r) > .ML__vlist-t > .ML__vlist-r:first-child > .ML__vlist > span > span:last-child";
+const cellSelector = mathArrayCellSelector;
 
 export function installMathEditingGuides(math: MathfieldElement): () => void {
   const root = math.shadowRoot;

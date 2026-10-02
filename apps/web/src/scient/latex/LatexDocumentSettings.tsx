@@ -12,6 +12,7 @@ import { Input } from "~/components/ui/input";
 import { LatexSelect } from "./LatexSelect";
 import { latexVisualLayoutProfile, type LatexVisualLayoutUpdate } from "./latexVisualDocument";
 import { LATEX_PAPER_SIZES } from "./latexVisualLayout";
+import { latexDocumentMathSetup } from "./latexDocumentMacros";
 
 export type LatexDocumentSettingsSection = "page" | "style";
 
@@ -28,6 +29,7 @@ export function LatexDocumentSettings(props: {
   // The parent mounts a fresh dialog for each opening. Tabs share one draft.
   const [original] = useState(props.source);
   const [profile] = useState(() => latexVisualLayoutProfile(original));
+  const [mathSetup] = useState(() => latexDocumentMathSetup(original));
   const [section, setSection] = useState(props.initialSection);
   const [changes, setChanges] = useState<Partial<LatexVisualLayoutUpdate>>({});
   const [error, setError] = useState<string | null>(null);
@@ -216,6 +218,34 @@ export function LatexDocumentSettings(props: {
                       ]}
                     />
                   </label>
+                  <div className="grid gap-2 text-sm">
+                    <h3>Packages and macros</h3>
+                    <p>
+                      Declared packages:{" "}
+                      {mathSetup.packages.declarations.length
+                        ? mathSetup.packages.declarations
+                            .map(({ name, options }) => (options ? `${name} [${options}]` : name))
+                            .join(", ")
+                        : "No explicit package declarations."}
+                    </p>
+                    {mathSetup.declarations.length > 0 && (
+                      <p>
+                        Declared macros:{" "}
+                        {mathSetup.declarations.map((name) => `\\${name}`).join(", ")}
+                      </p>
+                    )}
+                    {mathSetup.unsupported.length > 0 && (
+                      <p className="text-muted-foreground">
+                        These definitions need Source and PDF:{" "}
+                        {mathSetup.unsupported.map((name) => `\\${name}`).join(", ")}.
+                      </p>
+                    )}
+                    <p className="text-muted-foreground">
+                      Visual reads supported math definitions from the document setup and adds known
+                      package requirements when inserting content. Use Edit settings in Source to
+                      change packages or macros; package code is handled by the LaTeX compiler.
+                    </p>
+                  </div>
                 </>
               )}
             </fieldset>

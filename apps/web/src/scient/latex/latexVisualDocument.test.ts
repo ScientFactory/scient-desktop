@@ -581,7 +581,15 @@ Value & $x^2$ \\\\
   it("rejects unsupported pasted nodes and preserves optional arguments", () => {
     expect(edit(document("Hello"), [{ type: "image", attrs: { src: "x" } }])).toBeNull();
     expect(projectLatexVisualDocument(document("\\section[short]{Long title}")).rawBlocks).toBe(1);
-    expect(projectLatexVisualDocument(document("\\cite[page 1]{key}")).rawBlocks).toBe(1);
+    const source = document("\\cite[page 1]{key}");
+    const projection = projectLatexVisualDocument(source);
+    expect(projection.rawBlocks).toBe(0);
+    const nodes = structuredClone(projection.content.content!);
+    const citation = nodes[0]!.content![0]!;
+    expect(citation.type).toBe("latexInlineCommand");
+    expect(citation.attrs?.raw).toBe("\\cite[page 1]{key}");
+    citation.attrs = { ...citation.attrs, argument: "other-key" };
+    expect(edit(source, nodes)?.source).toBe(document("\\cite[page 1]{other-key}"));
   });
 
   it("preserves CRLF and supports a document with no body text", () => {

@@ -18,17 +18,20 @@ that every operation preserves every supported LaTeX construct.
 
 ## Component ownership and edit flow
 
-| Layer                         | Owner                                                   | Responsibility                                                                                                                                                    |
-| ----------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Document view and compilation | `ScientLatexSurface.tsx`                                | Source/Split/Visual/PDF selection, save-before-build entry points, export availability and build diagnostics.                                                     |
-| Project assembly              | `LatexProjectVisualEditor.tsx`, `latexProjectVisual.ts` | Resolve the root and included files; route accepted edits to their physical file. Ambiguous boundaries can refuse edits.                                          |
-| Source adapter                | `latexVisualDocument.ts`                                | Project supported source into editor nodes, retain source ranges, validate proposed changes and preserve opaque source.                                           |
-| Interactive canvas            | `LatexVisualEditor.tsx` and object views                | ProseMirror/Tiptap transactions, MathLive fields, selection, menus and contextual editing.                                                                        |
-| Title conversion              | `LatexTitleStep.ts`                                     | Keep the source before/after a paragraph-to-title conversion in the existing undo history.                                                                        |
-| Writing chrome                | `markdownEditor/ui/dockChrome.tsx`                      | Shared button/menu styling and priority overflow. Visual opts into a permanent row and labels-before-overflow compression; other consumers retain their defaults. |
-| Reading controls              | `writing/DocumentReaderControls.tsx`                    | Shared PDF/Visual page, zoom, fit and search controls. Format adapters supply navigation and search operations.                                                   |
-| Contextual footer             | `LatexContextTools.tsx`, heading/table/object toolbars  | Stable portal destination between Fit width and Search; keeps fields mounted while switching between inline controls and a compact menu.                          |
-| Persistence                   | Existing file save coordinator and Visual draft paths   | Publish accepted source with revision checks. Pending/refused input is not silently treated as saved source. Shared-session migration is outstanding.             |
+| Layer                                    | Owner                                                   | Responsibility                                                                                                                                                         |
+| ---------------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Document view and compilation            | `ScientLatexSurface.tsx`                                | Source/Split/Visual/PDF selection, save-before-build entry points, export availability and build diagnostics.                                                          |
+| Project assembly                         | `LatexProjectVisualEditor.tsx`, `latexProjectVisual.ts` | Resolve the root and included files; route accepted edits to their physical file. Ambiguous boundaries can refuse edits.                                               |
+| Source adapter                           | `latexVisualDocument.ts`                                | Project supported source into editor nodes, retain source ranges, validate proposed changes and preserve opaque source.                                                |
+| Interactive canvas                       | `LatexVisualEditor.tsx` and object views                | ProseMirror/Tiptap transactions, MathLive fields, selection, menus and contextual editing.                                                                             |
+| Equation, statement and table references | `latexEquationReferences.ts`, `mathEquationNumbers.ts`  | Derive one live number/label index for navigation; align equation tags with rendered MathLive rows without changing source or history.                                 |
+| Math setup                               | `latexDocumentMacros.ts`, `LatexDocumentMathContext.ts` | Parse bounded literal preamble definitions once, pass the root macro dictionary to every MathLive field, preserve calls in source, and expose setup in Document style. |
+| Environment declarations                 | `latexEnvironmentDeclarations.ts`                       | Interpret literal theorem names, standard styles, shared/scoped counters and simple quote wrappers; preserve declarations and reject unsupported definitions.          |
+| Title conversion                         | `LatexTitleStep.ts`                                     | Keep the source before/after a paragraph-to-title conversion in the existing undo history.                                                                             |
+| Writing chrome                           | `markdownEditor/ui/dockChrome.tsx`                      | Shared button/menu styling and priority overflow. Visual opts into a permanent row and labels-before-overflow compression; other consumers retain their defaults.      |
+| Reading controls                         | `writing/DocumentReaderControls.tsx`                    | Shared PDF/Visual page, zoom, fit and search controls. Format adapters supply navigation and search operations.                                                        |
+| Contextual footer                        | `LatexContextTools.tsx`, heading/table/object toolbars  | Stable portal destination between Fit width and Search; keeps fields mounted while switching between inline controls and a compact menu.                               |
+| Persistence                              | Existing file save coordinator and Visual draft paths   | Publish accepted source with revision checks. Pending/refused input is not silently treated as saved source. Shared-session migration is outstanding.                  |
 
 A supported edit passes from the canvas transaction to the source adapter, then
 to the project/file save path. Accepted source is projected back into the editor;
@@ -88,17 +91,17 @@ panes, remain one row and never require horizontal scrolling.
 
 ### Permanent writing row
 
-| Control       | Role and behavior                                                                                                                                                                                    |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Undo / Redo   | Use the active math field's history while editing math; otherwise use document history.                                                                                                              |
-| Text / T      | Change the current paragraph to Text, a supported heading level or Quote. The button name stays fixed; the menu marks the current style.                                                             |
-| Numbered      | Inside Text: update the current heading without closing the menu, or choose numbering before applying a heading to ordinary text.                                                                    |
-| Bold / Italic | Apply/remove marks on the prose selection. Additional formatting is available in More.                                                                                                               |
-| Lists         | Bulleted, numbered and description types; indent/outdent and remove formatting. Check the current type and disable unsupported conversions.                                                          |
-| Math          | Inline math, Display math, Aligned equations, Matrix, Cases, and Symbols & structures.                                                                                                               |
-| Insert / +    | Search and insert tables, figures, statements, references, footnotes, bibliography, abstract, contents and page breaks where supported. Root declarations and source context can restrict insertion. |
-| Document      | Edit title/authors/date, add a standard title block, use a plain paragraph as the document title, open page/document settings, or open Keyboard shortcuts (a plain text item without an icon).       |
-| More          | Retain lower-priority groups as the pane narrows. Contains only overflowed toolbar groups; no additional source or shortcut actions.                                                                 |
+| Control       | Role and behavior                                                                                                                                                                                                                 |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Undo / Redo   | Use the active math field's history while editing math; otherwise use document history.                                                                                                                                           |
+| Text / T      | Change the current paragraph to Text, a supported heading level or Quote. The button name stays fixed; the menu marks the current style.                                                                                          |
+| Numbered      | Inside Text: update the current heading without closing the menu, or choose numbering before applying a heading to ordinary text.                                                                                                 |
+| Bold / Italic | Apply/remove marks on the prose selection. Additional formatting is available in More.                                                                                                                                            |
+| Lists         | Bulleted, numbered and description types; indent/outdent and remove formatting. Check the current type and disable unsupported conversions.                                                                                       |
+| Math          | Inline math, Display math, Aligned equations, Matrix, Cases, and Symbols & structures.                                                                                                                                            |
+| Insert / +    | Search and insert tables, figures, statements, references, footnotes, bibliography, abstract, contents and page breaks where supported. Root declarations and source context can restrict insertion.                              |
+| Document      | Edit title/authors/date, add a standard title block, use a plain paragraph as the document title, manage References in a side panel, open page/document settings, or open Keyboard shortcuts (a plain text item without an icon). |
+| More          | Retain lower-priority groups as the pane narrows. Contains only overflowed toolbar groups; no additional source or shortcut actions.                                                                                              |
 
 The row stays at the top. Text labels disappear before action groups overflow:
 Text becomes **T**, Math keeps its sigma, Insert keeps its plus, and Document
@@ -201,6 +204,26 @@ the existing PDF save-copy hook and requires current revision/dependency evidenc
 These writing features introduce no hosted service, new compiler, or second save
 path. Project creation remains owned by the project sidebar.
 
+Imported boxed artwork and subfigure groups use a bounded `figureLayout`
+projection in the existing rich-preview node. The source adapter recognizes
+literal `\fbox`, centered fixed-height `\parbox`, zero-width height rules,
+`\rotatebox`, and simple `\includegraphics` within panels. It also recognizes
+one-argument literal preamble macros whose definition has this supported box
+shape; it never executes arbitrary TeX or rewrites a macro call into its expansion.
+Text, captions, labels and image paths retain individual source ranges. Edits
+patch those ranges, preserving dimensions, wrappers, rotation and separators.
+Structural layout changes remain in Source; unsupported artwork uses exact-source
+fallback. The view consumes this geometry and existing draft-aware text fields.
+Rotated bounds are measured from the untransformed artwork, with no observed-stage
+resize feedback. Panel and figure tools use the existing contextual footer.
+
+The live reference index derives ordinary article/book/report figure counters
+and default subfigure letters, suppressing numbers when counter setup is unknown.
+Labels must follow their caption to bind the corresponding counter. `\ref`
+uses the full panel reference (for example `1a`); `\subref` uses the panel letter
+(`a`), following the [subcaption package's default reference rules](https://mirrors.ibiblio.org/CTAN/macros/latex/contrib/caption/subcaption.pdf).
+Navigation highlights the panel or complete figure without selecting its content.
+
 Insert uses `LatexInsertMenuContent` in both its regular and overflow menus.
 Its top level is Figure, Table, Citation, Cross-reference, Footnote, Link,
 Theorems & proofs and More. Search includes nested actions. Unsupported insertion
@@ -222,7 +245,37 @@ Cross-references expose document-default, number and page-number forms without
 inventing rendered numbering. Links retain both `href` arguments in the inline
 schema and source-token map. Plain labels and addresses use footer fields;
 formatted labels remain source-editable. Bibliography setup preserves existing
-styles and delegates rendering to TeX. Abstract, contents and bibliography actions
+styles and delegates package-specific rendering to TeX. Standard manual
+`thebibliography` blocks project supported formatted prose into read-only entries.
+The live reference index keeps citation keys separate from cross-reference labels,
+derives default numeric and literal optional entry labels, suppresses duplicate
+targets, and supports individual links in multi-key `\cite` commands. A bounded
+optional-note parser retains the original note when citation keys are edited.
+Bibliography entries participate in pagination at entry boundaries. Document's
+References action opens an adjacent panel; a narrow pane docks it over the right
+edge. Citation footer actions open the same panel at the selected key, with known
+entry details kept in the footer. Entry controls never appear on the paper, and
+selection does not change the top writing bar. Insert's citation and cross-reference
+pickers retain their caret snapshots and remain independent of reference management.
+
+`latexBibliographyModel` owns balanced entry parsing, source ranges, literal field
+drafts, add/remove/replace operations and rebasing a single unchanged entry over
+unrelated writing. The citation picker uses the same parsers. Manual entry labels,
+formatted bodies, unknown BibTeX fields, string records and untouched entries
+retain their slices. Existing keys remain fixed in the panel; advanced entry
+source is validated against the same key. Removal confirms the effect on citations.
+Empty manual lists keep their environment and can accept new entries again.
+Unknown entry markup keeps exact-source fallback on paper.
+
+`LatexReferencesPanel` consumes these projections and existing explicitly linked
+resources, preserving their paths and the document's bibliography approach.
+It reads at most 24 linked files and bounds visible search results. Linked `.bib`
+writes lease the shared file save coordinator, reuse its revision checks, optimistic
+query cache, save resolution and owner callbacks (including PDF freshness).
+Read-only/truncated files are not written. Failed saves retain drafts; entry form
+drafts are cached by the Visual workspace identity for the current app session.
+Concurrent changes to the same entry are rejected, while unrelated changes are
+merged by source range and key. Abstract, contents and bibliography actions
 navigate existing open-file blocks; a bibliography already configured in the root
 is reported instead of duplicated. Cross-file discovery remains limited to the
 explicitly linked bibliography files and root setup.
@@ -383,6 +436,33 @@ adapter are not implemented.
 
 ### CSS page layout
 
+The pagination plugin publishes a derived position-to-page map alongside its
+decorations. Contents entries and `\pageref` read that local map, never claiming
+compiled TeX page evidence. The live reference index supplies current heading
+titles, numbering and targets; explicit contents metadata retains its source
+block target. Contents buttons and internal links share the existing navigation
+and temporary highlight behavior. The source adapter separates `\newpage` and
+`\clearpage` from preceding prose even without a blank line.
+
+The adapter recognizes the two-argument `\hyperlink`/`\hypertarget` forms and
+the optional-label `\hyperref[label]{text}` form from the
+[hyperref manual](https://tug.ctan.org/macros/latex/contrib/hyperref/doc/hyperref-doc.html).
+Their destination namespace and label namespace remain distinct. Link labels
+use a bounded read-only prose projection, preserving source formatting and
+displaying unsupported content exactly. Attribute serialization retains the
+optional-label syntax; footer editing never converts it to `\href`.
+
+Standard footnote markers are numbered by the shared live index. Pagination
+measures their prose, reserves space with the containing line, and places
+non-source footnote widgets at the page's text-area bottom. Notes and markers
+select the same existing footer editor. Marker clicks navigate to the note;
+note clicks return to the marker. Navigation uses the shared temporary highlight
+and respects reduced motion without automatically focusing the footer. The bounded prose renderer shares the
+source parser and constructs DOM text and mark elements without injecting HTML.
+Custom counters suppress inferred numbers, and long or unsupported footnotes
+remain subject to the compiler's authoritative layout. These widgets do not
+enter source or generated page-break commands.
+
 `latexVisualLayout.ts` owns the supported layout profile. It reads top-level
 class/package options and explicit geometry and spacing commands, ignoring
 comments and command bodies. Paper dimensions remain in inches and typography
@@ -530,6 +610,31 @@ their text; stretch tables retain full-width layout. Empty targets reserve one
 character of width, with guides painted inside it without changing geometry.
 These selection and sizing changes await interaction and PDF comparison checks.
 
+Table presentation reads caption order and column kinds from the retained source.
+A caption following the tabular stays below it; missing captions reserve no empty
+field. Header rules do not imply bold text: cell formatting follows preserved
+wrappers, including after structural edits. Imported mixed l/X/r tabularx layouts
+use intrinsic natural columns and give the flexible column the remaining width;
+fixed paragraph columns retain their declared widths. Uniform generated X tables
+keep equal columns. Caption and float spacing use the natural standard-class
+dimensions, with booktabs rule spacing approximated in CSS. Custom caption styles
+and TeX float placement still need the compiled PDF.
+
+The table adapter also projects bounded literal multicolumn/multirow cells,
+basic named xcolor row mixes, hline and cline rules in ordinary l/c/r tabulars.
+Logical slots share an owner cell in source metadata. The view renders only
+owners, using their spans, alignment, rules and shading; navigation skips covered
+slots and selections expand to full merged cells. Cell edits patch only their
+inner source ranges. The serializer rejects structural normalization for these
+tables, and the footer disables structural actions while retaining content
+editing, selection, copying and deletion. Their pagination stays atomic so
+presentation gaps cannot split a rowspan. Unsupported spans, colors or cell
+bodies retain exact-source fallback.
+The shared live reference index registers captioned table labels after their
+caption and derives standard article/book/report table numbers conservatively.
+Nonfloating tabulars do not increment that counter. Clicks scroll and highlight
+the table using the same navigation path as equations and statements.
+
 Clearing a rectangle updates the rows in one history transaction and resets the
 selected field drafts after acceptance, so delayed native input cannot restore
 the cleared text. Selected cell copies use source-preserving table cell serialization;
@@ -624,7 +729,7 @@ Comment line endings do not add printed spaces. Escaped `\%` and percent signs i
 literal code remain content. An empty document containing only comments still has
 an editable paragraph, with new text inserted outside the comments.
 
-The parser intentionally leaves unknown commands, optional citation arguments,
+The parser intentionally leaves unknown commands, unsupported citation arguments,
 unsupported control symbols, custom macros and unsupported table cells as source-only
 blocks. Simple templates do not establish arbitrary-paper coverage.
 
@@ -638,6 +743,36 @@ patch the statement body, retaining its opening/closing commands, optional title
 labels, surrounding whitespace, and untouched equations. Standard literal text
 accents render as characters while retaining their source spelling.
 
+Projection carries the root macro/environment setup through nested blocks and
+local replacement validation. The scientific math whitelist also validates
+supported document macro bodies, so rendering and source editing agree about
+`\R`, required-argument commands and declared operators. Macros remain calls
+in source; the adapter does not expand them into edited document text.
+
+`latexEnvironmentDeclarations.ts` recognizes top-level literal `\newtheorem`
+declarations, including starred statements, shared counters and section/chapter
+scope. Standard `\theoremstyle{plain|definition|remark}` declarations provide
+heading/body styling. The live reference plugin derives statement counters and
+label targets without storing presentation in source-editing attributes. Unknown
+counter changes disable inferred numbering. Labels remain inline source nodes,
+hidden on paper and editable through the statement footer.
+
+Statement headings run into the first prose paragraph instead of introducing
+an extra line. Standard theorem/proof spacing uses the document's base font size;
+quote wrappers use the standard 2.5em inset. Optional theorem notes remain upright
+and normal weight, and a proof's optional argument replaces its heading.
+Default amsthm proofs show an open square at the right end of the final paragraph,
+or on a following line after a final display/list. This CSS marker does not become
+an editor node, copied content or LaTeX source. Pagination includes its height.
+Custom proof definitions and preamble QED overrides disable this inferred marker.
+The layout follows the [AMS package conventions](https://texdoc.org/serve/amsthm/0);
+custom styles and exact TeX line/page breaking still belong to the compiler.
+
+Zero-argument `\newenvironment` wrappers around `quote`, with an optional literal
+or `\textbf` prefix, reuse the structured statement body adapter. Their declaration,
+prefix and custom begin/end names stay in source. Optional arguments, dynamic
+definitions, custom theorem styles and arbitrary wrapper code stay source-only.
+
 | Content                                                      | Visual behavior                      | Source preservation                                |
 | ------------------------------------------------------------ | ------------------------------------ | -------------------------------------------------- |
 | Ordinary prose and supported formatting                      | Editable on paper                    | Bounded text edits preserve original tokens        |
@@ -647,7 +782,7 @@ accents render as characters while retaining their source spelling.
 | Unknown body commands, dynamic titles, or unsupported syntax | Exact-source block with Edit LaTeX   | No lossy rendered preview or prose conversion      |
 
 This coverage does not evaluate arbitrary class/package definitions or reproduce
-custom theorem counters, styles, or proof-ending symbols. Their compiled PDF
+custom counter formatting, custom theorem styles, or custom proof-ending symbols. Their compiled PDF
 remains authoritative. Unsupported blocks can be edited in place as exact LaTeX;
 applying a draft checks both the source generation and the original block.
 

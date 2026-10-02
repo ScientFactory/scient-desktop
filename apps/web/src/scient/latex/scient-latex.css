@@ -559,6 +559,127 @@
 .scient-latex-visual-body[data-navigation="true"] {
   grid-template-columns: 208px minmax(0, 1fr);
 }
+.scient-latex-visual-body[data-references="true"] {
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
+}
+.scient-latex-visual-body[data-navigation="true"][data-references="true"] {
+  grid-template-columns: 208px minmax(0, 1fr) minmax(260px, 340px);
+}
+.scient-latex-references-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  border-left: 1px solid var(--border);
+  background: var(--background);
+  color: var(--foreground);
+  font: 13px/1.5 var(--font-sans);
+}
+.scient-latex-references-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.scient-latex-references-content {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  overflow: auto;
+  padding: 12px;
+  min-height: 0;
+}
+.scient-latex-references-panel label,
+.scient-latex-reference-entry {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.scient-latex-reference-entry {
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.scient-latex-reference-entry h3 {
+  font-weight: 600;
+}
+.scient-latex-reference-entry textarea {
+  width: 100%;
+  min-height: 5em;
+  resize: vertical;
+  padding: 8px;
+  border: 1px solid var(--input);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--foreground);
+  font: 12px/1.5 var(--font-mono);
+}
+.scient-latex-reference-entry textarea:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+.scient-latex-reference-entry details > label {
+  margin-top: 8px;
+}
+.scient-latex-references-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.scient-latex-references-help {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.scient-latex-references-list {
+  display: grid;
+  gap: 4px;
+  max-height: 240px;
+  overflow: auto;
+}
+.scient-latex-references-list > button {
+  display: grid;
+  gap: 3px;
+  padding: 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.scient-latex-references-list > button:is(:hover, [aria-pressed="true"]) {
+  background: var(--accent);
+  border-color: var(--border);
+}
+.scient-latex-references-list small {
+  color: var(--muted-foreground);
+}
+.scient-latex-references-removal {
+  display: grid;
+  gap: 8px;
+}
+.scient-latex-citation-details {
+  max-width: 180px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+@container scient-writing (max-width: 1050px) {
+  .scient-latex-visual-body[data-references="true"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .scient-latex-visual-body[data-navigation="true"][data-references="true"] {
+    grid-template-columns: 208px minmax(0, 1fr);
+  }
+  .scient-latex-references-panel {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-end: 0;
+    width: min(340px, calc(100% - 32px));
+    z-index: 26;
+    box-shadow: -4px 0 12px rgb(0 0 0 / 12%);
+  }
+}
 .scient-latex-document-navigation {
   display: flex;
   min-height: 0;
@@ -715,13 +836,12 @@
 
 .scient-latex-page-sheet > span {
   position: absolute;
-  bottom: -21px;
-  right: 3px;
-  padding: 2px 5px;
-  border-radius: 3px;
-  color: var(--muted-foreground);
-  font: 10px/1.2 var(--font-sans);
-  letter-spacing: 0.04em;
+  bottom: calc(var(--scient-latex-margin-bottom, 1in) * 0.5);
+  right: 50%;
+  transform: translateX(50%);
+  color: #171717;
+  font: var(--scient-latex-font-size, 13.2835px) / 1.2
+    var(--scient-latex-font-family, "KaTeX_Main", serif);
 }
 
 .scient-latex-visual-paper > .tiptap {
@@ -934,10 +1054,32 @@
 }
 .scient-latex-visual-document ol {
   list-style: decimal;
+  --scient-latex-list-prefix: "";
+  --scient-latex-list-suffix: ".";
   --scient-latex-list-itemsep: var(--scient-latex-enumerate-itemsep);
   --scient-latex-list-parsep: var(--scient-latex-enumerate-parsep);
   padding-left: var(--scient-latex-enumerate-leftmargin, 2.5em);
   margin: var(--scient-latex-enumerate-topsep, 0.8em) 0;
+}
+.scient-latex-visual-document ol[data-latex-list-style="decimal"] > li::marker {
+  content: var(--scient-latex-list-prefix) counter(list-item, decimal)
+    var(--scient-latex-list-suffix) " ";
+}
+.scient-latex-visual-document ol[data-latex-list-style="lower-alpha"] > li::marker {
+  content: var(--scient-latex-list-prefix) counter(list-item, lower-alpha)
+    var(--scient-latex-list-suffix) " ";
+}
+.scient-latex-visual-document ol[data-latex-list-style="upper-alpha"] > li::marker {
+  content: var(--scient-latex-list-prefix) counter(list-item, upper-alpha)
+    var(--scient-latex-list-suffix) " ";
+}
+.scient-latex-visual-document ol[data-latex-list-style="lower-roman"] > li::marker {
+  content: var(--scient-latex-list-prefix) counter(list-item, lower-roman)
+    var(--scient-latex-list-suffix) " ";
+}
+.scient-latex-visual-document ol[data-latex-list-style="upper-roman"] > li::marker {
+  content: var(--scient-latex-list-prefix) counter(list-item, upper-roman)
+    var(--scient-latex-list-suffix) " ";
 }
 .scient-latex-visual-document li p {
   margin: 0;
@@ -1042,6 +1184,31 @@
   text-align: center;
   scroll-margin-block: 100px;
 }
+.scient-latex-visual-display-math[data-equation-numbered] {
+  padding-inline: 3em;
+}
+.scient-latex-equation-numbers {
+  position: absolute;
+  inset: 0 0 0 auto;
+  min-width: 2.5em;
+  pointer-events: none;
+}
+.scient-latex-equation-numbers > span {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  line-height: 1;
+  white-space: nowrap;
+}
+.scient-latex-visual-display-math[data-reference-highlight],
+.scient-latex-scientific-structure[data-reference-highlight],
+.scient-latex-rich-preview[data-kind="table"][data-reference-highlight],
+.scient-latex-figure-preview[data-reference-highlight],
+.scient-latex-figure-panel[data-reference-highlight] {
+  outline: 2px solid #8aafda;
+  outline-offset: 4px;
+}
 .scient-latex-visual-inline-math[data-empty] math-field {
   min-width: 1ch;
   min-height: 1.2em;
@@ -1075,6 +1242,7 @@
   --caret-color: #2769bc;
   --primary: #2769bc;
   --contains-highlight-background-color: transparent;
+  --contains-highlight-color: currentColor;
   --highlight-text: transparent;
   --text-highlight-background-color: transparent;
   --placeholder-color: #6883a2;
@@ -1493,6 +1661,126 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   padding: 2px 5px;
   color: #285984;
 }
+.scient-latex-visual-command[data-equation-reference] {
+  font: inherit;
+}
+.scient-latex-visual-command[data-prose-command] {
+  display: inline;
+  font: inherit;
+}
+.scient-latex-visual-command[data-prose-command] > button {
+  font: inherit;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #285984;
+  overflow-wrap: anywhere;
+}
+.scient-latex-visual-command[data-anchor] > button {
+  color: inherit;
+}
+.scient-latex-visual-command[data-prose-command] > button sup {
+  font-size: 0.7em;
+  line-height: 0;
+  vertical-align: super;
+}
+.scient-latex-visual-command[data-prose-command] > button:is(:hover, :focus-visible) {
+  text-decoration: underline;
+}
+.scient-latex-page-footnotes {
+  position: absolute;
+  padding-top: 0.6em;
+  box-sizing: border-box;
+  font-size: var(--scient-latex-size-footnotesize, 0.8em);
+  line-height: var(--scient-latex-baseline-footnotesize, 1.2);
+  text-align: justify;
+  text-indent: 0;
+}
+.scient-latex-page-footnotes::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 40%;
+  border-top: calc(0.4 * 96px / 72.27) solid currentColor;
+}
+.scient-latex-page-footnote {
+  padding-left: 1.8em;
+  text-indent: -1.8em;
+  cursor: pointer;
+}
+.scient-latex-page-footnote[data-reference-highlight],
+.scient-latex-visual-command[data-prose-command][data-reference-highlight] {
+  outline: 2px solid #8aafda;
+  outline-offset: 2px;
+  background: #e9f2ff;
+}
+.scient-latex-page-footnote sup {
+  padding-left: 1em;
+  margin-right: 0.2em;
+  font-size: 0.7em;
+  vertical-align: super;
+}
+.scient-latex-visual-document[data-latex-measuring]
+  .scient-latex-page-footnotes.ProseMirror-widget {
+  display: none;
+}
+.scient-latex-visual-command[data-equation-reference] button {
+  font: inherit;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.scient-latex-equation-reference {
+  text-decoration: underline;
+  text-decoration-color: #8aafda;
+  text-underline-offset: 0.15em;
+}
+.scient-latex-visual-command[data-equation-reference] button:is(:hover, :focus-visible) {
+  color: #285984;
+}
+.scient-latex-visual-command[data-citation] {
+  display: inline;
+  font: inherit;
+}
+.scient-latex-citation button {
+  font: inherit;
+  border: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #285984;
+  cursor: pointer;
+}
+.scient-latex-citation button:is(:hover, :focus-visible) {
+  text-decoration: underline;
+}
+.scient-latex-visual-command[data-statement-label] {
+  position: relative;
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 0;
+}
+.scient-latex-visual-command[data-statement-label] > button {
+  position: absolute;
+  width: 0;
+  height: 0;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+}
+.scient-latex-visual-command[data-statement-label][data-selected]::after {
+  content: "";
+  position: absolute;
+  inset-inline-start: 0;
+  top: -0.9rem;
+  height: 1rem;
+  border-inline-start: 2px solid #8aafda;
+}
 .scient-latex-visual-command-name {
   font-size: 10px;
   opacity: 0.7;
@@ -1622,6 +1910,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-toc-preview h2 {
   margin-bottom: 0.35em;
   font-size: 1.44em;
+  font-weight: 700;
   text-align: left;
 }
 .scient-latex-abstract-preview h2::before,
@@ -1710,26 +1999,41 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 }
 .scient-latex-bibliography-preview {
   position: relative;
-  margin-block: 1.5em;
+  margin-block: 3.5ex 2.3ex;
+  border: 0;
 }
 .scient-latex-bibliography-preview h2 {
-  margin: 0 0 0.8em;
-  font-size: 1.2em;
+  margin: 0 0 2.3ex;
+  font-size: var(--scient-latex-section-size, 1.44em);
+  font-weight: bold;
 }
 .scient-latex-bibliography-preview ol {
-  padding-left: 2em;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  list-style: none;
+  padding: 0;
+  margin: 0;
 }
 .scient-latex-bibliography-preview li {
-  margin-bottom: 0.6em;
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  column-gap: 0.5em;
+  margin-bottom: 0.4em;
+  text-indent: 0;
 }
-.scient-latex-bibliography-preview li input {
-  width: 8em;
-  font: 0.75em/1.2 var(--font-sans);
-  color: #64748b;
+.scient-latex-bibliography-label {
+  min-width: 1.5em;
+  text-align: right;
+}
+.scient-latex-bibliography-preview li[data-reference-highlight] {
+  outline: 2px solid #8aafda;
+  outline-offset: 2px;
+  background: #e9f2ff;
 }
 .scient-latex-toc-preview {
-  margin: 2em 0;
-  padding: 0 2em;
+  margin: 0 0 2.3ex;
+  padding: 0;
 }
 .scient-latex-toc-preview p {
   color: #66768a;
@@ -1746,14 +2050,33 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   list-style: none;
 }
 .scient-latex-toc-preview li {
+  font: inherit;
+}
+.scient-latex-toc-preview li > button {
   display: grid;
-  grid-template-columns: 3.6em minmax(0, 1fr);
-  gap: 0.5em;
-  font-size: 0.95em;
-  line-height: 1.15;
+  grid-template-columns: 1.5em minmax(0, 1fr) 2em;
+  width: 100%;
+  gap: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #285984;
+  font: inherit;
+  text-align: left;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.scient-latex-toc-preview li[data-level="1"] > button {
+  font-weight: 700;
+}
+.scient-latex-toc-preview li > button:is(:hover, :focus-visible) {
+  text-decoration: underline;
+}
+.scient-latex-toc-page {
+  text-align: right;
 }
 .scient-latex-toc-preview li + li {
-  margin-top: 0;
+  margin-top: 0.75em;
 }
 .scient-latex-toc-preview li[data-level="2"] {
   padding-left: 1.5em;
@@ -2001,6 +2324,9 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   width: 100%;
   table-layout: fixed;
 }
+.scient-latex-rich-preview figure[data-table-kind="stretch"] table[data-mixed-columns] {
+  table-layout: auto;
+}
 .scient-latex-rich-preview figure table tbody .scient-latex-table-page-gap > td {
   height: 0;
   padding: 0;
@@ -2019,6 +2345,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   border: 0;
   text-align: left;
   vertical-align: top;
+  background: var(--scient-latex-table-cell-background, transparent);
 }
 .scient-latex-rich-preview td[data-align="center"],
 .scient-latex-rich-preview th[data-align="center"] {
@@ -2031,11 +2358,19 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-rich-preview th[data-align="right"] {
   text-align: right;
 }
-.scient-latex-rich-preview :is(td, th)[data-cell-selection] {
+.scient-latex-rich-preview :is(td, th)[data-cell-selection],
+.scient-latex-rich-preview[data-kind="table"][data-document-selected] :is(td, th) {
   background: var(--scient-latex-selection-background);
 }
 .scient-latex-rich-preview[data-kind="table"] {
   user-select: none;
+  border: 0;
+}
+.scient-latex-rich-preview[data-kind="table"]:has(figure[data-table-float]) {
+  margin-block: calc(12 * 96px / 72.27);
+}
+.scient-latex-rich-preview[data-kind="table"] figcaption[data-placement] {
+  margin: calc(10 * 96px / 72.27) 0 0;
 }
 .scient-latex-rich-preview[data-kind="table"] textarea {
   user-select: text;
@@ -2086,7 +2421,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-rich-preview :is(td, th)[data-align="right"] textarea {
   margin-left: auto;
 }
-.scient-latex-rich-preview figure[data-table-kind="stretch"] :is(td, th) textarea {
+.scient-latex-rich-preview textarea[data-table-cell-width="stretch"] {
   width: 100%;
   max-width: none;
 }
@@ -2108,13 +2443,28 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   outline: none;
   background: transparent;
 }
+.scient-latex-rich-preview[data-kind="table"] figcaption[data-numbered] {
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  gap: 0.333em;
+}
+.scient-latex-table-caption-number {
+  flex: none;
+}
+.scient-latex-rich-preview[data-kind="table"] figcaption[data-numbered] textarea {
+  margin: 0;
+  width: auto;
+  min-width: 1ch;
+  text-align: left;
+}
 .scient-latex-rich-preview td textarea:disabled,
 .scient-latex-rich-preview th textarea:disabled {
   cursor: default;
 }
 .scient-latex-rich-preview th {
-  background: transparent;
-  font-weight: 700;
+  background: var(--scient-latex-table-cell-background, transparent);
+  font-weight: inherit;
 }
 .scient-latex-rich-preview
   figure[data-table-style="booktabs"]
@@ -2122,6 +2472,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   tr:first-child
   > :not(.scient-latex-table-row-handle) {
   border-top: 0.08em solid currentColor;
+  padding-top: 0.65ex;
 }
 .scient-latex-rich-preview
   figure[data-table-style="booktabs"]
@@ -2132,13 +2483,13 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 }
 .scient-latex-rich-preview figure[data-table-style="booktabs"] th[scope="col"] {
   border-bottom: 0.05em solid currentColor;
-  padding-block: 0.4ex 0.65ex;
+  padding-block: 0.65ex 0.4ex;
 }
 .scient-latex-rich-preview figure[data-table-style="booktabs"] tr:nth-child(2) > td {
-  padding-top: 0.4ex;
+  padding-top: 0.65ex;
 }
 .scient-latex-rich-preview figure[data-table-style="booktabs"] tr:last-child > td {
-  padding-bottom: 0.65ex;
+  padding-bottom: 0.4ex;
 }
 .scient-latex-rich-preview figure[data-table-style="grid"] tbody td,
 .scient-latex-rich-preview
@@ -2146,6 +2497,103 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   tbody
   th:not(.scient-latex-table-row-handle) {
   border: 0.5px solid currentColor;
+}
+.scient-latex-figure-panels {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-end;
+  gap: 0.5em 0.333em;
+}
+.scient-latex-figure-panels[data-spread] {
+  justify-content: space-between;
+  column-gap: 0;
+}
+.scient-latex-figure-panel {
+  min-width: 0;
+  max-width: 100%;
+}
+.scient-latex-figure-artwork-stage {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  width: 100%;
+}
+.scient-latex-figure-artwork {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  box-sizing: content-box;
+}
+.scient-latex-figure-artwork[data-frame] {
+  border: calc(0.4 * 96px / 72.27) solid currentColor;
+  padding: calc(3 * 96px / 72.27);
+}
+.scient-latex-figure-artwork[data-vertical="bottom"] {
+  align-items: flex-end;
+}
+.scient-latex-figure-artwork[data-rotated] {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+}
+.scient-latex-figure-artwork textarea {
+  --scient-empty-guide-x: 50%;
+  width: auto;
+  min-width: 1ch;
+  max-width: 100%;
+  min-height: 1lh;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: center;
+  field-sizing: content;
+  resize: none;
+  overflow: hidden;
+}
+.scient-latex-figure-artwork textarea:focus {
+  outline: none;
+}
+.scient-latex-subfigure-caption,
+.scient-latex-figure-preview .scient-latex-figure-numbered-caption {
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  gap: 0.333em;
+}
+.scient-latex-subfigure-caption {
+  margin-top: calc(6 * 96px / 72.27);
+  font-size: var(--scient-latex-size-small);
+  line-height: var(--scient-latex-baseline-small);
+}
+.scient-latex-figure-layout .scient-latex-figure-numbered-caption {
+  margin: calc(10 * 96px / 72.27) 0 0;
+}
+.scient-latex-subfigure-caption > span,
+.scient-latex-figure-numbered-caption > span {
+  flex: none;
+}
+.scient-latex-subfigure-caption textarea,
+.scient-latex-figure-preview .scient-latex-figure-numbered-caption textarea {
+  width: auto;
+  min-width: 1ch;
+  max-width: 100%;
+  min-height: 1lh;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  field-sizing: content;
+  resize: none;
+  overflow: hidden;
 }
 .scient-latex-table-position {
   flex: none;
@@ -2197,6 +2645,17 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   gap: 8px;
   padding-top: 0;
 }
+.scient-latex-figure-layout {
+  border: 0;
+  margin-block: calc(12 * 96px / 72.27);
+}
+.scient-latex-figure-layout figure {
+  gap: 0;
+  align-items: stretch;
+}
+.scient-latex-figure-layout figcaption {
+  width: 100%;
+}
 .scient-latex-figure-preview figure[data-align="left"] {
   align-items: flex-start;
 }
@@ -2237,13 +2696,76 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 }
 .scient-latex-scientific-structure {
   display: flow-root;
-  margin-block: 0.8em;
+  margin-block: var(--scient-latex-theorem-sep, 0.8em);
 }
 .scient-latex-scientific-body {
-  display: flow-root;
+  /* Let paragraph line boxes flow beside the noneditable run-in heading. */
+  display: contents;
 }
 .scient-latex-scientific-body > div > p:first-child {
   text-indent: 0;
+}
+.scient-latex-scientific-structure[data-theorem-style="plain"] > .scient-latex-scientific-body {
+  font-style: italic;
+}
+.scient-latex-scientific-structure[data-theorem-style="definition"] > .scient-latex-scientific-body,
+.scient-latex-scientific-structure[data-theorem-style="remark"] > .scient-latex-scientific-body {
+  font-style: normal;
+}
+.scient-latex-scientific-structure[data-bold-prefix] > .scient-latex-scientific-heading {
+  font-weight: bold;
+}
+.scient-latex-scientific-structure[data-theorem-style="remark"] > .scient-latex-scientific-heading,
+.scient-latex-scientific-structure[data-proof] > .scient-latex-scientific-heading {
+  font-style: italic;
+}
+.scient-latex-scientific-note {
+  font-weight: normal;
+  font-style: normal;
+}
+.scient-latex-scientific-structure[data-theorem-style="remark"] {
+  margin-block: calc(var(--scient-latex-theorem-sep, 0.8em) / 2);
+}
+.scient-latex-scientific-structure[data-proof] {
+  margin-block: var(--scient-latex-proof-sep, 0.6em);
+}
+.scient-latex-scientific-structure[data-quote-wrapper] {
+  margin-inline: 2.5em;
+}
+.scient-latex-scientific-structure[data-run-in] > .scient-latex-scientific-heading {
+  float: left;
+  margin-inline-end: 0.5em;
+  padding: 0;
+}
+.scient-latex-scientific-structure[data-quote-wrapper][data-run-in]
+  > .scient-latex-scientific-heading {
+  margin-inline-end: 0.333em;
+}
+/* The proof marker belongs to presentation, never editable or serialized content. */
+.scient-latex-scientific-structure[data-proof-end="square"]
+  > .scient-latex-scientific-body
+  > [data-node-view-content-react]
+  > p:last-child::after {
+  content: "";
+  float: right;
+  box-sizing: border-box;
+  width: 0.6em;
+  height: 0.675em;
+  margin-inline-start: 1.5em;
+  margin-block-start: calc(0.5lh - 0.3375em);
+  border: 0.04em solid currentColor;
+}
+.scient-latex-scientific-structure[data-proof-end="square"]
+  > .scient-latex-scientific-body
+  > [data-node-view-content-react]:not(:has(> p:last-child))::after {
+  content: "";
+  display: block;
+  box-sizing: border-box;
+  width: 0.6em;
+  height: 0.675em;
+  margin-inline-start: auto;
+  margin-block-start: 0.25em;
+  border: 0.04em solid currentColor;
 }
 .scient-latex-scientific-preview .scient-latex-rich-preview-label button {
   border: 0;
@@ -2339,6 +2861,9 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 
 @container scient-writing (max-width: 600px) {
   .scient-latex-visual-body[data-navigation="true"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .scient-latex-visual-body[data-navigation="true"][data-references="true"] {
     grid-template-columns: minmax(0, 1fr);
   }
   .scient-latex-document-navigation {

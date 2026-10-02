@@ -83,6 +83,11 @@ ready to fill in. Conversion to description currently supports plain paragraphs;
 rich or nested content that its adapter cannot preserve is disabled. Custom
 source-only lists remain editable in LaTeX source.
 
+Nested bulleted and numbered lists remain editable with ordinary enumitem labels
+such as `label=\alph*)`, including bold or italic item text. Supported decimal,
+alphabetic and Roman labels, `start` and `resume` options keep their source
+spelling during content edits. Custom label macros retain exact-source fallback.
+
 The footer shares PDF's page navigation, zoom and search controls. Minus/plus
 use five-percent steps in the 25–500% range; click the percentage to reset to
 actual size. **Fit width** fills the available pane and follows
@@ -142,6 +147,18 @@ placement, numbering, and outer row structure are changed in Source. A single
 outer reference label can be edited directly; per-row labels remain in Source.
 **Edit LaTeX** edits the formula body, leaving its outer wrapper and metadata intact.
 
+Supported numbered equations show their number at the right edge. A reference
+such as `\eqref{eq:sum}` shows the matching number in parentheses; `\ref` omits
+the parentheses. Click a resolved reference to jump to the equation and briefly
+highlight it. Its target remains editable in the existing footer. Unnumbered
+displays stay unnumbered, and explicit tags and suppressed row numbers are
+respected. Standard article/book/report numbering and ordinary
+`\numberwithin{equation}{section}` or `{chapter}` update locally as equations
+change. Unresolved labels and unsupported custom numbering keep a label fallback;
+the compiled PDF remains authoritative. Table references also show the derived
+caption number and navigate to their labelled table. The label must exist in the
+document; an unlabelled nonfloating table does not create a reference target.
+
 **Symbols & structures** groups Common, Greek letters, Operators & relations,
 Arrows, Sums/integrals/limits, Brackets & accents, Functions & math alphabets, and
 More symbols. Search spans all categories. Hover or focus a tile to see its name
@@ -174,6 +191,32 @@ source. The Reference label field edits a single outer label; per-row labels,
 numbering, row count, and placement remain protected and are changed in Source.
 Edits crossing an interior numbering command, nested numbering, and commented
 equations remain protected. Macro definitions belong in the document source.
+Visual reads literal `\DeclareMathOperator` declarations from the root preamble,
+including the starred form, so `\DeclareMathOperator{\rank}{rank}` makes `\rank`
+render as an upright operator without changing the command in source. Simple
+`\newcommand`, `\renewcommand`, `\providecommand`, `\DeclareRobustCommand`, and
+undelimited `\def`/`\gdef` math definitions support required arguments. Macro
+calls remain single units in the formula; use Edit LaTeX to change their arguments.
+Preamble changes update the shared math setup without adding definitions to each
+included file. Optional/default arguments, conditional or recursive definitions,
+paired-delimiter declarations and commands requiring TeX execution remain
+controlled in Source and PDF.
+
+Theorem bodies use the same root macro setup, including commands such as `\R`
+and `\norm{x}`. Literal `\newtheorem` declarations supply statement names,
+shared counters and section/chapter numbering. The standard `plain`, `definition`
+and `remark` theorem styles control prose and heading styling. Statement labels
+stay out of printed prose and can be edited in the statement's footer options;
+resolved `\ref` links show the statement number and navigate to it.
+Statement and proof headings share the first line with their prose. Default
+amsthm proofs show the end-of-proof square on the right; it is display-only and
+is never added to your source. Custom proof/QED definitions remain source-owned.
+The optional proof title replaces “Proof”, while optional theorem titles appear
+in parentheses. Spacing and quote indentation follow the standard layout.
+Simple zero-argument `\newenvironment` quote wrappers, such as a `note` containing
+`\begin{quote}\textbf{Note.}` and ending with `\end{quote}`, render editable
+content while preserving the custom environment name. More complex definitions
+retain exact-source editing and compiler rendering in PDF.
 Edits that cannot round-trip remain local and are marked as unsaved. MathLive's
 separate virtual keyboard and menu are hidden.
 
@@ -210,7 +253,11 @@ The canvas reads safe document-class, paper, base-font, `geometry`, paragraph
 indentation, paragraph spacing and line-spacing settings from the preamble.
 Use **Document > Page layout** for paper size, orientation and individual margins.
 Use **Document > Document style** for standard document type, base font size and
-paragraph style. Both sections share one draft, with **Apply** and **Cancel**.
+paragraph style. Its **Packages and macros** summary shows explicit package
+declarations (including options), declared macros, and definitions requiring
+Source/PDF. Existing package options remain intact, and Visual adds only known
+missing requirements for inserted tools. Packages are never removed automatically.
+Both sections share one draft, with **Apply** and **Cancel**.
 Fields marked **Keep document setting** preserve the current source; blank margin
 fields do the same. Custom classes retain their class and text style in Source.
 **Edit settings in Source** opens the root setup. If the document changes while
@@ -257,9 +304,16 @@ Placeholders appear only while the title block is active.
 Plain abstract text is also shown and edited as an abstract
 rather than as a source card. Numbered sections, subsections, and subsubsections
 display their expected hierarchy in the canvas; starred headings remain
-unnumbered. `\tableofcontents` is represented as generated content and remains
-authoritative in the compiled PDF. `\newpage` and `\clearpage` appear as compact
-page-break markers instead of raw-source cards.
+unnumbered. `\tableofcontents` shows clickable entries with page numbers in Visual.
+Click a title to navigate to its heading. Titles follow heading edits, and page
+numbers follow Visual's local page map; the compiled PDF remains authoritative.
+An explicit
+`\addcontentsline{toc}{section}{Unnumbered section}` contributes an unnumbered
+entry to Visual's Contents without printing the command or creating a heading.
+The following paragraph remains editable, and the command stays in source.
+`\newpage` and `\clearpage` start a new Visual page, including when the command
+immediately follows prose without a blank line. They appear as compact page-break
+markers instead of raw-source cards.
 
 Description lists and common `tabular`, `tabularx`, `tabulary`, and `longtable`
 structures have visual editors. When inactive they read like document content;
@@ -279,12 +333,27 @@ footer follows the active cell without changing the table's appearance or the
 footer's height. The writing toolbar's Table picker inserts
 a chosen grid size and style.
 
+Imported captions appear above or below the table in source order and show their
+derived table number when supported. A header rule does not make text bold;
+explicit cell formatting is retained. In mixed-width tabularx tables, ordinary
+columns fit their contents while flexible X columns take the remaining width and
+wrap their text. Visual approximates table and caption spacing; custom package
+styles and float placement remain authoritative in PDF.
+
 Ordinary cell, caption, and label typing changes only the corresponding source
 ranges. Structural operations deliberately normalize only the supported table's
 `tabular` region so that its dimensions, column specification, and rules remain
-consistent; the surrounding document remains untouched. A table containing
-structural cell content, such as nested commands, math, or `\multicolumn`, stays
-protected; selecting it shows **Protected table — edit in Source** in the footer.
+consistent; the surrounding document remains untouched. Imported `tabular` tables
+with simple `l`, `c`, and `r` columns can also edit plain cell contents inside
+literal `\multicolumn` and positive `\multirow{n}{*}` spans. Basic named row colors
+such as `\rowcolor{blue!10}`, vertical rules, `\hline` and `\cline` are shown and
+preserved. These tables retain their structure: change spans, row/column counts,
+colors and rules in Source. Tab skips covered cells and leaves the table after
+the last visible cell. Selection expands to include complete merged cells.
+They stay together in the writing canvas rather than splitting a merged cell
+across pages. Nonfloating tables stay nonfloating and unnumbered.
+Other structural cell content, such as unsupported nested commands or math,
+stays protected; selecting it shows **Protected table — edit in Source** in the footer.
 Other unsupported structures, including
 custom macros, appear as protected source blocks.
 The visual editor does not silently normalize or discard them. A visual edit
@@ -365,11 +434,55 @@ selected but do not have a raster preview in the picker. Deleting a figure does
 not delete its image file. Use the footer for image path, width, placement,
 alignment and reference label; edit captions on paper.
 
+Imported figures can also display editable framed text, literal rotations, and
+side-by-side `subfigure` panels. A one-argument preamble command wrapping a
+centered, fixed-height `parbox` in `\fbox` is recognized from its definition;
+editing its text keeps the original command call. Panel and figure captions
+are editable on paper. Widths, rotation angles, framing and macro definitions
+remain in Source. Unsupported artwork stays available as exact source.
+
+For standard figure counters, captions show their number and subcaptions show
+their panel letter. `\ref` navigates to labelled figures or panels; `\subref`
+navigates to a panel and displays its letter. Custom counter or caption setup
+can prevent Visual from deriving a reliable number; the PDF remains authoritative.
+
 Citation search reads literal title, author, year and key fields from linked local
 `.bib` files, plus inline `\bibitem` entries. It does not resolve BibTeX string
 macros. Parenthetical and in-sentence forms are offered when natbib or biblatex is
 configured. A known citation key or reference label can also be entered directly.
 The compiler determines final citation text and reference numbers.
+
+For a standard manual `thebibliography`, Visual displays a References heading
+and bracketed entry labels, preserving supported emphasis and punctuation.
+Ordinary `\cite` commands display linked labels, including multiple keys and a
+plain optional note. Click a citation number to visit its entry. Citation keys
+remain editable in the footer. Package-specific citation styles remain compiler-owned.
+Open **Document > References** to search, add, edit and remove entries in a side
+panel. It reads explicitly linked `.bib` files and existing `\bibitem` lists;
+choose a destination when the document uses more than one. It preserves the
+document's bibliography packages, resources, style and printed-list commands.
+BibTeX entries offer title, author, year and additional fields, plus Entry source
+for expressions and custom fields. Manual entries offer their formatted LaTeX
+text and optional custom label. Existing keys stay fixed to preserve citations;
+new entries let you choose a unique key. Save applies the entry, while Cancel
+discards its form draft. Closing or switching entries asks you to finish a dirty
+draft first. Removal asks for confirmation because existing citations keep
+their keys and become unresolved. The last manual entry can be removed without
+changing the document's bibliography approach.
+
+Clicking a citation exposes its known entry details and **Edit reference** (or
+**Find reference**) in the contextual footer. Selecting the bibliography offers
+**Manage references** there. The paper keeps formatted entries without code or
+editing controls. **Insert > Citation** still inserts a citation at the captured
+caret; **Insert > Cross-reference** chooses a labelled object and uses `\ref`
+or `\eqref` by default. Bibliography management does not insert a citation.
+
+Reference saves preserve unrelated entries, unknown fields and literal TeX
+formatting. Unrelated document edits can be merged while the entry itself remains
+unchanged; conflicting edits retain the form draft instead of overwriting it.
+Linked file writes use Scient's normal file sessions and revision checks.
+Read-only or truncated files remain read-only. Entry form drafts survive moving
+between file views during the app session.
 
 **More > Bibliography** finds an existing bibliography, uses linked biblatex
 resources, or asks you to choose a BibTeX file/style or manual entries. It preserves
@@ -380,8 +493,19 @@ of adding another one.
 
 Links use `\href` and the document's hyperlink setup. Click an existing link to
 edit its address and plain label in the footer; formatted labels keep their exact
-LaTeX and are edited in Source. Footnotes containing formatting retain their LaTeX;
-plain note text can be edited directly in the footer.
+LaTeX and are edited in Source. Imported `\hyperref[label]{text}` and
+`\hyperlink{name}{text}` navigate to a labelled section or other supported target,
+including a literal `\hypertarget{name}{text}`. Section references display their
+number, and `\pageref` displays the target's local Visual page number. These
+commands keep their original source syntax. Links read as ordinary document text.
+
+Standard footnotes show a numbered superscript and their text beneath a short
+rule at the bottom of the corresponding Visual page. Click the superscript to
+navigate to its note; click the note to return to its marker. Either action
+selects the same footer editor without moving focus into it. Footnotes containing formatting retain their
+LaTeX; plain note text can be edited directly in the footer. Prose formatting such
+as emphasis is shown in the note. Custom counters and unsupported note bodies
+remain approximate or show exact source; PDF pagination remains authoritative.
 
 Dialogs retain the original insertion point. Cancelling inserts nothing; if the
 document changes while a picker is open, insertion asks you to choose the position

@@ -1,4 +1,7 @@
 import type { JSONContent } from "@tiptap/core";
+import { latexDocumentMathSetup } from "./latexDocumentMacros";
+import { latexEnvironmentDeclarations } from "./latexEnvironmentDeclarations";
+import { latexListOptionsSource, parseLatexListOptions } from "./latexListOptions";
 import {
   LATEX_INLINE_MARKS,
   LATEX_TEXT_DECLARATIONS,
@@ -43,6 +46,19 @@ export interface LatexVisualDocument {
   readonly blocks: readonly LatexVisualSourceBlock[];
   readonly supportedBlocks: number;
   readonly rawBlocks: number;
+  readonly setup?: LatexVisualSetup;
+}
+
+interface LatexVisualSetup {
+  readonly math: ReturnType<typeof latexDocumentMathSetup>;
+  readonly declarations: ReturnType<typeof latexEnvironmentDeclarations>;
+}
+
+function visualSetup(source: string): LatexVisualSetup {
+  return {
+    math: latexDocumentMathSetup(source),
+    declarations: latexEnvironmentDeclarations(source),
+  };
 }
 
 export interface LatexRootUpdate {
@@ -276,12 +292,16 @@ const INLINE_ATOMS = new Set([
   "citeyear",
   "ref",
   "eqref",
+  "subref",
   "autoref",
   "pageref",
   "nameref",
   "label",
   "url",
   "href",
+  "hyperref",
+  "hyperlink",
+  "hypertarget",
   "footnote",
   "index",
 ]);
@@ -643,17 +663,34 @@ function inlinePiece(
   }
   const text = inlineTextToken(rest, marks);
   if (text) return { end: at + text.source.length, node: textNode(text.text, marks)! };
-  const command = /^\\([A-Za-z]+)[\t\r\n ]*\{/u.exec(rest);
-  if (!command || !INLINE_ATOMS.has(command[1]!) || SOURCE_ONLY_INLINE_COMMANDS.has(command[1]!))
+  const atomCommand = /^\\([A-Za-z]+)[\t\r\n ]*(\{|\[)/u.exec(rest);
+  if (
+    !atomCommand ||
+    !INLINE_ATOMS.has(atomCommand[1]!) ||
+    SOURCE_ONLY_INLINE_COMMANDS.has(atomCommand[1]!)
+  )
     return null;
-  const opening = at + command[0].length - 1;
-  const close = closingBrace(source, opening);
-  if (close === null) return null;
-  const name = command[1]!;
+  const name = atomCommand[1]!;
+  const citation = latexCitationParts(rest);
+  if (citation) {
+    return {
+      end: at + citation.end,
+      node: marked({
+        type: "latexInlineCommand",
+        attrs: { name, argument: citation.argument, raw: rest.slice(0, citation.end) },
+      }),
+    };
+  }
+  if ((name === "hyperref") !== (atomCommand[2] === "[")) return null;
+  const opening = at + atomCommand[0].length - 1;
+  const close =
+    name === "hyperref" ? source.indexOf("]", opening + 1) : closingBrace(source, opening);
+  if (close === null || close < 0) return null;
   const argument = source.slice(opening + 1, close);
+  if (name === "hyperref" && /[{}\\%\s\[\]]/u.test(argument)) return null;
   let end = close + 1;
   let linkText: string | undefined;
-  if (name === "href") {
+  if (["href", "hyperref", "hyperlink", "hypertarget"].includes(name)) {
     const gap = /^[\t\r\n ]*/u.exec(source.slice(end))![0];
     const textOpening = end + gap.length;
     if (source[textOpening] !== "{") return null;
@@ -749,18 +786,19 @@ function parseHeading(source: string): JSONContent | null {
   };
 }
 
-function parseList(source: string, depth: number): JSONContent | null {
+function parseList(source: string, depth: number, setup: LatexVisualSetup): JSONContent | null {
   if (depth > 32) return null;
-  const opening = /^\\begin\{(itemize|enumerate)\}(?:\[(resume|start=\d+)\])?\s*/u.exec(source);
+  const opening = /^\\begin\{(itemize|enumerate)\}/u.exec(source);
   if (!opening) return null;
   const environment = opening[1]!;
-  if (opening[2] && environment !== "enumerate") return null;
-  const start = opening[2]?.startsWith("start=") ? Number(opening[2].slice(6)) : 1;
-  if (!Number.isSafeInteger(start) || start < 1) return null;
+  const optionRange = optionalArgumentRange(source, opening[0].length);
+  const options = parseLatexListOptions(optionRange?.source ?? "");
+  if (!options || (optionRange && environment !== "enumerate")) return null;
+  const bodyFrom = optionRange?.end ?? opening[0].length;
   const closing = `\\end{${environment}}`;
   const close = source.lastIndexOf(closing);
-  if (close < opening[0].length || source.slice(close + closing.length).trim() !== "") return null;
-  const body = source.slice(opening[0].length, close);
+  if (close < bodyFrom || source.slice(close + closing.length).trim() !== "") return null;
+  const body = source.slice(bodyFrom, close);
   const matches: { index: number; length: number }[] = [];
   for (let cursor = 0; cursor < body.length; cursor++) {
     if (body[cursor] === "%") return null;
@@ -788,14 +826,17 @@ function parseList(source: string, depth: number): JSONContent | null {
     const start = matches[index]!.index + matches[index]!.length;
     const end = index + 1 < matches.length ? matches[index + 1]!.index! : body.length;
     const item = body.slice(start, end).trim();
-    const projected = projectLatexVisualDocument(item, depth + 1);
+    const projected = projectLatexVisualDocument(item, depth + 1, setup);
     if (projected.rawBlocks > 0 || projected.blocks[0]?.node.type !== "paragraph") return null;
     items.push({ type: "listItem", content: projected.content.content ?? [] });
   }
   return {
     type: environment === "itemize" ? "bulletList" : "orderedList",
-    ...(opening[2] === "resume" ? { attrs: { resume: true } } : {}),
-    ...(start !== 1 ? { attrs: { start } } : {}),
+    attrs: {
+      ...(options.resume ? { resume: true } : {}),
+      ...(options.start !== 1 ? { start: options.start } : {}),
+      ...(optionRange ? { latexListOptions: optionRange.source } : {}),
+    },
     content: items,
   };
 }
@@ -976,6 +1017,8 @@ function nextBlockEnd(body: string, from: number): number {
   }
   const standalone = /^\\(?:maketitle|tableofcontents|newpage|clearpage)\b/u.exec(body.slice(from));
   if (standalone) return from + standalone[0].length;
+  const contentsEntry = contentsEntryRange(body, from);
+  if (contentsEntry) return contentsEntry.end;
   if (
     /^\\(?:part|chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?\{/u.test(
       body.slice(from),
@@ -999,7 +1042,7 @@ function nextBlockEnd(body: string, from: number): number {
       if (body.startsWith("\\end{document}", index)) return index;
       if (/^\r?\n[\t ]*\r?\n/u.test(body.slice(index))) return index;
       if (
-        /^\\(?:begin\{|\[|(?:part|chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?\{)/u.test(
+        /^\\(?:begin\{|\[|maketitle\b|tableofcontents\b|newpage\b|clearpage\b|addcontentsline\b|(?:part|chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?\{)/u.test(
           body.slice(index),
         )
       )
@@ -1010,6 +1053,38 @@ function nextBlockEnd(body: string, from: number): number {
     else if (body[index] === "}") depth--;
   }
   return body.length;
+}
+
+function contentsEntryRange(source: string, from: number) {
+  const command = /^\\addcontentsline(?![A-Za-z])/u.exec(source.slice(from));
+  if (!command) return null;
+  const arguments_: string[] = [];
+  let end = from + command[0].length;
+  for (let index = 0; index < 3; index++) {
+    while (/\s/u.test(source[end] ?? "")) end++;
+    if (source[end] !== "{") return null;
+    const close = closingBrace(source, end);
+    if (close === null) return null;
+    arguments_.push(source.slice(end + 1, close));
+    end = close + 1;
+  }
+  return { end, file: arguments_[0]!, kind: arguments_[1]!, title: arguments_[2]! };
+}
+
+function contentsEntry(source: string, from: number) {
+  const range = contentsEntryRange(source, from);
+  if (!range || range.file !== "toc") return null;
+  const heading = LATEX_HEADING_STYLES.find((style) => style.command === range.kind);
+  if (!heading && range.kind !== "part") return null;
+  const content = parseInline(range.title);
+  if (!content) return null;
+  return {
+    ...range,
+    level: heading?.level === 6 || range.kind === "part" ? 0 : heading!.level,
+    display: content
+      .map((node) => node.text ?? String(node.attrs?.tex ?? node.attrs?.argument ?? ""))
+      .join(""),
+  };
 }
 
 /** Unsupported metadata stays visibly exact; it is never stripped into prose. */
@@ -1377,25 +1452,22 @@ function parseBibliographyPreview(source: string): JSONContent | null {
   if (!opening || !source.endsWith(closing)) return null;
   const body = source.slice(opening[0].length, -closing.length);
   if (/%/u.test(body)) return null;
-  const matches = [...body.matchAll(/\\bibitem\{([^{}\\\s]+)\}/gu)];
-  if (matches.length === 0 || matches.length > 100) return null;
-  let editable = !body.slice(0, matches[0]!.index).trim();
+  const matches = [...body.matchAll(/\\bibitem\s*(?:\[([^\[\]]*)\]\s*)?\{([^{}\\\s]+)\}/gu)];
+  if (matches.length > 100) return null;
+  let editable = !body.slice(0, matches[0]?.index ?? body.length).trim();
   const items = matches.map((match, index) => {
     const end = matches[index + 1]?.index ?? body.length;
     const raw = body.slice(match.index! + match[0].length, end).trim();
     const inline = parseInline(raw);
     if (
       !inline ||
-      inline.some(
-        (node) => (node.type !== "text" && node.type !== "hardBreak") || node.marks?.length,
-      )
+      inline.some((node) => node.type !== "text" && node.type !== "hardBreak") ||
+      (match[1] !== undefined && metadataText(match[1]) === null)
     )
       editable = false;
     return {
-      label: match[1]!,
-      body: inline
-        ? inline.map((node) => (node.type === "hardBreak" ? "\n" : (node.text ?? ""))).join("")
-        : exactMetadataSource(raw),
+      label: match[2]!,
+      body: raw,
     };
   });
   return {
@@ -1406,6 +1478,17 @@ function parseBibliographyPreview(source: string): JSONContent | null {
       items,
       widestLabel: opening[1],
       editable,
+      sourceMeta: {
+        bibliographySource: true,
+        header:
+          source.slice(0, opening[0].length) + body.slice(0, matches[0]?.index ?? body.length),
+        entries: matches.map((match, index) => ({
+          key: match[2]!,
+          displayLabel: match[1] === undefined ? null : metadataText(match[1]),
+          body: items[index]!.body,
+          source: body.slice(match.index, matches[index + 1]?.index ?? body.length),
+        })),
+      },
     },
   };
 }
@@ -1441,6 +1524,7 @@ interface TabularBody {
   readonly endingFrom: number;
   readonly endingTo: number;
   readonly columnSpec: string;
+  readonly width: string | null;
 }
 
 function requiredArgument(
@@ -1460,9 +1544,11 @@ function tabularBody(source: string): TabularBody | null {
   if (!opening) return null;
   const name = opening[1]!;
   let cursor = opening.index + opening[0].length;
+  let tableWidth: string | null = null;
   if (name === "tabularx" || name === "tabulary") {
     const width = requiredArgument(source, cursor);
     if (!width) return null;
+    tableWidth = width.source;
     cursor = width.next;
   }
   const columnSpec = requiredArgument(source, cursor);
@@ -1482,6 +1568,7 @@ function tabularBody(source: string): TabularBody | null {
         endingFrom: end,
         endingTo: end + ending.length,
         columnSpec: columnSpec.source,
+        width: tableWidth,
       };
 }
 
@@ -1536,6 +1623,7 @@ export function latexVisualTablePresentation(source: string) {
     [...prefix.matchAll(/\\(tiny|scriptsize|footnotesize|small|normalsize)\b/gu)].at(-1)?.[1] ??
     "normalsize";
   const columnWidths: (number | null)[] = [];
+  const columnKinds: ("natural" | "fixed" | "flexible")[] = [];
   const spec = body?.columnSpec ?? "";
   for (let index = 0; index < spec.length; index++) {
     const character = spec[index]!;
@@ -1548,15 +1636,71 @@ export function latexVisualTablePresentation(source: string) {
     else if ("pmb".includes(character)) {
       const argument = requiredArgument(spec, index + 1);
       columnWidths.push(argument ? latexLengthInches(argument.source) : null);
+      columnKinds.push("fixed");
       if (argument) index = argument.next - 1;
-    } else if ("lcrX".includes(character)) columnWidths.push(null);
+    } else if ("lcrX".includes(character)) {
+      columnWidths.push(null);
+      columnKinds.push(character === "X" ? "flexible" : "natural");
+    }
   }
+  const caption = commandArgumentRange(source, "caption");
+  const relativeWidth =
+    /^((?:\d+(?:\.\d*)?|\.\d+)?)\s*\\(?:textwidth|linewidth|columnwidth)$/u.exec(
+      body?.width?.trim() ?? "",
+    );
+  const absoluteWidth = body?.width ? latexLengthInches(body.width) : null;
   return {
     size,
     columnWidths,
+    columnKinds,
+    captionAfter: caption !== null && body !== null && caption.from > body.to,
+    hasCaption: caption !== null,
+    hasFloat: /\\begin\{table\*?\}/u.test(source),
+    width: relativeWidth
+      ? `${Number(relativeWidth[1] || "1") * 100}%`
+      : absoluteWidth !== null
+        ? `${absoluteWidth}in`
+        : undefined,
     trimLeft: /^\s*@\{\}/u.test(spec),
     trimRight: /@\{\}\s*$/u.test(spec),
   };
+}
+
+/** A header rule establishes structure, not bold text. Keep cell formatting source-derived. */
+export function latexVisualTableFormatting(node: JSONContent) {
+  const rows = tableRows(node.attrs?.rows);
+  if (!rows) return [];
+  return preservedTableCells(node, rows).map((row) =>
+    row.map((raw) => {
+      const format = {
+        bold: false,
+        italic: false,
+        monospace: false,
+        smallCaps: false,
+        underline: false,
+      };
+      for (let depth = 0; depth < 8; depth++) {
+        const command =
+          /^\s*\\(textbf|textit|emph|texttt|textsc|underline|mbox|multicolumn|multirow)\b/u.exec(
+            raw,
+          );
+        if (!command) break;
+        let value = requiredArgument(raw, command[0].length);
+        if (command[1] === "multicolumn" || command[1] === "multirow") {
+          value = value && requiredArgument(raw, value.next);
+          value = value && requiredArgument(raw, value.next);
+        }
+        if (!value || raw.slice(value.next).trim()) break;
+        if (command[1] === "textbf") format.bold = true;
+        if (command[1] === "textit" || command[1] === "emph") format.italic = true;
+        if (command[1] === "texttt") format.monospace = true;
+        if (command[1] === "textsc") format.smallCaps = true;
+        if (command[1] === "underline") format.underline = true;
+        raw = value.source;
+      }
+      return format;
+    }),
+  );
 }
 
 interface TableSourceSlice {
@@ -1644,44 +1788,303 @@ function editableTableCell(source: string, offset: number): EditableTableCell | 
   };
 }
 
+export interface LatexTableCellLayout {
+  row: number;
+  column: number;
+  rowSpan: number;
+  colSpan: number;
+  alignment: "left" | "center" | "right";
+  top: boolean;
+  bottom: boolean;
+  left: boolean;
+  right: boolean;
+  background: string | null;
+}
+
+export function latexTableSelectionBounds(
+  layout: readonly (readonly (LatexTableCellLayout | null)[])[],
+  firstRow: number,
+  lastRow: number,
+  firstColumn: number,
+  lastColumn: number,
+) {
+  const owners = layout.flat().filter((cell): cell is LatexTableCellLayout => cell !== null);
+  for (let pass = 0; pass <= owners.length; pass++) {
+    let changed = false;
+    for (const cell of owners) {
+      const bottom = cell.row + cell.rowSpan - 1;
+      const right = cell.column + cell.colSpan - 1;
+      if (
+        cell.row > lastRow ||
+        bottom < firstRow ||
+        cell.column > lastColumn ||
+        right < firstColumn
+      )
+        continue;
+      if (
+        cell.row < firstRow ||
+        bottom > lastRow ||
+        cell.column < firstColumn ||
+        right > lastColumn
+      )
+        changed = true;
+      firstRow = Math.min(firstRow, cell.row);
+      lastRow = Math.max(lastRow, bottom);
+      firstColumn = Math.min(firstColumn, cell.column);
+      lastColumn = Math.max(lastColumn, right);
+    }
+    if (!changed) break;
+  }
+  return { firstRow, lastRow, firstColumn, lastColumn };
+}
+
+function tableRowColor(value: string): string | null {
+  const colors: Record<string, readonly number[]> = {
+    black: [0, 0, 0],
+    white: [255, 255, 255],
+    red: [255, 0, 0],
+    green: [0, 255, 0],
+    blue: [0, 0, 255],
+    cyan: [0, 255, 255],
+    magenta: [255, 0, 255],
+    yellow: [255, 255, 0],
+    gray: [128, 128, 128],
+  };
+  const match = /^([a-z]+)(?:!(\d{1,3})(?:!([a-z]+))?)?$/u.exec(value.trim());
+  if (!match) return null;
+  const first = colors[match[1]!];
+  const second = colors[match[3] ?? "white"];
+  const proportion = match[2] === undefined ? 1 : Number(match[2]) / 100;
+  if (!first || !second || proportion > 1) return null;
+  return `rgb(${first.map((channel, index) => Math.round(channel * proportion + second[index]! * (1 - proportion))).join(", ")})`;
+}
+
+/** Literal spans, colors and rules keep their source; only cell bodies are editable. */
+function parseSpannedTable(body: NonNullable<ReturnType<typeof tabularBody>>) {
+  if (body.environment !== "tabular" || !/^[\s|lcr]+$/u.test(body.columnSpec)) return null;
+  const spec = body.columnSpec.replace(/\s/gu, "");
+  if (spec.includes("||")) return null;
+  const columns = [...spec.matchAll(/[lcr]/gu)];
+  const width = columns.length;
+  const slices = splitTable(body.source, "row");
+  const count = slices.filter((slice) => slice.to < body.source.length).length;
+  if (!width || width > 20 || !count || count > 100) return null;
+  const layout: (LatexTableCellLayout | null)[][] = Array.from({ length: count }, () =>
+    Array.from({ length: width }, () => null),
+  );
+  const rows = Array.from({ length: count }, () => Array.from({ length: width }, () => ""));
+  const ranges: ({ from: number; to: number; original: string } | null)[][] = rows.map((row) =>
+    row.map(() => null),
+  );
+  const sources: ({ raw: string; display: string; from: number; to: number } | null)[][] = rows.map(
+    (row) => row.map(() => null),
+  );
+  const rules = Array.from({ length: count + 1 }, () => Array.from({ length: width }, () => false));
+  const colors: (string | null)[] = Array.from({ length: count }, () => null);
+  for (const [rowIndex, slice] of slices.entries()) {
+    let prefix = 0;
+    while (true) {
+      const whitespace = /^\s*/u.exec(slice.source.slice(prefix))![0];
+      prefix += whitespace.length;
+      const command = /^\\(hline|cline|rowcolor)\b/u.exec(slice.source.slice(prefix));
+      if (!command) break;
+      if (rowIndex > count) return null;
+      prefix += command[0].length;
+      if (command[1] === "hline") rules[rowIndex]!.fill(true);
+      else {
+        const argument = requiredArgument(slice.source, prefix);
+        if (!argument) return null;
+        prefix = argument.next;
+        if (command[1] === "cline") {
+          const range = /^(\d+)-(\d+)$/u.exec(argument.source.trim());
+          if (
+            !range ||
+            Number(range[1]) < 1 ||
+            Number(range[2]) > width ||
+            Number(range[1]) > Number(range[2])
+          )
+            return null;
+          for (let column = Number(range[1]) - 1; column < Number(range[2]); column++)
+            rules[rowIndex]![column] = true;
+        } else {
+          const color = tableRowColor(argument.source);
+          if (!color || rowIndex === count || colors[rowIndex]) return null;
+          colors[rowIndex] = color;
+        }
+      }
+    }
+    if (rowIndex === count) {
+      if (slice.source.slice(prefix).trim()) return null;
+      continue;
+    }
+    let column = 0;
+    for (const cell of splitTable(slice.source.slice(prefix), "cell")) {
+      if (column >= width) return null;
+      const raw = cell.source.trim();
+      const rawOffset = prefix + cell.from + cell.source.indexOf(raw);
+      const occupied = layout[rowIndex]![column];
+      if (occupied) {
+        if (raw || occupied.row === rowIndex) return null;
+        column++;
+        continue;
+      }
+      let from = 0;
+      let to = raw.length;
+      let colSpan = 1;
+      let rowSpan = 1;
+      let alignment = columns[column]![0];
+      let left = spec[columns[column]!.index! - 1] === "|";
+      let right = spec[columns[column]!.index! + 1] === "|";
+      if (/^\\multicolumn\b/u.test(raw)) {
+        const span = requiredArgument(raw, "\\multicolumn".length);
+        const format = span && requiredArgument(raw, span.next);
+        const content = format && requiredArgument(raw, format.next);
+        if (
+          !span ||
+          !format ||
+          !content ||
+          raw.slice(content.next).trim() ||
+          !/^\d+$/u.test(span.source) ||
+          !/^\|?[lcr]\|?$/u.test(format.source)
+        )
+          return null;
+        colSpan = Number(span.source);
+        alignment = format.source.replace(/\|/gu, "");
+        left = format.source.startsWith("|");
+        right = format.source.endsWith("|");
+        from = content.from;
+        to = content.to;
+      }
+      const content = raw.slice(from, to);
+      if (/^\s*\\multirow\b/u.test(content)) {
+        const command = /^\s*\\multirow\b/u.exec(content)!;
+        const span = requiredArgument(raw, from + command[0].length);
+        const size = span && requiredArgument(raw, span.next);
+        const value = size && requiredArgument(raw, size.next);
+        if (
+          !span ||
+          !size ||
+          !value ||
+          raw.slice(value.next, to).trim() ||
+          !/^\d+$/u.test(span.source) ||
+          size.source !== "*"
+        )
+          return null;
+        rowSpan = Number(span.source);
+        from = value.from;
+        to = value.to;
+      }
+      if (colSpan < 1 || column + colSpan > width || rowSpan < 1 || rowIndex + rowSpan > count)
+        return null;
+      const editable = editableTableCell(raw.slice(from, to), from);
+      if (!editable) return null;
+      const geometry: LatexTableCellLayout = {
+        row: rowIndex,
+        column,
+        rowSpan,
+        colSpan,
+        alignment: alignment === "c" ? "center" : alignment === "r" ? "right" : "left",
+        top: false,
+        bottom: false,
+        left,
+        right,
+        background: null,
+      };
+      for (let r = rowIndex; r < rowIndex + rowSpan; r++) {
+        for (let c = column; c < column + colSpan; c++) {
+          if (layout[r]![c]) return null;
+          layout[r]![c] = geometry;
+        }
+      }
+      rows[rowIndex]![column] = editable.display;
+      const offset = body.from + slice.from + rawOffset;
+      ranges[rowIndex]![column] = {
+        from: offset + editable.from,
+        to: offset + editable.to,
+        original: editable.display,
+      };
+      sources[rowIndex]![column] = { raw, ...editable };
+      column += colSpan;
+    }
+    if (column !== width) return null;
+  }
+  for (const [rowIndex, row] of layout.entries()) {
+    for (const [column, cell] of row.entries()) {
+      if (!cell) return null;
+      if (cell.row !== rowIndex || cell.column !== column) continue;
+      const top = rules[rowIndex]!.slice(column, column + cell.colSpan);
+      const bottom = rules[rowIndex + cell.rowSpan]!.slice(column, column + cell.colSpan);
+      if (
+        (top.some(Boolean) && !top.every(Boolean)) ||
+        (bottom.some(Boolean) && !bottom.every(Boolean))
+      )
+        return null;
+      for (let r = rowIndex + 1; r < rowIndex + cell.rowSpan; r++)
+        if (
+          rules[r]!.slice(column, column + cell.colSpan).some(Boolean) ||
+          colors[r] !== colors[rowIndex]
+        )
+          return null;
+      cell.top = top.every(Boolean);
+      cell.bottom = bottom.every(Boolean);
+      cell.background = colors[rowIndex]!;
+    }
+  }
+  return {
+    layout,
+    parsedRows: rows.map((row, index) => ({
+      rows: row,
+      ranges: ranges[index]!,
+      sources: sources[index]!,
+      end: body.from + slices[index]!.to + 2,
+      terminated: true,
+    })),
+  };
+}
+
 function parseTablePreview(source: string): JSONContent | null {
   if (!/\\begin\{(?:table\*?|tabularx|tabular|tabulary|longtable)\}/u.test(source)) return null;
   const body = tabularBody(source);
   if (body === null || body.source.length > 100_000) return null;
-  const parsedRows = splitTable(body.source, "row")
-    .map((row) => {
-      const cells = splitTable(row.source, "cell");
-      const editableCells = cells.map((cell) =>
-        editableTableCell(cell.source, body.from + row.from + cell.from),
-      );
-      return {
-        rows: cells.map(
-          (cell, index) => editableCells[index]?.display ?? exactMetadataSource(cell.source),
-        ),
-        sources: cells.map((cell) => {
-          const clean = cell.source
-            .trim()
-            .replace(TABLE_RULE_PREFIX, "")
-            .replace(TABLE_RULE_SUFFIX, "")
-            .trim();
-          const core = editableTableCell(clean, 0);
-          return core ? { raw: clean, ...core } : null;
-        }),
-        ranges: editableCells.map((cell) =>
-          cell ? { from: cell.from, to: cell.to, original: cell.display } : null,
-        ),
-        end: body.from + row.to + (row.to < body.source.length ? 2 : 0),
-        terminated: row.to < body.source.length,
-      };
-    })
-    .filter((row) => row.terminated || row.rows.some(Boolean));
+  const needsSpans = /\\(?:multicolumn|multirow|rowcolor|cline)\b/u.test(body.source);
+  const spanned = needsSpans ? parseSpannedTable(body) : null;
+  if (needsSpans && !spanned) return null;
+  const parsedRows =
+    spanned?.parsedRows ??
+    splitTable(body.source, "row")
+      .map((row) => {
+        const cells = splitTable(row.source, "cell");
+        const editableCells = cells.map((cell) =>
+          editableTableCell(cell.source, body.from + row.from + cell.from),
+        );
+        return {
+          rows: cells.map(
+            (cell, index) => editableCells[index]?.display ?? exactMetadataSource(cell.source),
+          ),
+          sources: cells.map((cell) => {
+            const clean = cell.source
+              .trim()
+              .replace(TABLE_RULE_PREFIX, "")
+              .replace(TABLE_RULE_SUFFIX, "")
+              .trim();
+            const core = editableTableCell(clean, 0);
+            return core ? { raw: clean, ...core } : null;
+          }),
+          ranges: editableCells.map((cell) =>
+            cell ? { from: cell.from, to: cell.to, original: cell.display } : null,
+          ),
+          end: body.from + row.to + (row.to < body.source.length ? 2 : 0),
+          terminated: row.to < body.source.length,
+        };
+      })
+      .filter((row) => row.terminated || row.rows.some(Boolean));
   const rows = parsedRows.slice(0, 100).map((row) => row.rows);
   const width = Math.max(0, ...rows.map((row) => row.length));
   if (rows.length === 0 || width === 0 || width > 20) return null;
   const editable =
     parsedRows.length <= 100 &&
     rows.every((row) => row.length === width) &&
-    parsedRows.every((row) => row.ranges.every((cell) => cell !== null));
+    (spanned !== null || parsedRows.every((row) => row.ranges.every((cell) => cell !== null)));
   const captionArgument = commandArgumentRange(source, "caption");
   const captionCell = captionArgument
     ? editableTableCell(captionArgument.source, captionArgument.from)
@@ -1725,6 +2128,8 @@ function parseTablePreview(source: string): JSONContent | null {
       tableCanonical: false,
       sourceMeta: editable
         ? {
+            preserveStructure: spanned !== null,
+            tableLayout: spanned?.layout ?? null,
             originalCells: parsedRows.map((row) => row.sources),
             originalHasHeader:
               /\\midrule\b/u.test(body.source) ||
@@ -1879,6 +2284,352 @@ function graphicsWidth(options: string): string {
   );
 }
 
+export interface LatexFigureArtwork {
+  frame: boolean;
+  width: string | null;
+  height: string | null;
+  vertical: "center" | "bottom";
+  angle: number;
+  path: string | null;
+  textRange: { from: number; to: number; original: string };
+}
+
+export interface LatexFigurePanel extends LatexFigureArtwork {
+  panelWidth: string | null;
+  subfigure: boolean;
+  captionRange: { from: number; to: number; original: string } | null;
+  labelRange: { from: number; to: number; original: string } | null;
+}
+
+function figureLength(source: string): string | null {
+  const relative = /^((?:\d+(?:\.\d*)?|\.\d+)?)\s*\\(?:linewidth|textwidth|columnwidth)$/u.exec(
+    source.trim(),
+  );
+  if (relative) {
+    const factor = Number(relative[1] || "1");
+    return factor > 0 && factor <= 1 ? `${factor * 100}%` : null;
+  }
+  const inches = latexLengthInches(source);
+  return inches !== null && inches > 0 && inches <= 30 ? `${inches}in` : null;
+}
+
+function parseFigureArtwork(
+  source: string,
+  from: number,
+  to: number,
+  setup: LatexVisualSetup,
+  depth = 0,
+  parameter = false,
+): LatexFigureArtwork | null {
+  if (depth > 8) return null;
+  [from, to] = trimSourceRange(source, from, to);
+  const raw = source.slice(from, to);
+  const command = /^\\([A-Za-z]+)\b/u.exec(raw);
+  if (command?.[1] === "rotatebox") {
+    const angle = requiredArgument(source, from + command[0].length);
+    const body = angle && requiredArgument(source, angle.next);
+    if (
+      !angle ||
+      !body ||
+      body.next > to ||
+      source.slice(body.next, to).trim() ||
+      !/^-?(?:\d+(?:\.\d*)?|\.\d+)$/u.test(angle.source)
+    )
+      return null;
+    const value = Number(angle.source);
+    if (Math.abs(value) > 360) return null;
+    const artwork = parseFigureArtwork(source, body.from, body.to, setup, depth + 1, parameter);
+    return artwork ? { ...artwork, angle: artwork.angle + value } : null;
+  }
+  if (command?.[1] === "fbox") {
+    const body = requiredArgument(source, from + command[0].length);
+    if (!body || body.next > to || source.slice(body.next, to).trim()) return null;
+    const artwork = parseFigureArtwork(source, body.from, body.to, setup, depth + 1, parameter);
+    return artwork && !artwork.frame ? { ...artwork, frame: true } : null;
+  }
+  if (command?.[1] === "parbox") {
+    const position = optionalArgumentRange(source, from + command[0].length);
+    const height = position && optionalArgumentRange(source, position.end);
+    const innerPosition = height && optionalArgumentRange(source, height.end);
+    const width = innerPosition && requiredArgument(source, innerPosition.end);
+    const body = width && requiredArgument(source, width.next);
+    if (
+      !position ||
+      !height ||
+      !innerPosition ||
+      !width ||
+      !body ||
+      body.next > to ||
+      position.source !== "c" ||
+      innerPosition.source !== "c" ||
+      source.slice(body.next, to).trim()
+    )
+      return null;
+    const cssWidth = figureLength(width.source);
+    const cssHeight = figureLength(height.source);
+    if (!cssWidth || !cssHeight || cssHeight.endsWith("%")) return null;
+    const centering = /^\s*\\centering\b\s*/u.exec(body.source);
+    if (!centering) return null;
+    const artwork = parseFigureArtwork(
+      source,
+      body.from + centering[0].length,
+      body.to,
+      setup,
+      depth + 1,
+      parameter,
+    );
+    return artwork ? { ...artwork, width: cssWidth, height: cssHeight, vertical: "center" } : null;
+  }
+  if (command?.[1] === "includegraphics") {
+    const option = optionalArgumentRange(source, from + command[0].length);
+    const path = requiredArgument(source, option?.end ?? from + command[0].length);
+    const width = option ? /^\s*width\s*=\s*(.+)\s*$/u.exec(option.source)?.[1] : null;
+    if (
+      !path ||
+      path.next > to ||
+      source.slice(path.next, to).trim() ||
+      (option && (!width || !figureLength(width)))
+    )
+      return null;
+    const value = editableTableCell(path.source, path.from);
+    if (!value) return null;
+    return {
+      frame: false,
+      width: width ? figureLength(width) : null,
+      height: null,
+      vertical: "center",
+      angle: 0,
+      path: value.display,
+      textRange: { from: value.from, to: value.to, original: value.display },
+    };
+  }
+  if (command && Object.hasOwn(setup.math.macros, command[1]!)) {
+    const macro = setup.math.macros[command[1]!]!;
+    const argument = requiredArgument(source, from + command[0].length);
+    if (
+      parameter ||
+      macro.args !== 1 ||
+      !argument ||
+      argument.next > to ||
+      source.slice(argument.next, to).trim()
+    )
+      return null;
+    const template = parseFigureArtwork(macro.def, 0, macro.def.length, setup, depth + 1, true);
+    const body = editableTableCell(argument.source, argument.from);
+    if (!template || template.textRange.original !== "#1" || template.path !== null || !body)
+      return null;
+    return { ...template, textRange: { from: body.from, to: body.to, original: body.display } };
+  }
+  let height: string | null = null;
+  const rule = /^\\rule\s*\{\s*0(?:\.0+)?(?:pt|mm|cm|in)\s*\}\s*\{([^{}]+)\}\s*/u.exec(raw);
+  if (rule) {
+    height = figureLength(rule[1]!);
+    if (!height || height.endsWith("%")) return null;
+    from += rule[0].length;
+    const ending = /\s*\\rule\s*\{\s*0(?:\.0+)?(?:pt|mm|cm|in)\s*\}\s*\{([^{}]+)\}\s*$/u.exec(
+      source.slice(from, to),
+    );
+    if (ending) {
+      if (figureLength(ending[1]!) !== height) return null;
+      to = from + ending.index;
+    }
+  }
+  const body =
+    parameter && source.slice(from, to).trim() === "#1"
+      ? { display: "#1", from, to }
+      : editableTableCell(source.slice(from, to), from);
+  if (!body) return null;
+  return {
+    frame: false,
+    width: null,
+    height,
+    vertical: height ? "bottom" : "center",
+    angle: 0,
+    path: null,
+    textRange: { from: body.from, to: body.to, original: body.display },
+  };
+}
+
+/** Boxes and panels are a bounded source projection, never arbitrary TeX execution. */
+function parseFigureLayout(source: string, setup: LatexVisualSetup): JSONContent | null {
+  const opening = /^\\begin\{(figure\*?)\}(?:\[[^\]]*\])?/u.exec(source);
+  if (!opening || source.length > 100_000) return null;
+  const ending = `\\end{${opening[1]}}`;
+  const end = source.lastIndexOf(ending);
+  if (end < opening[0].length || source.slice(end + ending.length).trim()) return null;
+  const panels: LatexFigurePanel[] = [];
+  let spreadPanels = false;
+  const items: { body: string; path: string; caption: string; label: string }[] = [];
+  const outer: {
+    captionRange: LatexFigurePanel["captionRange"];
+    labelRange: LatexFigurePanel["labelRange"];
+  } = { captionRange: null, labelRange: null };
+  const parsePanel = (from: number, to: number, panelWidth: string | null, subfigure: boolean) => {
+    let cursor = from;
+    const centered = /^\s*\\centering\b\s*/u.exec(source.slice(cursor, to));
+    if (centered) cursor += centered[0].length;
+    const captionAt = source.slice(cursor, to).search(/\\caption\b/u);
+    const labelAt = source.slice(cursor, to).search(/\\label\b/u);
+    const contentTo = Math.min(
+      to,
+      captionAt < 0 ? to : cursor + captionAt,
+      labelAt < 0 ? to : cursor + labelAt,
+    );
+    const artwork = parseFigureArtwork(source, cursor, contentTo, setup);
+    if (!artwork) return false;
+    let caption: LatexFigurePanel["captionRange"] = null;
+    let label: LatexFigurePanel["labelRange"] = null;
+    cursor = contentTo;
+    while (cursor < to) {
+      cursor += /^\s*/u.exec(source.slice(cursor, to))![0].length;
+      if (cursor === to) break;
+      const command = /^\\(caption|label)\b/u.exec(source.slice(cursor, to));
+      const argument = command && requiredArgument(source, cursor + command[0].length);
+      if (!command || !argument || argument.next > to) return false;
+      const value = editableTableCell(argument.source, argument.from);
+      if (!value || (command[1] === "label" && safeLatexLabel(value.display) === null))
+        return false;
+      const range = { from: value.from, to: value.to, original: value.display };
+      if (command[1] === "caption") {
+        if (caption) return false;
+        caption = range;
+      } else {
+        if (label) return false;
+        label = range;
+      }
+      cursor = argument.next;
+    }
+    panels.push({
+      ...artwork,
+      panelWidth,
+      subfigure,
+      captionRange: subfigure ? caption : null,
+      labelRange: subfigure ? label : null,
+    });
+    items.push({
+      body: artwork.path === null ? artwork.textRange.original : "",
+      path: artwork.path ?? "",
+      caption: subfigure ? (caption?.original ?? "") : "",
+      label: subfigure ? (label?.original ?? "") : "",
+    });
+    if (!subfigure) {
+      outer.captionRange = caption;
+      outer.labelRange = label;
+    }
+    return true;
+  };
+  let cursor = opening[0].length;
+  cursor += /^\s*(?:\\centering\b\s*)?/u.exec(source.slice(cursor, end))![0].length;
+  if (source.startsWith("\\begin{subfigure}", cursor)) {
+    while (source.startsWith("\\begin{subfigure}", cursor)) {
+      if (panels.length >= 26) return null;
+      const width = requiredArgument(source, cursor + "\\begin{subfigure}".length);
+      const closing = source.indexOf("\\end{subfigure}", width?.next ?? cursor);
+      const cssWidth = width && figureLength(width.source);
+      if (
+        !width ||
+        !cssWidth ||
+        closing < width.next ||
+        !parsePanel(width.next, closing, cssWidth, true)
+      )
+        return null;
+      cursor = closing + "\\end{subfigure}".length;
+      const separator = /^\s*(?:\\hfill\b\s*)?/u.exec(source.slice(cursor, end))![0];
+      spreadPanels ||= separator.includes("\\hfill");
+      cursor += separator.length;
+    }
+    const tail = source.slice(cursor, end);
+    const caption = commandFullRange(tail, "caption");
+    const label = commandFullRange(tail, "label");
+    let residual = tail;
+    for (const range of [caption, label]
+      .filter((range) => range !== null)
+      .sort((a, b) => b.from - a.from))
+      residual = residual.slice(0, range.from) + residual.slice(range.to);
+    if (residual.trim()) return null;
+    for (const [name, range] of [
+      ["caption", caption],
+      ["label", label],
+    ] as const) {
+      if (!range) continue;
+      const cell = editableTableCell(range.argument.source, cursor + range.argument.from);
+      if (!cell || (name === "label" && safeLatexLabel(cell.display) === null)) return null;
+      const value = { from: cell.from, to: cell.to, original: cell.display };
+      if (name === "caption") outer.captionRange = value;
+      else outer.labelRange = value;
+    }
+  } else {
+    if (!parsePanel(cursor, end, null, false)) return null;
+    // Ordinary image figures retain their existing path/width/placement controls.
+    if (panels[0]!.path !== null && !panels[0]!.frame && panels[0]!.angle === 0) return null;
+  }
+  return {
+    type: "latexRichPreview",
+    attrs: {
+      kind: "figureLayout",
+      raw: source,
+      items,
+      caption: outer.captionRange?.original ?? "",
+      label: outer.labelRange?.original ?? "",
+      editable: true,
+      sourceMeta: { panels, spreadPanels, ...outer },
+    },
+  };
+}
+
+function serializeFigureLayout(node: JSONContent): string | null {
+  const raw = String(node.attrs?.raw ?? "");
+  const meta = node.attrs?.sourceMeta as
+    | {
+        panels: LatexFigurePanel[];
+        captionRange: LatexFigurePanel["captionRange"];
+        labelRange: LatexFigurePanel["labelRange"];
+      }
+    | undefined;
+  const items = node.attrs?.items as
+    | { body: string; path: string; caption: string; label: string }[]
+    | undefined;
+  if (
+    !meta ||
+    !Array.isArray(meta.panels) ||
+    !Array.isArray(items) ||
+    items.length !== meta.panels.length
+  )
+    return null;
+  const patches: { from: number; to: number; value: string }[] = [];
+  const patch = (range: LatexFigurePanel["captionRange"], value: unknown, label = false) => {
+    if (typeof value !== "string" || (label && safeLatexLabel(value) === null)) return false;
+    if (!range) return value === "";
+    if (range.from < 0 || range.to < range.from || range.to > raw.length) return false;
+    if (value !== range.original)
+      patches.push({ from: range.from, to: range.to, value: label ? value : escapeText(value) });
+    return true;
+  };
+  for (const [index, panel] of meta.panels.entries()) {
+    const item = items[index]!;
+    if (
+      !item ||
+      !patch(panel.textRange, panel.path === null ? item.body : item.path) ||
+      !patch(panel.captionRange, item.caption) ||
+      !patch(panel.labelRange, item.label, true)
+    )
+      return null;
+  }
+  if (
+    !patch(meta.captionRange, node.attrs?.caption) ||
+    !patch(meta.labelRange, node.attrs?.label, true)
+  )
+    return null;
+  let result = raw;
+  let boundary = raw.length;
+  for (const patch of patches.sort((a, b) => b.from - a.from)) {
+    if (patch.to > boundary) return null;
+    result = result.slice(0, patch.from) + patch.value + result.slice(patch.to);
+    boundary = patch.from;
+  }
+  return result;
+}
+
 function parseFigurePreview(source: string): JSONContent | null {
   const opening = /^\\begin\{(figure\*?)\}(?:\[([^\]]*)\])?/u.exec(source);
   if (!opening) return null;
@@ -1968,7 +2719,11 @@ export function latexVisualFigureSource(): string {
   ].join("\n");
 }
 
-function parseRichPreview(source: string, documentSource: string): JSONContent | null {
+function parseRichPreview(
+  source: string,
+  documentSource: string,
+  setup = visualSetup(documentSource),
+): JSONContent | null {
   return (
     parseDocumentFrontMatter(source, documentSource) ??
     parsePartPreview(source) ??
@@ -1976,16 +2731,24 @@ function parseRichPreview(source: string, documentSource: string): JSONContent |
     parseBibliographyPreview(source) ??
     parseDescriptionPreview(source) ??
     parseTablePreview(source) ??
+    parseFigureLayout(source, setup) ??
     parseFigurePreview(source) ??
     parseScientificEnvironment(source)
   );
 }
 
-function scientificSourceRanges(source: string) {
+function scientificSourceRanges(source: string, setup: LatexVisualSetup) {
   const opening = /^\\begin\{([A-Za-z*]+)\}/u.exec(source);
   const environment = opening?.[1] ?? "";
-  if (!opening || !SCIENTIFIC_ENVIRONMENTS.has(environment)) return null;
+  const declaration = setup.declarations.environments.get(environment);
+  if (
+    !opening ||
+    setup.declarations.unsupported.has(environment) ||
+    (!SCIENTIFIC_ENVIRONMENTS.has(environment) && !declaration)
+  )
+    return null;
   const titleRange = optionalArgumentRange(source, opening[0].length);
+  if (titleRange && declaration?.kind === "quote") return null;
   const title = titleRange ? editableTableCell(titleRange.source, titleRange.from) : null;
   if (titleRange && !title) return null;
   const from = titleRange?.end ?? opening[0].length;
@@ -2023,31 +2786,45 @@ const scientificMathCommands = new Set([
   "mathinner",
 ]);
 
-function supportedScientificMath(node: JSONContent): boolean {
+function supportedScientificMath(node: JSONContent, setup: LatexVisualSetup): boolean {
+  const supportedEnvironments = (tex: string) =>
+    [...tex.matchAll(/\\(?:begin|end)\{([^}]+)\}/gu)].every((match) =>
+      STRUCTURED_MATH_ENVIRONMENT.test(match[1]!),
+    );
+  const supportedCommand = (name: string, depth = 0): boolean => {
+    const macro = Object.hasOwn(setup.math.macros, name) ? setup.math.macros[name] : undefined;
+    if (!macro) return !setup.math.unsupported.includes(name) && scientificMathCommands.has(name);
+    return (
+      depth < 32 &&
+      supportedEnvironments(macro.def) &&
+      latexCommands(macro.def).every(
+        (match) => !/^[A-Za-z]/u.test(match[1]!) || supportedCommand(match[1]!, depth + 1),
+      )
+    );
+  };
   if (node.type === "latexInlineMath" || node.type === "latexDisplayMath") {
     const tex = String(node.attrs?.tex ?? "");
     if (
       latexCommands(tex).some(
-        (match) => /^[A-Za-z]/u.test(match[1]!) && !scientificMathCommands.has(match[1]!),
+        (match) => /^[A-Za-z]/u.test(match[1]!) && !supportedCommand(match[1]!),
       )
     )
       return false;
-    if (
-      [...tex.matchAll(/\\(?:begin|end)\{([^}]+)\}/gu)].some(
-        (match) => !STRUCTURED_MATH_ENVIRONMENT.test(match[1]!),
-      )
-    )
-      return false;
+    if (!supportedEnvironments(tex)) return false;
   }
-  return node.content?.every(supportedScientificMath) ?? true;
+  return node.content?.every((child) => supportedScientificMath(child, setup)) ?? true;
 }
 
-function parseScientificStructure(source: string, depth: number): JSONContent | null {
+function parseScientificStructure(
+  source: string,
+  depth: number,
+  setup: LatexVisualSetup,
+): JSONContent | null {
   if (depth >= 32) return null;
-  const ranges = scientificSourceRanges(source);
+  const ranges = scientificSourceRanges(source, setup);
   if (!ranges) return null;
-  const body = projectLatexVisualDocument(source.slice(ranges.from, ranges.to), depth + 1);
-  if (body.rawBlocks > 0 || !supportedScientificMath(body.content)) return null;
+  const body = projectLatexVisualDocument(source.slice(ranges.from, ranges.to), depth + 1, setup);
+  if (body.rawBlocks > 0 || !supportedScientificMath(body.content, setup)) return null;
   return {
     type: "latexScientific",
     attrs: { environment: ranges.environment, title: ranges.title?.display ?? "", raw: source },
@@ -2055,16 +2832,20 @@ function parseScientificStructure(source: string, depth: number): JSONContent | 
   };
 }
 
-function classifyBlock(source: string, depth: number): JSONContent | null {
+function classifyBlock(
+  source: string,
+  depth: number,
+  setup = visualSetup(source),
+): JSONContent | null {
   if (source.trim() === "\\par") return { type: "paragraph", content: [] };
   return (
-    parseScientificStructure(source, depth) ??
+    parseScientificStructure(source, depth, setup) ??
     parseHeading(source) ??
-    parseList(source, depth) ??
+    parseList(source, depth, setup) ??
     (() => {
       if (depth > 32 || !source.startsWith("\\begin{quote}") || !source.endsWith("\\end{quote}"))
         return null;
-      const inner = projectLatexVisualDocument(source.slice(13, -11), depth + 1);
+      const inner = projectLatexVisualDocument(source.slice(13, -11), depth + 1, setup);
       return inner.rawBlocks === 0
         ? { type: "blockquote", content: inner.content.content ?? [] }
         : null;
@@ -2077,13 +2858,19 @@ function classifyBlock(source: string, depth: number): JSONContent | null {
   );
 }
 
-export function projectLatexVisualDocument(source: string, depth = 0): LatexVisualDocument {
+export function projectLatexVisualDocument(
+  source: string,
+  depth = 0,
+  root: string | LatexVisualSetup = source,
+): LatexVisualDocument {
+  const setup = typeof root === "string" ? visualSetup(root) : root;
   const beginMarker = "\\begin{document}";
   const endMarker = "\\end{document}";
   const begin = findDelimiter(source, beginMarker, 0);
   const bodyFrom = begin < 0 ? 0 : begin + beginMarker.length;
   const body = source.slice(bodyFrom);
   const blocks: LatexVisualSourceBlock[] = [];
+  const manualContents: { from: number; level: number; number: string; title: string }[] = [];
   let dynamicSyntax = /\\catcode\b/u.test(withoutVisualComments(source.slice(0, bodyFrom)));
   let cursor = 0;
   while (cursor < body.length) {
@@ -2093,6 +2880,18 @@ export function projectLatexVisualDocument(source: string, depth = 0): LatexVisu
     if (body.startsWith(endMarker, cursor)) break;
     if (body[cursor] === "%") {
       cursor = commentEnd(body, cursor);
+      continue;
+    }
+    // Nested structures must retain commands in their own serialization path.
+    const entry = dynamicSyntax || depth > 0 ? null : contentsEntry(body, cursor);
+    if (entry) {
+      manualContents.push({
+        from: bodyFrom + cursor,
+        level: entry.level,
+        number: "",
+        title: entry.display,
+      });
+      cursor = entry.end;
       continue;
     }
     const relativeEnd = nextBlockEnd(body, cursor);
@@ -2105,8 +2904,14 @@ export function projectLatexVisualDocument(source: string, depth = 0): LatexVisu
       /\\(?:catcode|def|gdef|edef|xdef|let|newcommand|renewcommand|newenvironment|renewenvironment)\b/u.test(
         withoutVisualComments(raw),
       );
-    const classified = dynamicSyntax ? null : classifyBlock(raw, depth);
-    const candidate = classified === null && !dynamicSyntax ? parseRichPreview(raw, source) : null;
+    const classified = dynamicSyntax ? null : classifyBlock(raw, depth, setup);
+    const environment = /^\\begin\{([A-Za-z*]+)\}/u.exec(raw)?.[1];
+    const candidate =
+      classified === null &&
+      !dynamicSyntax &&
+      !(environment && setup.declarations.unsupported.has(environment))
+        ? parseRichPreview(raw, source, setup)
+        : null;
     const preview = candidate?.attrs?.editable === true ? candidate : null;
     const node = withSourceId(
       classified ?? preview ?? { type: "latexRawBlock", attrs: { raw, label: "Raw LaTeX" } },
@@ -2129,12 +2934,17 @@ export function projectLatexVisualDocument(source: string, depth = 0): LatexVisu
   let part = 0;
   const chapters =
     /\\documentclass(?:\[[^\]]*\])?\{(?:book|report|memoir|scrbook|scrreprt)\}/u.test(source);
-  const tocEntries = blocks.flatMap((block) => {
+  const numberedContents = blocks.flatMap((block) => {
     if (block.node.type === "latexRichPreview" && block.node.attrs?.kind === "part") {
       if (block.node.attrs.unnumbered === true) return [];
       part += 1;
       return [
-        { level: 0, number: latexRomanNumber(part), title: String(block.node.attrs.title ?? "") },
+        {
+          from: block.from,
+          level: 0,
+          number: latexRomanNumber(part),
+          title: String(block.node.attrs.title ?? ""),
+        },
       ];
     }
     if (block.node.type !== "heading" || block.node.attrs?.unnumbered === true) return [];
@@ -2170,8 +2980,16 @@ export function projectLatexVisualDocument(source: string, depth = 0): LatexVisu
             : String(child.attrs?.argument ?? ""),
       )
       .join("");
-    return [{ level: level === 6 ? 0 : level, number, title }];
+    return [{ from: block.from, level: level === 6 ? 0 : level, number, title }];
   });
+  const tocEntries = [...numberedContents, ...manualContents]
+    .sort((left, right) => left.from - right.from)
+    .map(({ from, level, number, title }) => ({
+      level,
+      number,
+      title,
+      targetSourceId: [...blocks].reverse().find((block) => block.from <= from)?.id ?? null,
+    }));
   for (const [index, block] of blocks.entries()) {
     if (block.node.type !== "latexRichPreview" || block.node.attrs?.kind !== "toc") continue;
     blocks[index] = {
@@ -2192,6 +3010,7 @@ export function projectLatexVisualDocument(source: string, depth = 0): LatexVisu
   }
   return {
     source,
+    setup,
     content: { type: "doc", content: blocks.map((block) => block.node) },
     blocks,
     supportedBlocks: blocks.filter((block) => block.editable).length,
@@ -2227,6 +3046,46 @@ export function escapeText(text: string): string {
   );
 }
 
+/** Bounded citation syntax; retain notes verbatim when editing the citation keys. */
+export function latexCitationParts(source: string) {
+  const command = /^\\(cite|citep|citet|parencite|textcite|citeauthor|citeyear)\b\s*/u.exec(source);
+  if (!command) return null;
+  let cursor = command[0].length;
+  const notes: string[] = [];
+  while (source[cursor] === "[") {
+    if (notes.length >= (command[1] === "cite" ? 1 : 2)) return null;
+    const optional = optionalArgumentRange(source, cursor);
+    if (!optional || metadataText(optional.source) === null) return null;
+    notes.push(optional.source);
+    cursor = optional.end;
+    cursor += /^[\t\r\n ]*/u.exec(source.slice(cursor))![0].length;
+  }
+  const argument = requiredArgument(source, cursor);
+  if (!argument || /[{}\\%]/u.test(argument.source)) return null;
+  return {
+    name: command[1]!,
+    argument: argument.source,
+    notes,
+    prefix: source.slice(0, argument.from - 1),
+    end: argument.next,
+  };
+}
+
+export function latexInlineCommandSource(
+  name: string,
+  argument: string,
+  linkText = "",
+  raw = "",
+): string {
+  const citation = latexCitationParts(raw);
+  if (citation?.name === name) {
+    if (citation.argument === argument) return raw.slice(0, citation.end);
+    return `${citation.prefix}{${argument}}`;
+  }
+  const first = name === "hyperref" ? `[${argument}]` : `{${argument}}`;
+  return `\\${name}${first}${["href", "hyperref", "hyperlink", "hypertarget"].includes(name) ? `{${linkText}}` : ""}`;
+}
+
 function serializeInline(nodes: readonly JSONContent[] | undefined): string {
   const merged: JSONContent[] = [];
   for (const node of nodes ?? []) {
@@ -2253,13 +3112,12 @@ function serializeInline(nodes: readonly JSONContent[] | undefined): string {
       } else if (node.type === "latexInlineCommand") {
         const name = String(node.attrs?.name ?? "");
         if (!INLINE_ATOMS.has(name) || SOURCE_ONLY_INLINE_COMMANDS.has(name)) return "";
-        value =
-          "\\" +
-          name +
-          "{" +
-          String(node.attrs?.argument ?? "") +
-          "}" +
-          (name === "href" ? "{" + String(node.attrs?.linkText ?? "") + "}" : "");
+        value = latexInlineCommandSource(
+          name,
+          String(node.attrs?.argument ?? ""),
+          String(node.attrs?.linkText ?? ""),
+          String(node.attrs?.raw ?? ""),
+        );
       } else if (node.type === "hardBreak") {
         value = "\\\\\n";
       } else if (node.type === "text") {
@@ -2367,9 +3225,37 @@ export function latexVisualTableCellsClipboard(
     lastColumn < firstColumn
   )
     return null;
+  if (node.attrs?.sourceMeta?.tableLayout) {
+    const bounds = latexTableSelectionBounds(
+      node.attrs.sourceMeta.tableLayout,
+      firstRow,
+      lastRow,
+      firstColumn,
+      lastColumn,
+    );
+    firstRow = bounds.firstRow;
+    lastRow = bounds.lastRow;
+    firstColumn = bounds.firstColumn;
+    lastColumn = bounds.lastColumn;
+  }
   const cells = preservedTableCells(node, rows)
     .slice(firstRow, lastRow + 1)
-    .map((row) => row.slice(firstColumn, lastColumn + 1));
+    .map((row, index) =>
+      row.slice(firstColumn, lastColumn + 1).filter((_cell, column) => {
+        const layout = node.attrs?.sourceMeta?.tableLayout?.[firstRow + index]?.[
+          firstColumn + column
+        ] as LatexTableCellLayout | undefined;
+        if (!layout) return true;
+        if (
+          layout.row < firstRow ||
+          layout.column < firstColumn ||
+          layout.row + layout.rowSpan - 1 > lastRow ||
+          layout.column + layout.colSpan - 1 > lastColumn
+        )
+          return false;
+        return layout.row !== firstRow + index || layout.column === firstColumn + column;
+      }),
+    );
   const alignments = Array.from({ length: lastColumn - firstColumn + 1 }, (_, index) => {
     const alignment = node.attrs?.columnAlignments?.[firstColumn + index];
     return alignment === "center" ? "c" : alignment === "right" ? "r" : "l";
@@ -2507,7 +3393,8 @@ function serializeFigurePreview(node: JSONContent): string | null {
 export function serializeLatexVisualBlock(node: JSONContent): string | null {
   if (node.type === "latexScientific") {
     const environment = safeLatexArgument(node.attrs?.environment);
-    if (!environment || !SCIENTIFIC_ENVIRONMENTS.has(environment)) return null;
+    // Custom names are accepted only when reprojection finds a supported root declaration.
+    if (!environment || !/^[A-Za-z]+\*?$/u.test(environment)) return null;
     const title = typeof node.attrs?.title === "string" ? node.attrs.title : "";
     if (/[\[\]]/u.test(title)) return null;
     const blocks = (node.content ?? []).map(serializeLatexVisualBlock);
@@ -2581,7 +3468,47 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
     if (node.attrs.kind === "bibliography") {
       const items = Array.isArray(node.attrs.items) ? node.attrs.items : null;
       const widestLabel = safeLatexArgument(node.attrs.widestLabel ?? "99");
-      if (!items || items.length === 0 || widestLabel === null) return null;
+      if (!items || widestLabel === null) return null;
+      if (node.attrs.sourceMeta?.bibliographySource === true) {
+        const original = parseBibliographyPreview(raw)?.attrs;
+        if (!original?.editable) return null;
+        const retained = original.sourceMeta.entries as {
+          key: string;
+          body: string;
+          source: string;
+        }[];
+        const keys = new Set<string>();
+        const eol = raw.includes("\r\n") ? "\r\n" : "\n";
+        const entries: string[] = [];
+        for (const item of items) {
+          const key = safeLatexLabel(item?.label);
+          if (!key || keys.has(key) || typeof item.body !== "string") return null;
+          keys.add(key);
+          const entry = retained.find((candidate) => candidate.key === key);
+          if (entry) {
+            if (entry.body === item.body) entries.push(entry.source);
+            else {
+              const inline = parseInline(item.body);
+              const command = /^\\bibitem\s*(?:\[[^\[\]]*\]\s*)?\{[^{}]+\}/u.exec(entry.source);
+              if (
+                !command ||
+                !inline?.every((part) => part.type === "text" || part.type === "hardBreak")
+              )
+                return null;
+              entries.push(`${command[0]} ${item.body}${eol}`);
+            }
+          } else {
+            // Entry contents remain source-owned until their editing interaction is designed.
+            if (item.body !== "") return null;
+            entries.push(`\\bibitem{${key}} ${eol}`);
+          }
+        }
+        return (
+          original.sourceMeta.header +
+          entries.map((entry) => (entry.endsWith("\n") ? entry : entry + eol)).join("") +
+          "\\end{thebibliography}"
+        );
+      }
       const entries: string[] = [];
       for (const item of items) {
         if (!item || typeof item !== "object" || !("label" in item) || !("body" in item))
@@ -2598,6 +3525,7 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
       return `\\begin{abstract}${eol}${escapeText(node.attrs.body)}${eol}\\end{abstract}`;
     }
     if (node.attrs.kind === "scientific") return serializeScientificPreview(node);
+    if (node.attrs.kind === "figureLayout") return serializeFigureLayout(node);
     if (node.attrs.kind === "figure") return serializeFigurePreview(node);
     if (node.attrs.kind === "description") {
       const items = Array.isArray(node.attrs.items) ? node.attrs.items : null;
@@ -2692,6 +3620,24 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
     const ranges = Array.isArray(node.attrs.cellRanges) ? node.attrs.cellRanges : null;
     const sourceMeta = node.attrs.sourceMeta;
     if (!rows) return null;
+    if (sourceMeta?.preserveStructure === true) {
+      const original = parseTablePreview(raw)?.attrs;
+      if (!original || node.attrs.tableCanonical === true || rows.length !== original.rows.length)
+        return null;
+      for (const key of [
+        "rowIds",
+        "columnIds",
+        "columnAlignments",
+        "tableStyle",
+        "tableKind",
+        "hasHeader",
+      ])
+        if (JSON.stringify(node.attrs[key]) !== JSON.stringify(original[key])) return null;
+      if (
+        JSON.stringify(sourceMeta.tableLayout) !== JSON.stringify(original.sourceMeta.tableLayout)
+      )
+        return null;
+    }
     if (node.attrs.tableCanonical === true) {
       if (
         !sourceMeta ||
@@ -2821,6 +3767,7 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
         return null;
       for (const [cellIndex, value] of row.entries()) {
         const range = rowRanges[cellIndex];
+        if (range === null && sourceMeta.preserveStructure === true && value === "") continue;
         if (
           !range ||
           typeof range !== "object" ||
@@ -2942,11 +3889,8 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
     const options =
       environment !== "enumerate"
         ? ""
-        : node.attrs?.resume === true
-          ? "[resume]"
-          : start !== 1
-            ? `[start=${start}]`
-            : "";
+        : latexListOptionsSource(node.attrs?.latexListOptions, start, node.attrs?.resume === true);
+    if (options === null) return null;
     return `\\begin{${environment}}${options}\n${items.join("\n")}\n\\end{${environment}}`;
   }
   return null;
@@ -2963,6 +3907,15 @@ interface ComparableVisualNode {
 function comparableNode(node: JSONContent): ComparableVisualNode {
   const attrs = Object.fromEntries(
     Object.entries(node.attrs ?? {})
+      .map(
+        ([key, value]) =>
+          [
+            key,
+            key === "latexListOptions"
+              ? (parseLatexListOptions(String(value ?? ""))?.label ?? null)
+              : value,
+          ] as const,
+      )
       .filter(([key, value]) => {
         if (
           key === "sourceId" ||
@@ -3124,6 +4077,26 @@ function roundTripSignature(node: JSONContent): string {
             },
           }
         : {}),
+      ...(value.type === "latexRichPreview" && value.attrs?.kind === "figureLayout"
+        ? {
+            attrs: {
+              ...value.attrs,
+              ...(typeof value.attrs.caption === "string"
+                ? { caption: prose(value.attrs.caption).trim() }
+                : {}),
+              items: Array.isArray(value.attrs.items)
+                ? value.attrs.items.map((item: Record<string, unknown>) =>
+                    Object.fromEntries(
+                      Object.entries(item).map(([key, text]) => [
+                        key,
+                        typeof text === "string" ? prose(text).trim() : text,
+                      ]),
+                    ),
+                  )
+                : value.attrs.items,
+            },
+          }
+        : {}),
       ...(value.type === "latexRichPreview" && value.attrs?.kind === "bibliography"
         ? {
             attrs: {
@@ -3238,7 +4211,9 @@ function requiredObjectPackages(nodes: readonly JSONContent[]): Set<string> {
       packages.add("enumitem");
     if (
       node.type === "orderedList" &&
-      (node.attrs?.resume === true || Number(node.attrs?.start ?? 1) !== 1)
+      (node.attrs?.resume === true ||
+        Number(node.attrs?.start ?? 1) !== 1 ||
+        node.attrs?.latexListOptions)
     )
       packages.add("enumitem");
     if (node.attrs?.kind === "simple" && node.attrs.environment === "alltt") packages.add("alltt");
@@ -3563,23 +4538,27 @@ function patchScientificStructure(
   block: LatexVisualSourceBlock,
   next: JSONContent,
   rootSource: string | null,
+  setup: LatexVisualSetup,
 ): string | null {
   if (next.type !== "latexScientific") return null;
-  const ranges = scientificSourceRanges(block.source);
+  const ranges = scientificSourceRanges(block.source, setup);
   const environment = safeLatexArgument(next.attrs?.environment);
   const title = next.attrs?.title;
   if (
     !ranges ||
     !environment ||
-    !SCIENTIFIC_ENVIRONMENTS.has(environment) ||
+    setup.declarations.unsupported.has(environment) ||
+    (!SCIENTIFIC_ENVIRONMENTS.has(environment) &&
+      !setup.declarations.environments.has(environment)) ||
     typeof title !== "string" ||
-    /[\[\]]/u.test(title)
+    /[\[\]]/u.test(title) ||
+    (setup.declarations.environments.get(environment)?.kind === "quote" && title !== "")
   )
     return null;
   const originalBody = block.source.slice(ranges.from, ranges.to);
   const body = applyLatexVisualDocumentChange(
     originalBody,
-    projectLatexVisualDocument(originalBody),
+    projectLatexVisualDocument(originalBody, 0, setup),
     {
       type: "doc",
       content: next.content ?? [],
@@ -3705,6 +4684,9 @@ export function applyLatexVisualDocumentChange(
   origin?: number;
 } | null {
   if (projection.source !== source) return null;
+  const setup = context?.rootSource
+    ? visualSetup(context.rootSource)
+    : (projection.setup ?? visualSetup(source));
   const previous = projection.blocks;
   const next = nextContent.content ?? [];
   let prefix = 0;
@@ -3771,6 +4753,7 @@ export function applyLatexVisualDocumentChange(
           previousBlock,
           node,
           source.includes("\\begin{document}") ? source : (context?.rootSource ?? null),
+          setup,
         );
       if (
         previousBlock?.node.type === "latexDisplayMath" &&
@@ -3815,7 +4798,23 @@ export function applyLatexVisualDocumentChange(
   let from = oldChanged[0]?.from ?? previous[prefix]?.from ?? previous.at(-1)?.to ?? source.length;
   let to = oldChanged.at(-1)?.to ?? from;
   const origin = oldChanged[0]?.from ?? previous[prefix - 1]?.from ?? from;
-  let replacement = serialized.join(eol + eol);
+  const sourceGaps = oldChanged
+    .slice(1)
+    .map((block, index) => source.slice(oldChanged[index]!.to, block.from));
+  const hasContentsGap = sourceGaps.some((gap) => {
+    const at = findDelimiter(gap, "\\addcontentsline", 0);
+    return at >= 0 && contentsEntry(gap, at) !== null;
+  });
+  // Keep explicit contents metadata at its existing boundary. Refuse a
+  // structural change that cannot retain that boundary instead of deleting it.
+  if (hasContentsGap && oldChanged.length !== newChanged.length) return null;
+  let replacement = serialized
+    .map(
+      (block, index) =>
+        block +
+        (index < serialized.length - 1 ? (hasContentsGap ? sourceGaps[index]! : eol + eol) : ""),
+    )
+    .join("");
   // Own only whitespace at the edited boundaries. Otherwise inserting/deleting
   // a block leaves old separators behind and blank lines accumulate over time.
   if (oldChanged.length !== 1 || newChanged.length !== 1) {
@@ -3893,7 +4892,11 @@ export function applyLatexVisualDocumentChange(
     !["heading", "bulletList", "orderedList"].includes(newChanged[0]!.type ?? "") &&
     !["title", "toc"].includes(String(newChanged[0]!.attrs?.kind))
   ) {
-    const parsed = projectLatexVisualDocument(replacement);
+    const parsed = projectLatexVisualDocument(
+      replacement,
+      0,
+      rootUpdate?.next ?? (ownPreamble ? changedSource : setup),
+    );
     if (
       parsed.blocks.length === 1 &&
       roundTripSignature(parsed.blocks[0]!.node) === roundTripSignature(newChanged[0]!)
@@ -3935,7 +4938,11 @@ export function applyLatexVisualDocumentChange(
     }
   }
   // Reject a transaction that the supported projection cannot round-trip.
-  const projected = projectLatexVisualDocument(changedSource);
+  const projected = projectLatexVisualDocument(
+    changedSource,
+    0,
+    rootUpdate?.next ?? (ownPreamble ? changedSource : setup),
+  );
   if (roundTripSignature(projected.content) !== roundTripSignature(nextContent)) {
     const oldBlock = oldChanged[0];
     const newBlock = newChanged[0];

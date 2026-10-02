@@ -112,10 +112,15 @@ export function LatexReferenceDialog(props: {
     () => (props.open ? documentReferenceChoices(props.source) : []),
     [props.open, props.source],
   );
-  const inlineSources = useMemo(
-    () => (props.open ? inlineBibliographyChoices(props.source) : []),
-    [props.open, props.source],
-  );
+  const inlineSources = useMemo(() => {
+    if (!props.open) return [];
+    const choices = inlineBibliographyChoices(props.source);
+    if (props.setupSource && props.setupSource !== props.source) {
+      for (const entry of inlineBibliographyChoices(props.setupSource))
+        if (!choices.some((choice) => choice.key === entry.key)) choices.push(entry);
+    }
+    return choices;
+  }, [props.open, props.source, props.setupSource]);
   const candidates = mode === "reference" ? documentObjects : [...inlineSources, ...references];
   const choices = candidates.filter((entry) =>
     `${entry.title} ${entry.key} ${entry.detail}`.toLowerCase().includes(query.toLowerCase()),

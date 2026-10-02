@@ -1,8 +1,10 @@
 import { Extension } from "@tiptap/core";
 import type { Node as DocumentNode } from "@tiptap/pm/model";
-import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { Plugin, PluginKey, NodeSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import { afterEditorPaint } from "./afterEditorPaint";
+import { appendLatexProsePreview } from "./LatexProsePreview";
+import { latexEquationReferencesKey, navigateToFootnote } from "./latexEquationReferences";
 import {
   planLatexVisualPagination,
   type LatexVisualPaginationBlock,
@@ -13,13 +15,29 @@ interface PaginationState {
   readonly decorations: DecorationSet;
   readonly dimensions: LatexVisualPaginationOptions;
   readonly revision: number;
+  readonly pages: readonly { position: number; page: number }[];
 }
 
 type PaginationUpdate =
   | { readonly dimensions: LatexVisualPaginationOptions }
-  | { readonly decorations: DecorationSet };
+  | { readonly decorations: DecorationSet; readonly pages: PaginationState["pages"] };
 
 export const latexPaginationKey = new PluginKey<PaginationState>("scientLatexPagination");
+
+/** Local CSS page map; these values are not compiled TeX page evidence. */
+export function latexVisualPageAt(
+  state: import("@tiptap/pm/state").EditorState,
+  position: number,
+): number | null {
+  const pages = latexPaginationKey.getState(state)?.pages;
+  if (!pages?.length) return null;
+  let page = pages[0]!.page;
+  for (const entry of pages) {
+    if (entry.position > position) break;
+    page = entry.page;
+  }
+  return page + 1;
+}
 
 export function setLatexPaginationDimensions(
   view: EditorView,
@@ -186,6 +204,7 @@ function measureDocument(
     }
     const rect = dom.getBoundingClientRect();
     if (node.type.name === "latexScientific") {
+      const firstUnit = units.length;
       const heading = dom.querySelector<HTMLElement>(".scient-latex-scientific-heading");
       if (heading) {
         const headingRect = heading.getBoundingClientRect();
@@ -197,16 +216,24 @@ function measureDocument(
         });
       }
       node.forEach((child, offset) => visit(child, position + 1 + offset));
+      const lastUnit = units.length - 1;
+      if (dom.dataset.proofEnd === "square" && lastUnit >= firstUnit) {
+        // Include the generated ending when a proof finishes with a display/list.
+        units[lastUnit] = {
+          ...units[lastUnit]!,
+          bottom: Math.max(units[lastUnit]!.bottom, y(rect.bottom)),
+        };
+      }
       return;
     }
     const contentHeight = dimensions.pageHeight - dimensions.marginTop - dimensions.marginBottom;
     if (
       node.type.name === "latexRichPreview" &&
-      (node.attrs.kind === "description" || node.attrs.kind === "toc")
+      ["description", "toc", "bibliography"].includes(node.attrs.kind)
     ) {
       const items = [
         ...dom.querySelectorAll<HTMLElement>(
-          "[data-latex-description-item], [data-latex-toc-entry]",
+          "[data-latex-description-item], [data-latex-toc-entry], [data-latex-bibliography-item]",
         ),
       ];
       if (items.length > 0) {
@@ -227,6 +254,7 @@ function measureDocument(
     if (
       node.type.name === "latexRichPreview" &&
       node.attrs.kind === "table" &&
+      node.attrs.sourceMeta?.preserveStructure !== true &&
       (rect.height / scale > contentHeight || node.attrs.tableKind === "long")
     ) {
       const rows = [...dom.querySelectorAll<HTMLElement>("tr[data-latex-table-row]")];
@@ -324,261 +352,396 @@ function gapDecoration(
   );
 }
 
-export const LatexVisualPagination = Extension.create<{
-  onPageCount: (count: number) => void;
-}>({
+export function createLatexVisualPagination(onPageCount: (count: number) => void) {
+  return new Plugin<PaginationState>({
+    key: latexPaginationKey,
+    state: {
+      init: () => ({
+        decorations: DecorationSet.empty,
+        dimensions: { pageHeight: 1056, pageGap: 28, marginTop: 96, marginBottom: 96 },
+        revision: 0,
+        pages: [],
+      }),
+      apply(transaction, previous) {
+        const update = transaction.getMeta(latexPaginationKey) as PaginationUpdate | undefined;
+        return {
+          decorations:
+            update && "decorations" in update
+              ? update.decorations
+              : previous.decorations.map(transaction.mapping, transaction.doc),
+          dimensions: update && "dimensions" in update ? update.dimensions : previous.dimensions,
+          revision: previous.revision + (update && "dimensions" in update ? 1 : 0),
+          pages:
+            update && "pages" in update
+              ? update.pages
+              : transaction.docChanged
+                ? previous.pages.map((entry) => ({
+                    ...entry,
+                    position: transaction.mapping.map(entry.position),
+                  }))
+                : previous.pages,
+        };
+      },
+    },
+    props: { decorations: (state) => latexPaginationKey.getState(state)?.decorations },
+    view(view) {
+      let cancelPagination: (() => void) | null = null;
+      let refreshObservedBlocks = false;
+      let settle: ReturnType<typeof setTimeout> | undefined;
+      let lastInput = 0;
+      let disposed = false;
+      let measuring = false;
+      let composing = false;
+      let signature = "";
+      let measuredDocument: DocumentNode | null = null;
+      let lineCache = new WeakMap<DocumentNode, CachedLines>();
+      const root = view.dom;
+      const scroll = () => root.closest<HTMLElement>(".scient-latex-visual-scroll");
+      const anchor = () => {
+        const viewport = scroll();
+        if (!viewport) return null;
+        const box = viewport.getBoundingClientRect();
+        const point = view.hasFocus()
+          ? view.state.selection.head
+          : view.posAtCoords({
+              left: Math.max(
+                box.left + 24,
+                root.getBoundingClientRect().left + root.getBoundingClientRect().width / 2,
+              ),
+              top: box.top + Math.min(60, box.height / 3),
+            })?.pos;
+        if (point === undefined) return null;
+        const top = view.coordsAtPos(point).top;
+        return top >= box.top && top <= box.bottom ? { position: point, top, viewport } : null;
+      };
+      const paginate = () => {
+        cancelPagination = null;
+        if (refreshObservedBlocks) {
+          refreshObservedBlocks = false;
+          observe();
+        }
+        if (
+          disposed ||
+          view.composing ||
+          composing ||
+          measuring ||
+          !root.isConnected ||
+          root.getBoundingClientRect().width === 0
+        )
+          return;
+        const state = latexPaginationKey.getState(view.state);
+        if (!state) return;
+        measuring = true;
+        const pinned = anchor();
+        const focusedObject = document.activeElement;
+        const viewportBefore = scroll()?.getBoundingClientRect();
+        const focusedBox =
+          focusedObject instanceof HTMLElement &&
+          focusedObject !== root &&
+          root.contains(focusedObject)
+            ? focusedObject.getBoundingClientRect()
+            : null;
+        const keepObjectVisible =
+          focusedBox &&
+          viewportBefore &&
+          focusedBox.bottom >= viewportBefore.top &&
+          focusedBox.top <= viewportBefore.bottom;
+        try {
+          // Hiding only our widgets exposes natural flow without replacing the
+          // editable DOM or touching its native selection and composition.
+          root.dataset.latexMeasuring = "true";
+          const units = measureDocument(view, lineCache, state.dimensions);
+          const rootStyle = getComputedStyle(root);
+          const rootBox = root.getBoundingClientRect();
+          const scale = rootBox.width / (Number.parseFloat(rootStyle.width) || root.offsetWidth);
+          const notes = [...(latexEquationReferencesKey.getState(view.state)?.footnotes ?? [])].map(
+            ([position, note]) => {
+              const row = document.createElement("div");
+              row.className = "scient-latex-page-footnote";
+              const marker = document.createElement("sup");
+              marker.textContent = note.number ?? "*";
+              row.append(marker);
+              const text = document.createElement("span");
+              appendLatexProsePreview(text, note.body);
+              row.append(text);
+              const measure = document.createElement("div");
+              measure.className = "scient-latex-page-footnotes";
+              measure.style.left = rootStyle.paddingLeft;
+              measure.style.right = rootStyle.paddingRight;
+              measure.style.top = "0";
+              measure.style.visibility = "hidden";
+              measure.contentEditable = "false";
+              measure.append(row);
+              let height = 0;
+              // Measure beside the editor, never insert temporary children into
+              // ProseMirror's source-owned content DOM.
+              const host = document.createElement("div");
+              host.className = "scient-latex-visual-document";
+              host.contentEditable = "false";
+              Object.assign(host.style, {
+                position: "absolute",
+                visibility: "hidden",
+                pointerEvents: "none",
+                width: rootStyle.width,
+                minHeight: "0",
+                height: "0",
+                padding: "0",
+                font: rootStyle.font,
+              });
+              host.append(measure);
+              root.parentElement?.append(host);
+              try {
+                height = measure.getBoundingClientRect().height / scale;
+              } finally {
+                host.remove();
+              }
+              const unitIndex = units.findLastIndex((unit) => unit.position <= position);
+              if (unitIndex >= 0) {
+                const unit = units[unitIndex]!;
+                units[unitIndex] = { ...unit, footnoteHeight: (unit.footnoteHeight ?? 0) + height };
+              }
+              return { position, row, height, unitIndex, body: note.body, number: note.number };
+            },
+          );
+          const plan = planLatexVisualPagination(units, state.dimensions);
+          const notesByPage = new Map<number, typeof notes>();
+          for (const note of notes) {
+            const page = plan.placements[note.unitIndex]?.page;
+            if (page === undefined) continue;
+            const list = notesByPage.get(page) ?? [];
+            list.push(note);
+            notesByPage.set(page, list);
+          }
+          const objects = new Map<number, { node: DocumentNode; gaps: Record<number, number> }>();
+          const gaps = plan.placements.flatMap((placement, index) => {
+            const unit = units[index]!;
+            if (unit.objectPart) {
+              if (placement.offset > 0.5) {
+                const object: { node: DocumentNode; gaps: Record<number, number> } = objects.get(
+                  unit.position,
+                ) ?? {
+                  node: unit.objectPart.node,
+                  gaps: {},
+                };
+                object.gaps[unit.objectPart.index] = Math.round(placement.offset * 100) / 100;
+                objects.set(unit.position, object);
+              }
+              return [];
+            }
+            return placement.offset > 0.5
+              ? [
+                  {
+                    position: unit.position,
+                    height: Math.round(placement.offset * 100) / 100,
+                    explicit: unit.explicitBreak === true,
+                  },
+                ]
+              : [];
+          });
+          delete root.dataset.latexMeasuring;
+          const nextSignature = JSON.stringify([
+            gaps,
+            [...objects].map(([position, object]) => [position, object.gaps]),
+            plan.placements.map((placement, index) => [units[index]!.position, placement.page]),
+            [...notesByPage].map(([page, items]) => [
+              page,
+              items.map((item) => [item.position, item.height, item.body, item.number]),
+            ]),
+          ]);
+          if (signature !== nextSignature || measuredDocument !== view.state.doc) {
+            signature = nextSignature;
+            measuredDocument = view.state.doc;
+            view.dispatch(
+              view.state.tr
+                .setMeta(latexPaginationKey, {
+                  pages: plan.placements.map((placement, index) => ({
+                    position: units[index]!.position,
+                    page: placement.page,
+                  })),
+                  decorations: DecorationSet.create(view.state.doc, [
+                    ...[...notesByPage].map(([page, items]) =>
+                      Decoration.widget(
+                        view.state.doc.content.size,
+                        () => {
+                          const band = document.createElement("div");
+                          band.className = "scient-latex-page-footnotes";
+                          band.contentEditable = "false";
+                          band.setAttribute("aria-label", `Footnotes on page ${page + 1}`);
+                          band.style.left = rootStyle.paddingLeft;
+                          band.style.right = rootStyle.paddingRight;
+                          band.style.top = `${page * (state.dimensions.pageHeight + state.dimensions.pageGap) + state.dimensions.pageHeight - state.dimensions.marginBottom - items.reduce((height, item) => height + item.height, 0)}px`;
+                          for (const item of items) {
+                            item.row.tabIndex = 0;
+                            item.row.setAttribute("role", "button");
+                            item.row.setAttribute(
+                              "aria-label",
+                              `Return to footnote ${item.number ?? ""} marker`,
+                            );
+                            item.row.dataset.latexFootnotePosition = String(item.position);
+                            const edit = () => {
+                              const note = view.state.doc.nodeAt(item.position);
+                              if (
+                                note?.type.name !== "latexInlineCommand" ||
+                                note.attrs.name !== "footnote"
+                              )
+                                return;
+                              view.dispatch(
+                                view.state.tr.setSelection(
+                                  NodeSelection.create(view.state.doc, item.position),
+                                ),
+                              );
+                              navigateToFootnote(view, item.position, false);
+                            };
+                            item.row.addEventListener("click", (event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              edit();
+                            });
+                            item.row.addEventListener("keydown", (event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                edit();
+                              }
+                            });
+                            band.append(item.row);
+                          }
+                          return band;
+                        },
+                        {
+                          key: `footnotes:${page}:${view.state.doc.content.size}:${JSON.stringify(items.map((item) => [item.position, item.body, item.number, item.height]))}`,
+                          ignoreSelection: true,
+                        },
+                      ),
+                    ),
+                    ...gaps.map((gap) =>
+                      gapDecoration(
+                        gap.position,
+                        gap.height,
+                        gap.explicit,
+                        view.state.doc.resolve(gap.position).parent.isTextblock,
+                      ),
+                    ),
+                    ...[...objects].map(([position, object]) =>
+                      Decoration.node(
+                        position,
+                        position + object.node.nodeSize,
+                        {},
+                        { latexObjectPagination: object },
+                      ),
+                    ),
+                  ]),
+                } satisfies PaginationUpdate)
+                .setMeta("addToHistory", false),
+            );
+          }
+          root.style.setProperty(
+            "--scient-latex-document-height",
+            `${plan.pageCount * state.dimensions.pageHeight + (plan.pageCount - 1) * state.dimensions.pageGap}px`,
+          );
+          onPageCount(plan.pageCount);
+          if (pinned && root.isConnected)
+            pinned.viewport.scrollTop += view.coordsAtPos(pinned.position).top - pinned.top;
+          const active = document.activeElement;
+          const viewport = scroll();
+          if (
+            keepObjectVisible &&
+            viewport &&
+            active instanceof HTMLElement &&
+            active === focusedObject
+          ) {
+            const box = active.getBoundingClientRect();
+            const visible = viewport.getBoundingClientRect();
+            if (box.bottom > visible.bottom - 20)
+              viewport.scrollTop += box.bottom - visible.bottom + 20;
+            else if (box.top < visible.top + 20) viewport.scrollTop += box.top - visible.top - 20;
+          }
+        } finally {
+          delete root.dataset.latexMeasuring;
+          measuring = false;
+        }
+      };
+      const schedule = () => {
+        if (disposed || cancelPagination) return;
+        clearTimeout(settle);
+        const delay = Math.max(0, 220 - (performance.now() - lastInput));
+        if (delay > 0) settle = setTimeout(schedule, delay);
+        else cancelPagination = afterEditorPaint(paginate);
+      };
+      const typing = () => {
+        lastInput = performance.now();
+        cancelPagination?.();
+        cancelPagination = null;
+        schedule();
+      };
+      const fontsChanged = () => {
+        lineCache = new WeakMap();
+        schedule();
+      };
+      const compositionStart = () => {
+        composing = true;
+      };
+      const compositionEnd = () => {
+        composing = false;
+        schedule();
+      };
+      const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
+      const observe = () => {
+        resize?.disconnect();
+        resize?.observe(root);
+        for (const child of root.children) {
+          if (
+            !child.classList.contains("scient-latex-pagination-gap") &&
+            !child.classList.contains("scient-latex-page-footnotes")
+          )
+            resize?.observe(child);
+        }
+      };
+      observe();
+      root.addEventListener("load", schedule, true);
+      root.addEventListener("beforeinput", typing, true);
+      root.addEventListener("compositionstart", compositionStart, true);
+      root.addEventListener("compositionend", compositionEnd, true);
+      document.fonts?.addEventListener("loadingdone", fontsChanged);
+      void document.fonts?.ready.then(fontsChanged);
+      schedule();
+      return {
+        update(_view, previous) {
+          const before = latexPaginationKey.getState(previous);
+          const after = latexPaginationKey.getState(view.state);
+          if (previous.doc !== view.state.doc) {
+            refreshObservedBlocks = true;
+            schedule();
+          } else if (
+            before?.revision !== after?.revision ||
+            latexEquationReferencesKey.getState(previous) !==
+              latexEquationReferencesKey.getState(view.state)
+          ) {
+            lineCache = new WeakMap();
+            schedule();
+          }
+        },
+        destroy() {
+          disposed = true;
+          cancelPagination?.();
+          clearTimeout(settle);
+          resize?.disconnect();
+          root.removeEventListener("load", schedule, true);
+          root.removeEventListener("beforeinput", typing, true);
+          root.removeEventListener("compositionstart", compositionStart, true);
+          root.removeEventListener("compositionend", compositionEnd, true);
+          document.fonts?.removeEventListener("loadingdone", fontsChanged);
+        },
+      };
+    },
+  });
+}
+
+export const LatexVisualPagination = Extension.create<{ onPageCount: (count: number) => void }>({
   name: "latexVisualPagination",
   addOptions() {
     return { onPageCount: () => {} };
   },
   addProseMirrorPlugins() {
-    const onPageCount = this.options.onPageCount;
-    return [
-      new Plugin<PaginationState>({
-        key: latexPaginationKey,
-        state: {
-          init: () => ({
-            decorations: DecorationSet.empty,
-            dimensions: { pageHeight: 1056, pageGap: 28, marginTop: 96, marginBottom: 96 },
-            revision: 0,
-          }),
-          apply(transaction, previous) {
-            const update = transaction.getMeta(latexPaginationKey) as PaginationUpdate | undefined;
-            return {
-              decorations:
-                update && "decorations" in update
-                  ? update.decorations
-                  : previous.decorations.map(transaction.mapping, transaction.doc),
-              dimensions:
-                update && "dimensions" in update ? update.dimensions : previous.dimensions,
-              revision: previous.revision + (update && "dimensions" in update ? 1 : 0),
-            };
-          },
-        },
-        props: { decorations: (state) => latexPaginationKey.getState(state)?.decorations },
-        view(view) {
-          let cancelPagination: (() => void) | null = null;
-          let refreshObservedBlocks = false;
-          let settle: ReturnType<typeof setTimeout> | undefined;
-          let lastInput = 0;
-          let disposed = false;
-          let measuring = false;
-          let composing = false;
-          let signature = "";
-          let measuredDocument: DocumentNode | null = null;
-          let lineCache = new WeakMap<DocumentNode, CachedLines>();
-          const root = view.dom;
-          const scroll = () => root.closest<HTMLElement>(".scient-latex-visual-scroll");
-          const anchor = () => {
-            const viewport = scroll();
-            if (!viewport) return null;
-            const box = viewport.getBoundingClientRect();
-            const point = view.hasFocus()
-              ? view.state.selection.head
-              : view.posAtCoords({
-                  left: Math.max(
-                    box.left + 24,
-                    root.getBoundingClientRect().left + root.getBoundingClientRect().width / 2,
-                  ),
-                  top: box.top + Math.min(60, box.height / 3),
-                })?.pos;
-            if (point === undefined) return null;
-            const top = view.coordsAtPos(point).top;
-            return top >= box.top && top <= box.bottom ? { position: point, top, viewport } : null;
-          };
-          const paginate = () => {
-            cancelPagination = null;
-            if (refreshObservedBlocks) {
-              refreshObservedBlocks = false;
-              observe();
-            }
-            if (
-              disposed ||
-              view.composing ||
-              composing ||
-              measuring ||
-              !root.isConnected ||
-              root.getBoundingClientRect().width === 0
-            )
-              return;
-            const state = latexPaginationKey.getState(view.state);
-            if (!state) return;
-            measuring = true;
-            const pinned = anchor();
-            const focusedObject = document.activeElement;
-            const viewportBefore = scroll()?.getBoundingClientRect();
-            const focusedBox =
-              focusedObject instanceof HTMLElement &&
-              focusedObject !== root &&
-              root.contains(focusedObject)
-                ? focusedObject.getBoundingClientRect()
-                : null;
-            const keepObjectVisible =
-              focusedBox &&
-              viewportBefore &&
-              focusedBox.bottom >= viewportBefore.top &&
-              focusedBox.top <= viewportBefore.bottom;
-            try {
-              // Hiding only our widgets exposes natural flow without replacing the
-              // editable DOM or touching its native selection and composition.
-              root.dataset.latexMeasuring = "true";
-              const units = measureDocument(view, lineCache, state.dimensions);
-              const plan = planLatexVisualPagination(units, state.dimensions);
-              const objects = new Map<
-                number,
-                { node: DocumentNode; gaps: Record<number, number> }
-              >();
-              const gaps = plan.placements.flatMap((placement, index) => {
-                const unit = units[index]!;
-                if (unit.objectPart) {
-                  if (placement.offset > 0.5) {
-                    const object: { node: DocumentNode; gaps: Record<number, number> } =
-                      objects.get(unit.position) ?? {
-                        node: unit.objectPart.node,
-                        gaps: {},
-                      };
-                    object.gaps[unit.objectPart.index] = Math.round(placement.offset * 100) / 100;
-                    objects.set(unit.position, object);
-                  }
-                  return [];
-                }
-                return placement.offset > 0.5
-                  ? [
-                      {
-                        position: unit.position,
-                        height: Math.round(placement.offset * 100) / 100,
-                        explicit: unit.explicitBreak === true,
-                      },
-                    ]
-                  : [];
-              });
-              delete root.dataset.latexMeasuring;
-              const nextSignature = JSON.stringify([
-                gaps,
-                [...objects].map(([position, object]) => [position, object.gaps]),
-              ]);
-              if (signature !== nextSignature || measuredDocument !== view.state.doc) {
-                signature = nextSignature;
-                measuredDocument = view.state.doc;
-                view.dispatch(
-                  view.state.tr
-                    .setMeta(latexPaginationKey, {
-                      decorations: DecorationSet.create(view.state.doc, [
-                        ...gaps.map((gap) =>
-                          gapDecoration(
-                            gap.position,
-                            gap.height,
-                            gap.explicit,
-                            view.state.doc.resolve(gap.position).parent.isTextblock,
-                          ),
-                        ),
-                        ...[...objects].map(([position, object]) =>
-                          Decoration.node(
-                            position,
-                            position + object.node.nodeSize,
-                            {},
-                            { latexObjectPagination: object },
-                          ),
-                        ),
-                      ]),
-                    } satisfies PaginationUpdate)
-                    .setMeta("addToHistory", false),
-                );
-              }
-              root.style.setProperty(
-                "--scient-latex-document-height",
-                `${plan.pageCount * state.dimensions.pageHeight + (plan.pageCount - 1) * state.dimensions.pageGap}px`,
-              );
-              onPageCount(plan.pageCount);
-              if (pinned && root.isConnected)
-                pinned.viewport.scrollTop += view.coordsAtPos(pinned.position).top - pinned.top;
-              const active = document.activeElement;
-              const viewport = scroll();
-              if (
-                keepObjectVisible &&
-                viewport &&
-                active instanceof HTMLElement &&
-                active === focusedObject
-              ) {
-                const box = active.getBoundingClientRect();
-                const visible = viewport.getBoundingClientRect();
-                if (box.bottom > visible.bottom - 20)
-                  viewport.scrollTop += box.bottom - visible.bottom + 20;
-                else if (box.top < visible.top + 20)
-                  viewport.scrollTop += box.top - visible.top - 20;
-              }
-            } finally {
-              delete root.dataset.latexMeasuring;
-              measuring = false;
-            }
-          };
-          const schedule = () => {
-            if (disposed || cancelPagination) return;
-            clearTimeout(settle);
-            const delay = Math.max(0, 220 - (performance.now() - lastInput));
-            if (delay > 0) settle = setTimeout(schedule, delay);
-            else cancelPagination = afterEditorPaint(paginate);
-          };
-          const typing = () => {
-            lastInput = performance.now();
-            cancelPagination?.();
-            cancelPagination = null;
-            schedule();
-          };
-          const fontsChanged = () => {
-            lineCache = new WeakMap();
-            schedule();
-          };
-          const compositionStart = () => {
-            composing = true;
-          };
-          const compositionEnd = () => {
-            composing = false;
-            schedule();
-          };
-          const resize =
-            typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
-          const observe = () => {
-            resize?.disconnect();
-            resize?.observe(root);
-            for (const child of root.children) {
-              if (!child.classList.contains("scient-latex-pagination-gap")) resize?.observe(child);
-            }
-          };
-          observe();
-          root.addEventListener("load", schedule, true);
-          root.addEventListener("beforeinput", typing, true);
-          root.addEventListener("compositionstart", compositionStart, true);
-          root.addEventListener("compositionend", compositionEnd, true);
-          document.fonts?.addEventListener("loadingdone", fontsChanged);
-          void document.fonts?.ready.then(fontsChanged);
-          schedule();
-          return {
-            update(_view, previous) {
-              const before = latexPaginationKey.getState(previous);
-              const after = latexPaginationKey.getState(view.state);
-              if (previous.doc !== view.state.doc) {
-                refreshObservedBlocks = true;
-                schedule();
-              } else if (before?.revision !== after?.revision) {
-                lineCache = new WeakMap();
-                schedule();
-              }
-            },
-            destroy() {
-              disposed = true;
-              cancelPagination?.();
-              clearTimeout(settle);
-              resize?.disconnect();
-              root.removeEventListener("load", schedule, true);
-              root.removeEventListener("beforeinput", typing, true);
-              root.removeEventListener("compositionstart", compositionStart, true);
-              root.removeEventListener("compositionend", compositionEnd, true);
-              document.fonts?.removeEventListener("loadingdone", fontsChanged);
-            },
-          };
-        },
-      }),
-    ];
+    return [createLatexVisualPagination(this.options.onPageCount)];
   },
 });

@@ -39,6 +39,8 @@ export function useLatexTableSelection(props: {
   columnCount: number;
   activeCell: LatexTableCell;
   canClear: boolean;
+  normalizeSelection?: (selection: LatexTableSelection) => LatexTableSelection;
+  resolveCell?: (cell: LatexTableCell) => LatexTableCell;
   onClear: (selection: LatexTableSelection) => void;
   onDelete: () => void;
   onClipboard: (selection: LatexTableSelection) => string | null;
@@ -50,6 +52,7 @@ export function useLatexTableSelection(props: {
     current.current = props;
   });
   const store = (next: LatexTableSelection | null) => {
+    if (next && current.current.normalizeSelection) next = current.current.normalizeSelection(next);
     selected.current = next;
     const root = props.root.current;
     if (next) root?.setAttribute("data-table-selection", next.whole ? "whole" : "cells");
@@ -136,6 +139,7 @@ export function useLatexTableSelection(props: {
       return match ? { row: Number(match[1]), column: Number(match[2]) } : null;
     };
     const focusCell = (cell: LatexTableCell) => {
+      cell = current.current.resolveCell?.(cell) ?? cell;
       storeRef.current(null);
       root
         .querySelector<HTMLTextAreaElement>(`[data-table-cell="${cell.row}-${cell.column}"]`)

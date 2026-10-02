@@ -290,6 +290,13 @@ export function LatexProjectVisualEditor(props: Props) {
           draftKey={draftKey}
           fileRevision={JSON.stringify(paths.map((path) => [path, files.get(path)?.revision]))}
           onEdit={onEdit}
+          referenceFiles={{
+            saveResolution: props.saveResolution,
+            onPendingChange: props.onPendingChange,
+            onSaveConfirmed: props.onSaveConfirmed,
+            onSaveFailure: props.onSaveFailure,
+            onSaveResolutionApplied: props.onSaveResolutionApplied,
+          }}
           sourceError={editError}
           onOpenSourceAt={(offset) => {
             const span = document.spans.find(

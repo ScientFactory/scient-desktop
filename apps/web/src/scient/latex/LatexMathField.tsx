@@ -1,7 +1,7 @@
 import { attachShortcutHost } from "../keyboard/host";
 import { getKeyboardPreferences, subscribeKeyboardPreferences } from "../keyboard/preferences";
 import { mathCommand } from "../math/input/catalog";
-import { MathfieldElement } from "mathlive";
+import { MathfieldElement, type MacroDictionary } from "mathlive";
 import {
   forwardRef,
   useContext,
@@ -16,6 +16,7 @@ import { afterEditorPaint } from "./afterEditorPaint";
 import "mathlive/fonts.css";
 import { installMathEditingGuides } from "./mathEditingGuides";
 import { mathSymbolMacros } from "./mathSymbolPresentation";
+import { LatexDocumentMathContext } from "./LatexDocumentMathContext";
 import {
   createMathSelectionGeometry,
   restoreMathFieldValue,
@@ -124,6 +125,10 @@ export const LatexMathField = forwardRef<
 ) {
   const host = useRef<HTMLSpanElement>(null);
   const field = useRef<MathfieldElement | null>(null);
+  const documentMacros = useContext(LatexDocumentMathContext);
+  const initialMacros = useRef(documentMacros);
+  const baseMacros = useRef<MacroDictionary>({});
+  const appliedMacroSignature = useRef("");
   const displayMode = useRef(display);
   displayMode.current = display;
   const flush = useRef<() => boolean>(() => true);
@@ -216,7 +221,9 @@ export const LatexMathField = forwardRef<
     math.mathVirtualKeyboardPolicy = "manual";
     math.popoverPolicy = "auto";
     math.environmentPopoverPolicy = "off";
-    math.macros = { ...math.macros, ...mathSymbolMacros() };
+    baseMacros.current = { ...math.macros, ...mathSymbolMacros() };
+    math.macros = { ...baseMacros.current, ...initialMacros.current };
+    appliedMacroSignature.current = JSON.stringify(initialMacros.current);
     const recovered = restoredLatexFieldDraft(journalKey.current, lastAcknowledged.current);
     math.setValue(recovered, { silenceNotifications: true });
     const firstCell = firstMathCell(math);
@@ -784,6 +791,21 @@ export const LatexMathField = forwardRef<
       field.current = null;
     };
   }, [draftId, reportDraft]);
+  useEffect(() => {
+    const math = field.current;
+    if (!math) return;
+    const signature = JSON.stringify(documentMacros);
+    const apply = () => {
+      if (math.mode === "latex" || signature === appliedMacroSignature.current) return;
+      // MathLive reparses silently and preserves the command spelling and selection.
+      // Start from built-ins each time so removed document definitions do not linger.
+      math.macros = { ...baseMacros.current, ...documentMacros };
+      appliedMacroSignature.current = signature;
+    };
+    apply();
+    math.addEventListener("mode-change", apply);
+    return () => math.removeEventListener("mode-change", apply);
+  }, [documentMacros, draftId, reportDraft]);
   useEffect(() => {
     if (!field.current) return;
     field.current.setAttribute("aria-label", display ? "Display equation" : "Inline equation");

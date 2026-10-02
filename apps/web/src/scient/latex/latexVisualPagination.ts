@@ -4,6 +4,8 @@ export interface LatexVisualPaginationBlock {
   readonly explicitBreak?: boolean;
   /** Headings and the first/last two lines of a paragraph travel together. */
   readonly keepWithNext?: boolean;
+  /** Measured footnote content attached to this line reserves space on its page. */
+  readonly footnoteHeight?: number;
 }
 
 export interface LatexVisualPaginationOptions {
@@ -36,6 +38,7 @@ export function planLatexVisualPagination(
   const stride = options.pageHeight + options.pageGap;
   let page = 0;
   let accumulatedOffset = 0;
+  let footnoteSpace = 0;
   const placements: LatexVisualPaginationPlacement[] = [];
 
   for (const [index, block] of blocks.entries()) {
@@ -56,11 +59,15 @@ export function planLatexVisualPagination(
         markerOffset: Math.max(0, previousPageBottom + options.pageGap / 2 - top),
       });
       accumulatedOffset += offset;
+      if (nextPage !== page) footnoteSpace = 0;
       page = nextPage;
       continue;
     }
 
-    while (top >= page * stride + options.pageHeight - options.marginBottom) page += 1;
+    while (top >= page * stride + options.pageHeight - options.marginBottom) {
+      page += 1;
+      footnoteSpace = 0;
+    }
     let pageStart = page * stride + options.marginTop;
     let pageBottom = page * stride + options.pageHeight - options.marginBottom;
     let offset = 0;
@@ -84,12 +91,16 @@ export function planLatexVisualPagination(
       groupEnd += 1;
     const groupHeight = Math.max(height, blocks[groupEnd]!.bottom - block.top);
     const fittingHeight = groupHeight <= contentHeight ? groupHeight : height;
+    const groupNotes = blocks
+      .slice(index, groupEnd + 1)
+      .reduce((sum, item) => sum + (item.footnoteHeight ?? 0), 0);
     if (
-      top + fittingHeight > pageBottom + 0.5 &&
+      top + fittingHeight + footnoteSpace + groupNotes > pageBottom + 0.5 &&
       top > pageStart + 1 &&
-      fittingHeight <= contentHeight
+      fittingHeight + groupNotes <= contentHeight
     ) {
       page += 1;
+      footnoteSpace = 0;
       pageStart = page * stride + options.marginTop;
       pageBottom = page * stride + options.pageHeight - options.marginBottom;
       const pageOffset = Math.max(0, pageStart - top);
@@ -100,7 +111,9 @@ export function planLatexVisualPagination(
     }
 
     const startPage = page;
+    footnoteSpace += block.footnoteHeight ?? 0;
     page = Math.max(page, Math.floor(Math.max(top, bottom - 0.5) / stride));
+    if (page !== startPage) footnoteSpace = 0;
     placements.push({ page: startPage, offset, markerOffset: null });
   }
 
