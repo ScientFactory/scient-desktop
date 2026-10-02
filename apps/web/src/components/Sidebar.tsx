@@ -2626,6 +2626,7 @@ export default function Sidebar() {
     activeReorderableThreadKeys,
     activeThreads,
     workingThreads,
+    sectionActiveThreads,
     snoozedThreads,
     settledThreads,
     allSnoozedThreads,
@@ -2648,10 +2649,18 @@ export default function Sidebar() {
     const pinned: EnvironmentThreadShell[] = [];
     const active: EnvironmentThreadShell[] = [];
     const working: EnvironmentThreadShell[] = [];
+    // SCIENT-FORK:START — the Sections view replaces the Status layout, so it
+    // must see every inbox thread in normal order. The Working beta only moves
+    // rows between `active` and `working`; it never removes a thread from a
+    // section or reorders it there.
+    const sectionInbox: EnvironmentThreadShell[] = [];
+    // SCIENT-FORK:END
     // Working beta: only inbox threads fold away. Pins stay where the user
     // put them, and snoozed or settled threads keep their shelves.
-    const inbox = (thread: EnvironmentThreadShell) =>
-      workingShelfEnabled && isSidebarThreadWorking(thread) ? working : active;
+    const inbox = (thread: EnvironmentThreadShell) => {
+      sectionInbox.push(thread);
+      return workingShelfEnabled && isSidebarThreadWorking(thread) ? working : active;
+    };
     const snoozed: EnvironmentThreadShell[] = [];
     const settled: EnvironmentThreadShell[] = [];
     const draggable = new Set<string>();
@@ -2739,6 +2748,10 @@ export default function Sidebar() {
             }),
       // Newest work first, by the same clock as the inbox.
       workingThreads: sortInboxThreadsByReturn(working),
+      // SCIENT-FORK:START — Sections keep the full inbox in normal order; the
+      // Working beta never hides or reorders a thread there.
+      sectionActiveThreads: sortThreadsForSidebar(sectionInbox),
+      // SCIENT-FORK:END
       // Soonest wake first: "what comes back next" is the shelf's question.
       snoozedThreads: sortedSnoozed,
       settledThreads: sortedSettled,
@@ -2933,7 +2946,10 @@ export default function Sidebar() {
     threads,
     scopeProjectRefs: scopedProjectGroup?.memberProjectRefs ?? null,
     pinnedThreads,
-    activeThreads,
+    // SCIENT-FORK:START — Sections see the complete inbox, so the Working
+    // beta never removes or reorders a thread inside a section.
+    activeThreads: sectionActiveThreads,
+    // SCIENT-FORK:END
     routeThreadKey,
     newThreadContext,
     onBeforeNewThread: closeMobileSidebar,
