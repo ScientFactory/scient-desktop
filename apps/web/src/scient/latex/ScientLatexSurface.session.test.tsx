@@ -943,8 +943,10 @@ describe("document actions before Visual has ever mounted", () => {
         status.visualSourceRevisions["chapter.tex"] = revisionOf("Older compiled chapter.");
       } else {
         disk.set("data.txt", "New data saved by another editor.");
+        const descriptor = freshDescriptor();
+        if (descriptor._tag !== "generated-pdf") throw new Error("Expected generated PDF fixture");
         status.descriptor = PdfSourceDescriptor.make({
-          ...freshDescriptor(),
+          ...descriptor,
           bindingStatus: "stale",
           staleReason: "Source changed",
         });
