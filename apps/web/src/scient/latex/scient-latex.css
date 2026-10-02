@@ -3080,7 +3080,6 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-writing-toolbar > .scient-markdown-editor-dock[data-fixed] {
   overflow: hidden;
   flex-wrap: nowrap;
-  min-height: 38px;
 }
 .scient-latex-reader-footer {
   position: relative;

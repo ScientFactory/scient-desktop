@@ -1,6 +1,6 @@
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import { useEffect, useRef, useState } from "react";
-import { Plus } from "lucide-react";
+import { ChevronDown, Plus } from "lucide-react";
 import {
   Menu,
   MenuTrigger,
@@ -76,8 +76,8 @@ export function LatexInsertMenu(props: {
           disabled={props.disabled}
           render={
             <button type="button" aria-label="Insert" className={dockButtonClass()}>
-              <Plus aria-hidden="true" />
-              <span className="scient-latex-insert-label scient-latex-tool-label">Insert</span>
+              <Plus className="size-4" aria-hidden="true" />
+              <ChevronDown className="size-3 shrink-0 opacity-60" aria-hidden="true" />
             </button>
           }
         />

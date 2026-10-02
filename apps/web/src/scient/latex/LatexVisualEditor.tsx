@@ -56,6 +56,7 @@ import { LatexDocumentSettings } from "./LatexDocumentSettings";
 import { LatexContextTools } from "./LatexContextTools";
 import { DocumentReaderControls, DocumentSearchBar } from "../writing/DocumentReaderControls";
 import { ReaderBarHostContext } from "../writing/readerBarHost";
+import { scientCommandShortcut, scientMarkdownShortcut } from "../markdownEditor/shortcuts";
 import {
   DockButton,
   DockOverflowRow,
@@ -111,9 +112,14 @@ import {
   ListOrdered,
   IndentIncrease,
   IndentDecrease,
-  Pilcrow,
-  Heading,
-  Quote,
+  Heading1,
+  Heading2,
+  Heading3,
+  Heading4,
+  Heading5,
+  Heading6,
+  TextInitial,
+  TextQuote,
   Undo2,
   Redo2,
   Sigma,
@@ -4635,14 +4641,14 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   const formatActions = [
     {
       label: "Bold",
-      icon: <Bold strokeWidth={2.5} />,
+      icon: <Bold className="size-4" strokeWidth={2.5} />,
       action: () => editor?.chain().focus().toggleBold().run(),
       active: editor?.isActive("bold"),
       secondary: false,
     },
     {
       label: "Italic",
-      icon: <Italic />,
+      icon: <Italic className="size-4" />,
       action: () => editor?.chain().focus().toggleItalic().run(),
       active: editor?.isActive("italic"),
       secondary: false,
@@ -4828,19 +4834,35 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     }
   };
 
+  // Icons follow the depth of the heading in this document class, as in the Markdown bar.
+  const headingIcons = [Heading1, Heading2, Heading3, Heading4, Heading5, Heading6];
+  const headingIcon = (level: number) => {
+    const Icon =
+      headingIcons[headingStyles.findIndex((style) => style.level === level)] ?? Heading1;
+    return <Icon className="size-4" />;
+  };
+  const activeHeadingLevel = editor?.isActive("heading")
+    ? Number(editor.getAttributes("heading").level)
+    : null;
+  const activeStyleLabel =
+    activeHeadingLevel !== null
+      ? (headingStyles.find((style) => style.level === activeHeadingLevel)?.label ?? "Heading")
+      : editor?.isActive("blockquote")
+        ? "Quote"
+        : "Text";
   const writingStyleItems = (
     <>
       <MenuRadioGroup
         value={
-          editor?.isActive("heading")
-            ? String(editor.getAttributes("heading").level)
+          activeHeadingLevel !== null
+            ? String(activeHeadingLevel)
             : editor?.isActive("blockquote")
               ? "quote"
               : "paragraph"
         }
       >
         <DockCommandRadioItem value="paragraph" disabled={textReadOnly} onClick={setStandardStyle}>
-          <MenuRow icon={<Pilcrow />} label="Text" />
+          <MenuRow icon={<TextInitial className="size-4" />} label="Text" />
         </DockCommandRadioItem>
         {headingStyles.map(({ level, label }) => (
           <DockCommandRadioItem
@@ -4854,11 +4876,11 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
               )
             }
           >
-            <MenuRow icon={<Heading />} label={label} />
+            <MenuRow icon={headingIcon(level)} label={label} />
           </DockCommandRadioItem>
         ))}
         <DockCommandRadioItem value="quote" disabled={textReadOnly} onClick={setQuoteStyle}>
-          <MenuRow icon={<Quote />} label="Quote" />
+          <MenuRow icon={<TextQuote className="size-4" />} label="Quote" />
         </DockCommandRadioItem>
       </MenuRadioGroup>
       <MenuSeparator />
@@ -4870,16 +4892,19 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   const writingStyleTools = (
     <DockMenu
       commandScope="latex"
-      label="Style: Text"
+      label={`Style: ${activeStyleLabel}`}
       disabled={textReadOnly}
       icon={
-        <>
-          <span className="scient-latex-tool-label">Text</span>
-          <span className="scient-latex-tool-symbol" aria-hidden="true">
-            T
-          </span>
-        </>
+        activeHeadingLevel !== null ? (
+          headingIcon(activeHeadingLevel)
+        ) : editor?.isActive("blockquote") ? (
+          <TextQuote className="size-4" />
+        ) : (
+          <TextInitial className="size-4" />
+        )
       }
+      groupLabel="Style"
+      popupClassName="w-52"
     >
       {writingStyleItems}
     </DockMenu>
@@ -4891,7 +4916,8 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         .map((item) => (
           <DockButton
             key={item.label}
-            label={`${item.label}${shortcutLabel(item.label === "Bold" ? "latex.bold" : "latex.italic") ? " (" + shortcutLabel(item.label === "Bold" ? "latex.bold" : "latex.italic") + ")" : ""}`}
+            label={item.label}
+            shortcut={scientCommandShortcut(item.label === "Bold" ? "latex.bold" : "latex.italic")}
             icon={item.icon}
             preserveIconWeight={item.label === "Bold"}
             disabled={textReadOnly || !editor}
@@ -4902,26 +4928,32 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       <DockDivider />
     </>
   );
+  const activeListKind = editor?.isActive("orderedList")
+    ? "ordered"
+    : editor?.isActive("bulletList")
+      ? "bullet"
+      : "";
   const writingListItems = (
     <>
-      <DockCommandItem
-        onClick={() => {
-          setBulletListStyle();
-        }}
-        disabled={textReadOnly}
-      >
-        <MenuRow icon={<List />} label="Bullet list" />
-      </DockCommandItem>
-      <DockCommandItem
-        onClick={() => {
-          setOrderedListStyle(false);
-        }}
-        disabled={textReadOnly}
-      >
-        <MenuRow icon={<ListOrdered />} label="Numbered list" />
-      </DockCommandItem>
+      <MenuRadioGroup value={activeListKind}>
+        <DockCommandRadioItem
+          value="bullet"
+          disabled={textReadOnly}
+          onClick={() => setBulletListStyle()}
+        >
+          <MenuRow icon={<List className="size-4" />} label="Bullet list" />
+        </DockCommandRadioItem>
+        <DockCommandRadioItem
+          value="ordered"
+          disabled={textReadOnly}
+          onClick={() => setOrderedListStyle(false)}
+        >
+          <MenuRow icon={<ListOrdered className="size-4" />} label="Numbered list" />
+        </DockCommandRadioItem>
+      </MenuRadioGroup>
+      <MenuSeparator />
       <DockCommandItem disabled={textReadOnly} onClick={() => setOrderedListStyle(true)}>
-        <MenuRow icon={<ListOrdered />} label="Continue numbered list" />
+        <MenuRow icon={<ListOrdered className="size-4" />} label="Continue numbered list" />
       </DockCommandItem>
       <DockCommandItem
         disabled={textReadOnly}
@@ -4929,7 +4961,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
           applyRichLayout("\\begin{description}\n\\item[Label] Text\n\\end{description}")
         }
       >
-        <MenuRow icon={<List />} label="Description list" />
+        <MenuRow icon={<List className="size-4" />} label="Description list" />
       </DockCommandItem>
       <MenuSeparator />
       <DockCommandItem
@@ -4938,7 +4970,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         }}
         disabled={textReadOnly || !editor?.can().sinkListItem("listItem")}
       >
-        <MenuRow icon={<IndentIncrease />} label="Indent item" />
+        <MenuRow icon={<IndentIncrease className="size-4" />} label="Indent item" />
       </DockCommandItem>
       <DockCommandItem
         onClick={() => {
@@ -4946,13 +4978,26 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         }}
         disabled={textReadOnly || !editor?.can().liftListItem("listItem")}
       >
-        <MenuRow icon={<IndentDecrease />} label="Outdent item" />
+        <MenuRow icon={<IndentDecrease className="size-4" />} label="Outdent item" />
       </DockCommandItem>
     </>
   );
   const writingListTools = (
     <>
-      <DockMenu commandScope="latex" label="Lists" icon={<List />} disabled={textReadOnly}>
+      <DockMenu
+        commandScope="latex"
+        label={`List: ${activeListKind === "ordered" ? "Numbered" : activeListKind === "bullet" ? "Bullet" : "None"}`}
+        icon={
+          activeListKind === "ordered" ? (
+            <ListOrdered className="size-4" />
+          ) : (
+            <List className="size-4" />
+          )
+        }
+        groupLabel="Lists"
+        popupClassName="w-52"
+        disabled={textReadOnly}
+      >
         {writingListItems}
       </DockMenu>
       <DockDivider />
@@ -5009,7 +5054,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       label="Math"
       icon={
         <>
-          <Sigma />
+          <Sigma className="size-4" />
           <span className="scient-latex-tool-label">Math</span>
         </>
       }
@@ -5017,6 +5062,12 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     >
       {writingMathItems}
     </DockMenu>
+  );
+  const writingMathBar = (
+    <>
+      {writingMathTools}
+      <DockDivider />
+    </>
   );
   const undo = () => {
     if (activeMath.get()) activeMath.get()?.undo(false);
@@ -5029,14 +5080,16 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   const writingHistoryTools = (
     <>
       <DockButton
-        label="Undo (Ctrl/Cmd+Z)"
-        icon={<Undo2 />}
+        label="Undo"
+        shortcut={scientMarkdownShortcut("undo")}
+        icon={<Undo2 className="size-4" />}
         disabled={readOnly || (!mathActive && !editor?.can().undo())}
         onClick={undo}
       />
       <DockButton
-        label="Redo (Ctrl/Cmd+Shift+Z)"
-        icon={<Redo2 />}
+        label="Redo"
+        shortcut={scientMarkdownShortcut("redo")}
+        icon={<Redo2 className="size-4" />}
         disabled={readOnly || (!mathActive && !editor?.can().redo())}
         onClick={redo}
       />
@@ -5219,16 +5272,8 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                       ),
                     },
                     {
-                      id: "style",
-                      priority: 100,
-                      estimatedWidth: 115,
-                      bar: writingStyleTools,
-                      overflowLabel: "Text",
-                      overflow: writingStyleItems,
-                    },
-                    {
                       id: "format",
-                      priority: 50,
+                      priority: 100,
                       estimatedWidth: 76,
                       bar: writingFormatTools,
                       overflowLabel: "Formatting",
@@ -5248,25 +5293,25 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                       ),
                     },
                     {
+                      id: "style",
+                      priority: 50,
+                      estimatedWidth: 44,
+                      bar: writingStyleTools,
+                      overflowLabel: "Style",
+                      overflow: writingStyleItems,
+                    },
+                    {
                       id: "lists",
-                      priority: 20,
-                      estimatedWidth: 58,
+                      priority: 40,
+                      estimatedWidth: 48,
                       bar: writingListTools,
                       overflowLabel: "Lists",
                       overflow: writingListItems,
                     },
                     {
-                      id: "math",
-                      priority: 90,
-                      estimatedWidth: 90,
-                      bar: writingMathTools,
-                      overflowLabel: "Math",
-                      overflow: writingMathItems,
-                    },
-                    {
                       id: "insert",
-                      priority: 80,
-                      estimatedWidth: 85,
+                      priority: 20,
+                      estimatedWidth: 48,
                       bar: writingInsertTools,
                       overflowLabel: "Insert",
                       overflow: (
@@ -5291,19 +5336,22 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                       ),
                     },
                     {
+                      id: "math",
+                      priority: 90,
+                      estimatedWidth: 96,
+                      bar: writingMathBar,
+                      overflowLabel: "Math",
+                      overflow: writingMathItems,
+                    },
+                    {
                       id: "document",
                       priority: 10,
-                      estimatedWidth: 115,
+                      estimatedWidth: 44,
                       bar: (
                         <DockMenu
                           commandScope="latex"
                           label="Document"
-                          icon={
-                            <>
-                              <FileText />
-                              <span className="scient-latex-tool-label">Document</span>
-                            </>
-                          }
+                          icon={<FileText className="size-4" />}
                         >
                           {documentItems}
                         </DockMenu>

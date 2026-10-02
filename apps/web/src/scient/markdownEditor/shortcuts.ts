@@ -88,6 +88,45 @@ function ariaShortcut(binding: KeybindingShortcut, platform: string): string {
   return parts.join("+");
 }
 
+function presentCommandKeys(
+  commandId: string,
+  platform: string,
+): ScientMarkdownShortcutPresentation {
+  const keys = commandKeys(commandId, isMacPlatform(platform));
+  return {
+    display: keys
+      .map((key) =>
+        key
+          .split(" ")
+          .map((stroke) => {
+            const binding = parseKeybindingShortcut(stroke.replaceAll("plus", "+"));
+            if (!binding) return stroke;
+            const label = formatShortcutLabel(binding, platform);
+            return isMacPlatform(platform) ? compactMacKeyLabel(label, binding.key) : label;
+          })
+          .join(" → "),
+      )
+      .join(" / "),
+    ariaKeyShortcuts: keys
+      .filter((key) => !key.includes(" "))
+      .flatMap((key) => {
+        const binding = parseKeybindingShortcut(key.replaceAll("plus", "+"));
+        return binding ? [ariaShortcut(binding, platform)] : [];
+      })
+      .join(" "),
+  };
+}
+
+/** The same presentation for another editor's configurable command, such as `latex.bold`. */
+export function scientCommandShortcut(
+  commandId: string,
+  platform = runtimePlatform(),
+): ScientMarkdownShortcutPresentation | undefined {
+  return commandKeys(commandId, isMacPlatform(platform)).length > 0
+    ? presentCommandKeys(commandId, platform)
+    : undefined;
+}
+
 /** One source of truth for tooltip text and assistive shortcut metadata. */
 export function scientMarkdownShortcut(
   id: ScientMarkdownShortcutId,
@@ -96,31 +135,7 @@ export function scientMarkdownShortcut(
   const configurable = surfaceCommands(isMacPlatform(platform)).some(
     (command) => command.id === "markdown." + id,
   );
-  if (configurable) {
-    const keys = commandKeys("markdown." + id, isMacPlatform(platform));
-    return {
-      display: keys
-        .map((key) =>
-          key
-            .split(" ")
-            .map((stroke) => {
-              const binding = parseKeybindingShortcut(stroke.replaceAll("plus", "+"));
-              if (!binding) return stroke;
-              const label = formatShortcutLabel(binding, platform);
-              return isMacPlatform(platform) ? compactMacKeyLabel(label, binding.key) : label;
-            })
-            .join(" → "),
-        )
-        .join(" / "),
-      ariaKeyShortcuts: keys
-        .filter((key) => !key.includes(" "))
-        .flatMap((key) => {
-          const binding = parseKeybindingShortcut(key.replaceAll("plus", "+"));
-          return binding ? [ariaShortcut(binding, platform)] : [];
-        })
-        .join(" "),
-    };
-  }
+  if (configurable) return presentCommandKeys("markdown." + id, platform);
   const definition = SHORTCUTS[id];
   const bindings = orderedBindings(definition, platform);
   const primary = bindings[0]!;
