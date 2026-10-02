@@ -20,6 +20,9 @@ import { makeOmpScriptedWire } from "../omp/OmpCaptureReplay.testFixtures.ts";
 import { makeOmpAdapter } from "./OmpAdapter.ts";
 
 const encodeEventJson = Schema.encodeUnknownEffect(Schema.fromJsonString(ProviderRuntimeEvent));
+const encodeEventsJson = Schema.encodeUnknownEffect(
+  Schema.fromJsonString(Schema.Array(ProviderRuntimeEvent)),
+);
 const decodeEvent = Schema.decodeUnknownEffect(ProviderRuntimeEvent);
 
 const toolsHarness = Effect.fn("ompToolsHarness")(function* (
@@ -247,12 +250,12 @@ describe("Oh My Pi ordinary tool activity", () => {
         partialResult: { content: [{ type: "text", text: output }] },
       });
       yield* h.until((event) => event.type === "item.updated");
-      const serialized = JSON.stringify(h.items());
+      const serialized = yield* encodeEventsJson(h.items());
       expect(serialized).not.toContain(secret.slice(0, -1));
       expect(serialized).toContain("[REDACTED]");
       yield* h.adapter.interruptTurn(h.threadId, h.turn.turnId);
       yield* h.until((event) => event.type === "session.exited");
-      expect(JSON.stringify(h.items())).not.toContain(secret.slice(0, -1));
+      expect(yield* encodeEventsJson(h.items())).not.toContain(secret.slice(0, -1));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

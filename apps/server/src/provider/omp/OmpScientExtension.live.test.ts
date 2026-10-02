@@ -906,17 +906,19 @@ describe.runIf(binary)("native OMP ordinary tool activity", () => {
               const terminal = yield* until((event) => event.type === "turn.completed");
               expect(terminal.payload).toMatchObject({ state: "completed" });
             }
-            const starts = events.filter(
-              (event) =>
-                event.type === "item.started" && event.payload.itemType === "dynamic_tool_call",
+            const starts = events.flatMap((event) =>
+              event.type === "item.started" && event.payload.itemType === "dynamic_tool_call"
+                ? [event]
+                : [],
             );
             const bash = starts.find((event) => event.payload.title === "bash");
             expect(bash, "native bash did not start").toBeDefined();
             if (!bash) return yield* Effect.die(new Error("Native bash did not start."));
             expect(bash.payload.data).toMatchObject({ toolName: "bash", input: { command } });
-            const completed = events.filter(
-              (event) =>
-                event.type === "item.completed" && event.payload.itemType === "dynamic_tool_call",
+            const completed = events.flatMap((event) =>
+              event.type === "item.completed" && event.payload.itemType === "dynamic_tool_call"
+                ? [event]
+                : [],
             );
             const bashEnds = completed.filter((event) => event.itemId === bash.itemId);
             expect(bashEnds).toHaveLength(1);
