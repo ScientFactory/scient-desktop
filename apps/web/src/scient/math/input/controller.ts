@@ -183,11 +183,14 @@ export class MathInputController {
       if (current.region !== "prose") return false;
       const { source, selection } = current.snapshot;
       const selected = source.slice(selection.from, selection.to);
-      const caret = selection.to;
+      // Markdown cannot round-trip an empty equation, so a new one starts with
+      // an empty group and the caret inside it. LaTeX delimiters can stay empty.
+      const blank = current.snapshot.format === "markdown" ? "{}" : "";
+      const caret = selected || !blank ? selection.to : selection.from + 1;
       return this.commit(
         {
           ...selection,
-          insert: selected,
+          insert: selected || blank,
           selection: { from: caret, to: caret },
         },
         id === "math.display",

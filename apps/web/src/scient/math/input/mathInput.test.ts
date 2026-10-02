@@ -80,6 +80,16 @@ describe("shared math commands", () => {
     expect(f.controller.execute("math.symbol.alpha")).toBe(true);
     expect(f.state().source).toBe("hello \\(\\alpha \\)");
   });
+  it("starts a blank equation with an empty group in Markdown only", () => {
+    // Markdown cannot round-trip an empty equation; LaTeX delimiters can stay empty.
+    const markdown = fixture("hello ", "markdown");
+    expect(markdown.controller.execute("math.inline")).toBe(true);
+    expect(markdown.state().source).toContain("{}");
+    const latex = fixture("hello ", "latex");
+    expect(latex.controller.execute("math.inline")).toBe(true);
+    expect(latex.state().source).not.toContain("{}");
+    expect(latex.state().source).not.toBe("hello ");
+  });
   it("completes a fraction and preserves surrounding math delimiters", () => {
     const f = fixture("$\\frac$", "markdown");
     f.set({ selection: { from: 6, to: 6 } });
