@@ -122,34 +122,19 @@ export function DocumentReaderControls(props: {
           <ChevronRight />
         </ReaderButton>
         <div className="scient-pdf-toolbar-separator" />
-        <div className="scient-pdf-zoom-stepper">
-          <ReaderButton
-            className="scient-pdf-action-zoom-step"
-            label={
-              "Zoom in" +
-              (props.shortcutLabel("pdf.zoomIn")
-                ? " (" + props.shortcutLabel("pdf.zoomIn") + ")"
-                : "")
-            }
-            disabled={!props.ready}
-            onClick={() => props.onZoom(stepPdfZoom(props.scale, "in"))}
-          >
-            <Plus />
-          </ReaderButton>
-          <ReaderButton
-            className="scient-pdf-action-zoom-step"
-            label={
-              "Zoom out" +
-              (props.shortcutLabel("pdf.zoomOut")
-                ? " (" + props.shortcutLabel("pdf.zoomOut") + ")"
-                : "")
-            }
-            disabled={!props.ready}
-            onClick={() => props.onZoom(stepPdfZoom(props.scale, "out"))}
-          >
-            <Minus />
-          </ReaderButton>
-        </div>
+        <ReaderButton
+          className="scient-pdf-action-zoom-step"
+          label={
+            "Zoom out" +
+            (props.shortcutLabel("pdf.zoomOut")
+              ? " (" + props.shortcutLabel("pdf.zoomOut") + ")"
+              : "")
+          }
+          disabled={!props.ready}
+          onClick={() => props.onZoom(stepPdfZoom(props.scale, "out"))}
+        >
+          <Minus />
+        </ReaderButton>
         <ScientTooltip content="Fit width">
           <button
             type="button"
@@ -161,6 +146,19 @@ export function DocumentReaderControls(props: {
             {formatPdfZoom(props.scale)}
           </button>
         </ScientTooltip>
+        <ReaderButton
+          className="scient-pdf-action-zoom-step"
+          label={
+            "Zoom in" +
+            (props.shortcutLabel("pdf.zoomIn")
+              ? " (" + props.shortcutLabel("pdf.zoomIn") + ")"
+              : "")
+          }
+          disabled={!props.ready}
+          onClick={() => props.onZoom(stepPdfZoom(props.scale, "in"))}
+        >
+          <Plus />
+        </ReaderButton>
         {props.contextControls ?? <div className="min-w-1 flex-1" />}
         <ReaderButton
           className="scient-pdf-action-search"

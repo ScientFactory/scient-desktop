@@ -85,28 +85,8 @@
   box-shadow: 0 0 0 1px var(--ring);
 }
 
-/* Zoom in above zoom out, to the left of the percentage. */
-.scient-pdf-zoom-stepper {
-  display: flex;
-  flex: none;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.scient-pdf-zoom-stepper .scient-pdf-toolbar-button {
-  width: 20px;
-  height: 14px;
-  border-radius: 3px;
-}
-
-.scient-pdf-zoom-stepper .scient-pdf-toolbar-button > svg {
-  width: 11px;
-  height: 11px;
-  stroke-width: 2.5;
-}
-
 .scient-pdf-zoom-label {
-  min-width: 40px;
+  min-width: 44px;
   border-radius: 5px;
   padding: 3px 4px;
   color: var(--muted-foreground);
@@ -151,7 +131,7 @@
 
 @container scient-document-controls (max-width: 359px) {
   .scient-pdf-action-sidebar,
-  .scient-pdf-zoom-stepper {
+  .scient-pdf-action-zoom-step {
     display: none;
   }
 }
