@@ -90,6 +90,7 @@ export type OmpSessionUpdate =
       readonly toolCallId: string;
       readonly name: string;
       readonly status: "inProgress" | "completed" | "failed";
+      readonly input?: unknown;
       readonly detail?: string;
       readonly data?: unknown;
     }
@@ -1009,7 +1010,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
             type: "tool",
             phase: "updated",
             toolCallId,
-            name: "tool",
+            name: text(event.toolName) ?? "tool",
             status: "inProgress",
             data: event.update,
           });
@@ -1037,6 +1038,9 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
                 : "completed",
           toolCallId,
           name,
+          ...(event.args !== undefined || event.arguments !== undefined
+            ? { input: event.args ?? event.arguments }
+            : {}),
           status:
             event.type === "tool_execution_end" ? (failed ? "failed" : "completed") : "inProgress",
           ...(detail ? { detail } : {}),

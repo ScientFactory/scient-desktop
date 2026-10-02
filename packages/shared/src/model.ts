@@ -22,6 +22,75 @@ export interface SelectableModelOption {
   slug: string;
   name: string;
   aliases?: ReadonlyArray<string> | undefined;
+  unavailableReason?: string | undefined;
+}
+
+const VISIBLE_AGENT_SUBSCRIPTION_MODELS = new Set([
+  "anthropic/claude-sonnet-5-5",
+  "anthropic/claude-opus-5-5",
+  "anthropic/claude-fable-5-5",
+  "openai-codex/gpt-6-astra",
+  "openai-codex/gpt-6-luna",
+  "openai-codex/gpt-6.1-sol",
+  "google-antigravity/gemini-3.8-flash",
+  "google-antigravity/gemini-3.1-pro",
+  "google-antigravity/claude-opus-4-6",
+]);
+
+const AGENT_ACCOUNT_GROUP_ORDER = new Map([
+  ["anthropic", 0],
+  ["openai", 1],
+  ["openai-codex", 1],
+  ["google", 2],
+  ["google-antigravity", 2],
+  ["google-gemini-cli", 2],
+  ["google-vertex", 2],
+]);
+
+/** Default Pi/OMP account groups; preserve catalog order within each group. */
+export function sortAgentModelsByAccount<T extends { readonly slug: string }>(
+  driver: string,
+  models: ReadonlyArray<T>,
+): T[] {
+  if (driver !== "pi" && driver !== "omp") return [...models];
+  const rank = (model: T) => AGENT_ACCOUNT_GROUP_ORDER.get(model.slug.split("/")[0] ?? "") ?? 3;
+  return [...models].sort((a, b) => rank(a) - rank(b));
+}
+
+/** Curated picker defaults for native Pi/OMP catalogs, independent of account access. */
+export function getDefaultHiddenAgentModels(
+  driver: string,
+  models: ReadonlyArray<{ readonly slug: string; readonly isCustom?: boolean }>,
+): string[] {
+  if (driver !== "pi" && driver !== "omp") return [];
+  return models
+    .filter(
+      (model) =>
+        !model.isCustom &&
+        ["anthropic/", "openai-codex/", "google-antigravity/"].some((prefix) =>
+          model.slug.startsWith(prefix),
+        ) &&
+        !VISIBLE_AGENT_SUBSCRIPTION_MODELS.has(model.slug),
+    )
+    .map((model) => model.slug);
+}
+
+/** Saved visibility wins; use the default account order until the user reorders models. */
+export function resolveProviderModelPreferences(
+  driver: string,
+  models: ReadonlyArray<{ readonly slug: string; readonly isCustom?: boolean }>,
+  preferences:
+    | { readonly hiddenModels: ReadonlyArray<string>; readonly modelOrder: ReadonlyArray<string> }
+    | undefined,
+) {
+  if (driver !== "pi" && driver !== "omp") {
+    return preferences ?? { hiddenModels: [], modelOrder: [] };
+  }
+  if (preferences?.modelOrder.length) return preferences;
+  return {
+    hiddenModels: preferences?.hiddenModels ?? getDefaultHiddenAgentModels(driver, models),
+    modelOrder: sortAgentModelsByAccount(driver, models).map((model) => model.slug),
+  };
 }
 
 export function createModelCapabilities(input: {
@@ -375,7 +444,7 @@ export function resolveAutomaticModel(
     }
   >,
 ): string | undefined {
-  const available = models.filter((model) => !model.isLegacy);
+  const available = models.filter((model) => !model.isLegacy && !model.unavailableReason);
   const builtIns = available.filter((model) => !model.isCustom);
   const preferences =
     driver === "codex"
@@ -460,6 +529,7 @@ export function resolveSelectableModel(
   value: string | null | undefined,
   options: ReadonlyArray<SelectableModelOption>,
 ): string | null {
+  options = options.filter((option) => !option.unavailableReason);
   if (typeof value !== "string") {
     return null;
   }

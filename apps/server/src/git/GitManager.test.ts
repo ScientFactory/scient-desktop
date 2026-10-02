@@ -34,6 +34,10 @@ import {
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import * as GitLabCli from "../sourceControl/GitLabCli.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import {
+  makeNativeTextGeneration,
+  nativeOnlySettings,
+} from "../textGeneration/__tests__/nativeGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubSourceControlProvider from "../sourceControl/GitHubSourceControlProvider.ts";
@@ -2925,6 +2929,36 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(generatedModelSelection).toEqual(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection);
     }),
   );
+
+  for (const driver of ["pi", "omp"] as const) {
+    it.effect(`generates an actual SCM commit with ${driver}'s automatic native model`, () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-native-");
+        yield* initRepo(repoDir);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nnative\n");
+        const instanceId = ProviderInstanceId.make(`${driver}_work`);
+        let model: string | undefined;
+        const generation = yield* makeNativeTextGeneration(driver, instanceId, {
+          generateCommitMessage: (input) => {
+            model = input.modelSelection.model;
+            return Effect.succeed({ subject: "fix: native background routing", body: "" });
+          },
+        });
+        const { manager } = yield* makeManager({
+          serverSettings: nativeOnlySettings(driver, instanceId),
+          textGeneration: { generateCommitMessage: generation.generateCommitMessage },
+        });
+        const result = yield* runStackedAction(manager, { cwd: repoDir, action: "commit" });
+        expect(model).toBe("local/native");
+        expect(result.commit.status).toBe("created");
+        expect(
+          yield* runGit(repoDir, ["log", "-1", "--pretty=%s"]).pipe(
+            Effect.map((receipt) => receipt.stdout.trim()),
+          ),
+        ).toBe("fix: native background routing");
+      }),
+    );
+  }
 
   it.effect("includes local agent instructions when recent history is empty", () =>
     Effect.gen(function* () {

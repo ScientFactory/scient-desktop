@@ -310,6 +310,7 @@ export type OmpToolExecutionEndEvent = typeof OmpToolExecutionEndEvent.Type;
 export const OmpToolStreamUpdateEvent = Schema.Struct({
   type: Schema.Literal("tool_stream_update"),
   toolCallId: Schema.String,
+  toolName: maybeString,
   update: Schema.Unknown,
 });
 export type OmpToolStreamUpdateEvent = typeof OmpToolStreamUpdateEvent.Type;

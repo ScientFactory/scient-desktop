@@ -37,6 +37,7 @@ import {
   VoiceModelId as VoiceModelIdSchema,
   VoiceTranscriptionErrorKind,
 } from "@t3tools/contracts";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -220,6 +221,51 @@ export function recommendVoiceModel(
       };
 }
 
+/**
+ * Where development apps on this machine keep what they can share for voice:
+ * verified models, and the model last chosen in any of them. Each dev app has
+ * its own state, so without this every new one downloads and sets up voice
+ * again. A packaged app has no such folder, even one pointed at a dev server.
+ */
+export function resolveDevelopmentSharedVoiceDirectory(input: {
+  readonly isDevelopment: boolean;
+  readonly isPackaged: boolean;
+  readonly homeDirectory: string;
+}): string | null {
+  return input.isDevelopment && !input.isPackaged
+    ? NodePath.join(input.homeDirectory, SCIENT_DESKTOP_IDENTITY.baseDirName, "dev-shared", "voice")
+    : null;
+}
+
+const SHARED_SELECTION_FILE = "selected-model.json";
+
+/** The model last chosen in a dev app, if it is one this build knows. */
+export async function readSharedVoiceSelection(directory: string): Promise<VoiceModelId | null> {
+  try {
+    const value: unknown = JSON.parse(
+      await NodeFSP.readFile(NodePath.join(directory, SHARED_SELECTION_FILE), "utf8"),
+    );
+    const modelId =
+      typeof value === "object" && value !== null && "modelId" in value ? value.modelId : null;
+    return isVoiceModelId(modelId) ? modelId : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Best effort: a dev app that cannot record its choice still works. */
+async function writeSharedVoiceSelection(directory: string, modelId: VoiceModelId): Promise<void> {
+  const path = NodePath.join(directory, SHARED_SELECTION_FILE);
+  const pendingPath = `${path}.tmp-${process.pid}`;
+  try {
+    await NodeFSP.mkdir(directory, { recursive: true, mode: 0o700 });
+    await NodeFSP.writeFile(pendingPath, `${JSON.stringify({ modelId })}\n`, { mode: 0o600 });
+    await NodeFSP.rename(pendingPath, path);
+  } catch {
+    await NodeFSP.rm(pendingPath, { force: true }).catch(() => undefined);
+  }
+}
+
 export interface DesktopVoiceDependencies {
   readonly createEngine: typeof createLocalWhisperEngine;
   readonly resolveFreeBytes: (path: string) => Promise<number>;
@@ -246,6 +292,7 @@ export const makeWithDependencies = (dependencies: DesktopVoiceDependencies) =>
       ? NodePath.join(environment.rootDir, "native", "whisper-runtime")
       : NodePath.join(environment.resourcesPath, "whisper-runtime");
     const modelDir = NodePath.join(environment.stateDir, "voice", "models");
+    const sharedVoiceDir = resolveDevelopmentSharedVoiceDirectory(environment);
 
     let activeModelMutation: "select" | "remove" | null = null;
     let downloadController: AbortController | null = null;
@@ -257,11 +304,21 @@ export const makeWithDependencies = (dependencies: DesktopVoiceDependencies) =>
     const persistSelectedModel = (
       modelId: VoiceModelId | null,
     ): Effect.Effect<void, DesktopAppSettings.DesktopSettingsWriteError> =>
-      appSettings.setVoiceSelectedModelId(modelId).pipe(Effect.asVoid);
+      appSettings.setVoiceSelectedModelId(modelId).pipe(
+        Effect.tap(() =>
+          sharedVoiceDir !== null && modelId !== null
+            ? Effect.promise(() => writeSharedVoiceSelection(sharedVoiceDir, modelId))
+            : Effect.void,
+        ),
+        Effect.asVoid,
+      );
 
     const engine: TranscriptionEngine = dependencies.createEngine({
       runtimeDir,
       modelDir,
+      ...(sharedVoiceDir !== null
+        ? { sharedModelDir: NodePath.join(sharedVoiceDir, "models") }
+        : {}),
       manifests: VOICE_MODEL_DEFINITIONS,
       platform: environment.platform,
       isMaintenanceActive: () => activeModelMutation === "remove",
@@ -295,9 +352,19 @@ export const makeWithDependencies = (dependencies: DesktopVoiceDependencies) =>
         selectedModelId === null
           ? ({ state: "missing" } as const)
           : (existingStates[selectedModelId] ?? ({ state: "missing" } as const));
+      // A dev app that has several shared models and no choice of its own
+      // starts from the model last chosen in another dev app.
+      const sharedSelection =
+        sharedVoiceDir !== null && !isReady(selectedState)
+          ? yield* Effect.promise(() => readSharedVoiceSelection(sharedVoiceDir))
+          : null;
       const reconciledModelId = isReady(selectedState)
         ? selectedModelId
-        : findOnlyReadyModelId(existingStates);
+        : (findOnlyReadyModelId(existingStates) ??
+          (sharedSelection !== null &&
+          isReady(existingStates[sharedSelection] ?? { state: "missing" })
+            ? sharedSelection
+            : null));
       if (reconciledModelId !== selectedModelId) {
         selectedModelId = reconciledModelId;
         yield* persistSelectedModel(selectedModelId).pipe(

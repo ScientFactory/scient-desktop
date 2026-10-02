@@ -380,6 +380,12 @@ pause reasons and update events under
   state root.
 - Provider CLI authentication remains external-provider state. Do not copy
   production credentials into the repository or dev state.
+- One folder is shared by every development app on the machine:
+  `~/.scient-next/dev-shared/`. It holds only public, checksum-verified
+  downloads and one preference (the voice helper, voice models, and the voice
+  model last chosen), so a new candidate does not set voice up again. It never
+  holds sessions, settings, credentials, or databases. See
+  [`scient-voice.md`](../internals/scient-voice.md).
 
 ## Status, Recovery, And Removal
 

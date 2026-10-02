@@ -6,6 +6,19 @@ extensions, and skills remain Pi-owned. Models added through Scient use separate
 
 ## Setup
 
+Pi shares Oh My Pi's initial model visibility: native Anthropic Sonnet 5.5, Opus 5.5
+and Fable 5.5, plus Codex GPT-6-Astra, GPT-6-Luna and GPT-6.1-Sol, are shown when
+reported. The Antigravity account route initially shows Gemini 3.8 Flash, Gemini
+3.1 Pro, and Claude Opus 4.6. Other entries in these three native groups start hidden.
+Other Google routes and model groups are unchanged. The defaults apply to the Anthropic group with OAuth or API-key
+authentication and do not verify subscription access. All discovered entries remain on
+the provider page, where visibility can be changed. An instance's saved visibility list
+takes precedence over the initial defaults; preferences belong to each client.
+
+The default account group order is Anthropic, then OpenAI/Codex, then
+Google/Antigravity. Models keep their native catalog order within each group.
+A saved model order takes precedence; other account groups follow afterward.
+
 Enable **Pi** in **Settings > Providers**. Pi is off by default. On supported macOS, Windows, and
 glibc-based Linux desktops, Scient can install a qualified private Pi runtime through the existing
 **Install** action. Repair, update, and remove affect only that private runtime, not your system
@@ -50,6 +63,14 @@ In the model picker, a Pi instance with both kinds of models shows them in two s
 section's header to collapse or expand it; Scient remembers the choice on this device. The section
 holding the selected model opens with the picker, and searching lists every match.
 Connection setup and testing are available in desktop and web, not yet in the mobile app.
+
+Models known to be unavailable stay out of model selectors and automatic selection. They remain
+on this instance's provider page with an explanation and their picker switch off. During the server
+session, Scient remembers previously discovered models that disappear from a successful catalog
+refresh. Refresh after fixing the account or model configuration to make them selectable again.
+Changing the instance configuration or runtime version clears that remembered catalog. A failed
+catalog refresh does not establish a model-access denial. Models with unverified account access
+remain selectable; Scient does not send paid requests to every model to check access.
 
 You can still configure models and API keys, or complete Pi's supported `/login` flow, in Pi itself
 on the execution machine. Refresh the provider catalog afterward. There is no universal **Sign in to Pi** or

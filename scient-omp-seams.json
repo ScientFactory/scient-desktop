@@ -108,6 +108,36 @@
   ],
   "upstreamMounts": [
     {
+      "path": "apps/server/src/provider/providerSnapshot.ts",
+      "anchor": "export function retainUnavailableAgentModels(",
+      "purpose": "Retain previously discovered Pi and Oh My Pi models as unavailable after successful catalog removal, scoped to each provider instance."
+    },
+    {
+      "path": "apps/web/src/components/settings/ProviderSettingsPanel.tsx",
+      "anchor": "const modelPreferences = resolveProviderModelPreferences(",
+      "purpose": "Keep unavailable and default-hidden Pi and Oh My Pi models on the provider page, using saved instance visibility preferences when present."
+    },
+    {
+      "path": "apps/web/src/composerDraftStore.ts",
+      "anchor": "[\"antigravity\", \"pi\", \"omp\"].includes(input.selectedProvider)",
+      "purpose": "Prevent Pi and Oh My Pi draft selection from inventing a static model or falling back across provider accounts."
+    },
+    {
+      "path": "packages/shared/src/model.ts",
+      "anchor": "export function getDefaultHiddenAgentModels(",
+      "purpose": "Share Pi and Oh My Pi native model curation defaults while preserving user visibility overrides and custom models."
+    },
+    {
+      "path": "apps/server/src/textGeneration/TextGeneration.ts",
+      "anchor": "OMP_DEFAULT_TEXT_GENERATION_MODEL",
+      "purpose": "Resolve automatic Oh My Pi metadata models from the selected instance's cached native catalog."
+    },
+    {
+      "path": "apps/web/src/modelSelection.ts",
+      "anchor": "entry.driverKind === \"omp\"",
+      "purpose": "Keep automatic Pi and Oh My Pi metadata markers out of the model picker until discovery supplies a model."
+    },
+    {
       "path": "apps/mobile/src/components/ProviderIcon.tsx",
       "anchor": "props.provider === \"omp\"",
       "purpose": "Show the Oh My Pi mark in the mobile provider icon."

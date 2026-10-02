@@ -10,6 +10,14 @@ one interface. The provider still owns its account, subscription, and models.
 You can use an existing provider installation or, when available, let Scient
 install a qualified private copy on the machine where the project runs.
 
+Thread titles and other generated text use **Settings > Text generation**; source control can
+choose a separate writer. If Pi or Oh My Pi is the automatic fallback provider, Scient uses that
+instance's discovered default model, or its first available non-legacy built-in model (a custom
+model when only custom models remain). An explicit model choice takes priority. If discovery has
+not supplied a usable model, choose one in Settings or
+refresh the provider; automatic titles keep their normal fallback. This automatic choice does
+not guarantee the lowest price.
+
 ## The fastest setup path
 
 When no provider is ready, choose one from **Choose your AI** in the composer. Scient shows the next
