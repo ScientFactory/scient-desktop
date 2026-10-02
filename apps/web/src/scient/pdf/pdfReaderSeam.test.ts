@@ -174,7 +174,7 @@ describe("Scient PDF reader source seam", () => {
     expect(styles).not.toContain("@media (max-width: 520px)");
     expect(source).toContain('className="scient-pdf-action-sidebar"');
     expect(source).toContain('className="scient-pdf-action-zoom-step"');
-    expect(source).toContain('className="scient-pdf-action-fit"');
+    expect(source).not.toContain('className="scient-pdf-action-fit"');
     expect(source).not.toContain('className="scient-pdf-action-rotate"');
     expect(source).toContain('className="scient-pdf-action-search"');
     expect(source).toContain("<ZoomOut /> Zoom out");

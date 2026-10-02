@@ -78,6 +78,13 @@ vi.mock("../markdownEditor/ui/dockChrome", () => ({
     <button onClick={onClick}>{children}</button>
   ),
 }));
+// The header's own More menu is drawn eagerly so its items can be inspected.
+vi.mock("~/components/ui/menu", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/components/ui/menu")>()),
+  DropdownMenu: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  DropdownMenuTrigger: () => null,
+  DropdownMenuContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
 vi.mock("../documentExport/DocumentExportMenuItems", () => ({
   DocumentExportMenuItems: (props: NonNullable<typeof exportMenu.props>) => {
     exportMenu.props = props;

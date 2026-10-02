@@ -53,7 +53,7 @@ describe("shared PDF and Visual controls", () => {
       field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
     );
   };
-  it("shares PDF zoom stepping, limits, percentage reset and fit width", async () => {
+  it("shares PDF zoom stepping, limits, and a percentage that fits the width", async () => {
     const onZoom = vi.fn(),
       onActualSize = vi.fn(),
       onFitWidth = vi.fn();
@@ -63,10 +63,11 @@ describe("shared PDF and Visual controls", () => {
     await click("Zoom out");
     expect(onZoom).toHaveBeenLastCalledWith(0.95);
     await act(() => host.querySelector<HTMLButtonElement>(".scient-pdf-zoom-label")!.click());
-    expect(onActualSize).toHaveBeenCalledOnce();
-    expect(host.querySelector('input[aria-label="Document zoom percentage"]')).toBeNull();
-    await click("Fit width");
     expect(onFitWidth).toHaveBeenCalledOnce();
+    expect(onActualSize).not.toHaveBeenCalled();
+    expect(host.querySelector('input[aria-label="Document zoom percentage"]')).toBeNull();
+    // Actual size stays reachable in More; there is no separate Fit width button.
+    expect(host.querySelector(".scient-pdf-action-fit")).toBeNull();
     await render({ scale: 5, onZoom });
     await click("Zoom in");
     expect(onZoom).toHaveBeenLastCalledWith(5);

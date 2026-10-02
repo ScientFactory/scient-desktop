@@ -155,7 +155,8 @@ describe("Scient LaTeX file-preview seam", () => {
     );
     expect(surfaceSource).not.toContain("renderInteraction: renderVisualInteraction");
     expect(surfaceSource).not.toContain('if (preferredMode === "source") selectMode("split")');
-    expect(surfaceSource).toContain('event.key.toLowerCase() !== "s"');
+    expect(surfaceSource).toContain('event.key.toLowerCase() === "s"');
+    expect(surfaceSource).toContain("registerShortcutClaim(host, ownsSave)");
     expect(surfaceSource).toContain(
       "void saveAndBuild(false, pdfVisible && !!build.toolchain?.kind)",
     );

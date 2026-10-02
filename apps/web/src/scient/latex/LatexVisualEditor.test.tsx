@@ -175,7 +175,7 @@ describe("writing editor source transactions", () => {
       [...toolbar.querySelectorAll("[data-dock-group]")].map((group) =>
         group.getAttribute("data-dock-group"),
       ),
-    ).toEqual(["history", "style", "format", "lists", "math", "insert", "document"]);
+    ).toEqual(["history", "format", "style", "lists", "insert", "math", "document"]);
     expect(toolbar.querySelector('button[aria-label="Style: Text"]')).not.toBeNull();
     expect(toolbar.querySelector('[aria-label="Hide formatting tools"]')).toBeNull();
     expect(toolbar.querySelector('input[aria-label="Page number"]')).toBeNull();
@@ -184,7 +184,8 @@ describe("writing editor source transactions", () => {
     ).not.toBeNull();
     expect(container.querySelector(".scient-latex-document-tools")).toBeNull();
     const context = container.querySelector(".scient-latex-context-tools")!;
-    expect(context.previousElementSibling?.getAttribute("aria-label")).toBe("Fit width");
+    // The percentage fits the width; there is no separate Fit width button.
+    expect(context.previousElementSibling?.getAttribute("aria-label")).toMatch(/^Zoom in/);
     expect(context.nextElementSibling?.getAttribute("aria-label")).toMatch(/^Search Document/);
     expect(context.querySelector(".scient-latex-context-tools-slot")).not.toBeNull();
     expect(container.querySelector('[aria-label="Selected object properties"]')).toBeNull();
@@ -224,7 +225,8 @@ describe("writing editor source transactions", () => {
     });
     await mount();
     const toolbar = container.querySelector('[role="toolbar"][aria-label="Writing tools"]')!;
-    expect(toolbar.querySelector('[data-dock-group="style"]')).not.toBeNull();
+    // Bold and italic leave last, as in the Markdown bar.
+    expect(toolbar.querySelector('[data-dock-group="format"]')).not.toBeNull();
     expect(toolbar.querySelector('[data-dock-group="history"]')).toBeNull();
     await act(() =>
       toolbar.querySelector<HTMLButtonElement>('button[aria-label="More actions"]')!.click(),
@@ -235,7 +237,7 @@ describe("writing editor source transactions", () => {
     for (const label of [
       "Undo",
       "Redo",
-      "Bulleted list",
+      "Bullet list",
       "Theorems & proofs",
       "Page layout\u2026",
       "Keyboard shortcuts",
