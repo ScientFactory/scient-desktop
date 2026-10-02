@@ -83,30 +83,10 @@
 
 /* Zoom in above zoom out, to the left of the percentage. */
 .scient-pdf-zoom-stepper {
-  position: relative;
   display: flex;
   flex: none;
   flex-direction: column;
   gap: 1px;
-}
-
-/* A hairline between the two: short, and fading out at both ends. */
-.scient-pdf-zoom-stepper::after {
-  position: absolute;
-  inset-block-start: 50%;
-  inset-inline: 3px;
-  height: 1px;
-  transform: translateY(-50%) scaleY(0.5);
-  background: linear-gradient(
-    to right,
-    transparent,
-    var(--muted-foreground) 35%,
-    var(--muted-foreground) 65%,
-    transparent
-  );
-  opacity: 0.45;
-  content: "";
-  pointer-events: none;
 }
 
 .scient-pdf-zoom-stepper .scient-pdf-toolbar-button {
