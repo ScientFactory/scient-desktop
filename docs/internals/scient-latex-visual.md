@@ -126,9 +126,34 @@ writes, with the existing 500 ms debounce for both views. The recovery journal
 retains one accepted source copy and its base revision in memory, then coalesces
 local storage writes on a 200 ms leading deadline. There is no synchronous
 document hash on the input path or migration chain for retired overlay formats.
-Recovery offers Restore and Dismiss; Restore uses the same revision-checked
-workspace save path. Storage failures are reported without blocking workspace
-saves. Moving this remaining journal onto the shared document session is a
+Recovery is offered when a document opens with stored work that differs from the
+file. Only records in storage count; this window's unwritten checkpoint is the
+live draft of the current session. The work is moved from the live draft slots to
+a parked list, so the editor stays writable and later checkpoints cannot replace
+it; the original is removed only after its parked copy is stored. One line in
+the footer offers it. The file changes only after the user has opened the
+comparison and chosen the recovered version there, whatever revision the work
+was based on: the comparison is against the source the editor shows, which
+includes writing that is not saved yet. The write is a revision-checked save
+against the exact source the user compared, after any writing done meanwhile has
+been published, so a file that moved in between is not overwritten. The applied
+copy goes back to the live slot until its save is acknowledged. Nothing removes
+a parked entry except applying or discarding it; an entry that already equals
+the file compares as having no differences. Apply and Discard act only on the
+record the line shows, read from storage at that moment, so another view or
+window cannot be overridden. A document assembled from several files cannot be
+replaced in one revision-checked save, so its recovered work is offered for
+comparison and copying only. Work that cannot be parked, because storage is
+full, is offered from its live slot instead, and the editor stays read-only
+until the user uses or discards it, since writing would replace that slot;
+this window's own unwritten checkpoints are also kept out of that slot meanwhile.
+Work applied from its slot stays there as the live draft.
+The source-draft cache holds only this window's unwritten checkpoints, and
+confirming or discarding a draft judges the unwritten checkpoint and the stored
+record separately and removes each one that matches. A recovery copy is stamped with the
+revision of the source the editor actually holds, not the newest file revision
+it has seen. Storage failures are reported without blocking workspace saves.
+Moving this remaining journal onto the shared document session is a
 separate integration step in the proposed editing foundation.
 Autosaving continues while the writing surface is focused. Conflicts use the
 existing explicit retry/discard workflow. Rebuild is disabled until saves
@@ -313,7 +338,11 @@ publication to preserve revision ordering. Composition stays local until it ends
 Cross-file package edits still require both file sessions to acknowledge the edit.
 Rejected text conversion or source conflicts retain the live text and a raw editor
 recovery snapshot; they never reset the typing document to the prior source. That
-snapshot can reopen after reload. Successful conversion hands recovery to the
+snapshot reopens after reload only over the exact source it was typed on. Over a
+newer file, or when the editor cannot load it, it is offered through the same
+recovery line instead: as source when it converts, and as readable, copyable
+text when it does not. That text is read from the snapshot on a best-effort
+basis, so the parked entry also keeps the snapshot itself. Successful conversion hands recovery to the
 validated source journal before clearing the raw snapshot. Plain prose bypasses
 per-character source tokenization; round-trip signatures are cached for immutable
 nodes. Recovery storage writes happen after painting or on explicit exit.

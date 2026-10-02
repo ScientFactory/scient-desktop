@@ -198,4 +198,12 @@ describe("Scient LaTeX file-preview seam", () => {
     expect(surfaceSource).not.toMatch(/^export default/mu);
     expect(surfaceSource).not.toMatch(/^export \{/mu);
   });
+
+  it("counts this file's queued or failed save before the project retires its recovery copy", () => {
+    // The project editor clears its stored recovery copy when nothing is
+    // pending. A failed or queued save of the open file must hold that back.
+    expect(surfaceSource).toContain(
+      "selectedPending={visualAwaitingSave || sourcePending || saveError !== null}",
+    );
+  });
 });

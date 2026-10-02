@@ -673,6 +673,10 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     onSaveFailure: handleSaveFailure,
     onSaveResolutionApplied: handleSaveResolutionApplied,
   });
+  // The shared saver reports work it already holds from its mount effect,
+  // which runs before this one. Until then this file is not known to be idle.
+  const [saverReportedFor, setSaverReportedFor] = useState<string | null>(null);
+  useEffect(() => setSaverReportedFor(visualDraftKey), [visualDraftKey]);
   const handleContentsChange = useCallback(
     (contents: string) => {
       setLastEditAt(Date.now());
@@ -1369,7 +1373,10 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               <div style={{ display: showVisual ? "contents" : "none" }}>
                 <Suspense fallback={<div className="scient-latex-empty">Opening Visual view…</div>}>
                   <LatexProjectVisualEditor
-                    selectedPending={visualAwaitingSave}
+                    // The project's recovery copy is retired only when nothing is
+                    // unsaved, so a failed or queued save of this file counts too.
+                    selectedPending={visualAwaitingSave || sourcePending || saveError !== null}
+                    selectedSaverReady={saverReportedFor === visualDraftKey}
                     fileTruncated={props.truncated}
                     saveResolution={props.saveResolution}
                     onPendingChange={props.onPendingChange}

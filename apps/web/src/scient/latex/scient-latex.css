@@ -2694,26 +2694,115 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   caret-color: var(--primary);
 }
 
+/* Recovered unsaved work: one line in the footer, with details opening above it. */
+.scient-latex-visual-workspace > .scient-latex-visual-summary[data-recovery] {
+  position: relative;
+}
+.scient-latex-visual-summary[data-recovery] .scient-latex-document-status {
+  flex: none;
+}
 .scient-latex-visual-recovery {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.scient-latex-visual-recovery-message {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-right: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scient-latex-visual-recovery button {
+  flex: none;
+  border-radius: 4px;
+  padding: 2px 6px;
+  color: var(--muted-foreground);
+  font: inherit;
+  white-space: nowrap;
+}
+.scient-latex-visual-recovery button[data-primary] {
+  color: var(--foreground);
+}
+.scient-latex-visual-recovery button:hover:not(:disabled),
+.scient-latex-visual-recovery button[aria-expanded="true"] {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.scient-latex-visual-recovery button:disabled {
+  opacity: 0.5;
+}
+.scient-latex-visual-recovery-panel {
   position: absolute;
   z-index: 9;
-  bottom: 48px;
-  left: 16px;
-  right: 16px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  right: 0;
+  bottom: 100%;
+  left: 0;
+  display: grid;
+  gap: 6px;
+  max-height: min(280px, 45vh);
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  padding: 8px 12px 6px;
   background: var(--background);
-  font-size: 12px;
 }
-
-.scient-latex-visual-recovery textarea {
+.scient-latex-visual-recovery-panel ol {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.scient-latex-visual-recovery-panel pre {
+  margin: 0;
+  padding: 1px 6px;
+  font: 11px/1.6 var(--font-mono);
+  color: var(--foreground);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.scient-latex-visual-recovery-panel p {
+  margin: 0;
+}
+.scient-latex-visual-recovery-line {
   display: block;
-  width: 100%;
-  min-height: 64px;
-  padding: 6px;
+  margin-bottom: 2px;
+  font-size: 10px;
 }
-
+.scient-latex-visual-recovery-panel pre[data-side="current"] {
+  background: color-mix(in srgb, var(--destructive) 10%, transparent);
+}
+.scient-latex-visual-recovery-panel pre[data-side="recovered"] {
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+.scient-latex-visual-recovery-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+}
+.scient-latex-visual-recovery-legend {
+  display: flex;
+  gap: 10px;
+  margin-right: auto;
+}
+.scient-latex-visual-recovery-legend > span::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 4px;
+  border-radius: 2px;
+}
+.scient-latex-visual-recovery-legend > span[data-side="current"]::before {
+  background: color-mix(in srgb, var(--destructive) 35%, transparent);
+}
+.scient-latex-visual-recovery-legend > span[data-side="recovered"]::before {
+  background: color-mix(in srgb, var(--success) 40%, transparent);
+}
 .scient-latex-context-menu > summary {
   display: inline-flex;
   align-items: center;

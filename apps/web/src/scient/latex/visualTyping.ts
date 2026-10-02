@@ -38,7 +38,16 @@ const keyFor = (key: string) => `scient:latex-visual-draft:typing:${key}`;
 
 export function readTypingDraft(key: string): TypingDraft | null {
   try {
-    const value: unknown = JSON.parse(localStorage.getItem(keyFor(key)) ?? "null");
+    return parseTypingDraft(localStorage.getItem(keyFor(key)) ?? "null");
+  } catch {
+    return null;
+  }
+}
+
+/** Decode one stored snapshot; null when it is not a usable one. */
+export function parseTypingDraft(stored: string): TypingDraft | null {
+  try {
+    const value: unknown = JSON.parse(stored);
     if (
       !value ||
       typeof value !== "object" ||
@@ -57,13 +66,40 @@ export function readTypingDraft(key: string): TypingDraft | null {
   }
 }
 
-/** Used after paint or on exit, never on the ordinary input path. */
-export function retainTypingDraft(key: string, baseSource: string, doc: DocumentNode): void {
+/**
+ * Used after paint or on exit, never on the ordinary input path. Returns the
+ * identity of the snapshot it stored, so the writer can later remove exactly
+ * that version; null when nothing was stored.
+ */
+export function retainTypingDraft(
+  key: string,
+  baseSource: string,
+  doc: DocumentNode,
+): string | null {
+  const stored = JSON.stringify({ baseSource, content: doc.toJSON() });
   try {
-    localStorage.setItem(keyFor(key), JSON.stringify({ baseSource, content: doc.toJSON() }));
+    localStorage.setItem(keyFor(key), stored);
+    return stored;
   } catch {
     window.dispatchEvent(new CustomEvent("scient-latex-recovery-error", { detail: key }));
+    return null;
   }
+}
+
+/** The stored snapshot exactly as written; identifies one version of it. */
+export function typingDraftIdentity(key: string): string | null {
+  try {
+    return localStorage.getItem(keyFor(key));
+  } catch {
+    return null;
+  }
+}
+
+/** Remove the snapshot only if it is still the version the caller saw. */
+export function discardTypingDraft(key: string, identity: string): boolean {
+  if (typingDraftIdentity(key) !== identity) return false;
+  clearTypingDraft(key);
+  return true;
 }
 
 export function clearTypingDraft(key: string): void {
