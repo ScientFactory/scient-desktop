@@ -191,6 +191,34 @@ describe("writing editor source transactions", () => {
     expect(container.querySelector('[aria-label="Selected object properties"]')).toBeNull();
   });
 
+  it("offers the Markdown bar's inline formatting in the same order, without strikethrough", async () => {
+    await mount();
+    const toolbar = container.querySelector('[role="toolbar"][aria-label="Writing tools"]')!;
+    const format = toolbar.querySelector('[data-dock-group="format"]')!;
+    expect(
+      [...format.querySelectorAll("button")].map((button) => button.getAttribute("aria-label")),
+    ).toEqual(["Bold", "Italic", "Inline code", "Link"]);
+    await act(() => {
+      editor().commands.setTextSelection({ from: 1, to: 6 });
+    });
+    await act(() =>
+      format.querySelector<HTMLButtonElement>('button[aria-label="Inline code"]')!.click(),
+    );
+    expect(current).toContain("\\texttt{Hello}");
+    expect(
+      format.querySelector('button[aria-label="Inline code"]')!.getAttribute("aria-pressed"),
+    ).toBe("true");
+    await act(() =>
+      format.querySelector<HTMLButtonElement>('button[aria-label="Inline code"]')!.click(),
+    );
+    expect(current).not.toContain("\\texttt");
+    const link = format.querySelector<HTMLButtonElement>('button[aria-label="Link"]')!;
+    expect(link.disabled).toBe(false);
+    await act(() => link.click());
+    await act(() => {});
+    expect(document.body.textContent).toContain("Insert link");
+  });
+
   it("puts plain-text shortcut help under Document without extra More actions", async () => {
     await mount();
     const toolbar = container.querySelector('[role="toolbar"][aria-label="Writing tools"]')!;

@@ -154,6 +154,8 @@ import {
   Heading6,
   TextInitial,
   TextQuote,
+  Code as CodeIcon,
+  Link2,
   ListX,
   Undo2,
   Redo2,
@@ -3296,11 +3298,16 @@ const LatexScientific = Node.create({
   },
 });
 
-function toggleLatexProseMark(editor: Editor | null, mark: "bold" | "italic"): boolean {
+function toggleLatexProseMark(editor: Editor | null, mark: "bold" | "italic" | "code"): boolean {
   if (!editor) return false;
   let chain = editor.chain().focus();
+  // A mark replaces the others of its kind: weight, shape, or family.
   const conflicts =
-    mark === "bold" ? ["latexMedium"] : ["latexSmallCaps", "latexSlanted", "latexUpright"];
+    mark === "bold"
+      ? ["latexMedium"]
+      : mark === "code"
+        ? ["latexRoman", "latexSans"]
+        : ["latexSmallCaps", "latexSlanted", "latexUpright"];
   for (const conflict of conflicts) chain = chain.unsetMark(conflict);
   return chain.toggleMark(mark).run();
 }
@@ -3333,7 +3340,7 @@ const baseExtensions = [
     name: "sharedWritingKeys",
     priority: 1000,
     addKeyboardShortcuts() {
-      return { "Mod-b": () => true, "Mod-i": () => true };
+      return { "Mod-b": () => true, "Mod-i": () => true, "Mod-e": () => true };
     },
   }),
   StarterKit.configure({
@@ -4948,6 +4955,13 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     }
     if (id === "latex.bold") return toggleLatexProseMark(editor, "bold");
     if (id === "latex.italic") return toggleLatexProseMark(editor, "italic");
+    if (id === "latex.inlineCode") return toggleLatexProseMark(editor, "code");
+    if (id === "latex.link") {
+      const link = insertActions.find((action) => action.id === "link");
+      if (!link || link.disabled || link.disabledReason) return false;
+      link.run();
+      return true;
+    }
     if (id === "latex.bulletList") return setListStyle("bulletList");
     if (id === "latex.orderedList") return setListStyle("orderedList");
     if (id === "latex.table") {
@@ -5278,19 +5292,48 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     };
   }, [pageCount, pageHeight, zoom]);
 
+  // The same inline formatting, in the same order, as the Markdown bar; LaTeX
+  // has no strikethrough.
+  const linkAction = insertActions.find((action) => action.id === "link");
   const formatActions = [
     {
+      id: "latex.bold",
       label: "Bold",
       icon: <Bold className="size-4" strokeWidth={2.5} />,
       action: () => toggleLatexProseMark(editor, "bold"),
       active: editor?.isActive("bold"),
+      preserveIconWeight: true,
+      disabled: false,
       secondary: false,
     },
     {
+      id: "latex.italic",
       label: "Italic",
       icon: <Italic className="size-4" />,
       action: () => toggleLatexProseMark(editor, "italic"),
       active: editor?.isActive("italic"),
+      preserveIconWeight: false,
+      disabled: false,
+      secondary: false,
+    },
+    {
+      id: "latex.inlineCode",
+      label: "Inline code",
+      icon: <CodeIcon className="size-4" />,
+      action: () => toggleLatexProseMark(editor, "code"),
+      active: editor?.isActive("code"),
+      preserveIconWeight: true,
+      disabled: false,
+      secondary: false,
+    },
+    {
+      id: "latex.link",
+      label: "Link",
+      icon: <Link2 className="size-4" />,
+      action: () => linkAction?.run(),
+      active: false,
+      preserveIconWeight: true,
+      disabled: !linkAction || Boolean(linkAction.disabled || linkAction.disabledReason),
       secondary: false,
     },
   ];
@@ -5565,12 +5608,12 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         .filter((item) => !item.secondary)
         .map((item) => (
           <DockButton
-            key={item.label}
+            key={item.id}
             label={item.label}
-            shortcut={commandShortcut(item.label === "Bold" ? "latex.bold" : "latex.italic")}
+            shortcut={commandShortcut(item.id)}
             icon={item.icon}
-            preserveIconWeight={item.label === "Bold"}
-            disabled={textReadOnly || !editor}
+            preserveIconWeight={item.preserveIconWeight}
+            disabled={textReadOnly || !editor || item.disabled}
             active={!mathActive && Boolean(item.active)}
             onClick={item.action}
           />
@@ -6037,15 +6080,15 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                     {
                       id: "format",
                       priority: 100,
-                      estimatedWidth: 76,
+                      estimatedWidth: 136,
                       bar: writingFormatTools,
                       overflowLabel: "Formatting",
                       overflow: (
                         <>
                           {formatActions.map((action) => (
                             <DockCommandItem
-                              key={action.label}
-                              disabled={textReadOnly}
+                              key={action.id}
+                              disabled={textReadOnly || action.disabled}
                               onClick={action.action}
                             >
                               {action.icon}
