@@ -2,6 +2,108 @@
 
 Status: implementation candidate; human visual review pending.
 
+## Review direction and implementation boundary
+
+Yaacov's [architecture note](https://github.com/ScientFactory/scient-desktop/blob/claude/shared-editor-layer-design-20260926/docs/internals/scient-latex-visual-architecture-note.md)
+and [editable-content proposal](https://github.com/ScientFactory/scient-desktop/blob/claude/shared-editor-layer-design-20260926/docs/internals/scient-latex-visual-editable-content.md)
+explain the target shared architecture. This file describes the implementation
+on this branch. It does not claim the shared session or patch-contract migration
+has landed. Saving, recovery and the future timed-build scheduler remain shared
+integration work owned by the maintainers.
+
+The [contributor request](https://github.com/ScientFactory/scient-desktop/blob/claude/shared-editor-layer-design-20260926/docs/internals/scient-latex-visual-contributor-request.md)
+separately asks for an operation-by-operation capability table with exact-source
+test evidence. The control map below explains UI behavior; it is not evidence
+that every operation preserves every supported LaTeX construct.
+
+## Component ownership and edit flow
+
+| Layer                         | Owner                                                   | Responsibility                                                                                                                                                    |
+| ----------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Document view and compilation | `ScientLatexSurface.tsx`                                | Source/Split/Visual/PDF selection, save-before-build entry points, export availability and build diagnostics.                                                     |
+| Project assembly              | `LatexProjectVisualEditor.tsx`, `latexProjectVisual.ts` | Resolve the root and included files; route accepted edits to their physical file. Ambiguous boundaries can refuse edits.                                          |
+| Source adapter                | `latexVisualDocument.ts`                                | Project supported source into editor nodes, retain source ranges, validate proposed changes and preserve opaque source.                                           |
+| Interactive canvas            | `LatexVisualEditor.tsx` and object views                | ProseMirror/Tiptap transactions, MathLive fields, selection, menus and contextual editing.                                                                        |
+| Title conversion              | `LatexTitleStep.ts`                                     | Keep the source before/after a paragraph-to-title conversion in the existing undo history.                                                                        |
+| Writing chrome                | `markdownEditor/ui/dockChrome.tsx`                      | Shared button/menu styling and priority overflow. Visual opts into a permanent row and labels-before-overflow compression; other consumers retain their defaults. |
+| Reading controls              | `writing/DocumentReaderControls.tsx`                    | Shared PDF/Visual page, zoom, fit and search controls. Format adapters supply navigation and search operations.                                                   |
+| Contextual footer             | `LatexContextTools.tsx`, heading/table/object toolbars  | Stable portal destination between Fit width and Search; keeps fields mounted while switching between inline controls and a compact menu.                          |
+| Persistence                   | Existing file save coordinator and Visual draft paths   | Publish accepted source with revision checks. Pending/refused input is not silently treated as saved source. Shared-session migration is outstanding.             |
+
+A supported edit passes from the canvas transaction to the source adapter, then
+to the project/file save path. Accepted source is projected back into the editor;
+an unsupported edit retains its pending input or uses the exact-source editor.
+Navigation, zoom and search do not rewrite LaTeX. A PDF build consumes saved
+source and publishes a separate artifact; CSS page layout is never proof of
+compiled output.
+
+## Control map
+
+### Document header
+
+| Control                     | Role and behavior                                                                                                                    |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Source                      | Open the shared text editor for the physical LaTeX file.                                                                             |
+| Split                       | Show Source beside PDF or Visual. The preview choice persists locally.                                                               |
+| Visual                      | Open the supported visual editing canvas.                                                                                            |
+| PDF                         | Show the compiled artifact; opening an absent/stale PDF requests a build when prerequisites permit.                                  |
+| Split preview: PDF / Visual | Choose the right-hand view; available in More when the inline selector cannot fit.                                                   |
+| Export to Word              | Open Word export through the existing export workflow; unavailable with unresolved source/draft state.                               |
+| Rebuild / Cancel            | Save and request a manual PDF build; while cancellable, the same slot cancels it. The prior PDF stays available.                     |
+| More actions                | PDF/Word Export submenu, split-preview choices and build messages when available. PDF export requires a current successful artifact. |
+
+The direct Word action is retained to match the user's requested main-style
+header. Review item 13 proposed only one Export submenu; the branch therefore
+still differs from that recommendation. Header actions use icons in narrow
+panes, remain one row and never require horizontal scrolling.
+
+### Permanent writing row
+
+| Control               | Role and behavior                                                                                                                                                                                    |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Undo / Redo           | Use the active math field's history while editing math; otherwise use document history.                                                                                                              |
+| Text / T              | Change the current paragraph to Text, a supported heading level or Quote. The button name stays fixed; the menu marks the current style.                                                             |
+| Use as document title | Move a plain paragraph into the standard title block; confirm before replacing a nonempty title. One Undo reverses the conversion.                                                                   |
+| Bold / Italic         | Apply/remove marks on the prose selection. Additional formatting is available in More.                                                                                                               |
+| Lists                 | Bullet, numbered, continued-numbering and description lists; indent/outdent supported items.                                                                                                         |
+| Math                  | Insert supported inline/display equations and open the symbol tools.                                                                                                                                 |
+| Insert / +            | Search and insert tables, figures, statements, references, footnotes, bibliography, abstract, contents and page breaks where supported. Root declarations and source context can restrict insertion. |
+| Document              | Edit title/authors/date, explicitly add a standard title block, or open page/document settings.                                                                                                      |
+| More                  | Retain lower-priority groups as the pane narrows; expose additional formatting, source-only block navigation and writing shortcut help.                                                              |
+
+The row stays at the top. Text labels disappear before action groups overflow:
+Text becomes **T**, Math keeps its sigma, Insert keeps its plus, and Document
+keeps its file icon. Further narrowing moves complete groups into More; menus
+keep their full labels and accessible names. Selection-specific fields belong
+in the footer, not in an extra row or on the document paper.
+
+### Reading and contextual footer
+
+| Control                               | Role and behavior                                                                                                                                       |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Sidebar                               | Toggle Pages/Outline navigation for Visual. PDF supplies its own sidebar content.                                                                       |
+| Previous / page number / total / Next | Navigate the local Visual page map or compiled PDF page map. Page input uses shared validation. Previous/Next remain in More when hidden to make room.  |
+| Minus / percentage / Plus             | Shared PDF zoom stepping and range. The percentage displays a whole number; clicking it resets to actual size.                                          |
+| Fit width                             | Scale the document to the available pane width.                                                                                                         |
+| Search                                | Open shared find controls. Visual searches supported prose; math, title attributes and raw-source blocks are not indexed by this adapter.               |
+| Search previous / next / close        | Navigate matches or close find; Enter/Shift+Enter and Escape use the same shared interactions.                                                          |
+| More document actions                 | Alternate access to zoom, fit, sidebar, search and page navigation. PDF adds its format-specific actions.                                               |
+| Heading / Part                        | Numbered switch and reference label for the selected heading.                                                                                           |
+| Title                                 | Author visibility and automatic/custom/hidden date. Title, author and date text are edited on the paper.                                                |
+| Equation                              | Equation type, symbol palette and Code editor. Protected numbering commands can prevent type/row-structure changes.                                     |
+| Table                                 | Row and column insertion/deletion/movement, alignment, table style/width, header, caption, reference label and deletion, subject to source constraints. |
+| Figure                                | Alignment, width, placement, image path, reference label and deletion. Caption text is edited on the paper.                                             |
+| Statement                             | Supported theorem/proof/remark type, optional title and deletion. Supported body prose and math are edited inside the block.                            |
+| Reference / footnote                  | Edit the supported command argument.                                                                                                                    |
+| Bibliography / description list       | Add/remove the selected structure's supported entries or items.                                                                                         |
+| Exact-source block                    | Open its source, Apply a valid replacement or Cancel the local edit.                                                                                    |
+| Draft indicator                       | Indicate pending field input that has not been accepted into source; it does not assert a successful save.                                              |
+
+Context controls sit directly between Fit width and Search. On narrow panes they
+use a menu named for the object, such as Equation or Table. The footer stays the
+same height and preserves the field components while resizing; selecting an
+object never adds controls to the paper or changes the page layout.
+
 ## Fidelity target
 
 The writing surface should remain a comfortable CSS-based document editor, with
@@ -70,17 +172,41 @@ the existing PDF save-copy hook and requires current revision/dependency evidenc
 These writing features introduce no hosted service, new compiler, or second save
 path. Project creation remains owned by the project sidebar.
 
-The compact writing bar reuses Markdown's dock controls and shared table-size
-picker. Document settings and outline live in the document header. The style
-menu contains Text, headings, and Quote; heading numbering uses a contextual
-switch. Lists have their own menu, and other layouts live in Insert. The header
-uses one Export submenu for PDF and Word.
-Title/author/date remain editable on paper, with visibility controls in the
-contextual footbar and restoration from Document settings. Heading numbering and
-reference labels, table structure, figure properties, and statement properties
-also belong in that footbar; focusing an object does not insert controls into
-the page. Standard article/report/book classes can be selected in Document
-settings; incompatible switches and custom classes stay protected.
+The Visual writing bar uses Markdown's button/menu primitives with its own
+LaTeX action groups: history, paragraph style, emphasis, lists, math, Insert,
+and Document. It stays visible at the top and never collapses or scrolls
+horizontally. As the pane narrows, labels disappear first (Text becomes T),
+then lower-priority groups move into More if the symbols still do not fit.
+Selection does not rename or replace the top-row controls. Settings live
+under Document; keyboard shortcut help lives in More. The document header has
+no additional Visual-only controls. Its grouped view tabs and Export/Rebuild
+actions share one non-scrolling row; action labels yield to icons on narrow
+panes. Cancel reuses the build button while a build is running. The style menu contains Text, headings,
+Quote, and a separate Use as document title action. Heading numbering and other
+object controls sit directly between Fit width and Search in the fixed-height
+footer without changing page layout. Narrow panes use menus named for the
+selected object; previous/next page actions remain available in More.
+
+PDF and Visual both render `DocumentReaderControls` and `DocumentSearchBar`.
+The bottom Visual controls use the same page input validation, five-percent
+zoom steps, 25–500% manual range, percentage-button reset to actual size, fit
+width, search result controls, and keyboard interactions as PDF. Each surface
+supplies its own navigation/search adapter. Visual's sidebar contains Pages and
+Outline; its pages follow the local editor page map and can differ from PDF.
+Visual search uses the shared document-text plugin for supported prose; title
+attributes, math fields and exact-source objects are not indexed by that plugin.
+Navigation does not edit LaTeX. The document header retains its PDF/Word Export menu.
+
+Title, author and date remain editable on paper. Editing existing metadata
+never inserts a title block. Document > Add title block explicitly creates or
+restores the standard block while preserving existing metadata. Text > Use as
+document title moves a standalone plain-text paragraph into that block, asks
+before replacing a nonempty title, and preserves both the previous source and
+the new source in one reversible editor history step. External source adoption
+clears obsolete history as for other Visual edits. Custom title pages and
+unsupported title formatting remain source-owned. Standard article/report/book
+classes can be selected in Document settings; incompatible switches and custom
+classes stay protected.
 
 ### Source code editing
 
@@ -137,10 +263,9 @@ finish, and cannot run while a known save error or conflict is unresolved.
 `LatexBuildService.status` verifies dependency evidence but never starts a
 compiler. A stale status keeps the old artifact readable, marks its descriptor
 stale and removes visual source authorization from that response. The client
-rebuilds when a stale PDF is opened, after 2.5 seconds of idle editing while PDF
-is visible, and on Ctrl/Cmd+S while PDF is visible. Requests wait for file saves,
-coalesce while a build is running, and do not retry the same failed revision
-automatically. Explicit Rebuild remains available. Existing
+rebuilds when a stale PDF is opened and on Ctrl/Cmd+S while PDF is visible.
+Typing does not schedule a build; the shared scheduler and setting are pending. Open-PDF requests wait for file saves and build availability, and do not
+retry after an attempt until the PDF is reopened. Explicit Rebuild remains available. Existing
 root resolution, cancellation, bounded compile stabilization, immutable
 artifacts and PDF navigation remain owned by the existing build/reader path.
 

@@ -43,14 +43,19 @@ lists, undo and redo. **Insert...** opens a searchable menu for equations, table
 statements, figures and page breaks. Heading styles live in the style menu rather
 than being duplicated in Insert. Type `/` on an empty
 paragraph or press Ctrl/Cmd+/ to open it; use the arrow keys and Enter to choose.
-The toolbar stays on one slim row. Insert holds elements and references; Lists
-holds list actions. Document settings and Outline are in the document
-header. Selecting title metadata, headings, tables, figures, or statements exposes
-its options in the existing footbar. Title, author, and date remain directly
-editable on paper; Document settings restores missing fields.
-Zoom controls are in the top writing toolbar. Enter an exact percentage (25–400%)
-and press Enter, or use minus/plus. Escape cancels an
-unfinished percentage edit. **Fit width** fills the available pane and follows
+The writing toolbar stays fixed at the top on one row. When the pane narrows,
+labels disappear first (Text becomes **T**); less-used groups then move into
+**More**. Insert holds elements and references; Lists holds list actions.
+**Document > Document settings** opens page settings, and **Outline** is a tab
+in the footer's Pages sidebar. Selected-object options appear between **Fit
+width** and **Search** in the footer; narrow panes use an object-named menu.
+Title, author, and date remain editable on paper. **Document > Add title block**
+explicitly restores the standard block. **Text > Use as document title** moves a
+plain paragraph there, with confirmation before replacing an existing title.
+
+The footer shares PDF's page navigation, zoom and search controls. Minus/plus
+use five-percent steps in the 25–500% range; click the percentage to reset to
+actual size. **Fit width** fills the available pane and follows
 pane resizing automatically. Zoom changes only the on-screen view, not the LaTeX
 page dimensions or PDF layout. Pinch with two fingers on a trackpad, or hold Ctrl
 while scrolling, to zoom smoothly around the pointer without fixed percentage
@@ -165,8 +170,8 @@ build or export becomes available. A failed root save remains visible for resolu
 Math and object fields retain the exact text and caret locally. Source updates
 are coalesced during typing and flushed when leaving the field; page measurement
 waits briefly for typing to pause. These changes request a PDF build only when
-PDF is visible, after the idle delay.
-The keyboard button opens **All writing shortcuts**, a searchable list covering
+PDF is opened, or on Ctrl/Cmd+S while it is visible.
+**More > Keyboard shortcuts** opens **All writing shortcuts**, a searchable list covering
 Write, Math and Tables. Filter by area when needed; shortcut editing, custom math
 actions and the printable reference remain in the same dialog.
 
@@ -273,8 +278,8 @@ PDF selected, double-click a source line to locate it in the compiled PDF.
 
 Choose **Rebuild PDF** to build after the current source has been saved.
 Opening a stale PDF requests a build. While PDF is visible, Scient also rebuilds
-after about 2.5 seconds without editing and on Ctrl/Cmd+S. Builds wait for saves,
-keep the last successful PDF readable, and coalesce edits while a build is running.
+on Ctrl/Cmd+S. Typing alone does not request a build. Builds wait for saves,
+and keep the last successful PDF readable while building.
 A failed revision requires an explicit rebuild instead of repeated automatic attempts.
 **Export → PDF** saves a
 copy only when the latest PDF matches the saved buffer and build dependencies.
@@ -410,7 +415,7 @@ files must be edited one file at a time.
 
 Missing files, cycles and unresolved dynamic or conditional includes show an
 explanation instead of an incomplete Visual document. Use PDF for includes that
-require TeX execution. PDF visibility and idle editing determine automatic builds;
+require TeX execution. Opening the PDF and explicit save actions can request builds;
 Visual alone does not compile each edit.
 New tables start with a package-free style. Arbitrary custom macros and packages
 loaded through external class/style files are not expanded by the visual editor.
