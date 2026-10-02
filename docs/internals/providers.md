@@ -702,10 +702,14 @@ Scient Agent.
   `runtimeVersion` (the Oh My Pi release it runs). Resume cursors and protocol switches follow
   `runtimeVersion`. For Oh My Pi the two are equal.
 - State. The driver assigns `SCIENT_AGENT_ROOT=<stateDir>/scient-agent/instances/<instanceId>`
-  and removes every variable that could move the agent's state elsewhere. The agent keeps its
-  configuration, credentials, logs, caches and native addon there. Oh My Pi's own variables pass
-  through untouched: Scient Agent ignores them, and an `omp` started from the agent's shell keeps
-  the user's setup.
+  and passes no other `SCIENT_AGENT_*` variable, inherited or set on the instance. The agent
+  treats that root as authoritative: it ignores `SCIENT_AGENT_DIR` under it and does not take a
+  `SCIENT_AGENT_*` variable from a `.env` in the project or the home directory. It keeps its
+  configuration, credentials, logs, caches and native addon there. One thing stays outside: the
+  agent's native sign-in helper keeps its registration under `~/.scient-agent/oauth`, because a
+  URL-scheme handler is registered once per user. Oh My Pi's own variables pass through
+  untouched: Scient Agent ignores them, and an `omp` started from the agent's shell keeps the
+  user's setup.
 - Scient's folders. Sessions are in `<stateDir>/scient-agent-sessions` and generated extensions in
   `<stateDir>/scient-agent/extensions`. Each product's crash sweep covers only its own folders.
 - Resume. The two products write the same session format, so a cursor names its product: a

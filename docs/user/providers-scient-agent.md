@@ -34,15 +34,21 @@ Scient Agent starts with no sign-ins. Give it a model in one of these ways:
 Signing in to a model subscription from inside Scient is not available yet. Until it is, the
 agent's own terminal command works: run `scient-agent login` with `SCIENT_AGENT_ROOT` set to the
 agent's folder in Scient's data directory (`scient-agent/instances/<instance id>`), so the
-sign-in is stored where Scient runs the agent.
+sign-in is stored where Scient runs the agent. Then refresh the provider in **Settings >
+Providers** so its models appear.
 
 When Scient Agent has no model at all, its provider card says so and how to add one.
 
 ## Where it keeps things
 
-Everything Scient Agent owns (settings, sign-ins, logs, caches) is in a folder inside Scient's
-own data directory, not in your home directory. Removing Scient's data removes it. Files a task
-creates go where the task puts them, usually your project.
+Scient Agent's settings, sign-ins, logs and caches are in a folder inside Scient's own data
+directory, not in your home directory. Removing Scient's data removes them. A `.env` file in a
+project or in your home directory cannot move them. Files a task creates go where the task puts
+them, usually your project.
+
+One thing is kept in your home directory. Some sign-ins to a model subscription register a small
+helper with your operating system to receive the result, and the agent keeps that helper's record
+in `~/.scient-agent/oauth`. The sign-in itself is stored in Scient's data directory.
 
 In a project, Scient Agent reads `AGENTS.md` (or `CLAUDE.md` when there is no `AGENTS.md`), its
 own `.scient-agent` folder, and other agents' project folders such as `.claude`.
