@@ -54,6 +54,13 @@ function renderView(
     readonly collapsed?: readonly string[];
     readonly renaming?: string;
     readonly onRename?: (name: string) => void;
+    readonly promoted?: boolean;
+    readonly onManualPlacement?: (
+      groupId: string,
+      order: readonly string[],
+      key: string,
+      orderKeys: ReadonlyMap<string, string>,
+    ) => void;
   } = {},
 ) {
   const sections = (options.names ?? ["A", "B", "C"]).map((name, order) => ({
@@ -68,7 +75,7 @@ function renderView(
     active: [
       thread("g1", null),
       thread("g2", null),
-      ...[1, 2, 3].map((n) => thread(`a${n}`, "a")),
+      ...(options.promoted ? [3, 1, 2] : [1, 2, 3]).map((n) => thread(`a${n}`, "a")),
       ...[1, 2, 3].map((n) => thread(`b${n}`, "b")),
     ],
   });
@@ -79,6 +86,10 @@ function renderView(
   root.render(
     <SidebarSectionsView
       groups={groups as never}
+      {...(options.promoted
+        ? { canonicalGroupOrders: new Map([["a", ["env:a1", "env:a2", "env:a3"]]]) }
+        : {})}
+      {...(options.onManualPlacement ? { onManualPlacement: options.onManualPlacement } : {})}
       collapsedGroupIds={new Set(options.collapsed ?? [])}
       routeThreadKey={null}
       onToggleGroup={() => {}}
@@ -655,3 +666,32 @@ it.each([false, true])(
     }
   },
 );
+
+it("keeps a manual drop in the promoted display without saving unrelated automatic positions", async () => {
+  const onManualPlacement = vi.fn();
+  renderView(vi.fn(), { promoted: true, onManualPlacement });
+  await nextFrame();
+  const row = document.querySelector<HTMLElement>('[data-row="a2"]')!;
+  const start = row.getBoundingClientRect();
+  const target = document.querySelector<HTMLElement>('[data-row="a3"]')!.getBoundingClientRect();
+  const x = start.left + 20;
+  pointer("pointerdown", row, x, start.top + 4);
+  pointer("pointermove", document, x, start.top + 12);
+  await nextFrame();
+  pointer("pointermove", document, x, target.bottom - 4);
+  await nextFrame();
+  pointer("pointerup", document, x, target.bottom - 4);
+  await vi.waitFor(() => expect(onManualPlacement).toHaveBeenCalledTimes(1));
+  expect(onManualPlacement.mock.calls[0]!.slice(0, 3)).toEqual([
+    "a",
+    ["env:a3", "env:a2", "env:a1"],
+    "env:a2",
+  ]);
+  expect(reorderActiveThread).toHaveBeenCalledTimes(1);
+  const [ref, key] = reorderActiveThread.mock.calls[0]! as unknown as [
+    { environmentId: string; threadId: string },
+    string,
+  ];
+  expect(ref).toEqual({ environmentId: "env", threadId: "a2" });
+  expect(key > "m").toBe(true);
+});

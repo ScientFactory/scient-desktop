@@ -2842,11 +2842,18 @@ export default function Sidebar() {
     pinnedThreads,
     activeThreads,
     routeThreadKey,
+    now: snoozeNow,
     newThreadContext,
     onBeforeNewThread: closeMobileSidebar,
   });
   // Row handlers depend on these stable callbacks, never on `sections` itself.
-  const { handleSectionMenuAction, sectionMenuFor, sectionsView, visibleGroupThreads } = sections;
+  const {
+    handleSectionMenuAction,
+    sectionMenuFor,
+    sectionsView,
+    visibleGroupThreads,
+    onInteractionChange: onSectionInteractionChange,
+  } = sections;
   const sectionsOrderedThreads = useMemo(
     () => [...visibleGroupThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
     [renderedSettledThreads, visibleGroupThreads, visibleSnoozedThreads],
@@ -3914,6 +3921,9 @@ export default function Sidebar() {
       // SCIENT-FORK:START
       const bulkSectionMenu = sectionMenuFor(selectedThreads);
       // SCIENT-FORK:END
+      // SCIENT-FORK:START
+      onSectionInteractionChange(true);
+      // SCIENT-FORK:END
       const clicked = await settlePromise(() =>
         api.contextMenu.show(
           [
@@ -3944,6 +3954,9 @@ export default function Sidebar() {
           position,
         ),
       );
+      // SCIENT-FORK:START
+      onSectionInteractionChange(false);
+      // SCIENT-FORK:END
       if (clicked._tag === "Failure") return;
       // SCIENT-FORK:START
       const selectedRefs = selectedThreads.map((thread) =>
@@ -4102,6 +4115,7 @@ export default function Sidebar() {
       removeFromSelection,
       // SCIENT-FORK:START
       sectionMenuFor,
+      onSectionInteractionChange,
       // SCIENT-FORK:END
       serverConfigs,
       updateThreadMetadata,
@@ -4156,6 +4170,9 @@ export default function Sidebar() {
                 projectRef.projectId === thread.projectId,
             ),
           ) ?? null;
+        // SCIENT-FORK:START
+        onSectionInteractionChange(true);
+        // SCIENT-FORK:END
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
@@ -4189,6 +4206,9 @@ export default function Sidebar() {
             position,
           ),
         );
+        // SCIENT-FORK:START
+        onSectionInteractionChange(false);
+        // SCIENT-FORK:END
         if (clicked._tag === "Failure") return;
         // SCIENT-FORK:START
         if (await handleSectionMenuAction(clicked.value, [threadRef], position)) return;
@@ -4402,6 +4422,7 @@ export default function Sidebar() {
       // SCIENT-FORK:START
       handleSectionMenuAction,
       sectionMenuFor,
+      onSectionInteractionChange,
       // SCIENT-FORK:END
       serverConfigs,
       setProjectScopeKey,

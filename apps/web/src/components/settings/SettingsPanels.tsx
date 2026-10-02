@@ -1,3 +1,4 @@
+import { AutomaticThreadPlacementSettings } from "../../scient/sections/AutomaticThreadPlacementSettings";
 import { SettingsGroup } from "./SettingsGroup";
 import { Spinner } from "~/components/ui/spinner";
 import { NotificationSettings } from "./NotificationSettings";
@@ -2486,6 +2487,7 @@ export function GeneralSettingsPanel() {
           </>
         ) : null}
         {/* SCIENT-FORK:START — optional empty-section cleanup (primary-only). */}
+        <AutomaticThreadPlacementSettings />
         <EmptySectionCleanupSettings />
         {/* SCIENT-FORK:END */}
       </SettingsSection>
