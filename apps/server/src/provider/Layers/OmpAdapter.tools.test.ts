@@ -22,7 +22,9 @@ import { makeOmpAdapter } from "./OmpAdapter.ts";
 const encodeEventJson = Schema.encodeUnknownEffect(Schema.fromJsonString(ProviderRuntimeEvent));
 const decodeEvent = Schema.decodeUnknownEffect(ProviderRuntimeEvent);
 
-const toolsHarness = Effect.fn("ompToolsHarness")(function* () {
+const toolsHarness = Effect.fn("ompToolsHarness")(function* (
+  environment: Readonly<Record<string, string>> = {},
+) {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-omp-tools-"));
   yield* Effect.addFinalizer(() =>
     Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
@@ -33,7 +35,7 @@ const toolsHarness = Effect.fn("ompToolsHarness")(function* () {
     providerInstanceId: ProviderInstanceId.make("omp"),
     stateDir: root,
     attachmentsDir: root,
-    environment: {},
+    environment,
     eventQueueByteLimit: 64 * 1024,
     makeProcess: () =>
       makeOmpRpcClient(wire.io).pipe(Effect.map((client) => ({ ...client, version: "18.3.1" }))),
@@ -226,6 +228,31 @@ describe("Oh My Pi ordinary tool activity", () => {
         status: "stopped",
         command: { text: "printf large" },
       });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("redacts known credentials before clipping input and output previews", () =>
+    Effect.gen(function* () {
+      const secret = "opaque-fixture-credential-abcdefghijk";
+      const h = yield* toolsHarness({ SYNTHETIC_API_KEY: secret });
+      const command =
+        "x".repeat(4096 - '{"command":"'.length - secret.length + 1) +
+        secret +
+        "y".repeat(128 * 1024);
+      const output = "z".repeat(4096 - secret.length + 1) + secret + "w".repeat(128 * 1024);
+      yield* h.wire.send(start("shell", "bash", { command }), {
+        type: "tool_execution_update",
+        toolCallId: "shell",
+        toolName: "bash",
+        partialResult: { content: [{ type: "text", text: output }] },
+      });
+      yield* h.until((event) => event.type === "item.updated");
+      const serialized = JSON.stringify(h.items());
+      expect(serialized).not.toContain(secret.slice(0, -1));
+      expect(serialized).toContain("[REDACTED]");
+      yield* h.adapter.interruptTurn(h.threadId, h.turn.turnId);
+      yield* h.until((event) => event.type === "session.exited");
+      expect(JSON.stringify(h.items())).not.toContain(secret.slice(0, -1));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

@@ -1020,10 +1020,10 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         if (previous && previous.status !== "inProgress") return;
         const input =
           update.input !== undefined
-            ? clipToolData(update.input, Math.floor(toolDataByteLimit / 2))
+            ? clipToolData(ctx.redaction.exact(update.input), Math.floor(toolDataByteLimit / 2))
             : previous?.input;
         const target = isRecord(input) ? (input.path ?? input.file_path) : undefined;
-        const content = toolOutputText(update.data);
+        const content = toolOutputText(ctx.redaction.exact(update.data));
         const inputBytes = input === undefined ? 0 : Buffer.byteLength(encodeOmpJson(input));
         const item: OmpToolItem = {
           itemId:
