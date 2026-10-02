@@ -10,6 +10,8 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
+import type { OmpTarget } from "./OmpTarget.ts";
+
 /**
  * Serializes Oh My Pi runtime mutation against new OMP processes in this
  * server (invariant I5). Every OMP child process holds a lease on its
@@ -66,6 +68,8 @@ export interface OmpExecutableGateShape {
   readonly acquireProcess: (
     identity: string,
     options: {
+      /** The product named when the lease fails. */
+      readonly target: OmpTarget;
       readonly kind: OmpProcessKind;
       /** Admits the activation's own qualification process. */
       readonly activation?: OmpExecutableActivation | undefined;
@@ -77,12 +81,17 @@ export interface OmpExecutableGateShape {
    */
   readonly acquireActivation: (
     identity: string,
+    /** The product named when the activation is refused. */
+    options: { readonly target: OmpTarget },
   ) => Effect.Effect<OmpExecutableActivation, OmpExecutableBusyError, Scope.Scope>;
-  /** Reuse a successful `--version` verification for an unchanged executable. */
-  readonly verifiedVersion: <E, R>(
+  /**
+   * Reuse a successful identity probe for an unchanged executable. The key
+   * names the product too, so one key always holds one kind of result.
+   */
+  readonly verifiedVersion: <A, E, R>(
     key: string,
-    verify: Effect.Effect<string, E, R>,
-  ) => Effect.Effect<string, E, R>;
+    verify: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E, R>;
 }
 
 export class OmpExecutableGate extends Context.Service<OmpExecutableGate, OmpExecutableGateShape>()(
@@ -128,7 +137,7 @@ export const makeOmpExecutableGate = Effect.fn("makeOmpExecutableGate")(function
   const processWaitTimeout = options?.processWaitTimeout ?? OMP_PROCESS_WAIT_TIMEOUT;
   const drainTimeout = options?.activationDrainTimeout ?? OMP_ACTIVATION_DRAIN_TIMEOUT;
   const state = yield* Ref.make<GateState>({ nextId: 1, identities: new Map() });
-  const versions = yield* Ref.make<ReadonlyMap<string, { version: string; expiresAt: number }>>(
+  const versions = yield* Ref.make<ReadonlyMap<string, { verified: unknown; expiresAt: number }>>(
     new Map(),
   );
 
@@ -206,7 +215,11 @@ export const makeOmpExecutableGate = Effect.fn("makeOmpExecutableGate")(function
           duration: processWaitTimeout,
           orElse: () =>
             Effect.fail(
-              busy(identity, "updating", "Oh My Pi is being updated. Try again in a moment."),
+              busy(
+                identity,
+                "updating",
+                `${leaseOptions.target.name} is being updated. Try again in a moment.`,
+              ),
             ),
         }),
       );
@@ -216,7 +229,7 @@ export const makeOmpExecutableGate = Effect.fn("makeOmpExecutableGate")(function
     | { readonly _tag: "Held"; readonly activation: Activation; readonly draining: boolean }
     | { readonly _tag: "Refused"; readonly error: OmpExecutableBusyError };
 
-  const acquireActivation: OmpExecutableGateShape["acquireActivation"] = (identity) =>
+  const acquireActivation: OmpExecutableGateShape["acquireActivation"] = (identity, { target }) =>
     Effect.gen(function* () {
       const scope = yield* Scope.Scope;
       const released = yield* Deferred.make<void>();
@@ -234,7 +247,7 @@ export const makeOmpExecutableGate = Effect.fn("makeOmpExecutableGate")(function
                     error: busy(
                       identity,
                       "activation-pending",
-                      "Another Oh My Pi runtime change is already in progress.",
+                      `Another ${target.name} runtime change is already in progress.`,
                     ),
                   },
                   current,
@@ -250,7 +263,7 @@ export const makeOmpExecutableGate = Effect.fn("makeOmpExecutableGate")(function
                     error: busy(
                       identity,
                       "conversations-open",
-                      `Oh My Pi still has ${conversations} open conversation${conversations === 1 ? "" : "s"}. Stop them and try again.`,
+                      `${target.name} still has ${conversations} open conversation${conversations === 1 ? "" : "s"}. Stop them and try again.`,
                     ),
                   },
                   current,
@@ -283,7 +296,7 @@ export const makeOmpExecutableGate = Effect.fn("makeOmpExecutableGate")(function
                 busy(
                   identity,
                   "work-running",
-                  "Oh My Pi is still finishing background work. Try the runtime change again in a moment.",
+                  `${target.name} is still finishing background work. Try the runtime change again in a moment.`,
                 ),
               ),
           }),
@@ -295,12 +308,12 @@ export const makeOmpExecutableGate = Effect.fn("makeOmpExecutableGate")(function
       return { identity, token: activation.token };
     });
 
-  const verifiedVersion: OmpExecutableGateShape["verifiedVersion"] = (key, verify) =>
+  const verifiedVersion = <A, E, R>(key: string, verify: Effect.Effect<A, E, R>) =>
     Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
       const cached = (yield* Ref.get(versions)).get(key);
-      if (cached && cached.expiresAt > now) return cached.version;
-      const version = yield* verify;
+      if (cached && cached.expiresAt > now) return cached.verified as A;
+      const verified = yield* verify;
       yield* Ref.update(versions, (current) => {
         const next = new Map([...current].filter(([, entry]) => entry.expiresAt > now));
         next.delete(key);
@@ -309,9 +322,9 @@ export const makeOmpExecutableGate = Effect.fn("makeOmpExecutableGate")(function
           if (oldest === undefined) break;
           next.delete(oldest);
         }
-        return next.set(key, { version, expiresAt: now + VERSION_CACHE_TTL_MS });
+        return next.set(key, { verified, expiresAt: now + VERSION_CACHE_TTL_MS });
       });
-      return version;
+      return verified;
     });
 
   return OmpExecutableGate.of({ acquireProcess, acquireActivation, verifiedVersion });

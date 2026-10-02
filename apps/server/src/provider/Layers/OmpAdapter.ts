@@ -3,7 +3,6 @@ import {
   EventId,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
-  ProviderDriverKind,
   ProviderInstanceId,
   ProviderItemId,
   RuntimeItemId,
@@ -103,8 +102,8 @@ import {
   type OmpSessionRuntime,
   type OmpSessionUpdate,
 } from "../omp/OmpSessionRuntime.ts";
+import type { OmpTarget } from "../omp/OmpTarget.ts";
 
-const PROVIDER = ProviderDriverKind.make("omp");
 const encodeOmpJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const OMP_READY_TIMEOUT = "8 seconds";
 /**
@@ -155,15 +154,16 @@ type OmpCloseReason =
   | "overflow"
   | "adapter-close";
 
-const OMP_EXIT_REASONS: Record<Exclude<OmpCloseReason, "start-failed">, string> = {
-  "user-stop": "Oh My Pi stopped after a process error.",
-  "stop-all": "Oh My Pi stopped after a process error.",
-  "adapter-close": "Oh My Pi stopped after a process error.",
-  "process-exit": "Oh My Pi exited before the runtime could confirm the session was idle.",
-  "protocol-fatal": "Oh My Pi sent output Scient could not read, so the session was closed.",
-  overflow:
-    "Oh My Pi produced events faster than Scient could deliver them, so the session was closed.",
-};
+const ompExitReasons = (
+  productName: string,
+): Record<Exclude<OmpCloseReason, "start-failed">, string> => ({
+  "user-stop": `${productName} stopped after a process error.`,
+  "stop-all": `${productName} stopped after a process error.`,
+  "adapter-close": `${productName} stopped after a process error.`,
+  "process-exit": `${productName} exited before the runtime could confirm the session was idle.`,
+  "protocol-fatal": `${productName} sent output Scient could not read, so the session was closed.`,
+  overflow: `${productName} produced events faster than Scient could deliver them, so the session was closed.`,
+});
 
 const forcedExit: OmpProcessExit = { code: null, forced: true, stderrTail: "" };
 
@@ -183,6 +183,7 @@ interface EventBacklog {
 
 type SessionClient = OmpRpcClient & {
   readonly version: string;
+  readonly runtimeVersion: string;
   readonly shutdown?: Effect.Effect<OmpProcessExit, OmpRpcError>;
   /** Present on the custom-model bridge: wait for OMP to register Scient's models. */
   readonly refreshModels?: OmpRpcProcess["refreshModels"];
@@ -191,6 +192,8 @@ type SessionClient = OmpRpcClient & {
 };
 
 export interface OmpAdapterOptions {
+  /** The product this adapter runs: its name, driver kind, state folders and variables. */
+  readonly target: OmpTarget;
   readonly binaryPath: string;
   readonly providerInstanceId: ProviderInstanceId;
   readonly stateDir: string;
@@ -401,6 +404,9 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const adapterScope = yield* Scope.Scope;
   const makeProcess = options.makeProcess;
+  const PROVIDER = options.target.driverKind;
+  const productName = options.target.name;
+  const exitReasons = ompExitReasons(productName);
   const sessions = new Map<ThreadId, SessionContext>();
   /**
    * Starts that have not registered their session yet: waiting for the
@@ -435,19 +441,19 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
   /** Undelivered events per thread. Decremented on delivery, never reset. */
   const backlogs = new Map<ThreadId, EventBacklog>();
   const queued: EventBacklog = { items: 0, bytes: 0 };
-  // Expanded as the child's PI_CODING_AGENT_DIR is, so "~/x" and its
+  // Expanded as the child's agent directory variable is, so "~/x" and its
   // absolute path are one home.
   const effectiveHomeIdentity = expandHomePath(
     options.homePath?.trim() ||
-      options.environment.PI_CODING_AGENT_DIR?.trim() ||
+      options.environment[options.target.environment.agentDir]?.trim() ||
       options.environment.HOME?.trim() ||
       options.environment.USERPROFILE?.trim() ||
       "",
   );
   const effectiveProfileIdentity =
     options.profile?.trim() ||
-    options.environment.OMP_PROFILE?.trim() ||
-    options.environment.PI_PROFILE?.trim() ||
+    options.environment[options.target.environment.profile]?.trim() ||
+    options.environment[options.target.environment.profileFallback]?.trim() ||
     "";
   const now = Effect.map(DateTime.now, DateTime.formatIso);
   const uuid = crypto.randomUUIDv4.pipe(
@@ -508,7 +514,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     return new ProviderAdapterRequestError({
       provider: PROVIDER,
       method,
-      detail: ompUserDetail(safeDetail || "The Oh My Pi request failed."),
+      detail: ompUserDetail(options.target, safeDetail || `The ${productName} request failed.`),
       ...(cause === undefined ? {} : { cause }),
     });
   };
@@ -761,8 +767,8 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           ...refs(ctx),
           payload: {
             message: request
-              ? `Oh My Pi outcome uncertain for request ${request}.`
-              : "Oh My Pi outcome uncertain.",
+              ? `${productName} outcome uncertain for request ${request}.`
+              : `${productName} outcome uncertain.`,
           },
         },
         "control",
@@ -786,7 +792,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       if (sessionId?.trim()) {
         ctx.session = { ...ctx.session, nativeSessionId: sessionId.trim() };
       }
-      const ompVersion = ctx.handles?.client.version;
+      const ompVersion = ctx.handles?.client.runtimeVersion;
       if (!sessionFile || ompVersion === undefined) return;
       const relative = sessionFileInsideRoot(ctx.sessionRoot, sessionFile);
       if (!relative) {
@@ -797,14 +803,14 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             type: "runtime.warning",
             ...base,
             payload: {
-              message:
-                "Oh My Pi kept this transcript outside Scient's session directory, so this conversation cannot be resumed.",
+              message: `${productName} kept this transcript outside Scient's session directory, so this conversation cannot be resumed.`,
             },
           });
         }
         return;
       }
       const readable = yield* assertReadableOmpSessionFile({
+        target: options.target,
         sessionRoot: ctx.sessionRoot,
         relativeSessionFile: relative,
       }).pipe(Effect.option);
@@ -869,7 +875,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       const payload = {
         taskId,
         taskType: "monitor",
-        title: "Waiting for Oh My Pi background work",
+        title: `Waiting for ${productName} background work`,
       };
       yield* offer(
         pending
@@ -919,7 +925,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         const stamped = { ...base, ...refs(ctx) };
         const errorMessage =
           update.outcome === "failed"
-            ? ctx.redaction.text(update.detail ?? "Oh My Pi failed this turn.")
+            ? ctx.redaction.text(update.detail ?? `${productName} failed this turn.`)
             : undefined;
         if (update.outcome === "unknown") {
           yield* offerUncertain(ctx, turnId);
@@ -1171,7 +1177,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           yield* offer({
             type: "runtime.warning",
             ...base,
-            payload: { message: "Oh My Pi requested an invalid browser URL." },
+            payload: { message: `${productName} requested an invalid browser URL.` },
           });
           return;
         }
@@ -1181,7 +1187,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           type: "runtime.warning",
           ...base,
           payload: {
-            message: update.instructions ?? "Oh My Pi requested a browser action.",
+            message: update.instructions ?? `${productName} requested a browser action.`,
             detail: {
               kind: "open-url",
               url,
@@ -1293,7 +1299,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     const requested = reason === "user-stop" || reason === "stop-all" || reason === "adapter-close";
     const graceful = requested && cleanProcess;
     return {
-      reason: graceful ? "stopped" : OMP_EXIT_REASONS[reason],
+      reason: graceful ? "stopped" : exitReasons[reason],
       exitKind: graceful ? ("graceful" as const) : ("error" as const),
     };
   };
@@ -1363,7 +1369,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         Effect.timeoutOption(OMP_CLOSE_DEADLINE),
       );
       if (released._tag === "None") {
-        yield* Effect.logWarning("Oh My Pi session resources were not released in time.", {
+        yield* Effect.logWarning(`${productName} session resources were not released in time.`, {
           threadId,
         });
       }
@@ -1448,7 +1454,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
                 .issues.slice(0, 10)
                 .map((issue) => (issue.path ?? []).map(String).join("."))
             : [];
-        return Effect.logWarning("Oh My Pi model discovery failed.", {
+        return Effect.logWarning(`${productName} model discovery failed.`, {
           threadId: ctx.session.threadId,
           command: "get_available_models",
           errorType: cause._tag,
@@ -1472,8 +1478,8 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     return validation(
       "sendTurn",
       listed.length === 0
-        ? `The Oh My Pi model ${slug} has no reasoning levels, so "${level}" cannot be applied.`
-        : `The Oh My Pi model ${slug} does not offer the "${level}" reasoning level. It offers: ${listed.join(", ")}.`,
+        ? `The ${productName} model ${slug} has no reasoning levels, so "${level}" cannot be applied.`
+        : `The ${productName} model ${slug} does not offer the "${level}" reasoning level. It offers: ${listed.join(", ")}.`,
     );
   };
 
@@ -1547,7 +1553,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           ? encodeOmpModelSlug(state.model.provider, state.model.id)
           : undefined;
         if (reported && reported !== slug) {
-          yield* warn(ctx, `Oh My Pi selected ${reported} instead of ${slug}.`);
+          yield* warn(ctx, `${productName} selected ${reported} instead of ${slug}.`);
         }
         const effective = reported ?? slug;
         ctx.model = effective;
@@ -1571,7 +1577,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       if (applied !== level) {
         yield* warn(
           ctx,
-          `Oh My Pi applied the "${applied}" reasoning level instead of "${level}".`,
+          `${productName} applied the "${applied}" reasoning level instead of "${level}".`,
         );
       }
       ctx.thinkingLevel = applied;
@@ -1605,21 +1611,24 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         Effect.gen(function* () {
           const threadLock = yield* getThreadLock(input.threadId);
           if (adapterClosed) {
-            return yield* request("startSession", "Oh My Pi is shutting down.");
+            return yield* request("startSession", `${productName} is shutting down.`);
           }
           if (input.runtimeMode !== "full-access") {
             return yield* validation(
               "startSession",
-              "Oh My Pi currently supports only full access.",
+              `${productName} currently supports only full access.`,
             );
           }
           if (!input.cwd)
-            return yield* validation("startSession", "Oh My Pi requires a workspace directory.");
+            return yield* validation(
+              "startSession",
+              `${productName} requires a workspace directory.`,
+            );
           const cwd = yield* fs
             .realPath(input.cwd)
             .pipe(
               Effect.mapError((cause) =>
-                request("startSession", "Failed to resolve the Oh My Pi workspace.", cause),
+                request("startSession", `Failed to resolve the ${productName} workspace.`, cause),
               ),
             );
           const existing = sessions.get(input.threadId);
@@ -1628,19 +1637,23 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           else if (existing) {
             return yield* validation(
               "startSession",
-              "This thread already has an Oh My Pi session.",
+              `This thread already has ${options.target.nameWithArticle} session.`,
             );
           }
           const sessionRoot = path.join(
             options.stateDir,
-            "omp-sessions",
+            `${options.target.stateNamespace}-sessions`,
             ompSessionDirectoryKey(options.providerInstanceId, input.threadId),
           );
           yield* fs
             .makeDirectory(sessionRoot, { recursive: true })
             .pipe(
               Effect.mapError((cause) =>
-                request("startSession", "Failed to create the Oh My Pi session directory.", cause),
+                request(
+                  "startSession",
+                  `Failed to create the ${productName} session directory.`,
+                  cause,
+                ),
               ),
             );
           const stateReal = yield* fs
@@ -1654,13 +1667,17 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             .realPath(sessionRoot)
             .pipe(
               Effect.mapError((cause) =>
-                request("startSession", "Failed to resolve the Oh My Pi session directory.", cause),
+                request(
+                  "startSession",
+                  `Failed to resolve the ${productName} session directory.`,
+                  cause,
+                ),
               ),
             );
           if (!sessionFileInsideRoot(stateReal, rootReal)) {
             return yield* validation(
               "startSession",
-              "Oh My Pi session directory escaped Scient's state directory.",
+              `${productName} session directory escaped Scient's state directory.`,
             );
           }
           const lockPath = path.join(rootReal, ".session.lock");
@@ -1710,7 +1727,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             yield* Scope.close(scope, Exit.void);
             return yield* request(
               "startSession",
-              "Oh My Pi was stopped before the session finished starting.",
+              `${productName} was stopped before the session finished starting.`,
             );
           }
           sessions.set(input.threadId, ctx);
@@ -1724,7 +1741,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             // Acquired into the session scope in this order, so they are
             // released in reverse: runtime fibers, process, then the lock.
             yield* Effect.acquireRelease(
-              acquireOmpSessionLock(lockPath, lockRegistry).pipe(
+              acquireOmpSessionLock(options.target, lockPath, lockRegistry).pipe(
                 Effect.mapError((issue) => validation("startSession", issue)),
               ),
               (lock) => releaseOmpSessionLock(lock, lockRegistry),
@@ -1735,7 +1752,11 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               .readDirectory(rootReal)
               .pipe(
                 Effect.mapError((cause) =>
-                  request("startSession", "Could not inspect Oh My Pi's session files.", cause),
+                  request(
+                    "startSession",
+                    `Could not inspect ${productName}'s session files.`,
+                    cause,
+                  ),
                 ),
               );
             for (const name of abandonedContexts) {
@@ -1755,12 +1776,14 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             }
             const cursor = input.resumeCursor
               ? yield* parseOmpSessionCursor(input.resumeCursor, {
+                  target: options.target,
                   identity: resumeIdentity,
                   rpcProtocolVersion: OMP_RPC_PROTOCOL_V2,
                 }).pipe(Effect.mapError((issue) => validation("startSession", issue)))
               : undefined;
             if (cursor) {
               yield* assertReadableOmpSessionFile({
+                target: options.target,
                 sessionRoot: rootReal,
                 relativeSessionFile: cursor.relativeSessionFile,
               }).pipe(Effect.mapError((issue) => validation("startSession", issue)));
@@ -1786,9 +1809,10 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               awareness: buildScientAwareness(mcp?.capabilities),
             };
             const extension = yield* writeOmpExtensionFiles({
+              target: options.target,
               directory: rootReal,
               name: `scient-extension-${yield* uuid}`,
-              source: ompScientExtensionSource,
+              source: (bootstrapPath) => ompScientExtensionSource(options.target, bootstrapPath),
               bootstrap: { ...bootstrap },
             }).pipe(
               Effect.provideService(Scope.Scope, scope),
@@ -1827,6 +1851,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
                 : Effect.void;
             const client: SessionClient = yield* Effect.acquireRelease(
               makeProcess({
+                target: options.target,
                 command: options.binaryPath,
                 cwd,
                 env: processEnvironment,
@@ -1858,6 +1883,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             );
             if (client.redaction) ctx.redaction = client.redaction;
             const runtime = yield* makeOmpSessionRuntime({
+              target: options.target,
               client,
               continuationIdPrefix: yield* uuid,
               scope,
@@ -1880,7 +1906,8 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             const ready = yield* client.ready.pipe(
               Effect.timeoutOrElse({
                 duration: OMP_READY_TIMEOUT,
-                orElse: () => Effect.fail(request("ready", "Oh My Pi did not finish starting.")),
+                orElse: () =>
+                  Effect.fail(request("ready", `${productName} did not finish starting.`)),
               }),
               Effect.mapError((cause) =>
                 cause._tag === "ProviderAdapterRequestError"
@@ -1889,16 +1916,16 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               ),
             );
             if (!ready.supportedProtocolVersions?.includes(OMP_RPC_PROTOCOL_V2)) {
-              return yield* request("ready", "Oh My Pi did not offer RPC protocol v2.");
+              return yield* request("ready", `${productName} did not offer RPC protocol v2.`);
             }
             // Explicit extensions load before OMP reports ready. A bootstrap
             // still on disk means Scient's extension never ran; it must not
             // stay readable to the agent's tools.
             yield* extension.discardUnconsumed;
-            if (cursor && !ompMajorCompatible(cursor.ompVersion, client.version)) {
+            if (cursor && !ompMajorCompatible(cursor.ompVersion, client.runtimeVersion)) {
               return yield* validation(
                 "startSession",
-                "Oh My Pi resume cursor was written by a different major version.",
+                `${productName} resume cursor was written by a different major version.`,
               );
             }
             const subscribed = yield* client.setSubagentSubscription("progress").pipe(Effect.exit);
@@ -1908,27 +1935,28 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
                 type: "runtime.warning",
                 ...base,
                 payload: {
-                  message:
-                    "Oh My Pi did not enable subagent updates, so subagent activity stays hidden for this conversation.",
+                  message: `${productName} did not enable subagent updates, so subagent activity stays hidden for this conversation.`,
                 },
               });
             }
             // Pin the event kinds this client understands, so a new OMP event
             // cannot break or flood the conversation. Optional: without it
             // unknown kinds are still reported once and ignored.
-            if (compareSemverVersions(client.version, OMP_EVENT_FILTER_MINIMUM_VERSION) >= 0) {
+            if (
+              compareSemverVersions(client.runtimeVersion, OMP_EVENT_FILTER_MINIMUM_VERSION) >= 0
+            ) {
               const filtered = yield* client
                 .setEventFilter(OMP_KNOWN_EVENT_TYPES)
                 .pipe(Effect.exit);
               if (Exit.isFailure(filtered)) {
-                yield* Effect.logDebug("Oh My Pi did not accept the session event filter.", {
+                yield* Effect.logDebug(`${productName} did not accept the session event filter.`, {
                   threadId: input.threadId,
                   cause: Cause.pretty(filtered.cause),
                 });
               }
             } else {
               yield* Effect.logDebug(
-                "Oh My Pi predates set_event_filter; events stay unfiltered.",
+                `${productName} predates set_event_filter; events stay unfiltered.`,
                 {
                   threadId: input.threadId,
                   version: client.version,
@@ -1942,7 +1970,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               if (switched.cancelled) {
                 return yield* validation(
                   "startSession",
-                  "Oh My Pi cancelled the requested session switch.",
+                  `${productName} cancelled the requested session switch.`,
                 );
               }
             }
@@ -1952,6 +1980,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             if (cursor) {
               const sameFile = state.sessionFile
                 ? yield* ompSessionFilesEqual({
+                    target: options.target,
                     sessionRoot: rootReal,
                     expectedRelativeFile: cursor.relativeSessionFile,
                     reportedFile: state.sessionFile,
@@ -1963,7 +1992,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               ) {
                 return yield* validation(
                   "startSession",
-                  "Oh My Pi resumed a different session than the cursor requested.",
+                  `${productName} resumed a different session than the cursor requested.`,
                 );
               }
             }
@@ -1985,8 +2014,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
                 type: "runtime.warning",
                 ...base,
                 payload: {
-                  message:
-                    "Oh My Pi did not report its command list. Slash commands are unavailable.",
+                  message: `${productName} did not report its command list. Slash commands are unavailable.`,
                 },
               });
             }
@@ -1998,7 +2026,10 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               duration: OMP_START_DEADLINE,
               orElse: () =>
                 Effect.fail(
-                  request("startSession", "Oh My Pi did not finish starting within 2 minutes."),
+                  request(
+                    "startSession",
+                    `${productName} did not finish starting within 2 minutes.`,
+                  ),
                 ),
             }),
           );
@@ -2019,8 +2050,8 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           return yield* request(
             "startSession",
             reason === "user-stop" || reason === "stop-all" || reason === "adapter-close"
-              ? "Oh My Pi was stopped before the session finished starting."
-              : "Oh My Pi exited before the session finished starting.",
+              ? `${productName} was stopped before the session finished starting.`
+              : `${productName} exited before the session finished starting.`,
           );
         }),
       ),
@@ -2053,7 +2084,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         // Unknown: the next send re-applies its whole selection.
         ctx.model = undefined;
         ctx.thinkingLevel = undefined;
-        yield* warn(ctx, "Oh My Pi did not report its model after the failed turn.");
+        yield* warn(ctx, `${productName} did not report its model after the failed turn.`);
         return;
       }
       const effectiveModel = state.value.model
@@ -2064,12 +2095,12 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       if (ctx.model !== previousModel) {
         yield* warn(
           ctx,
-          `Oh My Pi is still using ${ctx.model ?? "another model"}; Scient could not restore ${previousModel ?? "the previous model"}.`,
+          `${productName} is still using ${ctx.model ?? "another model"}; Scient could not restore ${previousModel ?? "the previous model"}.`,
         );
       } else if (previousLevel !== undefined && ctx.thinkingLevel !== previousLevel) {
         yield* warn(
           ctx,
-          `Oh My Pi kept the "${ctx.thinkingLevel ?? "default"}" reasoning level; Scient could not restore "${previousLevel}".`,
+          `${productName} kept the "${ctx.thinkingLevel ?? "default"}" reasoning level; Scient could not restore "${previousLevel}".`,
         );
       }
       const { model: _model, ...session } = ctx.session;
@@ -2091,7 +2122,9 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         return Effect.raceFirst(
           effect,
           Deferred.await(ctx.closeStarted).pipe(
-            Effect.andThen(Effect.fail(request(method, "Oh My Pi closed this conversation."))),
+            Effect.andThen(
+              Effect.fail(request(method, `${productName} closed this conversation.`)),
+            ),
           ),
         );
       });
@@ -2104,13 +2137,13 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           const ctx = yield* requireSession(input.threadId);
           const nativeText = input.originalInput ?? input.input ?? "";
           if (!nativeText && (!input.attachments || input.attachments.length === 0)) {
-            return yield* validation("sendTurn", "Oh My Pi requires text or an attachment.");
+            return yield* validation("sendTurn", `${productName} requires text or an attachment.`);
           }
           const decision = ompCommandDecision(nativeText, ctx.handles.runtime.catalog());
           if (decision === "mutator") {
             const failure = validation(
               "sendTurn",
-              "Scient does not forward that Oh My Pi command.",
+              `Scient does not forward that ${productName} command.`,
             );
             if (input.hasContextPreamble) markTurnDispatchNotSent(failure);
             return yield* failure;
@@ -2118,7 +2151,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           if (decision === "unavailable") {
             const failure = validation(
               "sendTurn",
-              "That command is not available in this Oh My Pi conversation.",
+              `That command is not available in this ${productName} conversation.`,
             );
             if (input.hasContextPreamble) markTurnDispatchNotSent(failure);
             return yield* failure;
@@ -2126,14 +2159,17 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           if (decision === "allowed" && input.hasContextPreamble) {
             const failure = validation(
               "sendTurn",
-              "Start this fork with a normal message so Oh My Pi receives its conversation history. Send the slash command afterward; nothing was sent.",
+              `Start this fork with a normal message so ${productName} receives its conversation history. Send the slash command afterward; nothing was sent.`,
             );
             markTurnDispatchNotSent(failure);
             return yield* failure;
           }
           let steering = ctx.session.status === "running" && ctx.turnId !== undefined;
           if (!steering && ctx.session.status === "running") {
-            return yield* validation("sendTurn", "Wait for the current Oh My Pi turn to finish.");
+            return yield* validation(
+              "sendTurn",
+              `Wait for the current ${productName} turn to finish.`,
+            );
           }
           // Messages may be sent while background work can wake. A native
           // command may not: OMP runs some commands as a prompt that a wake-up
@@ -2141,7 +2177,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           if (!steering && decision === "allowed" && ctx.backgroundPending) {
             const failure = validation(
               "sendTurn",
-              "Oh My Pi commands wait until background work settles. Stop that work or send the command once it finishes; nothing was sent.",
+              `${productName} commands wait until background work settles. Stop that work or send the command once it finishes; nothing was sent.`,
             );
             markTurnDispatchNotSent(failure);
             return yield* failure;
@@ -2149,7 +2185,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           if (decision === "allowed" && input.attachments && input.attachments.length > 0) {
             return yield* validation(
               "sendTurn",
-              "Send attachments separately from an Oh My Pi command.",
+              `Send attachments separately from ${options.target.nameWithArticle} command.`,
             );
           }
           if (
@@ -2172,14 +2208,14 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             if (!selected)
               return yield* validation(
                 "sendTurn",
-                "Oh My Pi model selection must use provider/model.",
+                `${productName} model selection must use provider/model.`,
               );
             const selectedModel = encodeOmpModelSlug(selected.provider, selected.modelId);
             if (selectedModel && !ompModelSatisfied(ctx, selectedModel)) {
               if (steering) {
                 return yield* validation(
                   "sendTurn",
-                  "Wait for the current Oh My Pi turn before changing its model.",
+                  `Wait for the current ${productName} turn before changing its model.`,
                 );
               }
               modelChange = { ...selected, slug: selectedModel };
@@ -2192,7 +2228,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             if (requestedLevel !== undefined && level === undefined) {
               return yield* validation(
                 "sendTurn",
-                `Oh My Pi does not have a "${requestedLevel}" reasoning level.`,
+                `${productName} does not have a "${requestedLevel}" reasoning level.`,
               );
             }
             // After a model switch OMP applies the new model's default level,
@@ -2201,7 +2237,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               if (steering) {
                 return yield* validation(
                   "sendTurn",
-                  "Wait for the current Oh My Pi turn before changing its thinking level.",
+                  `Wait for the current ${productName} turn before changing its thinking level.`,
                 );
               }
               levelChange = level;
@@ -2227,7 +2263,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
                 Effect.mapError(() =>
                   validation(
                     "sendTurn",
-                    "Couldn't verify image support for the selected Oh My Pi model. Try again or send the message without images.",
+                    `Couldn't verify image support for the selected ${productName} model. Try again or send the message without images.`,
                   ),
                 ),
               );
@@ -2238,13 +2274,13 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             if (supportsImages === undefined) {
               return yield* validation(
                 "sendTurn",
-                "Couldn't verify image support for the selected Oh My Pi model. Try again or send the message without images.",
+                `Couldn't verify image support for the selected ${productName} model. Try again or send the message without images.`,
               );
             }
             if (!supportsImages) {
               return yield* validation(
                 "sendTurn",
-                "The selected Oh My Pi model does not support images. Choose an image-capable model or send the message without images.",
+                `The selected ${productName} model does not support images. Choose an image-capable model or send the message without images.`,
               );
             }
           }
@@ -2301,8 +2337,8 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
                 return yield* validation(
                   "sendTurn",
                   attachment.type === "image"
-                    ? `Images sent to Oh My Pi can be at most ${formatOmpBytes(limit)}; this one is ${formatOmpBytes(size)}.`
-                    : `Files sent to Oh My Pi can be at most ${formatOmpBytes(limit)}; this one is ${formatOmpBytes(size)}.`,
+                    ? `Images sent to ${productName} can be at most ${formatOmpBytes(limit)}; this one is ${formatOmpBytes(size)}.`
+                    : `Files sent to ${productName} can be at most ${formatOmpBytes(limit)}; this one is ${formatOmpBytes(size)}.`,
                 );
               }
               if (attachment.type === "image") {
@@ -2353,7 +2389,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             ).pipe(
               Effect.provideService(Scope.Scope, ctx.scope),
               Effect.mapError((cause) =>
-                request("prompt", "Could not prepare the fork history for Oh My Pi.", cause),
+                request("prompt", `Could not prepare the fork history for ${productName}.`, cause),
               ),
             );
             promptText = [
@@ -2367,7 +2403,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           if ("messageBytes" in plan) {
             return yield* validation(
               "sendTurn",
-              `This message is ${formatOmpBytes(plan.messageBytes)}; Oh My Pi accepts at most ${formatOmpBytes(maxFrameBytes)} per message. Send long text as a file attachment.`,
+              `This message is ${formatOmpBytes(plan.messageBytes)}; ${productName} accepts at most ${formatOmpBytes(maxFrameBytes)} per message. Send long text as a file attachment.`,
             );
           }
           const message = plan.message;
@@ -2395,7 +2431,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             if (state.model && ompThinkingLevel(state.thinkingLevel) === undefined) {
               const failure = validation(
                 "sendTurn",
-                "Oh My Pi did not report its current reasoning level. Retry the model change, or send with the current selection; nothing was sent.",
+                `${productName} did not report its current reasoning level. Retry the model change, or send with the current selection; nothing was sent.`,
               );
               markTurnDispatchNotSent(failure);
               return yield* failure;
@@ -2429,7 +2465,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               yield* restoreSelection;
               const failure = validation(
                 "sendTurn",
-                "Oh My Pi resumed background work while this message was being prepared. Wait for that work to finish before changing the model or sending a command; nothing was sent.",
+                `${productName} resumed background work while this message was being prepared. Wait for that work to finish before changing the model or sending a command; nothing was sent.`,
               );
               markTurnDispatchNotSent(failure);
               return yield* failure;
@@ -2531,7 +2567,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       new ProviderAdapterRequestError({
         provider: PROVIDER,
         method: operation,
-        detail: `Oh My Pi does not support ${operation} for ${String(threadId)}.`,
+        detail: `${productName} does not support ${operation} for ${String(threadId)}.`,
       }),
     );
 
@@ -2577,7 +2613,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         Effect.gen(function* () {
           const ctx = yield* requireSession(threadId);
           if (turnId && ctx.turnId && ctx.turnId !== turnId) {
-            return yield* validation("interruptTurn", "No matching active Oh My Pi turn.");
+            return yield* validation("interruptTurn", `No matching active ${productName} turn.`);
           }
           // Native abort only interrupts the foreground run. Like Claude,
           // Stop closes the session so detached jobs cannot wake it again.
@@ -2626,11 +2662,11 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     const raw = answers[id];
     const value = Array.isArray(raw) ? raw[0] : raw;
     if (typeof value !== "string" || (value.length === 0 && pending.method !== "editor")) {
-      return Effect.fail(validation("respondToUserInput", "Oh My Pi requires an answer."));
+      return Effect.fail(validation("respondToUserInput", `${productName} requires an answer.`));
     }
     if (pending.allowedValues && !pending.allowedValues.includes(value)) {
       return Effect.fail(
-        validation("respondToUserInput", "Choose one of Oh My Pi's offered answers."),
+        validation("respondToUserInput", `Choose one of ${productName}'s offered answers.`),
       );
     }
     const response =

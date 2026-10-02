@@ -16,6 +16,7 @@ import {
   sessionFileInsideRoot,
   type OmpResumeIdentity,
 } from "./OmpSessionCursor.ts";
+import { ompTarget } from "./OmpTarget.ts";
 
 const identity = (overrides: Partial<OmpResumeIdentity> = {}): OmpResumeIdentity => ({
   providerInstanceId: "omp",
@@ -50,6 +51,7 @@ describe("Oh My Pi session cursor", () => {
       const legacy = { ...cursor, schemaVersion: 2 as const, binaryPathFingerprint: "path-hash" };
       expect(
         yield* parseOmpSessionCursor(legacy, {
+          target: ompTarget,
           identity: identity(),
           ompVersion: "18.2.8",
           rpcProtocolVersion: 2,
@@ -88,6 +90,7 @@ describe("Oh My Pi session cursor", () => {
       expect(cursor?.launchPolicyFingerprint).toBe(ompLaunchPolicyFingerprint());
       expect(
         yield* parseOmpSessionCursor(cursor, {
+          target: ompTarget,
           identity: current,
           ompVersion: "18.2.8",
           rpcProtocolVersion: 2,
@@ -95,6 +98,7 @@ describe("Oh My Pi session cursor", () => {
       ).toMatchObject({ sessionId: "session-1" });
       expect(
         yield* parseOmpSessionCursor(cursor, {
+          target: ompTarget,
           identity: identity({ providerInstanceId: "omp-other" }),
           ompVersion: "18.2.8",
           rpcProtocolVersion: 2,
@@ -114,6 +118,7 @@ describe("Oh My Pi session cursor", () => {
       });
       const reject = (changed: OmpResumeIdentity, protocolVersion = 2, version = "18.2.8") =>
         parseOmpSessionCursor(cursor, {
+          target: ompTarget,
           identity: changed,
           ompVersion: version,
           rpcProtocolVersion: protocolVersion,
@@ -167,6 +172,7 @@ describe("Oh My Pi session cursor", () => {
           stateScopeFingerprint: v3Scope(current),
         };
         const migrated = yield* parseOmpSessionCursor(v3, {
+          target: ompTarget,
           identity: current,
           rpcProtocolVersion: 2,
         });
@@ -178,9 +184,11 @@ describe("Oh My Pi session cursor", () => {
           stateScopeFingerprint: v3Scope({ ...current, sessionRoot: "/state/omp/other" }),
         };
         expect(
-          yield* parseOmpSessionCursor(foreign, { identity: current, rpcProtocolVersion: 2 }).pipe(
-            Effect.flip,
-          ),
+          yield* parseOmpSessionCursor(foreign, {
+            target: ompTarget,
+            identity: current,
+            rpcProtocolVersion: 2,
+          }).pipe(Effect.flip),
         ).toContain("older identity format");
       }),
   );
@@ -198,6 +206,7 @@ describe("Oh My Pi session cursor", () => {
       expect(cursor?.lastRequestId).toBe("41");
       expect(
         yield* parseOmpSessionCursor(cursor, {
+          target: ompTarget,
           identity: current,
           ompVersion: "18.2.8",
           rpcProtocolVersion: 2,

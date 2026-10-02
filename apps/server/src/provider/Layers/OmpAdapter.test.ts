@@ -21,6 +21,7 @@ import type { OmpRpcResponse } from "effect-omp-rpc/schema";
 import { makeOmpAdapter } from "./OmpAdapter.ts";
 import { ompSessionDirectoryKey } from "../omp/OmpSessionCursor.ts";
 import { OMP_RPC_ARGS, type OmpRpcProcessOptions } from "../omp/OmpRpcProcess.ts";
+import { ompTarget } from "../omp/OmpTarget.ts";
 
 const success = (command: string, data: unknown = {}): OmpRpcResponse => ({
   id: "req",
@@ -66,6 +67,7 @@ describe("Oh My Pi adapter", () => {
           const sessionFile = `${options.sessionDir ?? ""}/session.jsonl`;
           const client = {
             version: "18.2.8",
+            runtimeVersion: "18.2.8",
             ready: Effect.succeed({
               type: "ready" as const,
               protocolVersion: 1,
@@ -111,7 +113,10 @@ describe("Oh My Pi adapter", () => {
             hostToolResult: () => Effect.void,
             hostUriResult: () => Effect.void,
             close: () => Effect.void,
-          } satisfies OmpRpcClient & { readonly version: string };
+          } satisfies OmpRpcClient & {
+            readonly version: string;
+            readonly runtimeVersion: string;
+          };
           return client;
         });
       const path = yield* Path.Path;
@@ -121,6 +126,7 @@ describe("Oh My Pi adapter", () => {
         `scient-omp-${String(yield* clock.currentTimeMillis)}`,
       );
       const adapter = yield* makeOmpAdapter({
+        target: ompTarget,
         binaryPath: "omp",
         providerInstanceId: ProviderInstanceId.make("omp"),
         stateDir,
@@ -233,6 +239,7 @@ describe("Oh My Pi adapter", () => {
           const sessionFile = `${options.sessionDir ?? ""}/session.jsonl`;
           const client = {
             version: "18.2.8",
+            runtimeVersion: "18.2.8",
             ready: Effect.succeed({
               type: "ready" as const,
               protocolVersion: 1,
@@ -281,7 +288,10 @@ describe("Oh My Pi adapter", () => {
               }),
             hostUriResult: () => Effect.void,
             close: () => Effect.void,
-          } satisfies OmpRpcClient & { readonly version: string };
+          } satisfies OmpRpcClient & {
+            readonly version: string;
+            readonly runtimeVersion: string;
+          };
           return client;
         });
       const path = yield* Path.Path;
@@ -291,6 +301,7 @@ describe("Oh My Pi adapter", () => {
         `scient-omp-reject-${String(yield* clock.currentTimeMillis)}`,
       );
       const adapter = yield* makeOmpAdapter({
+        target: ompTarget,
         binaryPath: "omp",
         providerInstanceId: ProviderInstanceId.make("omp"),
         stateDir,
@@ -346,6 +357,7 @@ describe("Oh My Pi adapter", () => {
           const sessionFile = `${options.sessionDir ?? ""}/session.jsonl`;
           const client = {
             version: "18.2.8",
+            runtimeVersion: "18.2.8",
             ready: Effect.succeed({
               type: "ready" as const,
               protocolVersion: 1,
@@ -403,7 +415,10 @@ describe("Oh My Pi adapter", () => {
             hostToolResult: () => Effect.void,
             hostUriResult: () => Effect.void,
             close: () => Effect.void,
-          } satisfies OmpRpcClient & { readonly version: string };
+          } satisfies OmpRpcClient & {
+            readonly version: string;
+            readonly runtimeVersion: string;
+          };
           return client;
         });
       const path = yield* Path.Path;
@@ -413,6 +428,7 @@ describe("Oh My Pi adapter", () => {
         `scient-omp-commands-${String(yield* clock.currentTimeMillis)}`,
       );
       const adapter = yield* makeOmpAdapter({
+        target: ompTarget,
         binaryPath: "omp",
         providerInstanceId: ProviderInstanceId.make("omp"),
         stateDir,
@@ -471,6 +487,7 @@ describe("Oh My Pi adapter", () => {
           const sessionFile = `${options.sessionDir ?? ""}/session.jsonl`;
           return {
             version: "18.2.8",
+            runtimeVersion: "18.2.8",
             ready: Effect.succeed({
               type: "ready" as const,
               protocolVersion: 1,
@@ -540,7 +557,10 @@ describe("Oh My Pi adapter", () => {
             hostToolResult: () => Effect.void,
             hostUriResult: () => Effect.void,
             close: () => Effect.void,
-          } satisfies OmpRpcClient & { readonly version: string };
+          } satisfies OmpRpcClient & {
+            readonly version: string;
+            readonly runtimeVersion: string;
+          };
         });
       const path = yield* Path.Path;
       const clock = yield* Clock.Clock;
@@ -549,6 +569,7 @@ describe("Oh My Pi adapter", () => {
         `scient-omp-model-refresh-${String(yield* clock.currentTimeMillis)}`,
       );
       const adapter = yield* makeOmpAdapter({
+        target: ompTarget,
         binaryPath: "omp",
         providerInstanceId: ProviderInstanceId.make("omp-model-refresh"),
         stateDir,

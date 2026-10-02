@@ -1,4 +1,5 @@
 import { ompExtensionBootstrapPrelude } from "./OmpExtensionBootstrap.ts";
+import type { OmpTarget } from "./OmpTarget.ts";
 
 /** What Scient's OMP extension reads from its bootstrap file. */
 export interface OmpScientExtensionBootstrap {
@@ -25,7 +26,7 @@ export interface OmpScientExtensionBootstrap {
  *   extension's re-runs for in-process subagents, which register the same
  *   tools on their own sessions.
  */
-const OMP_SCIENT_EXTENSION_BODY = `
+const ompScientExtensionBody = (target: OmpTarget): string => `
 const scientRecord = (value) =>
   typeof value === "object" && value !== null && !Array.isArray(value) ? value : undefined;
 
@@ -186,7 +187,7 @@ export default async function scientOmpExtension(pi) {
     systemPrompt: awareness ? [...event.systemPrompt, awareness] : undefined,
   }));
   pi.registerCommand("scient-status", {
-    description: "Show the Scient connection for this Oh My Pi session",
+    description: ${JSON.stringify(`Show the Scient connection for this ${target.name} session`)},
     async handler(_args, ctx) {
       ctx.ui.notify("Scient connected: " + toolNames.length + " tools. Full access; no native sandbox.", "info");
     },
@@ -195,5 +196,5 @@ export default async function scientOmpExtension(pi) {
 `;
 
 /** Module source of Scient's OMP extension, reading `bootstrapPath`. */
-export const ompScientExtensionSource = (bootstrapPath: string): string =>
-  `${ompExtensionBootstrapPrelude(bootstrapPath)}${OMP_SCIENT_EXTENSION_BODY}`;
+export const ompScientExtensionSource = (target: OmpTarget, bootstrapPath: string): string =>
+  `${ompExtensionBootstrapPrelude(target, bootstrapPath)}${ompScientExtensionBody(target)}`;

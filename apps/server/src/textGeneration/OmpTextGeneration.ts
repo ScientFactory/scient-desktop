@@ -26,6 +26,7 @@ import {
   type OmpRpcProcess,
   type OmpRpcProcessOptions,
 } from "../provider/omp/OmpRpcProcess.ts";
+import type { OmpTarget } from "../provider/omp/OmpTarget.ts";
 import type * as Scope from "effect/Scope";
 import {
   buildBranchNamePrompt,
@@ -60,14 +61,14 @@ const fallbackDetail = (event: OmpRpcEvent): string | undefined => {
  * The model failure an assistant message reports: `stopReason` `error` or
  * `aborted`, with OMP's `errorMessage` as the cause.
  */
-const assistantFailure = (message: unknown): string | undefined => {
+const assistantFailure = (target: OmpTarget, message: unknown): string | undefined => {
   if (!isRecord(message)) return undefined;
   if (message.stopReason !== "error" && message.stopReason !== "aborted") return undefined;
   return (
     nonEmpty(message.errorMessage) ??
     (message.stopReason === "aborted"
-      ? "Oh My Pi aborted the model request."
-      : "Oh My Pi's model request failed.")
+      ? `${target.name} aborted the model request.`
+      : `${target.name}'s model request failed.`)
   );
 };
 
@@ -108,6 +109,7 @@ const lastAssistantText = (messages: unknown): string | undefined => {
 };
 
 export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function* (
+  target: OmpTarget,
   settings: OmpSettings,
   environment: NodeJS.ProcessEnv = process.env,
   makeProcess: (
@@ -137,10 +139,11 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
         if (!selected) {
           return yield* new TextGenerationError({
             operation: input.operation,
-            detail: "Oh My Pi model selection must use the 'provider/model' format.",
+            detail: `${target.name} model selection must use the 'provider/model' format.`,
           });
         }
         const client = yield* makeProcess({
+          target,
           command: settings.binaryPath,
           cwd: input.cwd,
           env: environment,
@@ -151,7 +154,7 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
             (cause) =>
               new TextGenerationError({
                 operation: input.operation,
-                detail: "Failed to start Oh My Pi for text generation.",
+                detail: `Failed to start ${target.name} for text generation.`,
                 ...(isProtocolError(cause) ? { cause: cause.detail } : {}),
               }),
           ),
@@ -177,7 +180,7 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
         const failWith = (detail: string | undefined) =>
           Effect.all([Ref.get(attemptFailure), Ref.get(modelError)]).pipe(
             Effect.flatMap(([failure, notice]) =>
-              fail(detail ?? failure ?? notice ?? "Oh My Pi's model request failed."),
+              fail(detail ?? failure ?? notice ?? `${target.name}'s model request failed.`),
             ),
           );
         yield* client.events.pipe(
@@ -202,7 +205,7 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
             }
             if (event.type === "prompt_result") {
               if (event.agentInvoked === false) {
-                return fail("Oh My Pi finished the prompt without a model response.");
+                return fail(`${target.name} finished the prompt without a model response.`);
               }
               if (event.status === "error" || event.status === "aborted") {
                 return Ref.get(attemptFailure).pipe(
@@ -218,7 +221,7 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
               return Effect.void;
             }
             if (event.type === "message_end" && messageRole(event.message) === "assistant") {
-              const failure = assistantFailure(event.message);
+              const failure = assistantFailure(target, event.message);
               if (failure) {
                 currentMessageHasDelta = false;
                 return Ref.set(attemptFailure, failure);
@@ -274,8 +277,8 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
                 new TextGenerationError({
                   operation: input.operation,
                   detail: Cause.hasInterruptsOnly(cause)
-                    ? "Oh My Pi event stream ended before generation settled."
-                    : "Oh My Pi event stream failed before generation settled.",
+                    ? `${target.name} event stream ended before generation settled.`
+                    : `${target.name} event stream failed before generation settled.`,
                 }),
               ),
             onSuccess: () =>
@@ -283,7 +286,7 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
                 settled,
                 new TextGenerationError({
                   operation: input.operation,
-                  detail: "Oh My Pi exited before generation settled.",
+                  detail: `${target.name} exited before generation settled.`,
                 }),
               ),
           }),
@@ -298,7 +301,7 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
             (cause) =>
               new TextGenerationError({
                 operation: input.operation,
-                detail: "Failed to select the Oh My Pi model.",
+                detail: `Failed to select the ${target.name} model.`,
                 cause: client.redaction.text(String(cause)),
               }),
           ),
@@ -308,7 +311,7 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
             (cause) =>
               new TextGenerationError({
                 operation: input.operation,
-                detail: "Oh My Pi rejected the text-generation prompt.",
+                detail: `${target.name} rejected the text-generation prompt.`,
                 cause: client.redaction.text(String(cause)),
               }),
           ),
@@ -319,7 +322,7 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
             operation: input.operation,
             detail: client.redaction.text(
               (yield* Ref.get(modelError)) ??
-                "Oh My Pi finished the prompt without a model response.",
+                `${target.name} finished the prompt without a model response.`,
             ),
           });
         }
@@ -329,7 +332,7 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
           return yield* new TextGenerationError({
             operation: input.operation,
             detail: client.redaction.text(
-              (yield* Ref.get(modelError)) ?? "Oh My Pi returned empty output.",
+              (yield* Ref.get(modelError)) ?? `${target.name} returned empty output.`,
             ),
           });
         }
@@ -343,7 +346,7 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
             ? cause
             : new TextGenerationError({
                 operation: input.operation,
-                detail: "Oh My Pi text generation failed.",
+                detail: `${target.name} text generation failed.`,
                 cause,
               }),
         ),
@@ -355,7 +358,7 @@ export const makeOmpTextGeneration = Effect.fn("makeOmpTextGeneration")(function
         () =>
           new TextGenerationError({
             operation: input.operation,
-            detail: "Oh My Pi text generation timed out.",
+            detail: `${target.name} text generation timed out.`,
           }),
       ),
     );

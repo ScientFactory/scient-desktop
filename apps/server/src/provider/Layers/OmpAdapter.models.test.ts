@@ -28,6 +28,7 @@ import { classifyTurnDispatchFailure, markTurnDispatchAttempted } from "../turnD
 import { OMP_PENDING_CONNECTION_DETAIL } from "../omp/OmpModel.ts";
 import type { OmpProcessExit, OmpRpcProcessOptions } from "../omp/OmpRpcProcess.ts";
 import { makeOmpAdapter } from "./OmpAdapter.ts";
+import { ompTarget } from "../omp/OmpTarget.ts";
 
 const encodeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
@@ -250,6 +251,7 @@ const makeFakeOmp = (input: {
       return {
         ...client,
         version: "18.3.1",
+        runtimeVersion: "18.3.1",
         shutdown: Queue.end(stdout).pipe(Effect.as(cleanExit)),
         // The custom-model bridge's barrier: registers late models.
         refreshModels: () =>
@@ -280,6 +282,7 @@ const instanceId = ProviderInstanceId.make("omp-models");
 const startAdapter = (root: string, fake: ReturnType<typeof makeFakeOmp>) =>
   Effect.gen(function* () {
     const adapter = yield* makeOmpAdapter({
+      target: ompTarget,
       binaryPath: "omp",
       providerInstanceId: instanceId,
       stateDir: NodePath.join(root, "state"),

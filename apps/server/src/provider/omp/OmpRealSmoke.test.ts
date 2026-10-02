@@ -22,6 +22,7 @@ import {
   ompQualifyModel,
 } from "./OmpLive.testFixtures.ts";
 import { makeOmpRpcProcess, type OmpRpcProcessOptions } from "./OmpRpcProcess.ts";
+import { ompTarget } from "./OmpTarget.ts";
 
 /** The production process factory, leasing from this test's executable gate. */
 const gatedProcess = Effect.map(
@@ -48,6 +49,7 @@ describe.runIf(ompQualifyBinary)("real OMP qualification", () => {
         profile: "",
       });
       const result = yield* checkOmpProviderStatus(
+        ompTarget,
         settings,
         environment,
         yield* gatedProcess,
@@ -65,6 +67,7 @@ describe.runIf(ompQualifyBinary)("real OMP qualification", () => {
       NodeFS.rmSync(root, { recursive: true, force: true });
       const { environment, homePath } = ompLiveInstance(root);
       const adapter = yield* makeOmpAdapter({
+        target: ompTarget,
         binaryPath: binary,
         providerInstanceId: ProviderInstanceId.make("omp-real-smoke"),
         stateDir: NodePath.join(root, "state"),
@@ -95,6 +98,7 @@ describe.runIf(ompQualifyBinary)("real OMP qualification", () => {
         const { environment, homePath } = ompLiveInstance(root);
         const instanceId = ProviderInstanceId.make("omp-real-turn-smoke");
         const adapter = yield* makeOmpAdapter({
+          target: ompTarget,
           binaryPath: binary,
           providerInstanceId: instanceId,
           stateDir: NodePath.join(root, "state"),
@@ -132,6 +136,7 @@ describe.runIf(ompQualifyBinary)("real OMP qualification", () => {
         yield* adapter.stopAll();
         expect(yield* adapter.hasSession(threadId)).toBe(false);
         const resumedAdapter = yield* makeOmpAdapter({
+          target: ompTarget,
           binaryPath: binary,
           providerInstanceId: instanceId,
           stateDir: NodePath.join(root, "state"),

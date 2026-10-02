@@ -1,5 +1,5 @@
 import { isSupportedOmpMajor } from "@scientfactory/provider-runtime";
-import { ProviderDriverKind, type ServerProviderVersionAdvisory } from "@t3tools/contracts";
+import type { ServerProviderVersionAdvisory } from "@t3tools/contracts";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as DateTime from "effect/DateTime";
@@ -17,6 +17,7 @@ import {
   type ProviderMaintenanceCapabilitiesResolver,
   type ProviderMaintenanceResolutionContext,
 } from "../providerMaintenance.ts";
+import { ompTarget } from "./OmpTarget.ts";
 
 /**
  * Scient never runs Oh My Pi's own updater: `omp update` cannot install a
@@ -24,7 +25,7 @@ import {
  * System installs get a version advisory with the command to run by hand;
  * Scient-managed installs update through the managed-runtime pipeline.
  */
-const PROVIDER = ProviderDriverKind.make("omp");
+const PROVIDER = ompTarget.driverKind;
 
 /** npm `latest`: what bun, npm and the standalone installer's `omp update` install. */
 export const OMP_NPM_LATEST_URL = "https://registry.npmjs.org/@oh-my-pi/pi-coding-agent/latest";

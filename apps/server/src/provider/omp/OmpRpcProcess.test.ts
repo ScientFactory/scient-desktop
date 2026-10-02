@@ -33,6 +33,7 @@ import {
   ompRpcArgs,
   OMP_RPC_ARGS,
 } from "./OmpRpcProcess.ts";
+import { ompTarget } from "./OmpTarget.ts";
 
 const toJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -198,6 +199,7 @@ describe("Oh My Pi launch arguments", () => {
       yield* Effect.scoped(
         Effect.gen(function* () {
           const process = yield* makeOmpRpcProcess({
+            target: ompTarget,
             command: binary,
             env: { PATH: "/usr/bin", PROVIDER_API_KEY: secret },
             onFrame: (trace) => Effect.sync(() => traced.push(trace)),
@@ -256,6 +258,7 @@ describe("Oh My Pi launch arguments", () => {
       const exit = yield* Effect.scoped(
         Effect.gen(function* () {
           const process = yield* makeOmpRpcProcess({
+            target: ompTarget,
             command: binary,
             env: { PATH: "/usr/bin", PROVIDER_API_KEY: secret },
           });
@@ -331,6 +334,7 @@ describe("Oh My Pi launch arguments", () => {
       });
       const start = Effect.scoped(
         makeOmpRpcProcess({
+          target: ompTarget,
           command: binary,
           env: { PATH: "/usr/bin" },
           extraArgs: ["--no-tools"],
@@ -384,7 +388,7 @@ describe("Oh My Pi launch arguments", () => {
         );
       });
       const error = yield* Effect.scoped(
-        makeOmpRpcProcess({ command: binary, env: { PATH: "/usr/bin" } }).pipe(
+        makeOmpRpcProcess({ target: ompTarget, command: binary, env: { PATH: "/usr/bin" } }).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(OmpExecutableGate, yield* makeOmpExecutableGate()),
           Effect.flip,
@@ -454,14 +458,16 @@ describe("Oh My Pi launch arguments", () => {
           ] as const) {
             const gate = yield* makeOmpExecutableGate({ processWaitTimeout: "50 millis" });
             const spawned: Array<string> = [];
-            const start = makeOmpRpcProcess({ command, env }).pipe(
+            const start = makeOmpRpcProcess({ target: ompTarget, command, env }).pipe(
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, fakeOmp(spawned)),
               Effect.provideService(OmpExecutableGate, gate),
               Effect.scoped,
             );
             const identity = yield* canonicalOmpExecutablePath(executable);
             const error = yield* Effect.scoped(
-              gate.acquireActivation(identity).pipe(Effect.andThen(Effect.flip(start))),
+              gate
+                .acquireActivation(identity, { target: ompTarget })
+                .pipe(Effect.andThen(Effect.flip(start))),
             );
             expect(error.message, command).toContain("Oh My Pi is being updated");
             // The lease comes first: nothing was probed or spawned.
@@ -489,6 +495,7 @@ describe("Oh My Pi launch arguments", () => {
         const gate = yield* makeOmpExecutableGate();
         const scope = yield* Scope.make();
         yield* makeOmpRpcProcess({
+          target: ompTarget,
           command: binary,
           env: { PATH: "/usr/bin" },
           sessionDir: NodePath.join(root, "session"),
@@ -497,10 +504,12 @@ describe("Oh My Pi launch arguments", () => {
           Effect.provideService(OmpExecutableGate, gate),
           Effect.provideService(Scope.Scope, scope),
         );
-        const refused = yield* Effect.scoped(gate.acquireActivation(identity)).pipe(Effect.flip);
+        const refused = yield* Effect.scoped(
+          gate.acquireActivation(identity, { target: ompTarget }),
+        ).pipe(Effect.flip);
         expect(refused.reason).toBe("conversations-open");
         yield* Scope.close(scope, Exit.void);
-        yield* Effect.scoped(gate.acquireActivation(identity));
+        yield* Effect.scoped(gate.acquireActivation(identity, { target: ompTarget }));
       } finally {
         NodeFS.rmSync(root, { recursive: true, force: true });
       }
@@ -576,7 +585,11 @@ describe("Oh My Pi process shutdown", () => {
       const exited = yield* Deferred.make<number>();
       const kills: Array<string> = [];
       const scope = yield* Scope.make("sequential");
-      const process = yield* makeOmpRpcProcess({ command: binary, env: { PATH: "/usr/bin" } }).pipe(
+      const process = yield* makeOmpRpcProcess({
+        target: ompTarget,
+        command: binary,
+        env: { PATH: "/usr/bin" },
+      }).pipe(
         Effect.provideService(OmpExecutableGate, yield* makeOmpExecutableGate()),
         Effect.provideService(
           ChildProcessSpawner.ChildProcessSpawner,
@@ -604,7 +617,7 @@ describe("Oh My Pi process shutdown", () => {
       const exited = yield* Deferred.make<number>();
       const kills: Array<string> = [];
       yield* Effect.scoped(
-        makeOmpRpcProcess({ command: binary, env: { PATH: "/usr/bin" } }).pipe(
+        makeOmpRpcProcess({ target: ompTarget, command: binary, env: { PATH: "/usr/bin" } }).pipe(
           Effect.provideService(OmpExecutableGate, yield* makeOmpExecutableGate()),
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
@@ -629,6 +642,7 @@ describe("Oh My Pi process shutdown", () => {
         const scope = yield* Scope.make("sequential");
         // A descendant still holds the child's stdout, so it never reaches EOF.
         const process = yield* makeOmpRpcProcess({
+          target: ompTarget,
           command: binary,
           env: { PATH: "/usr/bin" },
         }).pipe(
@@ -662,7 +676,11 @@ describe("Oh My Pi process shutdown", () => {
       const exited = yield* Deferred.make<number>();
       const kills: Array<string> = [];
       const scope = yield* Scope.make("sequential");
-      const process = yield* makeOmpRpcProcess({ command: binary, env: { PATH: "/usr/bin" } }).pipe(
+      const process = yield* makeOmpRpcProcess({
+        target: ompTarget,
+        command: binary,
+        env: { PATH: "/usr/bin" },
+      }).pipe(
         Effect.provideService(OmpExecutableGate, yield* makeOmpExecutableGate()),
         Effect.provideService(
           ChildProcessSpawner.ChildProcessSpawner,

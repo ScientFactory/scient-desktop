@@ -23,6 +23,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import { ompProcessAlive } from "./OmpSessionLock.ts";
+import type { OmpTarget } from "./OmpTarget.ts";
 
 export class OmpExtensionFileError extends Schema.TaggedError<OmpExtensionFileError>()(
   "OmpExtensionFileError",
@@ -43,7 +44,7 @@ export class OmpExtensionFileError extends Schema.TaggedError<OmpExtensionFileEr
  * call. Only the initializer's result is kept, so the parsed bootstrap does
  * not outlive it.
  */
-export const ompExtensionBootstrapPrelude = (bootstrapPath: string): string => `
+export const ompExtensionBootstrapPrelude = (target: OmpTarget, bootstrapPath: string): string => `
 import { readFileSync as scientReadFileSync, unlinkSync as scientUnlinkSync } from "node:fs";
 
 const SCIENT_BOOTSTRAP_PATH = ${JSON.stringify(bootstrapPath)};
@@ -64,7 +65,7 @@ const scientOnce = (initialize) => {
     let slot;
     try {
       if (typeof bootstrap !== "object" || bootstrap === null) {
-        throw new Error("Scient's Oh My Pi bootstrap is unavailable.");
+        throw new Error(${JSON.stringify(`Scient's ${target.name} bootstrap is unavailable.`)});
       }
       slot = { value: initialize(bootstrap) };
     } catch (error) {
@@ -95,6 +96,7 @@ export interface OmpExtensionFiles {
  */
 export const writeOmpExtensionFiles = Effect.fn("OmpExtensionBootstrap.writeFiles")(
   function* (input: {
+    readonly target: OmpTarget;
     readonly directory: string;
     /** Unique within `directory`. */
     readonly name: string;
@@ -117,7 +119,7 @@ export const writeOmpExtensionFiles = Effect.fn("OmpExtensionBootstrap.writeFile
       }),
       catch: (cause) =>
         new OmpExtensionFileError({
-          detail: "Could not generate Scient's Oh My Pi extension.",
+          detail: `Could not generate Scient's ${input.target.name} extension.`,
           cause,
         }),
     });
@@ -131,9 +133,13 @@ export const writeOmpExtensionFiles = Effect.fn("OmpExtensionBootstrap.writeFile
     yield* write(
       bootstrapPath,
       contents.bootstrap,
-      "Could not write Scient's Oh My Pi extension bootstrap.",
+      `Could not write Scient's ${input.target.name} extension bootstrap.`,
     );
-    yield* write(extensionPath, contents.source, "Could not write Scient's Oh My Pi extension.");
+    yield* write(
+      extensionPath,
+      contents.source,
+      `Could not write Scient's ${input.target.name} extension.`,
+    );
     const discardUnconsumed = fs.exists(bootstrapPath).pipe(
       Effect.orElseSucceed(() => true),
       Effect.flatMap((present) =>
@@ -144,7 +150,7 @@ export const writeOmpExtensionFiles = Effect.fn("OmpExtensionBootstrap.writeFile
                 Effect.ignore,
                 Effect.andThen(
                   Effect.logWarning(
-                    "Oh My Pi did not load a Scient extension; its bootstrap was deleted unread.",
+                    `${input.target.name} did not load a Scient extension; its bootstrap was deleted unread.`,
                     { extension: input.name },
                   ),
                 ),
@@ -158,7 +164,7 @@ export const writeOmpExtensionFiles = Effect.fn("OmpExtensionBootstrap.writeFile
 
 /**
  * Prefix of the custom-model bridge's per-process extension directory under
- * `<stateDir>/omp/extensions`. It names the server's pid, so a sweep can tell
+ * `<stateDir>/<stateNamespace>/extensions`. It names the server's pid, so a sweep can tell
  * a live server's directory from a crashed one's.
  */
 export const ompExtensionProcessPrefix = (pid: number): string => `process-${pid}-`;
@@ -166,10 +172,11 @@ export const ompExtensionProcessPrefix = (pid: number): string => `process-${pid
 const OMP_SESSION_EXTENSION_FILE = /^scient-extension-.+\.(?:mjs|bootstrap\.json)$/u;
 
 /**
- * Removes the extension files a crashed server left behind: the custom-model
- * bridge's per-process directories under `<stateDir>/omp/extensions` and the
- * session extensions (and any bootstrap still holding credentials) in
- * `<stateDir>/omp-sessions/*`. Normally each is removed with its process.
+ * Removes the extension files a crashed server left behind for one target: the
+ * custom-model bridge's per-process directories under
+ * `<stateDir>/<stateNamespace>/extensions` and the session extensions (and any
+ * bootstrap still holding credentials) in `<stateDir>/<stateNamespace>-sessions/*`.
+ * Normally each is removed with its process.
  *
  * Only files last changed before `startedAt`, this server's start, go: every
  * file this server writes is newer, so its running sessions keep theirs
@@ -177,7 +184,11 @@ const OMP_SESSION_EXTENSION_FILE = /^scient-extension-.+\.(?:mjs|bootstrap\.json
  * (by its pid, or its session lock) is kept however old it is. Best effort.
  */
 export const sweepStaleOmpExtensionFiles = Effect.fn("OmpExtensionBootstrap.sweepStale")(
-  function* (input: { readonly stateDir: string; readonly startedAt: number }) {
+  function* (input: {
+    readonly target: OmpTarget;
+    readonly stateDir: string;
+    readonly startedAt: number;
+  }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const list = (directory: string) =>
@@ -203,14 +214,14 @@ export const sweepStaleOmpExtensionFiles = Effect.fn("OmpExtensionBootstrap.swee
         yield* fs.remove(file, { recursive: true, force: true }).pipe(Effect.ignore);
       });
 
-    const extensions = path.join(input.stateDir, "omp", "extensions");
+    const extensions = path.join(input.stateDir, input.target.stateNamespace, "extensions");
     for (const name of yield* list(extensions)) {
       if (!name.startsWith("process-")) continue;
       if (otherLiveServer(/^process-(\d+)-/u.exec(name)?.[1])) continue;
       yield* removeIfStale(path.join(extensions, name));
     }
 
-    const sessions = path.join(input.stateDir, "omp-sessions");
+    const sessions = path.join(input.stateDir, `${input.target.stateNamespace}-sessions`);
     for (const key of yield* list(sessions)) {
       const session = path.join(sessions, key);
       const lock = yield* fs

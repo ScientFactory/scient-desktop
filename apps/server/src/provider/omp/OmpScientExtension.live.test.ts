@@ -45,6 +45,7 @@ import {
   type OmpRpcProcess,
   type OmpRpcProcessOptions,
 } from "./OmpRpcProcess.ts";
+import { ompTarget } from "./OmpTarget.ts";
 
 const binary = ompQualifyBinary;
 const SCIENT_TOOL = "scient_fixture_echo";
@@ -306,11 +307,12 @@ const makeStubModelFactory = (
   root: string,
   baseUrl: string,
   instanceId: ProviderInstanceId,
-  makeProcess?: Parameters<typeof makeOmpCustomModelsClientFactory>[3],
+  makeProcess?: Parameters<typeof makeOmpCustomModelsClientFactory>[4],
 ) =>
   Effect.gen(function* () {
     const settingsChanges = yield* Queue.unbounded<ServerSettings>();
     return yield* makeOmpCustomModelsClientFactory(
+      ompTarget,
       {
         resolveCustomModels: () => Effect.succeed([stubConnection(baseUrl, instanceId)]),
         subscribeChanges: Effect.succeed(Stream.fromQueue(settingsChanges)),
@@ -381,6 +383,7 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
           let client: OmpRpcProcess | undefined;
           let extensionPath: string | undefined;
           const adapter = yield* makeOmpAdapter({
+            target: ompTarget,
             binaryPath: binary!,
             providerInstanceId: instanceId,
             stateDir: NodePath.join(root, "state"),
@@ -519,6 +522,7 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
           );
           let client: OmpRpcProcess | undefined;
           const adapter = yield* makeOmpAdapter({
+            target: ompTarget,
             binaryPath: binary!,
             providerInstanceId: instanceId,
             stateDir: NodePath.join(root, "state"),
@@ -690,6 +694,7 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
             instanceId,
           );
           const adapter = yield* makeOmpAdapter({
+            target: ompTarget,
             binaryPath: binary!,
             providerInstanceId: instanceId,
             stateDir: NodePath.join(root, "state"),
@@ -776,10 +781,11 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
           const mcpPort = yield* listen(mcp.server);
           const essential = 'loadMode: "essential",';
           const extension = yield* writeOmpExtensionFiles({
+            target: ompTarget,
             directory: root,
             name: "discoverable-extension",
             source: (bootstrapPath) => {
-              const source = ompScientExtensionSource(bootstrapPath);
+              const source = ompScientExtensionSource(ompTarget, bootstrapPath);
               expect(source.split(essential)).toHaveLength(2);
               return source.replace(essential, "");
             },
@@ -796,6 +802,7 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
             ProviderInstanceId.make("omp-scient-live-control"),
           );
           const process = yield* customModels({
+            target: ompTarget,
             command: binary!,
             cwd: NodePath.join(root, "cwd"),
             env: yield* isolatedEnvironment(root),

@@ -32,6 +32,7 @@ import { makeOmpAdapter } from "../Layers/OmpAdapter.ts";
 import * as OmpExecutableGate from "./OmpExecutableGate.ts";
 import { makeOmpCustomModelsClientFactory } from "./OmpCustomModels.ts";
 import { ompLiveInstance, ompQualifyBinary } from "./OmpLive.testFixtures.ts";
+import { ompTarget } from "./OmpTarget.ts";
 
 const layer = ScientForkContextDeliveryLive.pipe(
   Layer.provide(ServerSettingsService.layerTest()),
@@ -94,6 +95,7 @@ describe.runIf(ompQualifyBinary)("real OMP fork continuity", () => {
           baseEnv: { PATH: process.env.PATH ?? "" },
         });
         const factory = yield* makeOmpCustomModelsClientFactory(
+          ompTarget,
           {
             resolveCustomModels: () =>
               Effect.succeed([
@@ -125,6 +127,7 @@ describe.runIf(ompQualifyBinary)("real OMP fork continuity", () => {
           NodePath.join(root, "state"),
         );
         const adapter = yield* makeOmpAdapter({
+          target: ompTarget,
           binaryPath: ompQualifyBinary!,
           providerInstanceId: instanceId,
           stateDir: NodePath.join(root, "state"),
