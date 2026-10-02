@@ -282,6 +282,62 @@ describe("writing editor source transactions", () => {
     }
   });
 
+  it("replaces across paragraphs, a heading and a list, one block at a time", async () => {
+    const headerSlot = document.createElement("div");
+    document.body.append(headerSlot);
+    try {
+      await mount(
+        [
+          "\\section{A cat}",
+          "First cat here, and a second cat.",
+          "",
+          "No match in this one.",
+          "",
+          "\\begin{itemize}",
+          "\\item a cat in a list",
+          "\\end{itemize}",
+          "",
+          "Last cat.",
+        ].join("\n"),
+        "",
+        headerSlot,
+      );
+      await act(() =>
+        headerSlot
+          .querySelector<HTMLButtonElement>('button[aria-label^="Search Document"]')!
+          .click(),
+      );
+      const bar = container.querySelector(".scient-markdown-find-bar")!;
+      await setField(bar.querySelector<HTMLInputElement>("input[aria-label='Find text']")!, "cat");
+      expect(bar.textContent).toContain("1 of 5");
+      await act(() => bar.querySelector<HTMLButtonElement>("[aria-label='Show replace']")!.click());
+      await setField(
+        bar.querySelector<HTMLInputElement>("input[aria-label='Replacement text']")!,
+        "dog",
+      );
+      await act(() =>
+        bar.querySelector<HTMLButtonElement>("[aria-label='Replace all matches']")!.click(),
+      );
+      // Each block is written to the source before the next is edited.
+      await vi.waitFor(async () => {
+        await act(() => {});
+        expect(current).not.toContain("cat");
+      });
+      expect(current).toContain("\\section{A dog}");
+      expect(current).toContain("First dog here, and a second dog.");
+      expect(current).toContain("No match in this one.");
+      expect(current).toMatch(/\\item a dog in a list/u);
+      expect(current).toContain("Last dog.");
+      expect(container.textContent).not.toContain("could not");
+      // One block per undo step, so each step is an edit the source can hold.
+      await act(() => editor().commands.undo());
+      expect(current.match(/cat/gu)?.length).toBe(1);
+      expect(container.textContent).not.toContain("could not");
+    } finally {
+      headerSlot.remove();
+    }
+  });
+
   it("offers the Markdown bar's inline formatting in the same order, without strikethrough", async () => {
     await mount();
     const toolbar = container.querySelector('[role="toolbar"][aria-label="Writing tools"]')!;

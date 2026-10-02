@@ -4142,7 +4142,12 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   useLayoutEffect(() => {
     editorRef.current = editor;
   }, [editor]);
-  const find = useLatexVisualSearch(editor, !readOnly);
+  // Replace all writes each text block to the source before it edits the next.
+  const commitTyping = useCallback(
+    () => flushTypingRef.current() && flushSourceEditRef.current(),
+    [],
+  );
+  const find = useLatexVisualSearch(editor, !readOnly, commitTyping);
   const textStyle = useEditorState({
     editor,
     selector: ({ editor: current }) => ({
