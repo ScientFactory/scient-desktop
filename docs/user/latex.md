@@ -127,14 +127,14 @@ caret targets and are never written into the compiled source.
 
 The **Math** menu offers six choices:
 
-| Option                | Behavior                                                                                                 |
-| --------------------- | -------------------------------------------------------------------------------------------------------- |
-| Inline math           | Insert math within a sentence, or move the active equation inline.                                       |
-| Display math          | Insert math on its own line, or move the active inline formula onto its own line.                        |
-| Aligned equations     | Start two rows aligned at a relation; an existing formula becomes the first row.                         |
-| Matrix                | Choose brackets using the compact selector above the table-style size grid, then click a size to insert. |
-| Cases                 | Insert a two-row piecewise expression with expression and condition columns.                             |
-| Symbols & structures… | Search for symbols or insert fractions, roots, accents, and other structures.                            |
+| Option               | Behavior                                                                                                 |
+| -------------------- | -------------------------------------------------------------------------------------------------------- |
+| Inline math          | Insert math within a sentence, or move the active equation inline.                                       |
+| Display math         | Insert math on its own line, or move the active inline formula onto its own line.                        |
+| Aligned equations    | Start two rows aligned at a relation; an existing formula becomes the first row.                         |
+| Matrix               | Choose brackets using the compact selector above the table-style size grid, then click a size to insert. |
+| Cases                | Insert a two-row piecewise expression with expression and condition columns.                             |
+| Symbols & structures | Search for symbols or insert fractions, roots, accents, and other structures.                            |
 
 The current inline/display placement has a checkmark. Placement changes retain
 existing math; converting inline math to display math retains the surrounding text
@@ -365,12 +365,12 @@ Search finds entries inside the submenus too.
 
 | Option            | Behavior                                                                                                                        |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Figure…           | Choose a project PNG, JPEG or PDF, or import a PNG/JPEG. Preview raster images, set an optional caption and width, then insert. |
+| Figure            | Choose a project PNG, JPEG or PDF, or import a PNG/JPEG. Preview raster images, set an optional caption and width, then insert. |
 | Table             | Choose a size from the grid to insert a table.                                                                                  |
-| Citation…         | Select one or more bibliography sources and choose a citation form supported by the document.                                   |
-| Cross-reference…  | Find a labelled object in this file and insert its reference or page number.                                                    |
+| Citation          | Select one or more bibliography sources and choose a citation form supported by the document.                                   |
+| Cross-reference   | Find a labelled object in this file and insert its reference or page number.                                                    |
 | Footnote          | Insert a note at the cursor, or move selected inline content into a note.                                                       |
-| Link…             | Give selected text a web/email address, or enter new link text.                                                                 |
+| Link              | Give selected text a web/email address, or enter new link text.                                                                 |
 | Theorems & proofs | Insert Theorem, Lemma, Proposition, Corollary, Claim, Definition, Example, Remark or Proof.                                     |
 | More              | Code block, Page break, Abstract, Table of contents, Bibliography and other specialized blocks.                                 |
 

@@ -516,7 +516,7 @@ export function DocumentGridSizeMenu({
             {activeSize.columns} × {activeSize.rows}
           </div>
         </div>
-        {onCustomSize && <MenuItem onClick={onCustomSize}>Choose size…</MenuItem>}
+        {onCustomSize && <MenuItem onClick={onCustomSize}>Choose size</MenuItem>}
       </MenuSubPopup>
     </MenuSub>
   );

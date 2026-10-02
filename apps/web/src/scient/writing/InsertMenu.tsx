@@ -106,7 +106,7 @@ export function InsertMenuContent(props: {
         <input
           ref={input}
           aria-label="Search insert options"
-          placeholder="Search insert options…"
+          placeholder="Search insert options"
           // As one section of a larger menu it is a pointer convenience: the
           // menu opens on its first item and the keyboard walks the items.
           tabIndex={searchTakesFocus ? undefined : -1}

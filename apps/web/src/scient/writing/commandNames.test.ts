@@ -38,6 +38,14 @@ describe("shared writing command names", () => {
     },
   );
 
+  it("ends no menu item with three dots", () => {
+    // Markdown's menus name the thing and stop; LaTeX's do the same.
+    for (const [name, source] of Object.entries(SURFACES)) {
+      expect(source, name).not.toMatch(/label: [`"][^`"\n]*…[`"]/u);
+      expect(source, name).not.toMatch(/…\s*<\/(?:DockCommandItem|MenuItem|MenuSubTrigger)>/u);
+    }
+  });
+
   it("keeps the names the editors once disagreed on from coming back", () => {
     for (const [name, source] of Object.entries(SURFACES)) {
       for (const stale of ["Bulleted list", "Insert block or element", "Remove list formatting"])

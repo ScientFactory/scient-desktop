@@ -450,7 +450,7 @@ describe("writing editor source transactions", () => {
       "Redo",
       "Bullet list",
       "Theorems & proofs",
-      "Page layout\u2026",
+      "Page layout",
       "Keyboard shortcuts",
     ])
       // A row may end with its shortcut.
@@ -885,7 +885,7 @@ Theory & Proofs \\\\
 
   it("inserts a source-backed reference from the writing toolbar", async () => {
     await mount("Target \\label{sec:target}");
-    await insertMenuItem("Cross-reference\u2026");
+    await insertMenuItem("Cross-reference");
     const key = document.body.querySelector<HTMLInputElement>(
       ".scient-writing-reference-key input",
     )!;
@@ -923,7 +923,7 @@ Theory & Proofs \\\\
       container.querySelector<HTMLButtonElement>('button[aria-label="Document"]')!.click(),
     );
     const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
-      (item) => item.textContent?.trim() === "Use paragraph as title…",
+      (item) => item.textContent?.trim() === "Use paragraph as title",
     )!;
     await act(() => item.click());
     expect(current).toContain("\\title{Energy estimate}");

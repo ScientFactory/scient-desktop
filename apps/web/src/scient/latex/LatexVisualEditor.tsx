@@ -4752,7 +4752,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     },
     {
       id: "matrix",
-      label: "Matrix…",
+      label: "Matrix",
       description: "Choose rows, columns, and brackets",
       group: "Math",
       run: () => openMathPicker("matrix"),
@@ -4766,14 +4766,14 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     },
     {
       id: "math-symbols",
-      label: "Symbols & structures…",
+      label: "Symbols & structures",
       description: "Find symbols, fractions, roots, and other math structures",
       group: "Math",
       run: () => openMathPicker("symbols"),
     },
     {
       id: "figure",
-      label: "Figure…",
+      label: "Figure",
       description: "Choose an image from your project",
       group: "Objects",
       run: () =>
@@ -4834,7 +4834,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     {
       id: "reference",
       disabledReason: inlineInsertReason,
-      label: "Cross-reference…",
+      label: "Cross-reference",
       description: "Refer to a labelled heading, equation, figure, table, or theorem",
       group: "References",
       run: () => openReferences("reference"),
@@ -4842,7 +4842,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     {
       id: "citation",
       disabledReason: inlineInsertReason,
-      label: "Citation…",
+      label: "Citation",
       description: "Cite one or more bibliography sources",
       group: "References",
       run: () => openReferences("citation"),
@@ -4850,7 +4850,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     {
       id: "link",
       disabledReason: linkUnavailableReason,
-      label: `${WRITING_COMMAND_LABELS.link}…`,
+      label: WRITING_COMMAND_LABELS.link,
       description: "Link text to a web or email address",
       group: "References",
       run: () => {
@@ -4919,7 +4919,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     })),
     {
       id: "bibliography",
-      label: "Bibliography…",
+      label: "Bibliography",
       description: "Insert a reference list",
       group: "References",
       run: insertBibliography,
@@ -5937,14 +5937,14 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         }
         onClick={useParagraphAsTitle}
       >
-        Use paragraph as title…
+        Use paragraph as title
       </DockCommandItem>
       <MenuSeparator />
       <DockCommandItem disabled={readOnly} onClick={() => openDocumentSettings("page")}>
-        Page layout…
+        Page layout
       </DockCommandItem>
       <DockCommandItem disabled={readOnly} onClick={() => openDocumentSettings("style")}>
-        Document style…
+        Document style
       </DockCommandItem>
       <MenuSeparator />
       <DockCommandItem onClick={() => setShortcutsOpen(true)}>Keyboard shortcuts</DockCommandItem>
