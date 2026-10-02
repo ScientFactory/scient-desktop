@@ -110,8 +110,6 @@ import {
   Italic,
   List,
   ListOrdered,
-  IndentIncrease,
-  IndentDecrease,
   Heading1,
   Heading2,
   Heading3,
@@ -4962,23 +4960,6 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         }
       >
         <MenuRow icon={<List className="size-4" />} label="Description list" />
-      </DockCommandItem>
-      <MenuSeparator />
-      <DockCommandItem
-        onClick={() => {
-          editor?.chain().focus().sinkListItem("listItem").run();
-        }}
-        disabled={textReadOnly || !editor?.can().sinkListItem("listItem")}
-      >
-        <MenuRow icon={<IndentIncrease className="size-4" />} label="Indent item" />
-      </DockCommandItem>
-      <DockCommandItem
-        onClick={() => {
-          editor?.chain().focus().liftListItem("listItem").run();
-        }}
-        disabled={textReadOnly || !editor?.can().liftListItem("listItem")}
-      >
-        <MenuRow icon={<IndentDecrease className="size-4" />} label="Outdent item" />
       </DockCommandItem>
     </>
   );
