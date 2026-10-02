@@ -19,8 +19,7 @@ import type { ResolvedModelConnection } from "../../customModels.ts";
 import { makeOmpAdapter } from "../Layers/OmpAdapter.ts";
 import * as OmpExecutableGate from "./OmpExecutableGate.ts";
 import { makeOmpCustomModelsClientFactory } from "./OmpCustomModels.ts";
-import { ompLiveInstance, ompQualifyBinary } from "./OmpLive.testFixtures.ts";
-import { ompTarget } from "./OmpTarget.ts";
+import { ompLiveInstance, ompQualifyBinary, ompQualifyTarget } from "./OmpLive.testFixtures.ts";
 
 /** Real native async bash and result delivery; all model responses come from loopback. */
 describe.runIf(ompQualifyBinary)("real OMP background continuation", () => {
@@ -147,7 +146,7 @@ describe.runIf(ompQualifyBinary)("real OMP background continuation", () => {
               ],
             };
             const factory = yield* makeOmpCustomModelsClientFactory(
-              ompTarget,
+              ompQualifyTarget,
               {
                 resolveCustomModels: () => Effect.succeed([connection]),
                 subscribeChanges: Effect.succeed(Stream.never),
@@ -157,7 +156,7 @@ describe.runIf(ompQualifyBinary)("real OMP background continuation", () => {
             );
             let reportsSettlement = false;
             const adapter = yield* makeOmpAdapter({
-              target: ompTarget,
+              target: ompQualifyTarget,
               binaryPath: ompQualifyBinary!,
               providerInstanceId: instanceId,
               stateDir: NodePath.join(root, "state"),

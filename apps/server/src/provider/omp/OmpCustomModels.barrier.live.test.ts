@@ -16,10 +16,9 @@ import * as Stream from "effect/Stream";
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import * as OmpExecutableGate from "./OmpExecutableGate.ts";
 import { makeOmpCustomModelsClientFactory } from "./OmpCustomModels.ts";
-import { ompLiveInstance, ompQualifyBinary } from "./OmpLive.testFixtures.ts";
+import { ompLiveInstance, ompQualifyBinary, ompQualifyTarget } from "./OmpLive.testFixtures.ts";
 import { ompModelToServerModel } from "./OmpModel.ts";
 import { OMP_ISOLATED_ARGS } from "./OmpRpcProcess.ts";
-import { ompTarget } from "./OmpTarget.ts";
 
 /**
  * The second reviewer's live probes (R2-9, R2-10), against a real `omp`.
@@ -93,7 +92,7 @@ describe.runIf(binary)("real Oh My Pi custom-model refresh barrier", () => {
             yield* Queue.take(resolutionEvents);
           });
           const factory = yield* makeOmpCustomModelsClientFactory(
-            ompTarget,
+            ompQualifyTarget,
             {
               resolveCustomModels: () =>
                 Effect.gen(function* () {
@@ -106,7 +105,7 @@ describe.runIf(binary)("real Oh My Pi custom-model refresh barrier", () => {
             NodePath.join(root, "state"),
           );
           const launch = {
-            target: ompTarget,
+            target: ompQualifyTarget,
             command: binary!,
             cwd: root,
             env: liveEnvironment(root),
@@ -173,7 +172,7 @@ describe.runIf(binary)("real Oh My Pi custom-model refresh barrier", () => {
         Effect.gen(function* () {
           const root = makeRoot("r2-10");
           const factory = yield* makeOmpCustomModelsClientFactory(
-            ompTarget,
+            ompQualifyTarget,
             {
               resolveCustomModels: () => Effect.succeed([connection]),
               subscribeChanges: Effect.succeed(Stream.never),
@@ -182,7 +181,7 @@ describe.runIf(binary)("real Oh My Pi custom-model refresh barrier", () => {
             NodePath.join(root, "state"),
           );
           const client = yield* factory({
-            target: ompTarget,
+            target: ompQualifyTarget,
             command: binary!,
             cwd: root,
             env: liveEnvironment(root),

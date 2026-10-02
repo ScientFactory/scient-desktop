@@ -17,8 +17,7 @@ import type { ResolvedModelConnection } from "../../customModels.ts";
 import { makeOmpAdapter } from "../Layers/OmpAdapter.ts";
 import { makeOmpCustomModelsClientFactory } from "./OmpCustomModels.ts";
 import * as OmpExecutableGate from "./OmpExecutableGate.ts";
-import { ompLiveInstance, ompQualifyBinary } from "./OmpLive.testFixtures.ts";
-import { ompTarget } from "./OmpTarget.ts";
+import { ompLiveInstance, ompQualifyBinary, ompQualifyTarget } from "./OmpLive.testFixtures.ts";
 
 /** Real RPC and native tools; only the model is a loopback stub. */
 describe.runIf(ompQualifyBinary)("real Oh My Pi fork history", () => {
@@ -183,7 +182,7 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi fork history", () => {
           };
           const stateDir = NodePath.join(root, "state");
           const factory = yield* makeOmpCustomModelsClientFactory(
-            ompTarget,
+            ompQualifyTarget,
             {
               resolveCustomModels: () => Effect.succeed([connection]),
               subscribeChanges: Effect.succeed(Stream.never),
@@ -199,7 +198,7 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi fork history", () => {
           );
           NodeFS.writeFileSync(NodePath.join(attachmentsDir, "fork-image.png"), image);
           const adapter = yield* makeOmpAdapter({
-            target: ompTarget,
+            target: ompQualifyTarget,
             binaryPath: ompQualifyBinary!,
             providerInstanceId: instanceId,
             stateDir,
