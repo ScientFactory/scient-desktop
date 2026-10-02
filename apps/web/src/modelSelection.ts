@@ -92,6 +92,7 @@ export interface AppModelOption {
   /** Opaque provider-formatted cost label (e.g. Droid's `"0.5×"`); absent when unknown. */
   providerCostLabel?: string;
   isUnavailable?: boolean;
+  unavailableReason?: string;
 }
 
 function appendUnavailableDynamicModelSelection(
@@ -105,6 +106,7 @@ function appendUnavailableDynamicModelSelection(
   const slug = normalizeCustomModelSlug(selectedModel);
   if (!slug) return options;
   if (provider === "antigravity" && slug === ANTIGRAVITY_DEFAULT_MODEL) return options;
+  if (rawModels.some((model) => model.slug === slug && model.unavailableReason)) return options;
 
   // A model that exists in the raw catalog can be absent from `options`
   // because the user hid it. Keep that preference authoritative.
@@ -128,6 +130,7 @@ export function toAppModelOption(model: ServerProvider["models"][number]): AppMo
   if (model.isDefault) option.isDefault = true;
   if (model.isLegacy) option.isLegacy = true;
   if (model.providerCostLabel) option.providerCostLabel = model.providerCostLabel;
+  if (model.unavailableReason) option.unavailableReason = model.unavailableReason;
   return option;
 }
 
@@ -194,7 +197,7 @@ function getAppModelOptions(
   // only built-ins are taken from the snapshot; custom rows are rebuilt from
   // settings below.
   const options: AppModelOption[] = rawModels
-    .filter((model) => !model.isCustom)
+    .filter((model) => !model.isCustom && !model.unavailableReason)
     .map(toAppModelOption);
   const seen = new Set(options.map((option) => option.slug));
   const builtInModelSlugs = new Set(
@@ -210,6 +213,7 @@ function getAppModelOptions(
   const defaultInstanceId = defaultInstanceIdForDriver(provider);
   const customModels = readInstanceCustomModels(settings, defaultInstanceId, provider);
   for (const entry of normalizeCustomModelEntries(customModels, builtInModelSlugs)) {
+    if (rawModels.some((model) => model.slug === entry.slug && model.unavailableReason)) continue;
     if (seen.has(entry.slug)) {
       continue;
     }
@@ -247,7 +251,7 @@ export function getAppModelOptionsForInstance(
   selectedModel?: string | null,
 ): AppModelOption[] {
   const options: AppModelOption[] = entry.models
-    .filter((model) => !model.isCustom)
+    .filter((model) => !model.isCustom && !model.unavailableReason)
     .map(toAppModelOption);
   const seen = new Set(options.map((option) => option.slug));
   const builtInModelSlugs = new Set(
@@ -258,6 +262,8 @@ export function getAppModelOptionsForInstance(
 
   const customModels = readInstanceCustomModels(settings, entry.instanceId, entry.driverKind);
   for (const custom of normalizeCustomModelEntries(customModels, builtInModelSlugs)) {
+    if (entry.models.some((model) => model.slug === custom.slug && model.unavailableReason))
+      continue;
     if (seen.has(custom.slug)) {
       continue;
     }
@@ -426,7 +432,7 @@ export function resolveAppModelSelectionState(
         supportedProviders,
         selectedModel,
       ) ??
-      entry.models[0]?.slug ??
+      entry.models.find((model) => !model.unavailableReason)?.slug ??
       // Pi/OMP automatic markers are resolved from a discovered catalog. Do
       // not render one as a selectable native model before discovery succeeds.
       (entry.driverKind === "pi" || entry.driverKind === "omp"

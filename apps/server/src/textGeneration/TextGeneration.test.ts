@@ -271,6 +271,21 @@ describe("TextGeneration.make", () => {
       ],
       ["no models", { models: [] }],
       [
+        "only known unavailable models",
+        {
+          models: [
+            {
+              slug: "local/blocked",
+              name: "Blocked",
+              isCustom: false,
+              isDefault: true,
+              unavailableReason: "Account access required.",
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+      [
         "only invalid native models",
         {
           models: [

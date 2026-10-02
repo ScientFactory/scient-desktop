@@ -22,6 +22,7 @@ export interface SelectableModelOption {
   slug: string;
   name: string;
   aliases?: ReadonlyArray<string> | undefined;
+  unavailableReason?: string | undefined;
 }
 
 export function createModelCapabilities(input: {
@@ -375,7 +376,7 @@ export function resolveAutomaticModel(
     }
   >,
 ): string | undefined {
-  const available = models.filter((model) => !model.isLegacy);
+  const available = models.filter((model) => !model.isLegacy && !model.unavailableReason);
   const builtIns = available.filter((model) => !model.isCustom);
   const preferences =
     driver === "codex"
@@ -460,6 +461,7 @@ export function resolveSelectableModel(
   value: string | null | undefined,
   options: ReadonlyArray<SelectableModelOption>,
 ): string | null {
+  options = options.filter((option) => !option.unavailableReason);
   if (typeof value !== "string") {
     return null;
   }

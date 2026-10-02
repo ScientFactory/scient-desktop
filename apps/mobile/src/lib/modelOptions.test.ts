@@ -16,6 +16,36 @@ import {
 } from "./modelOptions";
 
 describe("mobile model options", () => {
+  it("does not reinsert a known unavailable saved model into the mobile picker", () => {
+    const config = {
+      providers: [
+        {
+          instanceId: "omp",
+          driver: "omp",
+          enabled: true,
+          installed: true,
+          auth: { status: "unknown" },
+          models: [
+            {
+              slug: "native/blocked",
+              name: "Blocked",
+              unavailableReason: "Account access required.",
+              isDefault: true,
+              isCustom: false,
+              capabilities: null,
+            },
+            { slug: "native/unknown", name: "Unverified", isCustom: false, capabilities: null },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+    const saved = { instanceId: ProviderInstanceId.make("omp"), model: "native/blocked" };
+    expect(buildModelOptions(config, saved).map((option) => option.selection.model)).toEqual([
+      "native/unknown",
+    ]);
+    expect(isModelSelectionUnavailable(config, saved)).toBe(true);
+    expect(resolveDefaultableModelSelection(config, saved)).toBeNull();
+  });
   it.each(["droid", "pi"])(
     "consumes %s discovered connections without legacy model settings",
     (driver) => {

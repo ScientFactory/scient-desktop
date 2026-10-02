@@ -74,6 +74,39 @@ function settingsWithProviderInstances(): UnifiedSettings {
 }
 
 describe("instance-scoped model selection", () => {
+  it.each(["pi", "omp"])(
+    "excludes known unavailable %s models even when selected or configured as custom",
+    (kind) => {
+      const driver = ProviderDriverKind.make(kind);
+      const entry: ServerProvider = {
+        ...provider({ provider: driver, instanceId: kind }),
+        models: [
+          {
+            slug: "native/blocked",
+            name: "Blocked",
+            isCustom: false,
+            isDefault: true,
+            unavailableReason: "Account access required.",
+            capabilities: null,
+          },
+          { slug: "native/unknown", name: "Unverified", isCustom: false, capabilities: null },
+        ],
+      };
+      const settings = {
+        ...DEFAULT_UNIFIED_SETTINGS,
+        providerInstances: {
+          [entry.instanceId]: { driver, config: { customModels: ["native/blocked"] } },
+        },
+      };
+      const projected = deriveProviderInstanceEntries([entry])[0]!;
+      expect(
+        getAppModelOptionsForInstance(settings, projected, "native/blocked").map(
+          (option) => option.slug,
+        ),
+      ).toEqual(["native/unknown"]);
+      expect(getDefaultProviderInstanceModel([entry], entry.instanceId)).toBe("native/unknown");
+    },
+  );
   it.each(["droid", "pi", "omp"] as const)(
     "keeps %s discovered BYOK models selectable, scoped, hideable, and removable",
     (kind) => {

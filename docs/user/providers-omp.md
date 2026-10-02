@@ -49,6 +49,17 @@ see [Scient tools and skills](#scient-tools-and-skills).
 
 ## Custom models
 
+Models known to be unavailable stay out of model selectors and automatic selection. They remain
+on this instance's provider page with an explanation and their picker switch off. During the server
+session, Scient remembers previously discovered models that disappear from a successful catalog
+refresh. Refresh after fixing the account or model configuration to make them selectable again.
+Changing the instance configuration or runtime version clears that remembered catalog.
+
+Native discovery checks configuration and credentials; it does not prove subscription entitlement,
+successful inference, or remaining quota. Models whose access is unverified remain selectable.
+Scient does not send paid requests to every model to check access, or infer a denial from a failed
+catalog refresh.
+
 Scient's shared **Custom models** settings can attach an OpenAI-compatible, OpenAI Responses, or
 Anthropic Messages connection to an Oh My Pi instance. For each attached model, Scient starts the
 agent with a small generated OMP extension that registers the model through OMP's provider API.

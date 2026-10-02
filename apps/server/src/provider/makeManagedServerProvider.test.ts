@@ -151,6 +151,38 @@ const enrichedSnapshotSecond: ServerProvider = {
 
 describe("makeManagedServerProvider", () => {
   it.effect(
+    "retains missing native models after refresh but clears old account state when settings change",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const settings = yield* Ref.make({ account: "personal" });
+          const probe = yield* Ref.make<ServerProvider>({
+            ...refreshedSnapshot,
+            driver: ProviderDriverKind.make("omp"),
+            instanceId: ProviderInstanceId.make("omp"),
+            models: [
+              { slug: "anthropic/claude", name: "Claude", isCustom: false, capabilities: null },
+            ],
+          });
+          const provider = yield* makeManagedServerProvider({
+            resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+            getSettings: Ref.get(settings),
+            streamSettings: Stream.empty,
+            haveSettingsChanged: (previous, next) => previous.account !== next.account,
+            initialSnapshot: () => Ref.get(probe),
+            checkProvider: Ref.get(probe),
+            refreshOnInterval: false,
+          });
+          yield* provider.refresh;
+          yield* Ref.update(probe, (snapshot) => ({ ...snapshot, models: [], status: "warning" }));
+          const missing = yield* provider.refresh;
+          assert.isDefined(missing.models[0]?.unavailableReason);
+          yield* Ref.set(settings, { account: "work" });
+          assert.deepEqual((yield* provider.refresh).models, []);
+        }),
+      ).pipe(Effect.provide(NeverRunTestLayer)),
+  );
+  it.effect(
     "runs the initial provider check in the background and streams the refreshed snapshot",
     () =>
       Effect.scoped(

@@ -84,6 +84,9 @@ export function isModelSelectionUnavailable(
   );
   const driver =
     provider?.driver ?? config.settings?.providerInstances[selection.instanceId]?.driver;
+  if (provider?.models.some((model) => model.slug === selection.model && model.unavailableReason)) {
+    return true;
+  }
   return (
     driver === "antigravity" &&
     (!provider ||
@@ -138,7 +141,10 @@ export function resolveDefaultableModelSelection(
   }
   const provider = config.providers.find((candidate) => candidate.instanceId === usable.instanceId);
   const model = provider?.models.find((candidate) => candidate.slug === usable.model);
-  return provider?.driver !== "antigravity" && model?.isLegacy === true ? null : usable;
+  return model?.unavailableReason ||
+    (provider?.driver !== "antigravity" && model?.isLegacy === true)
+    ? null
+    : usable;
 }
 
 export function resolveNewTaskModelSelection(input: {
@@ -167,6 +173,7 @@ export function buildModelOptions(
     if (
       !provider.enabled ||
       !provider.installed ||
+      provider.status === "error" ||
       provider.auth.status === "unauthenticated" ||
       (provider.driver === "antigravity" && provider.availability === "unavailable")
     ) {
@@ -177,6 +184,7 @@ export function buildModelOptions(
     const reasoningGroups = getAntigravityModelGroups(provider.driver, provider.models);
     const automaticModel = resolveAutomaticModel(provider.driver, provider.models);
     for (const model of provider.models) {
+      if (model.unavailableReason) continue;
       const reasoningGroup = reasoningGroups.find((group) =>
         group.models.some(({ slug }) => slug === model.slug),
       );
@@ -223,6 +231,7 @@ export function buildModelOptions(
       const model = provider?.models.find(
         (candidate) => candidate.slug === fallbackModelSelection.model,
       );
+      if (model?.unavailableReason) return [...options.values()];
       const providerDriver =
         provider?.driver ?? instanceConfig?.driver ?? fallbackModelSelection.instanceId;
       const providerLabel = providerDisplayLabel({

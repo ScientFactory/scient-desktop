@@ -51,6 +51,14 @@ section's header to collapse or expand it; Scient remembers the choice on this d
 holding the selected model opens with the picker, and searching lists every match.
 Connection setup and testing are available in desktop and web, not yet in the mobile app.
 
+Models known to be unavailable stay out of model selectors and automatic selection. They remain
+on this instance's provider page with an explanation and their picker switch off. During the server
+session, Scient remembers previously discovered models that disappear from a successful catalog
+refresh. Refresh after fixing the account or model configuration to make them selectable again.
+Changing the instance configuration or runtime version clears that remembered catalog. A failed
+catalog refresh does not establish a model-access denial. Models with unverified account access
+remain selectable; Scient does not send paid requests to every model to check access.
+
 You can still configure models and API keys, or complete Pi's supported `/login` flow, in Pi itself
 on the execution machine. Refresh the provider catalog afterward. There is no universal **Sign in to Pi** or
 **Sign out of Pi** action: individual model providers can use unrelated credentials. A model appearing
