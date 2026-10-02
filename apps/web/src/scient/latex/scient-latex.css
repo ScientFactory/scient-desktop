@@ -3590,7 +3590,8 @@ body:has(.scient-latex-mathfield math-field:focus-within)
    2. the page arrows: 752px, Split 844px.
    3. the sidebar button: 708px, Split 800px.
    4. build messages and Rebuild keep only their icons: 670px, Split 762px.
-   5. search keeps only its icon and opens over its neighbours when clicked: 573px, Split 665px.
+   5. search gets shorter and drops its count and arrows (Enter still moves): 573px, Split 665px.
+   5b. search keeps only its icon; clicking it opens the field in place, in its usual look: 470px.
    6. the separators: 500px, Split 500px.
    7. the percentage: 460px, Split 460px.
    8. the page number: 410px, Split 410px.
@@ -3693,130 +3694,6 @@ body:has(.scient-latex-mathfield math-field:focus-within)
     justify-content: center;
   }
 }
-@container scient-latex-surface (max-width: 573px) {
-  .scient-latex-surface:not([data-latex-layout="split"])
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search {
-    min-width: 28px;
-    flex: 0 0 28px;
-  }
-  .scient-latex-surface:not([data-latex-layout="split"])
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search-box {
-    position: absolute;
-    z-index: 30;
-    top: 0;
-    left: 0;
-    width: 28px;
-    height: 26px;
-  }
-  .scient-latex-surface:not([data-latex-layout="split"])
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search
-    input,
-  .scient-latex-surface:not([data-latex-layout="split"])
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search-count,
-  .scient-latex-surface:not([data-latex-layout="split"])
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search
-    button {
-    display: none;
-  }
-  .scient-latex-surface:not([data-latex-layout="split"])
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search[data-searching]
-    .scient-reader-search-box {
-    background: color-mix(in srgb, var(--accent) 80%, transparent);
-  }
-  .scient-latex-surface:not([data-latex-layout="split"])
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search:focus-within
-    .scient-reader-search-box {
-    width: 230px;
-    border: 1px solid var(--border);
-    background: var(--popover);
-    box-shadow: 0 6px 18px -8px rgb(0 0 0 / 0.35);
-  }
-  .scient-latex-surface:not([data-latex-layout="split"])
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search:focus-within
-    input,
-  .scient-latex-surface:not([data-latex-layout="split"])
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search:focus-within
-    button {
-    display: inline-flex;
-  }
-  .scient-latex-surface:not([data-latex-layout="split"])
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search:focus-within
-    .scient-reader-search-count {
-    display: inline;
-  }
-}
-@container scient-latex-surface (max-width: 665px) {
-  .scient-latex-surface[data-latex-layout="split"]
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search {
-    min-width: 28px;
-    flex: 0 0 28px;
-  }
-  .scient-latex-surface[data-latex-layout="split"]
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search-box {
-    position: absolute;
-    z-index: 30;
-    top: 0;
-    left: 0;
-    width: 28px;
-    height: 26px;
-  }
-  .scient-latex-surface[data-latex-layout="split"]
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search
-    input,
-  .scient-latex-surface[data-latex-layout="split"]
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search-count,
-  .scient-latex-surface[data-latex-layout="split"]
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search
-    button {
-    display: none;
-  }
-  .scient-latex-surface[data-latex-layout="split"]
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search[data-searching]
-    .scient-reader-search-box {
-    background: color-mix(in srgb, var(--accent) 80%, transparent);
-  }
-  .scient-latex-surface[data-latex-layout="split"]
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search:focus-within
-    .scient-reader-search-box {
-    width: 230px;
-    border: 1px solid var(--border);
-    background: var(--popover);
-    box-shadow: 0 6px 18px -8px rgb(0 0 0 / 0.35);
-  }
-  .scient-latex-surface[data-latex-layout="split"]
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search:focus-within
-    input,
-  .scient-latex-surface[data-latex-layout="split"]
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search:focus-within
-    button {
-    display: inline-flex;
-  }
-  .scient-latex-surface[data-latex-layout="split"]
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search:focus-within
-    .scient-reader-search-count {
-    display: inline;
-  }
-}
 @container scient-latex-surface (max-width: 500px) {
   .scient-latex-surface .scient-pdf-toolbar-hosted .scient-pdf-toolbar-separator {
     display: none;
@@ -3832,21 +3709,84 @@ body:has(.scient-latex-mathfield math-field:focus-within)
     display: none;
   }
 }
-
-/* Step 5: the field collapses rather than disappearing, so the icon can still
-   take the click and the caret, and then open. */
 @container scient-latex-surface (max-width: 573px) {
   .scient-latex-surface:not([data-latex-layout="split"])
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search {
+    min-width: 84px;
+  }
+  .scient-latex-surface:not([data-latex-layout="split"])
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search-count,
+  .scient-latex-surface:not([data-latex-layout="split"])
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search
+    button {
+    display: none;
+  }
+}
+@container scient-latex-surface (max-width: 665px) {
+  .scient-latex-surface[data-latex-layout="split"]
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search {
+    min-width: 84px;
+  }
+  .scient-latex-surface[data-latex-layout="split"]
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search-count,
+  .scient-latex-surface[data-latex-layout="split"]
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search
+    button {
+    display: none;
+  }
+}
+@container scient-latex-surface (max-width: 470px) {
+  .scient-latex-surface:not([data-latex-layout="split"])
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search {
+    min-width: 28px;
+    flex: 0 0 28px;
+  }
+  .scient-latex-surface:not([data-latex-layout="split"])
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search
+    .scient-reader-search-box {
+    position: absolute;
+    z-index: 30;
+    top: 0;
+    left: 0;
+    width: 28px;
+    height: 26px;
+  }
+  /* The field collapses rather than disappearing, so it can take the caret. */
+  .scient-latex-surface
     .scient-pdf-toolbar-hosted
     .scient-reader-search
     .scient-reader-search-box
     > input {
-    display: block;
     width: 0;
     flex: 0 0 0;
     opacity: 0;
   }
-  .scient-latex-surface:not([data-latex-layout="split"])
+  .scient-latex-surface
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search[data-searching]
+    .scient-reader-search-box,
+  .scient-latex-surface
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search:focus-within
+    .scient-reader-search-box {
+    /* The field's own look, made opaque so nothing shows through. */
+    background: color-mix(in srgb, var(--accent) 80%, var(--background));
+  }
+  .scient-latex-surface
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search:focus-within
+    .scient-reader-search-box {
+    width: 150px;
+  }
+  .scient-latex-surface
     .scient-pdf-toolbar-hosted
     .scient-reader-search:focus-within
     .scient-reader-search-box
@@ -3855,19 +3795,52 @@ body:has(.scient-latex-mathfield math-field:focus-within)
     flex: 1;
     opacity: 1;
   }
-}
-@container scient-latex-surface (max-width: 665px) {
+
   .scient-latex-surface[data-latex-layout="split"]
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search {
+    min-width: 28px;
+    flex: 0 0 28px;
+  }
+  .scient-latex-surface[data-latex-layout="split"]
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search
+    .scient-reader-search-box {
+    position: absolute;
+    z-index: 30;
+    top: 0;
+    left: 0;
+    width: 28px;
+    height: 26px;
+  }
+  /* The field collapses rather than disappearing, so it can take the caret. */
+  .scient-latex-surface
     .scient-pdf-toolbar-hosted
     .scient-reader-search
     .scient-reader-search-box
     > input {
-    display: block;
     width: 0;
     flex: 0 0 0;
     opacity: 0;
   }
-  .scient-latex-surface[data-latex-layout="split"]
+  .scient-latex-surface
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search[data-searching]
+    .scient-reader-search-box,
+  .scient-latex-surface
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search:focus-within
+    .scient-reader-search-box {
+    /* The field's own look, made opaque so nothing shows through. */
+    background: color-mix(in srgb, var(--accent) 80%, var(--background));
+  }
+  .scient-latex-surface
+    .scient-pdf-toolbar-hosted
+    .scient-reader-search:focus-within
+    .scient-reader-search-box {
+    width: 150px;
+  }
+  .scient-latex-surface
     .scient-pdf-toolbar-hosted
     .scient-reader-search:focus-within
     .scient-reader-search-box
