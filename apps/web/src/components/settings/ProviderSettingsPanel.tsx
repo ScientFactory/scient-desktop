@@ -872,7 +872,11 @@ export function EnvironmentProviderSettings({
     const driver = rows.find((row) => row.instanceId === instanceId)?.driver;
     updateClientSettings({
       providerModelPreferences:
-        hiddenModels.length === 0 && modelOrder.length === 0 && driver !== "pi" && driver !== "omp"
+        hiddenModels.length === 0 &&
+        modelOrder.length === 0 &&
+        driver !== "pi" &&
+        driver !== "omp" &&
+        driver !== "scient"
           ? rest
           : {
               ...rest,

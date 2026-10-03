@@ -11,7 +11,7 @@ You can use an existing provider installation or, when available, let Scient
 install a qualified private copy on the machine where the project runs.
 
 Thread titles and other generated text use **Settings > Text generation**; source control can
-choose a separate writer. If Pi or Oh My Pi is the automatic fallback provider, Scient uses that
+choose a separate writer. If Scient Agent, Pi, or Oh My Pi is the automatic fallback provider, Scient uses that
 instance's discovered default model, or its first available non-legacy built-in model (a custom
 model when only custom models remain). An explicit model choice takes priority. If discovery has
 not supplied a usable model, choose one in Settings or

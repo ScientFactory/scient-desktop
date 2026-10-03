@@ -216,7 +216,7 @@ describe("EnvironmentProviderSettings routing", () => {
     commands.updateProvider.mockReset().mockResolvedValue({ _tag: "Success" });
   });
 
-  it.each(["pi", "omp"])(
+  it.each(["pi", "omp", "scient"])(
     "shows %s curated defaults and persists enabling every model",
     (driver) => {
       const instanceId = ProviderInstanceId.make(driver);

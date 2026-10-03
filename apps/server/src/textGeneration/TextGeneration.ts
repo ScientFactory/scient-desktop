@@ -5,6 +5,7 @@ import type { ChatAttachment, ModelSelection } from "@t3tools/contracts";
 import {
   OMP_DEFAULT_TEXT_GENERATION_MODEL,
   PI_DEFAULT_TEXT_GENERATION_MODEL,
+  SCIENT_DEFAULT_TEXT_GENERATION_MODEL,
   TextGenerationError,
 } from "@t3tools/contracts";
 import { resolveAutomaticModel } from "@t3tools/shared/model";
@@ -139,7 +140,8 @@ const resolveGeneration = Effect.fn("TextGeneration.resolveGeneration")(function
   }
   const automatic =
     (instance.driverKind === "pi" && selection.model === PI_DEFAULT_TEXT_GENERATION_MODEL) ||
-    (instance.driverKind === "omp" && selection.model === OMP_DEFAULT_TEXT_GENERATION_MODEL);
+    (instance.driverKind === "omp" && selection.model === OMP_DEFAULT_TEXT_GENERATION_MODEL) ||
+    (instance.driverKind === "scient" && selection.model === SCIENT_DEFAULT_TEXT_GENERATION_MODEL);
   if (!automatic) return { textGeneration: instance.textGeneration, modelSelection: selection };
 
   // Read the catalog already owned by discovery. Metadata generation must not
