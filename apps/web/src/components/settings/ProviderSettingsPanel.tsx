@@ -19,6 +19,7 @@ import {
   resolveProviderInstanceEnabled,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import { resolveProviderModelPreferences } from "@t3tools/shared/model";
 import {
   getBackgroundActivityPresetSettings,
   resolveServerBackgroundActivitySettings,
@@ -60,6 +61,7 @@ import {
   isProviderUpdateActive,
   type ProviderSettingsUpdateCandidate,
 } from "../ProviderUpdateLaunchNotification.logic";
+import { ProviderUpdatesAction } from "../ProviderUpdatesAction";
 import { Button } from "../ui/button";
 import {
   Empty,
@@ -867,9 +869,14 @@ export function EnvironmentProviderSettings({
     const hiddenModels = [...new Set(next.hiddenModels.filter((slug) => slug.trim().length > 0))];
     const modelOrder = [...new Set(next.modelOrder.filter((slug) => slug.trim().length > 0))];
     const rest = withoutProviderInstanceKey(settings.providerModelPreferences, instanceId);
+    const driver = rows.find((row) => row.instanceId === instanceId)?.driver;
     updateClientSettings({
       providerModelPreferences:
-        hiddenModels.length === 0 && modelOrder.length === 0
+        hiddenModels.length === 0 &&
+        modelOrder.length === 0 &&
+        driver !== "pi" &&
+        driver !== "omp" &&
+        driver !== "scient"
           ? rest
           : {
               ...rest,
@@ -930,10 +937,11 @@ export function EnvironmentProviderSettings({
       (liveProvider !== undefined && isProviderUpdateActive(liveProvider));
     const showInlineUpdateButton = updateCandidate !== undefined;
     const canRunInlineUpdate = updateCandidate !== undefined && !isInstanceUpdateRunning;
-    const modelPreferences = settings.providerModelPreferences?.[row.instanceId] ?? {
-      hiddenModels: [],
-      modelOrder: [],
-    };
+    const modelPreferences = resolveProviderModelPreferences(
+      row.driver,
+      liveProvider?.models ?? [],
+      settings.providerModelPreferences?.[row.instanceId],
+    );
     const favoriteModels = Arr.filterMap(settings.favorites ?? [], (favorite) =>
       favorite.provider === row.instanceId ? Result.succeed(favorite.model) : Result.failVoid,
     );
@@ -997,6 +1005,7 @@ export function EnvironmentProviderSettings({
           updateProviderModelPreferences(row.instanceId, {
             ...modelPreferences,
             hiddenModels,
+            modelOrder: settings.providerModelPreferences?.[row.instanceId]?.modelOrder ?? [],
           })
         }
         onFavoriteModelsChange={(next) => updateProviderFavoriteModels(row.instanceId, next)}
@@ -1038,6 +1047,7 @@ export function EnvironmentProviderSettings({
         variant="plain"
         headerAction={
           <div className="flex min-w-0 items-center gap-2">
+            <ProviderUpdatesAction />
             {readOnly ? (
               <span className="min-w-0 truncate text-xs text-muted-foreground">
                 <ProviderLastChecked lastCheckedAt={lastCheckedAt} />

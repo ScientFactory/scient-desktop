@@ -4,6 +4,7 @@ import { DRIVER_OPTIONS } from "./components/settings/providerDriverMeta";
 import { PROVIDER_OPTIONS } from "./session-logic";
 
 const expectedOrder = [
+  "scient",
   "codex",
   "claudeAgent",
   "antigravity",

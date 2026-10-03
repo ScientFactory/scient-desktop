@@ -9,6 +9,7 @@ import { makeOmpRpcClient } from "effect-omp-rpc/client";
 import {
   OmpRpcCommandError,
   OmpRpcFrameTooLargeError,
+  OmpRpcProcessExitedError,
   type OmpRpcError,
 } from "effect-omp-rpc/errors";
 import type { OmpRpcResponse } from "effect-omp-rpc/schema";
@@ -16,6 +17,7 @@ import type { OmpRpcResponse } from "effect-omp-rpc/schema";
 import { makeOmpScriptedWire } from "../omp/OmpCaptureReplay.testFixtures.ts";
 import { makeOmpRedaction, type OmpRpcProcess } from "../omp/OmpRpcProcess.ts";
 import { checkOmpProviderStatus } from "./OmpProvider.ts";
+import { ompTarget } from "../omp/OmpTarget.ts";
 
 const response = (command: string, data: unknown = {}): OmpRpcResponse => ({
   id: "status-request",
@@ -34,6 +36,7 @@ const settings = Schema.decodeSync(OmpSettings)({
 
 const process = (overrides: Partial<OmpRpcProcess> = {}): OmpRpcProcess => ({
   version: "18.2.8",
+  runtimeVersion: "18.2.8",
   ready: Effect.succeed({
     type: "ready" as const,
     protocolVersion: 1,
@@ -94,11 +97,15 @@ describe("Oh My Pi provider status", () => {
   it.effect("does not probe a disabled provider", () =>
     Effect.gen(function* () {
       let probes = 0;
-      const result = yield* checkOmpProviderStatus({ ...settings, enabled: false }, {}, () =>
-        Effect.sync(() => {
-          probes += 1;
-          return process();
-        }),
+      const result = yield* checkOmpProviderStatus(
+        ompTarget,
+        { ...settings, enabled: false },
+        {},
+        () =>
+          Effect.sync(() => {
+            probes += 1;
+            return process();
+          }),
       );
       expect(probes).toBe(0);
       expect(result.status).toBe("disabled");
@@ -107,7 +114,9 @@ describe("Oh My Pi provider status", () => {
 
   it.effect("reports models while hiding mutating and unsupported commands", () =>
     Effect.gen(function* () {
-      const result = yield* checkOmpProviderStatus(settings, {}, () => Effect.succeed(process()));
+      const result = yield* checkOmpProviderStatus(ompTarget, settings, {}, () =>
+        Effect.succeed(process()),
+      );
       expect(result.status).toBe("ready");
       expect(result.auth).toEqual({ status: "unknown", required: false });
       expect(result.message).toBeUndefined();
@@ -121,7 +130,7 @@ describe("Oh My Pi provider status", () => {
       `handles native context capacity ${String(contextWindow)} through the real RPC client`,
       () =>
         Effect.gen(function* () {
-          const result = yield* checkOmpProviderStatus(settings, {}, () =>
+          const result = yield* checkOmpProviderStatus(ompTarget, settings, {}, () =>
             Effect.gen(function* () {
               const wire = yield* makeOmpScriptedWire((command) =>
                 command.type === "get_available_models"
@@ -153,6 +162,7 @@ describe("Oh My Pi provider status", () => {
               return {
                 ...client,
                 version: "18.2.8",
+                runtimeVersion: "18.2.8",
                 shutdown: Effect.succeed({ code: 0, forced: false, stderrTail: "" }),
                 redaction: makeOmpRedaction(undefined, []),
               };
@@ -176,7 +186,7 @@ describe("Oh My Pi provider status", () => {
 
   it.effect("labels custom-model providers with their connection name", () =>
     Effect.gen(function* () {
-      const result = yield* checkOmpProviderStatus(settings, {}, () =>
+      const result = yield* checkOmpProviderStatus(ompTarget, settings, {}, () =>
         Effect.succeed(
           process({
             getModels: () =>
@@ -200,7 +210,7 @@ describe("Oh My Pi provider status", () => {
 
   it.effect("preserves custom-model readiness reported by the process wrapper", () =>
     Effect.gen(function* () {
-      const result = yield* checkOmpProviderStatus(settings, {}, () =>
+      const result = yield* checkOmpProviderStatus(ompTarget, settings, {}, () =>
         Effect.succeed(
           process({
             assessModelConnections: () => [
@@ -236,9 +246,56 @@ describe("Oh My Pi provider discovery errors", () => {
   const failingModels = (error: OmpRpcError) => () =>
     Effect.succeed(process({ getModels: () => Effect.fail(error) }));
 
+  it.effect("says how to add a model when the agent exits for lack of one", () =>
+    Effect.gen(function* () {
+      const exited = new OmpRpcProcessExitedError({ detail: "RPC stdout ended." });
+      const result = yield* checkOmpProviderStatus(ompTarget, settings, {}, () =>
+        Effect.succeed(
+          process({
+            getModels: () => Effect.fail(exited),
+            getCommands: () => Effect.fail(exited),
+            shutdown: Effect.succeed({
+              code: 1,
+              forced: false,
+              stderrTail: "No models available. Use /login or set an API key environment variable.",
+            }),
+          }),
+        ),
+      );
+      expect(result.status).toBe("warning");
+      expect(result.installed).toBe(true);
+      expect(result.version).toBe("18.2.8");
+      expect(result.message).toBe(
+        "Oh My Pi has no models yet. Add a custom model, or sign in to a model provider in Oh My Pi.",
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps reporting any other exit as a failure", () =>
+    Effect.gen(function* () {
+      const exited = new OmpRpcProcessExitedError({ detail: "RPC stdout ended." });
+      const result = yield* checkOmpProviderStatus(ompTarget, settings, {}, () =>
+        Effect.succeed(
+          process({
+            getModels: () => Effect.fail(exited),
+            getCommands: () => Effect.fail(exited),
+            shutdown: Effect.succeed({
+              code: 1,
+              forced: false,
+              stderrTail: "panic: out of memory",
+            }),
+          }),
+        ),
+      );
+      expect(result.status).toBe("error");
+      expect(result.message).toBe("Oh My Pi exited during the check: RPC stdout ended.");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("names a command that timed out", () =>
     Effect.gen(function* () {
       const result = yield* checkOmpProviderStatus(
+        ompTarget,
         settings,
         {},
         failingModels(
@@ -258,6 +315,7 @@ describe("Oh My Pi provider discovery errors", () => {
   it.effect("names an outbound frame over the agent's limit", () =>
     Effect.gen(function* () {
       const result = yield* checkOmpProviderStatus(
+        ompTarget,
         settings,
         {},
         failingModels(
@@ -274,7 +332,7 @@ describe("Oh My Pi provider discovery errors", () => {
 
   it.effect("names a protocol violation read through the real client", () =>
     Effect.gen(function* () {
-      const result = yield* checkOmpProviderStatus(settings, {}, () =>
+      const result = yield* checkOmpProviderStatus(ompTarget, settings, {}, () =>
         Effect.gen(function* () {
           // A second ready frame in place of the model list is fatal.
           const wire = yield* makeOmpScriptedWire((command) =>
@@ -292,6 +350,7 @@ describe("Oh My Pi provider discovery errors", () => {
           return {
             ...client,
             version: "18.3.1",
+            runtimeVersion: "18.3.1",
             shutdown: Effect.succeed({ code: 0, forced: false, stderrTail: "" }),
             redaction: makeOmpRedaction(undefined, []),
           };

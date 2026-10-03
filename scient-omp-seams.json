@@ -1,14 +1,23 @@
 {
   "schemaVersion": 2,
   "owner": "ScientFactory",
-  "purpose": "External Oh My Pi provider. The wire package has no Scient orchestration types. Desktop files own process, session cursor, and current turn mapping. Shared integration points are mounts; Scient-owned provider documentation and release copy are classified here when they name Oh My Pi.",
-  "ownedRoots": ["packages/effect-omp-rpc", "apps/server/src/provider/omp"],
+  "purpose": "External Oh My Pi provider, and Scient Agent, Scient's own fork of it, which runs through the same modules as a separate product. The wire package has no Scient orchestration types. Desktop files own process, session cursor, and current turn mapping. Shared integration points are mounts; Scient-owned provider documentation and release copy are classified here when they name Oh My Pi.",
+  "ownedRoots": [
+    "packages/effect-omp-rpc",
+    "apps/server/src/provider/omp",
+    "apps/server/src/provider/scient"
+  ],
   "ownedFiles": [
     "apps/server/scripts/qualify-omp-rpc.ts",
+    "apps/server/scripts/qualifyScientAgentManagedRuntime.ts",
     "apps/server/src/provider/Drivers/OmpDriver.ts",
+    "apps/server/src/provider/Drivers/ScientAgentDriver.ts",
     "apps/server/src/provider/Layers/OmpAdapter.ts",
     "apps/server/src/provider/Layers/OmpProvider.ts",
     "apps/server/src/scient/providerLifecycle/OmpManagedRuntimeActions.ts",
+    "apps/server/src/scient/providerLifecycle/QualifiedRpcManagedRuntime.ts",
+    "apps/server/src/scient/providerLifecycle/ScientAgentConnectionActions.ts",
+    "apps/server/src/scient/providerLifecycle/ScientAgentManagedRuntimeActions.ts",
     "apps/server/src/textGeneration/OmpTextGeneration.ts",
     "apps/web/src/scient/modelPicker/modelSourceSections.browser.test.tsx",
     "apps/web/src/scient/modelPicker/modelSourceSections.test.ts",
@@ -16,6 +25,7 @@
     "apps/web/src/scient/providerConnection/OmpInlineSetup.tsx",
     "apps/web/src/scient/releaseNotes/catalog.ts",
     "docs/user/providers-omp.md",
+    "docs/user/providers-scient-agent.md",
     "packages/scient-provider-runtime/src/managedOmpRuntime.ts",
     "packages/scient-provider-runtime/src/ompManifest.ts"
   ],
@@ -102,11 +112,41 @@
     },
     {
       "path": "scripts/qualify-managed-runtime-catalog.ts",
-      "anchor": "verifyOmpRpc",
+      "anchor": "if (provider === \"omp\") await verifyRpc",
       "purpose": "Publish an Oh My Pi release only after the server's RPC qualification passes."
     }
   ],
   "upstreamMounts": [
+    {
+      "path": "apps/server/src/provider/providerSnapshot.ts",
+      "anchor": "export function retainUnavailableAgentModels(",
+      "purpose": "Retain previously discovered Pi and Oh My Pi models as unavailable after successful catalog removal, scoped to each provider instance."
+    },
+    {
+      "path": "apps/web/src/components/settings/ProviderSettingsPanel.tsx",
+      "anchor": "const modelPreferences = resolveProviderModelPreferences(",
+      "purpose": "Keep unavailable and default-hidden Pi and Oh My Pi models on the provider page, using saved instance visibility preferences when present."
+    },
+    {
+      "path": "apps/web/src/composerDraftStore.ts",
+      "anchor": "[\"antigravity\", \"pi\", \"omp\"].includes(input.selectedProvider)",
+      "purpose": "Prevent Pi and Oh My Pi draft selection from inventing a static model or falling back across provider accounts."
+    },
+    {
+      "path": "packages/shared/src/model.ts",
+      "anchor": "export function getDefaultHiddenAgentModels(",
+      "purpose": "Share Pi and Oh My Pi native model curation defaults while preserving user visibility overrides and custom models."
+    },
+    {
+      "path": "apps/server/src/textGeneration/TextGeneration.ts",
+      "anchor": "OMP_DEFAULT_TEXT_GENERATION_MODEL",
+      "purpose": "Resolve automatic Oh My Pi metadata models from the selected instance's cached native catalog."
+    },
+    {
+      "path": "apps/web/src/modelSelection.ts",
+      "anchor": "entry.driverKind === \"omp\"",
+      "purpose": "Keep automatic Pi and Oh My Pi metadata markers out of the model picker until discovery supplies a model."
+    },
     {
       "path": "apps/mobile/src/components/ProviderIcon.tsx",
       "anchor": "props.provider === \"omp\"",

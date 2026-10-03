@@ -1224,8 +1224,10 @@ export function deriveEffectiveComposerModelState(input: {
           { preserveUnavailableSelection: preserveThreadModel },
         )
       : null) ??
-    // Antigravity has no static model or cross-account catalog fallback.
-    (input.selectedProvider === "antigravity" && input.selectedInstanceId ? "" : null) ??
+    // Native catalogs have no static model or cross-account fallback.
+    (["antigravity", "pi", "omp"].includes(input.selectedProvider) && input.selectedInstanceId
+      ? ""
+      : null) ??
     resolveAppModelSelection(
       input.selectedProvider,
       input.settings,
@@ -1259,7 +1261,7 @@ export function deriveEffectiveComposerModelState(input: {
         activeSelection.model,
         { preserveUnavailableSelection: true },
       ) ??
-      (input.selectedProvider === "antigravity" ? "" : null) ??
+      (["antigravity", "pi", "omp"].includes(input.selectedProvider) ? "" : null) ??
       resolveAppModelSelection(
         input.selectedProvider,
         input.settings,

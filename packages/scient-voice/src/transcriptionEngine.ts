@@ -58,6 +58,8 @@ export interface TranscriptionEngine {
 export interface LocalWhisperEngineOptions {
   readonly runtimeDir: string;
   readonly modelDir: string;
+  /** See `VoiceModelManagerOptions.sharedModelsDirectory`. */
+  readonly sharedModelDir?: string;
   readonly manifests: readonly VoiceModelDefinition[];
   readonly fetchImpl?: typeof fetch;
   readonly spawnImpl?: WhisperSpawn;
@@ -84,6 +86,7 @@ export function createLocalWhisperEngine(options: LocalWhisperEngineOptions): Tr
       new VoiceModelManager({
         modelsDirectory: options.modelDir,
         manifest,
+        ...(options.sharedModelDir ? { sharedModelsDirectory: options.sharedModelDir } : {}),
         ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
       }),
     ]),

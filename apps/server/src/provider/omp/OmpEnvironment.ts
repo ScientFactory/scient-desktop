@@ -2,14 +2,15 @@ import type { ProviderInstanceEnvironment } from "@t3tools/contracts";
 
 import { expandHomePath } from "../../pathExpansion.ts";
 import { agentProcessEnvironment } from "../agentProcessEnvironment.ts";
+import { ompTarget } from "./OmpTarget.ts";
 
 /** Agent directory override, from oh-my-pi `packages/utils/src/dirs.ts`. */
-const OMP_AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
+const OMP_AGENT_DIR_ENV = ompTarget.environment.agentDir;
 /** Named profile. `OMP_PROFILE` wins over `PI_PROFILE`, and a named profile over the agent directory. */
-const OMP_PROFILE_ENV = "OMP_PROFILE";
-const OMP_LEGACY_PROFILE_ENV = "PI_PROFILE";
+const OMP_PROFILE_ENV = ompTarget.environment.profile;
+const OMP_LEGACY_PROFILE_ENV = ompTarget.environment.profileFallback;
 /** Scient passes its own per-conversation session directory to every process. */
-export const OMP_SESSION_DIR_ENV = "PI_CODING_AGENT_SESSION_DIR";
+const OMP_SESSION_DIR_ENV = ompTarget.environment.sessionDir;
 
 const hasName = (env: NodeJS.ProcessEnv, name: string): string | undefined =>
   Object.keys(env).find((key) => key.toUpperCase() === name);

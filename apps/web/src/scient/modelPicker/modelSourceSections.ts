@@ -2,11 +2,11 @@ import type { ProviderInstanceId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 /**
- * Oh My Pi and Pi list the user's own sign-ins and API keys together with the
+ * Oh My Pi, Pi and Scient Agent list the user's own sign-ins and API keys together with the
  * Scient custom models registered into them. The model picker shows the two
  * as separate sections that the user can collapse.
  */
-const SOURCE_SECTION_DRIVERS: ReadonlySet<string> = new Set(["omp", "pi"]);
+const SOURCE_SECTION_DRIVERS: ReadonlySet<string> = new Set(["omp", "pi", "scient"]);
 
 /**
  * Scient registers each model connection under the provider id

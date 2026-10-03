@@ -39,9 +39,11 @@ import type { OmpRpcResponse, OmpRpcState } from "effect-omp-rpc/schema";
 import { encodeOmpModelSlug } from "../omp/OmpModel.ts";
 import type { OmpProcessExit, OmpRpcProcessOptions } from "../omp/OmpRpcProcess.ts";
 import { makeOmpAdapter } from "./OmpAdapter.ts";
+import { ompTarget } from "../omp/OmpTarget.ts";
 
 type FakeProcess = OmpRpcClient & {
   readonly version: string;
+  readonly runtimeVersion: string;
   readonly shutdown?: Effect.Effect<OmpProcessExit, never>;
 };
 
@@ -88,6 +90,7 @@ const makeClient = (input: {
   const sessionFile = NodePath.join(input.sessionDir, "session.jsonl");
   return {
     version: "18.2.8",
+    runtimeVersion: "18.2.8",
     ready: Effect.succeed(readyFrame),
     events: Stream.fromQueue(input.events),
     flushEvents: () => Queue.offer(input.events, { _tag: "Drain" }).pipe(Effect.asVoid),
@@ -163,6 +166,7 @@ const makeAdapter = (input: {
   readonly eventQueueByteLimit?: number;
 }) =>
   makeOmpAdapter({
+    target: ompTarget,
     binaryPath: "omp",
     providerInstanceId: ProviderInstanceId.make(`omp-lifecycle-${input.label}`),
     stateDir: NodePath.join(input.root, "state"),
@@ -728,6 +732,7 @@ describe("Oh My Pi session ownership", () => {
           return {
             ...client,
             version: "18.2.8",
+            runtimeVersion: "18.2.8",
             shutdown: Effect.sync(() => {
               shutdowns += 1;
             }).pipe(Effect.andThen(Queue.end(stdout)), Effect.as(cleanExit)),

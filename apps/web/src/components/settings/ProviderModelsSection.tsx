@@ -432,11 +432,13 @@ export function ProviderModelsSection({
   );
 
   const pickerTooltip = (model: DisplayModel, isHidden: boolean) =>
-    model.isCustom
-      ? "Custom models are always shown in the picker"
-      : isHidden
-        ? "Hidden from picker"
-        : "Shown in picker";
+    model.unavailableReason
+      ? model.unavailableReason
+      : model.isCustom
+        ? "Custom models are always shown in the picker"
+        : isHidden
+          ? "Hidden from picker"
+          : "Shown in picker";
 
   // The trigger is a wrapper span: a disabled switch gets no pointer events,
   // so it could not open the tooltip itself.
@@ -445,8 +447,8 @@ export function ProviderModelsSection({
       <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
         <Switch
           size="sm"
-          checked={!isHidden}
-          disabled={model.isCustom}
+          checked={!isHidden && !model.unavailableReason}
+          disabled={model.isCustom || Boolean(model.unavailableReason)}
           onCheckedChange={(checked) => setHidden(model.slug, !checked)}
           aria-label={`Show ${model.name} in the model picker`}
         />
@@ -479,7 +481,7 @@ export function ProviderModelsSection({
         className={cn(
           // Actions column is at least wide enough for the four custom-row
           // buttons so capability labels line up across built-in and custom rows.
-          "grid h-7 grid-cols-[1.5rem_minmax(0,1fr)_auto_minmax(5.5rem,auto)_auto] items-center gap-2 rounded-md px-2 transition-colors hover:bg-muted/30",
+          "grid min-h-7 grid-cols-[1.5rem_minmax(0,1fr)_auto_minmax(5.5rem,auto)_auto] items-center gap-2 rounded-md px-2 transition-colors hover:bg-muted/30",
           isHidden && "opacity-50",
         )}
       >
@@ -506,6 +508,11 @@ export function ProviderModelsSection({
         </span>
         {rowActions(model, { isHidden, canMoveUp, canMoveDown })}
         {pickerSwitch(model, isHidden)}
+        {model.unavailableReason ? (
+          <span className="col-start-2 col-end-6 pb-1 text-2xs text-muted-foreground">
+            Unavailable: {model.unavailableReason}
+          </span>
+        ) : null}
       </div>
     );
   };

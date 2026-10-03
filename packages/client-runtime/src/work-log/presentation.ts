@@ -24,7 +24,7 @@ export function isWorktreeSetupActivity(kind: string): boolean {
   );
 }
 
-export type WorkLogToolLifecycleStatus = RuntimeItemStatus | "stopped";
+export type WorkLogToolLifecycleStatus = RuntimeItemStatus;
 
 export interface WorkLogPresentationEntry {
   readonly label: string;
@@ -419,6 +419,7 @@ function workEntryIndicatesToolFailureFromOutput(
   entry: WorkLogPresentationEntry,
   includeCommand: boolean,
 ): boolean {
+  if (entry.toolLifecycleStatus === "stopped") return false;
   if (
     entry.tone === "error" ||
     entry.toolLifecycleStatus === "failed" ||

@@ -198,6 +198,7 @@ function toolCommand(payload: unknown): string | null {
     field(field(item, "input"), "command"),
     field(field(item, "result"), "command"),
     field(data, "command"),
+    field(field(data, "input"), "command"),
   ]) {
     const command = commandText(candidate);
     if (command !== null) return command;

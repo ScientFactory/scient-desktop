@@ -97,3 +97,12 @@ in [Run Scient in the background](./background-service.md).
    older version or changing its release URL.
 4. If a desktop update cannot be checked or downloaded, install the same or a
    newer official release manually; do not remove the existing data directory.
+
+## Update providers
+
+**Settings → Providers** shows provider updates for the selected environment.
+**Update all** updates every outdated provider on every connected environment
+at once. Hover it to see which providers it will update. Two kinds are left
+out on purpose: providers that only offer a manual update command, and
+Scient-managed runtimes, which keep their own qualified update and repair
+actions rather than a bulk path.

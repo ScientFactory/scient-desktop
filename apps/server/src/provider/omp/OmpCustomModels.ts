@@ -43,6 +43,7 @@ import {
   type OmpRpcProcess,
   type OmpRpcProcessOptions,
 } from "./OmpRpcProcess.ts";
+import type { OmpTarget } from "./OmpTarget.ts";
 
 /**
  * The generated extension OMP loads. It registers Scient's custom models, then
@@ -62,7 +63,7 @@ import {
  * each in-process subagent; a re-run replays the current registrations into
  * the subagent's API and starts nothing.
  */
-const OMP_CUSTOM_MODELS_EXTENSION_BODY = `
+const ompCustomModelsExtensionBody = (target: OmpTarget): string => `
 const scientModelsBridge = (bootstrap) => {
   const { url, token } = bootstrap;
   const keys = new Map(Object.entries(bootstrap.keys ?? {}));
@@ -97,9 +98,9 @@ const scientModelsBridge = (bootstrap) => {
     const literal = keys.get(connection.apiKey);
     if (literal === undefined) throw new Error("A Scient custom-model credential is unavailable.");
     if (literal.startsWith("!"))
-      throw new Error("Oh My Pi would run an API key that starts with ! as a command.");
+      throw new Error(${JSON.stringify(`${target.name} would run an API key that starts with ! as a command.`)});
     if (Object.hasOwn(process.env, literal))
-      throw new Error("Oh My Pi would read an API key that names an environment variable from the environment.");
+      throw new Error(${JSON.stringify(`${target.name} would read an API key that names an environment variable from the environment.`)});
     return literal;
   };
   const register = (connections) => {
@@ -213,8 +214,8 @@ export default async function scientOmpCustomModels(pi) {
 `;
 
 /** Module source of Scient's OMP custom-model extension, reading `bootstrapPath`. */
-export const ompCustomModelsExtensionSource = (bootstrapPath: string): string =>
-  `${ompExtensionBootstrapPrelude(bootstrapPath)}${OMP_CUSTOM_MODELS_EXTENSION_BODY}`;
+export const ompCustomModelsExtensionSource = (target: OmpTarget, bootstrapPath: string): string =>
+  `${ompExtensionBootstrapPrelude(target, bootstrapPath)}${ompCustomModelsExtensionBody(target)}`;
 
 type OmpProcessFactory = (
   options: OmpRpcProcessOptions,
@@ -353,17 +354,18 @@ export const buildOmpCustomModelPayload = (
  * OMP runs a provider key that starts with `!` as a shell command, so such a
  * key is reported as unusable here rather than registered.
  */
-const OMP_COMMAND_KEY_DETAIL =
-  "Oh My Pi cannot use an API key that starts with “!”. Re-enter the key in Custom models.";
-
-const ompConnections = (
-  connections: ReadonlyArray<ResolvedModelConnection>,
-): ReadonlyArray<ResolvedModelConnection> =>
-  connections.map((connection) => {
-    if (!connection.apiKey || !Redacted.value(connection.apiKey).startsWith("!")) return connection;
-    const { apiKey: _apiKey, ...rest } = connection;
-    return { ...rest, credentialError: OMP_COMMAND_KEY_DETAIL };
-  });
+const ompConnections =
+  (target: OmpTarget) =>
+  (connections: ReadonlyArray<ResolvedModelConnection>): ReadonlyArray<ResolvedModelConnection> =>
+    connections.map((connection) => {
+      if (!connection.apiKey || !Redacted.value(connection.apiKey).startsWith("!"))
+        return connection;
+      const { apiKey: _apiKey, ...rest } = connection;
+      return {
+        ...rest,
+        credentialError: `${target.name} cannot use an API key that starts with “!”. Re-enter the key in Custom models.`,
+      };
+    });
 
 const publishableConnectionIds = (
   connections: ReadonlyArray<ResolvedModelConnection>,
@@ -428,7 +430,7 @@ const listen = (server: NodeHttp.Server) =>
         server.listen(0, "127.0.0.1");
       }),
     catch: (cause) =>
-      new OmpRpcProtocolError({ detail: "Could not prepare OMP custom models.", cause }),
+      new OmpRpcProtocolError({ detail: "Could not prepare the custom models.", cause }),
   });
 
 const close = (server: NodeHttp.Server) =>
@@ -469,9 +471,6 @@ const OMP_MODELS_ACK_MAX_BYTES = 4096;
  * stay idle for the request timeout.
  */
 const OMP_MODELS_MAX_AUTHORIZED_REQUESTS = 8;
-const OMP_MODELS_RETIRED_DETAIL = "Oh My Pi model connections are retired.";
-const OMP_MODELS_CHANGED_DETAIL =
-  "Scient model connections changed. Start a new turn to reconnect to Oh My Pi.";
 
 /**
  * Model generations. Scient bumps `generation` whenever the models it would
@@ -520,6 +519,7 @@ const settingsRevision = (settings: ServerSettings): number | undefined => {
  */
 export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeClientFactory")(
   function* (
+    target: OmpTarget,
     settings: Pick<ServerSettingsService["Service"], "resolveCustomModels" | "subscribeChanges">,
     instanceId: ProviderInstanceId,
     stateDir: string,
@@ -536,7 +536,10 @@ export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeC
     const requestTimeoutMs = timing.requestTimeoutMs ?? OMP_MODELS_REQUEST_TIMEOUT_MS;
     const connectionsCheckingInterval =
       timing.connectionsCheckingIntervalMs ?? OMP_MODELS_CONNECTIONS_CHECKING_INTERVAL_MS;
-    const extensionDirectory = path.join(stateDir, "omp", "extensions");
+    const productName = target.name;
+    const modelsRetiredDetail = `${productName} model connections are retired.`;
+    const modelsChangedDetail = `Scient model connections changed. Start a new turn to reconnect to ${productName}.`;
+    const extensionDirectory = path.join(stateDir, target.stateNamespace, "extensions");
     yield* fs.makeDirectory(extensionDirectory, { recursive: true });
     return (options: OmpRpcProcessOptions) =>
       Effect.gen(function* () {
@@ -544,10 +547,10 @@ export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeC
         // missed between startup resolution and the live bridge.
         const changes = yield* settings.subscribeChanges;
         const initialConnections = yield* settings.resolveCustomModels(instanceId).pipe(
-          Effect.map(ompConnections),
+          Effect.map(ompConnections(target)),
           Effect.mapError(
             (cause) =>
-              new OmpRpcProtocolError({ detail: "Could not resolve OMP custom models.", cause }),
+              new OmpRpcProtocolError({ detail: "Could not resolve the custom models.", cause }),
           ),
         );
         let loaded = publishableConnections(initialConnections);
@@ -578,10 +581,10 @@ export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeC
           ReadonlyArray<ResolvedModelConnection>,
           OmpRpcProtocolError
         > = Effect.suspend(() => settings.resolveCustomModels(instanceId)).pipe(
-          Effect.map(ompConnections),
+          Effect.map(ompConnections(target)),
           Effect.mapError(
             (cause) =>
-              new OmpRpcProtocolError({ detail: "Could not resolve OMP custom models.", cause }),
+              new OmpRpcProtocolError({ detail: "Could not resolve the custom models.", cause }),
           ),
         );
         const fail = (detail: string): Effect.Effect<never, OmpRpcProtocolError> =>
@@ -607,7 +610,7 @@ export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeC
             const change = customModelRuntimeChange(loaded, current, instanceId);
             if (change === "revoke" || requiresCredentialRestart(loaded, current)) {
               yield* retire;
-              return yield* fail(OMP_MODELS_CHANGED_DETAIL);
+              return yield* fail(modelsChangedDetail);
             }
             const signature = payloadSignature(active);
             if (signature !== publishedSignature) {
@@ -626,23 +629,23 @@ export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeC
         const synchronize = (revision: number | undefined, force: boolean) =>
           authority.withPermit(
             Effect.gen(function* () {
-              if (retired || closed) return yield* fail(OMP_MODELS_RETIRED_DETAIL);
+              if (retired || closed) return yield* fail(modelsRetiredDetail);
               if (!force && revision !== undefined && revision === resolvedRevision) return;
               const current = yield* resolveCurrent;
-              if (retired || closed) return yield* fail(OMP_MODELS_RETIRED_DETAIL);
+              if (retired || closed) return yield* fail(modelsRetiredDetail);
               resolvedRevision = force ? undefined : revision;
               yield* adopt(current);
             }),
           );
         /** Every guarded RPC: the cached authority only, never the secret store. */
         const checkAuthority: Effect.Effect<void, OmpRpcProtocolError> = authority.withPermit(
-          Effect.suspend(() => (retired || closed ? fail(OMP_MODELS_RETIRED_DETAIL) : Effect.void)),
+          Effect.suspend(() => (retired || closed ? fail(modelsRetiredDetail) : Effect.void)),
         );
         const guarded = <A>(effect: Effect.Effect<A, OmpRpcError>): Effect.Effect<A, OmpRpcError> =>
           checkAuthority.pipe(Effect.andThen(effect));
         const retiredError = new OmpModelRefreshError({
           reason: "retired",
-          detail: OMP_MODELS_CHANGED_DETAIL,
+          detail: modelsChangedDetail,
         });
         /** Wait until OMP acknowledged `target`, bounded by the refresh timeout. */
         const awaitApplied = (target: number): Effect.Effect<void, OmpModelRefreshError> =>
@@ -655,7 +658,7 @@ export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeC
                 Effect.fail(
                   new OmpModelRefreshError({
                     reason: "timeout",
-                    detail: `Oh My Pi did not load the updated Scient models within ${Math.ceil(refreshTimeoutMs / 1000)} seconds.`,
+                    detail: `${productName} did not load the updated Scient models within ${Math.ceil(refreshTimeoutMs / 1000)} seconds.`,
                   }),
                 ),
             }),
@@ -666,7 +669,7 @@ export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeC
                 ? Effect.fail(
                     new OmpModelRefreshError({
                       reason: "failed",
-                      detail: `Oh My Pi could not load the Scient models: ${failure.detail}`,
+                      detail: `${productName} could not load the Scient models: ${failure.detail}`,
                     }),
                   )
                 : Effect.void;
@@ -695,12 +698,12 @@ export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeC
           void run(
             authority.withPermit(
               Effect.gen(function* () {
-                if (retired || closed) return yield* fail(OMP_MODELS_RETIRED_DETAIL);
+                if (retired || closed) return yield* fail(modelsRetiredDetail);
                 const active = activeConnections(resolvedConnections);
                 const change = customModelRuntimeChange(loaded, active, instanceId);
                 if (change === "revoke" || requiresCredentialRestart(loaded, active)) {
                   yield* retire;
-                  return yield* fail(OMP_MODELS_CHANGED_DETAIL);
+                  return yield* fail(modelsChangedDetail);
                 }
                 const next = buildOmpCustomModelPayload(active);
                 loaded = publishableConnections(active);
@@ -865,7 +868,7 @@ export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeC
         );
         const address = server.address();
         if (!address || typeof address === "string") {
-          return yield* fail("Could not determine the OMP custom-model endpoint.");
+          return yield* fail("Could not determine the custom-model endpoint.");
         }
         // A private directory per process, removed with it.
         const directory = yield* Effect.acquireRelease(
@@ -878,15 +881,16 @@ export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeC
           Effect.mapError(
             (cause) =>
               new OmpRpcProtocolError({
-                detail: "Could not prepare Scient's Oh My Pi extension.",
+                detail: `Could not prepare Scient's ${productName} extension.`,
                 cause,
               }),
           ),
         );
         const extension = yield* writeOmpExtensionFiles({
+          target,
           directory,
           name: "scient-custom-models",
-          source: ompCustomModelsExtensionSource,
+          source: (bootstrapPath) => ompCustomModelsExtensionSource(target, bootstrapPath),
           bootstrap: {
             url: `http://127.0.0.1:${address.port}/models`,
             token,
@@ -900,7 +904,7 @@ export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeC
           extraArgs: [...(options.extraArgs ?? []), "--extension", extension.extensionPath],
           secrets: [...(options.secrets ?? []), token, ...Object.values(initialPayload.keys)],
         });
-        if (!native) return yield* fail("Oh My Pi has not started.");
+        if (!native) return yield* fail(`${productName} has not started.`);
         const nativeProcess: OmpRpcProcess = native;
         yield* changes.pipe(
           Stream.runForEach((next) =>
@@ -908,7 +912,7 @@ export const makeOmpCustomModelsClientFactory = Effect.fn("OmpCustomModels.makeC
               Effect.catch(() =>
                 retired
                   ? Effect.void
-                  : Effect.logWarning("Could not verify OMP model connections."),
+                  : Effect.logWarning("Could not verify the model connections."),
               ),
             ),
           ),

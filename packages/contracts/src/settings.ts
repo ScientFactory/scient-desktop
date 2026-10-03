@@ -567,6 +567,12 @@ export const ClientSettingsSchema = Schema.Struct({
   // old keys, so everyone, including prior beta opt-outs, resets to the new
   // default sidebar.
   legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // Beta: working and monitoring threads fold into a Working shelf and return
+  // to the top of the inbox once they need the user. The inbox then orders by
+  // time, so manual placement there is ignored (and kept) while it is on.
+  sidebarWorkingShelfEnabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
   ),
@@ -930,6 +936,32 @@ export const OmpSettings = makeProviderSettingsSchema(
   { order: ["binaryPath", "homePath", "profile"] },
 );
 export type OmpSettings = typeof OmpSettings.Type;
+
+/**
+ * Scient Agent keeps its state in a directory this server assigns, so it has
+ * no home or profile setting. It is Scient's own agent, so it is on by default.
+ */
+export const ScientAgentSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: makeBinaryPathSetting("scient-agent").pipe(
+      Schema.annotateKey({
+        title: "Binary path",
+        description: "Path to the Scient Agent executable (0.1.0 or newer).",
+        providerSettingsForm: { placeholder: "scient-agent", clearWhenEmpty: "omit" },
+      }),
+    ),
+    customModels: Schema.Array(CustomModelSetting).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  { order: ["binaryPath"] },
+);
+export type ScientAgentSettings = typeof ScientAgentSettings.Type;
 
 export const DroidSettings = makeProviderSettingsSchema(
   {
@@ -1565,6 +1597,7 @@ export const ServerSettings = Schema.Struct({
     droid: DroidSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     pi: PiSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     omp: OmpSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    scient: ScientAgentSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     antigravity: AntigravitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
@@ -1767,6 +1800,11 @@ const OmpSettingsPatch = Schema.Struct({
   homePath: Schema.optionalKey(TrimmedString),
   profile: Schema.optionalKey(TrimmedString),
 });
+
+const ScientAgentSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(TrimmedString),
+});
 export const ServerSettingsPatch = Schema.Struct({
   // SCIENT-FORK:START — replaces the whole catalog; omitted leaves it alone.
   threadSections: Schema.optionalKey(ThreadSections),
@@ -1901,6 +1939,7 @@ export const ServerSettingsPatch = Schema.Struct({
       droid: Schema.optionalKey(DroidSettingsPatch),
       pi: Schema.optionalKey(PiSettingsPatch),
       omp: Schema.optionalKey(OmpSettingsPatch),
+      scient: Schema.optionalKey(ScientAgentSettingsPatch),
       antigravity: Schema.optionalKey(AntigravitySettingsPatch),
     }),
   ),
@@ -1999,6 +2038,7 @@ export const ClientSettingsPatch = Schema.Struct({
   proactivePanelsEnabled: Schema.optionalKey(Schema.Boolean),
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
+  sidebarWorkingShelfEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),

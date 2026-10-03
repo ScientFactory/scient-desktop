@@ -59,6 +59,9 @@ vi.mock("./CursorInlineSetup", () => ({ CursorInlineSetup: inlineSetup("Cursor")
 vi.mock("./DroidInlineSetup", () => ({ DroidInlineSetup: inlineSetup("Droid") }));
 vi.mock("./GrokInlineSetup", () => ({ GrokInlineSetup: inlineSetup("Grok") }));
 vi.mock("./PiInlineSetup", () => ({ PiInlineSetup: inlineSetup("Pi") }));
+vi.mock("./ScientAgentInlineSetup", () => ({
+  ScientAgentInlineSetup: inlineSetup("Scient Agent"),
+}));
 vi.mock("./OmpInlineSetup", () => ({ OmpInlineSetup: inlineSetup("Oh My Pi") }));
 
 import {
@@ -156,6 +159,7 @@ describe("AssistedProviderSetupHost", () => {
   it.each([
     ["pi", "Pi"],
     ["omp", "Oh My Pi"],
+    ["scient", "Scient Agent"],
   ] as const)("gives %s its composer presentation only on the composer surface", (driver, name) => {
     const composer = renderToStaticMarkup(
       <AssistedProviderSetupHost

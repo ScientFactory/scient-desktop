@@ -216,6 +216,56 @@ describe("EnvironmentProviderSettings routing", () => {
     commands.updateProvider.mockReset().mockResolvedValue({ _tag: "Success" });
   });
 
+  it.each(["pi", "omp", "scient"])(
+    "shows %s curated defaults and persists enabling every model",
+    (driver) => {
+      const instanceId = ProviderInstanceId.make(driver);
+      const native = {
+        ...provider(),
+        instanceId,
+        driver: ProviderDriverKind.make(driver),
+        models: [
+          "anthropic/claude-haiku-4-5",
+          "anthropic/claude-opus-5-5",
+          "google-antigravity/claude-opus-4-5",
+          "google-antigravity/claude-opus-4-6",
+          "google-antigravity/gemini-3.8-flash",
+          "google-antigravity/gemini-3.1-pro",
+        ].map((slug) => ({
+          slug,
+          name: slug,
+          isCustom: false,
+          capabilities: {},
+        })),
+      };
+      settingsState.value = {
+        ...DEFAULT_UNIFIED_SETTINGS,
+        providerInstances: { [instanceId]: { driver: native.driver, enabled: true } },
+      };
+      atoms.providers = [native];
+      const editor = visitElements(
+        renderPanel({ targetInstanceId: instanceId }),
+        (element) => element.props.instanceId === instanceId && element.props.mode === "editor",
+      );
+      expect(editor?.props.hiddenModels).toEqual([
+        "anthropic/claude-haiku-4-5",
+        "google-antigravity/claude-opus-4-5",
+      ]);
+      if (!editor) throw new Error("Provider editor was not rendered");
+      (editor.props.onHiddenModelsChange as (models: string[]) => void)([]);
+      const saved = { [instanceId]: { hiddenModels: [], modelOrder: [] } };
+      expect(settingsState.updateClientSettings).toHaveBeenCalledExactlyOnceWith({
+        providerModelPreferences: saved,
+      });
+      settingsState.value = { ...settingsState.value, providerModelPreferences: saved };
+      const restored = visitElements(
+        renderPanel({ targetInstanceId: instanceId }),
+        (element) => element.props.instanceId === instanceId && element.props.mode === "editor",
+      );
+      expect(restored?.props.hiddenModels).toEqual([]);
+    },
+  );
+
   it("coalesces a nullable provider snapshot before rendering array-backed UI", () => {
     expect(() => renderPanel()).not.toThrow();
     expect(settingsState.readEnvironmentIds).toEqual([environmentId]);
@@ -223,7 +273,7 @@ describe("EnvironmentProviderSettings routing", () => {
 
   it("routes refresh and provider update commands to the selected environment", async () => {
     atoms.providers = [provider()];
-    const panel = renderPanel();
+    const panel = renderPanel({ targetInstanceId: codexId });
     const refreshButton = visitElements(panel, isRefreshButton);
     expect(refreshButton).not.toBeNull();
     (refreshButton?.props.onClick as (() => void) | undefined)?.();
@@ -288,7 +338,7 @@ describe("EnvironmentProviderSettings routing", () => {
 
   it("forwards a requested runtime action into the lifecycle dialog", () => {
     atoms.providers = [provider()];
-    const panel = renderPanel();
+    const panel = renderPanel({ targetInstanceId: codexId });
     const providerCard = visitElements(
       panel,
       (element) =>
@@ -300,7 +350,7 @@ describe("EnvironmentProviderSettings routing", () => {
       "repair",
     );
 
-    const updatedPanel = renderPanel();
+    const updatedPanel = renderPanel({ targetInstanceId: codexId });
     const connectionDialog = visitElements(updatedPanel, (element) => {
       const dialogProvider = element.props.provider as ServerProvider | undefined;
       return (
@@ -335,7 +385,7 @@ describe("EnvironmentProviderSettings routing", () => {
     ],
   ])("saves %s on this device without changing the selected server", (action, expected) => {
     atoms.providers = [provider()];
-    const panel = renderPanel();
+    const panel = renderPanel({ targetInstanceId: codexId });
     const editor = visitElements(
       panel,
       (element) => element.props.instanceId === codexId && element.props.mode === "editor",
@@ -401,11 +451,11 @@ describe("EnvironmentProviderSettings routing", () => {
         }),
     );
     atoms.providers = [provider(), missingAntigravityProvider()];
-    let panel = renderPanel();
+    let panel = renderPanel({ targetInstanceId: codexId });
     const initialEditor = visitElements(panel, (element) => element.props.mode === "editor");
     (initialEditor?.props.onRunUpdate as () => void)();
 
-    panel = renderPanel();
+    panel = renderPanel({ targetInstanceId: codexId });
     const antigravityRow = visitElements(
       panel,
       (element) => element.props.mode === "list" && element.props.instanceId === antigravityId,
@@ -414,7 +464,7 @@ describe("EnvironmentProviderSettings routing", () => {
 
     for (const status of ["warning", "ready"] as const) {
       atoms.providers = [{ ...provider(), status }, missingAntigravityProvider()];
-      panel = renderPanel();
+      panel = renderPanel({ targetInstanceId: codexId });
       expect(
         visitElements(panel, (element) => element.props.mode === "editor")?.props.instanceId,
       ).toBe(antigravityId);
@@ -422,7 +472,7 @@ describe("EnvironmentProviderSettings routing", () => {
 
     finishUpdate();
     await flushPromises();
-    panel = renderPanel();
+    panel = renderPanel({ targetInstanceId: codexId });
     expect(
       visitElements(panel, (element) => element.props.mode === "editor")?.props.instanceId,
     ).toBe(antigravityId);

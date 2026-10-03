@@ -20,6 +20,7 @@ import {
 } from "../omp/OmpCaptureReplay.testFixtures.ts";
 import type { ProviderAdapterError } from "../Errors.ts";
 import { makeOmpAdapter } from "./OmpAdapter.ts";
+import { ompTarget } from "../omp/OmpTarget.ts";
 
 const RATE_LIMIT =
   "429 Rate limit reached for requests. Please try again in 0.1s. retry-after-ms=100\nRate limit reached for requests. Please try again in 0.1s. (type=rate_limit_error param=rate_limit_exceeded)";
@@ -45,6 +46,7 @@ const replayTurn = (
     const replay = yield* makeOmpCaptureReplay(name, options.respond);
     const stateDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-omp-capture-"));
     const adapter = yield* makeOmpAdapter({
+      target: ompTarget,
       binaryPath: "omp",
       providerInstanceId: ProviderInstanceId.make("omp"),
       stateDir,
@@ -52,7 +54,11 @@ const replayTurn = (
       environment: {},
       makeProcess: () =>
         makeOmpRpcClient(replay.io).pipe(
-          Effect.map((client) => ({ ...client, version: options.version ?? "18.3.1" })),
+          Effect.map((client) => ({
+            ...client,
+            version: options.version ?? "18.3.1",
+            runtimeVersion: options.version ?? "18.3.1",
+          })),
         ),
     });
     const threadId = ThreadId.make(`capture-${name}`);

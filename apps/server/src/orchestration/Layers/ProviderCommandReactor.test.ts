@@ -60,6 +60,10 @@ import type { ProviderTurnEndConfirmation } from "../../provider/Services/Provid
 import { ProviderAuthService } from "../../provider/Services/ProviderAuthService.ts";
 import { makeProviderRegistryLayer } from "../../provider/testUtils/providerRegistryMock.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
+import {
+  makeNativeTextGeneration,
+  nativeOnlySettings,
+} from "../../textGeneration/__tests__/nativeGeneration.ts";
 import { TerminalManager } from "../../terminal/Manager.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
@@ -207,6 +211,7 @@ describe("ProviderCommandReactor", () => {
     readonly nativeFork?: boolean;
     readonly sendTurnEffect?: ProviderServiceShape["sendTurn"];
     readonly tryHandlePromptCommandEffect?: ProviderAuthService["Service"]["tryHandlePromptCommand"];
+    readonly serverSettings?: Parameters<typeof ServerSettingsService.layerTest>[0];
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir =
@@ -534,7 +539,7 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
       Layer.provideMerge(Layer.mock(TerminalManager)({ closeIdle: closeIdleTerminals })),
-      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(ServerSettingsService.layerTest(input?.serverSettings)),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
@@ -2425,6 +2430,63 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.title).toBe("Resolve stale reconnect state");
     expect(thread?.titleRegeneration).toBeNull();
   });
+
+  it.each(["pi", "omp"] as const)(
+    "uses %s's automatic native model for first and manual titles",
+    async (driver) => {
+      const instanceId = ProviderInstanceId.make(`${driver}_work`);
+      const calls: ModelSelection[] = [];
+      const generation = await Effect.runPromise(
+        makeNativeTextGeneration(driver, instanceId, {
+          generateThreadTitle: (input) => {
+            calls.push(input.modelSelection);
+            return Effect.succeed({
+              title: input.previousTitle ? "Manual native title" : "Native title",
+            });
+          },
+        }),
+      );
+      const harness = await createHarness({
+        threadModelSelection: createModelSelection(instanceId, "local/native"),
+        serverSettings: nativeOnlySettings(driver, instanceId),
+      });
+      harness.generateThreadTitle.mockImplementation(generation.generateThreadTitle);
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-native-title-first"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("native-title-user"),
+            role: "user",
+            text: "Review native model routing",
+            attachments: [],
+          },
+          titleSeed: "Thread",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "full-access",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        }),
+      );
+      await harness.drain();
+      await waitFor(async () => (await harness.readModel()).threads[0]?.title === "Native title");
+      expect((await harness.readModel()).threads[0]?.title).toBe("Native title");
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("cmd-native-title-regenerate"),
+          threadId: ThreadId.make("thread-1"),
+          regenerateTitle: true,
+        }),
+      );
+      await harness.drain();
+      expect((await harness.readModel()).threads[0]?.title).toBe("Manual native title");
+      expect(calls).toEqual([
+        createModelSelection(instanceId, "local/native"),
+        createModelSelection(instanceId, "local/native"),
+      ]);
+    },
+  );
 
   it("pins the first user message when regeneration context is truncated", async () => {
     const harness = await createHarness();

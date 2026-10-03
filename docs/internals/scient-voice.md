@@ -149,6 +149,30 @@ For a development checkout, run:
 pnpm voice:runtime:stage
 ```
 
+### Development apps on one machine
+
+Every development app has its own state, so each one would otherwise build the
+helper and download its models again. Development apps share both through
+`~/.scient-next/dev-shared/voice/`; a released app never reads or writes it.
+
+- **Helper.** `pnpm voice:runtime:stage` copies the helper from
+  `whisper-runtime/<version>-<commit>-<platform>-<arch>/` when another checkout
+  has already staged this exact pinned build, and adds what it builds. The dev
+  launcher does the same copy before each start and never builds. An entry is
+  used only if its receipt names this version, commit, platform and
+  architecture and every file matches the recorded size and checksum.
+  Packaging does not use this folder.
+- **Models.** A model found in `models/` is copied into the app's own model
+  folder and verified exactly like a download before it is installed; a model
+  an app installs is copied there. Models are never used in place, so removing
+  or repairing one in a dev app affects only that app. A removed model stays
+  removed until that app is restarted or the model is requested again.
+- **Choice.** A dev app with several models and no choice of its own starts
+  from the model last chosen in another dev app (`selected-model.json`).
+
+Microphone permission is granted by macOS to each app identity and cannot be
+shared: a new development app asks once.
+
 ## Deliberate exclusions
 
 M1 does not run speculative background benchmarks, continuous partial

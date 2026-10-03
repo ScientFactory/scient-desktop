@@ -15,6 +15,7 @@ import { makeOmpRpcClient } from "effect-omp-rpc/client";
 
 import { makeOmpScriptedWire } from "../omp/OmpCaptureReplay.testFixtures.ts";
 import { makeOmpAdapter } from "./OmpAdapter.ts";
+import { ompTarget } from "../omp/OmpTarget.ts";
 
 const lifecycle = (id: string, status: string) => ({
   type: "subagent_lifecycle",
@@ -61,6 +62,7 @@ describe("Oh My Pi adapter background subagents", () => {
       );
       const stateDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-omp-bg-"));
       const adapter = yield* makeOmpAdapter({
+        target: ompTarget,
         binaryPath: "omp",
         providerInstanceId: ProviderInstanceId.make("omp"),
         stateDir,
@@ -68,7 +70,7 @@ describe("Oh My Pi adapter background subagents", () => {
         environment: {},
         makeProcess: () =>
           makeOmpRpcClient(wire.io).pipe(
-            Effect.map((client) => ({ ...client, version: "18.3.1" })),
+            Effect.map((client) => ({ ...client, version: "18.3.1", runtimeVersion: "18.3.1" })),
           ),
       });
       const events: Array<ProviderRuntimeEvent> = [];
@@ -147,6 +149,7 @@ const continuationHarness = Effect.fn("continuationHarness")(function* (withSuba
   );
   let closed = false;
   const adapter = yield* makeOmpAdapter({
+    target: ompTarget,
     binaryPath: "omp",
     providerInstanceId: ProviderInstanceId.make("omp"),
     stateDir,
@@ -158,7 +161,7 @@ const continuationHarness = Effect.fn("continuationHarness")(function* (withSuba
         close: Effect.sync(() => {
           closed = true;
         }).pipe(Effect.andThen(wire.io.close!)),
-      }).pipe(Effect.map((client) => ({ ...client, version: "18.3.1" }))),
+      }).pipe(Effect.map((client) => ({ ...client, version: "18.3.1", runtimeVersion: "18.3.1" }))),
   });
   const threadId = ThreadId.make("omp-continuation");
   const events: Array<ProviderRuntimeEvent> = [];

@@ -312,6 +312,12 @@ import {
 // SCIENT-FORK:START — thread queue seam. To retire, delete this block, the
 // marked blocks below, and `~/scient/threadQueue`.
 import { ThreadQueueStrip } from "~/scient/threadQueue/ThreadQueueStrip";
+import {
+  pendingQueueAdmissionPreviews,
+  settleQueueAdmissionPreview,
+  shouldPreviewQueueAdmission,
+  type OptimisticUserMessage,
+} from "~/scient/threadQueue/optimisticQueuePresentation";
 import { useThreadQueue } from "~/scient/threadQueue/useThreadQueue";
 import type { ScientThreadQueueItem } from "@t3tools/contracts";
 // SCIENT-FORK:END
@@ -1852,7 +1858,7 @@ function ChatViewContent(props: ChatViewProps) {
     const src = item.src;
     return () => revokeBlobPreviewUrl(src);
   }, [expandedImage]);
-  const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
+  const [optimisticUserMessages, setOptimisticUserMessages] = useState<OptimisticUserMessage[]>([]);
   // Last live snapshot from the setup stream. The server drops a finished
   // snapshot after a grace period and emits null; holding it here bridges the
   // gap until the settled activity arrives on the thread projection.
@@ -3945,7 +3951,7 @@ function ChatViewContent(props: ChatViewProps) {
             });
           });
 
-    const localMessages = optimisticUserMessages;
+    const localMessages = optimisticUserMessages.filter((message) => !message.queueAdmission);
     if (localMessages.length === 0) {
       return serverMessagesWithPreviewHandoff;
     }
@@ -6549,6 +6555,18 @@ function ChatViewContent(props: ChatViewProps) {
     };
   }, [activeThread?.id, activeThread?.messages, handoffAttachmentPreviews, optimisticUserMessages]);
 
+  // Retire admitted previews permanently so editing/deleting a queue row cannot reveal them again.
+  useEffect(() => {
+    const queuedIds = new Set(threadQueue.items.map((item) => item.messageId));
+    if (
+      !optimisticUserMessages.some((message) => message.queueAdmission && queuedIds.has(message.id))
+    )
+      return;
+    setOptimisticUserMessages((messages) =>
+      messages.filter((message) => !message.queueAdmission || !queuedIds.has(message.id)),
+    );
+  }, [optimisticUserMessages, threadQueue.items]);
+
   useEffect(() => {
     setOptimisticUserMessages((existing) => {
       for (const message of existing) {
@@ -9025,7 +9043,13 @@ function ChatViewContent(props: ChatViewProps) {
               ...(attachment.source ? { source: attachment.source } : {}),
             },
       );
-      frameSubmittedMessage(messageIdForSend, readingPositionAtSend);
+      const previewQueueAdmission = shouldPreviewQueueAdmission({
+        ordinaryServerSend: isServerThread && !options?.steer && !directAnnotation,
+        phase,
+        hasWaitingItems: threadQueue.items.length > 0,
+        awaitingCompletion: threadQueue.awaitingCompletion,
+      });
+      if (!previewQueueAdmission) frameSubmittedMessage(messageIdForSend, readingPositionAtSend);
       setOptimisticUserMessages((existing) => [
         ...existing,
         {
@@ -9038,6 +9062,9 @@ function ChatViewContent(props: ChatViewProps) {
           createdAt: messageCreatedAt,
           updatedAt: messageCreatedAt,
           streaming: false,
+          ...(previewQueueAdmission
+            ? { queueAdmission: { threadKey: routeThreadKey, accepted: false } }
+            : {}),
         },
       ]);
       setThreadError(threadIdForSend, null);
@@ -9302,13 +9329,15 @@ function ChatViewContent(props: ChatViewProps) {
               setThreadError(threadIdForSend, chatActionErrorMessage(cause));
             }
           }
+          setOptimisticUserMessages((existing) =>
+            settleQueueAdmissionPreview(existing, messageIdForSend, queued),
+          );
           if (queued) {
-            setOptimisticUserMessages((existing) =>
-              existing.filter((message) => message.id !== messageIdForSend),
-            );
             resetLocalDispatch();
             void threadQueue.refresh();
           } else {
+            if (previewQueueAdmission)
+              frameSubmittedMessage(messageIdForSend, readingPositionAtSend);
             clearUsageLimitsFor(routeThreadKey);
             acknowledgeActiveThreadWoke();
           }
@@ -10455,7 +10484,12 @@ function ChatViewContent(props: ChatViewProps) {
             "flex shrink-0",
             panelAnimationsActive &&
               "motion-safe:transition-opacity motion-safe:duration-(--panel-animation-duration) motion-safe:ease-out",
-            rightPanelOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0",
+            // Closed, the control leaves the flex flow so the cluster is only as wide as the two
+            // toggles the header reserves room for; anchored to the cluster's left edge, it fades
+            // out where it stood rather than over the terminal toggle.
+            rightPanelOpen
+              ? "pointer-events-auto opacity-100"
+              : "pointer-events-none absolute right-full mr-1 opacity-0",
           )}
           inert={!rightPanelOpen}
         >
@@ -11085,6 +11119,17 @@ function ChatViewContent(props: ChatViewProps) {
                     <div className="mx-auto w-full max-w-3xl">
                       <ThreadQueueStrip
                         items={threadQueue.items}
+                        pendingMessages={pendingQueueAdmissionPreviews(
+                          optimisticUserMessages,
+                          routeThreadKey,
+                          threadQueue.items,
+                          displayServerMessages,
+                        ).map((message) => ({
+                          id: message.id,
+                          text: message.text,
+                          attachmentCount: message.attachments?.length ?? 0,
+                          accepted: message.queueAdmission?.accepted === true,
+                        }))}
                         error={threadQueue.error ?? queueEditStorageError}
                         threadBusy={phase === "running" || phase === "connecting"}
                         supportsExplicitSend={
