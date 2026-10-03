@@ -9,7 +9,7 @@ Text menu with hover cards is implemented in the local pilot; code is not pushed
 ## Proposed bar, in both editors
 
 ```
-Undo  Redo | Text ▾ | Lists ▾ | Insert ▾ | Math ▾ | Document ▾
+Undo  Redo | Text ▾ | Insert ▾ | Math ▾ | Lists ▾ | Document ▾
 ```
 
 Each menu has the same name, place and order in both editors; each editor lists
@@ -78,6 +78,11 @@ not pushed yet.
 
 ## Shared Text menu (decided; local pilot)
 
+The shared order is **Text → Insert → Math → Lists → Document**, following
+Undo/Redo. Markdown's final menu uses the Document icon and name. Formatting
+rows have equal side padding; their checkmark reuses the leading icon slot
+instead of reserving a separate left gutter.
+
 The bar button reads **Text** in both editors. Hover opens these categories:
 
 - **Paragraph style:** Paragraph, heading levels, Quote. LaTeX also has its
@@ -95,7 +100,6 @@ categories; each editor supplies its supported commands.
 
 ## Still open
 
-2. **Markdown's More becomes Document**, so both editors end with the same menu.
 3. **Font size** in Text › Size (LaTeX only): which sizes, and when.
 
 ## Screen-blocking dialogs (owner review, 2026-10-03)
