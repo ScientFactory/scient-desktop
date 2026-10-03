@@ -71,15 +71,7 @@ export function LatexDocumentSettings(props: {
               <XIcon />
             </Button>
           </div>
-          <div className="flex flex-col gap-2 p-6 pb-3">
-            <h2 className="wrap-anywhere font-heading text-xl font-semibold leading-none">
-              Document settings
-            </h2>
-            <p className="text-sm text-muted-foreground">
-              Settings apply to the whole document. Only your changes are applied.
-            </p>
-          </div>
-          <div className="space-y-4 p-6 pt-1">
+          <div className="space-y-4 p-6">
             <div className="flex gap-2" role="group" aria-label="Settings section">
               <Button
                 variant={section === "page" ? "selected" : "ghost"}
@@ -111,68 +103,69 @@ export function LatexDocumentSettings(props: {
               <fieldset className="grid gap-3" disabled={props.disabled || stale}>
                 {section === "page" ? (
                   <>
-                    <label className="grid gap-1">
-                      Paper size
-                      <LatexSelect
-                        value={changes.paper ?? ""}
-                        onValueChange={(value) =>
-                          update({ paper: value as LatexVisualLayoutUpdate["paper"] })
-                        }
-                        disabled={props.disabled || stale}
-                        aria-label="Paper size"
-                        options={[
-                          { value: "", label: "Keep document setting", disabled: true },
-                          ...Object.entries(LATEX_PAPER_SIZES).map(([value, paper]) => ({
-                            value,
-                            label: paper.label,
-                          })),
-                        ]}
-                      />
-                    </label>
-                    <label className="grid gap-1">
-                      Orientation
-                      <LatexSelect
-                        value={changes.orientation ?? ""}
-                        onValueChange={(value) =>
-                          update({ orientation: value as "portrait" | "landscape" })
-                        }
-                        disabled={props.disabled || stale}
-                        aria-label="Orientation"
-                        options={[
-                          { value: "", label: "Keep document setting", disabled: true },
-                          { value: "portrait", label: "Portrait" },
-                          { value: "landscape", label: "Landscape" },
-                        ]}
-                      />
-                    </label>
                     <div className="grid grid-cols-2 gap-3">
-                      {(["top", "right", "bottom", "left"] as const).map((side) => (
-                        <label key={side} className="grid gap-1">
-                          {side[0]!.toUpperCase() + side.slice(1)} margin
-                          <Input
-                            aria-label={`${side[0]!.toUpperCase() + side.slice(1)} margin`}
-                            value={changes.margins?.[side] ?? ""}
-                            placeholder="Keep document setting"
-                            onChange={(event) => {
-                              const margins = { ...changes.margins };
-                              if (event.target.value.trim()) margins[side] = event.target.value;
-                              else delete margins[side];
-                              setChanges((value) => {
-                                const next = { ...value };
-                                if (Object.keys(margins).length) next.margins = margins;
-                                else delete next.margins;
-                                return next;
-                              });
-                              setError(null);
-                            }}
-                          />
-                        </label>
-                      ))}
+                      <label className="grid gap-1">
+                        Paper size
+                        <LatexSelect
+                          value={changes.paper ?? ""}
+                          onValueChange={(value) =>
+                            update({ paper: value as LatexVisualLayoutUpdate["paper"] })
+                          }
+                          disabled={props.disabled || stale}
+                          aria-label="Paper size"
+                          options={[
+                            { value: "", label: "Keep document setting", disabled: true },
+                            ...Object.entries(LATEX_PAPER_SIZES).map(([value, paper]) => ({
+                              value,
+                              label: paper.label,
+                            })),
+                          ]}
+                        />
+                      </label>
+                      <label className="grid gap-1">
+                        Orientation
+                        <LatexSelect
+                          value={changes.orientation ?? ""}
+                          onValueChange={(value) =>
+                            update({ orientation: value as "portrait" | "landscape" })
+                          }
+                          disabled={props.disabled || stale}
+                          aria-label="Orientation"
+                          options={[
+                            { value: "", label: "Keep document setting", disabled: true },
+                            { value: "portrait", label: "Portrait" },
+                            { value: "landscape", label: "Landscape" },
+                          ]}
+                        />
+                      </label>
                     </div>
-                    <p className="text-sm text-muted-foreground">
-                      Enter a margin such as 2cm or 1in. Empty fields preserve the document setting.
-                      The PDF shows the final layout.
-                    </p>
+                    <div className="grid gap-1" role="group" aria-label="Margin">
+                      <span>Margin</span>
+                      <div className="grid grid-cols-4 gap-3">
+                        {(["top", "right", "left", "bottom"] as const).map((side) => (
+                          <label key={side} className="grid gap-1">
+                            {side[0]!.toUpperCase() + side.slice(1)}
+                            <Input
+                              aria-label={`${side[0]!.toUpperCase() + side.slice(1)}`}
+                              value={changes.margins?.[side] ?? ""}
+                              placeholder="Keep"
+                              onChange={(event) => {
+                                const margins = { ...changes.margins };
+                                if (event.target.value.trim()) margins[side] = event.target.value;
+                                else delete margins[side];
+                                setChanges((value) => {
+                                  const next = { ...value };
+                                  if (Object.keys(margins).length) next.margins = margins;
+                                  else delete next.margins;
+                                  return next;
+                                });
+                                setError(null);
+                              }}
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    </div>
                   </>
                 ) : (
                   <>

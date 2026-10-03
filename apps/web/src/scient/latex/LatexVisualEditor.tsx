@@ -59,7 +59,6 @@ import { LatexInsertMenu, LatexInsertMenuContent, type LatexInsertAction } from 
 import { LatexDocumentSettings, type LatexDocumentSettingsSection } from "./LatexDocumentSettings";
 import { LatexContextTools } from "./LatexContextTools";
 import { DocumentReaderControls, type ReaderSearch } from "../writing/DocumentReaderControls";
-import { DropdownMenuItem } from "~/components/ui/menu";
 import { ScientFindBar } from "../writing/ScientFindBar";
 import { ReaderBarHostContext, useHostedReaderShortcuts } from "../writing/readerBarHost";
 import { DocumentFooter } from "../writing/DocumentFooter";
@@ -145,16 +144,7 @@ import { withoutComments } from "./latexAuthoringModel";
 import { LatexVisualSearch, useLatexVisualSearch } from "./useLatexVisualSearch";
 import { clampPdfPage, stepPdfZoom } from "../pdf/pdfReaderModel";
 import { useLatexPinchZoom } from "./useLatexPinchZoom";
-import {
-  Replace,
-  Heading1,
-  Heading2,
-  Heading3,
-  Heading4,
-  Heading5,
-  Heading6,
-  FileText,
-} from "lucide-react";
+import { Heading1, Heading2, Heading3, Heading4, Heading5, Heading6, FileText } from "lucide-react";
 import { mathSourceCompletions, type MathSourceCompletion } from "./latexMathCompletion";
 import {
   LatexVisualPagination,
@@ -4182,11 +4172,6 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         ? find.close()
         : findController.configureFind({ query: "", caseSensitive: false, wholeWord: false }),
   };
-  const findAndReplaceItem = readOnly ? undefined : (
-    <DropdownMenuItem onClick={find.show}>
-      <Replace /> Find and replace
-    </DropdownMenuItem>
-  );
   const textStyle = useEditorState({
     editor,
     selector: ({ editor: current }) => ({
@@ -5899,6 +5884,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     setSettingsSection(section);
     setSettingsOpen(true);
   };
+  const readerHost = useContext(ReaderBarHostContext);
   const documentItems = (
     <>
       <MenuSub>
@@ -5934,11 +5920,12 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         Document settings
       </DockCommandItem>
       <MenuSeparator />
+      {readOnly ? null : <DockCommandItem onClick={find.show}>Find and replace</DockCommandItem>}
+      {readerHost?.documentActions}
+      <MenuSeparator />
       <DockCommandItem onClick={() => setShortcutsOpen(true)}>Keyboard shortcuts</DockCommandItem>
     </>
   );
-
-  const readerHost = useContext(ReaderBarHostContext);
   const [objectPosition, setObjectPosition] = useState<string | null>(null);
   // The footer follows the caret: where it is, and how much has been written.
   const footerPosition = (() => {
@@ -6518,7 +6505,6 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                           onToggleSearch={() => (find.open ? find.close() : find.show())}
                           onShowSearch={() => setSearchFocus((request) => request + 1)}
                           search={headerSearch}
-                          moreActions={findAndReplaceItem}
                           shortcutLabel={shortcutLabel}
                         />
                       </>
@@ -6587,7 +6573,6 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                       onToggleSearch={() => (find.open ? find.close() : find.show())}
                       onShowSearch={() => setSearchFocus((request) => request + 1)}
                       search={headerSearch}
-                      moreActions={findAndReplaceItem}
                       shortcutLabel={shortcutLabel}
                     />
                   </footer>

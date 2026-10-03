@@ -74,10 +74,13 @@ describe("writing editor source transactions", () => {
     vi.unstubAllGlobals();
   });
   // The full find and replace bar opens from the reader controls' More menu.
-  async function openFindAndReplace(headerSlot: HTMLElement) {
+  // Find and replace is in the writing row's Document menu.
+  async function openFindAndReplace(_headerSlot: HTMLElement) {
     await act(() =>
-      headerSlot
-        .querySelector<HTMLButtonElement>('button[aria-label="More Document actions"]')!
+      container
+        .querySelector<HTMLButtonElement>(
+          '[role="toolbar"][aria-label="Writing tools"] button[aria-label="Document"]',
+        )!
         .click(),
     );
     const item = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(

@@ -3646,3 +3646,9 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   margin-inline-start: -3px;
   padding-inline: 2px 7px;
 }
+
+/* Visual's More lists only what the row has no room for: with everything in
+   the row there is nothing to list, so the button is not shown. */
+.scient-latex-toolbar[data-more-when-full][data-fit=""] .scient-pdf-action-more {
+  display: none;
+}

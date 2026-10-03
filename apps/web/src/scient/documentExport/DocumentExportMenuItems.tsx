@@ -10,14 +10,17 @@ export function DocumentExportMenuItems(props: {
   wordDisabled?: boolean;
   pdfUnavailableReason?: string;
   pdfLabel?: string;
+  /** Without the icon, beside items that have none. */
+  plain?: boolean;
 }) {
   return (
     <MenuSub>
       <MenuSubTrigger>
-        <FileDown />
+        {props.plain ? null : <FileDown />}
         <span>Export</span>
       </MenuSubTrigger>
-      <MenuSubPopup className="w-64">
+      {/* As wide as "PDF" and "Word"; the reason a format is unavailable wraps. */}
+      <MenuSubPopup className="w-max max-w-60">
         <DockCommandItem disabled={props.pdfDisabled} onClick={props.onPdfExport}>
           <span className="flex min-w-0 flex-col">
             <span>{props.pdfLabel ?? "PDF"}</span>

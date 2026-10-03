@@ -1137,7 +1137,73 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       </button>
     </ScientTooltip>
   );
-  const documentMenuItems = (
+  // Export: in the header's More, or in the Visual editor's Document menu.
+  const exportMenu = (plain: boolean) => (
+    <DocumentExportMenuItems
+      plain={plain}
+      onWordExport={() => setWordExportOpen(true)}
+      wordDisabled={
+        target === null ||
+        sourcePending ||
+        visualProjectState.pending ||
+        hasLocalVisualDraft ||
+        buildBlocked
+      }
+      pdfLabel={exportingPdf ? "Exporting\u2026" : "PDF"}
+      pdfDisabled={
+        descriptor === null ||
+        !pdfMatchesBuffer ||
+        status.stale ||
+        status.busy ||
+        sourcePending ||
+        visualProjectState.pending ||
+        hasLocalVisualDraft ||
+        buildBlocked ||
+        exportingPdf
+      }
+      pdfUnavailableReason="Rebuild PDF to export the current document."
+      onPdfExport={() => {
+        if (!descriptor || !pdfMatchesBuffer || status.stale || exportingPdf) return;
+        setExportingPdf(true);
+        setSyncNotice(null);
+        void (async () => {
+          const prepared = await prepareDocument();
+          if (!prepared?.isCurrent() || !target) return;
+          const snapshot = await readLatexBuildStatus(target.environmentId, {
+            workspaceRoot: target.cwd,
+            relativePath: target.relativePath,
+          });
+          if (!prepared.isCurrent()) return;
+          const current = { ...build, snapshot };
+          if (
+            !snapshot?.descriptor ||
+            latexStatusStripModel(current, props.cwd).stale ||
+            latexStatusStripModel(current, props.cwd).busy ||
+            [...prepared.revisions].some(
+              ([path, revision]) =>
+                isLatexPreviewFile(path) && snapshot.visualSourceRevisions?.[path] !== revision,
+            )
+          ) {
+            setSyncNotice({
+              label: "Rebuild needed",
+              message: "Rebuild the PDF before exporting the current document.",
+            });
+            return;
+          }
+          await savePdfCopy(snapshot.descriptor);
+        })()
+          .catch((error: unknown) =>
+            setSyncNotice({
+              label: "Export failed",
+              message: error instanceof Error ? error.message : "Could not save the PDF copy.",
+            }),
+          )
+          .finally(() => setExportingPdf(false));
+      }}
+    />
+  );
+  const exportItems = exportMenu(false);
+  const documentMenuItems = (withExport = true) => (
     <>
       {mode === "split" ? (
         // Here only while the row has no room for its PDF/Visual switch.
@@ -1157,67 +1223,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           </DockCommandItem>
         </IfRowHidden>
       ) : null}
-      <DocumentExportMenuItems
-        onWordExport={() => setWordExportOpen(true)}
-        wordDisabled={
-          target === null ||
-          sourcePending ||
-          visualProjectState.pending ||
-          hasLocalVisualDraft ||
-          buildBlocked
-        }
-        pdfLabel={exportingPdf ? "Exporting\u2026" : "PDF"}
-        pdfDisabled={
-          descriptor === null ||
-          !pdfMatchesBuffer ||
-          status.stale ||
-          status.busy ||
-          sourcePending ||
-          visualProjectState.pending ||
-          hasLocalVisualDraft ||
-          buildBlocked ||
-          exportingPdf
-        }
-        pdfUnavailableReason="Rebuild PDF to export the current document."
-        onPdfExport={() => {
-          if (!descriptor || !pdfMatchesBuffer || status.stale || exportingPdf) return;
-          setExportingPdf(true);
-          setSyncNotice(null);
-          void (async () => {
-            const prepared = await prepareDocument();
-            if (!prepared?.isCurrent() || !target) return;
-            const snapshot = await readLatexBuildStatus(target.environmentId, {
-              workspaceRoot: target.cwd,
-              relativePath: target.relativePath,
-            });
-            if (!prepared.isCurrent()) return;
-            const current = { ...build, snapshot };
-            if (
-              !snapshot?.descriptor ||
-              latexStatusStripModel(current, props.cwd).stale ||
-              latexStatusStripModel(current, props.cwd).busy ||
-              [...prepared.revisions].some(
-                ([path, revision]) =>
-                  isLatexPreviewFile(path) && snapshot.visualSourceRevisions?.[path] !== revision,
-              )
-            ) {
-              setSyncNotice({
-                label: "Rebuild needed",
-                message: "Rebuild the PDF before exporting the current document.",
-              });
-              return;
-            }
-            await savePdfCopy(snapshot.descriptor);
-          })()
-            .catch((error: unknown) =>
-              setSyncNotice({
-                label: "Export failed",
-                message: error instanceof Error ? error.message : "Could not save the PDF copy.",
-              }),
-            )
-            .finally(() => setExportingPdf(false));
-        }}
-      />
+      {withExport ? exportItems : null}
     </>
   );
   // The view switch and the build status. With reader controls in the row they
@@ -1369,7 +1375,8 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       )}
     </div>
   );
-  const readerBarHost = (slot: HTMLElement | null): ReaderBarHost => ({
+  // The Visual editor has a Document menu of its own; Export goes there.
+  const readerBarHost = (slot: HTMLElement | null, editor = false): ReaderBarHost => ({
     slot,
     afterZoom: (
       <>
@@ -1380,7 +1387,8 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     afterSearch: statusStrip,
     beforeTrailing: splitPreviewSwitch,
     trailing: buildButton,
-    moreActions: documentMenuItems,
+    moreActions: documentMenuItems(!editor),
+    ...(editor ? { documentActions: exportMenu(true) } : {}),
     onHosted: onReaderHosted,
   });
   return (
@@ -1401,6 +1409,8 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         ref={headerRow}
         className="scient-latex-toolbar"
         data-reader-hosted={readerHosted ? "" : undefined}
+        // Visual's More holds only what the row has no room for.
+        data-more-when-full={readerHosted && showVisual ? "" : undefined}
       >
         {readerHosted ? null : (
           <div
@@ -1423,7 +1433,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                 <Ellipsis />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <ReaderRowContext value={headerRow.current}>{documentMenuItems}</ReaderRowContext>
+                <ReaderRowContext value={headerRow.current}>{documentMenuItems()}</ReaderRowContext>
               </DropdownMenuContent>
             </DropdownMenu>
           )}
@@ -1561,7 +1571,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
             ) : null}
             {showVisual || visualOpened ? (
               <div style={{ display: showVisual ? "contents" : "none" }}>
-                <ReaderBarHostContext value={readerBarHost(showVisual ? readerSlot : null)}>
+                <ReaderBarHostContext value={readerBarHost(showVisual ? readerSlot : null, true)}>
                   <Suspense fallback={<LatexPendingViewer label="Opening Visual view…" />}>
                     <LatexProjectVisualEditor
                       // The project's recovery copy is retired only when nothing is

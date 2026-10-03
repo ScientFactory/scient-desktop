@@ -20,6 +20,8 @@ export interface ReaderBarHost {
   readonly trailing?: ReactNode;
   /** Added to the More menu after the reader's own actions. */
   readonly moreActions?: ReactNode;
+  /** Added to the editor's own Document menu, for an editor that has one. */
+  readonly documentActions?: ReactNode;
   /** Told when controls start and stop being drawn in the slot. */
   readonly onHosted: (hosted: boolean) => void;
 }

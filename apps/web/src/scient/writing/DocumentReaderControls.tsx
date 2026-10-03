@@ -328,7 +328,14 @@ export function DocumentReaderControls(props: {
           action?.();
         }}
       >
-        <DropdownMenuTrigger render={<ReaderButton label={"More " + props.label + " actions"} />}>
+        <DropdownMenuTrigger
+          render={
+            <ReaderButton
+              className="scient-pdf-action-more"
+              label={"More " + props.label + " actions"}
+            />
+          }
+        >
           <Ellipsis />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" finalFocus={() => !searchOwnsFocus.current}>
