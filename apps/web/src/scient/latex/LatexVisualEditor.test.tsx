@@ -252,7 +252,7 @@ describe("writing editor source transactions", () => {
     await selectKind("bibliography");
     await act(() =>
       [...container.querySelectorAll<HTMLButtonElement>("button")]
-        .find((button) => button.textContent?.trim() === "Manage references…")!
+        .find((button) => button.textContent?.trim() === "Manage references")!
         .click(),
     );
     const field = () =>
