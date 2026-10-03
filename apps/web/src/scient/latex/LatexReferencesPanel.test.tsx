@@ -226,6 +226,43 @@ describe("References bibliography session", () => {
     expect(host.textContent).toContain("Reference saved.");
   });
 
+  it("keeps entry A when an earlier write and superseding entry B leave a clean lane", async () => {
+    await mount();
+    await type("Entry A");
+    let earlier!: Promise<boolean>;
+    await act(() => {
+      expect(tab.change(disk.source + "@misc{other, title = {Earlier edit}}\n", 0)).toBe(true);
+      earlier = tab.flushNow();
+    });
+    expect(write).toHaveBeenCalledOnce();
+    await save();
+    expect(tab.getSnapshot().draftSource).toContain("Entry A");
+    let flushed!: Promise<boolean>;
+    await act(() => {
+      const snapshot = tab.getSnapshot();
+      expect(
+        tab.change(snapshot.draftSource.replace("Entry A", "Entry B"), snapshot.editVersion),
+      ).toBe(true);
+      flushed = tab.flushNow();
+    });
+    const first = publication;
+    publication = deferred();
+    await act(async () => first.resolve({ revision: "r2" }));
+    expect(write).toHaveBeenCalledTimes(2);
+    expect(write.mock.calls.every(([intent]) => !intent.source.includes("Entry A"))).toBe(true);
+    await act(async () => {
+      publication.resolve({ revision: "r3" });
+      expect(await earlier).toBe(true);
+      expect(await flushed).toBe(true);
+    });
+    expect(tab.getSnapshot().baselineSource).toContain("Entry B");
+    expect(tab.getSnapshot().pending).toBe(false);
+    expect(field()?.value).toBe("Entry A");
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(host.textContent).not.toContain("Reference saved.");
+    expect(host.textContent).toContain("The file changed before the reference was saved");
+  });
+
   it("retains a refused entry edit without overwriting a tab's conflicting edit", async () => {
     await mount();
     await type("Form edit");
@@ -245,30 +282,44 @@ describe("References bibliography session", () => {
     expect(host.textContent).not.toContain("Reference saved.");
   });
 
-  it("can confirm a retained new entry after retry without adding it twice", async () => {
-    await mount();
-    await act(() =>
-      [...host.querySelectorAll<HTMLButtonElement>("button")]
-        .find((button) => button.textContent === "Add reference")!
-        .click(),
-    );
-    await type("New entry");
-    await save();
-    await act(async () => {
-      publication.reject(new Error("Synthetic write failed"));
-      expect(await tab.flushNow()).toBe(false);
-    });
-    expect(field()?.value).toBe("New entry");
-    expect(onSaved).not.toHaveBeenCalled();
-    publication = deferred();
-    await act(async () => {
-      const retry = tab.retry();
-      publication.resolve({ revision: "r2" });
-      expect(await retry).toBe(true);
-    });
-    await save();
-    expect(field()).toBeNull();
-    expect(onSaved).toHaveBeenCalledOnce();
-    expect(disk.source.match(/@misc\{reference1/gu)).toHaveLength(1);
-  });
+  it.each(["LF", "CRLF"])(
+    "can confirm a retained new entry after %s retry without adding it twice",
+    async (endings) => {
+      if (endings === "CRLF") {
+        await act(async () => {
+          expect(tab.change(disk.source.replace(/\n/gu, "\r\n"), 0)).toBe(true);
+          publication.resolve({ revision: "crlf" });
+          expect(await tab.flushNow()).toBe(true);
+        });
+        publication = deferred();
+        write.mockClear();
+      }
+      await mount();
+      await act(() =>
+        [...host.querySelectorAll<HTMLButtonElement>("button")]
+          .find((button) => button.textContent === "Add reference")!
+          .click(),
+      );
+      await type("New entry");
+      await save();
+      await act(async () => {
+        publication.reject(new Error("Synthetic write failed"));
+        expect(await tab.flushNow()).toBe(false);
+      });
+      expect(field()?.value).toBe("New entry");
+      expect(onSaved).not.toHaveBeenCalled();
+      publication = deferred();
+      await act(async () => {
+        const retry = tab.retry();
+        publication.resolve({ revision: "r2" });
+        expect(await retry).toBe(true);
+      });
+      await save();
+      expect(field()).toBeNull();
+      expect(onSaved).toHaveBeenCalledOnce();
+      expect(disk.source.match(/@misc\{reference1/gu)).toHaveLength(1);
+      expect(write).toHaveBeenCalledTimes(2);
+      if (endings === "CRLF") expect(disk.source).not.toMatch(/(?<!\r)\n/u);
+    },
+  );
 });

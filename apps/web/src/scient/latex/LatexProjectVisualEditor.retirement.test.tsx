@@ -18,6 +18,7 @@ const { disk, optimistic, visual, saveProject, projectState } = vi.hoisted(() =>
       disabled: boolean;
       onEdit: (expected: string, next: string) => boolean;
       flushReferenceEdits: () => Promise<boolean>;
+      confirmedReferenceSource: () => string | null;
       sourceError: string | null;
     },
   },
@@ -236,6 +237,37 @@ describe("retiring the project's recovery copy", () => {
       expect(await confirmation).toBe(true);
     });
     expect(completed).toBe(true);
+  });
+
+  it("assembles reference confirmation from selected and included confirmed baselines", async () => {
+    const manual = (body: string) =>
+      `\\begin{thebibliography}{99}\n\\bibitem{known} ${body}\n\\end{thebibliography}\n`;
+    disk.set(path, { source: tex("Root intro.\n\\input{chapter}"), revision: "r1" });
+    disk.set("chapter.tex", { source: manual("Original entry"), revision: "c1" });
+    const selected = acquire(path);
+    const chapter = acquire("chapter.tex");
+    await mount(<Surface lease={selected} />);
+    await act(() => chapter.change(manual("Entry A"), 0));
+    expect(visual.props!.source).toContain("Entry A");
+    expect(visual.props!.confirmedReferenceSource()).toContain("Original entry");
+    let flushed!: Promise<boolean>;
+    await act(() => {
+      flushed = visual.props!.flushReferenceEdits();
+    });
+    await act(async () => {
+      acknowledge();
+      expect(await flushed).toBe(true);
+    });
+    expect(visual.props!.confirmedReferenceSource()).toContain("Entry A");
+    // An accepted but unconfirmed edit must never be used as publication evidence.
+    await act(() => selected.change(tex("Changed root.\n\\input{chapter}"), 0));
+    expect(visual.props!.confirmedReferenceSource()).toContain("Root intro.");
+    await act(async () => {
+      const saved = selected.flushNow();
+      acknowledge();
+      expect(await saved).toBe(true);
+    });
+    expect(visual.props!.confirmedReferenceSource()).toContain("Changed root.");
   });
 
   it("keeps it when a second view opens while the file's session still has that source unsaved", async () => {

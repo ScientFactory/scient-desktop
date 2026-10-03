@@ -433,6 +433,27 @@ export function LatexProjectVisualEditor(props: Props) {
             ]);
             return results.every(Boolean);
           }}
+          confirmedReferenceSource={() => {
+            const confirmed = new Map<string, VisualProjectFile>();
+            for (const [path, file] of snapshot.current.states) {
+              const lease =
+                path === props.relativePath
+                  ? props.documentPersistence?.find((item) => item.target.relativePath === path)
+                  : file.persistence;
+              if (lease) {
+                const saved = lease.getSnapshot();
+                confirmed.set(path, {
+                  contents: saved.baselineSource,
+                  revision: saved.baselineRevision,
+                  truncated: false,
+                });
+              } else if (path !== props.relativePath && !isLatexPreviewFile(path) && file.data) {
+                confirmed.set(path, file.data);
+              }
+            }
+            const published = assembleVisualProject(root!, confirmed);
+            return published.missing.length || published.errors.length ? null : published.source;
+          }}
           documentPersistence={[
             ...(props.documentPersistence ?? []),
             ...[...states.values()].flatMap((file) => (file.persistence ? [file.persistence] : [])),

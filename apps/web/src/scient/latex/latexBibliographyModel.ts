@@ -259,6 +259,51 @@ export function validBibliographyKey(key: string) {
   return !!key && !/[\s{},\\%#[\]]/u.test(key);
 }
 
+/** Ignore line endings and the trailing separator after a manual entry. */
+export function normalizedBibliographyEntryText(raw: string) {
+  return raw.replace(/\r\n/gu, "\n").trimEnd();
+}
+
+/** A clean save lane only confirms this submission if its entry is in the published source. */
+export function bibliographyChangePublished(
+  expected: string,
+  next: string,
+  published: string,
+  kind: BibliographyEntry["kind"],
+) {
+  const parse = (source: string) =>
+    kind === "bibtex" ? bibtexEntries(source) : manualBibliography(source);
+  const before = parse(expected),
+    after = parse(next),
+    saved = parse(published);
+  if (
+    [before, after, saved].some(
+      (parsed) =>
+        parsed.error !== null ||
+        new Set(parsed.entries.map((entry) => entry.key)).size !== parsed.entries.length,
+    )
+  )
+    return false;
+  const text = (entry: BibliographyEntry | undefined) =>
+    entry === undefined ? undefined : normalizedBibliographyEntryText(entry.raw);
+  const keys = new Set([...before.entries, ...after.entries].map((entry) => entry.key));
+  const changed = [...keys].filter(
+    (key) =>
+      text(before.entries.find((entry) => entry.key === key)) !==
+      text(after.entries.find((entry) => entry.key === key)),
+  );
+  if (changed.length === 0)
+    return after.entries.every(
+      (entry) => text(entry) === text(saved.entries.find((item) => item.key === entry.key)),
+    );
+  if (changed.length !== 1) return false;
+  const key = changed[0]!;
+  return (
+    text(after.entries.find((entry) => entry.key === key)) ===
+    text(saved.entries.find((entry) => entry.key === key))
+  );
+}
+
 function replaceRanges(source: string, changes: { from: number; to: number; value: string }[]) {
   let next = source;
   for (const change of changes.sort((a, b) => b.from - a.from))

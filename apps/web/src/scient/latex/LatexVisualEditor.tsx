@@ -90,7 +90,7 @@ import {
 } from "~/components/ui/menu";
 import "../markdownEditor/scient-markdown-editor.css";
 import { LatexReferenceDialog } from "./LatexReferenceDialog";
-import { mergeBibliographyChange } from "./latexBibliographyModel";
+import { bibliographyChangePublished, mergeBibliographyChange } from "./latexBibliographyModel";
 import {
   LatexReferencesPanel,
   type BibliographyDetails,
@@ -3983,6 +3983,8 @@ const MATH_INSERTIONS = {
 export interface LatexVisualEditorProps {
   /** Confirms accepted reference edits through their owning file sessions. */
   readonly flushReferenceEdits?: (() => Promise<boolean>) | undefined;
+  /** The assembled published source when the editor spans more than one file. */
+  readonly confirmedReferenceSource?: (() => string | null) | undefined;
   readonly documentPersistence?: readonly MarkdownPersistenceLease[] | undefined;
   readonly onLocalDraftChange?: (pending: boolean) => void;
   readonly draftKey: string;
@@ -5874,6 +5876,18 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         return false;
       }
       const current = currentSource.current;
+      const confirm = async () => {
+        if ((await props.flushReferenceEdits?.()) !== true) return false;
+        const path = id === "root" ? props.rootRelativePath : props.relativePath;
+        const published = props.confirmedReferenceSource
+          ? props.confirmedReferenceSource()
+          : props.documentPersistence
+              ?.find((lease) => lease.target.relativePath === path)
+              ?.getSnapshot().baselineSource;
+        return (
+          published != null && bibliographyChangePublished(expected, next, published, "bibitem")
+        );
+      };
       if (id === "root") {
         const root = props.rootSource;
         const merged = root && mergeBibliographyChange(expected, next, root, "bibitem");
@@ -5882,15 +5896,25 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
           !!root &&
           merged != null &&
           onEdit.current(current, current, { expected: root, next: merged });
-        return accepted && (await props.flushReferenceEdits?.()) === true;
+        return accepted && (await confirm());
       }
       const merged = mergeBibliographyChange(expected, next, current, "bibitem");
       if (merged === null || !onEdit.current(current, merged)) return false;
       currentSource.current = merged;
       installProjection(projectLatexVisualDocument(merged, 0, props.rootSource ?? merged), true);
-      return (await props.flushReferenceEdits?.()) === true;
+      return confirm();
     },
-    [readOnly, props.canEditRoot, props.rootSource, props.flushReferenceEdits, installProjection],
+    [
+      readOnly,
+      props.canEditRoot,
+      props.rootSource,
+      props.rootRelativePath,
+      props.relativePath,
+      props.flushReferenceEdits,
+      props.confirmedReferenceSource,
+      props.documentPersistence,
+      installProjection,
+    ],
   );
   const bibliographyDocuments = useMemo<BibliographyDocument[]>(() => {
     const documents: BibliographyDocument[] = [

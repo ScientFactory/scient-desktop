@@ -42,8 +42,11 @@ store. LaTeX source and Visual input have their own comparison-first journal;
 `.bib` files and reference entry forms have no startup recovery offer and write
 no bibliography checkpoint. Form drafts remain available during the app session.
 Reference saves, including manual `\bibitem` edits, clear the form and announce
-success only when the owning sessions confirm publication. A refused or failed
-save retains the form and exposes the session's persistence notice.
+success only when the owning sessions' confirmed baseline contains the submitted
+entry with the same key and line-ending-normalized text, or confirms its absence
+for a removal. A clean persistence lane alone does not prove the submission was
+published. A refused, failed or superseded save retains the form; save failures
+also expose the session's persistence notice.
 
 A supported edit passes from the canvas transaction to the source adapter, then
 to the project/file save path. Accepted source is projected back into the editor;
@@ -488,8 +491,10 @@ flushes their actual sessions even when Visual was never opened. Clean unopened
 files receive ordered reads, not additional savers. A conflict, failed save,
 unresolved field, or unsaved generic include prevents the action. When includes
 need TeX to resolve them, independently pending workspace files also prevent
-preparation because ownership cannot be established. The receipt is rechecked
-immediately before build/export. Unrelated files do not block a fully resolved
+preparation because ownership cannot be established. Linked bibliography commands
+also leave ownership incomplete: preparation refuses while bibliography sessions
+have unsaved changes or need attention; it does not flush those sessions.
+The receipt is rechecked immediately before build/export. Unrelated files do not block a fully resolved
 document.
 
 A Visual operation that requires changing a root declaration and a chapter is

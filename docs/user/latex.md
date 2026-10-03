@@ -503,9 +503,11 @@ formatting. Unrelated document edits can be merged while the entry itself remain
 unchanged; conflicting edits retain the form draft instead of overwriting it.
 Linked `.bib` files use the same document session and revision checks whether
 edited in References or in their own Source tab. The entry form clears and reports
-success only after the owning sessions confirm the save, including manual
-`\bibitem` edits. Failed or refused saves keep the form draft and show the save
-notice; keep the document open and resolve the save there.
+success only after the owning sessions' published source contains the submitted
+entry with the same key and text (allowing different line endings), or confirms
+its removal. This includes manual `\bibitem` edits. Failed, refused or superseded
+saves keep the form draft and show the save notice; keep the document open and
+resolve the save there.
 Read-only or truncated files remain read-only. Entry form drafts survive moving
 between file views during the app session. Linked `.bib` source and reference form
 drafts have no recovery offer after an app restart.
@@ -568,7 +570,10 @@ Opening a stale PDF requests a build. While PDF is visible, Scient also rebuilds
 on Ctrl/Cmd+S. Typing alone does not request a build. Before building, Scient asks
 open document fields to finish and waits for the root and included files to save,
 even if you have only used Source. Unresolved field input, save errors or conflicts
-must be resolved first. The last successful PDF stays readable while building.
+must be resolved first. Preparation refuses while linked bibliography changes
+are unsaved; save them in References or their Source tab before continuing.
+Preparation does not save those bibliography files. The last successful PDF stays
+readable while building.
 A failed revision requires an explicit rebuild instead of repeated automatic attempts.
 **Document → Export → PDF** in Visual, or **More → Export → PDF** in the
 other views, uses the same save preparation and saves a copy only when the

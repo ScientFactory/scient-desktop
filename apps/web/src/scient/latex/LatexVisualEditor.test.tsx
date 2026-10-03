@@ -44,6 +44,7 @@ describe("writing editor source transactions", () => {
   let container: HTMLDivElement;
   let root: ReturnType<typeof createRoot>;
   let current: string;
+  let confirmed: string | null;
   const originalGetAnimations = Object.getOwnPropertyDescriptor(Element.prototype, "getAnimations");
   const writes = vi.fn();
   const flushReferences = vi.fn<() => Promise<boolean>>();
@@ -56,6 +57,7 @@ describe("writing editor source transactions", () => {
       value: () => [],
     });
     writes.mockReset();
+    confirmed = null;
     flushReferences.mockReset().mockResolvedValue(false);
     clearVisualDraft("synthetic-editor-test");
     clearTypingDraft("synthetic-editor-test");
@@ -65,6 +67,11 @@ describe("writing editor source transactions", () => {
     root = createRoot(container);
   });
   afterEach(async () => {
+    // References keeps forms across remounts; discard this fixture's retained form.
+    const cancel = [...container.querySelectorAll<HTMLButtonElement>("form button")].find(
+      (button) => button.textContent === "Cancel",
+    );
+    if (cancel) await reactAct(() => cancel.click());
     await act(async () => root.unmount());
     container.remove();
     clearVisualDraft("synthetic-editor-test");
@@ -169,6 +176,7 @@ describe("writing editor source transactions", () => {
           onEditingChange={() => {}}
           onOpenSource={() => {}}
           flushReferenceEdits={flushReferences}
+          confirmedReferenceSource={() => confirmed}
           onEdit={(expected, next) => {
             if (current !== expected) return false;
             writes(expected, next);
@@ -231,9 +239,39 @@ describe("writing editor source transactions", () => {
     expect(container.textContent).toContain("Your entry draft is retained");
     expect(container.textContent).not.toContain("Reference saved.");
     flushReferences.mockResolvedValueOnce(true);
+    confirmed = current;
     await save();
     expect(field()).toBeNull();
     expect(container.textContent).toContain("Reference saved.");
+  });
+
+  it("keeps a manual reference when a clean save published a superseding entry", async () => {
+    await mount(
+      "\\begin{thebibliography}{99}\n\\bibitem{known} Original entry\n\\end{thebibliography}",
+    );
+    await selectKind("bibliography");
+    await act(() =>
+      [...container.querySelectorAll<HTMLButtonElement>("button")]
+        .find((button) => button.textContent?.trim() === "Manage references…")!
+        .click(),
+    );
+    const field = () =>
+      container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Reference entry text"]');
+    await setField(field()!, "Entry A");
+    flushReferences.mockImplementationOnce(async () => {
+      confirmed = current.replace("Entry A", "Entry B");
+      return true;
+    });
+    await act(() =>
+      container
+        .querySelector("form")!
+        .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
+    );
+    expect(flushReferences).toHaveBeenCalledOnce();
+    expect(confirmed).toContain("Entry B");
+    expect(field()?.value).toBe("Entry A");
+    expect(container.textContent).not.toContain("Reference saved.");
+    expect(container.textContent).toContain("The file changed before the reference was saved");
   });
 
   it("keeps writing tools in one permanent row and reader controls in the footer", async () => {

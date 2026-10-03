@@ -18,9 +18,11 @@ import {
   addBibliographyEntry,
   bibliographyEntrySource,
   bibliographyEntryTitle,
+  bibliographyChangePublished,
   bibtexEntries,
   manualBibliography,
   mergeBibliographyChange,
+  normalizedBibliographyEntryText,
   replaceBibliographyEntry,
   validBibliographyKey,
   type BibliographyEntry,
@@ -98,7 +100,10 @@ function BibliographyFile(props: {
       if (merged === null) return false;
       if (current.draftSource !== merged && !lease.change(merged, current.editVersion))
         return false;
-      return lease.flushNow();
+      return (
+        (await lease.flushNow()) &&
+        bibliographyChangePublished(expected, next, lease.getSnapshot().baselineSource, "bibtex")
+      );
     },
     [lease],
   );
@@ -410,7 +415,11 @@ export function LatexReferencesPanel(props: {
       (draft.isNew &&
         candidates.some(
           ({ document, entry }) =>
-            entry.key === key && (document.id !== target.id || entry.raw !== source),
+            entry.key === key &&
+            (document.id !== target.id ||
+              source === null ||
+              normalizedBibliographyEntryText(entry.raw) !==
+                normalizedBibliographyEntryText(source)),
         ))
     ) {
       setNotice(parsed.error ?? "Use a unique citation key without spaces or LaTeX commands.");
@@ -449,7 +458,7 @@ export function LatexReferencesPanel(props: {
         );
       } else
         setNotice(
-          "The file changed or could not be saved. Your entry draft is retained. Resolve the file conflict before saving again.",
+          "The file changed before the reference was saved, or the save failed. Your entry draft is retained.",
         );
     } catch {
       setNotice("Could not save this reference. Your draft is retained.");
