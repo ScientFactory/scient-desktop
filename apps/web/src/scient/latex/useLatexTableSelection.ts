@@ -3,6 +3,7 @@ import type { Editor } from "@tiptap/core";
 import { NodeSelection } from "@tiptap/pm/state";
 import { latexSelectEventOwner } from "./latexContextEvents";
 import { captureLatexObjectDrag, latexObjectSelectionAtPointer } from "./latexObjectSelection";
+import { clearLatexEditingTarget } from "./latexEditingTarget";
 
 export interface LatexTableCell {
   readonly row: number;
@@ -62,6 +63,7 @@ export function useLatexTableSelection(props: {
   const storeRef = useRef(store);
   storeRef.current = store;
   const select = (next: LatexTableSelection) => {
+    clearLatexEditingTarget(current.current.editor);
     storeRef.current(next);
     const field = document.activeElement;
     if (field instanceof HTMLTextAreaElement && current.current.root.current?.contains(field))
@@ -141,9 +143,12 @@ export function useLatexTableSelection(props: {
     const focusCell = (cell: LatexTableCell) => {
       cell = current.current.resolveCell?.(cell) ?? cell;
       storeRef.current(null);
-      root
-        .querySelector<HTMLTextAreaElement>(`[data-table-cell="${cell.row}-${cell.column}"]`)
-        ?.focus({ preventScroll: true });
+      const field = root.querySelector<HTMLElement>(
+        `[data-table-cell="${cell.row}-${cell.column}"]`,
+      );
+      const inline = (field as (HTMLElement & { editor?: Editor }) | null)?.editor;
+      if (inline) inline.commands.focus("end");
+      else field?.focus({ preventScroll: true });
     };
     const pointerMove = (event: PointerEvent) => {
       if (!drag) return;
@@ -234,23 +239,43 @@ export function useLatexTableSelection(props: {
         storeRef.current(null);
     };
     const focused = (event: FocusEvent) => {
-      if (event.target instanceof HTMLTextAreaElement && selected.current) storeRef.current(null);
+      if (
+        event.target instanceof Element &&
+        event.target.closest("[data-table-cell]") &&
+        selected.current
+      )
+        storeRef.current(null);
     };
     const keydown = (event: KeyboardEvent) => {
       if (event.isComposing || event.defaultPrevented) return;
       const state = current.current;
       const modifier = event.ctrlKey || event.metaKey;
+      if (
+        !selected.current &&
+        event.target instanceof Element &&
+        event.target.closest(".scient-latex-object-math, .scient-latex-visual-inline-math")
+      )
+        return;
       const field =
         event.target instanceof HTMLTextAreaElement && event.target.hasAttribute("data-table-cell")
           ? event.target
           : null;
-      const selectedText =
-        field && field.selectionStart === 0 && field.selectionEnd === field.value.length;
+      const inline =
+        event.target instanceof Element
+          ? event.target.closest<HTMLElement>("[data-table-cell][contenteditable]")
+          : null;
+      const inlineEditor = (inline as (HTMLElement & { editor?: Editor }) | null)?.editor;
+      const selectedText = field
+        ? field.selectionStart === 0 && field.selectionEnd === field.value.length
+        : inlineEditor
+          ? inlineEditor.state.selection.from <= 1 &&
+            inlineEditor.state.selection.to >= inlineEditor.state.doc.content.size - 1
+          : false;
       if (
         modifier &&
         !event.altKey &&
         event.key.toLowerCase() === "a" &&
-        (selected.current || !field || selectedText)
+        (selected.current || (!field && !inlineEditor) || selectedText)
       ) {
         select({
           anchor: { row: 0, column: 0 },
@@ -267,9 +292,15 @@ export function useLatexTableSelection(props: {
         else if (state.canClear) state.onClear(selected.current);
       } else if (!modifier && !event.altKey && event.shiftKey && event.key.startsWith("Arrow")) {
         const direction = event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 1;
-        const atEdge =
-          field &&
-          (direction < 0 ? field.selectionStart === 0 : field.selectionEnd === field.value.length);
+        const atEdge = field
+          ? direction < 0
+            ? field.selectionStart === 0
+            : field.selectionEnd === field.value.length
+          : inlineEditor
+            ? direction < 0
+              ? inlineEditor.state.selection.from === 1
+              : inlineEditor.state.selection.to === inlineEditor.state.doc.content.size - 1
+            : false;
         if (!selected.current && !atEdge) return;
         const anchor = selected.current?.anchor ?? state.activeCell;
         const head = selected.current?.head ?? state.activeCell;

@@ -483,6 +483,129 @@
     var(--scient-latex-font-family, "KaTeX_Main", serif);
 }
 
+.scient-latex-running-header,
+.scient-latex-running-footer {
+  position: absolute;
+  left: var(--scient-latex-margin-left, 1in);
+  right: var(--scient-latex-margin-right, 1in);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  align-items: end;
+  color: #111;
+  font: var(--scient-latex-font-size, 13.2835px) / 1.2
+    var(--scient-latex-font-family, "KaTeX_Main", serif);
+  border: 0 solid currentColor;
+  white-space: pre-wrap;
+}
+.scient-latex-running-header > span,
+.scient-latex-running-footer > span {
+  /* fancyhdr's default fields share the full headwidth, with distinct alignment. */
+  grid-area: 1 / 1;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+.scient-latex-running-header > :nth-child(2),
+.scient-latex-running-footer > :nth-child(2) {
+  text-align: center;
+}
+.scient-latex-running-header > :nth-child(3),
+.scient-latex-running-footer > :nth-child(3) {
+  text-align: right;
+}
+
+.scient-latex-visual-document p[data-latex-noindent] {
+  text-indent: 0;
+}
+.scient-latex-page-layout {
+  margin: 0;
+  min-width: 0;
+}
+.scient-latex-page-layout[data-layout="columns"] {
+  margin-block: calc(12 * 1.32835px);
+}
+.scient-latex-page-layout[data-layout="columns"] > .scient-latex-page-layout-body > div {
+  column-count: var(--scient-latex-columns, 2);
+  column-gap: calc(10 * 1.32835px);
+  column-fill: balance;
+}
+.scient-latex-page-layout[data-layout="row"] > .scient-latex-page-layout-body > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.scient-latex-page-layout[data-layout="minipage"] {
+  --scient-latex-par-indent: 0em;
+  flex-shrink: 0;
+}
+[data-latex-page-layout="minipage"][data-alignment="t"] {
+  align-self: flex-start;
+}
+[data-latex-page-layout="minipage"][data-alignment="b"] {
+  align-self: flex-end;
+}
+.scient-latex-page-layout-body > div > p:first-child {
+  margin-top: 0;
+}
+.scient-latex-inline-column-break {
+  display: inline-block;
+  width: 0;
+  height: 1em;
+  padding: 0;
+  margin: 0;
+  vertical-align: baseline;
+  pointer-events: none;
+}
+.scient-latex-column-break-gap {
+  display: block;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  font-size: 0;
+  line-height: 0;
+  break-after: column;
+  pointer-events: none;
+}
+.scient-latex-visual-document[data-latex-column-measuring] .scient-latex-column-break-gap {
+  display: none;
+}
+.scient-latex-visual-document p:has(.scient-latex-inline-column-break) {
+  text-indent: 0;
+}
+.scient-latex-visual-document p:has(.scient-latex-inline-column-break)::before {
+  content: "";
+  display: inline-block;
+  width: var(--scient-latex-par-indent, 1.5em);
+}
+.scient-latex-visual-document
+  p[data-latex-noindent]:has(.scient-latex-inline-column-break)::before {
+  width: 0;
+}
+.scient-latex-layout-spacing {
+  height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.scient-latex-layout-spacing[data-spacing="smallskip"] {
+  height: calc(3 * 1.32835px);
+}
+.scient-latex-layout-spacing[data-spacing="medskip"] {
+  height: calc(6 * 1.32835px);
+}
+.scient-latex-layout-spacing[data-spacing="bigskip"] {
+  height: calc(12 * 1.32835px);
+}
+.scient-latex-page-layout[data-layout="columns"]
+  > .scient-latex-page-layout-body
+  > div
+  > .node-latexRichPreview:has(> .scient-latex-layout-spacing[data-spacing="columnbreak"])
+  + * {
+  break-before: column;
+}
+
 .scient-latex-visual-paper > .tiptap {
   position: relative;
   z-index: 1;
@@ -556,6 +679,27 @@
 }
 .scient-latex-visual-document[data-latex-measuring] .scient-latex-table-page-gap {
   display: none;
+}
+.scient-latex-visual-document[data-latex-measuring] tr[data-latex-longtable-band="head"],
+.scient-latex-visual-document[data-latex-measuring] tr[data-latex-longtable-band="foot"] {
+  /* Retain their contribution to column widths while removing their height. */
+  visibility: collapse;
+}
+.scient-latex-longtable-measurements {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  width: 100%;
+  height: 0;
+  overflow: hidden;
+}
+.scient-latex-rich-preview .scient-latex-longtable-rule {
+  height: 0;
+  padding: 0;
+  border-top: 0.8pt solid currentColor;
+}
+tr[data-latex-longtable-band] {
+  user-select: none;
 }
 .scient-latex-visual-document[data-latex-measuring] .scient-latex-object-page-gap {
   display: none;
@@ -1620,6 +1764,129 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   position: relative;
   margin-block: 2em 1.5em;
 }
+
+/* Literal fields keep the paper layout; the noninteractive backdrop paints syntax. */
+.scient-latex-inline-literal {
+  display: inline-flex;
+  vertical-align: baseline;
+  font-family: "KaTeX_Typewriter", var(--font-mono);
+  white-space: pre;
+}
+.scient-latex-inline-literal textarea {
+  field-sizing: content;
+  box-sizing: content-box;
+  min-width: 1ch;
+  max-width: 100%;
+  height: 1.2em;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1.2;
+  white-space: pre;
+  resize: none;
+  overflow: hidden;
+  outline: none;
+}
+.scient-latex-literal-code {
+  position: relative;
+  line-height: 1.25;
+  white-space: pre;
+  text-align: left;
+  text-indent: 0;
+  border: 0 solid currentColor;
+}
+.scient-latex-literal-code[data-wrap] {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.scient-latex-literal-code[data-frame="single"] {
+  border-width: 0.4pt;
+  padding: 0.25em;
+  margin-inline: -0.25em;
+}
+.scient-latex-literal-code:is([data-frame="lines"], [data-frame="topline"]) {
+  border-top-width: 0.4pt;
+  padding-top: 0.25em;
+}
+.scient-latex-literal-code:is([data-frame="lines"], [data-frame="bottomline"]) {
+  border-bottom-width: 0.4pt;
+  padding-bottom: 0.25em;
+}
+.scient-latex-listing-highlight {
+  pointer-events: none;
+  user-select: none;
+}
+.scient-latex-listing-line {
+  position: relative;
+  min-height: 1.25em;
+  white-space: inherit;
+}
+.scient-latex-listing-number {
+  position: absolute;
+  right: calc(100% + 10pt);
+  top: 0;
+  width: max-content;
+  line-height: inherit;
+  white-space: nowrap;
+  text-align: right;
+}
+.scient-latex-literal-code[data-numbers="right"] .scient-latex-listing-number {
+  right: auto;
+  left: calc(100% + 10pt);
+}
+.scient-latex-simple-preview .scient-latex-literal-code .scient-latex-listing-editor {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+  padding: inherit;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  font: inherit;
+  line-height: inherit;
+  white-space: inherit;
+  overflow-wrap: inherit;
+  tab-size: inherit;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  caret-color: #111;
+  background: transparent;
+  opacity: 1;
+  overflow: hidden;
+  resize: none;
+}
+.scient-latex-listing-editor::selection {
+  background: rgb(90 150 230 / 28%);
+}
+.scient-latex-listing-caption {
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  margin-block: 0.5em;
+  text-indent: 0;
+  text-align: center;
+  white-space: pre-wrap;
+}
+.scient-latex-listing-caption > span {
+  flex-shrink: 0;
+}
+.scient-latex-simple-preview .scient-latex-listing-caption textarea {
+  field-sizing: content;
+  width: auto;
+  min-width: 1ch;
+  max-width: 100%;
+  flex: 0 1 auto;
+  font: inherit;
+  line-height: inherit;
+  text-align: center;
+}
 .scient-latex-part-preview textarea {
   font-size: 1.7em;
   font-weight: bold;
@@ -1718,6 +1985,145 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-toc-preview li[data-level="3"] {
   padding-left: 3em;
   font-size: 0.94em;
+}
+/* Source-owned controls occupy a position for pagination but print no content. */
+.scient-latex-document-command {
+  display: block;
+  height: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+}
+.scient-latex-visual-paper[data-title-page]
+  .scient-latex-visual-document
+  .scient-latex-title-preview {
+  box-sizing: border-box;
+  min-height: calc(
+    var(--scient-latex-paper-height) - var(--scient-latex-margin-top) -
+      var(--scient-latex-margin-bottom)
+  );
+  margin: 0;
+  padding: 0 0 15%;
+  align-content: center;
+}
+/* Numbering comes from the same source traversal as references and contents. */
+.scient-latex-visual-paper[data-document-class]
+  .scient-latex-visual-document
+  > :is(h1, h2, h3)[data-latex-heading-number]:not([data-latex-unnumbered])::before {
+  content: attr(data-latex-heading-number);
+}
+.scient-latex-visual-document > h6[data-latex-heading-number]:not([data-latex-unnumbered])::before {
+  content: attr(data-latex-chapter-name) " " attr(data-latex-heading-number);
+}
+.scient-latex-visual-paper:is([data-document-class="report"], [data-document-class="book"])
+  .scient-latex-visual-document
+  > h6,
+.scient-latex-visual-paper:is([data-document-class="report"], [data-document-class="book"])
+  .scient-latex-toc-preview {
+  margin-top: 0;
+  padding-top: calc(50 * 96px / 72.27);
+}
+.scient-latex-visual-paper:is([data-document-class="report"], [data-document-class="book"])
+  .scient-latex-visual-document
+  > h6 {
+  font-size: calc(24.88 * 96px / 72.27);
+  line-height: 1.2;
+  margin-bottom: calc(40 * 96px / 72.27);
+}
+.scient-latex-visual-paper:is([data-document-class="report"], [data-document-class="book"])
+  .scient-latex-visual-document
+  > h6::before {
+  font-size: calc(20.74 * 96px / 72.27);
+  margin-bottom: calc(20 * 96px / 72.27);
+}
+.scient-latex-visual-paper:is([data-document-class="report"], [data-document-class="book"])
+  .scient-latex-toc-preview
+  h2 {
+  font-size: calc(24.88 * 96px / 72.27);
+  line-height: 1.2;
+  margin-bottom: calc(40 * 96px / 72.27);
+}
+.scient-latex-toc-title {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+}
+.scient-latex-toc-title::after {
+  content: "";
+  flex: 1 0 0.8em;
+  align-self: end;
+  border-bottom: 1px dotted currentColor;
+  margin: 0 0.4em 0.25em;
+}
+.scient-latex-toc-preview li + li {
+  margin-top: 0;
+}
+.scient-latex-toc-preview[data-list-kind="contents"] li[data-level="1"] {
+  margin-top: 0.75em;
+}
+.scient-latex-toc-preview[data-list-kind="contents"]
+  li[data-level="1"]
+  .scient-latex-toc-title::after {
+  border: 0;
+}
+.scient-latex-toc-preview:not([data-list-kind="contents"]) li {
+  padding-left: 1.5em;
+}
+.scient-latex-toc-preview:not([data-list-kind="contents"]) li > button {
+  grid-template-columns: 2.3em minmax(0, 1fr) 1.55em;
+  font-weight: normal;
+}
+.scient-latex-visual-paper:is([data-document-class="report"], [data-document-class="book"])
+  .scient-latex-toc-preview[data-list-kind="contents"]
+  li {
+  margin-top: 0;
+}
+.scient-latex-visual-paper:is([data-document-class="report"], [data-document-class="book"])
+  .scient-latex-toc-preview[data-list-kind="contents"]
+  li[data-level="0"] {
+  margin-top: calc(10 * 96px / 72.27);
+}
+.scient-latex-visual-paper:is([data-document-class="report"], [data-document-class="book"])
+  .scient-latex-toc-preview
+  li[data-level="0"]
+  > button {
+  font-weight: bold;
+}
+.scient-latex-visual-paper:is([data-document-class="report"], [data-document-class="book"])
+  .scient-latex-toc-preview
+  li[data-level="0"]
+  .scient-latex-toc-title::after {
+  border: 0;
+}
+.scient-latex-visual-paper:is([data-document-class="report"], [data-document-class="book"])
+  .scient-latex-toc-preview[data-list-kind="contents"]
+  li[data-level="1"] {
+  padding-left: 1.5em;
+}
+.scient-latex-visual-paper:is([data-document-class="report"], [data-document-class="book"])
+  .scient-latex-toc-preview[data-list-kind="contents"]
+  li[data-level="1"]
+  > button {
+  grid-template-columns: 2.3em minmax(0, 1fr) 1.55em;
+  font-weight: normal;
+}
+.scient-latex-visual-paper:is([data-document-class="report"], [data-document-class="book"])
+  .scient-latex-toc-preview[data-list-kind="contents"]
+  li[data-level="1"]
+  .scient-latex-toc-title::after {
+  border-bottom: 1px dotted currentColor;
+}
+.scient-latex-visual-paper:is([data-document-class="report"], [data-document-class="book"])
+  .scient-latex-toc-preview
+  li[data-level="2"] {
+  padding-left: 3.8em;
+}
+.scient-latex-visual-paper:is([data-document-class="report"], [data-document-class="book"])
+  .scient-latex-toc-preview
+  li[data-level="3"] {
+  padding-left: 7em;
 }
 .scient-latex-page-break {
   position: relative;
@@ -1930,6 +2336,50 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-rich-preview[data-kind="table"][data-document-selected] :is(td, th) {
   background: var(--scient-latex-selection-background);
 }
+.scient-latex-rich-preview :is(td, th):focus-within:not([data-cell-selection]) {
+  background: var(--scient-latex-table-cell-background, transparent);
+}
+.scient-latex-inline-field {
+  min-width: 1ch;
+  min-height: 1lh;
+  max-width: 100%;
+  user-select: text;
+}
+.scient-latex-inline-field[data-table-cell-width="content"] {
+  width: max-content;
+  max-width: none;
+  white-space: nowrap;
+}
+.scient-latex-inline-field-content {
+  outline: none;
+  min-height: 1lh;
+  text-align: inherit;
+  user-select: text;
+}
+.scient-latex-inline-field-content > p {
+  margin: 0 !important;
+  text-indent: 0 !important;
+}
+.scient-latex-rich-preview :is(td, th)[data-align="center"] .scient-latex-inline-field {
+  margin-inline: auto;
+}
+.scient-latex-rich-preview :is(td, th)[data-align="right"] .scient-latex-inline-field {
+  margin-left: auto;
+}
+.scient-latex-rich-preview:focus-within .scient-latex-inline-field[data-empty] {
+  position: relative;
+}
+.scient-latex-rich-preview:focus-within .scient-latex-inline-field[data-empty]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.2em;
+  width: 0.65em;
+  height: 0.9em;
+  border: 1px dashed var(--scient-empty-guide, #b8c7da);
+  border-radius: 3px;
+  pointer-events: none;
+}
 .scient-latex-rich-preview[data-kind="table"] {
   user-select: none;
   border: 0;
@@ -2034,11 +2484,19 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   background: var(--scient-latex-table-cell-background, transparent);
   font-weight: inherit;
 }
-.scient-latex-rich-preview figure[data-table-style="booktabs"] tbody tr:first-child > * {
+.scient-latex-rich-preview
+  figure[data-table-style="booktabs"]
+  tbody
+  tr:first-child:not([data-latex-longtable-band])
+  > :not(.scient-latex-table-row-handle) {
   border-top: 0.08em solid currentColor;
   padding-top: 0.65ex;
 }
-.scient-latex-rich-preview figure[data-table-style="booktabs"] tbody tr:last-child > * {
+.scient-latex-rich-preview
+  figure[data-table-style="booktabs"]
+  tbody
+  tr:last-child:not([data-latex-longtable-band])
+  > :not(.scient-latex-table-row-handle) {
   border-bottom: 0.08em solid currentColor;
 }
 .scient-latex-rich-preview figure[data-table-style="booktabs"] th[scope="col"] {
@@ -2115,6 +2573,140 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 }
 .scient-latex-figure-artwork textarea:focus {
   outline: none;
+}
+.scient-latex-object-math {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: baseline;
+  outline: none;
+}
+.scient-latex-tikz {
+  position: relative;
+  flex: none;
+  text-align: left;
+}
+.scient-latex-tikz > svg {
+  display: block;
+  overflow: visible;
+}
+.scient-latex-tikz-label {
+  position: absolute;
+  display: inline-flex;
+  width: max-content;
+  white-space: nowrap;
+  line-height: normal;
+}
+.scient-latex-tikz-label textarea {
+  max-width: none;
+  white-space: pre;
+}
+.scient-latex-color-box {
+  margin: 1em 0;
+  border: 0.5mm solid var(--scient-box-frame);
+  border-radius: 1mm;
+  background: var(--scient-box-background);
+  color: black;
+  overflow: visible;
+}
+.scient-latex-color-box-title {
+  padding: 2mm 5mm;
+  background: var(--scient-box-frame);
+  color: var(--scient-box-title);
+}
+.scient-latex-color-box-title textarea {
+  display: block;
+  field-sizing: content;
+  width: 100%;
+  min-height: 1lh;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  resize: none;
+  outline: none;
+}
+.scient-latex-color-box-body {
+  padding: 3mm 5mm;
+}
+.scient-latex-color-box-body > :first-child {
+  margin-top: 0;
+  text-indent: 0;
+}
+.scient-latex-color-box-body > :last-child {
+  margin-bottom: 0;
+}
+.scient-latex-algorithm {
+  margin: 1em 0;
+  border-top: 0.8pt solid currentColor;
+  border-bottom: 0.8pt solid currentColor;
+  text-align: left;
+}
+.scient-latex-algorithm[data-reference-highlight] {
+  background: var(--scient-latex-selection-background);
+}
+.scient-latex-algorithm-caption {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5em;
+  padding: 0.2em 0;
+  border-bottom: 0.4pt solid currentColor;
+}
+.scient-latex-algorithm-caption strong {
+  flex: none;
+}
+.scient-latex-algorithm-caption textarea {
+  field-sizing: content;
+  flex: 1;
+  min-width: 1ch;
+  min-height: 1lh;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  resize: none;
+  outline: none;
+}
+.scient-latex-algorithm-body {
+  padding: 0.5em 0 0.5em 2em;
+}
+.scient-latex-algorithm-line {
+  position: relative;
+  text-indent: 0;
+  line-height: var(--scient-latex-line-height);
+}
+.scient-latex-algorithm-line-body {
+  padding-left: calc(var(--algorithm-indent, 0) * 1.5em);
+  min-height: 1lh;
+}
+.scient-latex-algorithm-number {
+  position: absolute;
+  right: calc(100% + 0.5em);
+  font-size: 0.8em;
+}
+.scient-latex-algorithm-comment {
+  float: right;
+  margin-left: 1em;
+}
+.scient-latex-algorithm-comment::before {
+  content: "▷ ";
+}
+.scient-latex-color-box[data-breakable] .scient-latex-pagination-gap::before {
+  content: "";
+  position: absolute;
+  inset: 0 -5.5mm;
+  background: linear-gradient(
+    to top,
+    white var(--scient-latex-margin-top),
+    var(--background) var(--scient-latex-margin-top),
+    var(--background) calc(var(--scient-latex-margin-top) + var(--scient-latex-page-gap)),
+    white calc(var(--scient-latex-margin-top) + var(--scient-latex-page-gap))
+  );
+  border-block: 0.5mm solid var(--scient-box-frame);
+  box-sizing: border-box;
 }
 .scient-latex-subfigure-caption,
 .scient-latex-figure-preview .scient-latex-figure-numbered-caption {

@@ -999,6 +999,136 @@ describe("writing editor source transactions", () => {
     expect(current).toContain(`\\[\n${matrix}\n\\]`);
   });
 
+  it("edits prose and inserts both kinds of math inside an abstract", async () => {
+    await mount("\\begin{abstract}\nAbstract text.\n\\end{abstract}");
+    const host = container.querySelector('[aria-label="Abstract"]');
+    expect(host?.closest('[contenteditable="false"]')).toBeNull();
+    let position = 0;
+    editor().state.doc.descendants((node, at) => {
+      if (node.type.name === "paragraph") position = at + 1;
+    });
+    await act(() =>
+      editor()
+        .chain()
+        .setTextSelection(position)
+        .insertContent({ type: "latexInlineMath", attrs: { tex: "x", wrapper: "paren" } })
+        .run(),
+    );
+    await act(() =>
+      editor().commands.insertContentAt(editor().state.doc.firstChild!.nodeSize - 1, {
+        type: "latexDisplayMath",
+        attrs: { tex: "a=b", wrapper: "bracket" },
+      }),
+    );
+    expect(current).toContain("\\(x\\)Abstract text.");
+    expect(current).toMatch(/\\\[\s*a=b\s*\\\]/u);
+    expect(current.match(/\\begin\{abstract\}/g)).toHaveLength(1);
+    expect(projectLatexVisualDocument(current).rawBlocks).toBe(0);
+  });
+
+  it("routes the Math menu to the caret inside a table cell and shares document undo", async () => {
+    await mount("\\begin{tabular}{ll}\nBefore after & Keep\\\\\n\\end{tabular}");
+    const field = container.querySelector<HTMLElement>('[data-table-cell="0-0"]')!;
+    const inner = (field as HTMLElement & { editor: Editor }).editor;
+    expect(inner).toBeDefined();
+    await act(() => inner.chain().focus().setTextSelection(8).run());
+    await act(() =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Math"]')!.click(),
+    );
+    const option = [
+      ...document.querySelectorAll<HTMLElement>('[role="menuitem"], [role="menuitemradio"]'),
+    ].find((item) => item.textContent?.trim() === "Inline math");
+    expect(option).toBeDefined();
+    await act(() => option!.click());
+    let position = -1;
+    inner.state.doc.descendants((node, at) => {
+      if (node.type.name === "latexInlineMath") position = at;
+    });
+    expect(position).toBeGreaterThan(0);
+    await act(() =>
+      inner.view.dispatch(
+        inner.state.tr.setNodeMarkup(position, undefined, { tex: "q^2", wrapper: "paren" }),
+      ),
+    );
+    expect(current).toContain("Before \\(q^2\\)after & Keep");
+    expect(editor().state.doc.childCount).toBe(1);
+    expect(projectLatexVisualDocument(current).rawBlocks).toBe(0);
+    await act(() => editor().commands.undo());
+    expect(current.match(/\\begin\{tabular\}/g)).toHaveLength(1);
+  });
+
+  it("expands a cell's Select All to the whole table and restores a deleted table with undo", async () => {
+    await mount("\\begin{tabular}{ll}\nOne & Two\\\\\n\\end{tabular}");
+    const field = container.querySelector<HTMLElement>('[data-table-cell="0-0"]')!;
+    const inner = (field as HTMLElement & { editor: Editor }).editor;
+    await act(() => inner.chain().focus().selectAll().run());
+    await act(() =>
+      field.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true }),
+      ),
+    );
+    const table = container.querySelector<HTMLElement>('[data-table-selection="whole"]');
+    expect(table).not.toBeNull();
+    await act(() =>
+      table!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Delete", bubbles: true, cancelable: true }),
+      ),
+    );
+    expect(current).not.toContain("\\begin{tabular}");
+    await act(() => editor().commands.undo());
+    expect(current.match(/\\begin\{tabular\}/g)).toHaveLength(1);
+    expect(current).toContain("One & Two");
+  });
+
+  it("retains rapid edits in different table cells", async () => {
+    await mount("\\begin{tabular}{ll}\nOne & Two\\\\\n\\end{tabular}");
+    const fields = [...container.querySelectorAll<HTMLElement>("[data-table-cell]")].map(
+      (field) => (field as HTMLElement & { editor: Editor }).editor,
+    );
+    await act(() => {
+      fields[0]!.chain().selectAll().insertContent("First").run();
+      fields[1]!.chain().selectAll().insertContent("Second").run();
+    });
+    expect(current).toContain("First & Second");
+  });
+
+  it("clears a rectangular selection of rich cells and restores it without another table", async () => {
+    await mount("\\begin{tabular}{ll}\nAlpha & Text $x$\\\\\nKeep & Last\\\\\n\\end{tabular}");
+    const field = container.querySelector<HTMLElement>('[data-table-cell="0-0"]')!;
+    const inner = (field as HTMLElement & { editor: Editor }).editor;
+    await act(() => inner.commands.focus("end"));
+    await act(() =>
+      field.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "ArrowRight",
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
+    const table = container.querySelector<HTMLElement>('[data-table-selection="cells"]');
+    expect(table).not.toBeNull();
+    await act(() =>
+      table!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Delete", bubbles: true, cancelable: true }),
+      ),
+    );
+    expect(editor().state.doc.firstChild!.attrs.rows).toEqual([
+      ["", ""],
+      ["Keep", "Last"],
+    ]);
+    await act(() => editor().commands.undo());
+    expect(editor().state.doc.firstChild!.attrs.rows).toEqual([
+      ["Alpha", "Text $x$"],
+      ["Keep", "Last"],
+    ]);
+    expect(current.match(/\\begin\{tabular\}/g)).toHaveLength(1);
+    await act(() => inner.commands.focus("end"));
+    expect(container.querySelector("[data-table-selection]")).toBeNull();
+    expect(inner.state.selection.empty).toBe(true);
+  });
+
   it("edits description and table structures without opening source", async () => {
     await mount(`\\begin{description}[style=nextline]
 \\item[Algorithms] Design and prove algorithms.
@@ -1032,33 +1162,30 @@ Theory & Proofs \\\\
     expect(caption.value).toBe("Research options.");
     await setField(caption, "Research areas & evidence.");
     expect(current).toContain("\\caption{Research areas \\& evidence.}");
-    const evidence = container.querySelector<HTMLTextAreaElement>(
-      "textarea[aria-label='Table row 2 column 2']",
+    const evidence = container.querySelector<HTMLElement>(
+      "[contenteditable][aria-label='Table row 2 column 2']",
     )!;
-    await act(async () => {
-      evidence.focus();
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
-        evidence,
-        "Verified proofs",
-      );
-      evidence.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    await act(() => {});
+    const fieldEditor = (evidence as HTMLElement & { editor: Editor }).editor;
+    await act(() => fieldEditor.chain().focus().selectAll().insertContent("Verified proofs").run());
     expect(current).toContain("Theory & Verified proofs");
-    expect(
-      container.querySelector<HTMLTextAreaElement>("textarea[aria-label='Table row 2 column 2']"),
-    ).toBe(evidence);
+    expect(container.querySelector("[contenteditable][aria-label='Table row 2 column 2']")).toBe(
+      evidence,
+    );
     const addRow = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
       (button) => button.textContent === "Insert row below",
     )!;
     await act(async () => addRow.click());
     expect(current).toContain(" &  \\\\");
-    expect(container.querySelector("textarea[aria-label='Table row 3 column 1']")).not.toBeNull();
+    expect(
+      container.querySelector("[contenteditable][aria-label='Table row 3 column 1']"),
+    ).not.toBeNull();
     const addColumn = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
       (button) => button.textContent === "Insert column right",
     )!;
     await act(async () => addColumn.click());
-    expect(container.querySelector("textarea[aria-label='Table row 1 column 3']")).not.toBeNull();
+    expect(
+      container.querySelector("[contenteditable][aria-label='Table row 1 column 3']"),
+    ).not.toBeNull();
     await selectOption("Table style", "Full grid");
     expect(current).toContain("\\hline");
     const reference = container.querySelector<HTMLInputElement>(
@@ -1084,7 +1211,9 @@ Theory & Proofs \\\\
     await act(() => {});
     expect(current).toContain("\\begin{table}[htbp]");
     expect(current).toContain("\\begin{tabular}");
-    expect(container.querySelector("textarea[aria-label='Table row 3 column 4']")).not.toBeNull();
+    expect(
+      container.querySelector("[contenteditable][aria-label='Table row 3 column 4']"),
+    ).not.toBeNull();
   });
 
   it("inserts and edits theorem-like scientific statements", async () => {

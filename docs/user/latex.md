@@ -335,6 +335,44 @@ The following paragraph remains editable, and the command stays in source.
 immediately follows prose without a blank line. They appear as compact page-break
 markers instead of raw-source cards.
 
+Inline `\verb` text and `verbatim` blocks are editable directly on the page.
+Their contents remain literal: commands, percent signs and braces are printed,
+without creating headings, equations or comments. Code edits preserve the
+surrounding LaTeX delimiters.
+
+`lstlisting` code and plain captions are also editable on the page. Visual reads
+supported root-preamble `\lstset` settings and local listing options for language,
+font size, syntax colors, frames, wrapping and line numbers. Captions appear as
+**Listing 1: …** above or below the code according to `captionpos`. Highlighting
+uses the editor's existing language parsers; no external highlighter is launched.
+Unsupported listing styles retain exact-source fallback. Visual approximates
+the listing layout; the compiled PDF remains authoritative.
+
+`multicols` regions render editable text in the requested columns, including
+explicit `\columnbreak` commands and page footnotes. Supported `minipage` widths
+and top/center/bottom alignment are reflected on the page; adjacent minipages
+joined by `\hfill` stay side by side. Edits retain these environments and widths.
+An inline `\columnbreak` keeps the surrounding text in one paragraph and breaks
+after its rendered line, without adding a new paragraph indentation.
+To start the next paragraph at the top of the next column, end the preceding
+paragraph before the command, using `\par\columnbreak` or a blank line before
+`\columnbreak`. A single source newline does not end a LaTeX paragraph.
+Visual preserves that distinction, including the equivalent forced form
+`\columnbreak[4]`; it does not insert paragraph breaks to change PDF behavior.
+Full-width prose resumes after a column region. `\noindent`, `\par`, the three
+standard skip commands and root-level `\vfill` affect layout without printing
+their source. Vertical fill pushes the following content toward the bottom of
+the current printable page when space is available.
+
+Visual also reads common root-preamble `fancyhdr` left/center/right fields,
+running section marks and `\thepage`, with header/footer offsets from geometry
+or literal length assignments. These running fields are display-only; edit their
+definitions in Source. Columns are currently kept together by Visual's local
+page planner. Default running fields align against the full header/footer width,
+and long text wraps within the page margins. Long regions, minipage-specific
+footnotes, custom page styles and TeX's page/column balancing still require the
+compiled PDF.
+
 Description lists and common `tabular`, `tabularx`, `tabulary`, and `longtable`
 structures have visual editors. When inactive they read like document content;
 selection and keyboard focus reveal their structural controls. In a description
@@ -360,6 +398,21 @@ columns fit their contents while flexible X columns take the remaining width and
 wrap their text. Visual approximates table and caption spacing; custom package
 styles and float placement remain authoritative in PDF.
 
+Imported longtables can separate their initial header, repeated header, page
+footer, and final footer using `\endfirsthead`, `\endhead`, `\endfoot`, and
+`\endlastfoot`. Visual repeats the continuation header and footer when the data
+rows cross its page boundaries. The caption, initial header, and data cells are
+editable on the page; continuation definitions remain editable in Source.
+For standard document counters, the caption includes `Table 1:` and continuation
+text using `\thetable` shares that number. Cell edits retain the existing page
+gaps while the updated layout settles.
+Simple literal row templates declared in the preamble, such as
+`\newcommand{\testrow}[1]{#1 & Synthetic record #1 & Pending\\}`, render as
+ordinary cells. Untouched calls remain intact. Editing a generated cell writes
+that one call as an explicit row, preserving the template definition and other
+calls. Structural changes to these imported tables remain in Source. Exact
+break positions and more complex template expansion require the compiled PDF.
+
 Ordinary cell, caption, and label typing changes only the corresponding source
 ranges. Structural operations deliberately normalize only the supported table's
 `tabular` region so that its dimensions, column specification, and rules remain
@@ -372,7 +425,10 @@ colors and rules in Source. Tab skips covered cells and leaves the table after
 the last visible cell. Selection expands to include complete merged cells.
 They stay together in the writing canvas rather than splitting a merged cell
 across pages. Nonfloating tables stay nonfloating and unnumbered.
-Other structural cell content, such as unsupported nested commands or math,
+Cells containing a single inline formula are rendered and edited with the math
+editor, preserving their math delimiters. Tab moves between cells; selected math
+cells participate in the same clear and copy operations as text cells.
+Other structural cell content, such as unsupported nested commands or mixed prose and math,
 stays protected; selecting it shows **Protected table — edit in Source** in the footer.
 Other unsupported structures, including
 custom macros, appear as protected source blocks.
@@ -381,6 +437,37 @@ cannot delete across a protected preview or source block, or across an included
 file boundary. Click a source-only block or use **Edit LaTeX** to edit its exact
 source in place; **Apply LaTeX** checks that the document has not changed underneath
 the draft. **Source** opens the file that owns the block.
+
+### Repeated document content
+
+Visual can display a simple document-level counter loop with up to 100 iterations,
+including literal paragraph macros, generated headings and equations. Explicit
+page breaks and contents links behave like ordinary document content.
+
+Opening the file keeps its loop and macro definitions unchanged. Editing generated
+content expands the loop into ordinary LaTeX so each occurrence can be edited
+independently. More complex TeX programs remain available in Source.
+
+### Algorithms
+
+Standard `algorithm` / `algpseudocode` blocks show their caption, line numbers,
+indentation, keywords and comments. Edit prose, formulas, comments and captions
+directly on paper. Press Enter in a step, or use **Algorithm options → Add step**
+in the footer, to add a statement. Existing algorithm references navigate to the
+numbered float. Unknown pseudocode commands stay available in Source.
+
+### Colored text and boxes
+
+Colored text and inline color boxes are editable on paper, including literal
+custom colors and percentage mixtures. Supported `tcolorbox` blocks show their
+colored title, frame and background with editable prose, math and lists inside.
+Breakable boxes can continue onto later Visual pages; exact splitting remains
+the compiler's responsibility.
+
+Simple counter loops used to generate repeated paragraphs are displayed without
+showing their code. Editing a generated paragraph expands that loop into ordinary
+paragraphs in Source, allowing each one to change independently. Until that edit,
+the loop is preserved. Undo restores the previous document.
 
 ### Selecting table and math cells
 
@@ -459,6 +546,13 @@ centered, fixed-height `parbox` in `\fbox` is recognized from its definition;
 editing its text keeps the original command call. Panel and figure captions
 are editable on paper. Widths, rotation angles, framing and macro definitions
 remain in Source. Unsupported artwork stays available as exact source.
+
+Simple TikZ figures with numeric line paths, arrow axes, endpoint labels, filled
+circles and literal coordinate-pair loops are rendered in Visual. Edit labels
+and captions on paper. Select the figure and open **Drawing** in its contextual
+footer to edit an element's coordinates or the drawing's explicit scale. These
+edits preserve the surrounding TikZ commands; unfamiliar commands or options
+remain in Source.
 
 For standard figure counters, captions show their number and subcaptions show
 their panel letter. `\ref` navigates to labelled figures or panels; `\subref`
@@ -641,14 +735,22 @@ badge tells you so.
 
 ## Choose a LaTeX engine
 
-Scient compiles with pdfLaTeX, driven through `latexmk` — or through Tectonic
-instead, if that's what it finds. On the `latexmk` path, XeLaTeX and LuaLaTeX
-aren't run: if a document asks for one, through a `% !TEX program = xelatex`
-(or `lualatex`) comment or by loading a package pdfLaTeX can't process, such as
-`fontspec` or `unicode-math`, Scient detects that before the build starts and
-the error explains what the document needs instead of failing partway through a
-compile that was never going to work. Tectonic's engine is XeTeX-based, so with
-Tectonic installed those same documents build normally and nothing is refused.
+Scient uses `latexmk` when available and defaults to pdfLaTeX. A compiler
+directive in the root document selects an installed engine:
+
+```latex
+% !TEX program = lualatex
+```
+
+Use `xelatex` or `pdflatex` to select those engines instead. TeXShop's
+`TS-program` spelling is also recognized. A root directive takes precedence
+over directives in included preambles. The selected compiler must be available
+in the TeX distribution used by Scient.
+
+Without a directive, an unconditional `fontspec` or `unicode-math` load produces
+guidance to select LuaLaTeX or XeLaTeX. Tectonic remains the fallback toolchain;
+it uses a XeTeX-based engine and cannot satisfy an explicit LuaLaTeX or pdfLaTeX
+request. Such requests explain which toolchain is needed before compilation.
 
 Engine-aware documents that load packages only in the appropriate conditional
 branch are allowed to build normally.
@@ -676,6 +778,14 @@ or restarting.
 
 Compiling never leaves clutter in your files: build output, logs, and other
 compiler byproducts stay out of your project entirely.
+
+Some older LaTeX distributions emit an explicitly ignored “Infinite glue
+shrinkage found in box being split” message for longtables. Scient shows this
+known upstream issue as one warning per source location, without the engine's
+page and font output. Updating the LaTeX distribution's `longtable` package
+addresses the underlying issue. Table-width warnings from intermediate passes
+are omitted only when `latexmk` completes a later pass and reports settled
+output; warnings that remain in the final pass are still shown.
 
 ## Choose the root document
 
@@ -726,3 +836,25 @@ Ordinary prose edits preserve unchanged `~`, dash spelling, emphasis commands an
 source line breaks. Unknown macros and unsupported syntax remain available through
 Source; Write is a bounded editor, not a complete TeX interpreter. Using
 recovered changes follows normal save and conflict handling.
+
+Standard report documents show editable title metadata even when it is declared
+inside `document`, separate title/chapter pages, Roman front-matter page numbers,
+and lettered appendix chapters. Contents and lists of figures/tables have aligned
+numbers, indented entries and clickable targets. Captions and references share
+chapter numbering (for example, Figure 1.1 and Table 2.1). Page numbers reflect the
+Visual layout; exact float placement and compiled page breaks remain PDF features.
+
+Theorem and proof bodies remain editable when their formulas use grouped legacy
+font commands such as `K_{\rm LQR}`. References in proof headings are clickable,
+and algorithms may retain a size declaration such as `\small` before their steps.
+
+Abstracts support ordinary paragraphs and inline or display math. Table cells
+support formatted text mixed with inline math: place the caret in a cell and use
+Math → Inline math. Table cells share document undo. Deleting a rectangle clears
+its cells; re-entering a cell returns to caret editing. Display math requires a
+paragraph outside the table.
+
+For BibTeX documents, an existing `.bbl` beside the main `.tex` supplies the printed
+bibliography and citation numbers in Visual. Use Document → References to edit the
+original `.bib` entries. This display follows the saved `.bbl`; it may need updating
+after bibliography changes. It is not generated by Visual itself.

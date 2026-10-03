@@ -86,7 +86,7 @@ import {
   type LatexEvidenceMarks,
 } from "./latexBuildEvidence.ts";
 import { buildLatexInvocation, latexEngineEnvironment } from "./latexCommand.ts";
-import { evaluateLatexEngineGate } from "./latexEngineGate.ts";
+import { selectLatexBuildEngine } from "./latexEngineGate.ts";
 import { parseLatexLog, summarizeLatexFailure, transcriptFailureDiagnostic } from "./latexLog.ts";
 import { missingLatexPackageInputs } from "./latexMissingPackages.ts";
 import { latexPreambleIncludes, latexPreamblePackages } from "./latexPreamble.ts";
@@ -1431,38 +1431,28 @@ export const make = Effect.gen(function* () {
       }
 
       const rootAbsolutePath = path.join(entry.workspaceRoot, entry.rootRelativePath);
-      const preamble =
-        toolchain.kind === "latexmk" ? yield* readPreambleHeads(rootAbsolutePath) : null;
-
-      // A document that names another engine is refused before anything runs.
-      // `latexmk -pdf` drives pdfLaTeX, and handing it a fontspec or
-      // `% !TEX program = xelatex` document yields pages of confusing macro
-      // errors instead of one honest sentence. Tectonic's engine is XeTeX-based,
-      // so only the latexmk path is gated.
-      if (toolchain.kind === "latexmk" && preamble !== null) {
-        const verdict = evaluateLatexEngineGate(preamble);
-        if (!verdict.supported) {
-          yield* recordFailure({
-            key,
-            generation,
-            production,
-            summary: verdict.message,
-            diagnostics: [
-              {
-                severity: "error",
-                file: entry.rootRelativePath,
-                line: null,
-                // The gate's message already names the engine and quotes the
-                // line that asked for it.
-                message: verdict.message,
-              },
-            ],
-          });
-          return;
-        }
+      const preamble = yield* readPreambleHeads(rootAbsolutePath);
+      const compiler = selectLatexBuildEngine(preamble ?? { rootText: "" }, toolchain.kind);
+      if (compiler.error !== null) {
+        yield* recordFailure({
+          key,
+          generation,
+          production,
+          summary: compiler.error,
+          diagnostics: [
+            {
+              severity: "error",
+              file: entry.rootRelativePath,
+              line: null,
+              message: compiler.error,
+            },
+          ],
+        });
+        return;
       }
 
       const invocation = buildLatexInvocation({
+        engine: compiler.engine,
         toolchain: {
           kind: toolchain.kind,
           executable: toolchainExecutable,

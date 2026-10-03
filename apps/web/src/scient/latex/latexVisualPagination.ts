@@ -2,10 +2,16 @@ export interface LatexVisualPaginationBlock {
   readonly top: number;
   readonly bottom: number;
   readonly explicitBreak?: boolean;
+  /** Implicit chapter/list start: advance, then measure this block normally. */
+  readonly breakBefore?: boolean;
   /** Headings and the first/last two lines of a paragraph travel together. */
   readonly keepWithNext?: boolean;
   /** Measured footnote content attached to this line reserves space on its page. */
   readonly footnoteHeight?: number;
+  /** Root vertical fill distributes the free printable space before the next page break. */
+  readonly stretch?: boolean;
+  readonly continuationHeaderHeight?: number;
+  readonly continuationFooterHeight?: number;
 }
 
 export interface LatexVisualPaginationOptions {
@@ -42,6 +48,7 @@ export function planLatexVisualPagination(
   const placements: LatexVisualPaginationPlacement[] = [];
 
   for (const [index, block] of blocks.entries()) {
+    const incomingPage = page;
     const height = Math.max(0, block.bottom - block.top);
     let top = block.top + accumulatedOffset;
     let bottom = top + height;
@@ -64,29 +71,45 @@ export function planLatexVisualPagination(
       continue;
     }
 
+    let offset = 0;
+    if (block.breakBefore && top > page * stride + options.marginTop + 1) {
+      page++;
+      footnoteSpace = 0;
+      offset = Math.max(0, page * stride + options.marginTop - top);
+      accumulatedOffset += offset;
+      top += offset;
+      bottom += offset;
+    }
     while (top >= page * stride + options.pageHeight - options.marginBottom) {
       page += 1;
       footnoteSpace = 0;
     }
     let pageStart = page * stride + options.marginTop;
-    let pageBottom = page * stride + options.pageHeight - options.marginBottom;
-    let offset = 0;
+    let pageBottom =
+      page * stride +
+      options.pageHeight -
+      options.marginBottom -
+      (block.continuationFooterHeight ?? 0);
 
     // A browser can naturally place a block in the previous page's bottom
     // margin or in the visual gap between sheets. Advancing `page` alone is
     // not enough: move that block to the next printable origin as well.
-    if (top < pageStart) {
-      offset = pageStart - top;
-      accumulatedOffset += offset;
-      top += offset;
-      bottom += offset;
+    const printableStart =
+      pageStart + (page !== incomingPage ? (block.continuationHeaderHeight ?? 0) : 0);
+    if (top < printableStart) {
+      const adjustment = printableStart - top;
+      offset += adjustment;
+      accumulatedOffset += adjustment;
+      top += adjustment;
+      bottom += adjustment;
     }
 
     let groupEnd = index;
     while (
       blocks[groupEnd]?.keepWithNext &&
       blocks[groupEnd + 1] &&
-      !blocks[groupEnd + 1]!.explicitBreak
+      !blocks[groupEnd + 1]!.explicitBreak &&
+      !blocks[groupEnd + 1]!.breakBefore
     )
       groupEnd += 1;
     const groupHeight = Math.max(height, blocks[groupEnd]!.bottom - block.top);
@@ -102,8 +125,12 @@ export function planLatexVisualPagination(
       page += 1;
       footnoteSpace = 0;
       pageStart = page * stride + options.marginTop;
-      pageBottom = page * stride + options.pageHeight - options.marginBottom;
-      const pageOffset = Math.max(0, pageStart - top);
+      pageBottom =
+        page * stride +
+        options.pageHeight -
+        options.marginBottom -
+        (block.continuationFooterHeight ?? 0);
+      const pageOffset = Math.max(0, pageStart + (block.continuationHeaderHeight ?? 0) - top);
       offset += pageOffset;
       accumulatedOffset += pageOffset;
       top += pageOffset;
@@ -111,6 +138,23 @@ export function planLatexVisualPagination(
     }
 
     const startPage = page;
+    if (block.stretch) {
+      let end = index;
+      while (blocks[end + 1] && !blocks[end + 1]!.explicitBreak && !blocks[end + 1]!.breakBefore)
+        end++;
+      const tail = blocks.slice(index, end + 1);
+      const notes = tail.reduce((sum, item) => sum + (item.footnoteHeight ?? 0), 0);
+      const fills = tail.filter((item) => item.stretch).length;
+      const free = Math.max(
+        0,
+        pageBottom - footnoteSpace - notes - blocks[end]!.bottom - accumulatedOffset,
+      );
+      const stretch = free / Math.max(1, fills);
+      offset += stretch;
+      accumulatedOffset += stretch;
+      top += stretch;
+      bottom += stretch;
+    }
     footnoteSpace += block.footnoteHeight ?? 0;
     page = Math.max(page, Math.floor(Math.max(top, bottom - 0.5) / stride));
     if (page !== startPage) footnoteSpace = 0;
