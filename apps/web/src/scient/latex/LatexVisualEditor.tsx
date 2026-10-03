@@ -7760,6 +7760,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                             className="scient-latex-visual-paper"
                             data-indent-after-heading={layout.indentAfterHeading}
                             data-document-class={layout.documentClass}
+                            data-title-page={titlePage || undefined}
                             onDragOver={(event) => {
                               if (!event.dataTransfer.types.includes("Files")) return;
                               event.preventDefault();
