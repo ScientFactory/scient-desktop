@@ -52,7 +52,7 @@ export function LatexDocumentSettings(props: {
         anchor={() => props.anchor.current ?? props.fallbackAnchor.current}
         align="start"
         aria-label="Document settings"
-        className="w-lg max-w-[calc(100vw-2rem)]"
+        className="w-96 max-w-[calc(100vw-2rem)]"
         surface="bare"
         padding="none"
         keepMounted
@@ -63,7 +63,7 @@ export function LatexDocumentSettings(props: {
         <div className="dialog-glass relative rounded-2xl border text-popover-foreground">
           <div className="absolute end-2 top-2">
             <Button
-              size="icon"
+              size="icon-xs"
               variant="ghost"
               aria-label="Close document settings"
               onClick={() => props.onOpenChange(false)}
@@ -71,9 +71,10 @@ export function LatexDocumentSettings(props: {
               <XIcon />
             </Button>
           </div>
-          <div className="space-y-4 p-6">
+          <div className="space-y-3 p-4">
             <div className="flex gap-2" role="group" aria-label="Settings section">
               <Button
+                size="xs"
                 variant={section === "page" ? "selected" : "ghost"}
                 aria-pressed={section === "page"}
                 onClick={() => setSection("page")}
@@ -81,6 +82,7 @@ export function LatexDocumentSettings(props: {
                 Page layout
               </Button>
               <Button
+                size="xs"
                 variant={section === "style" ? "selected" : "ghost"}
                 aria-pressed={section === "style"}
                 onClick={() => setSection("style")}
@@ -89,7 +91,7 @@ export function LatexDocumentSettings(props: {
               </Button>
             </div>
             <form
-              className="grid gap-4"
+              className="grid gap-3"
               onSubmit={(event) => {
                 event.preventDefault();
                 if (!changed || props.disabled || stale) return;
@@ -103,10 +105,11 @@ export function LatexDocumentSettings(props: {
               <fieldset className="grid gap-3" disabled={props.disabled || stale}>
                 {section === "page" ? (
                   <>
-                    <div className="grid grid-cols-2 gap-3">
-                      <label className="grid gap-1">
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="grid gap-1 text-xs">
                         Paper size
                         <LatexSelect
+                          size="sm"
                           value={changes.paper ?? ""}
                           onValueChange={(value) =>
                             update({ paper: value as LatexVisualLayoutUpdate["paper"] })
@@ -114,7 +117,7 @@ export function LatexDocumentSettings(props: {
                           disabled={props.disabled || stale}
                           aria-label="Paper size"
                           options={[
-                            { value: "", label: "Keep document setting", disabled: true },
+                            { value: "", label: "Keep current", disabled: true },
                             ...Object.entries(LATEX_PAPER_SIZES).map(([value, paper]) => ({
                               value,
                               label: paper.label,
@@ -122,9 +125,10 @@ export function LatexDocumentSettings(props: {
                           ]}
                         />
                       </label>
-                      <label className="grid gap-1">
+                      <label className="grid gap-1 text-xs">
                         Orientation
                         <LatexSelect
+                          size="sm"
                           value={changes.orientation ?? ""}
                           onValueChange={(value) =>
                             update({ orientation: value as "portrait" | "landscape" })
@@ -132,20 +136,21 @@ export function LatexDocumentSettings(props: {
                           disabled={props.disabled || stale}
                           aria-label="Orientation"
                           options={[
-                            { value: "", label: "Keep document setting", disabled: true },
+                            { value: "", label: "Keep current", disabled: true },
                             { value: "portrait", label: "Portrait" },
                             { value: "landscape", label: "Landscape" },
                           ]}
                         />
                       </label>
                     </div>
-                    <div className="grid gap-1" role="group" aria-label="Margin">
-                      <span>Margin</span>
-                      <div className="grid grid-cols-4 gap-3">
+                    <div className="grid gap-2" role="group" aria-label="Margin">
+                      <h3 className="text-sm font-semibold">Margin</h3>
+                      <div className="grid grid-cols-4 gap-2">
                         {(["top", "right", "left", "bottom"] as const).map((side) => (
-                          <label key={side} className="grid gap-1">
+                          <label key={side} className="grid gap-1 text-xs">
                             {side[0]!.toUpperCase() + side.slice(1)}
                             <Input
+                              size="compact"
                               aria-label={`${side[0]!.toUpperCase() + side.slice(1)} margin`}
                               value={changes.margins?.[side] ?? ""}
                               placeholder="Keep"
@@ -169,9 +174,10 @@ export function LatexDocumentSettings(props: {
                   </>
                 ) : (
                   <>
-                    <label className="grid gap-1">
+                    <label className="grid gap-1 text-xs">
                       Document type
                       <LatexSelect
+                        size="sm"
                         value={changes.documentClass ?? profile.documentClass}
                         disabled={props.disabled || stale || customClass}
                         onValueChange={(value) => update({ documentClass: value })}
@@ -197,9 +203,10 @@ export function LatexDocumentSettings(props: {
                         controlled by its LaTeX setup.
                       </p>
                     )}
-                    <label className="grid gap-1">
+                    <label className="grid gap-1 text-xs">
                       Base text size
                       <LatexSelect
+                        size="sm"
                         disabled={props.disabled || stale || customClass}
                         value={changes.baseFontPt ?? ""}
                         onValueChange={(value) =>
@@ -207,7 +214,7 @@ export function LatexDocumentSettings(props: {
                         }
                         aria-label="Base text size"
                         options={[
-                          { value: "", label: "Keep document setting", disabled: true },
+                          { value: "", label: "Keep current", disabled: true },
                           ...[10, 11, 12].map((size) => ({
                             value: String(size),
                             label: `${size} pt`,
@@ -215,9 +222,10 @@ export function LatexDocumentSettings(props: {
                         ]}
                       />
                     </label>
-                    <label className="grid gap-1">
+                    <label className="grid gap-1 text-xs">
                       Paragraphs
                       <LatexSelect
+                        size="sm"
                         disabled={props.disabled || stale || customClass}
                         value={changes.paragraphStyle ?? ""}
                         onValueChange={(value) =>
@@ -225,7 +233,7 @@ export function LatexDocumentSettings(props: {
                         }
                         aria-label="Paragraphs"
                         options={[
-                          { value: "", label: "Keep document setting", disabled: true },
+                          { value: "", label: "Keep current", disabled: true },
                           { value: "indented", label: "First-line indent" },
                           { value: "spaced", label: "Space between paragraphs" },
                         ]}
@@ -243,6 +251,7 @@ export function LatexDocumentSettings(props: {
               {error && <p role="alert">{error}</p>}
               <div className="flex flex-wrap justify-between gap-2">
                 <Button
+                  size="xs"
                   type="button"
                   variant="ghost"
                   onClick={() => {
@@ -253,10 +262,15 @@ export function LatexDocumentSettings(props: {
                   Edit settings in Source
                 </Button>
                 <div className="flex gap-2">
-                  <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
+                  <Button
+                    size="xs"
+                    type="button"
+                    variant="outline"
+                    onClick={() => props.onOpenChange(false)}
+                  >
                     Cancel
                   </Button>
-                  <Button type="submit" disabled={!changed || props.disabled || stale}>
+                  <Button size="xs" type="submit" disabled={!changed || props.disabled || stale}>
                     Apply
                   </Button>
                 </div>

@@ -16,7 +16,7 @@ export function LatexSelect(props: {
   "aria-label": string;
   disabled?: boolean;
   title?: string | undefined;
-  size?: "default" | "compact";
+  size?: "default" | "compact" | "sm";
 }) {
   const ownerId = useId();
   return (
