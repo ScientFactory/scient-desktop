@@ -58,14 +58,20 @@ only what its file format can save.
 | Table rows, columns, alignment | Footer | Footer | Footer (unchanged) |
 | Figure, equation, statement options | — | Footer | Footer (unchanged) |
 
-## Decisions for the owner
+## Decided (owner, 2026-10-03)
 
-1. **Link.** Proposed: Insert, with Citation, Cross-reference and Footnote. A
-   link is what the text points to, not how it looks; Cmd+K stays.
-2. **Bold and Italic inside Text › Formatting.** Option A as decided; their
-   on/off state shows only inside the menu.
-3. **Math in Markdown.** Proposed: the same Math menu, replacing the Ω button
-   and the display-math item in Insert.
-4. **Markdown's More becomes Document**, so both editors end with the same menu.
-5. **Text direction** moves into Text (Markdown only), freeing a bar button.
-6. **Subscript and superscript**: add them to both now, or later.
+| # | Question | Decision |
+| --- | --- | --- |
+| 1 | Where does Link go? | **Insert**, next to Citation, Cross-reference and Footnote. No Link button in the bar; Cmd+K stays. |
+| 2 | How does the Insert button look? | **The word "Insert"**, not a plus icon. |
+| 3 | Math in Markdown? | **The same Math menu as LaTeX**, replacing the Ω button and the "Math equation" item in Insert. |
+| 4 | Text direction? | **Moves into the Text (Style) menu** (Markdown only), freeing a bar button. |
+| 5 | Subscript and superscript? | **Not now.** |
+| 6 | Markdown's "hide formatting tools" handle? | **Keep it.** |
+
+## Still open
+
+1. **Bold, Italic and Inline code inside Text › Formatting** (option A: hover opens
+   the second card, so two clicks), or kept as bar buttons.
+2. **Markdown's More becomes Document**, so both editors end with the same menu.
+3. **Font size** in Text › Size (LaTeX only): which sizes, and when.
