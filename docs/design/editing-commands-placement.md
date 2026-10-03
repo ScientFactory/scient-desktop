@@ -70,9 +70,10 @@ only what its file format can save.
 | 6 | Markdown's "hide formatting tools" handle? | **Keep it.** |
 | 7 | How does the Math button look? | **The word "Math"** alone, no Σ icon, in both editors. |
 | 8 | Where do Find and replace and Export go in LaTeX Visual? | **The Document menu**, with Title & authors and Document settings. The header's More then lists only what the row has no room for, and is hidden while everything fits. The Export card is only as wide as "PDF" and "Word". |
+| 9 | How is Document settings organised? | **One card, no tabs**: Type, Text size, Paper, Orientation, Margins (Narrow / Normal / Wide / Custom), Paragraphs. Every setting shows the document's current value; Apply writes only what changed. |
 | 7 | Screen-blocking editing dialogs? | **None wanted.** Link becomes a compact popover; remaining modal controls are inventoried below for conversion. |
 
-Decisions 1–4, 7 and 8 are built in the owner's local test app for review; that code is
+Decisions 1–4 and 7–9 are built in the owner's local test app for review; that code is
 not pushed yet.
 
 ## Still open
