@@ -27,6 +27,15 @@ export interface MarkdownSourceBlock {
    */
   readonly logicalText: string;
   readonly textSpans: ReadonlyArray<MarkdownSourceTextSpan>;
+  /**
+   * Kinds of the blocks nested inside a container (quote, list, list item,
+   * footnote), in document order and without repeats. Empty for a block whose
+   * content is inline only. Lets a projection notice nested syntax, such as a
+   * reference definition or an HTML comment, that it cannot carry.
+   */
+  readonly nestedBlockKinds: ReadonlyArray<string>;
+  /** For a merged `<div dir>` region holding exactly one block, that block's kind. */
+  readonly directionWrappedKind?: RootContent["type"];
 }
 
 export interface MarkdownSourceTextSpan {
@@ -96,6 +105,34 @@ const LOGICAL_VALUE_NODE_KINDS = new Set(["code", "inlineCode", "text"]);
 
 function hasReferenceDefinition(node: MdastValueNode): boolean {
   return node.type === "definition" || (node.children?.some(hasReferenceDefinition) ?? false);
+}
+
+const CONTAINER_NODE_KINDS = new Set(["blockquote", "list", "listItem", "footnoteDefinition"]);
+
+/** A `<div dir>` / `</div>` line pair inside a container, which the editor reads as direction. */
+const DIRECTION_WRAPPER_KIND = "directionWrapper";
+
+function isDirectionWrapperLine(node: MdastValueNode): "open" | "close" | null {
+  if (node.type !== "html" || typeof node.value !== "string") return null;
+  const value = node.value.trim();
+  if (DIRECTION_OPEN_PATTERN.test(value)) return "open";
+  return value === DIRECTION_CLOSE_TEXT ? "close" : null;
+}
+
+function nestedBlockKinds(node: MdastValueNode): string[] {
+  const kinds = new Set<string>();
+  const visit = (container: MdastValueNode): void => {
+    if (!CONTAINER_NODE_KINDS.has(container.type)) return;
+    const children = container.children ?? [];
+    const wrapperLines = children.map(isDirectionWrapperLine);
+    const pairedWrapper = wrapperLines.includes("open") && wrapperLines.includes("close");
+    children.forEach((child, index) => {
+      kinds.add(pairedWrapper && wrapperLines[index] ? DIRECTION_WRAPPER_KIND : child.type);
+      visit(child);
+    });
+  };
+  visit(node);
+  return [...kinds];
 }
 
 const CONTEXT_NODE_KINDS = new Set(["definition", "footnoteDefinition", "yaml", "toml", "html"]);
@@ -228,6 +265,12 @@ function mergeDirectionRegions(
       );
       logicalText += block.logicalText;
     }
+    const innerKinds = new Set<string>();
+    for (const block of inner) {
+      innerKinds.add(block.kind);
+      for (const kind of block.nestedBlockKinds) innerKinds.add(kind);
+    }
+    const onlyInner = inner.length === 1 ? inner[0] : undefined;
     merged.push({
       id: open.id,
       kind: "paragraph",
@@ -238,6 +281,8 @@ function mergeDirectionRegions(
       trailing: close.trailing,
       logicalText,
       textSpans,
+      nestedBlockKinds: [...innerKinds],
+      ...(onlyInner ? { directionWrappedKind: onlyInner.kind } : {}),
     });
     index = closeIndex + 1;
   }
@@ -288,6 +333,7 @@ export function createMarkdownSourceLedger(source: string): MarkdownSourceLedger
         trailing: source.slice(contentEnd, end),
         logicalText: text.logicalText,
         textSpans: text.textSpans,
+        nestedBlockKinds: nestedBlockKinds(node as MdastValueNode),
       };
     }),
   );

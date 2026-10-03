@@ -104,16 +104,35 @@ const NODE_NAMES_BY_BLOCK_KIND: Partial<Record<MarkdownSourceBlock["kind"], Read
 
 /** Whether the rich node is the kind of block the source ledger found. */
 function matchesBlockKind(block: MarkdownSourceBlock, node: ProseMirrorNode): boolean {
-  const names = NODE_NAMES_BY_BLOCK_KIND[block.kind];
-  if (!names) return true;
-  if (names.has(node.type.name)) return true;
-  // A `<div dir>` region is one ledger "paragraph" whose content may be a
-  // directed heading or table.
-  return (
-    block.kind === "paragraph" &&
-    typeof node.attrs.dir === "string" &&
-    (node.type.name === "heading" || node.type.name === "table")
-  );
+  // A `<div dir>` region is one ledger "paragraph" around the block it directs.
+  const names = NODE_NAMES_BY_BLOCK_KIND[block.directionWrappedKind ?? block.kind];
+  return !names || names.has(node.type.name);
+}
+
+// Nested syntax the rich document cannot carry. Inside a quote or list it
+// would be dropped or escaped the next time the container is rewritten, so
+// such a container stays editable source.
+const SOURCE_ONLY_NESTED_KINDS = new Set([
+  "definition",
+  "footnoteDefinition",
+  "html",
+  "math",
+  "toml",
+  "yaml",
+]);
+
+// A heading is one line in Markdown. An atom whose source spans lines (a
+// multi-line equation or citation) cannot be written back into it.
+function isOneLineHeading(node: ProseMirrorNode): boolean {
+  if (node.type.name !== "heading") return true;
+  let oneLine = true;
+  node.forEach((child) => {
+    if (!child.isAtom) return;
+    for (const value of Object.values(child.attrs)) {
+      if (typeof value === "string" && /[\r\n]/u.test(value)) oneLine = false;
+    }
+  });
+  return oneLine;
 }
 
 function parseBlock(
@@ -126,13 +145,16 @@ function parseBlock(
   const footnote = footnoteDefinitionBlock(block);
   if (footnote) return footnote;
   if (!COMMONMARK_BLOCK_KINDS.has(block.kind)) return rawBlock(block);
-  // A block the rich editor cannot show faithfully stays editable source:
-  // a dropped node or a different kind of block would hide content that a
-  // later edit then removes from the file.
+  // A block the rich editor cannot show faithfully stays editable source: a
+  // dropped node, a different kind of block, or nested syntax it cannot carry
+  // would hide content that a later edit then removes from the file.
+  if (block.nestedBlockKinds.some((kind) => SOURCE_ONLY_NESTED_KINDS.has(kind))) {
+    return rawBlock(block);
+  }
   const parsed = parseFaithfully(block.source, { references: { ...environment.references } });
   if (!parsed || parsed.childCount !== 1) return rawBlock(block);
   const node = parsed.child(0);
-  if (!matchesBlockKind(block, node)) return rawBlock(block);
+  if (!matchesBlockKind(block, node) || !isOneLineHeading(node)) return rawBlock(block);
   return withMarkdownSourceId(node, block.id);
 }
 

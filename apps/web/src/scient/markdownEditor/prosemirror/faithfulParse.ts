@@ -50,8 +50,15 @@ export function makeFaithfulMarkdownParse(
   }
 
   return (source, environment) => {
+    // A parse may run inside another (from a token's attribute callback);
+    // each keeps its own answer.
+    const outer = dropped;
     dropped = false;
-    const document = detecting.parse(source, environment);
-    return dropped ? null : document;
+    try {
+      const document = detecting.parse(source, environment);
+      return dropped ? null : document;
+    } finally {
+      dropped = outer;
+    }
   };
 }

@@ -63,6 +63,39 @@ describe("faithful Markdown projection", () => {
     expect(session.session.draftSource).toContain("**Keep** body.");
   });
 
+  it("changes only the typed character in a heading with math in a CRLF file", () => {
+    const source = "# Paper\r\n\r\n## Estimating $\\beta$ here\r\n\r\nBody text.\r\n";
+    const session = new ScientProseMirrorSession({ source, revision: "r1", mode: "write" });
+    const position = textPosition(session, "Estimating") + 1;
+
+    session.applyTransaction(session.state.tr.insertText("x", position, position), "user");
+
+    expect(session.session.draftSource).toBe(source.replace("Estimating", "Exstimating"));
+  });
+
+  it.each([
+    ["a heading whose equation spans lines", "Title \\(a\nb\\)\n===\n"],
+    ["a quote holding a reference definition", "> [r]: https://example.org\n>\n> Keep body.\n"],
+    ["a quote holding an HTML comment", "> Quote text\n>\n> <!-- keep me -->\n"],
+    ["a list item holding display math", "- Alpha item\n\n  $$\n  x^2\n  $$\n\n- Beta\n"],
+  ])("keeps %s as editable source", (_case, source) => {
+    const projection = createScientMarkdownProjection(source);
+
+    expect(projection.document.childCount).toBe(1);
+    expect(projection.document.firstChild?.type.name).toBe("raw_block");
+    expect(projection.document.firstChild?.attrs.source).toBe(source.trimEnd());
+    expect(serializeScientMarkdownProjection(projection, projection.document)).toBe(source);
+  });
+
+  it.each([
+    ['<div dir="auto">\n\n## Title\n\n</div>\n', "heading"],
+    ['<div dir="rtl">\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\n</div>\n', "table"],
+  ])("keeps a direction-wrapped block rich: %s", (source, name) => {
+    const projection = createScientMarkdownProjection(source);
+
+    expect(projection.document.firstChild?.type.name).toBe(name);
+  });
+
   it("names a heading with math by its TeX in the outline", () => {
     const projection = createScientMarkdownProjection("## Estimating $\\beta$ here\n");
     const state = EditorState.create({
@@ -91,6 +124,37 @@ describe("makeFaithfulMarkdownParse", () => {
 
   it("returns the ordinary document when nothing was dropped", () => {
     expect(parse("a b c", {})?.toJSON()).toEqual(droppingParser.parse("a b c").toJSON());
+  });
+
+  it("keeps each answer separate when one parse runs inside another", () => {
+    let nested: string | null = null;
+    let inner: ReturnType<typeof parse> | undefined;
+    const reentrant = new MarkdownParser(
+      defaultMarkdownParser.schema,
+      defaultMarkdownParser.tokenizer,
+      {
+        ...defaultMarkdownParser.tokens,
+        strong: { block: "code_block" },
+        em: {
+          mark: "em",
+          getAttrs: () => {
+            if (nested !== null) inner = reentrantParse(nested, {});
+            return null;
+          },
+        },
+      },
+    );
+    const reentrantParse = makeFaithfulMarkdownParse(reentrant);
+
+    // The outer parse drops a node; a clean inner parse must not hide that.
+    nested = "plain";
+    expect(reentrantParse("*a* **b**", {})).toBeNull();
+    expect(inner).not.toBeNull();
+
+    // The outer parse is clean; a dropping inner parse must not reject it.
+    nested = "a **b** c";
+    expect(reentrantParse("*a* c", {})).not.toBeNull();
+    expect(inner).toBeNull();
   });
 
   it("starts each parse without the previous parse's refusal", () => {
