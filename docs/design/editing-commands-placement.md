@@ -111,13 +111,13 @@ secondary cards on hover, as do the other menu categories.
 
 - **LaTeX:** Figure, Table, Code block, Literal text; References; Theorems & proofs;
   Document blocks; Page break. References contains Citation, Cross-reference,
-  Link, then Footnote after a separator. Document blocks contains Abstract,
-  Table of contents, Bibliography.
+  Link, then Footnote after a separator. Theorems & proofs also contains Question
+  and solution and Subquestions. Document blocks contains Abstract,
+  Table of contents, Bibliography, Verse.
 - **Markdown:** Image, Table, Code block; References; Divider line, Line break.
   References contains Link, Wiki link, then Footnote after a separator.
 - More and Other blocks are removed from LaTeX Insert. Question and solution,
-  Subquestions and Verse are removed from the creation menu. These menu changes
-  do not remove support for existing document content.
+  Subquestions remain under Theorems & proofs; Verse remains under Document blocks.
 - Long quotation and Part move to Text › Paragraph style. Left-aligned and
   Right-aligned text move to Text › Alignment. Their source and insertion
   semantics are unchanged.

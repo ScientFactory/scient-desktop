@@ -24,6 +24,7 @@ import { LatexVisualEditor } from "./LatexVisualEditor";
 import { clearVisualDraft } from "./visualDrafts";
 import { clearTypingDraft, readTypingDraft } from "./visualTyping";
 import { readStoredRecovery } from "./visualRecovery";
+import { projectLatexVisualDocument } from "./latexVisualDocument";
 
 const KEY = "pending-field-source-owner";
 const SOURCE =
@@ -109,6 +110,74 @@ describe("pending fields across outside document changes", () => {
     });
     expect(writes).not.toHaveBeenCalled();
   }
+
+  it("clears restored rich-cell drafts with a rectangle and allows finish, including after undo", async () => {
+    shown = "\\begin{tabular}{ll}\nAlpha & Text $x$\\\\\nKeep & Last\\\\\n\\end{tabular}";
+    const tableNode = projectLatexVisualDocument(shown).content.content![0]!;
+    const draftKeys = [0, 1].map(
+      (column) =>
+        `${KEY}:${tableNode.attrs!.sourceId}:table:cell:${tableNode.attrs!.rowIds[0]}:${tableNode.attrs!.columnIds[column]}`,
+    );
+    for (const [column, key] of draftKeys.entries())
+      localStorage.setItem(
+        `scient.latex.field:${key}`,
+        JSON.stringify({
+          base: tableNode.attrs!.rows[0][column],
+          text: `Restored ${column}`,
+        }),
+      );
+    await render();
+    await advance(40);
+    const fields = [0, 1].map((column) =>
+      container.querySelector<HTMLElement>(`[data-table-cell="0-${column}"]`)!,
+    );
+    const inner = fields.map((element) => (element as HTMLElement & { editor: Editor }).editor);
+    expect(inner.map((cell) => cell.state.doc.textContent)).toEqual(["Restored 0", "Restored 1"]);
+    await act(() => expect(finish?.()).toBe(false));
+    await act(() => inner[0]!.commands.focus("end"));
+    await advance(40);
+    await act(() =>
+      fields[0]!.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "ArrowRight",
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
+    const table = container.querySelector<HTMLElement>('[data-table-selection="cells"]')!;
+    expect(table).not.toBeNull();
+    await act(() =>
+      table.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Delete",
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
+    await advance(400);
+    expect(inner.map((cell) => cell.state.doc.textContent)).toEqual(["", ""]);
+    expect(editor().state.doc.firstChild!.attrs.rows).toEqual([
+      ["", ""],
+      ["Keep", "Last"],
+    ]);
+    expect(draftKeys.map((key) => localStorage.getItem(`scient.latex.field:${key}`))).toEqual([
+      null,
+      null,
+    ]);
+    await act(() => expect(finish?.()).toBe(true));
+    expect(pending).toHaveBeenLastCalledWith(false);
+    await act(() => editor().commands.undo());
+    await advance(400);
+    expect(inner.map((cell) => cell.state.doc.textContent)).toEqual(["Alpha", "Text "]);
+    expect(inner[1]!.getJSON().content![0]!.content).toContainEqual({
+      type: "latexInlineMath",
+      attrs: expect.objectContaining({ tex: "x" }),
+    });
+    await act(() => expect(finish?.()).toBe(true));
+  });
 
   it.each([
     ["changes the same title", SOURCE.replace("Original title", "Agent title")],

@@ -16,7 +16,7 @@ export const LatexDraftContext = createContext({
 });
 
 /** Apply an accepted grouped edit without publishing each field separately. */
-export function replaceLatexFieldDraft(field: HTMLTextAreaElement, value: string): void {
+export function replaceLatexFieldDraft(field: HTMLElement, value: string): void {
   field.dispatchEvent(new CustomEvent("scient-latex-replace-field-draft", { detail: value }));
 }
 

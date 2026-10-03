@@ -425,10 +425,12 @@ colors and rules in Source. Tab skips covered cells and leaves the table after
 the last visible cell. Selection expands to include complete merged cells.
 They stay together in the writing canvas rather than splitting a merged cell
 across pages. Nonfloating tables stay nonfloating and unnumbered.
-Cells containing a single inline formula are rendered and edited with the math
-editor, preserving their math delimiters. Tab moves between cells; selected math
-cells participate in the same clear and copy operations as text cells.
-Other structural cell content, such as unsupported nested commands or mixed prose and math,
+Cells support formatted prose mixed with inline formulas. Use Math → Inline math
+at the cell caret; formulas use the math editor and retain their delimiters.
+Text → Formatting and configured writing shortcuts work inside cells, and cell
+edits share document undo. Tab moves between cells; mixed prose/math cells
+participate in the same rectangle clear and copy operations as text cells.
+Other structural cell content, such as unsupported nested commands,
 stays protected; selecting it shows **Protected table — edit in Source** in the footer.
 Other unsupported structures, including
 custom macros, appear as protected source blocks.

@@ -83,7 +83,7 @@ describe("Hands-on review source preservation", () => {
     ).replaceAll("\n", "\r\n");
     expect(
       edit(source, (nodes) => {
-        nodes[0]!.attrs!.body = "A wrapped summary.";
+        nodes[0]!.content![0]!.content![0]!.text = "A wrapped summary.";
       })?.source,
     ).toBe(source.replace("introduction.", "summary."));
   });
@@ -123,8 +123,20 @@ describe("Hands-on review source preservation", () => {
     });
     expect(changed?.source).toBe(source.replace("\\]\nwhere", "\\]\n\\[\ny=2\n\\]\nwhere"));
   });
-  it("does not display protected table cells as stripped previews", () => {
+  it("projects supported inline math as a rich cell and round-trips a cell edit", () => {
     const raw = "\\begin{tabular}{c} $\\frac{1}{2}$ \\\\ \\end{tabular}";
+    expect(projectLatexVisualDocument(raw).blocks[0]!.node).toMatchObject({
+      type: "latexRichPreview",
+      attrs: { kind: "table", rows: [["$\\frac{1}{2}$"]] },
+    });
+    expect(
+      edit(raw, (nodes) => {
+        nodes[0]!.attrs!.rows[0][0] = "$\\frac{2}{3}$";
+      })?.source,
+    ).toBe(raw.replace("\\frac{1}{2}", "\\frac{2}{3}"));
+  });
+  it("does not display unsupported nested cell commands as stripped previews", () => {
+    const raw = "\\begin{tabular}{c} \\custom{Keep $x$ exactly} \\\\ \\end{tabular}";
     expect(projectLatexVisualDocument(raw).blocks[0]!.node).toMatchObject({
       type: "latexRawBlock",
       attrs: { raw },

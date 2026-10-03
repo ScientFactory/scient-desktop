@@ -30,6 +30,11 @@ import { clearTypingDraft } from "./visualTyping";
 import { scientificStatementsFixture } from "./scientificStatements.fixture";
 import { projectLatexVisualDocument } from "./latexVisualDocument";
 import { latexFigureSource } from "./figureSource";
+import {
+  DEFAULT_KEYBOARD_PREFERENCES,
+  reloadKeyboardPreferences,
+  saveKeyboardPreferences,
+} from "../keyboard/preferences";
 
 // Wait for the editor's paint-delayed conversion and source publication.
 const act = async (callback: () => unknown) =>
@@ -62,6 +67,7 @@ describe("writing editor source transactions", () => {
     clearVisualDraft("synthetic-editor-test");
     clearTypingDraft("synthetic-editor-test");
     localStorage.clear();
+    reloadKeyboardPreferences();
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -99,6 +105,20 @@ describe("writing editor source transactions", () => {
   }
   function editor(): Editor {
     return (container.querySelector(".ProseMirror") as HTMLElement & { editor: Editor }).editor;
+  }
+  async function openCellFormatting() {
+    await act(() =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Text"]')!.click(),
+    );
+    const trigger = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (item) => item.textContent === "Formatting",
+    )!;
+    await act(() => trigger.click());
+    return vi.waitFor(() => {
+      const items = [...document.body.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')];
+      expect(items).toHaveLength(3);
+      return items;
+    });
   }
   async function insertMenuItem(name: string) {
     await act(() =>
@@ -1024,6 +1044,122 @@ describe("writing editor source transactions", () => {
     expect(current).toMatch(/\\\[\s*a=b\s*\\\]/u);
     expect(current.match(/\\begin\{abstract\}/g)).toHaveLength(1);
     expect(projectLatexVisualDocument(current).rawBlocks).toBe(0);
+  });
+
+  it.each([
+    ["bold", 0, "textbf"],
+    ["italic", 1, "textit"],
+    ["code", 2, "texttt"],
+  ] as const)(
+    "follows the cell caret for %s availability, checked state and menu actions",
+    async (mark, index, command) => {
+      await mount(`\\begin{tabular}{ll}\n\\${command}{Marked} Plain & Other\\\\\n\\end{tabular}`);
+      await selectKind("table");
+      const field = container.querySelector<HTMLElement>('[data-table-cell="0-0"]')!;
+      const inner = (field as HTMLElement & { editor: Editor }).editor;
+      await act(() => inner.chain().focus().setTextSelection({ from: 1, to: 7 }).run());
+      let items = await openCellFormatting();
+      expect(items.every((item) => item.getAttribute("aria-disabled") !== "true")).toBe(true);
+      expect(items[index]!.getAttribute("aria-checked")).toBe("true");
+      await act(() => items[index]!.click());
+      expect(inner.isActive(mark)).toBe(false);
+      expect(current).not.toContain(`\\${command}{Marked}`);
+      await act(() => inner.chain().focus().setTextSelection({ from: 8, to: 13 }).run());
+      items = await openCellFormatting();
+      expect(items[index]!.getAttribute("aria-checked")).toBe("false");
+      await act(() => items[index]!.click());
+      expect(inner.isActive(mark)).toBe(true);
+      expect(current).toContain(`Marked \\${mark === "italic" ? "emph" : command}{Plain}`);
+      // A different cell has its own marks, even though the outer selection stays a table.
+      const other = (
+        container.querySelector('[data-table-cell="0-1"]') as HTMLElement & { editor: Editor }
+      ).editor;
+      await act(() => other.chain().focus().selectAll().run());
+      items = await openCellFormatting();
+      expect(items[index]!.getAttribute("aria-checked")).toBe("false");
+    },
+  );
+
+  it.each(["MacIntel", "Win32"])(
+    "respects default, disabled and remapped cell formatting shortcuts on %s",
+    async (platform) => {
+      vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
+      reloadKeyboardPreferences();
+      await mount("\\begin{tabular}{l}\nCell text\\\\\n\\end{tabular}");
+      const field = container.querySelector<HTMLElement>('[data-table-cell="0-0"]')!;
+      const inner = (field as HTMLElement & { editor: Editor }).editor;
+      await act(() => inner.chain().focus().selectAll().run());
+      const press = (key: string, shiftKey = false) =>
+        act(() =>
+          field.dispatchEvent(
+            new KeyboardEvent("keydown", {
+              key,
+              shiftKey,
+              metaKey: platform === "MacIntel",
+              ctrlKey: platform !== "MacIntel",
+              bubbles: true,
+              cancelable: true,
+            }),
+          ),
+        );
+      for (const [command, key, mark] of [
+        ["latex.bold", "b", "bold"],
+        ["latex.italic", "i", "italic"],
+        ["latex.inlineCode", "e", "code"],
+      ] as const) {
+        await act(() => saveKeyboardPreferences(DEFAULT_KEYBOARD_PREFERENCES));
+        await press(key);
+        expect(inner.isActive(mark)).toBe(true); // One toggle, not two owners.
+        await press(key);
+        expect(inner.isActive(mark)).toBe(false);
+        await act(() =>
+          saveKeyboardPreferences({
+            ...DEFAULT_KEYBOARD_PREFERENCES,
+            overrides: { [command]: [] },
+          }),
+        );
+        const before = current;
+        await press(key);
+        expect(inner.isActive(mark)).toBe(false);
+        expect(current).toBe(before);
+        await act(() =>
+          saveKeyboardPreferences({
+            ...DEFAULT_KEYBOARD_PREFERENCES,
+            overrides: { [command]: [`mod+shift+${key}`] },
+          }),
+        );
+        await press(key);
+        expect(inner.isActive(mark)).toBe(false);
+        await press(key, true);
+        expect(inner.isActive(mark)).toBe(true);
+        await press(key, true);
+        expect(inner.isActive(mark)).toBe(false);
+      }
+    },
+  );
+
+  it("counts a cell text selection in the footer and follows cell selection changes", async () => {
+    const headerSlot = document.createElement("div");
+    document.body.append(headerSlot);
+    try {
+      await mount(
+        "\\begin{tabular}{ll}\nHello brave $x$ world & Other\\\\\n\\end{tabular}",
+        "",
+        headerSlot,
+      );
+      const inner = (
+        container.querySelector('[data-table-cell="0-0"]') as HTMLElement & { editor: Editor }
+      ).editor;
+      await act(() => inner.chain().focus().setTextSelection({ from: 1, to: 12 }).run());
+      const footer = container.querySelector(".scient-document-footer-count")!;
+      expect(footer.textContent).toBe("2 of 4 words");
+      await act(() => inner.commands.setTextSelection({ from: 1, to: 6 }));
+      expect(footer.textContent).toBe("1 of 4 words");
+      await act(() => inner.commands.setTextSelection(1));
+      expect(footer.textContent).toBe("4 words");
+    } finally {
+      headerSlot.remove();
+    }
   });
 
   it("routes the Math menu to the caret inside a table cell and shares document undo", async () => {

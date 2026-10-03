@@ -111,7 +111,12 @@ import {
 import { latexColorCss, latexDocumentColors } from "./latexColorBoxes";
 import { LatexObjectMathField } from "./LatexObjectMathField";
 import { LatexInlineField } from "./LatexInlineField";
-import { latexEditingTarget, LatexInlineOwnerContext } from "./latexEditingTarget";
+import {
+  latexEditingTarget,
+  LatexInlineOwnerContext,
+  useLatexEditingState,
+} from "./latexEditingTarget";
+import { LatexWritingKeys } from "./latexWritingKeys";
 import { latexTableMathCell, latexTableCellIsMath } from "./latexVisualDocument";
 import { LatexProsePreview } from "./LatexProsePreview";
 import { latexFigureSource } from "./figureSource";
@@ -2314,17 +2319,15 @@ function LatexRichPreviewView({
         }),
       );
       if (editor.state.doc === before) return;
-      tableRoot.current
-        ?.querySelectorAll<HTMLTextAreaElement>("textarea[data-table-cell]")
-        .forEach((field) => {
-          const [row, column] = (field.dataset.tableCell ?? "").split("-").map(Number);
-          if (
-            row !== undefined &&
-            column !== undefined &&
-            tableSelectionContains(selection, row, column)
-          )
-            replaceLatexFieldDraft(field, "");
-        });
+      tableRoot.current?.querySelectorAll<HTMLElement>("[data-table-cell]").forEach((field) => {
+        const [row, column] = (field.dataset.tableCell ?? "").split("-").map(Number);
+        if (
+          row !== undefined &&
+          column !== undefined &&
+          tableSelectionContains(selection, row, column)
+        )
+          replaceLatexFieldDraft(field, "");
+      });
     },
     onClipboard: (selection) => {
       const position = getPos();
@@ -4349,15 +4352,7 @@ const baseExtensions = [
       return [latexDocumentObjectSelection()];
     },
   }),
-  // Configurable formatting is dispatched by the shared capture adapter. Prevent
-  // StarterKit from reviving its fixed bindings after a shortcut is disabled.
-  Extension.create({
-    name: "sharedWritingKeys",
-    priority: 1000,
-    addKeyboardShortcuts() {
-      return { "Mod-b": () => true, "Mod-i": () => true, "Mod-e": () => true };
-    },
-  }),
+  LatexWritingKeys,
   StarterKit.configure({
     heading: { levels: [1, 2, 3, 4, 5, 6] },
     codeBlock: false,
@@ -5360,11 +5355,17 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     return attachShortcutHost(editor.view.dom, ["latex", "math"], {
       capture: true,
       feedback: setShortcutHint,
-      accepts: (event) =>
-        editor.isEditable &&
-        !editor.view.composing &&
-        event.target instanceof Element &&
-        !event.target.closest('input, textarea, select, math-field, [contenteditable="false"]'),
+      accepts: (event) => {
+        const target = latexEditingTarget(editor);
+        return (
+          editor.isEditable &&
+          target.isEditable &&
+          !target.view.composing &&
+          event.target instanceof Element &&
+          !event.target.closest("input, textarea, select, math-field") &&
+          event.target.closest("[contenteditable]") === target.view.dom
+        );
+      },
       execute: (id) => shortcutAction.current(id),
     });
   }, [editor]);
@@ -6689,10 +6690,17 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   // The same inline formatting, in the same order, as the Markdown bar; LaTeX
   // has no strikethrough.
   // Inline formatting acts on text; on an object (title, figure, equation) it is off.
+  const { editor: editingTarget, state: editingState } = useLatexEditingState(editor);
   const caretInText = Boolean(
     editor &&
     !(editor.state.selection instanceof NodeSelection) &&
     editor.state.selection.$from.parent.isTextblock,
+  );
+  const formattingAvailable = Boolean(
+    editingTarget?.isEditable &&
+    editingState &&
+    !(editingState.selection instanceof NodeSelection) &&
+    editingState.selection.$from.parent.isTextblock,
   );
   const formatActions = [
     {
@@ -6700,27 +6708,27 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       label: WRITING_COMMAND_LABELS.bold,
       icon: <WritingCommandIcon command="bold" />,
       action: () => toggleLatexProseMark(editor ? latexEditingTarget(editor) : null, "bold"),
-      active: editor?.isActive("bold"),
+      active: editingTarget?.isActive("bold"),
       preserveIconWeight: true,
-      disabled: !caretInText,
+      disabled: !formattingAvailable,
     },
     {
       id: "latex.italic",
       label: WRITING_COMMAND_LABELS.italic,
       icon: <WritingCommandIcon command="italic" />,
       action: () => toggleLatexProseMark(editor ? latexEditingTarget(editor) : null, "italic"),
-      active: editor?.isActive("italic"),
+      active: editingTarget?.isActive("italic"),
       preserveIconWeight: false,
-      disabled: !caretInText,
+      disabled: !formattingAvailable,
     },
     {
       id: "latex.inlineCode",
       label: WRITING_COMMAND_LABELS.inlineCode,
       icon: <WritingCommandIcon command="inlineCode" />,
       action: () => toggleLatexProseMark(editor ? latexEditingTarget(editor) : null, "code"),
-      active: editor?.isActive("code"),
+      active: editingTarget?.isActive("code"),
       preserveIconWeight: true,
-      disabled: !caretInText,
+      disabled: !formattingAvailable,
     },
   ];
 
@@ -7323,7 +7331,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     () => (hostsFooter ? countLatexWords(props.source) : 0),
     [hostsFooter, props.source],
   );
-  const selectedWords = editor ? countSelectedWords(editor.state) : null;
+  const selectedWords = editingState ? countSelectedWords(editingState) : null;
   const footerWords = {
     // The total is an estimate from the source; it never reads below the selection.
     total: Math.max(sourceWords, selectedWords ?? 0),

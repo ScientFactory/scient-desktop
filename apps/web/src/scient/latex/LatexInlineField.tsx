@@ -13,6 +13,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { TextSelection } from "@tiptap/pm/state";
 import { LatexDraftContext, restoredLatexFieldDraft } from "./LatexTextField";
 import { latexTableInlineContent, serializeLatexVisualBlock } from "./latexVisualDocument";
+import { LatexWritingKeys } from "./latexWritingKeys";
 import {
   activateLatexEditingTarget,
   clearLatexEditingTarget,
@@ -53,6 +54,7 @@ export function LatexInlineField(props: {
   const editor = useEditor({
     shouldRerenderOnTransaction: false,
     extensions: [
+      LatexWritingKeys,
       StarterKit.configure({
         document: false,
         undoRedo: false,
@@ -190,6 +192,27 @@ export function LatexInlineField(props: {
       };
     }
   }, [editor, props.source, props.disabled, props.label, props.cell]);
+  useEffect(() => {
+    if (!editor) return;
+    const element = editor.view.dom;
+    const replace = (event: Event) => {
+      if (!(event instanceof CustomEvent) || typeof event.detail !== "string") return;
+      pending.current = null;
+      acknowledged.current = event.detail;
+      editor.commands.setContent(inlineDocument(event.detail), { emitUpdate: false });
+      reportDraft(id, false);
+      const key = current.current.draftKey;
+      if (key) {
+        try {
+          localStorage.removeItem(`scient.latex.field:${key}`);
+        } catch {
+          /* Optional recovery storage. */
+        }
+      }
+    };
+    element.addEventListener("scient-latex-replace-field-draft", replace);
+    return () => element.removeEventListener("scient-latex-replace-field-draft", replace);
+  }, [editor, id, reportDraft]);
   useEffect(() => {
     if (!editor) return;
     reportDraft(id, pending.current !== null);
