@@ -1074,6 +1074,14 @@ export const make = Effect.gen(function* () {
                   }),
               ),
             );
+          // The identity (device and inode, as bigints: 64-bit ids exceed a
+          // double) of the file being moved, taken before the new name exists.
+          const sourceIdentity = yield* Effect.promise(() =>
+            NodeFSP.lstat(source.realTargetPath, { bigint: true }).then(
+              (stat) => ({ dev: stat.dev, ino: stat.ino }),
+              () => null,
+            ),
+          );
           yield* Effect.tryPromise({
             try: () => NodeFSP.link(source.realTargetPath, destination.realTargetPath),
             catch: (cause) =>
@@ -1092,15 +1100,23 @@ export const make = Effect.gen(function* () {
                     cause,
                   }),
           });
-          // The identity (device and inode, as bigints: 64-bit ids exceed a
-          // double) of the file just linked. Cleanup removes the new name only
-          // while it still holds this file, never a file another program put
-          // there since; the old name is removed only while it still is it.
+          // The new name is known to hold the moved file only when it shows
+          // the identity taken before linking. Otherwise (the source replaced
+          // just before the link, or the new name replaced just after) nothing
+          // is removed: every ownership check below fails, and the rename
+          // reports a conflict with both names left in place. Cleanup removes
+          // the new name only while it holds the moved file; the old name is
+          // removed only while it still is that file.
           const destinationPath = destination.realTargetPath;
           const sourcePath = source.realTargetPath;
           const linkedIdentity = yield* Effect.promise(() =>
             NodeFSP.lstat(destinationPath, { bigint: true }).then(
-              (stat) => ({ dev: stat.dev, ino: stat.ino }),
+              (stat) =>
+                sourceIdentity !== null &&
+                stat.dev === sourceIdentity.dev &&
+                stat.ino === sourceIdentity.ino
+                  ? sourceIdentity
+                  : null,
               () => null,
             ),
           );
