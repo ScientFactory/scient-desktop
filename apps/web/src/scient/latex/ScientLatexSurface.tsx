@@ -1422,6 +1422,8 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                     relativePath={props.relativePath}
                     disabled={props.truncated || persistence === null || sourceRecovery.blocked}
                     onEdit={handleVisualEdit}
+                    flushReferenceEdits={persistence?.flushNow}
+                    documentPersistence={persistence ? [persistence] : []}
                     onEditingChange={ignoreVisualEditing}
                     onOpenSource={() => selectMode("source")}
                     onOpenRoot={(mode = "source") => {

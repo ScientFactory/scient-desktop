@@ -17,6 +17,7 @@ const { disk, optimistic, visual, saveProject, projectState } = vi.hoisted(() =>
       source: string;
       disabled: boolean;
       onEdit: (expected: string, next: string) => boolean;
+      flushReferenceEdits: () => Promise<boolean>;
       sourceError: string | null;
     },
   },
@@ -115,6 +116,8 @@ describe("retiring the project's recovery copy", () => {
         draftKey="unused"
         disabled={false}
         onEdit={() => true}
+        flushReferenceEdits={props.lease.flushNow}
+        documentPersistence={[props.lease]}
         onEditingChange={() => {}}
         onOpenSource={() => {}}
         onOpenFileSource={() => {}}
@@ -136,6 +139,7 @@ describe("retiring the project's recovery copy", () => {
         fileTruncated={false}
         selectedPending={false}
         draftKey="unused"
+        flushReferenceEdits={() => Promise.resolve(true)}
         disabled={false}
         registerSaveProject={(save) => (saveProject.current = save)}
         onEdit={props.onEdit ?? (() => true)}
@@ -210,6 +214,28 @@ describe("retiring the project's recovery copy", () => {
     localStorage.setItem(SLOT, record);
     await mount(<Surface lease={acquire(path)} />);
     expect(localStorage.getItem(SLOT)).toBeNull();
+  });
+
+  it("reference confirmation flushes the selected file's actual session", async () => {
+    disk.set(path, { source: tex("File"), revision: "r1" });
+    const lease = acquire(path);
+    await mount(<Surface lease={lease} />);
+    await act(() => lease.change(tex("Edited"), 0));
+    let completed = false;
+    let confirmation!: Promise<boolean>;
+    await act(() => {
+      confirmation = visual.props!.flushReferenceEdits().then((saved) => {
+        completed = true;
+        return saved;
+      });
+    });
+    expect(writes).toBe(1);
+    expect(completed).toBe(false);
+    await act(async () => {
+      acknowledge();
+      expect(await confirmation).toBe(true);
+    });
+    expect(completed).toBe(true);
   });
 
   it("keeps it when a second view opens while the file's session still has that source unsaved", async () => {
@@ -302,6 +328,30 @@ describe("retiring the project's recovery copy", () => {
       await mount(<FixedSurface source={root} onEdit={rootEdits} />);
       await settle(20);
       expect(visual.props!.source).toContain("Chapter text.");
+    });
+
+    it("reference confirmation waits for an included file's publication", async () => {
+      const before = visual.props!.source;
+      await act(() =>
+        expect(visual.props!.onEdit(before, edited("Chapter text.", "Updated chapter."))).toBe(
+          true,
+        ),
+      );
+      let completed = false;
+      let confirmation!: Promise<boolean>;
+      await act(() => {
+        confirmation = visual.props!.flushReferenceEdits().then((saved) => {
+          completed = true;
+          return saved;
+        });
+      });
+      expect(writes).toBe(1);
+      expect(completed).toBe(false);
+      await act(async () => {
+        acknowledge();
+        expect(await confirmation).toBe(true);
+      });
+      expect(disk.get("chapter.tex")?.source).toBe("Updated chapter.\n");
     });
 
     it("refuses a root declaration plus chapter edit before changing either file", async () => {

@@ -19,20 +19,30 @@ that every operation preserves every supported LaTeX construct.
 
 ## Component ownership and edit flow
 
-| Layer                                    | Owner                                                   | Responsibility                                                                                                                                                         |
-| ---------------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Document view and compilation            | `ScientLatexSurface.tsx`                                | Source/Split/Visual/PDF selection, save-before-build entry points, export availability and build diagnostics.                                                          |
-| Project assembly                         | `LatexProjectVisualEditor.tsx`, `latexProjectVisual.ts` | Resolve the root and included files; route accepted edits to their physical file. Ambiguous boundaries can refuse edits.                                               |
-| Source adapter                           | `latexVisualDocument.ts`                                | Project supported source into editor nodes, retain source ranges, validate proposed changes and preserve opaque source.                                                |
-| Interactive canvas                       | `LatexVisualEditor.tsx` and object views                | ProseMirror/Tiptap transactions, MathLive fields, selection, menus and contextual editing.                                                                             |
-| Equation, statement and table references | `latexEquationReferences.ts`, `mathEquationNumbers.ts`  | Derive one live number/label index for navigation; align equation tags with rendered MathLive rows without changing source or history.                                 |
-| Math setup                               | `latexDocumentMacros.ts`, `LatexDocumentMathContext.ts` | Parse bounded literal preamble definitions once, pass the root macro dictionary to every MathLive field, preserve calls in source, and expose setup in Document style. |
-| Environment declarations                 | `latexEnvironmentDeclarations.ts`                       | Interpret literal theorem names, standard styles, shared/scoped counters and simple quote wrappers; preserve declarations and reject unsupported definitions.          |
-| Title conversion                         | `LatexTitleStep.ts`                                     | Keep the source before/after a paragraph-to-title conversion in the existing undo history.                                                                             |
-| Writing chrome                           | `markdownEditor/ui/dockChrome.tsx`                      | Shared button/menu styling and priority overflow. Visual opts into a permanent row and labels-before-overflow compression; other consumers retain their defaults.      |
-| Reading controls                         | `writing/DocumentReaderControls.tsx`                    | Shared PDF/Visual page, zoom, fit and search controls. Format adapters supply navigation and search operations.                                                        |
-| Contextual footer                        | `LatexContextTools.tsx`, heading/table/object toolbars  | Stable portal destination between Fit width and Search; keeps fields mounted while switching between inline controls and a compact menu.                               |
-| Persistence                              | Shared document sessions and LaTeX recovery journal     | One saver per physical file across Source and Visual. Pending fields are settled before document save/build/export; recovery remains comparison-first.                 |
+| Layer                                    | Owner                                                   | Responsibility                                                                                                                                                                      |
+| ---------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Document view and compilation            | `ScientLatexSurface.tsx`                                | Source/Split/Visual/PDF selection, save-before-build entry points, export availability and build diagnostics.                                                                       |
+| Project assembly                         | `LatexProjectVisualEditor.tsx`, `latexProjectVisual.ts` | Resolve the root and included files; route accepted edits to their physical file. Ambiguous boundaries can refuse edits.                                                            |
+| Source adapter                           | `latexVisualDocument.ts`                                | Project supported source into editor nodes, retain source ranges, validate proposed changes and preserve opaque source.                                                             |
+| Interactive canvas                       | `LatexVisualEditor.tsx` and object views                | ProseMirror/Tiptap transactions, MathLive fields, selection, menus and contextual editing.                                                                                          |
+| Equation, statement and table references | `latexEquationReferences.ts`, `mathEquationNumbers.ts`  | Derive one live number/label index for navigation; align equation tags with rendered MathLive rows without changing source or history.                                              |
+| Math setup                               | `latexDocumentMacros.ts`, `LatexDocumentMathContext.ts` | Parse bounded literal preamble definitions once, pass the root macro dictionary to every MathLive field, preserve calls in source, and expose setup in Document style.              |
+| Environment declarations                 | `latexEnvironmentDeclarations.ts`                       | Interpret literal theorem names, standard styles, shared/scoped counters and simple quote wrappers; preserve declarations and reject unsupported definitions.                       |
+| Title conversion                         | `LatexTitleStep.ts`                                     | Keep the source before/after a paragraph-to-title conversion in the existing undo history.                                                                                          |
+| Writing chrome                           | `markdownEditor/ui/dockChrome.tsx`                      | Shared button/menu styling and priority overflow. Visual opts into a permanent row and labels-before-overflow compression; other consumers retain their defaults.                   |
+| Reading controls                         | `writing/DocumentReaderControls.tsx`                    | Shared PDF/Visual page, zoom, fit and search controls. Format adapters supply navigation and search operations.                                                                     |
+| Contextual footer                        | `LatexContextTools.tsx`, heading/table/object toolbars  | Stable portal destination between Fit width and Search; keeps fields mounted while switching between inline controls and a compact menu.                                            |
+| Persistence                              | Shared document sessions and LaTeX recovery journal     | One saver per physical LaTeX or `.bib` file across its session-backed views. Pending fields are settled before document save/build/export; LaTeX recovery remains comparison-first. |
+
+References and a standalone `.bib` Source tab acquire leases on the same registry
+session. Both use its current source, revision checks, pending/departure guards
+and conflict notices. Non-Markdown sessions do not use the registry checkpoint
+store. LaTeX source and Visual input have their own comparison-first journal;
+`.bib` files and reference entry forms have no startup recovery offer and write
+no bibliography checkpoint. Form drafts remain available during the app session.
+Reference saves, including manual `\bibitem` edits, clear the form and announce
+success only when the owning sessions confirm publication. A refused or failed
+save retains the form and exposes the session's persistence notice.
 
 A supported edit passes from the canvas transaction to the source adapter, then
 to the project/file save path. Accepted source is projected back into the editor;

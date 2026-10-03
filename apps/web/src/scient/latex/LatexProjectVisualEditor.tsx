@@ -16,6 +16,7 @@ import { useProjectFileQuery } from "~/components/files/projectFilesQueryState";
 import { documentFailureReason } from "~/scient/markdownEditor/persistence/documentFailureReason";
 import { onDocumentSaved } from "~/scient/markdownEditor/persistence/documentPublication";
 import { useMarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/useMarkdownPersistenceLease";
+import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { projectEnvironment } from "~/state/projects";
 import { LatexVisualEditor, type LatexVisualEditorProps } from "./LatexVisualEditor";
 import {
@@ -34,6 +35,7 @@ interface FileState {
   unsaved: () => boolean;
   write: (contents: string) => boolean;
   flush: () => Promise<boolean>;
+  persistence?: MarkdownPersistenceLease | undefined;
 }
 interface Props extends LatexVisualEditorProps {
   registerSaveProject?: (save: (() => Promise<boolean>) | null) => void;
@@ -191,8 +193,9 @@ function ProjectFileSession(props: {
       unsaved,
       write,
       flush,
+      persistence: lease ?? undefined,
     });
-  }, [path, contents, revision, truncated, error, live, unsaved, write, flush, update]);
+  }, [path, contents, revision, truncated, error, live, unsaved, write, flush, lease, update]);
   // The project keeps a removed file's last text. It must not keep its session.
   const detach = props.detach;
   useEffect(() => () => detach(path), [path, detach]);
@@ -237,6 +240,7 @@ export function LatexProjectVisualEditor(props: Props) {
           unsaved: nothingUnsaved,
           write: refuseWrite,
           flush: nothingToFlush,
+          persistence: undefined,
         });
       }),
     [],
@@ -422,6 +426,17 @@ export function LatexProjectVisualEditor(props: Props) {
           draftKey={draftKey}
           fileRevision={JSON.stringify(paths.map((path) => [path, files.get(path)?.revision]))}
           onEdit={onEdit}
+          flushReferenceEdits={async () => {
+            const results = await Promise.all([
+              props.flushReferenceEdits?.() ?? Promise.resolve(false),
+              ...[...snapshot.current.states.values()].map((file) => file.flush()),
+            ]);
+            return results.every(Boolean);
+          }}
+          documentPersistence={[
+            ...(props.documentPersistence ?? []),
+            ...[...states.values()].flatMap((file) => (file.persistence ? [file.persistence] : [])),
+          ]}
           referenceFiles={{
             onSaved: props.onSaved,
           }}

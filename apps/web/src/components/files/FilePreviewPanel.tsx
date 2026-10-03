@@ -1476,7 +1476,9 @@ export default function FilePreviewPanel({
   const usesDocumentSession =
     !isHostFile &&
     relativePath !== null &&
-    (isRichMarkdown || (documentSessionIsCurrent && isLatexPreviewFile(relativePath)));
+    (isRichMarkdown ||
+      (documentSessionIsCurrent &&
+        (isLatexPreviewFile(relativePath) || /\.bib$/i.test(relativePath))));
   const {
     automaticRefreshUnavailable,
     cancelReloadNotice,

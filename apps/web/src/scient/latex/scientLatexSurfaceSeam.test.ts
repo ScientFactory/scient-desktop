@@ -120,9 +120,21 @@ describe("Scient LaTeX file-preview seam", () => {
     ])
       expect(mountedPropNames()).not.toContain(retired);
     expect(panelSource).toContain(
-      "isRichMarkdown || (documentSessionIsCurrent && isLatexPreviewFile(relativePath))",
+      "isLatexPreviewFile(relativePath) || /\\.bib$/i.test(relativePath)",
     );
     expect(panelSource).toContain("surfaceOwnsConflictDetection: usesDocumentSession");
+  });
+
+  it("routes bibliography tabs through the session-backed source surface", () => {
+    expect(panelSource).toMatch(
+      /const usesDocumentSession =[\s\S]*?!isHostFile[\s\S]*?documentSessionIsCurrent[\s\S]*?isLatexPreviewFile\(relativePath\) \|\| \/\\\.bib\$\/i\.test\(relativePath\)/u,
+    );
+    expect(panelSource).toMatch(
+      /usesDocumentSession && relativePath !== null \? \{ environmentId, cwd, relativePath \} : null/u,
+    );
+    expect(panelSource).toMatch(
+      /markdownLease \? \(\s*<MarkdownSourceSurface[\s\S]*?persistence=\{markdownLease\}/u,
+    );
   });
 
   it("edits source through the session's bindings instead of forking an editor or a saver", () => {

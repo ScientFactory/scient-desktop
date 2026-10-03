@@ -43,6 +43,7 @@ describe("writing editor source transactions", () => {
   let current: string;
   const originalGetAnimations = Object.getOwnPropertyDescriptor(Element.prototype, "getAnimations");
   const writes = vi.fn();
+  const flushReferences = vi.fn<() => Promise<boolean>>();
   const tex = (body: string) =>
     `\\documentclass{article}\n\\begin{document}\n${body}\n\\end{document}\n`;
   beforeEach(() => {
@@ -52,6 +53,7 @@ describe("writing editor source transactions", () => {
       value: () => [],
     });
     writes.mockReset();
+    flushReferences.mockReset().mockResolvedValue(false);
     clearVisualDraft("synthetic-editor-test");
     clearTypingDraft("synthetic-editor-test");
     localStorage.clear();
@@ -150,6 +152,7 @@ describe("writing editor source transactions", () => {
           disabled={false}
           onEditingChange={() => {}}
           onOpenSource={() => {}}
+          flushReferenceEdits={flushReferences}
           onEdit={(expected, next) => {
             if (current !== expected) return false;
             writes(expected, next);
@@ -167,6 +170,48 @@ describe("writing editor source transactions", () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
     });
   }
+
+  it("retains a manual reference until its document save is confirmed", async () => {
+    await mount(
+      "\\begin{thebibliography}{99}\n\\bibitem{known} Original entry\n\\end{thebibliography}",
+    );
+    await selectKind("bibliography");
+    const manage = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.trim() === "Manage references…",
+    )!;
+    expect(manage).toBeDefined();
+    await act(() => manage.click());
+    const field = () =>
+      container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Reference entry text"]');
+    expect(field()).not.toBeNull();
+    await setField(field()!, "Updated entry");
+    let confirm!: (value: boolean) => void;
+    flushReferences.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          confirm = resolve;
+        }),
+    );
+    const save = () =>
+      act(() =>
+        container
+          .querySelector("form")!
+          .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
+      );
+    await save();
+    expect(current).toContain("Updated entry");
+    expect(flushReferences).toHaveBeenCalledOnce();
+    expect(field()?.value).toBe("Updated entry");
+    expect(container.textContent).not.toContain("Reference saved.");
+    await act(() => confirm(false));
+    expect(field()?.value).toBe("Updated entry");
+    expect(container.textContent).toContain("Your entry draft is retained");
+    expect(container.textContent).not.toContain("Reference saved.");
+    flushReferences.mockResolvedValueOnce(true);
+    await save();
+    expect(field()).toBeNull();
+    expect(container.textContent).toContain("Reference saved.");
+  });
 
   it("keeps writing tools in one permanent row and reader controls in the footer", async () => {
     await mount();

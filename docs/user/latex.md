@@ -482,9 +482,14 @@ or `\eqref` by default. Bibliography management does not insert a citation.
 Reference saves preserve unrelated entries, unknown fields and literal TeX
 formatting. Unrelated document edits can be merged while the entry itself remains
 unchanged; conflicting edits retain the form draft instead of overwriting it.
-Linked file writes use Scient's normal file sessions and revision checks.
+Linked `.bib` files use the same document session and revision checks whether
+edited in References or in their own Source tab. The entry form clears and reports
+success only after the owning sessions confirm the save, including manual
+`\bibitem` edits. Failed or refused saves keep the form draft and show the save
+notice; keep the document open and resolve the save there.
 Read-only or truncated files remain read-only. Entry form drafts survive moving
-between file views during the app session.
+between file views during the app session. Linked `.bib` source and reference form
+drafts have no recovery offer after an app restart.
 
 **More > Bibliography** finds an existing bibliography, uses linked biblatex
 resources, or asks you to choose a BibTeX file/style or manual entries. It preserves
@@ -514,8 +519,9 @@ document changes while a picker is open, insertion asks you to choose the positi
 again. An image already imported when this happens remains a project asset.
 
 Preamble, macro and global-layout edits show a rebuild notice. After a crash or
-interrupted save, your unsaved changes are offered in the footer when you reopen
-the document, and you can keep writing meanwhile. **Compare** shows them next to
+interrupted save, journaled LaTeX source and Visual input are offered in the footer
+when you reopen the document, and you can keep writing meanwhile. This recovery
+does not cover linked `.bib` files or reference entry forms. **Compare** shows them next to
 the file, and the file is replaced only if you choose **Use recovered** there.
 **Discard** removes the recovered copy. In a narrow footer, the unsaved-work button
 opens the comparison, where you can also discard the copy. In a document made of
