@@ -332,8 +332,9 @@ unsupported title formatting remain source-owned. Standard article/report/book
 classes can be selected in Document style; incompatible switches and custom
 classes stay protected.
 
-Document has these entries: Title & authors, Page layout, Document style and
-Keyboard shortcuts. The last two open sections of one settings dialog
+Document has these entries: Title & authors, Document settings and Keyboard
+shortcuts. Document settings opens one dialog, with Page layout and Document
+style as its two tabs,
 with a shared draft, explicit Apply/Cancel, and a source snapshot checked again
 before mutation. Unchanged fields remain source-controlled. Margin updates carry
 only edited sides; adding geometry to a standard class retains the other projected

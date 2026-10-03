@@ -5937,11 +5937,9 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         </MenuSubPopup>
       </MenuSub>
       <MenuSeparator />
+      {/* One dialog, with Page layout and Document style as its two tabs. */}
       <DockCommandItem disabled={readOnly} onClick={() => openDocumentSettings("page")}>
-        Page layout
-      </DockCommandItem>
-      <DockCommandItem disabled={readOnly} onClick={() => openDocumentSettings("style")}>
-        Document style
+        Document settings
       </DockCommandItem>
       <MenuSeparator />
       <DockCommandItem onClick={() => setShortcutsOpen(true)}>Keyboard shortcuts</DockCommandItem>

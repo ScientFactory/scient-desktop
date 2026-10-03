@@ -446,7 +446,7 @@ describe("writing editor source transactions", () => {
       "Redo",
       "Bullet list",
       "Theorems & proofs",
-      "Page layout",
+      "Document settings",
       "Keyboard shortcuts",
     ])
       // A row may end with its shortcut.

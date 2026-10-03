@@ -54,8 +54,8 @@ paragraph or press Ctrl/Cmd+/ to open it; use the arrow keys and Enter to choose
 The writing toolbar stays fixed at the top on one row. When the pane narrows,
 labels disappear first (Math keeps its sigma); less-used groups then move into
 **More**. Insert holds elements and references; Lists holds list actions.
-**Document > Page layout** and **Document > Document style** open two sections of
-one settings dialog. **Outline** is a tab
+**Document > Document settings** opens one dialog with two tabs, Page layout and
+Document style. **Outline** is a tab
 in the sidebar, which opens from the header row. Selected-object options appear
 on the left of the footer; narrow panes use an object-named menu.
 **Document > Title & authors** offers Edit title, Edit authors and Edit date when
