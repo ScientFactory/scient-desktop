@@ -3,6 +3,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ANTIGRAVITY_DEFAULT_MODEL,
   DROID_DEFAULT_MODEL,
+  SCIENT_DEFAULT_TEXT_GENERATION_MODEL,
   type CustomModel,
   ModelSelection,
   ProjectId,
@@ -1044,10 +1045,10 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           { instanceId: ProviderInstanceId.make("antigravity"), model: ANTIGRAVITY_DEFAULT_MODEL },
         );
         // With every other provider off, it is what is left.
-        assert.equal(
-          (yield* selectionWith({ providers: builtInsDisabled }))?.instanceId,
-          ProviderInstanceId.make("scient"),
-        );
+        assert.deepEqual(yield* selectionWith({ providers: builtInsDisabled }), {
+          instanceId: ProviderInstanceId.make("scient"),
+          model: SCIENT_DEFAULT_TEXT_GENERATION_MODEL,
+        });
         // Turned off, nothing is chosen for it.
         assert.equal(
           (yield* selectionWith({ providers: { ...builtInsDisabled, scient: disabled } }))
