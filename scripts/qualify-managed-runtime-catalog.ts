@@ -134,6 +134,63 @@ const verifyDroidProtocol = (binary: string, version: string, platform: NodeJS.P
     platform,
   });
 
+/** Every process below `root`, read from `ps` (POSIX); children before their own children. */
+function posixDescendants(root: number): number[] {
+  const listing = NodeChildProcess.spawnSync("ps", ["-A", "-o", "pid=,ppid="], {
+    encoding: "utf8",
+  });
+  const children = new Map<number, number[]>();
+  for (const line of (listing.stdout ?? "").split("\n")) {
+    const [pid, ppid] = line.trim().split(/\s+/u).map(Number);
+    if (!pid || !ppid) continue;
+    children.set(ppid, [...(children.get(ppid) ?? []), pid]);
+  }
+  const found: number[] = [];
+  const queue = [...(children.get(root) ?? [])];
+  while (queue.length > 0) {
+    const pid = queue.shift()!;
+    found.push(pid);
+    queue.push(...(children.get(pid) ?? []));
+  }
+  return found;
+}
+
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Ends `root` and every process below it, and resolves when they have exited
+ * (or after 10 seconds). On POSIX the agent runs in its own process group, so
+ * killing the supervisor alone would leave it running: the tree is read first,
+ * because orphans lose their parent link once the supervisor dies.
+ */
+async function terminateProcessTree(root: number): Promise<void> {
+  if (HostProcessPlatform.defaultValue() === "win32") {
+    NodeChildProcess.spawnSync("taskkill", ["/pid", String(root), "/T", "/F"], {
+      windowsHide: true,
+    });
+    return;
+  }
+  const tree = [...posixDescendants(root), root];
+  for (const pid of tree) {
+    try {
+      process.kill(-pid, "SIGKILL"); // the group it leads, if any
+    } catch {}
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {}
+  }
+  for (let waited = 0; waited < 100 && tree.some(isRunning); waited += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
 /**
  * Oh My Pi is published only after the installed binary completes the app's
  * managed-activation check: the RPC v2 handshake, its version, and
@@ -161,6 +218,8 @@ async function verifyRpc(
     provider === "scient"
       ? await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-agent-rpc-qualification-"))
       : undefined;
+  // Set when the tree had to be ended; the home is removed only after it exits.
+  let treeEnded: Promise<void> | undefined;
   try {
     await new Promise<void>((resolve, reject) => {
       const child = NodeChildProcess.spawn(
@@ -186,11 +245,7 @@ async function verifyRpc(
         forced = setTimeout(() => {
           if (child.exitCode !== null || child.signalCode !== null || child.pid === undefined)
             return;
-          if (HostProcessPlatform.defaultValue() === "win32") {
-            NodeChildProcess.spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
-              windowsHide: true,
-            });
-          } else child.kill("SIGKILL");
+          treeEnded = terminateProcessTree(child.pid);
         }, 15_000);
       };
       cancellation?.addEventListener("abort", cancel, { once: true });
@@ -212,6 +267,7 @@ async function verifyRpc(
       });
     });
   } finally {
+    await treeEnded;
     if (home) await NodeFSP.rm(home, { recursive: true, force: true });
   }
 }
