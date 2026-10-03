@@ -62,6 +62,7 @@ function Field(props: { readonly label: string; readonly children: ReactNode }) 
 /**
  * Two or three choices side by side, drawn like the header's view switch:
  * white, with a grey pill under the chosen one that slides when it changes.
+ * The pill has the tone of a chosen item in a dropdown list.
  */
 function Choice<T extends string>(props: {
   readonly label: string;
@@ -85,7 +86,7 @@ function Choice<T extends string>(props: {
     >
       <span
         aria-hidden="true"
-        className="absolute inset-y-0.5 rounded-[5px] bg-accent transition-[left] duration-200 ease-out motion-reduce:transition-none"
+        className="absolute inset-y-0.5 rounded-[5px] bg-foreground/[0.08] transition-[left] duration-200 ease-out motion-reduce:transition-none"
         style={{
           width: `calc((100% - 4px) / ${count})`,
           left: `calc(2px + (100% - 4px) * ${index} / ${count})`,
