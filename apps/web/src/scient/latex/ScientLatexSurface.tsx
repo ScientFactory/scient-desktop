@@ -312,6 +312,19 @@ function LatexPendingViewer(props: { readonly label: string }) {
 }
 
 const VIEW_SWITCH = ".scient-latex-modes:not(.scient-latex-split-modes)";
+/** What the header row gives up, in order, when it runs out of room. */
+const HEADER_FIT_STEPS = [
+  "zoom",
+  "page",
+  "sidebar",
+  "status",
+  "search-short",
+  "split",
+  "search-icon",
+  "separators",
+  "percent",
+  "page-number",
+] as const;
 /**
  * Where the view switch starts in the header row while reader controls sit
  * before it, measured from the row's edge. Source has no reader controls; it
@@ -1040,6 +1053,31 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       </div>
     ) : null;
   const readerHosted = mergesReaderBar && hostedReaders > 0;
+  // The header row hides controls only when it runs out of room, one at a
+  // time in this order, and shows them again as soon as they fit.
+  useLayoutEffect(() => {
+    const row = headerRow.current;
+    if (!row) return;
+    const fit = () => {
+      const hidden: string[] = [];
+      row.dataset.fit = "";
+      for (const step of HEADER_FIT_STEPS) {
+        if (row.scrollWidth <= row.clientWidth + 1) break;
+        hidden.push(step);
+        row.dataset.fit = hidden.join(" ");
+      }
+    };
+    fit();
+    const resize = new ResizeObserver(fit);
+    resize.observe(row);
+    // Content changes too: page count, zoom, build messages, a pane's controls.
+    const content = new MutationObserver(fit);
+    content.observe(row, { childList: true, subtree: true, characterData: true });
+    return () => {
+      resize.disconnect();
+      content.disconnect();
+    };
+  }, []);
   // Without reader controls the row leaves their room empty, so the view
   // switch stays where it is in every view. The room gives way in a narrow pane.
   useLayoutEffect(() => {

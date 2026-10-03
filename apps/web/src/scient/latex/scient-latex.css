@@ -3250,28 +3250,9 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   display: inline;
 }
 
-/* Match the document header across modes without a scrolling action row. */
-@container scient-latex-surface (max-width: 650px) {
-  .scient-latex-toolbar .scient-latex-split-modes {
-    display: none;
-  }
-}
 @container scient-latex-surface (max-width: 520px) {
   .scient-latex-toolbar {
     gap: 4px;
-  }
-  .scient-latex-word-export > span,
-  .scient-latex-build-action > span {
-    display: none;
-  }
-  .scient-latex-word-export > svg {
-    display: block;
-  }
-  .scient-latex-word-export,
-  .scient-latex-build-action {
-    width: 28px;
-    padding: 0;
-    justify-content: center;
   }
 }
 @container scient-latex-surface (max-width: 360px) {
@@ -3572,7 +3553,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   font-size: 11px;
 }
 
-/* Status icons, shown only when the row is short of room (step 4 below). */
+/* Status icons, shown only when the row is short of room. */
 .scient-latex-chip {
   display: inline-flex;
   align-items: center;
@@ -3583,270 +3564,85 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   height: 13px;
 }
 
-/* When the header row runs short of room, controls give way in this order.
-   Split has its PDF/Visual switch as well, so each step comes earlier there
-   (until 650px, where that switch moves into More).
-   1. the zoom steps; the percentage stays: 800px, Split 892px.
-   2. the page arrows: 752px, Split 844px.
-   3. the sidebar button: 708px, Split 800px.
-   4. build messages and Rebuild keep only their icons: 670px, Split 762px.
-   5. search gets shorter and drops its count and arrows (Enter still moves): 573px, Split 665px.
-   5b. search keeps only its icon; clicking it opens the field in place, in its usual look: 470px.
-   6. the separators: 500px, Split 500px.
-   7. the percentage: 460px, Split 460px.
-   8. the page number: 410px, Split 410px.
-*/
-@container scient-latex-surface (max-width: 800px) {
-  .scient-latex-surface:not([data-latex-layout="split"])
-    .scient-pdf-toolbar-hosted
-    .scient-pdf-action-zoom-step {
-    display: none;
-  }
+/* When the header row runs short of room, the surface measures it and hides
+   the next item in this order until everything fits (data-fit, in
+   ScientLatexSurface): the zoom steps (the percentage stays), the page
+   arrows, the sidebar button; build messages and Rebuild keep their icons;
+   search gets shorter; Split's PDF/Visual switch moves into More; search keeps
+   its icon; the separators; the percentage; the page number. Nothing is hidden
+   while there is room for it. */
+.scient-latex-toolbar[data-fit~="zoom"] .scient-pdf-action-zoom-step,
+.scient-latex-toolbar[data-fit~="page"] .scient-pdf-action-page-step,
+.scient-latex-toolbar[data-fit~="sidebar"] .scient-pdf-action-sidebar,
+.scient-latex-toolbar[data-fit~="sidebar"]
+  .scient-pdf-action-sidebar
+  + .scient-pdf-toolbar-separator,
+.scient-latex-toolbar[data-fit~="status"] .scient-latex-chip-text,
+.scient-latex-toolbar[data-fit~="status"] .scient-latex-build-action > span,
+.scient-latex-toolbar[data-fit~="split"] .scient-latex-split-modes,
+.scient-latex-toolbar[data-fit~="separators"] .scient-pdf-toolbar-separator,
+.scient-latex-toolbar[data-fit~="percent"] .scient-pdf-zoom-label,
+.scient-latex-toolbar[data-fit~="page-number"] .scient-pdf-page-control {
+  display: none;
 }
-@container scient-latex-surface (max-width: 892px) {
-  .scient-latex-surface[data-latex-layout="split"]
-    .scient-pdf-toolbar-hosted
-    .scient-pdf-action-zoom-step {
-    display: none;
-  }
+.scient-latex-toolbar[data-fit~="status"] .scient-latex-chip-icon {
+  display: block;
 }
-@container scient-latex-surface (max-width: 752px) {
-  .scient-latex-surface:not([data-latex-layout="split"])
-    .scient-pdf-toolbar-hosted
-    .scient-pdf-action-page-step {
-    display: none;
-  }
+.scient-latex-toolbar[data-fit~="status"] .scient-latex-chip {
+  padding: 4px;
 }
-@container scient-latex-surface (max-width: 844px) {
-  .scient-latex-surface[data-latex-layout="split"]
-    .scient-pdf-toolbar-hosted
-    .scient-pdf-action-page-step {
-    display: none;
-  }
+.scient-latex-toolbar[data-fit~="status"] .scient-latex-build-action {
+  width: 28px;
+  padding: 0;
+  justify-content: center;
 }
-@container scient-latex-surface (max-width: 708px) {
-  .scient-latex-surface:not([data-latex-layout="split"])
-    .scient-pdf-toolbar-hosted
-    .scient-pdf-action-sidebar,
-  .scient-latex-surface:not([data-latex-layout="split"])
-    .scient-pdf-toolbar-hosted
-    .scient-pdf-action-sidebar
-    + .scient-pdf-toolbar-separator {
-    display: none;
-  }
+.scient-latex-toolbar[data-fit~="search-short"] .scient-reader-search {
+  min-width: 84px;
 }
-@container scient-latex-surface (max-width: 800px) {
-  .scient-latex-surface[data-latex-layout="split"]
-    .scient-pdf-toolbar-hosted
-    .scient-pdf-action-sidebar,
-  .scient-latex-surface[data-latex-layout="split"]
-    .scient-pdf-toolbar-hosted
-    .scient-pdf-action-sidebar
-    + .scient-pdf-toolbar-separator {
-    display: none;
-  }
+.scient-latex-toolbar[data-fit~="search-short"] .scient-reader-search-count,
+.scient-latex-toolbar[data-fit~="search-short"] .scient-reader-search button {
+  display: none;
 }
-@container scient-latex-surface (max-width: 670px) {
-  .scient-latex-surface:not([data-latex-layout="split"])
-    .scient-latex-toolbar
-    .scient-latex-chip-text,
-  .scient-latex-surface:not([data-latex-layout="split"])
-    .scient-latex-toolbar
-    .scient-latex-build-action
-    > span {
-    display: none;
-  }
-  .scient-latex-surface:not([data-latex-layout="split"])
-    .scient-latex-toolbar
-    .scient-latex-chip-icon {
-    display: block;
-  }
-  .scient-latex-surface:not([data-latex-layout="split"]) .scient-latex-toolbar .scient-latex-chip {
-    padding: 4px;
-  }
-  .scient-latex-surface:not([data-latex-layout="split"])
-    .scient-latex-toolbar
-    .scient-latex-build-action {
-    width: 28px;
-    padding: 0;
-    justify-content: center;
-  }
+/* Search as an icon. Clicking it opens the field in place, in its usual quiet
+   look; the field collapses rather than disappearing so it can take the caret. */
+.scient-latex-toolbar[data-fit~="search-icon"] .scient-reader-search {
+  min-width: 28px;
+  flex: 0 0 28px;
 }
-@container scient-latex-surface (max-width: 762px) {
-  .scient-latex-surface[data-latex-layout="split"] .scient-latex-toolbar .scient-latex-chip-text,
-  .scient-latex-surface[data-latex-layout="split"]
-    .scient-latex-toolbar
-    .scient-latex-build-action
-    > span {
-    display: none;
-  }
-  .scient-latex-surface[data-latex-layout="split"] .scient-latex-toolbar .scient-latex-chip-icon {
-    display: block;
-  }
-  .scient-latex-surface[data-latex-layout="split"] .scient-latex-toolbar .scient-latex-chip {
-    padding: 4px;
-  }
-  .scient-latex-surface[data-latex-layout="split"]
-    .scient-latex-toolbar
-    .scient-latex-build-action {
-    width: 28px;
-    padding: 0;
-    justify-content: center;
-  }
+.scient-latex-toolbar[data-fit~="search-icon"] .scient-reader-search .scient-reader-search-box {
+  position: absolute;
+  z-index: 30;
+  top: 0;
+  left: 0;
+  width: 28px;
+  height: 26px;
 }
-@container scient-latex-surface (max-width: 500px) {
-  .scient-latex-surface .scient-pdf-toolbar-hosted .scient-pdf-toolbar-separator {
-    display: none;
-  }
+.scient-latex-toolbar[data-fit~="search-icon"]
+  .scient-reader-search
+  .scient-reader-search-box
+  > input {
+  width: 0;
+  flex: 0 0 0;
+  opacity: 0;
 }
-@container scient-latex-surface (max-width: 460px) {
-  .scient-latex-surface .scient-pdf-toolbar-hosted .scient-pdf-zoom-label {
-    display: none;
-  }
+.scient-latex-toolbar[data-fit~="search-icon"]
+  .scient-reader-search[data-searching]
+  .scient-reader-search-box,
+.scient-latex-toolbar[data-fit~="search-icon"]
+  .scient-reader-search:focus-within
+  .scient-reader-search-box {
+  background: color-mix(in srgb, var(--accent) 80%, var(--background));
 }
-@container scient-latex-surface (max-width: 410px) {
-  .scient-latex-surface .scient-pdf-toolbar-hosted .scient-pdf-page-control {
-    display: none;
-  }
+.scient-latex-toolbar[data-fit~="search-icon"]
+  .scient-reader-search:focus-within
+  .scient-reader-search-box {
+  width: 150px;
 }
-@container scient-latex-surface (max-width: 573px) {
-  .scient-latex-surface:not([data-latex-layout="split"])
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search {
-    min-width: 84px;
-  }
-  .scient-latex-surface:not([data-latex-layout="split"])
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search-count,
-  .scient-latex-surface:not([data-latex-layout="split"])
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search
-    button {
-    display: none;
-  }
-}
-@container scient-latex-surface (max-width: 665px) {
-  .scient-latex-surface[data-latex-layout="split"]
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search {
-    min-width: 84px;
-  }
-  .scient-latex-surface[data-latex-layout="split"]
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search-count,
-  .scient-latex-surface[data-latex-layout="split"]
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search
-    button {
-    display: none;
-  }
-}
-@container scient-latex-surface (max-width: 470px) {
-  .scient-latex-surface:not([data-latex-layout="split"])
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search {
-    min-width: 28px;
-    flex: 0 0 28px;
-  }
-  .scient-latex-surface:not([data-latex-layout="split"])
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search
-    .scient-reader-search-box {
-    position: absolute;
-    z-index: 30;
-    top: 0;
-    left: 0;
-    width: 28px;
-    height: 26px;
-  }
-  /* The field collapses rather than disappearing, so it can take the caret. */
-  .scient-latex-surface
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search
-    .scient-reader-search-box
-    > input {
-    width: 0;
-    flex: 0 0 0;
-    opacity: 0;
-  }
-  .scient-latex-surface
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search[data-searching]
-    .scient-reader-search-box,
-  .scient-latex-surface
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search:focus-within
-    .scient-reader-search-box {
-    /* The field's own look, made opaque so nothing shows through. */
-    background: color-mix(in srgb, var(--accent) 80%, var(--background));
-  }
-  .scient-latex-surface
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search:focus-within
-    .scient-reader-search-box {
-    width: 150px;
-  }
-  .scient-latex-surface
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search:focus-within
-    .scient-reader-search-box
-    > input {
-    width: auto;
-    flex: 1;
-    opacity: 1;
-  }
-
-  .scient-latex-surface[data-latex-layout="split"]
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search {
-    min-width: 28px;
-    flex: 0 0 28px;
-  }
-  .scient-latex-surface[data-latex-layout="split"]
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search
-    .scient-reader-search-box {
-    position: absolute;
-    z-index: 30;
-    top: 0;
-    left: 0;
-    width: 28px;
-    height: 26px;
-  }
-  /* The field collapses rather than disappearing, so it can take the caret. */
-  .scient-latex-surface
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search
-    .scient-reader-search-box
-    > input {
-    width: 0;
-    flex: 0 0 0;
-    opacity: 0;
-  }
-  .scient-latex-surface
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search[data-searching]
-    .scient-reader-search-box,
-  .scient-latex-surface
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search:focus-within
-    .scient-reader-search-box {
-    /* The field's own look, made opaque so nothing shows through. */
-    background: color-mix(in srgb, var(--accent) 80%, var(--background));
-  }
-  .scient-latex-surface
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search:focus-within
-    .scient-reader-search-box {
-    width: 150px;
-  }
-  .scient-latex-surface
-    .scient-pdf-toolbar-hosted
-    .scient-reader-search:focus-within
-    .scient-reader-search-box
-    > input {
-    width: auto;
-    flex: 1;
-    opacity: 1;
-  }
+.scient-latex-toolbar[data-fit~="search-icon"]
+  .scient-reader-search:focus-within
+  .scient-reader-search-box
+  > input {
+  width: auto;
+  flex: 1;
+  opacity: 1;
 }
