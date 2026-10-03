@@ -373,6 +373,25 @@ describe("writing editor source transactions", () => {
     }
   });
 
+  it("starts a titled document with formatting ready on body text", async () => {
+    await mount("\\maketitle\nHello world.", "\\title{Title}\n");
+    expect(editor().state.selection.$from.parent.type.name).toBe("paragraph");
+    const text = container.querySelector<HTMLButtonElement>('button[aria-label="Text"]')!;
+    await act(() => text.click());
+    const formatting = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (item) => item.textContent === "Formatting",
+    )!;
+    await act(() => formatting.click());
+    const bold = await vi.waitFor(() => {
+      const item = document.body.querySelector<HTMLElement>('[role="menuitemcheckbox"]');
+      expect(item).not.toBeNull();
+      expect(item!.getAttribute("aria-disabled")).not.toBe("true");
+      return item!;
+    });
+    await act(() => bold.click());
+    expect(editor().isActive("bold")).toBe(true);
+  });
+
   it("offers the Markdown bar's inline formatting in the same order, without strikethrough", async () => {
     await mount();
     const toolbar = container.querySelector('[role="toolbar"][aria-label="Writing tools"]')!;

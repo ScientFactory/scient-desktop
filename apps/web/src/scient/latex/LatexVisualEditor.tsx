@@ -4109,6 +4109,25 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         "aria-label": "Visual LaTeX document editor",
       },
     },
+    onCreate: ({ editor: created }) => {
+      // Tiptap finishes mounting before selecting the first editable paragraph.
+      // Doing this in a React effect is too early: mount can reset it to the title.
+      const editor = created;
+      const { selection, doc } = editor.state;
+      if (!(selection instanceof NodeSelection) && selection.$from.parent.isTextblock) return;
+      let target: number | null = null;
+      doc.descendants((node, position) => {
+        if (target !== null) return false;
+        if (node.isTextblock && node.type.name === "paragraph") target = position + 1;
+        return target === null;
+      });
+      if (target === null) return;
+      editor.view.dispatch(
+        editor.state.tr
+          .setSelection(TextSelection.create(editor.state.doc, target))
+          .setMeta("addToHistory", false),
+      );
+    },
     onUpdate: ({ editor: updated }) => {
       const doc = updated.state.doc;
       if (ordinaryDocuments.current.has(doc)) queueTyping(doc);
@@ -4125,25 +4144,6 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
 
   useLayoutEffect(() => {
     editorRef.current = editor;
-  }, [editor]);
-  // A document opens with the caret on its title block, which is an object, so
-  // the writing row had nothing to act on. Start in the first line of text.
-  useEffect(() => {
-    if (!editor || editor.isDestroyed) return;
-    const { selection, doc } = editor.state;
-    if (!(selection instanceof NodeSelection) && selection.$from.parent.isTextblock) return;
-    let target: number | null = null;
-    doc.descendants((node, position) => {
-      if (target !== null) return false;
-      if (node.isTextblock && node.type.name === "paragraph") target = position + 1;
-      return target === null;
-    });
-    if (target === null) return;
-    editor.view.dispatch(
-      editor.state.tr
-        .setSelection(TextSelection.create(editor.state.doc, target))
-        .setMeta("addToHistory", false),
-    );
   }, [editor]);
   // Replace all writes each text block to the source before it edits the next.
   const commitTyping = useCallback(
