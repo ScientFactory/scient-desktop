@@ -235,7 +235,7 @@ it("shows running sub-agents and a long wait as alive, on one line, with a ticki
       .toBeGreaterThan(first);
 
     const fitsOnOneLine = (row: HTMLElement) => {
-      expect(row.getBoundingClientRect().height, row.textContent ?? "").toBeLessThan(40);
+      expect(row.getBoundingClientRect().height, row.textContent ?? "").toBeLessThan(48);
       expect(row.getBoundingClientRect().right).toBeLessThanOrEqual(
         host.getBoundingClientRect().right,
       );

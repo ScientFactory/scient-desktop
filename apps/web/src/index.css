@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "./scient/typography/profile.css";
 @import "./scient/presentation/scient-content-scrollbar.css";
+@import "./scient/presentation/scient-trace.css";
 
 @custom-variant dark (&:is(.dark, .dark *));
 @custom-variant light (&:not(.dark, .dark *));
