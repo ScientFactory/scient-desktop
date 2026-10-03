@@ -418,8 +418,7 @@ function ListsMenu({
     <DockMenu
       label={`List: ${listMenuLabel(snapshot.listKind)}`}
       icon={listTriggerIcon(snapshot.listKind)}
-      groupLabel="Lists"
-      popupClassName="w-52"
+      popupClassName="w-48"
     >
       <ListsMenuItems controller={controller} snapshot={snapshot} />
     </DockMenu>

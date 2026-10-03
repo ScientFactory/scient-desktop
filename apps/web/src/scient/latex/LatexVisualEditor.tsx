@@ -5742,9 +5742,8 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
             command={listState?.type === "orderedList" ? "numberedList" : "bulletList"}
           />
         }
-        groupLabel="Lists"
         disabled={textReadOnly}
-        popupClassName="w-56"
+        popupClassName="w-48"
       >
         {writingListItems}
       </DockMenu>
