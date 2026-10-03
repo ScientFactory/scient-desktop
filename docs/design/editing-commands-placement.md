@@ -84,7 +84,7 @@ not pushed yet.
 
 **Decision:** editing controls must not block the document with a modal backdrop.
 Use compact anchored popovers for short forms; larger settings and reference
-workflows need a nonmodal panel. Only Link has been converted in the local
+workflows need a nonmodal panel. Link and Document settings have been converted in the local
 pilot so far. This inventory is based on current pilot source inspection,
 not a visual or native interaction sweep; size varies by window.
 
@@ -95,7 +95,7 @@ not a visual or native interaction sweep; size varies by window.
 | Insert › Citation | Unavailable | Modal reference picker | Pending: nonmodal source picker panel. |
 | Insert › Cross-reference | Unavailable | Same modal reference picker | Pending: anchored picker or nonmodal panel. |
 | Insert › More › Bibliography | Unavailable | Modal bibliography form | Pending: compact popover or nonmodal panel. |
-| Document › Document settings | Unavailable | Modal with Page layout and Document style tabs | Pending: nonmodal settings panel. |
+| Document › Document settings | Unavailable | Compact nonmodal popover beside Document (384px, capped to viewport), with Page layout and Document style tabs | **Fixed in local pilot; code not pushed.** Compact selects, margin fields and buttons; short labels and help. |
 | Title & authors: missing title or custom formatting fallback | Unavailable | Modal Document title guidance | Pending: inline guidance or compact popover. Ordinary title fields are inline, not modal. |
 | Keyboard shortcuts (Markdown More / LaTeX Document) | Large modal shortcut settings | Same large modal shortcut settings | Pending: nonmodal shortcuts panel. |
 | Keyboard shortcuts › My shortcut reference | Nested modal reference sheet | Same nested modal reference sheet | Pending: view within shortcuts panel. |
