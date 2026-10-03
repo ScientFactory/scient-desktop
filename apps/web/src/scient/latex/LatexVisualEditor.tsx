@@ -3599,13 +3599,6 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   const [settingsSection, setSettingsSection] = useState<LatexDocumentSettingsSection | null>(null);
   const [titleHelp, setTitleHelp] = useState<string | null>(null);
   const titleHelpAction = useRef<(() => void) | null>(null);
-  const [titleConversion, setTitleConversion] = useState<{
-    expected: string;
-    source: string;
-    previousTitle: string;
-    title: string;
-  } | null>(null);
-  const titleFocusAfterDialog = useRef(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [shortcutHint, setShortcutHint] = useState("");
   useSyncExternalStore(
@@ -5112,30 +5105,6 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     }
     if (commitTitleSource(expected, prepared.source)) openTitleField("title");
   };
-  const useParagraphAsTitle = () => {
-    if (!editor || !flushTypingRef.current() || !flushSourceEditRef.current()) return;
-    const selection = editor.state.selection;
-    if (
-      selection.$from.depth !== 1 ||
-      !selection.$from.sameParent(selection.$to) ||
-      selection.$from.parent.type.name !== "paragraph"
-    ) {
-      setNotice(
-        "Place the cursor in one standalone text paragraph to use it as the document title.",
-      );
-      return;
-    }
-    const expected = currentSource.current;
-    const prepared = prepareLatexDocumentTitle(expected, selection.$from.index(0));
-    if (!prepared) {
-      setNotice(
-        "Use a plain text paragraph for this action. Custom title formatting remains editable in LaTeX source.",
-      );
-      return;
-    }
-    if (prepared.previousTitle.trim()) setTitleConversion({ expected, ...prepared });
-    else if (commitTitleSource(expected, prepared.source)) openTitleField("title");
-  };
   const openTitleField = (field: "title" | "author" | "date") => {
     if (!flushTypingRef.current() || !flushSourceEditRef.current()) return;
     const title = projection.current.blocks.find((block) => block.node.attrs?.kind === "title");
@@ -5145,7 +5114,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         return;
       }
       setTitleHelp(
-        "No editable title block is displayed. You can explicitly add a standard title block, or open the existing title in Source.",
+        "This document has no title yet. Add one, or open the existing title in Source.",
       );
       return;
     }
@@ -5933,16 +5902,6 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     () => !displayedTitle && prepareLatexDocumentTitle(props.source) !== null,
     [displayedTitle, props.source],
   );
-  const titleParagraph = editor?.state.selection.$from.parent;
-  const canUseParagraphAsTitle = Boolean(
-    editor &&
-    !textReadOnly &&
-    editor.state.selection.$from.depth === 1 &&
-    editor.state.selection.$from.sameParent(editor.state.selection.$to) &&
-    titleParagraph?.type.name === "paragraph" &&
-    titleParagraph.textContent.trim() &&
-    titleParagraph.content.content.every((node) => node.isText && node.marks.length === 0),
-  );
   const openDocumentSettings = (section: LatexDocumentSettingsSection) => {
     if (!flushTypingRef.current() || !flushSourceEditRef.current()) return;
     setSettingsSection(section);
@@ -5952,43 +5911,31 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     <>
       <MenuSub>
         <MenuSubTrigger>Title &amp; authors</MenuSubTrigger>
-        <MenuSubPopup data-dock-command-scope="latex">
-          <DockCommandItem disabled={readOnly} onClick={() => openTitleField("title")}>
-            Edit title
-          </DockCommandItem>
-          <DockCommandItem disabled={readOnly} onClick={() => openTitleField("author")}>
-            Edit authors
-          </DockCommandItem>
-          <DockCommandItem disabled={readOnly} onClick={() => openTitleField("date")}>
-            Edit date
-          </DockCommandItem>
-          <MenuSeparator />
-          <DockCommandItem
-            disabled={readOnly || !canAddTitle}
-            title={
-              displayedTitle
-                ? "A title block already exists."
-                : !canAddTitle
-                  ? "This title is controlled by its LaTeX source."
-                  : undefined
-            }
-            onClick={addTitleBlock}
-          >
-            Add title block
-          </DockCommandItem>
+        <MenuSubPopup className="w-max min-w-0" data-dock-command-scope="latex">
+          {displayedTitle ? (
+            <>
+              <DockCommandItem disabled={readOnly} onClick={() => openTitleField("title")}>
+                Edit title
+              </DockCommandItem>
+              <DockCommandItem disabled={readOnly} onClick={() => openTitleField("author")}>
+                Edit authors
+              </DockCommandItem>
+              <DockCommandItem disabled={readOnly} onClick={() => openTitleField("date")}>
+                Edit date
+              </DockCommandItem>
+            </>
+          ) : (
+            // Only when the document has none: adding a title is always a choice.
+            <DockCommandItem
+              disabled={readOnly || !canAddTitle}
+              title={canAddTitle ? undefined : "This title is controlled by its LaTeX source."}
+              onClick={addTitleBlock}
+            >
+              Add a title
+            </DockCommandItem>
+          )}
         </MenuSubPopup>
       </MenuSub>
-      <DockCommandItem
-        disabled={!canUseParagraphAsTitle}
-        title={
-          !canUseParagraphAsTitle
-            ? "Place the cursor in a standalone plain-text paragraph."
-            : undefined
-        }
-        onClick={useParagraphAsTitle}
-      >
-        Use paragraph as title
-      </DockCommandItem>
       <MenuSeparator />
       <DockCommandItem disabled={readOnly} onClick={() => openDocumentSettings("page")}>
         Page layout
@@ -6112,53 +6059,9 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                             setTitleHelp(null);
                           }}
                         >
-                          Add title block
+                          Add a title
                         </Button>
                       )}
-                    </div>
-                  </DialogPopup>
-                </Dialog>
-                <Dialog
-                  open={titleConversion !== null}
-                  onOpenChange={(open) => {
-                    if (!open) setTitleConversion(null);
-                  }}
-                  onOpenChangeComplete={(open) => {
-                    if (!open && titleFocusAfterDialog.current) {
-                      titleFocusAfterDialog.current = false;
-                      openTitleField("title");
-                    }
-                  }}
-                >
-                  <DialogPopup finalFocus={() => !titleFocusAfterDialog.current}>
-                    <DialogTitle>Replace document title?</DialogTitle>
-                    <DialogDescription>
-                      The paragraph will move into the title block. Undo restores the paragraph and
-                      the previous title together.
-                    </DialogDescription>
-                    <dl className="scient-latex-title-comparison">
-                      <dt>Current title</dt>
-                      <dd>{titleConversion?.previousTitle}</dd>
-                      <dt>New title</dt>
-                      <dd>{titleConversion?.title}</dd>
-                    </dl>
-                    <div className="flex justify-end gap-2">
-                      <Button variant="outline" onClick={() => setTitleConversion(null)}>
-                        Cancel
-                      </Button>
-                      <Button
-                        onClick={() => {
-                          if (
-                            titleConversion &&
-                            commitTitleSource(titleConversion.expected, titleConversion.source)
-                          ) {
-                            titleFocusAfterDialog.current = true;
-                            setTitleConversion(null);
-                          }
-                        }}
-                      >
-                        Replace title
-                      </Button>
                     </div>
                   </DialogPopup>
                 </Dialog>

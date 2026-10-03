@@ -36,17 +36,13 @@ service is required for the writing workflow.
 Write is a source-derived writing canvas, not an editable PDF. You can start
 writing before installing or running TeX. The canvas uses a document workspace
 with a compact toolbar, a collapsible outline, and a contextual
-status bar. The **Style** menu includes Text, heading levels, and Quote, using
-plain labels and a checkmark for the current style. Heading levels are grouped
-under **Headings**, with a centered **Numbered** button. A filled gray button
-with a checkmark means numbering is on; an outlined button without a checkmark means it is off. It updates the current
-heading immediately and keeps the menu open. The heading footer uses the same
-label and pressed state. In ordinary
-text, choose numbering and then a heading level in the same menu. Changing
-heading level preserves the selected numbering setting; Text and Quote are
-unaffected. Ctrl/Cmd+Alt+0 is Text and Ctrl/Cmd+Alt+1, 2 and 3 are the first
-three heading levels. "Numbered headings" at the top of the Style menu decides
-whether new headings are numbered. Quote is not available inside a list item.
+status bar. The **Style** menu lists Text, the heading levels and Quote, with
+thin lines between them; the current style is highlighted. **Numbered
+headings**, a small switch under the heading levels, turns numbering on or off
+for the current heading, or for the next heading chosen from ordinary text,
+without closing the menu. Changing heading level keeps that setting; Text and
+Quote are unaffected. Ctrl/Cmd+Alt+0 is Text and Ctrl/Cmd+Alt+1, 2 and 3 are the first
+three heading levels. Quote is not available inside a list item.
 Chapter-based classes also offer Chapter. The toolbar button shows
 the icon of the current style. The toolbar holds, in order: undo and redo; bold,
 italic, inline code (Ctrl/Cmd+E) and link (Ctrl/Cmd+K); Style; Lists; Insert;
@@ -62,14 +58,12 @@ labels disappear first (Math keeps its sigma); less-used groups then move into
 one settings dialog. **Outline** is a tab
 in the sidebar, which opens from the header row. Selected-object options appear
 on the left of the footer; narrow panes use an object-named menu.
-**Document > Title & authors** groups Edit title, Edit authors, Edit date and
-Add title block. Editing jumps to the corresponding on-paper field. A missing or
-custom title offers an explicit creation/source action instead of silently adding
-a block. Add title block is disabled when a title already exists. Date modes in
+**Document > Title & authors** offers Edit title, Edit authors and Edit date when
+the document shows a title; editing jumps to the corresponding on-paper field.
+When it shows none, the only item is **Add a title**: a title block is never
+added silently. Date modes in
 the footer are Automatic (the compilation date), Custom and Hidden.
-Title, author, and date remain editable on paper. **Document > Title & authors > Add title block**
-explicitly restores the standard block. **Document > Use paragraph as title** moves a
-plain paragraph there, with confirmation before replacing an existing title.
+Title, author, and date remain editable on paper.
 
 **Lists** offers Bullet list, Numbered list, Description list, and No list. The
 current type is highlighted, and each row shows its shortcut: Ctrl/Cmd+Shift+8

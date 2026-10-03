@@ -915,27 +915,7 @@ Theory & Proofs \\\\
     );
   });
 
-  it("moves a paragraph into the title and undoes the complete source change", async () => {
-    await mount("Energy estimate\n\nBody stays here");
-    const original = current;
-    await act(() => editor().commands.setTextSelection(1));
-    await act(() =>
-      container.querySelector<HTMLButtonElement>('button[aria-label="Document"]')!.click(),
-    );
-    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
-      (item) => item.textContent?.trim() === "Use paragraph as title",
-    )!;
-    await act(() => item.click());
-    expect(current).toContain("\\title{Energy estimate}");
-    expect(current).toContain("\\maketitle");
-    expect(current.match(/Energy estimate/gu)).toHaveLength(1);
-    const titled = current;
-    await act(() => editor().commands.undo());
-    expect(current).toBe(original);
-    await act(() => editor().commands.redo());
-    expect(current).toBe(titled);
-  });
-  it("editing a title never silently inserts a printed title block", async () => {
+  it("never inserts a printed title block unless the writer asks for one", async () => {
     await mount("Body", "\\title{Existing metadata}\n");
     const original = current;
     await act(() =>
@@ -945,10 +925,12 @@ Theory & Proofs \\\\
       (item) => item.textContent?.trim() === "Title & authors",
     )!;
     await act(() => titleGroup.click());
-    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
-      (item) => item.textContent?.trim() === "Edit title",
-    )!;
-    await act(() => item.click());
+    const names = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].map((item) =>
+      item.textContent?.trim(),
+    );
+    // No title block is shown yet: the only choice is to add one.
+    expect(names).toContain("Add a title");
+    expect(names).not.toContain("Edit title");
     expect(current).toBe(original);
     expect(current).not.toContain("\\maketitle");
   });

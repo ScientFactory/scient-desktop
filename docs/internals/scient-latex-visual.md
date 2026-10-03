@@ -293,7 +293,7 @@ Its filled gray pressed state and checkmark indicate numbering is enabled; the
 unchecked button is outlined. The menu and footer use the same state treatment. It changes the selected heading without closing the menu, or sets the
 numbering for the next heading chosen from ordinary text. The footer uses the
 same wording and reads the same heading attribute; tooltips explain the scope. Heading-level changes
-preserve that choice. Use paragraph as title lives under Document. Heading
+preserve that choice. Heading
 numbering is also available alongside other object controls
 in the fixed-height footer without changing page layout. Narrow panes use menus named for the
 selected object; previous/next page actions remain available in More.
@@ -324,17 +324,16 @@ writes them like typing.
 Navigation does not edit LaTeX. PDF/Word Export is in the header's More menu.
 
 Title, author and date remain editable on paper. Editing existing metadata
-never inserts a title block. Document > Title & authors > Add title block explicitly creates or
-restores the standard block while preserving existing metadata. Document > Use paragraph as title moves a standalone plain-text paragraph into that block, asks
-before replacing a nonempty title, and preserves both the previous source and
-the new source in one reversible editor history step. External source adoption
-clears obsolete history as for other Visual edits. Custom title pages and
+never inserts a title block. Document > Title & authors shows Edit title, authors
+and date while a title block is displayed, and only **Add a title** while none
+is; that explicitly creates or restores the standard block while preserving
+existing metadata. There is no command that turns a paragraph into the title. Custom title pages and
 unsupported title formatting remain source-owned. Standard article/report/book
 classes can be selected in Document style; incompatible switches and custom
 classes stay protected.
 
-Document has four stable entries: Title & authors, Use paragraph as title,
-Page layout and Document style. The last two open sections of one settings dialog
+Document has these entries: Title & authors, Page layout, Document style and
+Keyboard shortcuts. The last two open sections of one settings dialog
 with a shared draft, explicit Apply/Cancel, and a source snapshot checked again
 before mutation. Unchanged fields remain source-controlled. Margin updates carry
 only edited sides; adding geometry to a standard class retains the other projected
