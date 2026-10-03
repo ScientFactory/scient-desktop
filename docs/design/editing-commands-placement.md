@@ -50,9 +50,9 @@ only what its file format can save.
 | Title & authors | — | Document menu | **Document** (LaTeX only) |
 | Document settings | — | Document menu | **Document** (LaTeX only) |
 | Document outline | More | Sidebar button in the header | **Document** in Markdown; the sidebar in LaTeX |
-| Find and replace | More | Header search field, and header More | **Document** in Markdown; header in LaTeX |
+| Find and replace | More | Header search field, and header More | **Document** in both — decided (the header search field stays in LaTeX) |
 | Move block up/down, Duplicate, Delete block | More | — | **Document** (Markdown only), or a menu on the block itself |
-| Export | More | Header More | **Document** in Markdown; header in LaTeX |
+| Export | More | Header More | **Document** in both — decided (LaTeX PDF and Source views keep it in the header More) |
 | Keyboard shortcuts | More | Document menu | **Document** |
 | Hide formatting tools | Bar (left handle) | — | Keep in Markdown — decided |
 | Table rows, columns, alignment | Footer | Footer | Footer (unchanged) |
@@ -69,9 +69,10 @@ only what its file format can save.
 | 5 | Subscript and superscript? | **Not now.** |
 | 6 | Markdown's "hide formatting tools" handle? | **Keep it.** |
 | 7 | How does the Math button look? | **The word "Math"** alone, no Σ icon, in both editors. |
+| 8 | Where do Find and replace and Export go in LaTeX Visual? | **The Document menu**, with Title & authors and Document settings. The header's More then lists only what the row has no room for, and is hidden while everything fits. The Export card is only as wide as "PDF" and "Word". |
 | 7 | Screen-blocking editing dialogs? | **None wanted.** Link becomes a compact popover; remaining modal controls are inventoried below for conversion. |
 
-Decisions 1–4 and 7 are built in the owner's local test app for review; that code is
+Decisions 1–4, 7 and 8 are built in the owner's local test app for review; that code is
 not pushed yet.
 
 ## Still open
