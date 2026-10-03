@@ -306,7 +306,30 @@ function StyleMenuItems({
         );
       })}
       {snapshot.inTable ? <p className="scient-menu-note">A table cell holds text only.</p> : null}
+      <MenuSeparator />
+      {/* Text direction lives with the other text settings. */}
+      <MenuSub>
+        <MenuSubTrigger>
+          {directionTriggerIcon(snapshot.textDirection)}
+          <span>{snapshot.inTable ? "Table direction" : "Direction"}</span>
+        </MenuSubTrigger>
+        <MenuSubPopup className="w-max">
+          <DirectionMenuItems controller={controller} snapshot={snapshot} />
+        </MenuSubPopup>
+      </MenuSub>
     </MenuRadioGroup>
+  );
+}
+
+/** The same Math menu as LaTeX, with what a Markdown file can hold. */
+function MathMenuItems({ controller }: { readonly controller: ScientMarkdownEditorView }) {
+  return (
+    <>
+      <MenuItem onClick={() => controller.mathInput.execute("math.inline")}>Inline math</MenuItem>
+      <MenuItem onClick={() => controller.mathInput.execute("math.display")}>Display math</MenuItem>
+      <MenuSeparator />
+      <MenuItem onClick={() => controller.mathInput.open()}>Symbols &amp; structures</MenuItem>
+    </>
   );
 }
 
@@ -430,7 +453,6 @@ const INSERT_ITEMS: ReadonlyArray<{
   readonly label: string;
 }> = [
   { command: "code-block", label: "Code block" },
-  { command: "display-math", label: "Math equation ($$)" },
   { command: "footnote", label: "Footnote" },
   { command: "image", label: "Image" },
   { command: "wiki-link", label: "Wiki link ([[note]])" },
@@ -438,8 +460,18 @@ const INSERT_ITEMS: ReadonlyArray<{
 ];
 
 /** Markdown's actions for the shared Insert menu: only what a Markdown file can hold. */
-function markdownInsertActions(controller: ScientMarkdownEditorView): readonly InsertMenuAction[] {
+function markdownInsertActions(
+  controller: ScientMarkdownEditorView,
+  openLinkEditor: () => void,
+): readonly InsertMenuAction[] {
   return [
+    {
+      id: "link",
+      label: WRITING_COMMAND_LABELS.link,
+      icon: <WritingCommandIcon command="link" className="size-4 text-muted-foreground" />,
+      shortcut: scientMarkdownShortcut("link"),
+      run: openLinkEditor,
+    },
     ...INSERT_ITEMS.map((item) => ({
       id: item.command,
       label: item.label,
@@ -465,15 +497,22 @@ const markdownInsertLayout: InsertMenuLayout = (item, table) => (
   <>
     {table}
     {INSERT_ITEMS.map(({ command }) => item(command))}
+    {item("link")}
     <MenuSeparator />
     {item("hard-break")}
   </>
 );
 
-function InsertBlockMenu({ controller }: { readonly controller: ScientMarkdownEditorView }) {
+function InsertBlockMenu({
+  controller,
+  openLinkEditor,
+}: {
+  readonly controller: ScientMarkdownEditorView;
+  readonly openLinkEditor: () => void;
+}) {
   return (
     <InsertMenu
-      actions={markdownInsertActions(controller)}
+      actions={markdownInsertActions(controller, openLinkEditor)}
       layout={markdownInsertLayout}
       onInsertTable={(rows, columns) => {
         controller.insertTable({ rows, columns });
@@ -491,17 +530,6 @@ const DIRECTION_ITEMS: ReadonlyArray<{
   { command: "direction-ltr", label: "Left-to-right" },
   { command: "direction-rtl", label: "Right-to-left" },
 ];
-
-function directionMenuLabel(direction: ScientMarkdownEditorSnapshot["textDirection"]): string {
-  switch (direction) {
-    case "ltr":
-      return "Left-to-right";
-    case "rtl":
-      return "Right-to-left";
-    default:
-      return "Auto";
-  }
-}
 
 function directionTriggerIcon(direction: ScientMarkdownEditorSnapshot["textDirection"]): ReactNode {
   switch (direction) {
@@ -542,24 +570,6 @@ function DirectionMenuItems({
         </MenuRadioItem>
       ))}
     </MenuRadioGroup>
-  );
-}
-
-function DirectionMenu({
-  controller,
-  snapshot,
-}: {
-  readonly controller: ScientMarkdownEditorView;
-  readonly snapshot: ScientMarkdownEditorSnapshot;
-}) {
-  return (
-    <DockMenu
-      label={`${snapshot.inTable ? "Table" : "Text"} direction: ${directionMenuLabel(snapshot.textDirection)}`}
-      icon={directionTriggerIcon(snapshot.textDirection)}
-      groupLabel={snapshot.inTable ? "Table direction" : "Text direction"}
-    >
-      <DirectionMenuItems controller={controller} snapshot={snapshot} />
-    </DockMenu>
   );
 }
 
@@ -699,6 +709,7 @@ function LinkEditorTrigger({
   openRequest = 0,
   shortcut,
   triggerId,
+  anchorOnly = false,
 }: {
   readonly controller: ScientMarkdownEditorView;
   readonly active?: boolean;
@@ -706,12 +717,28 @@ function LinkEditorTrigger({
   readonly openRequest?: number;
   readonly shortcut: ScientMarkdownShortcutPresentation;
   readonly triggerId: string;
+  /** No button: only the place the link editor opens from (Link is in Insert). */
+  readonly anchorOnly?: boolean;
 }) {
   useEffect(() => {
     if (openRequest === 0) return;
     handle.open(triggerId);
     controller.acknowledgeLinkEditRequest(openRequest);
   }, [controller, handle, openRequest, triggerId]);
+  if (anchorOnly)
+    return (
+      <PopoverTrigger
+        handle={handle}
+        id={triggerId}
+        render={
+          <span
+            className="pointer-events-none inline-block h-7 w-0 overflow-hidden"
+            aria-hidden="true"
+            tabIndex={-1}
+          />
+        }
+      />
+    );
 
   return (
     <Tooltip>
@@ -1169,6 +1196,8 @@ export function ScientMarkdownControls({
   const [linkEditorHandle] = useState(createLinkEditorHandle);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const dockLinkEditorTriggerId = `scient-markdown-link-dock-${useId()}`;
+  const openLinkEditor = () => linkEditorHandle.open(dockLinkEditorTriggerId);
+  const mathMenuAnchor = useRef<HTMLSpanElement>(null);
   const selectionLinkEditorTriggerId = `scient-markdown-link-selection-${useId()}`;
   const slashItems =
     snapshot.slashQuery === null ? [] : filterScientMarkdownSlashCommands(snapshot.slashQuery);
@@ -1191,13 +1220,6 @@ export function ScientMarkdownControls({
   const dockGroups: readonly DockGroup[] = !snapshot.editable
     ? []
     : [
-        {
-          id: "math",
-          priority: 90,
-          estimatedWidth: 36,
-          pinned: true,
-          bar: <MathInputTools controller={controller.mathInput} />,
-        },
         {
           id: "history",
           priority: 30,
@@ -1292,14 +1314,6 @@ export function ScientMarkdownControls({
                 active={active.has("code")}
                 shortcut="inlineCode"
               />
-              <LinkEditorTrigger
-                controller={controller}
-                active={active.has("link")}
-                handle={linkEditorHandle}
-                openRequest={snapshot.selectionEmpty ? snapshot.linkEditRequest : 0}
-                shortcut={scientMarkdownShortcut("link")}
-                triggerId={dockLinkEditorTriggerId}
-              />
               <DockDivider />
             </>
           ),
@@ -1331,7 +1345,16 @@ export function ScientMarkdownControls({
           estimatedWidth: 48,
           bar: (
             <>
-              <InsertBlockMenu controller={controller} />
+              <InsertBlockMenu controller={controller} openLinkEditor={openLinkEditor} />
+              {/* Where the link editor opens from: Link is in Insert, Cmd+K anywhere. */}
+              <LinkEditorTrigger
+                controller={controller}
+                handle={linkEditorHandle}
+                openRequest={snapshot.selectionEmpty ? snapshot.linkEditRequest : 0}
+                shortcut={scientMarkdownShortcut("link")}
+                triggerId={dockLinkEditorTriggerId}
+                anchorOnly
+              />
               <DockDivider />
             </>
           ),
@@ -1339,7 +1362,7 @@ export function ScientMarkdownControls({
           // The same searchable content as the bar's menu.
           overflow: (
             <InsertMenuContent
-              actions={markdownInsertActions(controller)}
+              actions={markdownInsertActions(controller, openLinkEditor)}
               layout={markdownInsertLayout}
               onInsertTable={(rows, columns) => {
                 controller.insertTable({ rows, columns });
@@ -1348,12 +1371,27 @@ export function ScientMarkdownControls({
           ),
         },
         {
-          id: "direction",
-          priority: 10,
-          estimatedWidth: 44,
-          bar: <DirectionMenu controller={controller} snapshot={snapshot} />,
-          overflowLabel: "Text direction",
-          overflow: <DirectionMenuItems controller={controller} snapshot={snapshot} />,
+          id: "math",
+          priority: 90,
+          estimatedWidth: 76,
+          bar: (
+            <span ref={mathMenuAnchor} className="inline-flex">
+              <DockMenu
+                label="Math"
+                icon={
+                  <>
+                    <Sigma className="size-4" />
+                    <span className="text-[13px]">Math</span>
+                  </>
+                }
+                popupClassName="w-max [&_[role=menuitem]]:whitespace-nowrap"
+              >
+                <MathMenuItems controller={controller} />
+              </DockMenu>
+            </span>
+          ),
+          overflowLabel: "Math",
+          overflow: <MathMenuItems controller={controller} />,
         },
       ];
 
@@ -1404,6 +1442,9 @@ export function ScientMarkdownControls({
         controller={controller}
         handle={linkEditorHandle}
       />
+      {snapshot.editable ? (
+        <MathInputTools controller={controller.mathInput} anchor={mathMenuAnchor} />
+      ) : null}
 
       {snapshot.editable && snapshot.slashQuery !== null && slashItems.length > 0 ? (
         <div

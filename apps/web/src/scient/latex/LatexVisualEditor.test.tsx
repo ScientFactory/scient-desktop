@@ -376,7 +376,7 @@ describe("writing editor source transactions", () => {
     const format = toolbar.querySelector('[data-dock-group="format"]')!;
     expect(
       [...format.querySelectorAll("button")].map((button) => button.getAttribute("aria-label")),
-    ).toEqual(["Bold", "Italic", "Inline code", "Link"]);
+    ).toEqual(["Bold", "Italic", "Inline code"]);
     await act(() => {
       editor().commands.setTextSelection({ from: 1, to: 6 });
     });
@@ -391,8 +391,14 @@ describe("writing editor source transactions", () => {
       format.querySelector<HTMLButtonElement>('button[aria-label="Inline code"]')!.click(),
     );
     expect(current).not.toContain("\\texttt");
-    const link = format.querySelector<HTMLButtonElement>('button[aria-label="Link"]')!;
-    expect(link.disabled).toBe(false);
+    // Link lives in Insert, not in the bar.
+    await act(() =>
+      toolbar.querySelector<HTMLButtonElement>('button[aria-label="Insert"]')!.click(),
+    );
+    const link = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (item) => item.textContent?.trim().startsWith("Link"),
+    )!;
+    expect(link).toBeDefined();
     await act(() => link.click());
     await act(() => {});
     expect(document.body.textContent).toContain("Insert link");

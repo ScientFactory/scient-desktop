@@ -581,11 +581,8 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     expect(
       host.querySelector("[aria-label='Inline code']")?.getAttribute("data-preserve-icon-weight"),
     ).toBe("true");
-    expect(
-      host
-        .querySelector("[aria-label='Add or edit link']")
-        ?.getAttribute("data-preserve-icon-weight"),
-    ).toBe("true");
+    // Link is in Insert, not a bar button.
+    expect(host.querySelector("[aria-label='Add or edit link']")).toBeNull();
     expect(host.querySelector("[aria-label='Hide formatting tools']")).not.toBeNull();
   });
 
@@ -650,9 +647,15 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     await act(() =>
       host.querySelector<HTMLButtonElement>("[aria-label='Show formatting tools']")!.click(),
     );
-    await act(() =>
-      host.querySelector<HTMLButtonElement>("[aria-label='Add or edit link']")!.click(),
-    );
+    // Link is in Insert.
+    await act(() => host.querySelector<HTMLButtonElement>("button[aria-label='Insert']")!.click());
+    const linkItem = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+    ).find((node) => node.textContent?.trim().startsWith("Link"))!;
+    await act(() => linkItem.click());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
 
     const popup = document.body.querySelector<HTMLElement>("[data-slot='popover-popup']");
     const viewport = popup?.querySelector<HTMLElement>("[data-slot='popover-viewport']");

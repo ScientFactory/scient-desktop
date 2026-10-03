@@ -6,7 +6,6 @@ import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 
 import type { ShortcutPresentation } from "../keyboard/presentation";
 import { DocumentTableSizeMenu } from "./DocumentTableSizeMenu";
-import { WritingCommandIcon } from "./commandIcons";
 import { WRITING_COMMAND_LABELS } from "./commandNames";
 import { dockButtonClass, DockCommandItem, MenuRow } from "./dockChrome";
 
@@ -134,7 +133,8 @@ export function InsertMenu(props: {
               aria-label={WRITING_COMMAND_LABELS.insert}
               className={dockButtonClass()}
             >
-              <WritingCommandIcon command="insert" />
+              {/* A word, not a plus: what the button does is read at a glance. */}
+              <span className="text-[13px]">{WRITING_COMMAND_LABELS.insert}</span>
               <ChevronDown className="size-3 shrink-0 opacity-60" aria-hidden="true" />
             </button>
           }

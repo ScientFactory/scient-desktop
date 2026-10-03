@@ -54,6 +54,18 @@ describe("formatting menu focus", () => {
     return { view, controller, controlsHost };
   }
 
+  // Link lives in Insert; Cmd+K still opens it from the editor.
+  async function openLinkFromInsert(controlsHost: HTMLElement) {
+    await act(() =>
+      controlsHost.querySelector<HTMLButtonElement>('button[aria-label="Insert"]')!.click(),
+    );
+    const item = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+      (node) => node.textContent?.trim().startsWith("Link"),
+    )!;
+    expect(item).toBeDefined();
+    await act(() => item.click());
+  }
+
   it("opens the existing link editor with the right-clicked destination prefilled", async () => {
     const showLinkContextMenu = vi.fn(async () => "edit" as const);
     const { controlsHost } = await fixture(
@@ -82,7 +94,8 @@ describe("formatting menu focus", () => {
     });
     expect(input.value).toBe("notes.md");
     expect(showLinkContextMenu).toHaveBeenCalledOnce();
-    expect(controlsHost.querySelectorAll('button[aria-label="Add or edit link"]')).toHaveLength(1);
+    // There is no link button in the bar any more.
+    expect(controlsHost.querySelector('button[aria-label="Add or edit link"]')).toBeNull();
   });
 
   it.each(["caret", "selection"] as const)(
@@ -129,15 +142,14 @@ describe("formatting menu focus", () => {
     await act(() => {
       view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 5)));
     });
-    const triggers = await vi.waitFor(() => {
+    // The selection toolbar has its own link button; the bar opens it from Insert.
+    const selectionTrigger = await vi.waitFor(() => {
       const buttons = Array.from(
         document.body.querySelectorAll<HTMLButtonElement>('button[aria-label="Add or edit link"]'),
       );
-      expect(buttons).toHaveLength(2);
-      return buttons;
+      expect(buttons).toHaveLength(1);
+      return buttons[0]!;
     });
-    const dockTrigger = triggers.find((trigger) => controlsHost.contains(trigger))!;
-    const selectionTrigger = triggers.find((trigger) => !controlsHost.contains(trigger))!;
 
     await act(() => selectionTrigger.click());
     await vi.waitFor(() => {
@@ -147,7 +159,7 @@ describe("formatting menu focus", () => {
       );
     });
 
-    await act(() => dockTrigger.click());
+    await openLinkFromInsert(controlsHost);
     await vi.waitFor(() => {
       expect(document.body.querySelectorAll('[data-slot="popover-popup"]')).toHaveLength(1);
       expect(document.body.querySelectorAll('input[aria-label="Link destination"]')).toHaveLength(
@@ -161,11 +173,8 @@ describe("formatting menu focus", () => {
     const outsideInput = document.createElement("input");
     outsideInput.setAttribute("aria-label", "Outside input");
     document.body.append(outsideInput);
-    const trigger = controlsHost.querySelector<HTMLButtonElement>(
-      'button[aria-label="Add or edit link"]',
-    )!;
 
-    await act(() => trigger.click());
+    await openLinkFromInsert(controlsHost);
     await vi.waitFor(() =>
       expect(document.body.querySelector('input[aria-label="Link destination"]')).not.toBeNull(),
     );
@@ -208,10 +217,7 @@ describe("formatting menu focus", () => {
     });
     await vi.waitFor(() => expect(view.hasFocus()).toBe(true));
 
-    const trigger = controlsHost.querySelector<HTMLButtonElement>(
-      'button[aria-label="Add or edit link"]',
-    )!;
-    await act(() => trigger.click());
+    await openLinkFromInsert(controlsHost);
     const triggerInput = await vi.waitFor(() => {
       const input = document.body.querySelector<HTMLInputElement>(
         'input[aria-label="Link destination"]',
@@ -224,13 +230,13 @@ describe("formatting menu focus", () => {
         new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
       );
     });
-    await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
+    // Opened from Insert, it returns focus to the document.
+    await vi.waitFor(() => expect(view.hasFocus()).toBe(true));
   });
 
   it.each([
     ["Style:", "Heading 2", "heading-2", "A paragraph\n"],
     ["List:", "Numbered list", "ordered-list", "A paragraph\n"],
-    ["Text direction:", "Right-to-left", "direction-rtl", "A paragraph\n"],
     ["Style:", "Text", "paragraph", "A paragraph\n"],
     ["Style:", "Text", "paragraph", "> A quote\n"],
   ])(
@@ -293,10 +299,18 @@ describe("formatting menu focus", () => {
         "4 of 4 words",
       ),
     );
-    const direction = controlsHost.querySelector<HTMLButtonElement>(
-      'button[aria-label^="Table direction:"]',
-    )!;
-    await act(() => direction.click());
+    // Direction lives in the Style menu, under Direction (Table direction in a table).
+    const openDirection = async () => {
+      await act(() =>
+        controlsHost.querySelector<HTMLButtonElement>("button[aria-label^='Style:']")!.click(),
+      );
+      const submenu = Array.from(
+        document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+      ).find((node) => node.textContent?.trim() === "Table direction")!;
+      expect(submenu).toBeDefined();
+      await act(() => submenu.click());
+    };
+    await openDirection();
     const directionItems = Array.from(
       document.body.querySelectorAll<HTMLElement>('[role="menuitemradio"]'),
     );
@@ -309,7 +323,8 @@ describe("formatting menu focus", () => {
     expect(view.state.selection).toBeInstanceOf(CellSelection);
     expect(controller.session.session.draftSource).toContain('<div dir="rtl">');
 
-    await act(() => direction.click());
+    await vi.waitFor(() => expect(document.body.querySelector("[role='menu']")).toBeNull());
+    await openDirection();
     const automatic = Array.from(
       document.body.querySelectorAll<HTMLElement>('[role="menuitemradio"]'),
     ).find((node) => node.textContent?.trim() === "Auto — detect from table")!;

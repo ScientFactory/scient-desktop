@@ -5647,7 +5647,8 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   const writingFormatTools = (
     <>
       {formatActions
-        .filter((item) => !item.secondary)
+        // Link is in Insert, with the other references; Cmd+K stays.
+        .filter((item) => !item.secondary && item.id !== "latex.link")
         .map((item) => (
           <DockButton
             key={item.id}
