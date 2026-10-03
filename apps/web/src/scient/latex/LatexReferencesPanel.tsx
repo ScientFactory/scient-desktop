@@ -1,15 +1,19 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
-import { useFileSaveCoordinator } from "~/components/files/useFileSaveCoordinator";
-import {
-  getOptimisticProjectFileQueryData,
-  setProjectFileQueryData,
-  useProjectFileQuery,
-} from "~/components/files/projectFilesQueryState";
+import { useAtomValue } from "@effect/atom-react";
+import * as Option from "effect/Option";
+import { AsyncResult } from "effect/unstable/reactivity";
+import { useProjectFileQuery } from "~/components/files/projectFilesQueryState";
+import { documentFailureReason } from "~/scient/markdownEditor/persistence/documentFailureReason";
+import { onDocumentSaved } from "~/scient/markdownEditor/persistence/documentPublication";
+import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
+import { ScientMarkdownPersistenceNotice } from "~/scient/markdownEditor/ui/ScientMarkdownPersistenceNotice";
+import { useMarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/useMarkdownPersistenceLease";
+import { projectEnvironment } from "~/state/projects";
+import { checkpointVisualDraft, confirmVisualDraft, flushVisualDraft } from "./visualDrafts";
 import { bibliographyPaths } from "./latexAuthoringModel";
-import type { FileSaveResolution } from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
 import { LatexSelect } from "./LatexSelect";
 import {
   addBibliographyEntry,
@@ -31,6 +35,7 @@ export interface BibliographyDocument {
   readOnly: boolean;
   pending?: boolean;
   error?: string | null;
+  persistence?: MarkdownPersistenceLease | null;
   apply: (expected: string, next: string) => boolean | Promise<boolean>;
 }
 export interface BibliographyDetails {
@@ -39,13 +44,10 @@ export interface BibliographyDetails {
   path: string;
 }
 export interface ReferenceFileCallbacks {
-  saveResolution: FileSaveResolution | null;
-  onPendingChange: (path: string, pending: boolean) => void;
-  onSaveConfirmed: (path: string, contents: string, revision: string) => void;
-  onSaveFailure: (path: string, error: unknown) => void;
-  onSaveResolutionApplied: () => void;
+  onSaved: () => void;
 }
 
+/** A linked bibliography shares the same revision-checked session as its other views. */
 function BibliographyFile(props: {
   environmentId: EnvironmentId;
   cwd: string;
@@ -53,74 +55,98 @@ function BibliographyFile(props: {
   update: (file: BibliographyDocument) => void;
   callbacks?: ReferenceFileCallbacks | undefined;
 }) {
-  const query = useProjectFileQuery(props.environmentId, props.cwd, props.path);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const data = query.data;
-  useEffect(() => query.refresh(), [query.refresh]);
-  const latest = useRef(data);
-  latest.current = data;
-  const coordinator = useFileSaveCoordinator({
-    environmentId: props.environmentId,
-    cwd: props.cwd,
-    relativePath: props.path,
-    revision: data?.revision ?? "",
-    enabled: !!data && !data.readOnly && !data.truncated,
-    saveResolution: props.callbacks?.saveResolution ?? null,
-    onPendingChange: (path, value) => {
-      setPending(value);
-      props.callbacks?.onPendingChange(path, value);
-    },
-    onSaveConfirmed: (path, contents, revision) => {
-      setError(null);
-      props.callbacks?.onSaveConfirmed(path, contents, revision);
-    },
-    onSaveFailure: (path, cause) => {
-      setError(
-        "The file could not be saved. Your draft is retained; resolve the file conflict in Source before retrying.",
-      );
-      props.callbacks?.onSaveFailure(path, cause);
-    },
-    onSaveResolutionApplied: () => {
-      setError(null);
-      props.callbacks?.onSaveResolutionApplied();
-    },
+  const { environmentId, cwd, path } = props;
+  const query = useProjectFileQuery(environmentId, cwd, path);
+  const target = useMemo(
+    () => ({ environmentId, cwd, relativePath: path }),
+    [environmentId, cwd, path],
+  );
+  const { lease, snapshot, admissionError, retryAdmission } = useMarkdownPersistenceLease({
+    target,
+    authoritativeSnapshot: query.authoritativeData,
   });
+  const refresh = query.refresh;
+  useEffect(() => refresh(), [refresh]);
+  const changes = useAtomValue(
+    projectEnvironment.fileChanges({ environmentId, input: { cwd, relativePath: path } }),
+  );
+  const change = Option.getOrNull(AsyncResult.value(changes));
+  const seenChange = useRef(change);
+  const sessionOpen = lease !== null;
+  useEffect(() => {
+    if (change === seenChange.current) return;
+    seenChange.current = change;
+    if (sessionOpen) return;
+    refresh();
+    retryAdmission();
+  }, [change, sessionOpen, refresh, retryAdmission]);
+  const draftKey = `${environmentId}\0${cwd}\0${path}`;
+  const pending = snapshot?.pending ?? false;
+  const needsAttention =
+    snapshot !== null && (snapshot.conflict !== null || snapshot.error !== null);
+  const saveError = needsAttention
+    ? `Could not save ${path}. Resolve the save in References.`
+    : null;
+  const saved = useEffectEvent((source: string) => {
+    confirmVisualDraft(draftKey, source);
+    props.callbacks?.onSaved();
+  });
+  useEffect(
+    () => (lease === null ? undefined : onDocumentSaved(lease, ({ source }) => saved(source))),
+    [lease],
+  );
+  useEffect(
+    () => () => {
+      flushVisualDraft(draftKey);
+    },
+    [draftKey],
+  );
   const apply = useCallback(
     async (expected: string, next: string) => {
-      const current =
-        getOptimisticProjectFileQueryData(props.environmentId, props.cwd, props.path) ??
-        latest.current;
-      if (!current || current.readOnly || current.truncated || !current.revision) return false;
-      const merged = mergeBibliographyChange(expected, next, current.contents, "bibtex");
+      if (lease === null) return false;
+      const current = lease.getSnapshot();
+      if (current.editingBlocked) return false;
+      const merged = mergeBibliographyChange(expected, next, current.draftSource, "bibtex");
       if (merged === null) return false;
-      if (current.contents !== merged) {
-        coordinator.change(merged);
-        setProjectFileQueryData(
-          props.environmentId,
-          props.cwd,
-          props.path,
+      if (current.draftSource !== merged) {
+        if (!lease.change(merged, current.editVersion)) return false;
+        checkpointVisualDraft(
+          draftKey,
           merged,
-          current.revision,
+          current.draftSource,
+          merged,
+          current.baselineRevision,
         );
       }
-      return coordinator.flush();
+      return lease.flushNow();
     },
-    [coordinator.change, coordinator.flush, props.environmentId, props.cwd, props.path],
+    [lease, draftKey],
   );
+  const disk = query.authoritativeData;
+  const error =
+    saveError ??
+    (admissionError !== null
+      ? (documentFailureReason(admissionError) ??
+        (admissionError instanceof Error ? admissionError.message : `Could not open ${path}.`))
+      : query.error) ??
+    (disk?.truncated ? "This file is too large to edit here." : null);
+  const source = snapshot?.draftSource ?? disk?.contents ?? "";
+  const readOnly = lease === null || snapshot?.editingBlocked === true;
+  const update = props.update;
+  const loading = query.isPending || pending || (lease === null && disk === null && error === null);
   useEffect(() => {
-    props.update({
-      id: `bib:${props.path}`,
-      path: props.path,
-      source: data?.contents ?? "",
+    update({
+      id: `bib:${path}`,
+      path,
+      source,
       kind: "bibtex",
-      readOnly: !data || !!data.readOnly || !!data.truncated,
-      pending: query.isPending || pending,
-      error:
-        error ?? query.error ?? (data?.truncated ? "This file is too large to edit here." : null),
+      readOnly,
+      pending: loading,
+      error,
+      persistence: lease,
       apply,
     });
-  }, [props.update, props.path, data, query.isPending, query.error, pending, error, apply]);
+  }, [update, path, source, readOnly, loading, error, lease, apply]);
   return null;
 }
 
@@ -293,10 +319,11 @@ export function LatexReferencesPanel(props: {
     else referenceDrafts.delete(props.draftKey);
   }, [props.draftKey, draft, dirty]);
   const draftReporter = props.onDraftChange;
+  const filePending = Object.values(files).some((file) => file.pending);
   useEffect(() => {
-    draftReporter(dirty || saving);
+    draftReporter(dirty || saving || filePending);
     return () => draftReporter(false);
-  }, [dirty, saving, draftReporter]);
+  }, [dirty, saving, filePending, draftReporter]);
   const requestSeen = useRef(-1);
   useEffect(() => {
     if (!props.open || requestSeen.current === props.request.sequence) return;
@@ -333,20 +360,26 @@ export function LatexReferencesPanel(props: {
     }
     requestAnimationFrame(() => input.current?.focus({ preventScroll: true }));
   }, [props.open, props.request, props.environmentId, props.cwd, candidates, files, paths, dirty]);
+  // Once read, keep the leases through closing the panel so pending/error
+  // reports continue to describe the same bibliography sessions.
+  const resourcePaths = [
+    ...new Set([
+      ...(props.open || props.loadDetails ? paths.slice(0, 24) : []),
+      ...Object.values(files).map((file) => file.path),
+    ]),
+  ];
   const resources =
-    (props.open || props.loadDetails) && props.environmentId && props.cwd
-      ? paths
-          .slice(0, 24)
-          .map((path) => (
-            <BibliographyFile
-              key={path}
-              environmentId={props.environmentId!}
-              cwd={props.cwd!}
-              path={path}
-              update={updateFile}
-              callbacks={props.fileCallbacks}
-            />
-          ))
+    props.environmentId && props.cwd
+      ? resourcePaths.map((path) => (
+          <BibliographyFile
+            key={path}
+            environmentId={props.environmentId!}
+            cwd={props.cwd!}
+            path={path}
+            update={updateFile}
+            callbacks={props.fileCallbacks}
+          />
+        ))
       : null;
   if (!props.open) return resources;
   const choose = (document: BibliographyDocument, entry: BibliographyEntry) => {
@@ -540,6 +573,9 @@ export function LatexReferencesPanel(props: {
           document.error || parsed.error ? (
             <div role="alert" key={document.id}>
               {document.path}: {document.error ?? parsed.error}
+              {document.persistence ? (
+                <ScientMarkdownPersistenceNotice persistence={document.persistence} />
+              ) : null}
               <Button
                 variant="outline"
                 size="sm"

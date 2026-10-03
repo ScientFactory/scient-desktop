@@ -163,6 +163,7 @@ describe("ScientMarkdownFileSurface", () => {
       getSnapshot: coordinator.getSnapshot,
       subscribe: coordinator.subscribe,
       change: (source: string, version: number) => coordinator.change(source, version),
+      applyEdit: coordinator.applyEdit.bind(coordinator),
       noteFreshnessHint: (reason?: string) => coordinator.noteFreshnessHint(reason),
       flushNow: () => coordinator.flushNow(),
       retry: () => coordinator.retry(),

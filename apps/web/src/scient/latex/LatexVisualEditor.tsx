@@ -1,4 +1,6 @@
 import { LatexSelect } from "./LatexSelect";
+import { randomUUID } from "~/lib/utils";
+
 import { isLatexContextEvent } from "./latexContextEvents";
 import type { JSONContent } from "@tiptap/core";
 import { matrixEdit, type MatrixAction, type MatrixEnvironment } from "../math/input/matrix";
@@ -126,6 +128,7 @@ import {
   journalAppliedRecovery,
   parkUninstalledTypingDraft,
   parkUnpublishedSource,
+  parkUnappliedInput,
   readStartupRecovery,
   readStoredRecovery,
   removeRecovery,
@@ -3988,7 +3991,7 @@ export interface LatexVisualEditorProps {
   readonly environmentId?: EnvironmentId | undefined;
   readonly cwd?: string | undefined;
   readonly relativePath?: string | undefined;
-  readonly registerFinishEditing?: (finish: (() => void) | null) => void;
+  readonly registerFinishEditing?: (finish: (() => boolean) | null) => void;
 }
 
 const visualJsonNodes = new WeakMap<ProseMirrorNode, JSONContent>();
@@ -4066,23 +4069,31 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     [props.draftKey],
   );
   const pendingFields = useRef(new Set<string>());
-  const [hasLocalDraft, setHasLocalDraft] = useState(false);
+  const localDraftReporter = useRef(props.onLocalDraftChange);
+  const [localDraftState, setLocalDraftState] = useState({ pending: false, version: 0 });
+  const hasLocalDraft = localDraftState.pending;
   const cancelDraftReport = useRef<(() => void) | null>(null);
   const reportDraft = useCallback((id: string, pending: boolean) => {
+    if (pendingFields.current.has(id) === pending) return;
     if (pending) pendingFields.current.add(id);
     else pendingFields.current.delete(id);
+    localDraftReporter.current?.(pendingFields.current.size > 0);
     if (!cancelDraftReport.current)
       cancelDraftReport.current = afterEditorPaint(() => {
         cancelDraftReport.current = null;
-        setHasLocalDraft(pendingFields.current.size > 0);
+        setLocalDraftState((previous) => ({
+          pending: pendingFields.current.size > 0,
+          version: previous.version + 1,
+        }));
       });
   }, []);
   useEffect(() => () => cancelDraftReport.current?.(), []);
   const onLocalDraftChange = props.onLocalDraftChange;
-  useEffect(() => {
-    onLocalDraftChange?.(hasLocalDraft);
-  }, [hasLocalDraft, onLocalDraftChange]);
-  useEffect(() => () => onLocalDraftChange?.(false), [onLocalDraftChange]);
+  useLayoutEffect(() => {
+    localDraftReporter.current = onLocalDraftChange;
+    onLocalDraftChange?.(pendingFields.current.size > 0);
+    return () => onLocalDraftChange?.(false);
+  }, [onLocalDraftChange]);
 
   // A typing snapshot is reinstalled only over the source it was typed on.
   // Other unsaved work is parked apart from the live draft slots and waits for
@@ -4114,6 +4125,10 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   // the editor adopts a source, so a draft kept over an older source is never
   // stamped with a newer file's revision.
   const sourceRevision = useRef(props.fileRevision);
+
+  const observedSource = useRef({ source: props.source, revision: props.fileRevision });
+  const deferredSource = useRef(false);
+
   // The typing snapshot this editor last stored or put back. Another view of
   // the document may have stored a different one since; only ours is removed.
   const ownTyping = useRef<string | null>(null);
@@ -4174,6 +4189,9 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   useEffect(() => () => cancelToolbarRefresh.current?.(), []);
   const [notice, setNotice] = useState<string | null>(null);
   const [unsynced, setUnsynced] = useState(false);
+  const rawInputRecovery = useRef<LatexVisualRecovery | null>(null);
+  const rawInputPersistedRecovery = useRef<LatexVisualRecovery | null>(null);
+  const rawInputInteraction = useRef("");
   const [blockSource, setBlockSource] = useState<{
     id: string;
     position: number;
@@ -4886,15 +4904,33 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       props.source === pendingSourceEdit.current?.expected
     ) {
       sourceRevision.current = props.fileRevision;
+
+      observedSource.current = { source: props.source, revision: props.fileRevision };
+      deferredSource.current = false;
       return;
     }
-    if (pendingTyping.current) {
-      retainOwnTyping(currentSource.current, pendingTyping.current);
+    // A draft report alone is not a new host observation. The parent may still
+    // carry the last acknowledged source after accepting a local publication.
+    if (
+      !deferredSource.current &&
+      observedSource.current.source === props.source &&
+      observedSource.current.revision === props.fileRevision
+    )
+      return;
+    observedSource.current = { source: props.source, revision: props.fileRevision };
+    // Field callbacks are relative to the displayed node and original source.
+    // Keep that context until its input is accepted or explicitly discarded;
+    // replacing it here would let a delayed callback overwrite the new source.
+    if ([...pendingFields.current].some((id) => id !== "source-publication")) {
+      deferredSource.current = true;
+      if (pendingTyping.current) retainOwnTyping(currentSource.current, pendingTyping.current);
+
       setNotice(
         "The source changed elsewhere. Your unsaved writing is retained here; resolve the source change before saving.",
       );
       return;
     }
+    deferredSource.current = false;
     cancelSourcePublish.current?.();
     cancelSourcePublish.current = null;
     // An edit the editor accepted but had not published yet has no stored copy.
@@ -4940,6 +4976,8 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     props.rootSource,
     props.draftKey,
     reportDraft,
+
+    localDraftState.version,
   ]);
 
   // Runs after the effect above, so the editor has adopted the source that the
@@ -5009,8 +5047,9 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       )
         field.blur();
       editor?.commands.blur();
-      flushTypingRef.current();
-      flushSourceEditRef.current(pendingTyping.current !== null);
+      const typingFinished = flushTypingRef.current();
+      const sourceFinished = flushSourceEditRef.current(pendingTyping.current !== null);
+      return typingFinished && sourceFinished && pendingFields.current.size === 0;
     });
     return () => registerFinishEditing?.(null);
   }, [editor, registerFinishEditing]);
@@ -6118,7 +6157,17 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   const discardRecovery = () => {
     if (!recovery) return;
     // Remove only the record this bar shows; any other waiting work is shown next.
-    settleRecovery(recovery, removeRecovery(props.draftKey, recovery));
+
+    const removed = removeRecovery(props.draftKey, recovery);
+    if (removed && rawInputRecovery.current?.identity === recovery.identity) {
+      if (rawInputPersistedRecovery.current !== null)
+        removeRecovery(props.draftKey, rawInputPersistedRecovery.current);
+      rawInputPersistedRecovery.current = null;
+      rawInputRecovery.current = null;
+      reportDraft("block-source", false);
+      setBlockSource(null);
+    }
+    settleRecovery(recovery, removed);
   };
 
   const openBlockSource = (position: number) => {
@@ -6145,6 +6194,9 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       node.attrs.raw !== block.source
     )
       return;
+    rawInputInteraction.current = randomUUID();
+    rawInputRecovery.current = null;
+    rawInputPersistedRecovery.current = null;
     setBlockSource({
       id: block.id,
       position,
@@ -6157,15 +6209,42 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       editor.view.dom.querySelector<HTMLElement>('[aria-label="Block LaTeX source"]')?.focus();
     });
   };
+  const retireRawInput = () => {
+    const retained = rawInputRecovery.current;
+    if (retained === null) return;
+    removeRecovery(props.draftKey, retained);
+    if (rawInputPersistedRecovery.current !== null)
+      removeRecovery(props.draftKey, rawInputPersistedRecovery.current);
+    rawInputPersistedRecovery.current = null;
+    rawInputRecovery.current = null;
+    // A quota failure exposes the in-memory copy in the recovery bar.
+    // Cancelling that exact draft must also release its read-only fallback.
+    setRecovery((shown) =>
+      shown?.identity === retained.identity ? readStoredRecovery(props.draftKey) : shown,
+    );
+  };
   const blockSourceContext = {
     active: blockSource,
     disabled: readOnly,
     open: openBlockSource,
     change: (draft: string) => {
-      reportDraft("block-source", draft !== blockSource?.original);
+      const changed = draft !== blockSource?.original;
+      if (changed) {
+        const retained = parkUnappliedInput(
+          props.draftKey,
+          draft,
+          rawInputInteraction.current,
+          rawInputPersistedRecovery.current,
+        );
+        rawInputRecovery.current = retained;
+        if (retained.parked) rawInputPersistedRecovery.current = retained;
+        if (!retained.parked) setRecovery(retained);
+      } else retireRawInput();
+      reportDraft("block-source", changed);
       setBlockSource((previous) => (previous ? { ...previous, draft } : null));
     },
     close: () => {
+      retireRawInput();
       reportDraft("block-source", false);
       setBlockSource(null);
     },
@@ -6190,6 +6269,12 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         );
         return;
       }
+      // Do not retire unapplied input until the accepted source has a durable copy.
+      checkpointVisualDraft(props.draftKey, next, expected, next, sourceRevision.current);
+      if (flushVisualDraft(props.draftKey) && rawInputRecovery.current !== null)
+        removeRecovery(props.draftKey, rawInputRecovery.current);
+      rawInputRecovery.current = null;
+      rawInputPersistedRecovery.current = null;
       currentSource.current = next;
       reportDraft("block-source", false);
       setBlockSource(null);

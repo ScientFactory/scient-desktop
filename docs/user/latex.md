@@ -232,8 +232,10 @@ cases, and aligned equations. You can also type a complete `matrix`, `bmatrix`,
 empty visual paragraph; Scient converts it only after the matching `\end{...}`
 is complete. Unsupported or malformed environments remain ordinary text or
 protected source rather than being partially rewritten.
-Source remains the authoritative `.tex` file. Source and Visual share the same
-revision-checked save queue; switching views does not create a second document.
+Source remains the authoritative `.tex` file. Source and Visual share one document
+session and revision-checked save queue per file, including a chapter opened in its
+own tab; switching views does not create a second document. If the file changes
+elsewhere while you have unsaved edits, Scient keeps both versions for you to resolve.
 
 Inserting or deleting visual blocks maintains a single blank source line between
 adjacent blocks instead of accumulating the separators left behind by deleted
@@ -515,8 +517,17 @@ Preamble, macro and global-layout edits show a rebuild notice. After a crash or
 interrupted save, your unsaved changes are offered in the footer when you reopen
 the document, and you can keep writing meanwhile. **Compare** shows them next to
 the file, and the file is replaced only if you choose **Use recovered** there.
-**Discard** removes the recovered copy. In a document made of several files, the
-recovered changes can be compared and copied, but are not applied for you.
+**Discard** removes the recovered copy. In a narrow footer, the unsaved-work button
+opens the comparison, where you can also discard the copy. In a document made of
+several files, the recovered changes can be compared and copied, but are not applied
+for you. Source and Split offer the same comparison for the file you are editing.
+If the recovered copy cannot be stored safely, editing pauses and the notice tells
+you to keep the document open until you use or discard it. You can copy it first.
+
+Unapplied **Edit LaTeX** text is recovered separately, including incomplete LaTeX.
+**View** and **Copy** let you retrieve it without replacing a whole document.
+Cancel discards only that editing interaction; Apply clears its recovery copy only
+after the accepted source has been stored in the recovery journal.
 
 ## Edit LaTeX source
 
@@ -529,11 +540,13 @@ PDF selected, double-click a source line to locate it in the compiled PDF.
 
 Choose **Rebuild PDF** to build after the current source has been saved.
 Opening a stale PDF requests a build. While PDF is visible, Scient also rebuilds
-on Ctrl/Cmd+S. Typing alone does not request a build. Builds wait for saves,
-and keep the last successful PDF readable while building.
+on Ctrl/Cmd+S. Typing alone does not request a build. Before building, Scient asks
+open document fields to finish and waits for the root and included files to save,
+even if you have only used Source. Unresolved field input, save errors or conflicts
+must be resolved first. The last successful PDF stays readable while building.
 A failed revision requires an explicit rebuild instead of repeated automatic attempts.
-**Export → PDF** saves a
-copy only when the latest PDF matches the saved buffer and build dependencies.
+**Export → PDF** uses the same save preparation and saves a copy only when the
+latest PDF matches the saved source and freshly checked build dependencies.
 Update the PDF first if export is unavailable.
 
 An agent can still explicitly request a build through the existing tools. Errors and
@@ -551,7 +564,8 @@ visual quality matters.
 ## Export to Word
 
 Save the source, choose the document root in the LaTeX toolbar if Scient has not
-found one, then select **Export ▸ Word**. Scient converts the selected LaTeX
+found one, then select **Export ▸ Word**. Word export waits for the same document
+saves and field completion as Rebuild PDF. Scient converts the selected LaTeX
 document to a `.docx` file; the first export offers to install Pandoc if it is
 not yet available. The export uses the root file and its literal `\input`,
 `\include`, and `\subfile` references. As in LaTeX, these resolve from the root
@@ -657,12 +671,13 @@ and `\subimport` references are expanded in order, including nested files.
 `\includeonly` is respected and `\include` retains its page breaks. Edits save
 back to the file that owns the content; the original include commands stay intact.
 
-Write uses the selected root document for page settings and image paths. When a
-supported insertion needs a missing package or theorem declaration, Scient saves
-it in the root preamble along with the chapter edit. Each file has its own revision
-check; save conflicts are reported, and PDF builds wait for pending file saves.
-Switching views keeps those saves active. A selection spanning multiple source
-files must be edited one file at a time.
+Write uses the selected root document for page settings and image paths. If a
+supported insertion would need to change both a chapter and the root preamble,
+Scient asks you to add the missing package or theorem declaration in Source first,
+then retry; neither file is changed by the refused insertion. Each file has its own
+revision check; save conflicts are reported, and build/export wait for pending
+file saves. Switching views keeps those saves active. A selection spanning multiple
+source files must be edited one file at a time.
 
 Missing files, cycles and unresolved dynamic or conditional includes show an
 explanation instead of an incomplete Visual document. Use PDF for includes that

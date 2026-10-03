@@ -377,7 +377,9 @@ async function buildProjectIndex(
   };
   await visit(workspaceRoot, 0);
   const generation = NodeCrypto.createHash("sha256");
-  for (const [path, hash] of [...sourceHashes].sort(([left], [right]) => left.localeCompare(right))) {
+  for (const [path, hash] of [...sourceHashes].sort(([left], [right]) =>
+    left.localeCompare(right),
+  )) {
     generation.update(path).update("\0").update(hash).update("\0");
   }
   return {

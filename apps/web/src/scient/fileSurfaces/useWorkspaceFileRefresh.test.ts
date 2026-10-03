@@ -97,7 +97,7 @@ vi.mock("~/components/files/projectFilesQueryState", () => ({
   }),
 }));
 
-import { useWorkspaceFileRefresh } from "./useWorkspaceFileRefresh";
+import { useSessionFileWatch, useWorkspaceFileRefresh } from "./useWorkspaceFileRefresh";
 
 const input = {
   environmentId: EnvironmentId.make("environment-1"),
@@ -170,6 +170,25 @@ describe("workspace refresh ownership", () => {
     render({ relativePath: "paper.pdf", loadAsText: false });
     expect(render({ relativePath: "paper.pdf", loadAsText: false }).viewerRefreshKey).toBe(2);
     expect(mocks.refreshFile).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports and restarts a session's watcher without acting on its changes", () => {
+    const watch = (enabled = true) => {
+      hooks.begin();
+      const result = useSessionFileWatch(input.environmentId, input.cwd, "paper.tex", enabled);
+      hooks.commit();
+      return result;
+    };
+    expect(watch().unavailable).toBe(false);
+    mocks.watcher = AsyncResult.failure(Cause.fail(new Error("watch unavailable")));
+    expect(watch().unavailable).toBe(true);
+    // Not this panel's concern while no session owns the file.
+    expect(watch(false).unavailable).toBe(false);
+    watch().refresh();
+    expect(mocks.refreshWatcher).toHaveBeenCalledOnce();
+    mocks.watcher = AsyncResult.success({ _tag: "file-changed", relativePath: "paper.tex" });
+    expect(watch().unavailable).toBe(false);
+    expect(mocks.refreshFile).not.toHaveBeenCalled();
   });
 
   it("leaves rich-editor conflict ownership to the session", () => {

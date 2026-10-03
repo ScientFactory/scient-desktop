@@ -104,7 +104,10 @@ import { useMarkdownPersistenceLease } from "~/scient/markdownEditor/persistence
 import { useMarkdownPersistenceGuards } from "~/scient/markdownEditor/persistence/useMarkdownPersistenceGuards";
 import { useMarkdownSourcePersistence } from "~/scient/markdownEditor/persistence/useMarkdownSourcePersistence";
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
-import { markdownPersistenceRegistry } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
+import {
+  documentSessionIsCurrent,
+  markdownPersistenceRegistry,
+} from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { workspacePdfSourceForPreview } from "~/scient/pdf/pdfSource";
 import {
   ScientFileFreshnessNotices,
@@ -113,6 +116,7 @@ import {
 } from "~/scient/fileSurfaces/ScientFileFreshnessControls";
 import {
   type FileSaveResolution,
+  useSessionFileWatch,
   useWorkspaceFileRefresh,
 } from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
 import { usePendingSurfaceDeparture } from "~/scient/fileSurfaces/usePendingSurfaceDeparture";
@@ -1467,6 +1471,12 @@ export default function FilePreviewPanel({
   const isMarkdownPreview = relativePath ? isMarkdownPreviewFile(relativePath) : false;
   const isRichMarkdown = relativePath ? isScientMarkdownDocumentPath(relativePath) : false;
   const isMarkdownDocument = isMarkdownPreview || isRichMarkdown;
+  // Files whose saving belongs to a document session, not to this panel's
+  // generic saver: one owner per file for every view of it.
+  const usesDocumentSession =
+    !isHostFile &&
+    relativePath !== null &&
+    (isRichMarkdown || (documentSessionIsCurrent && isLatexPreviewFile(relativePath)));
   const {
     automaticRefreshUnavailable,
     cancelReloadNotice,
@@ -1491,12 +1501,18 @@ export default function FilePreviewPanel({
     // distinguished from a media or PDF file before choosing a preview.
     loadAsText: attachment === undefined,
     sourcePending: effectiveSourcePending,
-    surfaceOwnsConflictDetection: isRichMarkdown && !isHostFile,
+    surfaceOwnsConflictDetection: usesDocumentSession,
     workspaceMutationId,
     // Host files outside the workspace are watched too: they stay read-only,
     // but an agent or another app can still change them while they are open.
     watchChanges: attachment === undefined && !quietMarkdownPaths.has(relativePath ?? ""),
   });
+  const sessionWatch = useSessionFileWatch(
+    environmentId,
+    cwd,
+    relativePath,
+    relativePath !== null && quietMarkdownPaths.has(relativePath),
+  );
   const isDirectory = queriedFile.isNotFile && !isHostFile;
   const previewPath = isDirectory ? null : relativePath;
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
@@ -1580,9 +1596,7 @@ export default function FilePreviewPanel({
     retryAdmission,
   } = useMarkdownPersistenceLease({
     target:
-      isRichMarkdown && !isHostFile && relativePath !== null
-        ? { environmentId, cwd, relativePath }
-        : null,
+      usesDocumentSession && relativePath !== null ? { environmentId, cwd, relativePath } : null,
     authoritativeSnapshot: queriedFile.authoritativeData,
     workspaceMutationId,
   });
@@ -1625,8 +1639,7 @@ export default function FilePreviewPanel({
     !isMedia &&
     !isPdf;
   const awaitingMarkdownLease =
-    isRichMarkdown &&
-    !isHostFile &&
+    usesDocumentSession &&
     markdownLease === null &&
     queriedFile.authoritativeData !== null &&
     !queriedFile.authoritativeData.truncated &&
@@ -1984,7 +1997,20 @@ export default function FilePreviewPanel({
             </FileSurfaceAction>
           ) : null}
           {relativePath && isLatexPreviewFile(relativePath) ? (
-            <ScientFileFreshnessStatus {...freshnessNoticeProps} pending={effectiveSourcePending} />
+            <ScientFileFreshnessStatus
+              {...freshnessNoticeProps}
+              pending={effectiveSourcePending}
+              sessionAttention={
+                // The same three cases the session's own notice tells apart.
+                markdownSnapshot?.conflict
+                  ? "conflict"
+                  : markdownSnapshot?.error
+                    ? markdownSnapshot.pending
+                      ? "failure"
+                      : "refresh"
+                    : null
+              }
+            />
           ) : null}
           {canSaveCopy ? (
             <FileSurfaceAction label="Save a copy to this device" onPress={handleSaveCopy}>
@@ -1993,11 +2019,14 @@ export default function FilePreviewPanel({
           ) : null}
           {attachment === undefined && previewPath !== null ? (
             <ScientFileReloadButton
-              automaticRefreshUnavailable={automaticRefreshUnavailable}
+              automaticRefreshUnavailable={automaticRefreshUnavailable || sessionWatch.unavailable}
               isPending={markdownSnapshot?.reading ?? file.isPending}
               onReload={
                 markdownLease
-                  ? () => void markdownLease.refresh()
+                  ? () => {
+                      sessionWatch.refresh();
+                      void markdownLease.refresh();
+                    }
                   : admissionError
                     ? retryAdmission
                     : requestManualReload
@@ -2025,23 +2054,7 @@ export default function FilePreviewPanel({
             : {})}
         />
       ) : attachment === undefined && relativePath && isLatexPreviewFile(relativePath) ? null : (
-        <ScientFileFreshnessNotices
-          relativePath={relativePath}
-          notice={reloadNotice}
-          readError={isDirectory ? null : file.error}
-          readFailureReason={file.failureReason}
-          missingFileChoices={missingFile.paths}
-          onOpenFile={onOpenFile}
-          saveError={saveError}
-          saveRetryReady={saveRetryReady}
-          hasFallbackData={file.data !== null}
-          reloading={file.isPending}
-          onCancel={cancelReloadNotice}
-          onReload={requestManualReload}
-          onRequestOverwrite={requestOverwrite}
-          onRetrySave={requestRetrySave}
-          onResolve={resolveReloadNotice}
-        />
+        <ScientFileFreshnessNotices {...freshnessNoticeProps} />
       )}
       {relativePath && !markdownLease && !isPdf && file.data?.readOnly ? (
         <div className="shrink-0 border-b border-border/50 bg-muted/35 px-3 py-1.5 scient-reading-micro text-muted-foreground">
@@ -2180,7 +2193,7 @@ export default function FilePreviewPanel({
           ) : awaitingMarkdownLease ? (
             <div
               className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground"
-              aria-label="Opening Markdown editor"
+              aria-label="Opening editor"
             />
           ) : relativePath && file.error && file.data === null ? (
             readFailure
@@ -2243,19 +2256,16 @@ export default function FilePreviewPanel({
                   contents={file.data.contents}
                   revision={file.data.revision}
                   truncated={file.data.truncated}
+                  // Without a session the file is read-only or too large to edit completely.
+                  persistence={markdownLease}
                   resolvedTheme={resolvedTheme}
                   revealLine={revealLine}
                   revealRequestId={revealRequestId}
                   latexPresentationRequest={latexPresentationRequest}
                   wordWrap={wordWrap}
                   onPostRender={onFilePostRender}
-                  onPendingChange={handlePendingChange}
                   onOpenFileSource={onOpenFileSource}
                   onLatexPresentationRequestHandled={onLatexPresentationRequestHandled}
-                  onSaveFailure={handleSaveFailure}
-                  onSaveConfirmed={handleSaveConfirmed}
-                  onSaveResolutionApplied={handleSaveResolutionApplied}
-                  saveResolution={saveResolution}
                 />
               </Suspense>
             ) : computeSourceLanguage !== null && !file.data.truncated ? (

@@ -6,12 +6,6 @@ import { afterEach, assert, describe, it } from "vite-plus/test";
 import { writeColdHandoff } from "../apps/desktop/scripts/dev-cold-handoff.mjs";
 
 import {
-  resolveDevelopmentLaunchPaths,
-  writeDevelopmentLaunchHandoff,
-  writeDevelopmentProcessPid,
-} from "../apps/desktop/scripts/dev-app-process.mjs";
-
-import {
   acquireRunner,
   clearStaleRunner,
   installDevelopmentAppBundle,
@@ -26,10 +20,8 @@ import {
   watchForLaunchFailure,
   readLocalDevAppMarker,
   registerDevelopmentAppBundle,
-  releaseRunner,
   resolveLocalDevAppPaths,
   resolveLocalDevAppServiceLabel,
-  resolveOwnedDevelopmentLaunches,
   resolveStableDevHome,
   startAppInBackground,
   statusApp,
@@ -518,16 +510,6 @@ describe("local dev app runner lifecycle", () => {
     assert.equal(attempts, 2);
   });
 
-  it("does not let an exiting old runner remove a replacement runner lock", () => {
-    const { paths } = fixture();
-    writeRunnerState(paths, 5678);
-
-    assert.isFalse(releaseRunner(paths, 1234));
-    assert.equal(JSON.parse(NodeFS.readFileSync(paths.runnerStatePath, "utf8")).pid, 5678);
-    assert.isTrue(releaseRunner(paths, 5678));
-    assert.isFalse(NodeFS.existsSync(paths.runnerDir));
-  });
-
   it("preserves the grace window for a runner that has not written state yet", () => {
     const { paths } = fixture();
     NodeFS.mkdirSync(paths.runnerDir, { recursive: true });
@@ -549,13 +531,8 @@ describe("local dev app runner lifecycle", () => {
       paths,
       matchesRunner: () => true,
       serviceIsLoaded: () => false,
-      resolveOwnedLaunches: () => [
-        {
-          app: { pid: 2222 },
-          backend: { pid: 3333 },
-          launcher: { pid: 1111 },
-        },
-      ],
+      resolveOwnedApp: () => ({ pid: 2222 }),
+      resolveOwnedBackend: () => ({ pid: 3333 }),
       writeLine: (line) => lines.push(line),
     });
 
@@ -614,112 +591,14 @@ describe("local dev app runner lifecycle", () => {
       paths,
       matchesRunner: () => true,
       serviceIsLoaded: () => true,
-      resolveOwnedLaunches: () => [{ app: { pid: 2222 }, backend: null, launcher: { pid: 1111 } }],
+      resolveOwnedApp: () => ({ pid: 2222 }),
+      resolveOwnedBackend: () => null,
       writeLine: (line) => lines.push(line),
     });
 
     assert.deepEqual(lines, [
       `${LOCAL_DEV_APP_NAME} is starting for ${paths.root} (runner PID 1234, app PID 2222).`,
     ]);
-  });
-
-  it("preserves an incomplete launch record for the full lifetime of its runner", () => {
-    const { paths } = fixture();
-    const record = resolveDevelopmentLaunchPaths(paths.runtimeDir, "1-1-cccccccc");
-    NodeFS.mkdirSync(record.launchDir, { recursive: true });
-    const twentySecondsAgo = new Date(Date.now() - 20_000);
-    NodeFS.utimesSync(record.launchDir, twentySecondsAgo, twentySecondsAgo);
-
-    assert.lengthOf(
-      resolveOwnedDevelopmentLaunches(paths, {
-        preserveIncomplete: true,
-        inspectCommand: () => null,
-        inspectChildren: () => [],
-      }),
-      1,
-    );
-    assert.isTrue(NodeFS.existsSync(record.launchDir));
-    assert.deepEqual(
-      resolveOwnedDevelopmentLaunches(paths, {
-        preserveIncomplete: false,
-        inspectCommand: () => null,
-        inspectChildren: () => [],
-      }),
-      [],
-    );
-    assert.isFalse(NodeFS.existsSync(record.launchDir));
-  });
-
-  it("keeps a generation handoff until publication or its recovery grace expires", () => {
-    const { paths } = fixture();
-    const record = resolveDevelopmentLaunchPaths(paths.runtimeDir, "1-1-eeeeeeee");
-    writeDevelopmentLaunchHandoff(record);
-    const modifiedAt = NodeFS.statSync(record.backendPidPendingPath).mtimeMs;
-    const dependencies = {
-      inspectCommand: () => null,
-      inspectChildren: () => [],
-    };
-
-    assert.lengthOf(
-      resolveOwnedDevelopmentLaunches(paths, {
-        ...dependencies,
-        now: () => modifiedAt + 1,
-      }),
-      1,
-    );
-    assert.isTrue(NodeFS.existsSync(record.launchDir));
-    assert.deepEqual(
-      resolveOwnedDevelopmentLaunches(paths, {
-        ...dependencies,
-        now: () => modifiedAt + 5_001,
-      }),
-      [],
-    );
-    assert.isFalse(NodeFS.existsSync(record.launchDir));
-  });
-
-  it("does not delete a backend published while its handoff marker disappears", () => {
-    const { paths } = fixture();
-    const record = resolveDevelopmentLaunchPaths(paths.runtimeDir, "1-1-eeeeeeee");
-    writeDevelopmentLaunchHandoff(record);
-    writeDevelopmentProcessPid(record.backendPidPath, 5432);
-    const electronBinaryPath = NodePath.join(
-      paths.root,
-      "apps",
-      "desktop",
-      ".electron-runtime",
-      `${LOCAL_DEV_APP_NAME}.app`,
-      "Contents",
-      "MacOS",
-      "Electron",
-    );
-    const commandPrefix = `${electronBinaryPath} ${NodePath.join(
-      paths.root,
-      "apps",
-      "server",
-      "dist",
-      "bin.mjs",
-    )}`;
-    let backendInspections = 0;
-
-    const launches = resolveOwnedDevelopmentLaunches(paths, {
-      inspectCommand: (pid) => {
-        if (pid !== 5432) return null;
-        backendInspections++;
-        if (backendInspections === 1) {
-          NodeFS.rmSync(record.backendPidPendingPath);
-          return null;
-        }
-        return `${commandPrefix} --bootstrap-fd 3`;
-      },
-      inspectChildren: () => [],
-    });
-
-    assert.equal(backendInspections, 2);
-    assert.lengthOf(launches, 1);
-    assert.equal(launches[0].backend?.pid, 5432);
-    assert.isTrue(NodeFS.existsSync(record.launchDir));
-    assert.isTrue(NodeFS.existsSync(record.backendPidPath));
   });
 
   it("signals only the validated runner PID", async () => {
@@ -731,7 +610,6 @@ describe("local dev app runner lifecycle", () => {
       paths,
       matchesRunner: () => true,
       killProcess: (...args) => signals.push(args),
-      resolveOwnedLaunches: () => [],
       waitUntilStopped: async () => true,
       unloadService: () => false,
       writeLine: () => {},
@@ -749,27 +627,21 @@ describe("local dev app runner lifecycle", () => {
       paths,
       matchesRunner: () => true,
       killProcess: (...args) => signals.push(args),
-      resolveOwnedLaunches: () => [
-        {
-          record: { generation: "test-generation" },
-          app: { pid: 2222, command: "/owned/Electron" },
-          backend: { pid: 3333, command: "/owned/Electron server/bin.mjs" },
-          launcher: null,
-        },
-      ],
+      resolveOwnedApp: () => ({ pid: 2222, command: "/owned/Electron" }),
+      resolveOwnedBackend: () => ({ pid: 3333, command: "/owned/Electron server/bin.mjs" }),
       waitUntilStopped: async () => true,
       unloadService: () => false,
       writeLine: () => {},
     });
 
     assert.deepEqual(signals, [
-      [3333, "SIGTERM"],
       [2222, "SIGTERM"],
+      [3333, "SIGTERM"],
       [1234, "SIGTERM"],
     ]);
   });
 
-  it("stops every same-worktree process even when no launch record owns it", async () => {
+  it("stops every same-worktree app even when the shared PID file missed them", async () => {
     const { paths } = fixture();
     const signals = [];
 
@@ -777,7 +649,8 @@ describe("local dev app runner lifecycle", () => {
       paths,
       matchesRunner: () => false,
       killProcess: (...args) => signals.push(args),
-      resolveOwnedLaunches: () => [],
+      resolveOwnedApp: () => null,
+      resolveOwnedBackend: () => null,
       resolveOwnedApps: () => [
         { pid: 2222, command: "/owned/Electron --t3code-dev-root=/owned" },
         { pid: 4444, command: "/owned/Electron --t3code-dev-root=/owned" },
@@ -795,101 +668,81 @@ describe("local dev app runner lifecycle", () => {
     ]);
   });
 
-  it("revalidates a generation immediately before signaling a recorded PID", async () => {
+  it("fails instead of reporting success when owned processes survive SIGKILL", async () => {
     const { paths } = fixture();
     writeRunnerState(paths);
-    const recordedLaunch = {
-      record: { generation: "test-generation" },
-      app: { pid: 2222, command: "/owned/Electron" },
-      backend: null,
-      launcher: null,
-    };
-    let resolutionCount = 0;
     const signals = [];
+    const lines = [];
+    let unloads = 0;
+    let failure;
 
-    await stopApp({
-      paths,
-      matchesRunner: () => true,
-      killProcess: (...args) => signals.push(args),
-      resolveOwnedLaunches: () => {
-        resolutionCount += 1;
-        return resolutionCount <= 2 ? [recordedLaunch] : [];
-      },
-      waitUntilStopped: async () => true,
-      unloadService: () => false,
-      writeLine: () => {},
-    });
+    try {
+      await stopApp({
+        paths,
+        matchesRunner: () => true,
+        killProcess: (...args) => signals.push(args),
+        resolveOwnedApp: () => ({ pid: 2222, command: "/owned/Electron" }),
+        resolveOwnedBackend: () => null,
+        resolveOwnedApps: () => [],
+        resolveOwnedBackends: () => [],
+        waitUntilStopped: async () => false,
+        unloadService: () => {
+          unloads += 1;
+          return false;
+        },
+        writeLine: (line) => lines.push(line),
+      });
+    } catch (error) {
+      failure = error;
+    }
 
-    assert.deepEqual(signals, [[1234, "SIGTERM"]]);
-    assert.isAtLeast(resolutionCount, 3);
+    assert.instanceOf(failure, Error);
+    assert.equal(
+      failure.message,
+      `Could not stop every owned ${LOCAL_DEV_APP_NAME} process for ${paths.root}; some are still running.`,
+    );
+    assert.deepEqual(signals, [
+      [2222, "SIGTERM"],
+      [1234, "SIGTERM"],
+      [2222, "SIGKILL"],
+      [1234, "SIGKILL"],
+    ]);
+    assert.equal(unloads, 1);
+    assert.deepEqual(lines, []);
   });
 
-  it("retains ownership of a discovered backend after its app exits", async () => {
+  it("escalates and fails when an app outlives a stop during startup", async () => {
     const { paths } = fixture();
-    const record = resolveDevelopmentLaunchPaths(paths.runtimeDir, "1-1-dddddddd");
-    const appBundlePath = NodePath.join(
-      paths.root,
-      "apps",
-      "desktop",
-      ".electron-runtime",
-      `${LOCAL_DEV_APP_NAME}.app`,
-    );
-    const electronBinaryPath = NodePath.join(appBundlePath, "Contents", "MacOS", "Electron");
-    const backendCommandPrefix = `${electronBinaryPath} ${NodePath.join(
-      paths.root,
-      "apps",
-      "server",
-      "dist",
-      "bin.mjs",
-    )}`;
-    const commands = new Map([
-      [1101, `${electronBinaryPath} --app`],
-      [1102, `${backendCommandPrefix} --backend`],
-      [
-        1103,
-        `/usr/bin/open -n -W --env SCIENT_DEV_APP_PID_FILE=${record.appPidPath} ${appBundlePath}`,
-      ],
-    ]);
-    writeDevelopmentProcessPid(record.appPidPath, 1101);
-    writeDevelopmentProcessPid(record.launcherPidPath, 1103);
-    const alive = new Set(commands.keys());
-    const inspectCommand = (pid) => (alive.has(pid) ? commands.get(pid) : null);
-    const resolveOwnedLaunches = () =>
-      resolveOwnedDevelopmentLaunches(paths, {
-        inspectCommand,
-        inspectChildren: (parentPid) =>
-          parentPid === 1101 && alive.has(1102) ? [{ pid: 1102, command: commands.get(1102) }] : [],
-      });
+    NodeFS.mkdirSync(paths.runnerDir, { recursive: true });
     const signals = [];
-    let waitCount = 0;
+    const lines = [];
+    let failure;
 
-    await stopApp({
-      paths,
-      matchesRunner: () => false,
-      killProcess: (pid, signal) => {
-        signals.push([pid, signal]);
-        if (pid === 1102 && signal === "SIGTERM") {
-          assert.equal(NodeFS.readFileSync(record.backendPidPath, "utf8").trim(), "1102");
-          return;
-        }
-        alive.delete(pid);
-      },
-      resolveOwnedLaunches,
-      waitUntilStopped: async () => {
-        waitCount += 1;
-        return waitCount > 1 && resolveOwnedLaunches().length === 0;
-      },
-      unloadService: () => false,
-      writeLine: () => {},
-    });
+    try {
+      await stopApp({
+        paths,
+        matchesRunner: () => false,
+        killProcess: (...args) => signals.push(args),
+        resolveOwnedApp: () => null,
+        resolveOwnedBackend: () => null,
+        resolveOwnedApps: () => [{ pid: 2222, command: "/owned/Electron --t3code-dev-root" }],
+        resolveOwnedBackends: () => [],
+        waitUntilStopped: async () => false,
+        unloadService: () => true,
+        serviceIsLoaded: () => false,
+        writeLine: (line) => lines.push(line),
+      });
+    } catch (error) {
+      failure = error;
+    }
 
+    assert.instanceOf(failure, Error);
     assert.deepEqual(signals, [
-      [1102, "SIGTERM"],
-      [1101, "SIGTERM"],
-      [1103, "SIGTERM"],
-      [1102, "SIGKILL"],
+      [2222, "SIGTERM"],
+      [2222, "SIGKILL"],
     ]);
-    assert.isFalse(NodeFS.existsSync(record.launchDir));
+    assert.isTrue(NodeFS.existsSync(paths.runnerDir));
+    assert.deepEqual(lines, []);
   });
 
   it("treats a runner that exits before signaling as already stopped", async () => {
@@ -905,90 +758,12 @@ describe("local dev app runner lifecycle", () => {
         error.code = "ESRCH";
         throw error;
       },
-      resolveOwnedLaunches: () => [],
-      waitUntilStopped: async () => true,
       unloadService: () => false,
       writeLine: (line) => lines.push(line),
     });
 
     assert.isFalse(NodeFS.existsSync(paths.runnerDir));
-    assert.deepEqual(lines, [`Stopped ${LOCAL_DEV_APP_NAME} for ${paths.root}.`]);
-  });
-
-  it("stops every recorded launch generation after the runner has crashed", async () => {
-    const { paths } = fixture();
-    const first = resolveDevelopmentLaunchPaths(paths.runtimeDir, "1-1-aaaaaaaa");
-    const second = resolveDevelopmentLaunchPaths(paths.runtimeDir, "1-2-bbbbbbbb");
-    const appBundlePath = NodePath.join(
-      paths.root,
-      "apps",
-      "desktop",
-      ".electron-runtime",
-      `${LOCAL_DEV_APP_NAME}.app`,
-    );
-    const electronBinaryPath = NodePath.join(appBundlePath, "Contents", "MacOS", "Electron");
-    const backendCommandPrefix = `${electronBinaryPath} ${NodePath.join(
-      paths.root,
-      "apps",
-      "server",
-      "dist",
-      "bin.mjs",
-    )}`;
-    const commands = new Map([
-      [1101, `${electronBinaryPath} --first`],
-      [1102, `${backendCommandPrefix} --first`],
-      [
-        1103,
-        `/usr/bin/open -n -W --env SCIENT_DEV_APP_PID_FILE=${first.appPidPath} ${appBundlePath}`,
-      ],
-      [2201, `${electronBinaryPath} --second`],
-      [2202, `${backendCommandPrefix} --second`],
-      [
-        2203,
-        `/usr/bin/open -n -W --env SCIENT_DEV_APP_PID_FILE=${second.appPidPath} ${appBundlePath}`,
-      ],
-    ]);
-    for (const [record, pids] of [
-      [first, { app: 1101, backend: 1102, launcher: 1103 }],
-      [second, { app: 2201, backend: 2202, launcher: 2203 }],
-    ]) {
-      writeDevelopmentProcessPid(record.appPidPath, pids.app);
-      writeDevelopmentProcessPid(record.backendPidPath, pids.backend);
-      writeDevelopmentProcessPid(record.launcherPidPath, pids.launcher);
-    }
-    const alive = new Set(commands.keys());
-    const inspectCommand = (pid) => (alive.has(pid) ? commands.get(pid) : null);
-    const resolveOwnedLaunches = () =>
-      resolveOwnedDevelopmentLaunches(paths, { inspectCommand, inspectChildren: () => [] });
-    const signals = [];
-    const lines = [];
-
-    await stopApp({
-      paths,
-      matchesRunner: () => false,
-      killProcess: (pid, signal) => {
-        signals.push([pid, signal]);
-        alive.delete(pid);
-      },
-      resolveOwnedLaunches,
-      waitUntilStopped: async () => resolveOwnedLaunches().length === 0,
-      unloadService: () => false,
-      writeLine: (line) => lines.push(line),
-    });
-
-    assert.deepEqual(signals, [
-      [1102, "SIGTERM"],
-      [2202, "SIGTERM"],
-      [1101, "SIGTERM"],
-      [2201, "SIGTERM"],
-      [1103, "SIGTERM"],
-      [2203, "SIGTERM"],
-    ]);
-    assert.isFalse(NodeFS.existsSync(first.launchDir));
-    assert.isFalse(NodeFS.existsSync(second.launchDir));
-    assert.deepEqual(lines, [
-      `Stopped orphaned ${LOCAL_DEV_APP_NAME} app processes for ${paths.root}.`,
-    ]);
+    assert.deepEqual(lines, [`${LOCAL_DEV_APP_NAME} is already stopped for ${paths.root}`]);
   });
 });
 
