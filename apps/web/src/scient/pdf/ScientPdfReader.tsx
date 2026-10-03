@@ -474,7 +474,7 @@ function LoadedScientPdfReader(props: {
             {canSaveCopy ? (
               <DropdownMenuItem disabled={savingCopy} onClick={() => void saveCopy()}>
                 {savingCopy ? <LoaderCircle className="animate-spin" /> : <Download />}
-                {savingCopy ? "Saving copy…" : "Save a copy…"}
+                {savingCopy ? "Saving copy…" : "Save a copy"}
               </DropdownMenuItem>
             ) : null}
             {canRevealSource ? (

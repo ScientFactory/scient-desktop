@@ -61,7 +61,7 @@ import { WordFileExportDialog } from "~/scient/wordExport/WordFileExportDialog";
 import { documentBindingChanges } from "./bindingChanges";
 import { DockCommandItem } from "../writing/dockChrome";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "~/components/ui/menu";
-import { ReaderButton } from "../writing/DocumentReaderControls";
+import { ReaderButton, IfRowHidden, ReaderRowContext } from "../writing/DocumentReaderControls";
 import { DocumentExportMenuItems } from "../documentExport/DocumentExportMenuItems";
 import { ReaderBarHostContext, type ReaderBarHost } from "../writing/readerBarHost";
 const LatexProjectVisualEditor = lazy(() =>
@@ -1139,17 +1139,23 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   );
   const documentMenuItems = (
     <>
-      {mode === "split"
-        ? LATEX_SPLIT_PREVIEWS.map((candidate) => (
+      {mode === "split" ? (
+        // Here only while the row has no room for its PDF/Visual switch.
+        <IfRowHidden selector=".scient-latex-split-modes">
+          {LATEX_SPLIT_PREVIEWS.map((candidate) => (
             <DockCommandItem key={candidate} onClick={() => selectSplitPreview(candidate)}>
               Split preview: {LATEX_PREVIEW_MODE_LABELS[candidate]}
             </DockCommandItem>
-          ))
-        : null}
+          ))}
+        </IfRowHidden>
+      ) : null}
       {diagnostics.length > 0 || status.state === "failed" ? (
-        <DockCommandItem onClick={() => setDiagnosticsOpen(true)}>
-          <CircleAlert /> Build messages
-        </DockCommandItem>
+        // The counts in the row open the same card.
+        <IfRowHidden selector="[data-diagnostics-toggle]">
+          <DockCommandItem onClick={() => setDiagnosticsOpen(true)}>
+            <CircleAlert /> Build messages
+          </DockCommandItem>
+        </IfRowHidden>
       ) : null}
       <DocumentExportMenuItems
         onWordExport={() => setWordExportOpen(true)}
@@ -1416,7 +1422,9 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               <DropdownMenuTrigger render={<ReaderButton label="More actions" />}>
                 <Ellipsis />
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">{documentMenuItems}</DropdownMenuContent>
+              <DropdownMenuContent align="end">
+                <ReaderRowContext value={headerRow.current}>{documentMenuItems}</ReaderRowContext>
+              </DropdownMenuContent>
             </DropdownMenu>
           )}
         </div>

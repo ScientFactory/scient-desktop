@@ -1,4 +1,12 @@
-import { useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   ChevronDown,
@@ -45,6 +53,22 @@ export function ReaderButton(
       </button>
     </ScientTooltip>
   );
+}
+
+/** The row a More menu belongs to, so it can leave out what the row shows. */
+export const ReaderRowContext = createContext<HTMLElement | null>(null);
+
+/**
+ * A More menu item that stands in for a control in the row: it appears only
+ * while that control is hidden, for example in a narrow pane.
+ */
+export function IfRowHidden(props: { readonly selector: string; readonly children: ReactNode }) {
+  const row = useContext(ReaderRowContext);
+  if (!row) return props.children;
+  const shown = [...row.querySelectorAll<HTMLElement>(props.selector)].some(
+    (element) => element.getClientRects().length > 0,
+  );
+  return shown ? null : props.children;
 }
 
 /** What the search field in the reader controls shows and does. */
@@ -165,6 +189,8 @@ export function DocumentReaderControls(props: {
 }) {
   const [pageInput, setPageInput] = useState(String(props.page));
   const pendingSearch = useRef<(() => void) | null>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const [menuRow, setMenuRow] = useState<HTMLElement | null>(null);
   const searchOwnsFocus = useRef(false);
   useEffect(() => setPageInput(String(props.page)), [props.page]);
   const host = useContext(ReaderBarHostContext);
@@ -182,6 +208,7 @@ export function DocumentReaderControls(props: {
   };
   const toolbar = (
     <div
+      ref={toolbarRef}
       className={cn("scient-pdf-toolbar", host ? "scient-pdf-toolbar-hosted" : null)}
       role="toolbar"
       aria-label={props.label + " controls"}
@@ -288,7 +315,12 @@ export function DocumentReaderControls(props: {
       {host?.trailing}
       <DropdownMenu
         onOpenChange={(open) => {
-          if (open) searchOwnsFocus.current = false;
+          if (!open) return;
+          searchOwnsFocus.current = false;
+          const toolbarElement = toolbarRef.current;
+          setMenuRow(
+            toolbarElement?.closest<HTMLElement>(".scient-latex-toolbar") ?? toolbarElement,
+          );
         }}
         onOpenChangeComplete={(open) => {
           if (open) return;
@@ -301,58 +333,69 @@ export function DocumentReaderControls(props: {
           <Ellipsis />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" finalFocus={() => !searchOwnsFocus.current}>
-          <DropdownMenuItem
-            disabled={!props.ready}
-            onClick={() => props.onZoom(stepPdfZoom(props.scale, "out"))}
-          >
-            <ZoomOut /> Zoom out
-          </DropdownMenuItem>
-          <DropdownMenuItem disabled={!props.ready} onClick={() => props.onActualSize()}>
-            <Scan /> Actual size
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            disabled={!props.ready}
-            onClick={() => props.onZoom(stepPdfZoom(props.scale, "in"))}
-          >
-            <ZoomIn /> Zoom in
-          </DropdownMenuItem>
-          <DropdownMenuItem disabled={!props.ready} onClick={() => props.onFitWidth()}>
-            <Maximize2 /> Fit width
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={props.onToggleSidebar}>
-            <ListTree /> {props.sidebarOpen ? "Hide sidebar" : "Show pages and outline"}
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onClick={() => {
-              searchOwnsFocus.current = true;
-              pendingSearch.current = props.onShowSearch;
-            }}
-          >
-            <Search /> Search {props.label}
-          </DropdownMenuItem>
-          {props.contextControls || host ? (
-            <>
+          {/* Only what the row does not show right now, and what has no button. */}
+          <ReaderRowContext value={menuRow}>
+            <IfRowHidden selector=".scient-pdf-action-zoom-step">
               <DropdownMenuItem
-                disabled={!props.ready || props.page <= 1}
-                onClick={() => props.onPage(props.page - 1)}
+                disabled={!props.ready}
+                onClick={() => props.onZoom(stepPdfZoom(props.scale, "out"))}
               >
-                <ChevronLeft /> Previous page
+                <ZoomOut /> Zoom out
               </DropdownMenuItem>
               <DropdownMenuItem
-                disabled={!props.ready || props.page >= props.pageCount}
-                onClick={() => props.onPage(props.page + 1)}
+                disabled={!props.ready}
+                onClick={() => props.onZoom(stepPdfZoom(props.scale, "in"))}
               >
-                <ChevronRight /> Next page
+                <ZoomIn /> Zoom in
               </DropdownMenuItem>
-            </>
-          ) : null}
-          {props.moreActions}
-          {host?.moreActions ? (
-            <>
-              <DropdownMenuSeparator />
-              {host.moreActions}
-            </>
-          ) : null}
+            </IfRowHidden>
+            <DropdownMenuItem disabled={!props.ready} onClick={() => props.onActualSize()}>
+              <Scan /> Actual size
+            </DropdownMenuItem>
+            <IfRowHidden selector=".scient-pdf-zoom-label">
+              <DropdownMenuItem disabled={!props.ready} onClick={() => props.onFitWidth()}>
+                <Maximize2 /> Fit width
+              </DropdownMenuItem>
+            </IfRowHidden>
+            <IfRowHidden selector=".scient-pdf-action-sidebar">
+              <DropdownMenuItem onClick={props.onToggleSidebar}>
+                <ListTree /> {props.sidebarOpen ? "Hide sidebar" : "Show pages and outline"}
+              </DropdownMenuItem>
+            </IfRowHidden>
+            <IfRowHidden selector=".scient-reader-search, .scient-pdf-action-search">
+              <DropdownMenuItem
+                onClick={() => {
+                  searchOwnsFocus.current = true;
+                  pendingSearch.current = props.onShowSearch;
+                }}
+              >
+                <Search /> Search {props.label}
+              </DropdownMenuItem>
+            </IfRowHidden>
+            {props.contextControls || host ? (
+              <IfRowHidden selector=".scient-pdf-action-page-step">
+                <DropdownMenuItem
+                  disabled={!props.ready || props.page <= 1}
+                  onClick={() => props.onPage(props.page - 1)}
+                >
+                  <ChevronLeft /> Previous page
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={!props.ready || props.page >= props.pageCount}
+                  onClick={() => props.onPage(props.page + 1)}
+                >
+                  <ChevronRight /> Next page
+                </DropdownMenuItem>
+              </IfRowHidden>
+            ) : null}
+            {props.moreActions}
+            {host?.moreActions ? (
+              <>
+                <DropdownMenuSeparator />
+                {host.moreActions}
+              </>
+            ) : null}
+          </ReaderRowContext>
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
