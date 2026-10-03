@@ -1,7 +1,41 @@
 import type { JSONContent } from "@tiptap/core";
+import { parseLatexTikz } from "./latexTikz";
+import { parseLatexAlgorithm, algorithmLineSource } from "./latexAlgorithm";
+import {
+  expandLatexDocumentLoop,
+  documentLoopSourceRange,
+  type DocumentLoopExpansion,
+} from "./latexDocumentLoops";
+import {
+  latexDocumentColors,
+  latexColorCss,
+  latexInlineColor,
+  latexColorMarkSource,
+  latexColorBoxOpening,
+  expandColorBoxLoop,
+} from "./latexColorBoxes";
+import {
+  latexCounterLabel,
+  latexDocumentCommand,
+  latexTitleDeclarations,
+} from "./latexDocumentStructure";
 import { latexDocumentMathSetup } from "./latexDocumentMacros";
 import { latexEnvironmentDeclarations } from "./latexEnvironmentDeclarations";
 import { latexListOptionsSource, parseLatexListOptions } from "./latexListOptions";
+import { latexPageLayoutOpening, latexLayoutSpacing } from "./latexPageLayouts";
+import {
+  expandLongTableRows,
+  longTableSections,
+  longTableVisibleBody,
+  physicalLongTablePatches,
+} from "./latexLongTable";
+import {
+  activeLatexSource,
+  inlineLatexLiteral,
+  inlineLatexLiteralSource,
+  latexLiteralBlock,
+  latexListingPresentation,
+} from "./latexLiteral";
 import {
   LATEX_INLINE_MARKS,
   LATEX_TEXT_DECLARATIONS,
@@ -47,15 +81,22 @@ export interface LatexVisualDocument {
   readonly supportedBlocks: number;
   readonly rawBlocks: number;
   readonly setup?: LatexVisualSetup;
+  readonly generated?: {
+    readonly expansion: DocumentLoopExpansion;
+    readonly virtual: LatexVisualDocument;
+  };
+  readonly generatedOrigins?: readonly Pick<DocumentLoopExpansion, "raw" | "expanded">[];
 }
 
 interface LatexVisualSetup {
+  readonly colors: Record<string, string>;
   readonly math: ReturnType<typeof latexDocumentMathSetup>;
   readonly declarations: ReturnType<typeof latexEnvironmentDeclarations>;
 }
 
 function visualSetup(source: string): LatexVisualSetup {
   return {
+    colors: latexDocumentColors(source),
     math: latexDocumentMathSetup(source),
     declarations: latexEnvironmentDeclarations(source),
   };
@@ -283,6 +324,8 @@ export function updateLatexVisualLayoutSource(
 }
 
 const INLINE_ATOMS = new Set([
+  "columnbreak",
+  "verb",
   "cite",
   "citep",
   "citet",
@@ -371,6 +414,9 @@ function closingBrace(source: string, opening: number): number | null {
 }
 
 const TEXT_SYMBOLS: Readonly<Record<string, string>> = {
+  quad: "\u2003",
+  qquad: "\u2003\u2003",
+  enspace: "\u2002",
   ss: "\u00df",
   SS: "\u1e9e",
   ae: "\u00e6",
@@ -569,6 +615,11 @@ function latexCommentRanges(source: string): { from: number; to: number }[] {
         if (closing >= 0 && (newline < 0 || closing < newline)) cursor = closing + 1;
       }
     } else if (token[1] === "begin") {
+      const literal = latexLiteralBlock(source, from);
+      if (literal) {
+        cursor = literal.end;
+        continue;
+      }
       const environment = /^\s*\{(verbatim\*?|Verbatim|alltt|lstlisting|minted)\}/u.exec(
         source.slice(from + token[0].length),
       );
@@ -623,6 +674,20 @@ function inlinePiece(
   scoped = false,
 ): InlinePiece | null {
   const rest = source.slice(at);
+  const literal = inlineLatexLiteral(source, at);
+  if (literal) {
+    return {
+      end: literal.end,
+      node: {
+        type: "latexInlineCommand",
+        attrs: {
+          name: "verb",
+          argument: literal.text,
+          raw: source.slice(at, literal.end),
+        },
+      },
+    };
+  }
   if (rest[0] === "%") {
     const end = commentEnd(source, at);
     const indentation = /^[\t ]*/u.exec(source.slice(end))![0];
@@ -639,6 +704,17 @@ function inlinePiece(
     ...node,
     ...(marks.length ? { marks: marks.map((type) => ({ type })) } : {}),
   });
+  const columnBreak = /^\\columnbreak\b(?:[\t ]*\[4\])?[\t ]*(?:\r?\n[\t ]*)?/u.exec(rest);
+  if (columnBreak) {
+    if (/^\s*\[/u.test(rest.slice(columnBreak[0].length))) return null;
+    return {
+      end: at + columnBreak[0].length,
+      node: marked({
+        type: "latexInlineCommand",
+        attrs: { name: "columnbreak", argument: "", raw: columnBreak[0] },
+      }),
+    };
+  }
   const math = rest.startsWith("\\(")
     ? { open: "\\(", close: "\\)", wrapper: "paren" }
     : rest.startsWith("$") && !rest.startsWith("$$")
@@ -722,6 +798,19 @@ function parseInline(
   const nodes: JSONContent[] = [];
   let currentMarks = marks;
   for (let at = 0; at < source.length;) {
+    const colored = latexInlineColor(source, at);
+    if (colored) {
+      const content = parseInline(colored.body.value, currentMarks, scoped);
+      if (!content) return null;
+      nodes.push(
+        ...content.map((node) => ({
+          ...node,
+          marks: [{ type: "latexColor", attrs: colored.attrs }, ...(node.marks ?? [])],
+        })),
+      );
+      at = colored.body.end;
+      continue;
+    }
     const piece = inlinePiece(source, at, currentMarks, scoped);
     if (!piece) return null;
     if (piece.ignored) {
@@ -973,6 +1062,11 @@ function matchingEnvironmentEnd(source: string, from: number, depth = 0): number
     return null;
   }
   for (let cursor = from + opening[0].length; cursor < source.length; cursor++) {
+    const literal = inlineLatexLiteral(source, cursor);
+    if (literal) {
+      cursor = literal.end - 1;
+      continue;
+    }
     if (source[cursor] === "%") {
       const newline = source.indexOf("\n", cursor);
       if (newline < 0) return null;
@@ -1006,6 +1100,8 @@ function nextBlockEnd(body: string, from: number): number {
     const end = body.indexOf("\n", from);
     return end < 0 ? body.length : end;
   }
+  const minipages = minipageRowRanges(body.slice(from));
+  if (minipages) return from + minipages.at(-1)!.to;
   if (body.startsWith("\\begin{", from)) return matchingEnvironmentEnd(body, from) ?? body.length;
   if (body.startsWith("\\[", from)) {
     const close = findDelimiter(body, "\\]", from + 2);
@@ -1015,8 +1111,16 @@ function nextBlockEnd(body: string, from: number): number {
     const close = findDelimiter(body, "$$", from + 2);
     return close < 0 ? body.length : close + 2;
   }
-  const standalone = /^\\(?:maketitle|tableofcontents|newpage|clearpage)\b/u.exec(body.slice(from));
+  const columnBreak = /^\\columnbreak\b(?:[\t ]*\[4\])?/u.exec(body.slice(from));
+  if (columnBreak && !/^\s*\[/u.test(body.slice(from + columnBreak[0].length)))
+    return from + columnBreak[0].length;
+  const standalone =
+    /^\\(?:maketitle|tableofcontents|listoffigures|listoftables|newpage|clearpage|par|smallskip|medskip|bigskip|vfill|hfill)\b/u.exec(
+      body.slice(from),
+    );
   if (standalone) return from + standalone[0].length;
+  const documentCommand = latexDocumentCommand(body, from);
+  if (documentCommand) return documentCommand.end;
   const contentsEntry = contentsEntryRange(body, from);
   if (contentsEntry) return contentsEntry.end;
   if (
@@ -1032,6 +1136,11 @@ function nextBlockEnd(body: string, from: number): number {
   }
   let depth = 0;
   for (let index = from; index < body.length; index++) {
+    const literal = inlineLatexLiteral(body, index);
+    if (literal) {
+      index = literal.end - 1;
+      continue;
+    }
     if (body[index] === "%") {
       const end = body.indexOf("\n", index);
       if (end < 0) return body.length;
@@ -1039,10 +1148,15 @@ function nextBlockEnd(body: string, from: number): number {
       continue;
     }
     if (depth === 0 && index > from) {
+      if (
+        latexDocumentCommand(body, index) ||
+        /^\\(?:listoffigures|listoftables)\b/u.test(body.slice(index))
+      )
+        return index;
       if (body.startsWith("\\end{document}", index)) return index;
       if (/^\r?\n[\t ]*\r?\n/u.test(body.slice(index))) return index;
       if (
-        /^\\(?:begin\{|\[|maketitle\b|tableofcontents\b|newpage\b|clearpage\b|addcontentsline\b|(?:part|chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?\{)/u.test(
+        /^\\(?:begin\{|\[|maketitle\b|tableofcontents\b|newpage\b|clearpage\b|par\b|smallskip\b|medskip\b|bigskip\b|vfill\b|hfill\b|addcontentsline\b|(?:part|chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?\{)/u.test(
           body.slice(index),
         )
       )
@@ -1189,9 +1303,10 @@ export function metadataText(value: string): string | null {
 export function titleMetadata(source: string) {
   const begin = findDelimiter(source, "\\begin{document}", 0);
   const preamble = begin < 0 ? source : source.slice(0, begin);
-  const title = commandArgument(preamble, "title");
-  const author = commandArgument(preamble, "author");
-  const date = commandArgument(preamble, "date");
+  const declarations = latexTitleDeclarations(source);
+  const title = declarations.get("title")?.value ?? null;
+  const author = declarations.get("author")?.value ?? null;
+  const date = declarations.get("date")?.value ?? null;
   const dateMode =
     date === null
       ? "default"
@@ -1307,6 +1422,19 @@ export function projectLatexTitleSourceEdit(source: string, content: JSONContent
 }
 
 function parseDocumentFrontMatter(source: string, documentSource: string): JSONContent | null {
+  const command = latexDocumentCommand(source.trim());
+  if (command && command.end === source.trim().length) {
+    return {
+      type: "latexRichPreview",
+      attrs: {
+        kind: "documentCommand",
+        raw: source,
+        environment: command.name,
+        body: command.name === "pagenumbering" ? command.value : "",
+        editable: true,
+      },
+    };
+  }
   if (source.trim() === "\\maketitle") {
     return {
       type: "latexRichPreview",
@@ -1318,10 +1446,10 @@ function parseDocumentFrontMatter(source: string, documentSource: string): JSONC
       },
     };
   }
-  if (source.trim() === "\\tableofcontents") {
+  if (/^\\(?:tableofcontents|listoffigures|listoftables)$/u.test(source.trim())) {
     return {
       type: "latexRichPreview",
-      attrs: { kind: "toc", raw: source, editable: true },
+      attrs: { kind: "toc", environment: source.trim().slice(1), raw: source, editable: true },
     };
   }
   if (/^\\(?:newpage|clearpage)$/u.test(source.trim())) {
@@ -1359,12 +1487,42 @@ const SIMPLE_LAYOUT_ENVIRONMENTS = new Set([
   "flushright",
 ]);
 
-function parseSimpleLayout(source: string): JSONContent | null {
+function parseSimpleLayout(source: string, preamble: string): JSONContent | null {
   const opening = /^\\begin\{([^}]+)\}/u.exec(source);
   const environment = opening?.[1] ?? "";
   if (!opening || !SIMPLE_LAYOUT_ENVIRONMENTS.has(environment)) return null;
   const closing = `\\end{${environment}}`;
   if (!source.endsWith(closing)) return null;
+  if (["verbatim", "verbatim*", "lstlisting"].includes(environment)) {
+    const range = latexLiteralBlock(source);
+    if (!range || range.end !== source.length) return null;
+    const presentation =
+      environment === "lstlisting" ? latexListingPresentation(preamble, range.options) : null;
+    if (environment === "lstlisting" && !presentation) return null;
+    const captionOption = range.options.get("caption");
+    const caption = captionOption
+      ? editableTableCell(source.slice(captionOption.from, captionOption.to), captionOption.from)
+      : null;
+    if (captionOption && !caption) return null;
+    return {
+      type: "latexRichPreview",
+      attrs: {
+        kind: "simple",
+        environment,
+        body: source.slice(range.bodyFrom, range.bodyTo),
+        caption: caption?.display ?? null,
+        raw: source,
+        editable: true,
+        sourceMeta: {
+          literal: true,
+          listingPresentation: presentation,
+          captionRange: caption
+            ? { from: caption.from, to: caption.to, original: caption.display }
+            : null,
+        },
+      },
+    };
+  }
   const interior = source
     .slice(opening[0].length, -closing.length)
     .replace(/^\r?\n/u, "")
@@ -1447,6 +1605,17 @@ export function latexRomanNumber(value: number): string {
 }
 
 function parseBibliographyPreview(source: string): JSONContent | null {
+  if (/^(?:\\bibliographystyle\s*\{[^{}]+\}\s*)?\\bibliography\s*\{[^{}]+\}\s*$/u.test(source))
+    return {
+      type: "latexRichPreview",
+      attrs: {
+        kind: "bibliography",
+        raw: source,
+        items: [],
+        editable: true,
+        sourceMeta: { externalBibliography: true },
+      },
+    };
   const opening = /^\\begin\{thebibliography\}\{([^{}]*)\}/u.exec(source);
   const closing = "\\end{thebibliography}";
   if (!opening || !source.endsWith(closing)) return null;
@@ -1756,7 +1925,51 @@ function trimSourceRange(source: string, from: number, to: number): [number, num
   return [from, to];
 }
 
-function editableTableCell(source: string, offset: number): EditableTableCell | null {
+export function latexTableMathCell(source: string) {
+  if (!(source.startsWith("$") || source.startsWith("\\("))) return null;
+  const nodes = parseInline(source);
+  if (nodes?.length !== 1 || nodes[0]?.type !== "latexInlineMath") return null;
+  return {
+    tex: String(nodes[0].attrs?.tex ?? ""),
+    opening: source.startsWith("$") ? "$" : "\\(",
+    closing: source.startsWith("$") ? "$" : "\\)",
+  };
+}
+
+export function latexTableCellIsMath(
+  node: Pick<JSONContent, "attrs">,
+  row: number,
+  column: number,
+): boolean {
+  const rowId = /^table-row-(\d+)$/u.exec(String(node.attrs?.rowIds?.[row]));
+  const columnId = /^table-column-(\d+)$/u.exec(String(node.attrs?.columnIds?.[column]));
+  const cell =
+    rowId && columnId
+      ? node.attrs?.sourceMeta?.originalCells?.[Number(rowId[1])]?.[Number(columnId[1])]
+      : null;
+  return (
+    typeof cell?.raw === "string" && latexTableMathCell(cell.raw.slice(cell.from, cell.to)) !== null
+  );
+}
+
+export function latexTableInlineContent(source: string): JSONContent[] | null {
+  const content = parseInline(source);
+  return content?.every((node) =>
+    ["text", "latexInlineMath", "latexInlineCommand"].includes(node.type ?? ""),
+  )
+    ? content
+    : null;
+}
+
+function serializeTableCellValue(value: string, _math = false): string {
+  return latexTableInlineContent(value) ? value : escapeText(value);
+}
+
+function editableTableCell(
+  source: string,
+  offset: number,
+  allowMath = false,
+): EditableTableCell | null {
   let [from, to] = trimSourceRange(source, 0, source.length);
   // Retain whitespace after a rule when the first cell is empty. Trimming the
   // right edge before consuming it puts the insertion point inside the TeX
@@ -1770,6 +1983,7 @@ function editableTableCell(source: string, offset: number): EditableTableCell | 
   if (suffix) [from, to] = trimSourceRange(source, from, from + suffix.index);
 
   for (let depth = 0; depth < 8; depth++) {
+    if (allowMath) break;
     const wrapper = TABLE_CELL_WRAPPER.exec(source.slice(from, to));
     if (!wrapper) break;
     const opening = from + wrapper[0].lastIndexOf("{");
@@ -1779,7 +1993,7 @@ function editableTableCell(source: string, offset: number): EditableTableCell | 
   }
 
   const core = source.slice(from, to);
-  const display = metadataText(core);
+  const display = allowMath ? (latexTableInlineContent(core) ? core : null) : metadataText(core);
   if (display === null || display.includes("\n")) return null;
   return {
     display: display.replace(/\s+/gu, " ").trim(),
@@ -1861,7 +2075,8 @@ function tableRowColor(value: string): string | null {
 
 /** Literal spans, colors and rules keep their source; only cell bodies are editable. */
 function parseSpannedTable(body: NonNullable<ReturnType<typeof tabularBody>>) {
-  if (body.environment !== "tabular" || !/^[\s|lcr]+$/u.test(body.columnSpec)) return null;
+  if (!["tabular", "longtable"].includes(body.environment) || !/^[\s|lcr]+$/u.test(body.columnSpec))
+    return null;
   const spec = body.columnSpec.replace(/\s/gu, "");
   if (spec.includes("||")) return null;
   const columns = [...spec.matchAll(/[lcr]/gu)];
@@ -1886,11 +2101,14 @@ function parseSpannedTable(body: NonNullable<ReturnType<typeof tabularBody>>) {
     while (true) {
       const whitespace = /^\s*/u.exec(slice.source.slice(prefix))![0];
       prefix += whitespace.length;
-      const command = /^\\(hline|cline|rowcolor)\b/u.exec(slice.source.slice(prefix));
+      const command = /^\\(hline|toprule|midrule|bottomrule|cline|rowcolor)\b/u.exec(
+        slice.source.slice(prefix),
+      );
       if (!command) break;
       if (rowIndex > count) return null;
       prefix += command[0].length;
-      if (command[1] === "hline") rules[rowIndex]!.fill(true);
+      if (["hline", "toprule", "midrule", "bottomrule"].includes(command[1]!))
+        rules[rowIndex]!.fill(true);
       else {
         const argument = requiredArgument(slice.source, prefix);
         if (!argument) return null;
@@ -1976,7 +2194,7 @@ function parseSpannedTable(body: NonNullable<ReturnType<typeof tabularBody>>) {
       }
       if (colSpan < 1 || column + colSpan > width || rowSpan < 1 || rowIndex + rowSpan > count)
         return null;
-      const editable = editableTableCell(raw.slice(from, to), from);
+      const editable = editableTableCell(raw.slice(from, to), from, true);
       if (!editable) return null;
       const geometry: LatexTableCellLayout = {
         row: rowIndex,
@@ -2042,10 +2260,92 @@ function parseSpannedTable(body: NonNullable<ReturnType<typeof tabularBody>>) {
   };
 }
 
-function parseTablePreview(source: string): JSONContent | null {
+function parseLongTablePreview(
+  source: string,
+  body: TabularBody,
+  setup: LatexVisualSetup,
+): JSONContent | null {
+  const originalParts = longTableSections(source, body.from, body.to);
+  if (!originalParts) return null;
+  const expanded = expandLongTableRows(source, originalParts.bodyFrom, body.to, setup.math.macros);
+  if (!expanded) return null;
+  const virtualBody = tabularBody(expanded.virtual);
+  if (!virtualBody) return null;
+  const parts = longTableSections(expanded.virtual, virtualBody.from, virtualBody.to);
+  if (!parts) return null;
+  const visible = longTableVisibleBody(expanded.virtual, virtualBody.from, virtualBody.to, parts);
+  if (visible === null) return null;
+  const table = parseTablePreview(expanded.virtual, setup, { ...virtualBody, source: visible });
+  if (!table?.attrs?.editable) return null;
+  const band = (key: string) => {
+    const range = parts.sections.get(key);
+    if (!range) return { rows: [], layout: [], rule: false, sizes: [] };
+    const raw = expanded.virtual.slice(range.from, range.to);
+    const sizes = splitTable(raw, "row").map(
+      (row) =>
+        /\\(tiny|scriptsize|footnotesize|small|normalsize)\b/u.exec(row.source)?.[1] ??
+        "normalsize",
+    );
+    const rendered = raw
+      .replace(/\\thetable\s*(?:\{\})?/gu, "SCIENTTABLENUMBER")
+      .replace(/\\(?:tiny|scriptsize|footnotesize|small|normalsize)\b\s*/gu, "");
+    if (
+      !splitTable(rendered, "row").some((row) =>
+        row.source.replace(TABLE_RULE_PREFIX, "").replace(TABLE_RULE_SUFFIX, "").trim(),
+      )
+    )
+      return {
+        rows: [],
+        layout: [],
+        rule: /\\(?:toprule|midrule|bottomrule|hline)\b/u.test(raw),
+        sizes,
+      };
+    const preview = parseTablePreview(
+      `\\begin{tabular}{${body.columnSpec}}${rendered}\\end{tabular}`,
+      setup,
+    );
+    if (!preview?.attrs?.editable) return null;
+    return {
+      rows: preview.attrs.rows,
+      layout: preview.attrs.sourceMeta?.tableLayout ?? [],
+      rule: /\\(?:toprule|midrule|bottomrule|hline)\b/u.test(raw),
+      sizes,
+    };
+  };
+  const head = band("head"),
+    foot = band("foot"),
+    lastFoot = band(parts.sections.has("lastfoot") ? "lastfoot" : "foot");
+  if (!head || !foot || !lastFoot) return null;
+  table.attrs.raw = source;
+  table.attrs.sourceMeta = {
+    ...table.attrs.sourceMeta,
+    preserveStructure: true,
+    longtable: {
+      virtualRaw: expanded.virtual,
+      expansions: expanded.expansions,
+      head,
+      foot,
+      lastFoot,
+      originalAttributes: Object.fromEntries(
+        ["rowIds", "columnIds", "columnAlignments", "tableStyle", "tableKind", "hasHeader"].map(
+          (key) => [key, table.attrs![key]],
+        ),
+      ),
+    },
+  };
+  return table;
+}
+
+function parseTablePreview(
+  source: string,
+  setup = visualSetup(source),
+  preparedBody?: TabularBody,
+): JSONContent | null {
   if (!/\\begin\{(?:table\*?|tabularx|tabular|tabulary|longtable)\}/u.test(source)) return null;
-  const body = tabularBody(source);
+  const body = preparedBody ?? tabularBody(source);
   if (body === null || body.source.length > 100_000) return null;
+  if (body.environment === "longtable" && !preparedBody)
+    return parseLongTablePreview(source, body, setup);
   const needsSpans = /\\(?:multicolumn|multirow|rowcolor|cline)\b/u.test(body.source);
   const spanned = needsSpans ? parseSpannedTable(body) : null;
   if (needsSpans && !spanned) return null;
@@ -2055,7 +2355,7 @@ function parseTablePreview(source: string): JSONContent | null {
       .map((row) => {
         const cells = splitTable(row.source, "cell");
         const editableCells = cells.map((cell) =>
-          editableTableCell(cell.source, body.from + row.from + cell.from),
+          editableTableCell(cell.source, body.from + row.from + cell.from, true),
         );
         return {
           rows: cells.map(
@@ -2067,7 +2367,7 @@ function parseTablePreview(source: string): JSONContent | null {
               .replace(TABLE_RULE_PREFIX, "")
               .replace(TABLE_RULE_SUFFIX, "")
               .trim();
-            const core = editableTableCell(clean, 0);
+            const core = editableTableCell(clean, 0, true);
             return core ? { raw: clean, ...core } : null;
           }),
           ranges: editableCells.map((cell) =>
@@ -2095,6 +2395,20 @@ function parseTablePreview(source: string): JSONContent | null {
       ? { display: labelArgument.source, from: labelArgument.from, to: labelArgument.to }
       : null;
   const hasFloat = /\\begin\{table\*?\}/u.test(source);
+  const hasHeader =
+    /\\midrule\b/u.test(body.source) ||
+    Boolean(
+      rows[0]?.length &&
+      rows[0].every((cell) => {
+        const content = latexTableInlineContent(cell);
+        return (
+          content?.length &&
+          content.every(
+            (part) => part.type === "text" && part.marks?.some((mark) => mark.type === "bold"),
+          )
+        );
+      }),
+    );
   const tableStyle = /\\(?:toprule|midrule|bottomrule)\b/u.test(body.source)
     ? "booktabs"
     : /\\hline\b/u.test(body.source) || body.columnSpec.includes("|")
@@ -2121,19 +2435,14 @@ function parseTablePreview(source: string): JSONContent | null {
       columnAlignments: tableAlignments(body.columnSpec, width),
       tableStyle,
       tableKind,
-      hasHeader:
-        rows.length > 0 &&
-        (/\\midrule\b/u.test(body.source) ||
-          splitTable(body.source, "row")[0]?.source.includes("\\textbf") === true),
+      hasHeader,
       tableCanonical: false,
       sourceMeta: editable
         ? {
             preserveStructure: spanned !== null,
             tableLayout: spanned?.layout ?? null,
             originalCells: parsedRows.map((row) => row.sources),
-            originalHasHeader:
-              /\\midrule\b/u.test(body.source) ||
-              splitTable(body.source, "row")[0]?.source.includes("\\textbf") === true,
+            originalHasHeader: hasHeader,
             captionRange: captionCell
               ? { from: captionCell.from, to: captionCell.to, original: captionCell.display }
               : null,
@@ -2159,6 +2468,7 @@ function parseTablePreview(source: string): JSONContent | null {
 }
 
 const SCIENTIFIC_ENVIRONMENTS = new Set([
+  "abstract",
   "theorem",
   "lemma",
   "proposition",
@@ -2285,6 +2595,7 @@ function graphicsWidth(options: string): string {
 }
 
 export interface LatexFigureArtwork {
+  tikz?: boolean;
   frame: boolean;
   width: string | null;
   height: string | null;
@@ -2324,6 +2635,17 @@ function parseFigureArtwork(
   if (depth > 8) return null;
   [from, to] = trimSourceRange(source, from, to);
   const raw = source.slice(from, to);
+  if (parseLatexTikz(raw))
+    return {
+      tikz: true,
+      frame: false,
+      width: null,
+      height: null,
+      vertical: "center",
+      angle: 0,
+      path: null,
+      textRange: { from, to, original: raw },
+    };
   const command = /^\\([A-Za-z]+)\b/u.exec(raw);
   if (command?.[1] === "rotatebox") {
     const angle = requiredArgument(source, from + command[0].length);
@@ -2607,6 +2929,14 @@ function serializeFigureLayout(node: JSONContent): string | null {
   };
   for (const [index, panel] of meta.panels.entries()) {
     const item = items[index]!;
+    if (panel.tikz) {
+      if (!item || typeof item.body !== "string" || !parseLatexTikz(item.body)) return null;
+      if (item.body !== panel.textRange.original)
+        patches.push({ from: panel.textRange.from, to: panel.textRange.to, value: item.body });
+      if (!patch(panel.captionRange, item.caption) || !patch(panel.labelRange, item.label, true))
+        return null;
+      continue;
+    }
     if (
       !item ||
       !patch(panel.textRange, panel.path === null ? item.body : item.path) ||
@@ -2727,10 +3057,10 @@ function parseRichPreview(
   return (
     parseDocumentFrontMatter(source, documentSource) ??
     parsePartPreview(source) ??
-    parseSimpleLayout(source) ??
+    parseSimpleLayout(source, setup.math.packages.preamble) ??
     parseBibliographyPreview(source) ??
     parseDescriptionPreview(source) ??
-    parseTablePreview(source) ??
+    parseTablePreview(source, setup) ??
     parseFigureLayout(source, setup) ??
     parseFigurePreview(source) ??
     parseScientificEnvironment(source)
@@ -2749,7 +3079,29 @@ function scientificSourceRanges(source: string, setup: LatexVisualSetup) {
     return null;
   const titleRange = optionalArgumentRange(source, opening[0].length);
   if (titleRange && declaration?.kind === "quote") return null;
-  const title = titleRange ? editableTableCell(titleRange.source, titleRange.from) : null;
+  const titleContent = titleRange ? parseInline(titleRange.source) : null;
+  const richTitle = titleContent?.every(
+    (node) =>
+      node.type === "text" ||
+      node.type === "hardBreak" ||
+      (node.type === "latexInlineCommand" && ["ref", "eqref"].includes(String(node.attrs?.name))),
+  );
+  const title = titleRange
+    ? (editableTableCell(titleRange.source, titleRange.from) ??
+      (richTitle
+        ? {
+            from: titleRange.from,
+            to: titleRange.to,
+            display: titleContent!
+              .map(
+                (node) =>
+                  node.text ??
+                  (node.type === "hardBreak" ? " " : `[${String(node.attrs?.argument)}]`),
+              )
+              .join(""),
+          }
+        : null))
+    : null;
   if (titleRange && !title) return null;
   const from = titleRange?.end ?? opening[0].length;
   const to = source.lastIndexOf("\\end{" + environment + "}");
@@ -2784,6 +3136,13 @@ const scientificMathCommands = new Set([
   "mathclose",
   "mathpunct",
   "mathinner",
+  // Scoped legacy notation is adapted at the MathLive boundary; source stays intact.
+  "rm",
+  "bf",
+  "it",
+  "sf",
+  "tt",
+  "cal",
 ]);
 
 function supportedScientificMath(node: JSONContent, setup: LatexVisualSetup): boolean {
@@ -2815,6 +3174,211 @@ function supportedScientificMath(node: JSONContent, setup: LatexVisualSetup): bo
   return node.content?.every((child) => supportedScientificMath(child, setup)) ?? true;
 }
 
+/** Adjacent minipages joined by hfill share one editable row and retain the separator. */
+function minipageRowRanges(source: string) {
+  if (!source.startsWith("\\begin{minipage}")) return null;
+  const ranges: { from: number; to: number }[] = [];
+  let from = 0;
+  for (let count = 0; count < 16; count++) {
+    const to = matchingEnvironmentEnd(source, from);
+    if (to === null) return null;
+    ranges.push({ from, to });
+    const gap = /^[\t \r\n]*\\hfill\b[\t \r\n]*/u.exec(source.slice(to));
+    if (
+      !gap ||
+      /\r?\n[\t ]*\r?\n/u.test(gap[0]) ||
+      !source.startsWith("\\begin{minipage}", to + gap[0].length)
+    )
+      break;
+    from = to + gap[0].length;
+  }
+  return ranges.length > 1 ? ranges : null;
+}
+
+function parsePageLayoutStructure(
+  source: string,
+  depth: number,
+  setup: LatexVisualSetup,
+): JSONContent | null {
+  if (depth >= 32) return null;
+  const algorithm = parseLatexAlgorithm(source);
+  if (algorithm) {
+    const content = algorithmContent(algorithm);
+    const title = algorithm.caption ? metadataText(algorithm.caption.value) : "";
+    if (!content || title === null) return null;
+    return {
+      type: "latexScientific",
+      attrs: { environment: "algorithm", title, raw: source, layout: algorithm.layout },
+      content,
+    };
+  }
+  const box = latexColorBoxOpening(source);
+  if (box) {
+    if (
+      ![box.layout.colback, box.layout.colframe, box.layout.coltitle].every((color) =>
+        latexColorCss(color, setup.colors),
+      )
+    )
+      return null;
+    const expanded = expandColorBoxLoop(source.slice(box.from, box.to));
+    if (!expanded) return null;
+    const body = projectLatexVisualDocument(expanded.source, depth + 1, setup);
+    if (body.rawBlocks > 0) return null;
+    return {
+      type: "latexScientific",
+      attrs: { environment: "tcolorbox", title: box.title, raw: source, layout: box.layout },
+      content: body.content.content ?? [{ type: "paragraph" }],
+    };
+  }
+  const row = minipageRowRanges(source);
+  if (row && row.at(-1)!.to === source.length) {
+    const content = row.map((range) =>
+      parsePageLayoutStructure(source.slice(range.from, range.to), depth + 1, setup),
+    );
+    if (content.some((node) => node === null)) return null;
+    return {
+      type: "latexScientific",
+      attrs: { environment: "minipagerow", title: "", raw: source, layout: { kind: "row" } },
+      content: content as JSONContent[],
+    };
+  }
+  const opening = latexPageLayoutOpening(source);
+  if (!opening) return null;
+  const end = matchingEnvironmentEnd(source, 0);
+  if (end !== source.length) return null;
+  const to = end - `\\end{${opening.environment}}`.length;
+  const body = projectLatexVisualDocument(source.slice(opening.from, to), depth + 1, setup);
+  if (body.rawBlocks > 0) return null;
+  // Minipage footnotes have independent numbering and placement, not page footnotes.
+  const containsFootnote = (node: JSONContent): boolean =>
+    (node.type === "latexInlineCommand" && node.attrs?.name === "footnote") ||
+    (node.content?.some(containsFootnote) ?? false);
+  if (opening.layout.kind === "minipage" && containsFootnote(body.content)) return null;
+  return {
+    type: "latexScientific",
+    attrs: { environment: opening.environment, title: "", raw: source, layout: opening.layout },
+    content: body.content.content ?? [{ type: "paragraph" }],
+  };
+}
+
+function patchPageLayoutStructure(
+  raw: string,
+  next: JSONContent,
+  setup: LatexVisualSetup,
+  rootSource: string | null,
+): string | null {
+  if (next.attrs?.layout?.kind === "algorithm") {
+    const algorithm = parseLatexAlgorithm(raw);
+    const original = algorithm && algorithmContent(algorithm);
+    if (
+      !algorithm ||
+      !original ||
+      next.attrs.environment !== "algorithm" ||
+      JSON.stringify(next.attrs.layout) !== JSON.stringify(algorithm.layout)
+    )
+      return null;
+    const content = next.content ?? [];
+    const rows = content.map(serializeAlgorithmLine);
+    if (!rows.length || rows.some((row) => row === null)) return null;
+    const patches: { from: number; to: number; value: string }[] = [];
+    const title = String(next.attrs.title ?? "");
+    if (title !== (algorithm.caption ? metadataText(algorithm.caption.value) : "")) {
+      if (!algorithm.caption) return null;
+      patches.push({
+        from: algorithm.caption.from,
+        to: algorithm.caption.to,
+        value: escapeText(title),
+      });
+    }
+    if (content.length === original.length) {
+      content.forEach((node, index) => {
+        if (roundTripSignature(node) !== roundTripSignature(original[index]!))
+          patches.push({
+            from: algorithm.rows[index]!.from,
+            to: algorithm.rows[index]!.to,
+            value: rows[index]!,
+          });
+      });
+    } else
+      patches.push({ from: algorithm.from, to: algorithm.to, value: `\n${rows.join("\n")}\n` });
+    let result = raw;
+    for (const patch of patches.sort((left, right) => right.from - left.from))
+      result = result.slice(0, patch.from) + patch.value + result.slice(patch.to);
+    return parseLatexAlgorithm(result) ? result : null;
+  }
+  if (next.attrs?.layout?.kind === "colorBox") {
+    const box = latexColorBoxOpening(raw);
+    if (
+      !box ||
+      next.attrs.environment !== "tcolorbox" ||
+      JSON.stringify(box.layout) !== JSON.stringify(next.attrs.layout)
+    )
+      return null;
+    const expanded = expandColorBoxLoop(raw.slice(box.from, box.to));
+    if (!expanded) return null;
+    const changed = applyLatexVisualDocumentChange(
+      expanded.source,
+      projectLatexVisualDocument(expanded.source, 0, setup),
+      { type: "doc", content: next.content ?? [] },
+      { rootSource, allowRootUpdates: false },
+    );
+    if (!changed) return null;
+    let body = changed.source;
+    // The node's retained source also lets document undo recover a materialized loop.
+    const retained = String(next.attrs.raw ?? "");
+    const retainedBox = latexColorBoxOpening(retained);
+    const loop =
+      expanded.loop ??
+      (retainedBox
+        ? expandColorBoxLoop(retained.slice(retainedBox.from, retainedBox.to))?.loop
+        : null);
+    if (loop && body.includes(loop.expanded)) body = body.replace(loop.expanded, () => loop.raw);
+    let head = raw.slice(0, box.from);
+    const title = String(next.attrs.title ?? "");
+    if (title !== box.title) {
+      if (!box.titleRange || /[\\{}%#$&_^~\[\]]/u.test(title)) return null;
+      const value = head[box.titleRange.from - 1] === "{" ? title : `{${title}}`;
+      head = head.slice(0, box.titleRange.from) + value + head.slice(box.titleRange.to);
+    }
+    return head + body + raw.slice(box.to);
+  }
+  const row = minipageRowRanges(raw);
+  if (next.attrs?.layout?.kind === "row") {
+    if (!row || row.length !== next.content?.length) return null;
+    let result = raw;
+    for (let index = row.length - 1; index >= 0; index--) {
+      const range = row[index]!;
+      const value = patchPageLayoutStructure(
+        raw.slice(range.from, range.to),
+        next.content![index]!,
+        setup,
+        rootSource,
+      );
+      if (value === null) return null;
+      result = result.slice(0, range.from) + value + result.slice(range.to);
+    }
+    return result;
+  }
+  const opening = latexPageLayoutOpening(raw);
+  if (
+    !opening ||
+    next.attrs?.environment !== opening.environment ||
+    JSON.stringify(next.attrs.layout) !== JSON.stringify(opening.layout)
+  )
+    return null;
+  const end = matchingEnvironmentEnd(raw, 0);
+  if (end !== raw.length) return null;
+  const to = end - `\\end{${opening.environment}}`.length;
+  const original = raw.slice(opening.from, to);
+  const changed = applyLatexVisualDocumentChange(
+    original,
+    projectLatexVisualDocument(original, 0, setup),
+    { type: "doc", content: next.content ?? [] },
+    { rootSource, allowRootUpdates: false },
+  );
+  return changed ? raw.slice(0, opening.from) + changed.source + raw.slice(to) : null;
+}
+
 function parseScientificStructure(
   source: string,
   depth: number,
@@ -2827,7 +3391,12 @@ function parseScientificStructure(
   if (body.rawBlocks > 0 || !supportedScientificMath(body.content, setup)) return null;
   return {
     type: "latexScientific",
-    attrs: { environment: ranges.environment, title: ranges.title?.display ?? "", raw: source },
+    attrs: {
+      environment: ranges.environment,
+      title: ranges.title?.display ?? "",
+      titleSource: ranges.titleRange?.source ?? null,
+      raw: source,
+    },
     content: body.content.content ?? [{ type: "paragraph" }],
   };
 }
@@ -2838,7 +3407,14 @@ function classifyBlock(
   setup = visualSetup(source),
 ): JSONContent | null {
   if (source.trim() === "\\par") return { type: "paragraph", content: [] };
+  const spacing = latexLayoutSpacing(source);
+  if (spacing)
+    return {
+      type: "latexRichPreview",
+      attrs: { kind: "spacing", environment: spacing, raw: source, editable: true },
+    };
   return (
+    parsePageLayoutStructure(source, depth, setup) ??
     parseScientificStructure(source, depth, setup) ??
     parseHeading(source) ??
     parseList(source, depth, setup) ??
@@ -2852,8 +3428,12 @@ function classifyBlock(
     })() ??
     parseDisplayMath(source) ??
     (() => {
-      const content = parseInline(source.trim());
-      return content === null ? null : { type: "paragraph", content };
+      const trimmed = source.trim();
+      const prefix = /^\\noindent\b\s*/u.exec(trimmed);
+      const content = parseInline(prefix ? trimmed.slice(prefix[0].length) : trimmed);
+      return content === null
+        ? null
+        : { type: "paragraph", ...(prefix ? { attrs: { latexNoIndent: true } } : {}), content };
     })()
   );
 }
@@ -2864,6 +3444,32 @@ export function projectLatexVisualDocument(
   root: string | LatexVisualSetup = source,
 ): LatexVisualDocument {
   const setup = typeof root === "string" ? visualSetup(root) : root;
+  const expansion = depth === 0 ? expandLatexDocumentLoop(source, setup.math.macros) : null;
+  if (expansion) {
+    const expandedSource =
+      source.slice(0, expansion.from) + expansion.expanded + source.slice(expansion.to);
+    const virtual = projectLatexVisualDocument(expandedSource, 0, setup);
+    const generatedBlocks = virtual.blocks.filter(
+      (block) =>
+        block.from < expansion.from + expansion.expanded.length && block.to > expansion.from,
+    );
+    // Do not expose a partly expanded program or writable virtual source fallbacks.
+    if (
+      !virtual.generated &&
+      generatedBlocks.length > 0 &&
+      generatedBlocks.every((block) => block.editable)
+    )
+      return {
+        ...virtual,
+        source,
+        generated: { expansion, virtual },
+        generatedOrigins: [{ raw: expansion.raw, expanded: expansion.expanded }],
+        blocks: virtual.blocks.map((block) => {
+          const range = documentLoopSourceRange(expansion, block.from, block.to);
+          return { ...block, ...range, source: source.slice(range.from, range.to) };
+        }),
+      };
+  }
   const beginMarker = "\\begin{document}";
   const endMarker = "\\end{document}";
   const begin = findDelimiter(source, beginMarker, 0);
@@ -2902,9 +3508,18 @@ export function projectLatexVisualDocument(
     const id = sourceId(blocks.length);
     dynamicSyntax ||=
       /\\(?:catcode|def|gdef|edef|xdef|let|newcommand|renewcommand|newenvironment|renewenvironment)\b/u.test(
-        withoutVisualComments(raw),
+        withoutVisualComments(activeLatexSource(raw)),
       );
-    const classified = dynamicSyntax ? null : classifyBlock(raw, depth, setup);
+    let classified = dynamicSyntax ? null : classifyBlock(raw, depth, setup);
+    const supportedColors = (node: JSONContent): boolean =>
+      (node.marks ?? []).every(
+        (mark) =>
+          mark.type !== "latexColor" ||
+          (latexColorCss(String(mark.attrs?.color ?? ""), setup.colors) !== null &&
+            (mark.attrs?.command !== "fcolorbox" ||
+              latexColorCss(String(mark.attrs?.background ?? ""), setup.colors) !== null)),
+      ) && (node.content ?? []).every(supportedColors);
+    if (classified && !supportedColors(classified)) classified = null;
     const environment = /^\\begin\{([A-Za-z*]+)\}/u.exec(raw)?.[1];
     const candidate =
       classified === null &&
@@ -2932,9 +3547,19 @@ export function projectLatexVisualDocument(
   let subsubsection = 0;
   let chapter = 0;
   let part = 0;
+  let appendix = false;
   const chapters =
     /\\documentclass(?:\[[^\]]*\])?\{(?:book|report|memoir|scrbook|scrreprt)\}/u.test(source);
   const numberedContents = blocks.flatMap((block) => {
+    if (
+      block.node.type === "latexRichPreview" &&
+      block.node.attrs?.kind === "documentCommand" &&
+      block.node.attrs.environment === "appendix"
+    ) {
+      appendix = true;
+      chapter = section = subsection = subsubsection = 0;
+      return [];
+    }
     if (block.node.type === "latexRichPreview" && block.node.attrs?.kind === "part") {
       if (block.node.attrs.unnumbered === true) return [];
       part += 1;
@@ -2964,13 +3589,16 @@ export function projectLatexVisualDocument(
       subsection += 1;
       subsubsection = 0;
     } else subsubsection += 1;
+    const sectionNumber = latexCounterLabel(section, appendix && !chapters ? "Alph" : "arabic");
     const localNumber =
       level === 1
-        ? `${section}`
+        ? sectionNumber
         : level === 2
-          ? `${section}.${subsection}`
-          : `${section}.${subsection}.${subsubsection}`;
-    const number = level === 6 ? String(chapter) : (chapters ? `${chapter}.` : "") + localNumber;
+          ? `${sectionNumber}.${subsection}`
+          : `${sectionNumber}.${subsection}.${subsubsection}`;
+    const chapterNumber = latexCounterLabel(chapter, appendix ? "Alph" : "arabic");
+    const number =
+      level === 6 ? chapterNumber : (chapters ? `${chapterNumber}.` : "") + localNumber;
     const title = (block.node.content ?? [])
       .map((child) =>
         child.type === "text"
@@ -2991,7 +3619,12 @@ export function projectLatexVisualDocument(
       targetSourceId: [...blocks].reverse().find((block) => block.from <= from)?.id ?? null,
     }));
   for (const [index, block] of blocks.entries()) {
-    if (block.node.type !== "latexRichPreview" || block.node.attrs?.kind !== "toc") continue;
+    if (
+      block.node.type !== "latexRichPreview" ||
+      block.node.attrs?.kind !== "toc" ||
+      block.node.attrs.environment !== "tableofcontents"
+    )
+      continue;
     blocks[index] = {
       ...block,
       node: { ...block.node, attrs: { ...block.node.attrs, tocEntries } },
@@ -3032,10 +3665,15 @@ export function escapeText(text: string): string {
     "^": "\\textasciicircum{}",
     "\u00a0": "~",
     "\u2009": "\\,",
+    "\u2002": "\\enspace{}",
+    "\u2003": "\\quad{}",
     "'": "\\textquotesingle{}",
     "`": "\\textasciigrave{}",
   };
-  const escaped = text.replace(/[\\%&_#${}~^'`\u00a0\u2009]/gu, (character) => escapes[character]!);
+  const escaped = text.replace(
+    /[\\%&_#${}~^'`\u00a0\u2002\u2003\u2009]/gu,
+    (character) => escapes[character]!,
+  );
   // TeX engines need accent commands for graphemes without a precomposed letter.
   return escaped.replace(
     /([A-Za-z])([\u0300-\u036f])/gu,
@@ -3077,6 +3715,9 @@ export function latexInlineCommandSource(
   linkText = "",
   raw = "",
 ): string {
+  if (name === "columnbreak")
+    return /^\\columnbreak\b(?:[\t ]*\[4\])?\s*$/u.test(raw) ? raw : "\\columnbreak";
+  if (name === "verb") return inlineLatexLiteralSource(argument, raw) ?? raw;
   const citation = latexCitationParts(raw);
   if (citation?.name === name) {
     if (citation.argument === argument) return raw.slice(0, citation.end);
@@ -3087,6 +3728,29 @@ export function latexInlineCommandSource(
 }
 
 function serializeInline(nodes: readonly JSONContent[] | undefined): string {
+  // One color box must stay one TeX box when its text contains multiple marks.
+  if (nodes?.some((node) => node.marks?.some((mark) => mark.type === "latexColor"))) {
+    let result = "";
+    for (let at = 0; at < nodes.length;) {
+      const color = nodes[at]!.marks?.find((mark) => mark.type === "latexColor");
+      const signature = JSON.stringify(color);
+      let end = at + 1;
+      while (
+        end < nodes.length &&
+        JSON.stringify(nodes[end]!.marks?.find((mark) => mark.type === "latexColor")) === signature
+      )
+        end++;
+      const content = nodes.slice(at, end).map((node) => {
+        if (!color) return node;
+        const index = node.marks!.findIndex((mark) => mark.type === "latexColor");
+        return { ...node, marks: node.marks!.filter((_, at) => at !== index) };
+      });
+      const inner = serializeInline(content);
+      result += color ? (latexColorMarkSource(color.attrs, inner) ?? "") : inner;
+      at = end;
+    }
+    return result;
+  }
   const merged: JSONContent[] = [];
   for (const node of nodes ?? []) {
     const previous = merged.at(-1);
@@ -3124,10 +3788,39 @@ function serializeInline(nodes: readonly JSONContent[] | undefined): string {
         value = escapeText(node.text ?? "");
       } else return "";
       for (const mark of (node.marks ?? []).toReversed())
-        value = latexTextMarkSource(mark.type, value);
+        value =
+          mark.type === "latexColor"
+            ? (latexColorMarkSource(mark.attrs, value) ?? "")
+            : latexTextMarkSource(mark.type, value);
       return value;
     })
     .join("");
+}
+
+function algorithmContent(
+  algorithm: NonNullable<ReturnType<typeof parseLatexAlgorithm>>,
+): JSONContent[] | null {
+  const rows: JSONContent[] = [];
+  for (const row of algorithm.rows) {
+    const content = parseInline(row.body);
+    const comment = row.comment === null ? null : parseInline(row.comment);
+    if (!content || (row.comment !== null && !comment)) return null;
+    if (comment) content.push({ type: "latexAlgorithmComment", content: comment });
+    rows.push({ type: "latexAlgorithmLine", attrs: { command: row.command }, content });
+  }
+  return rows;
+}
+
+function serializeAlgorithmLine(node: JSONContent): string | null {
+  if (node.type !== "latexAlgorithmLine") return null;
+  const content = node.content ?? [];
+  const comments = content.filter((child) => child.type === "latexAlgorithmComment");
+  if (comments.length > 1 || (comments.length && content.at(-1) !== comments[0])) return null;
+  return algorithmLineSource(
+    String(node.attrs?.command),
+    serializeInline(content.filter((child) => child.type !== "latexAlgorithmComment")),
+    comments[0] ? serializeInline(comments[0].content) : null,
+  );
 }
 
 function canonicalTableColumnSpec(
@@ -3154,7 +3847,7 @@ function canonicalTableBody(
   const serializedRows = rows.map((row, rowIndex) => {
     const cells = row.map((cell, columnIndex) => {
       if (sourceCells) return sourceCells[rowIndex]![columnIndex]!;
-      const value = escapeText(cell);
+      const value = serializeTableCellValue(cell);
       return hasHeader && rowIndex === 0 ? `\\textbf{${value}}` : value;
     });
     return `${cells.join(" & ")} \\\\`;
@@ -3276,13 +3969,15 @@ function preservedTableCells(node: JSONContent, rows: string[][]): string[][] {
         typeof cell.from !== "number" ||
         typeof cell.to !== "number"
       ) {
-        const value = escapeText(text);
+        const value = serializeTableCellValue(text);
         return node.attrs?.hasHeader && rowIndex === 0 ? `\\textbf{${value}}` : value;
       }
       let value =
         text === cell.display
           ? cell.raw
-          : cell.raw.slice(0, cell.from) + escapeText(text) + cell.raw.slice(cell.to);
+          : cell.raw.slice(0, cell.from) +
+            serializeTableCellValue(text, latexTableCellIsMath(node, rowIndex, columnIndex)) +
+            cell.raw.slice(cell.to);
       if (
         rowIndex === 0 &&
         (node.attrs?.hasHeader !== node.attrs?.sourceMeta?.originalHasHeader ||
@@ -3391,12 +4086,20 @@ function serializeFigurePreview(node: JSONContent): string | null {
 }
 
 export function serializeLatexVisualBlock(node: JSONContent): string | null {
+  if (node.type === "latexAlgorithmLine") return serializeAlgorithmLine(node);
   if (node.type === "latexScientific") {
+    if (node.attrs?.layout)
+      return patchPageLayoutStructure(
+        String(node.attrs.raw ?? ""),
+        node,
+        visualSetup(String(node.attrs.raw ?? "")),
+        null,
+      );
     const environment = safeLatexArgument(node.attrs?.environment);
     // Custom names are accepted only when reprojection finds a supported root declaration.
     if (!environment || !/^[A-Za-z]+\*?$/u.test(environment)) return null;
     const title = typeof node.attrs?.title === "string" ? node.attrs.title : "";
-    if (/[\[\]]/u.test(title)) return null;
+    if (!node.attrs?.titleSource && /[\[\]]/u.test(title)) return null;
     const blocks = (node.content ?? []).map(serializeLatexVisualBlock);
     if (blocks.some((block) => block === null)) return null;
     const eol = String(node.attrs?.raw ?? "").includes("\r\n") ? "\r\n" : "\n";
@@ -3404,7 +4107,13 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
       "\\begin{" +
       environment +
       "}" +
-      (title ? "[" + escapeText(title) + "]" : "") +
+      (title
+        ? "[" +
+          (typeof node.attrs?.titleSource === "string"
+            ? node.attrs.titleSource
+            : escapeText(title)) +
+          "]"
+        : "") +
       eol +
       blocks.join(eol + eol) +
       eol +
@@ -3413,7 +4122,10 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
       "}"
     );
   }
-  if (node.type === "paragraph") return serializeInline(node.content) || "\\par";
+  if (node.type === "paragraph")
+    return (
+      (node.attrs?.latexNoIndent ? "\\noindent " : "") + (serializeInline(node.content) || "\\par")
+    );
   if (node.type === "heading") {
     const command =
       LATEX_HEADING_STYLES.find((style) => style.level === node.attrs?.level)?.command ?? "section";
@@ -3446,7 +4158,12 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
   if (node.type === "latexRichPreview") {
     const raw = String(node.attrs?.raw ?? "");
     if (node.attrs?.editable !== true) return raw;
-    if (["title", "toc", "pagebreak"].includes(String(node.attrs.kind))) return raw;
+    if (node.attrs.kind === "bibliography" && node.attrs.sourceMeta?.externalBibliography)
+      return raw;
+    if (
+      ["title", "toc", "pagebreak", "spacing", "documentCommand"].includes(String(node.attrs.kind))
+    )
+      return raw;
     if (node.attrs.kind === "part") {
       const title = typeof node.attrs.title === "string" ? node.attrs.title : null;
       const label = safeLatexLabel(node.attrs.label ?? "");
@@ -3457,6 +4174,52 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
       const environment = String(node.attrs.environment ?? "");
       const body = typeof node.attrs.body === "string" ? node.attrs.body : null;
       if (!SIMPLE_LAYOUT_ENVIRONMENTS.has(environment) || body === null) return null;
+      if (["verbatim", "verbatim*", "lstlisting"].includes(environment)) {
+        const range = latexLiteralBlock(raw);
+        if (!range || range.environment !== environment) return null;
+        if (body.split(/\r?\n/u).some((line) => line.trim() === `\\end{${environment}}`))
+          return null;
+        const captionOption = range.options.get("caption");
+        const patches = [
+          {
+            from: range.bodyFrom,
+            to: range.bodyTo,
+            value:
+              body === raw.slice(range.bodyFrom, range.bodyTo)
+                ? body
+                : body.replace(/\r?\n/gu, raw.includes("\r\n") ? "\r\n" : "\n"),
+          },
+        ];
+        const originalCaption = captionOption
+          ? editableTableCell(raw.slice(captionOption.from, captionOption.to), captionOption.from)
+          : null;
+        if ((node.attrs.caption ?? null) !== (originalCaption?.display ?? null)) {
+          if (!originalCaption || typeof node.attrs.caption !== "string") return null;
+          const original = raw.slice(originalCaption.from, originalCaption.to);
+          const content = parseInline(original);
+          if (!content) return null;
+          const value = minimallyPatchedBlock(
+            {
+              id: "caption",
+              from: 0,
+              to: original.length,
+              source: original,
+              editable: true,
+              node: { type: "paragraph", content },
+            },
+            {
+              type: "paragraph",
+              content: node.attrs.caption ? [{ type: "text", text: node.attrs.caption }] : [],
+            },
+          );
+          if (value === null) return null;
+          patches.push({ from: originalCaption.from, to: originalCaption.to, value });
+        }
+        let result = raw;
+        for (const patch of patches.sort((a, b) => b.from - a.from))
+          result = result.slice(0, patch.from) + patch.value + result.slice(patch.to);
+        return result;
+      }
       const code = ["verbatim", "verbatim*", "alltt", "lstlisting"].includes(environment);
       const text = code
         ? body
@@ -3620,6 +4383,62 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
     const ranges = Array.isArray(node.attrs.cellRanges) ? node.attrs.cellRanges : null;
     const sourceMeta = node.attrs.sourceMeta;
     if (!rows) return null;
+    if (sourceMeta?.longtable) {
+      const meta = sourceMeta.longtable;
+      if (
+        !ranges ||
+        rows.length !== ranges.length ||
+        node.attrs.tableCanonical ||
+        typeof meta.virtualRaw !== "string" ||
+        !Array.isArray(meta.expansions)
+      )
+        return null;
+      for (const [key, value] of Object.entries(meta.originalAttributes ?? {}))
+        if (JSON.stringify(node.attrs[key]) !== JSON.stringify(value)) return null;
+      const patches: { from: number; to: number; value: string }[] = [];
+      for (const [rowIndex, row] of rows.entries()) {
+        if (row.length !== ranges[rowIndex]?.length) return null;
+        for (const [cellIndex, value] of row.entries()) {
+          const range = ranges[rowIndex][cellIndex];
+          if (range === null && value === "") continue;
+          if (
+            !range ||
+            typeof range.from !== "number" ||
+            typeof range.to !== "number" ||
+            typeof range.original !== "string"
+          )
+            return null;
+          if (value !== range.original)
+            patches.push({
+              from: range.from,
+              to: range.to,
+              value: serializeTableCellValue(
+                value,
+                latexTableCellIsMath(node, rowIndex, cellIndex),
+              ),
+            });
+        }
+      }
+      for (const [rangeKey, value] of [
+        ["captionRange", node.attrs.caption],
+        ["labelRange", node.attrs.label],
+      ] as const) {
+        const range = sourceMeta[rangeKey];
+        if (!range) {
+          if (value) return null;
+          continue;
+        }
+        if (typeof value !== "string") return null;
+        if (value === range.original) continue;
+        if (rangeKey === "labelRange" && safeLatexLabel(value) === null) return null;
+        patches.push({
+          from: range.from,
+          to: range.to,
+          value: rangeKey === "labelRange" ? value : escapeText(value),
+        });
+      }
+      return physicalLongTablePatches(raw, meta.virtualRaw, meta.expansions, patches);
+    }
     if (sourceMeta?.preserveStructure === true) {
       const original = parseTablePreview(raw)?.attrs;
       if (!original || node.attrs.tableCanonical === true || rows.length !== original.rows.length)
@@ -3784,7 +4603,10 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
         )
           return null;
         if (value === range.original) continue;
-        const escaped = escapeText(value);
+        const escaped = serializeTableCellValue(
+          value,
+          latexTableCellIsMath(node, rowIndex, cellIndex),
+        );
         const needsRuleSeparator =
           range.from === range.to &&
           /\\(?:toprule|midrule|bottomrule|hline)$/u.test(raw.slice(0, range.from));
@@ -3859,7 +4681,7 @@ export function serializeLatexVisualBlock(node: JSONContent): string | null {
           row.some((cell) => typeof cell !== "string")
         )
           return null;
-        lines.push(`${row.map((cell) => escapeText(cell)).join(" & ")} \\\\`);
+        lines.push(`${row.map((cell) => serializeTableCellValue(cell)).join(" & ")} \\\\`);
       }
       replacements.push({
         from: sourceMeta.insertAt,
@@ -3920,7 +4742,7 @@ function comparableNode(node: JSONContent): ComparableVisualNode {
         if (
           key === "sourceId" ||
           (node.type === "latexInlineCommand" && key === "raw") ||
-          (node.type === "latexScientific" && key === "raw") ||
+          (node.type === "latexScientific" && (key === "raw" || key === "titleSource")) ||
           (node.type === "latexDisplayMath" && key === "numberingSource") ||
           key === "latexCommand" ||
           (node.type === "latexRichPreview" &&
@@ -3933,6 +4755,7 @@ function comparableNode(node: JSONContent): ComparableVisualNode {
               key === "rowIds" ||
               key === "columnIds" ||
               key === "tableCanonical" ||
+              (node.attrs?.kind === "table" && key === "hasHeader") ||
               (node.attrs?.kind === "figure" && key === "figureOptions") ||
               (node.attrs?.kind !== "figure" &&
                 (key === "path" ||
@@ -3941,11 +4764,15 @@ function comparableNode(node: JSONContent): ComparableVisualNode {
                   key === "figurePlacement" ||
                   key === "figureAlignment" ||
                   key === "figureStarred")) ||
-              (!["scientific", "simple"].includes(String(node.attrs?.kind)) &&
+              (!["scientific", "simple", "spacing", "toc", "documentCommand"].includes(
+                String(node.attrs?.kind),
+              ) &&
                 key === "environment") ||
               (!["scientific", "title", "part"].includes(String(node.attrs?.kind)) &&
                 key === "title") ||
-              (!["scientific", "abstract", "simple"].includes(String(node.attrs?.kind)) &&
+              (!["scientific", "abstract", "simple", "documentCommand"].includes(
+                String(node.attrs?.kind),
+              ) &&
                 key === "body") ||
               (node.attrs?.kind !== "bibliography" && key === "widestLabel") ||
               (node.attrs?.kind !== "title" &&
@@ -3961,7 +4788,11 @@ function comparableNode(node: JSONContent): ComparableVisualNode {
           value === undefined
         )
           return false;
-        if ((key === "unnumbered" || key === "resume") && value === false) return false;
+        if (
+          (key === "unnumbered" || key === "resume" || key === "latexNoIndent") &&
+          value === false
+        )
+          return false;
         if (key === "referenceLabel" && value === "") return false;
         if (key === "start" && value === 1) return false;
         if (key === "wrapper" && (value === "paren" || value === "bracket")) return false;
@@ -4047,7 +4878,9 @@ function roundTripSignature(node: JSONContent): string {
                         ["verbatim", "verbatim*", "alltt", "lstlisting"].includes(
                           String(value.attrs.environment),
                         )
-                      ? item
+                      ? value.attrs?.sourceMeta?.literal === true && key === "body"
+                        ? item.replace(/\r\n/gu, "\n")
+                        : item
                       : prose(item).trim()
                   : item,
               ]),
@@ -4062,10 +4895,24 @@ function roundTripSignature(node: JSONContent): string {
               // reparsed TeX using its whitespace semantics, just like prose.
               ...(Array.isArray(value.attrs.rows)
                 ? {
-                    rows: value.attrs.rows.map((row: unknown) =>
+                    // Header status is inferred from rules and cell formatting.
+                    // Compare the actual inline content, including formatting
+                    // added explicitly by a structural header operation.
+                    rows: (value.attrs.tableCanonical
+                      ? preservedTableCells(value, value.attrs.rows)
+                      : value.attrs.rows
+                    ).map((row: unknown) =>
                       Array.isArray(row)
                         ? row.map((cell: unknown) =>
-                            typeof cell === "string" ? prose(cell).trim() : cell,
+                            typeof cell === "string"
+                              ? comparableNode(
+                                  normalize({
+                                    type: "paragraph",
+                                    content:
+                                      latexTableInlineContent(serializeTableCellValue(cell)) ?? [],
+                                  }),
+                                )
+                              : cell,
                           )
                         : row,
                     ),
@@ -4133,6 +4980,18 @@ export function adoptLatexVisualContent(
   return {
     ...parsed,
     content,
+    ...(parsed.generated
+      ? {
+          generated: {
+            ...parsed.generated,
+            virtual: adoptLatexVisualContent(
+              parsed.generated.virtual.source,
+              content,
+              parsed.generated.virtual,
+            ),
+          },
+        }
+      : {}),
     blocks: parsed.blocks.map((block, index) => ({
       ...block,
       node: content.content?.[index] ?? block.node,
@@ -4165,6 +5024,7 @@ function ensureScientificEnvironmentDeclarations(
   const preamble = source.slice(0, begin).replace(/(?<!\\)%[^\r\n]*/gu, "");
   const declarations: string[] = [];
   for (const environment of environments) {
+    if (environment === "abstract") continue;
     const declared = new RegExp(
       `\\\\(?:newtheorem|newenvironment)\\*?\\s*\\{${environment}\\}`,
       "u",
@@ -4195,6 +5055,12 @@ function ensureScientificEnvironmentDeclarations(
 function requiredObjectPackages(nodes: readonly JSONContent[]): Set<string> {
   const packages = new Set<string>();
   for (const node of nodes) {
+    if (node.attrs?.layout?.kind === "algorithm") {
+      packages.add("algorithm");
+      packages.add("algpseudocode");
+    }
+    if (node.attrs?.layout?.kind === "colorBox") packages.add("tcolorbox");
+    if (node.marks?.some((mark) => mark.type === "latexColor")) packages.add("xcolor");
     if (node.attrs?.kind === "figure") {
       packages.add("graphicx");
       if (String(node.attrs.figurePlacement ?? "").includes("H")) packages.add("float");
@@ -4252,7 +5118,7 @@ function setPreambleCommandArgument(
 ): string | null {
   const begin = findDelimiter(source, "\\begin{document}", 0);
   if (begin < 0) return null;
-  const range = commandArgumentRange(source.slice(0, begin), command);
+  const range = latexTitleDeclarations(source).get(command);
   if (range) return source.slice(0, range.from) + value + source.slice(range.to);
   return replaceOrInsertPreambleLine(
     source,
@@ -4447,6 +5313,21 @@ function splitParagraphSource(
 }
 
 function minimallyPatchedBlock(block: LatexVisualSourceBlock, next: JSONContent): string | null {
+  const noIndentPrefix =
+    block.node.type === "paragraph" && block.node.attrs?.latexNoIndent && next.attrs?.latexNoIndent
+      ? /^\s*\\noindent\b\s*/u.exec(block.source)
+      : null;
+  if (noIndentPrefix) {
+    const value = minimallyPatchedBlock(
+      {
+        ...block,
+        source: block.source.slice(noIndentPrefix[0].length),
+        node: { ...block.node, attrs: { ...block.node.attrs, latexNoIndent: false } },
+      },
+      { ...next, attrs: { ...next.attrs, latexNoIndent: false } },
+    );
+    return value === null ? null : noIndentPrefix[0] + value;
+  }
   if (block.node.type !== next.type || !["paragraph", "heading"].includes(next.type ?? ""))
     return null;
   if (
@@ -4551,7 +5432,7 @@ function patchScientificStructure(
     (!SCIENTIFIC_ENVIRONMENTS.has(environment) &&
       !setup.declarations.environments.has(environment)) ||
     typeof title !== "string" ||
-    /[\[\]]/u.test(title) ||
+    (title !== (ranges.title?.display ?? "") && /[\[\]]/u.test(title)) ||
     (setup.declarations.environments.get(environment)?.kind === "quote" && title !== "")
   )
     return null;
@@ -4682,8 +5563,68 @@ export function applyLatexVisualDocumentChange(
   projection: LatexVisualDocument;
   rootUpdate?: LatexRootUpdate;
   origin?: number;
+  materializedGenerator?: boolean;
 } | null {
   if (projection.source !== source) return null;
+  if (projection.generated || projection.generatedOrigins?.length) {
+    if (latexVisualNodeSignature(projection.content) === latexVisualNodeSignature(nextContent))
+      return { source, structural: false, projection };
+    const { generated, generatedOrigins, ...ordinary } = projection;
+    const virtual = generated?.virtual ?? ordinary;
+    const changed = applyLatexVisualDocumentChange(virtual.source, virtual, nextContent, context);
+    if (!changed) return null;
+    const origins = generatedOrigins ?? [];
+    let result = changed.source;
+    for (const origin of origins) {
+      const at = result.indexOf(origin.expanded);
+      if (at >= 0 && result.indexOf(origin.expanded, at + 1) < 0)
+        result = result.slice(0, at) + origin.raw + result.slice(at + origin.expanded.length);
+    }
+    // Once materialized, normal typing retains the existing incremental source map.
+    if (result === changed.source)
+      return {
+        ...changed,
+        materializedGenerator: generated !== undefined,
+        ...(generated && changed.origin !== undefined
+          ? {
+              origin: documentLoopSourceRange(
+                generated.expansion,
+                changed.origin,
+                changed.origin + 1,
+              ).from,
+            }
+          : {}),
+        projection: { ...changed.projection, generatedOrigins: origins },
+      };
+    const project = (value: string) =>
+      projectLatexVisualDocument(
+        value,
+        0,
+        value.includes("\\begin{document}")
+          ? value
+          : (changed.rootUpdate?.next ?? context?.rootSource ?? projection.setup ?? value),
+      );
+    let parsed = project(result);
+    if (roundTripSignature(parsed.content) !== roundTripSignature(nextContent)) {
+      result = changed.source;
+      parsed = project(result);
+      if (roundTripSignature(parsed.content) !== roundTripSignature(nextContent)) return null;
+    }
+    const mappedOrigin =
+      generated && changed.origin !== undefined
+        ? documentLoopSourceRange(generated.expansion, changed.origin, changed.origin + 1).from
+        : changed.origin;
+    return {
+      ...changed,
+      source: result,
+      ...(mappedOrigin === undefined ? {} : { origin: mappedOrigin }),
+      materializedGenerator: generated !== undefined && parsed.generated === undefined,
+      projection: {
+        ...adoptLatexVisualContent(result, nextContent, parsed),
+        generatedOrigins: origins,
+      },
+    };
+  }
   const setup = context?.rootSource
     ? visualSetup(context.rootSource)
     : (projection.setup ?? visualSetup(source));
@@ -4748,6 +5689,24 @@ export function applyLatexVisualDocumentChange(
     split ??
     newChanged.map((node, index) => {
       const previousBlock = oldChanged.length === newChanged.length ? oldChanged[index] : null;
+      if (node.type === "latexRichPreview" && node.attrs?.kind === "documentCommand") {
+        // Title edits update the declaration's source without replacing the live
+        // editor. A later structural edit must not restore its older raw attribute.
+        const originals = previous.filter(
+          (block) =>
+            node.attrs?.sourceId != null &&
+            block.node.attrs?.sourceId === node.attrs.sourceId &&
+            latexVisualNodeSignature(block.node) === latexVisualNodeSignature(node),
+        );
+        if (originals.length === 1) return originals[0]!.source;
+      }
+      if (node.type === "latexScientific" && node.attrs?.layout)
+        return patchPageLayoutStructure(
+          previousBlock?.source ?? String(node.attrs.raw ?? ""),
+          node,
+          setup,
+          source.includes("\\begin{document}") ? source : (context?.rootSource ?? null),
+        );
       if (previousBlock?.node.type === "latexScientific" && node.type === "latexScientific")
         return patchScientificStructure(
           previousBlock,
@@ -4792,6 +5751,8 @@ export function applyLatexVisualDocumentChange(
         node.attrs?.kind === previousBlock.node.attrs?.kind
       )
         return patchRichTextBlock(previousBlock, node);
+      if (node.type === "latexRichPreview" && node.attrs?.sourceMeta?.literal === true)
+        return serializeLatexVisualBlock(node);
       return minimal ?? serializeLatexVisualBlock(node)?.replace(/\r?\n/gu, eol) ?? null;
     });
   if (serialized.some((value) => value === null)) return null;
@@ -4808,11 +5769,17 @@ export function applyLatexVisualDocumentChange(
   // Keep explicit contents metadata at its existing boundary. Refuse a
   // structural change that cannot retain that boundary instead of deleting it.
   if (hasContentsGap && oldChanged.length !== newChanged.length) return null;
+  const keepParagraphGaps =
+    oldChanged.length === newChanged.length && sourceGaps.some((gap) => /\\par\b/u.test(gap));
   let replacement = serialized
     .map(
       (block, index) =>
         block +
-        (index < serialized.length - 1 ? (hasContentsGap ? sourceGaps[index]! : eol + eol) : ""),
+        (index < serialized.length - 1
+          ? hasContentsGap || keepParagraphGaps
+            ? sourceGaps[index]!
+            : eol + eol
+          : ""),
     )
     .join("");
   // Own only whitespace at the edited boundaries. Otherwise inserting/deleting
@@ -4860,8 +5827,8 @@ export function applyLatexVisualDocumentChange(
   const previousPackages = requiredObjectPackages(previousNodes);
   const requiredPackages = new Set([
     ...[...requiredObjectPackages(newChanged)].filter((name) => !previousPackages.has(name)),
-    ...newMathSymbolPackages(previousSource, replacement),
-    ...newLatexCommandPackages(previousSource, replacement),
+    ...newMathSymbolPackages(activeLatexSource(previousSource), activeLatexSource(replacement)),
+    ...newLatexCommandPackages(activeLatexSource(previousSource), activeLatexSource(replacement)),
   ]);
   if (addedEnvironments.size || requiredPackages.size) {
     if (!root || findDelimiter(root, "\\begin{document}", 0) < 0) {

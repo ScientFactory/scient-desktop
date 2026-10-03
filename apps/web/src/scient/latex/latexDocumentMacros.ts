@@ -1,5 +1,6 @@
 import { latexCommands, latexPackageInventory } from "./latexPackages";
 import { MATH_SYMBOLS } from "./mathSymbols";
+import { mathLiveFontDeclarations } from "./mathLiveFontDeclarations";
 
 export interface DocumentMathMacro {
   def: string;
@@ -205,7 +206,12 @@ export function latexDocumentMathSetup(source: string) {
     candidates.delete(name);
     unsupported.delete(name);
     if (supported)
-      candidates.set(name, { def: definition, args, expand: false, captureSelection: true });
+      candidates.set(name, {
+        def: mathLiveFontDeclarations(definition),
+        args,
+        expand: false,
+        captureSelection: true,
+      });
     else unsupported.add(name);
   }
   // Bound expansion and reject both recursive definitions and aliases to them.

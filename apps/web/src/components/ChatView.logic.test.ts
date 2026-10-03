@@ -2060,6 +2060,17 @@ describe("shouldRefocusComposerOnWindowFocus", () => {
     expect(shouldRefocusComposerOnWindowFocus(element("DIV", { role: "textbox" }))).toBe(false);
   });
 
+  it.each(["FIGURE", "MATH-FIELD", "BUTTON"])(
+    "preserves a focused %s inside an editor even when that object is not contenteditable",
+    (tagName) => {
+      expect(
+        shouldRefocusComposerOnWindowFocus(
+          element(tagName, { within: '[contenteditable="true"]' }),
+        ),
+      ).toBe(false);
+    },
+  );
+
   it.each(["IFRAME", "WEBVIEW"])("leaves a focused %s preview alone", (tagName) => {
     expect(shouldRefocusComposerOnWindowFocus(element(tagName))).toBe(false);
   });

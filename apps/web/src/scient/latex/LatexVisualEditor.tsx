@@ -1,4 +1,6 @@
 import { LatexSelect } from "./LatexSelect";
+import { LatexLongTableBand, type LongTableBand } from "./LatexLongTableBand";
+import { latexRunningPageStyle, latexRunningPageFields } from "./latexPageLayouts";
 import { isLatexContextEvent } from "./latexContextEvents";
 import type { JSONContent } from "@tiptap/core";
 import { matrixEdit, type MatrixAction, type MatrixEnvironment } from "../math/input/matrix";
@@ -89,6 +91,18 @@ import {
 } from "./LatexReferencesPanel";
 import { LatexFigureInsertDialog } from "./LatexFigureInsertDialog";
 import { LatexFigureArtwork } from "./LatexFigureArtwork";
+import { LatexTikzArtwork, LatexTikzControls } from "./LatexTikzView";
+import { LatexColorBoxView } from "./LatexColorBoxView";
+import {
+  LatexAlgorithmView,
+  LatexAlgorithmLine,
+  LatexAlgorithmComment,
+} from "./LatexAlgorithmView";
+import { latexColorCss, latexDocumentColors } from "./latexColorBoxes";
+import { LatexObjectMathField } from "./LatexObjectMathField";
+import { LatexInlineField } from "./LatexInlineField";
+import { latexEditingTarget, LatexInlineOwnerContext } from "./latexEditingTarget";
+import { latexTableMathCell, latexTableCellIsMath } from "./latexVisualDocument";
 import { LatexProsePreview } from "./LatexProsePreview";
 import { latexFigureSource } from "./figureSource";
 import { uploadLatexImage } from "./imageUpload";
@@ -104,6 +118,12 @@ import { LatexMatrixDialog } from "./LatexMatrixDialog";
 import { LatexMatrixSizeMenu } from "./LatexMatrixSizeMenu";
 import type { MathSymbol } from "./mathSymbols";
 import { LatexTextField, LatexDraftContext, replaceLatexFieldDraft } from "./LatexTextField";
+import { LatexLiteralCodeView } from "./LatexLiteralCodeView";
+import {
+  inlineLatexLiteralSource,
+  latexListingDefaults,
+  type LatexListingPresentation,
+} from "./latexLiteral";
 import { useLatexTableSelection, tableSelectionContains } from "./useLatexTableSelection";
 import { latexDocumentObjectSelection } from "./latexDocumentObjectSelection";
 import {
@@ -176,7 +196,10 @@ import {
   createLatexVisualPagination,
   latexPaginationKey,
   latexObjectPageGaps,
+  latexObjectContinuationHeights,
   latexVisualPageAt,
+  latexVisualPageLabelAt,
+  latexVisualPageLabels,
   setLatexPaginationDimensions,
 } from "./latexVisualPaginationExtension";
 import {
@@ -224,6 +247,16 @@ const LatexSourceAttributes = Extension.create({
   name: "latexSourceAttributes",
   addGlobalAttributes() {
     return [
+      {
+        types: ["paragraph"],
+        attributes: {
+          latexNoIndent: {
+            default: false,
+            parseHTML: (element) => element.hasAttribute("data-latex-noindent"),
+            renderHTML: (attrs) => (attrs.latexNoIndent ? { "data-latex-noindent": "true" } : {}),
+          },
+        },
+      },
       {
         types: ["paragraph", "heading", "bulletList", "orderedList", "blockquote"],
         attributes: {
@@ -849,6 +882,10 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
   };
 
   const changeType = (value: string) => {
+    if (!value.startsWith("inline-") && !editor.schema.nodes.latexDisplayMath) {
+      setShortcutHint("Use inline math inside a table cell.");
+      return;
+    }
     if (attributes.numberingSource) {
       setSourceError(
         "Change the equation type in Source to keep its labels and numbering commands.",
@@ -1421,12 +1458,13 @@ function LatexInlineCommandView({
   getPos,
 }: NodeViewProps) {
   const editable = useEditorEditable(editor);
+  const referenceEditor = useContext(LatexInlineOwnerContext) ?? editor;
   const name = String(node.attrs.name ?? "command");
   const argument = String(node.attrs.argument ?? "");
   const citation = latexCitationParts(String(node.attrs.raw ?? ""));
   const referenceManager = useContext(LatexReferencesContext);
   const citationTargets = useEditorState({
-    editor,
+    editor: referenceEditor,
     selector: ({ editor: current }) => {
       const references = current && latexEquationReferencesKey.getState(current.state);
       return name === "cite" && references?.manualCitations
@@ -1438,7 +1476,7 @@ function LatexInlineCommandView({
     },
   });
   const equationReference = useEditorState({
-    editor,
+    editor: referenceEditor,
     selector: ({ editor: current }) => {
       if (
         !current ||
@@ -1454,10 +1492,10 @@ function LatexInlineCommandView({
     },
   });
   const referencePage = useEditorState({
-    editor,
+    editor: referenceEditor,
     selector: ({ editor: current }) =>
       current && equationReference
-        ? latexVisualPageAt(current.state, equationReference.position)
+        ? latexVisualPageLabelAt(current.state, equationReference.position)
         : null,
   });
   const footnoteNumber = useEditorState({
@@ -1494,7 +1532,14 @@ function LatexInlineCommandView({
   const isExternalLink = name === "href" || name === "url";
   const hasLinkText = ["href", "hyperref", "hyperlink", "hypertarget"].includes(name);
   useEffect(() => {
-    if (!selected || !editable || equationReference || citationTargets || name === "footnote")
+    if (
+      !selected ||
+      !editable ||
+      equationReference ||
+      citationTargets ||
+      name === "footnote" ||
+      name === "verb"
+    )
       return;
     const frame = requestAnimationFrame(() =>
       host
@@ -1503,6 +1548,47 @@ function LatexInlineCommandView({
     );
     return () => cancelAnimationFrame(frame);
   }, [selected, editable, host, name, equationReference, citationTargets]);
+  if (name === "columnbreak") {
+    return (
+      <NodeViewWrapper
+        as="span"
+        className="scient-latex-inline-column-break"
+        contentEditable={false}
+        aria-label="Column break"
+      />
+    );
+  }
+  if (name === "verb") {
+    return (
+      <NodeViewWrapper as="span" className="scient-latex-inline-literal" contentEditable={false}>
+        <LatexTextField
+          aria-label="Inline literal text"
+          rows={1}
+          wrap="off"
+          spellCheck={false}
+          disabled={!editable}
+          value={argument}
+          onFocus={() => {
+            const position = getPos();
+            if (typeof position === "number") editor.commands.setNodeSelection(position);
+          }}
+          onValueChange={(value) => {
+            const raw = inlineLatexLiteralSource(value, String(node.attrs.raw ?? ""));
+            if (raw !== null) updateAttributes({ argument: value, raw });
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === "Escape") {
+              event.preventDefault();
+              const position = getPos();
+              if (typeof position === "number")
+                editor.commands.setTextSelection(position + node.nodeSize);
+              editor.commands.focus(undefined, { scrollIntoView: false });
+            }
+          }}
+        />
+      </NodeViewWrapper>
+    );
+  }
   return (
     <NodeViewWrapper
       as="span"
@@ -1540,7 +1626,7 @@ function LatexInlineCommandView({
                   onClick={() => {
                     const position = getPos();
                     if (typeof position === "number") editor.commands.setNodeSelection(position);
-                    if (target) navigateToEquation(editor.view, target);
+                    if (target) navigateToEquation(referenceEditor.view, target);
                   }}
                 >
                   {target?.number ?? "?"}
@@ -1572,7 +1658,7 @@ function LatexInlineCommandView({
               return;
             }
             if (equationReference) {
-              navigateToEquation(editor.view, equationReference);
+              navigateToEquation(referenceEditor.view, equationReference);
               return;
             }
             requestAnimationFrame(() =>
@@ -2045,6 +2131,10 @@ function LatexRichPreviewView({
   const controlsVisible = kind === "table" ? objectActive : selected || objectActive;
   const tableEditable = kind === "table" && structureEditable;
   const objectPageGaps = useMemo(() => latexObjectPageGaps(decorations, node), [decorations, node]);
+  const continuationHeights = useMemo(
+    () => latexObjectContinuationHeights(decorations, node),
+    [decorations, node],
+  );
   const tablePresentation = useMemo(
     () => latexVisualTablePresentation(String(node.attrs.raw ?? "")),
     [node.attrs.raw],
@@ -2070,7 +2160,28 @@ function LatexRichPreviewView({
     node.attrs.sourceMeta && typeof node.attrs.sourceMeta === "object"
       ? (node.attrs.sourceMeta as Record<string, unknown>)
       : null;
+  const listingOrdinal = useEditorState({
+    editor,
+    selector: ({ editor: current }) => {
+      if (!current || kind !== "simple" || node.attrs.environment !== "lstlisting") return "";
+      const position = getPos();
+      let ordinal = 1;
+      current.state.doc.descendants((earlier, at) => {
+        if (typeof position !== "number" || at >= position) return false;
+        if (
+          earlier.type.name === "latexRichPreview" &&
+          earlier.attrs.environment === "lstlisting" &&
+          earlier.attrs.caption !== null
+        )
+          ordinal++;
+      });
+      return String(ordinal);
+    },
+  });
   const tableStructureEditable = tableEditable && sourceMeta?.preserveStructure !== true;
+  const longtable = sourceMeta?.longtable as
+    | { head: LongTableBand; foot: LongTableBand; lastFoot: LongTableBand }
+    | undefined;
   const tableLayout = (sourceMeta?.tableLayout ?? []) as (LatexTableCellLayout | null)[][];
   const tableCells = rows.flatMap((row, r) =>
     row.flatMap((_cell, c) => {
@@ -2109,13 +2220,24 @@ function LatexRichPreviewView({
   });
   const contentsPresentation = useEditorState({
     editor,
-    selector: ({ editor: current }) =>
-      kind === "toc" && current
-        ? (latexEquationReferencesKey.getState(current.state)?.contents ?? []).map((entry) => ({
-            ...entry,
-            page: latexVisualPageAt(current.state, entry.position),
-          }))
-        : [],
+    selector: ({ editor: current }) => {
+      if (kind !== "toc" || !current) return [];
+      const references = latexEquationReferencesKey.getState(current.state);
+      const floatKind =
+        node.attrs.environment === "listoffigures"
+          ? "figure"
+          : node.attrs.environment === "listoftables"
+            ? "table"
+            : null;
+      const entries = floatKind
+        ? (references?.floatContents ?? []).filter((entry) => entry.kind === floatKind)
+        : (references?.contents ?? []).map((entry) => ({ ...entry, kind: "heading" as const }));
+      const pageLabels = latexVisualPageLabels(current.state);
+      return entries.map((entry) => {
+        const page = latexVisualPageAt(current.state, entry.position);
+        return { ...entry, page: page === null ? null : (pageLabels[page - 1] ?? null) };
+      });
+    },
   });
   const hasTableFloat = sourceMeta?.hasFloat === true;
   const captionEditable =
@@ -2321,7 +2443,11 @@ function LatexRichPreviewView({
   };
   const updateCell = (rowIndex: number, cellIndex: number, value: string) => {
     if (!editorEditable || !tableEditable) return;
-    const nextRows = rows.map((row) => [...row]);
+    const position = getPos();
+    const currentNode = typeof position === "number" ? editor.state.doc.nodeAt(position) : null;
+    if (!currentNode || currentNode.type !== node.type) return;
+    const nextRows = (currentNode.attrs.rows as string[][]).map((row) => [...row]);
+    if (!nextRows[rowIndex] || cellIndex >= nextRows[rowIndex]!.length) return;
     nextRows[rowIndex]![cellIndex] = value;
     updateAttributes({ rows: nextRows });
   };
@@ -2336,28 +2462,28 @@ function LatexRichPreviewView({
       column = owner.column;
     }
     requestAnimationFrame(() => {
-      tableRoot.current
-        ?.querySelector<HTMLTextAreaElement>(`[data-table-cell="${row}-${column}"]`)
-        ?.focus();
+      const field = tableRoot.current?.querySelector<HTMLElement>(
+        `[data-table-cell="${row}-${column}"]`,
+      );
+      const inner = (field as (HTMLElement & { editor?: Editor }) | null)?.editor;
+      if (inner) inner.commands.focus("end");
+      else field?.focus();
     });
   };
   const focusCellWhitespace = (event: MouseEvent<HTMLTableCellElement>) => {
     if (!editorEditable || !tableEditable || event.button !== 0) return;
     if (tableRoot.current?.hasAttribute("data-table-selection")) return;
-    const field = event.currentTarget.querySelector<HTMLTextAreaElement>(
-      "textarea[data-table-cell]",
-    );
-    // Keep native caret placement and drag selection when clicking the text.
-    if (!field || field.disabled || event.target === field) return;
-    // Cells can be wider/taller than their text-sized editor. Route the spare
-    // area to that editor before ProseMirror selects the entire table atom.
+    const field = event.currentTarget.querySelector<HTMLElement>("[data-table-cell]");
+    if (!field || (event.target instanceof globalThis.Node && field.contains(event.target))) return;
     event.preventDefault();
     event.stopPropagation();
-    const bounds = field.getBoundingClientRect();
-    const caret =
-      event.clientY < bounds.top || event.clientX < bounds.left ? 0 : field.value.length;
-    field.focus({ preventScroll: true });
-    field.setSelectionRange(caret, caret);
+    const inner = (field as HTMLElement & { editor?: Editor }).editor;
+    if (inner) {
+      const bounds = field.getBoundingClientRect();
+      inner.commands.focus(
+        event.clientX < bounds.left || event.clientY < bounds.top ? "start" : "end",
+      );
+    } else field.focus({ preventScroll: true });
   };
   const addTableRow = (after = selectedCell.row) => {
     if (!editorEditable || !tableStructureEditable || rows.length === 0) return;
@@ -2572,6 +2698,33 @@ function LatexRichPreviewView({
   }
   if (kind === "simple") {
     const environment = String(node.attrs.environment ?? "quotation");
+    if (sourceMeta?.literal === true) {
+      return (
+        <NodeViewWrapper
+          ref={objectRoot}
+          className="scient-latex-simple-preview"
+          data-environment={environment}
+          contentEditable={false}
+          onFocusCapture={selectObject}
+        >
+          <LatexLiteralCodeView
+            environment={environment}
+            body={String(node.attrs.body ?? "")}
+            caption={typeof node.attrs.caption === "string" ? node.attrs.caption : null}
+            ordinal={listingOrdinal ?? ""}
+            presentation={
+              (sourceMeta.listingPresentation ?? null) as LatexListingPresentation | null
+            }
+            disabled={!editorEditable || !structureEditable}
+            bodyDraftKey={fieldDraft("body")}
+            captionDraftKey={fieldDraft("caption")}
+            onBodyChange={(body) => updateAttributes({ body })}
+            onCaptionChange={(caption) => updateAttributes({ caption })}
+            onExit={() => leaveObject(1)}
+          />
+        </NodeViewWrapper>
+      );
+    }
     const label =
       (
         {
@@ -2605,6 +2758,8 @@ function LatexRichPreviewView({
     );
   }
   if (kind === "bibliography") {
+    const external = sourceMeta?.externalBibliography === true;
+    const bibliographyItems = external ? (bibliographyPresentation?.items ?? []) : items;
     return (
       <NodeViewWrapper
         ref={objectRoot}
@@ -2621,15 +2776,20 @@ function LatexRichPreviewView({
         >
           <button
             type="button"
-            onClick={() => referenceManager?.open(String(items[descriptionItem]?.label ?? ""))}
+            onClick={() =>
+              referenceManager?.open(String(bibliographyItems[descriptionItem]?.label ?? ""))
+            }
             disabled={!referenceManager}
           >
             Manage references…
           </button>
         </LatexObjectToolbar>
         <h2>{bibliographyPresentation?.title ?? "References"}</h2>
+        {external && !bibliographyPresentation?.items && (
+          <p>Compiled bibliography unavailable. Manage entries in Document → References.</p>
+        )}
         <ol>
-          {items.map((item, index) => (
+          {bibliographyItems.map((item, index) => (
             <Fragment key={`${String(item.label ?? "")}:${index}`}>
               {objectPageGaps[index] ? (
                 <li
@@ -2647,7 +2807,7 @@ function LatexRichPreviewView({
                 </span>
                 <LatexProsePreview
                   source={
-                    sourceMeta?.bibliographySource === true
+                    sourceMeta?.bibliographySource === true || external
                       ? String(item.body ?? "")
                       : escapeText(String(item.body ?? ""))
                   }
@@ -2661,9 +2821,25 @@ function LatexRichPreviewView({
   }
   if (kind === "toc") {
     const entries = contentsPresentation ?? [];
+    const listKind =
+      node.attrs.environment === "listoffigures"
+        ? "figures"
+        : node.attrs.environment === "listoftables"
+          ? "tables"
+          : "contents";
     return (
-      <NodeViewWrapper className="scient-latex-toc-preview" contentEditable={false}>
-        <h2>Contents</h2>
+      <NodeViewWrapper
+        className="scient-latex-toc-preview"
+        data-list-kind={listKind}
+        contentEditable={false}
+      >
+        <h2>
+          {listKind === "figures"
+            ? "List of Figures"
+            : listKind === "tables"
+              ? "List of Tables"
+              : "Contents"}
+        </h2>
         {entries.length > 0 ? (
           <ol>
             {entries.map((entry, index) => (
@@ -2684,12 +2860,14 @@ function LatexRichPreviewView({
                         position: entry.position,
                         row: 0,
                         number: entry.number,
-                        kind: "heading",
+                        kind: entry.kind,
                       })
                     }
                   >
                     <span>{String(entry.number ?? "")}</span>
-                    <span>{String(entry.title ?? "")}</span>
+                    <span className="scient-latex-toc-title">
+                      <span>{String(entry.title ?? "")}</span>
+                    </span>
                     <span className="scient-latex-toc-page">{entry.page ?? ""}</span>
                   </button>
                 </li>
@@ -2698,10 +2876,31 @@ function LatexRichPreviewView({
           </ol>
         ) : (
           <p>
-            The table of contents will be generated from headings and explicit contents entries.
+            {listKind === "contents"
+              ? "The table of contents will be generated from headings and explicit contents entries."
+              : `No captioned ${listKind} yet.`}
           </p>
         )}
       </NodeViewWrapper>
+    );
+  }
+  if (kind === "documentCommand") {
+    return (
+      <NodeViewWrapper
+        className="scient-latex-document-command"
+        contentEditable={false}
+        aria-hidden="true"
+      />
+    );
+  }
+  if (kind === "spacing") {
+    return (
+      <NodeViewWrapper
+        className="scient-latex-layout-spacing"
+        data-spacing={String(node.attrs.environment)}
+        contentEditable={false}
+        aria-hidden="true"
+      />
     );
   }
   if (kind === "pagebreak") {
@@ -2729,10 +2928,15 @@ function LatexRichPreviewView({
       field: "body" | "caption" | "label" | "path",
       value: string,
     ) => {
-      if (!editable) return;
+      if (!editable) return false;
       updateAttributes({
         items: figureItems.map((item, at) => (at === index ? { ...item, [field]: value } : item)),
       });
+      const position = getPos();
+      return (
+        typeof position === "number" &&
+        editor.state.doc.nodeAt(position)?.attrs.items?.[index]?.[field] === value
+      );
     };
     return (
       <NodeViewWrapper
@@ -2804,6 +3008,18 @@ function LatexRichPreviewView({
               </button>
             </div>
           </details>
+          {panels.map((panel, index) =>
+            panel.tikz ? (
+              <LatexTikzControls
+                key={index}
+                panel={index}
+                source={figureItems[index]?.body ?? ""}
+                disabled={!editable}
+                draftKey={fieldDraft(`panel:${index}:drawing`)}
+                onChange={(value) => changeItem(index, "body", value)}
+              />
+            ) : null,
+          )}
         </LatexObjectToolbar>
         <figure>
           <div
@@ -2821,7 +3037,16 @@ function LatexRichPreviewView({
                   style={{ width: panel.panelWidth ?? "100%" }}
                 >
                   <LatexFigureArtwork artwork={panel}>
-                    {panel.path !== null ? (
+                    {panel.tikz ? (
+                      <LatexTikzArtwork
+                        source={item.body}
+                        disabled={!editable}
+                        draftKey={fieldDraft(`panel:${index}:drawing`)}
+                        onChange={(value) => changeItem(index, "body", value)}
+                        onExit={leaveObject}
+                        onUndo={(redo) => (redo ? editor.commands.redo() : editor.commands.undo())}
+                      />
+                    ) : panel.path !== null ? (
                       <LatexFigureImage
                         alt={item.caption || caption}
                         path={item.path}
@@ -3309,12 +3534,40 @@ function LatexRichPreviewView({
               <tbody>
                 {keyedRows.map(({ index: rowIndex, key, value: row }) => (
                   <Fragment key={key}>
+                    {objectPageGaps[rowIndex] && longtable ? (
+                      <LatexLongTableBand
+                        band={longtable.foot}
+                        kind="foot"
+                        columns={row.length}
+                        alignments={columnAlignments}
+                        number={tableNumber ?? null}
+                      />
+                    ) : null}
                     {objectPageGaps[rowIndex] ? (
                       <tr key="page-gap" className="scient-latex-table-page-gap" aria-hidden="true">
                         <td colSpan={Math.max(1, row.length)}>
-                          <div style={{ height: objectPageGaps[rowIndex] }} />
+                          <div
+                            style={{
+                              height: Math.max(
+                                0,
+                                objectPageGaps[rowIndex]! -
+                                  (longtable
+                                    ? continuationHeights.head + continuationHeights.foot
+                                    : 0),
+                              ),
+                            }}
+                          />
                         </td>
                       </tr>
+                    ) : null}
+                    {objectPageGaps[rowIndex] && longtable ? (
+                      <LatexLongTableBand
+                        band={longtable.head}
+                        kind="head"
+                        columns={row.length}
+                        alignments={columnAlignments}
+                        number={tableNumber ?? null}
+                      />
                     ) : null}
                     <tr
                       key="row"
@@ -3338,13 +3591,16 @@ function LatexRichPreviewView({
                         const cellStyle: CSSProperties & {
                           "--scient-latex-table-cell-background"?: string;
                         } = {
-                          fontWeight: format?.bold ? 700 : 400,
-                          fontStyle: format?.italic ? "italic" : "normal",
-                          fontFamily: format?.monospace
-                            ? '"KaTeX_Typewriter", var(--font-mono)'
-                            : undefined,
-                          fontVariantCaps: format?.smallCaps ? "small-caps" : undefined,
-                          textDecoration: format?.underline ? "underline" : undefined,
+                          fontWeight: !tableEditable && format?.bold ? 700 : 400,
+                          fontStyle: !tableEditable && format?.italic ? "italic" : "normal",
+                          fontFamily:
+                            !tableEditable && format?.monospace
+                              ? '"KaTeX_Typewriter", var(--font-mono)'
+                              : undefined,
+                          fontVariantCaps:
+                            !tableEditable && format?.smallCaps ? "small-caps" : undefined,
+                          textDecoration:
+                            !tableEditable && format?.underline ? "underline" : undefined,
                           ...(layout
                             ? {
                                 borderTop: layout.top ? "0.5px solid currentColor" : "0",
@@ -3358,84 +3614,51 @@ function LatexRichPreviewView({
                             : {}),
                         };
                         const content = tableEditable ? (
-                          <LatexTextField
-                            aria-label={`Table row ${rowIndex + 1} column ${cellIndex + 1}`}
-                            data-table-cell={`${rowIndex}-${cellIndex}`}
-                            data-table-cell-width={
+                          <LatexInlineField
+                            owner={editor}
+                            extensions={inlineFieldExtensions}
+                            source={cell}
+                            label={`Table row ${rowIndex + 1} column ${cellIndex + 1}`}
+                            cell={`${rowIndex}-${cellIndex}`}
+                            width={
                               columnKind === "flexible"
                                 ? "stretch"
-                                : !node.attrs.tableCanonical &&
-                                    tablePresentation.columnWidths[cellIndex] != null
+                                : columnKind === "fixed"
                                   ? "fixed"
                                   : "content"
                             }
-                            wrap={columnKind === "natural" ? "off" : "soft"}
                             style={
                               !node.attrs.tableCanonical &&
                               tablePresentation.columnWidths[cellIndex] != null
                                 ? {
                                     width: `${tablePresentation.columnWidths[cellIndex]! * CSS_PIXELS_PER_INCH}px`,
-                                    maxWidth: "none",
                                   }
                                 : undefined
                             }
                             disabled={!editorEditable}
-                            rows={1}
-                            value={cell}
                             draftKey={fieldDraft(`cell:${key}:${cellKey}`)}
                             onFocus={() => setSelectedCell({ row: rowIndex, column: cellIndex })}
-                            onValueChange={(value) => updateCell(rowIndex, cellIndex, value)}
-                            onKeyDown={(event) => {
-                              if (event.nativeEvent.isComposing) return;
-                              if (
-                                (event.ctrlKey || event.metaKey) &&
-                                event.key.toLowerCase() === "z"
-                              ) {
-                                event.preventDefault();
-                                if (event.shiftKey) editor.commands.redo();
-                                else editor.commands.undo();
-                                return;
-                              }
-                              if (event.key === "Escape") {
-                                event.preventDefault();
-                                leaveObject(1);
-                                return;
-                              }
-                              const field = event.currentTarget;
-                              if (
-                                (event.key === "ArrowUp" && field.selectionStart === 0) ||
-                                (event.key === "ArrowDown" &&
-                                  field.selectionEnd === field.value.length)
-                              ) {
-                                const nextRow =
-                                  rowIndex +
-                                  (event.key === "ArrowUp" ? -1 : (layout?.rowSpan ?? 1));
-                                if (nextRow >= 0 && nextRow < rows.length) {
-                                  event.preventDefault();
-                                  focusTableCell(nextRow, cellIndex);
-                                }
-                                return;
-                              }
-                              if (event.key !== "Tab") return;
-                              const current = tableCells.findIndex(
-                                (cell) => cell.row === rowIndex && cell.column === cellIndex,
+                            onChange={(value) => {
+                              updateCell(rowIndex, cellIndex, value);
+                              const position = getPos();
+                              return (
+                                typeof position === "number" &&
+                                editor.state.doc.nodeAt(position)?.attrs.rows?.[rowIndex]?.[
+                                  cellIndex
+                                ] === value
                               );
-                              const next = current + (event.shiftKey ? -1 : 1);
-                              if (next < 0) {
-                                event.preventDefault();
-                                leaveObject(-1);
-                                return;
-                              }
-                              event.preventDefault();
-                              if (next >= tableCells.length) {
-                                if (tableStructureEditable) addTableRow(rows.length - 1);
-                                else leaveObject(1);
-                                return;
-                              }
-                              const nextCell = tableCells[next]!;
-                              setSelectedCell(nextCell);
-                              focusTableCell(nextCell.row, nextCell.column);
                             }}
+                            onTab={(direction) => {
+                              const current = tableCells.findIndex(
+                                (item) => item.row === rowIndex && item.column === cellIndex,
+                              );
+                              const next = tableCells[current + direction];
+                              if (next) focusTableCell(next.row, next.column);
+                              else if (direction > 0 && tableStructureEditable)
+                                addTableRow(rows.length - 1);
+                              else leaveObject(direction);
+                            }}
+                            onExit={leaveObject}
                           />
                         ) : (
                           cell
@@ -3496,9 +3719,35 @@ function LatexRichPreviewView({
                     </tr>
                   </Fragment>
                 ))}
+                {longtable ? (
+                  <LatexLongTableBand
+                    band={longtable.lastFoot}
+                    kind="lastfoot"
+                    columns={Math.max(1, rows[0]?.length ?? 1)}
+                    alignments={columnAlignments}
+                    number={tableNumber ?? null}
+                  />
+                ) : null}
               </tbody>
             </table>
           </div>
+          {longtable ? (
+            <div className="scient-latex-longtable-measurements" aria-hidden="true">
+              {(["head", "foot"] as const).map((kind) => (
+                <table key={kind} data-latex-longtable-measure={kind}>
+                  <tbody>
+                    <LatexLongTableBand
+                      band={longtable[kind]}
+                      kind="measurement"
+                      columns={Math.max(1, rows[0]?.length ?? 1)}
+                      alignments={columnAlignments}
+                      number={tableNumber ?? null}
+                    />
+                  </tbody>
+                </table>
+              ))}
+            </div>
+          ) : null}
           {tablePresentation.captionAfter && tableCaption}
         </figure>
       )}
@@ -3680,6 +3929,10 @@ const LatexRichPreview = Node.create<LatexVisualWorkspace>({
     return ReactNodeViewRenderer(
       (props) => <LatexRichPreviewView {...props} workspace={workspace} />,
       {
+        stopEvent: ({ event }) =>
+          event.target instanceof Element &&
+          Boolean(event.target.closest(".scient-latex-inline-field")),
+        trackNodeViewPosition: true,
         update({ oldNode, newNode, oldDecorations, newDecorations, updateProps }) {
           if (oldNode !== newNode || oldDecorations !== newDecorations) updateProps();
           return true;
@@ -3730,6 +3983,77 @@ function LatexScientificView({
     },
   });
   const statement = presentation?.statement;
+  if (environment === "abstract")
+    return (
+      <NodeViewWrapper className="scient-latex-abstract-preview">
+        <h2 contentEditable={false}>Abstract</h2>
+        <NodeViewContent className="scient-latex-abstract-body" aria-label="Abstract" />
+      </NodeViewWrapper>
+    );
+  if (node.attrs.layout?.kind === "algorithm")
+    return (
+      <LatexAlgorithmView
+        node={node}
+        editor={editor}
+        selected={selected}
+        getPos={getPos}
+        updateAttributes={updateAttributes}
+        deleteNode={deleteNode}
+        editable={editable}
+        draftKey={
+          documentEditing
+            ? `${documentEditing.draftKey}:algorithm:${fieldSourceId(editor, node, getPos())}`
+            : undefined
+        }
+      />
+    );
+  if (node.attrs.layout?.kind === "colorBox")
+    return (
+      <LatexColorBoxView
+        node={node}
+        editor={editor}
+        selected={selected}
+        updateAttributes={updateAttributes}
+        deleteNode={deleteNode}
+        editable={editable}
+        draftKey={
+          documentEditing
+            ? `${documentEditing.draftKey}:box:${fieldSourceId(editor, node, getPos())}`
+            : undefined
+        }
+      />
+    );
+  if (node.attrs.layout) {
+    const layout = node.attrs.layout as {
+      kind: string;
+      columns?: number;
+      width?: string;
+      alignment?: string;
+    };
+    return (
+      <NodeViewWrapper
+        className="scient-latex-page-layout"
+        data-layout={layout.kind}
+        data-alignment={layout.alignment}
+        style={
+          {
+            "--scient-latex-columns": layout.columns ?? 1,
+          } as CSSProperties
+        }
+      >
+        <NodeViewContent
+          className="scient-latex-page-layout-body"
+          aria-label={
+            layout.kind === "columns"
+              ? "Column text"
+              : layout.kind === "row"
+                ? "Minipage row"
+                : "Minipage text"
+          }
+        />
+      </NodeViewWrapper>
+    );
+  }
   const quoted = statement?.kind === "quote";
   const displayTitle = statement?.title ?? environment[0]!.toUpperCase() + environment.slice(1);
   const environmentOptions = new Map([
@@ -3789,11 +4113,23 @@ function LatexScientificView({
       {(!quoted || displayTitle) && (
         <div className="scient-latex-scientific-heading" contentEditable={false} onClick={select}>
           <span>
-            {statement?.proof && node.attrs.title ? String(node.attrs.title) : displayTitle}
+            {statement?.proof && node.attrs.title ? (
+              <LatexProsePreview
+                source={node.attrs.titleSource ?? escapeText(String(node.attrs.title))}
+                editor={editor}
+              />
+            ) : (
+              displayTitle
+            )}
             {statement?.number ? " " + statement.number : ""}
             {!statement?.proof && node.attrs.title && (
               <span className="scient-latex-scientific-note">
-                {" (" + String(node.attrs.title) + ")"}
+                {" ("}
+                <LatexProsePreview
+                  source={node.attrs.titleSource ?? escapeText(String(node.attrs.title))}
+                  editor={editor}
+                />
+                {")"}
               </span>
             )}
             {quoted ? "" : "."}
@@ -3832,7 +4168,7 @@ function LatexScientificView({
                       : undefined
                   }
                   disabled={!editable}
-                  onValueChange={(title) => updateAttributes({ title })}
+                  onValueChange={(title) => updateAttributes({ title, titleSource: null })}
                 />
               </label>
             )}
@@ -3883,8 +4219,10 @@ const LatexScientific = Node.create({
     return {
       environment: { default: "theorem" },
       title: { default: "" },
+      titleSource: { default: null, rendered: false },
       raw: { default: "", rendered: false },
       sourceId: { default: null, rendered: false },
+      layout: { default: null, rendered: false },
     };
   },
   parseHTML() {
@@ -3894,7 +4232,19 @@ const LatexScientific = Node.create({
     return ["div", { ...HTMLAttributes, "data-latex-scientific": "" }, 0];
   },
   addNodeView() {
-    return ReactNodeViewRenderer(LatexScientificView);
+    return ReactNodeViewRenderer(LatexScientificView, {
+      attrs: ({ node }) => {
+        const layout = node.attrs.layout;
+        return {
+          "data-latex-page-layout": layout?.kind ?? "",
+          "data-alignment": layout?.alignment ?? "",
+          style:
+            layout?.kind === "minipage"
+              ? `width: ${layout.width}; min-width: 0; flex-shrink: 0;`
+              : "",
+        };
+      },
+    });
   },
 });
 
@@ -3919,8 +4269,59 @@ const LatexTextMarks = LATEX_CANVAS_TEXT_MARKS.map(({ name, style }) =>
   }),
 );
 
+const LatexColor = Mark.create({
+  name: "latexColor",
+  priority: 1100,
+  inclusive: false,
+  excludes: "",
+  addAttributes() {
+    return {
+      command: { default: "textcolor" },
+      color: { default: "black" },
+      background: { default: "" },
+    };
+  },
+  parseHTML() {
+    return [{ tag: "span[data-latex-color]" }];
+  },
+  renderHTML({ mark }) {
+    const command = String(mark.attrs.command);
+    const foreground = command === "textcolor" ? latexColorCss(mark.attrs.color) : null;
+    const background =
+      command === "colorbox"
+        ? latexColorCss(mark.attrs.color)
+        : command === "fcolorbox"
+          ? latexColorCss(mark.attrs.background)
+          : null;
+    const frame = command === "fcolorbox" ? latexColorCss(mark.attrs.color) : null;
+    return [
+      "span",
+      {
+        ...mark.attrs,
+        "data-latex-color": command,
+        style: [
+          foreground && `color:${foreground}`,
+          background && `background:${background};padding:3pt;white-space:nowrap`,
+          frame && `border:0.4pt solid ${frame}`,
+        ]
+          .filter(Boolean)
+          .join(";"),
+      },
+      0,
+    ];
+  },
+});
+
 // TeX's typewriter family can contain bold, accents and other text styling.
 const LatexMonospace = Code.extend({ excludes: "" });
+
+const inlineFieldExtensions = [
+  ...LatexTextMarks,
+  LatexColor,
+  LatexMonospace,
+  LatexInlineMath,
+  LatexInlineCommand,
+];
 
 const baseExtensions = [
   Extension.create({
@@ -3948,6 +4349,9 @@ const baseExtensions = [
     trailingNode: false,
   }),
   ...LatexTextMarks,
+  LatexColor,
+  LatexAlgorithmLine,
+  LatexAlgorithmComment,
   LatexMonospace,
   LatexSourceAttributes,
   LatexInlineMath,
@@ -3967,6 +4371,7 @@ export interface LatexVisualEditorProps {
   readonly fileRevision: string;
   readonly source: string;
   readonly rootSource?: string | null;
+  readonly compiledBibliography?: string | null;
   readonly rootRelativePath?: string | null;
   readonly disabled: boolean;
   readonly onEdit: (
@@ -4023,12 +4428,14 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       environments: [...declarations.environments],
       unsupportedEnvironments: [...declarations.unsupported],
       defaultProofEnd: declarations.defaultProofEnd,
+      listingDefaults: [...(latexListingDefaults(mathSetupSource) ?? [])],
     });
   }, [documentMathSetup, mathSetupSource]);
   const [mathActive, setMathActive] = useState(false);
   const [mathPicker, setMathPicker] = useState<"matrix" | "symbols" | null>(null);
   const [matrixEnvironment, setMatrixEnvironment] = useState<MatrixEnvironment>("bmatrix");
   const mathPickerTarget = useRef<{
+    editor: Editor;
     doc: ProseMirrorNode;
     selection: Selection;
     field: ActiveMathEditor | null;
@@ -4110,6 +4517,8 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   const currentSource = useRef(initial.source);
   const referenceSource = useRef(props.rootSource ?? props.source);
   referenceSource.current = props.rootSource ?? props.source;
+  const compiledBibliographySource = useRef(props.compiledBibliography ?? null);
+  compiledBibliographySource.current = props.compiledBibliography ?? null;
   // The file revision that `currentSource` descends from. It moves only when
   // the editor adopts a source, so a draft kept over an older source is never
   // stamped with a newer file's revision.
@@ -4388,7 +4797,11 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       reportDraft("source-publication", true);
       cancelSourcePublish.current?.();
       cancelSourcePublish.current = afterEditorPaint(() => flushSourceEditRef.current());
-      setNotice(null);
+      setNotice(
+        changed.materializedGenerator
+          ? "The edited loop is now ordinary LaTeX. Its generated content can be edited independently."
+          : null,
+      );
       return true;
     },
     [installProjection, reportDraft, props.draftKey],
@@ -4481,7 +4894,12 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       richPreviewExtension,
       Extension.create({
         name: "latexEquationReferences",
-        addProseMirrorPlugins: () => [latexEquationReferences(() => referenceSource.current)],
+        addProseMirrorPlugins: () => [
+          latexEquationReferences(
+            () => referenceSource.current,
+            () => compiledBibliographySource.current,
+          ),
+        ],
       }),
       Extension.create({
         name: "latexImageUploads",
@@ -4773,14 +5191,20 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       latexEquationReferencesKey.getState(editor.state)?.defaultProofEnd === undefined ||
       !latexEquationReferencesKey.getState(editor.state)?.tables ||
       !latexEquationReferencesKey.getState(editor.state)?.figures ||
-      !latexEquationReferencesKey.getState(editor.state)?.contents
+      !latexEquationReferencesKey.getState(editor.state)?.contents ||
+      !latexEquationReferencesKey.getState(editor.state)?.headings
     ) {
       editor.unregisterPlugin("latexEquationReferences");
-      editor.registerPlugin(latexEquationReferences(() => referenceSource.current));
+      editor.registerPlugin(
+        latexEquationReferences(
+          () => referenceSource.current,
+          () => compiledBibliographySource.current,
+        ),
+      );
       referencePluginFactory.current = latexEquationReferences;
     }
     editor.view.dispatch(editor.state.tr.setMeta(latexEquationReferencesKey, true));
-  }, [editor, props.rootSource, props.source, latexEquationReferences]);
+  }, [editor, props.rootSource, props.source, props.compiledBibliography, latexEquationReferences]);
   const find = useLatexVisualSearch(editor);
   const textStyle = useEditorState({
     editor,
@@ -5024,7 +5448,14 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       else activeMath.get()?.changeType(display ? "display-bracket" : "inline-paren");
       return;
     }
-    if (editor && !readOnly) insertVisualMath(editor, display, tex);
+    if (editor && !readOnly) {
+      const target = latexEditingTarget(editor);
+      if (display && target !== editor && !tex) {
+        setNotice("Use inline math inside a table cell.");
+        return;
+      }
+      insertVisualMath(target, display && target === editor, tex);
+    }
   };
   const openMathPicker = (kind: "matrix" | "symbols") => {
     if (!editor || readOnly) return;
@@ -5037,7 +5468,13 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       field.symbols();
       return;
     }
-    mathPickerTarget.current = { doc: editor.state.doc, selection: editor.state.selection, field };
+    const target = latexEditingTarget(editor);
+    mathPickerTarget.current = {
+      editor: target,
+      doc: target.state.doc,
+      selection: target.state.selection,
+      field,
+    };
     pendingMathInsert.current = null;
     setMathPicker(kind);
   };
@@ -5052,14 +5489,18 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     mathPickerTarget.current = null;
     pendingMathInsert.current = null;
     if (!editor || editor.isDestroyed || !target) return;
-    if (editor.state.doc !== target.doc || !editor.isEditable) {
+    if (
+      target.editor.isDestroyed ||
+      target.editor.state.doc !== target.doc ||
+      !target.editor.isEditable
+    ) {
       if (insertion)
         setNotice(
           "The document changed while the picker was open. Place the cursor and try again.",
         );
       return;
     }
-    editor.view.dispatch(editor.state.tr.setSelection(target.selection));
+    target.editor.view.dispatch(target.editor.state.tr.setSelection(target.selection));
     if (target.field) {
       if (insertion?.action) target.field.command(insertion.action);
       else if (insertion) target.field.insert(insertion.tex);
@@ -5071,8 +5512,8 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
           : insertion.action === "moveToSubscript"
             ? "{}_{}"
             : insertion.tex.replace(/#[0-9?]/gu, "{}");
-      insertVisualMath(editor, insertion.display, source);
-    } else editor.view.focus();
+      insertVisualMath(target.editor, insertion.display && target.editor === editor, source);
+    } else target.editor.view.focus();
   };
   const alignedEquations = () => {
     if (readOnly) return;
@@ -5080,7 +5521,13 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     if (field) field.changeType("aligned-equations");
     else if (editor) {
       const tex = alignedMathBody("{}");
-      insertVisualMath(editor, true, tex, { tex, environment: "align*", wrapper: "bracket" });
+      const target = latexEditingTarget(editor);
+      insertVisualMath(
+        target,
+        target === editor,
+        tex,
+        target === editor ? { tex, environment: "align*", wrapper: "bracket" } : undefined,
+      );
     }
   };
 
@@ -5137,7 +5584,9 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     editor.state.doc.descendants((node, position) => {
       if (
         found === null &&
-        (node.attrs.kind === kind || sourcePattern?.test(String(node.attrs.raw ?? "")))
+        (node.attrs.kind === kind ||
+          node.attrs.environment === kind ||
+          sourcePattern?.test(String(node.attrs.raw ?? "")))
       )
         found = position;
     });
@@ -5636,8 +6085,10 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       setNavigationTab("outline");
       return true;
     }
-    if (id === "latex.bold") return toggleLatexProseMark(editor, "bold");
-    if (id === "latex.italic") return toggleLatexProseMark(editor, "italic");
+    if (id === "latex.bold")
+      return toggleLatexProseMark(editor ? latexEditingTarget(editor) : null, "bold");
+    if (id === "latex.italic")
+      return toggleLatexProseMark(editor ? latexEditingTarget(editor) : null, "italic");
     if (id === "latex.bulletList") return setListStyle("bulletList");
     if (id === "latex.orderedList") return setListStyle("orderedList");
     if (id === "latex.table") {
@@ -5665,7 +6116,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       const edit = custom
         ? customMathEdit(custom, selected, { from: 0, to: selected.length })
         : commandEdit(command!, selected, { from: 0, to: selected.length });
-      return insertVisualMath(editor, false, edit.insert);
+      return insertVisualMath(latexEditingTarget(editor), false, edit.insert);
     }
     const actionId =
       (
@@ -5885,6 +6336,59 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     () => latexVisualLayoutProfile(props.rootSource ?? props.source),
     [props.source, props.rootSource],
   );
+  const runningStyle = useMemo(
+    () => latexRunningPageStyle(props.rootSource ?? props.source),
+    [props.rootSource, props.source],
+  );
+  const runningMarks = useEditorState({
+    editor,
+    selector: ({ editor: current }) => {
+      const marks: { page: number; level: number; text: string }[] = [];
+      let section = 0,
+        subsection = 0;
+      current?.state.doc.descendants((node, position) => {
+        if (
+          node.type.name !== "heading" ||
+          ![1, 2].includes(Number(node.attrs.level)) ||
+          node.attrs.unnumbered
+        )
+          return;
+        if (node.attrs.level === 1) {
+          section++;
+          subsection = 0;
+        } else subsection++;
+        marks.push({
+          page: latexVisualPageAt(current.state, position) ?? 1,
+          level: Number(node.attrs.level),
+          text: `${section}${node.attrs.level === 2 ? "." + subsection : ""} ${node.textContent}`.toUpperCase(),
+        });
+      });
+      return marks;
+    },
+  });
+  const printedPages = useEditorState({
+    editor,
+    selector: ({ editor: current }) => (current ? latexVisualPageLabels(current.state) : []),
+  });
+  const titlePage = useEditorState({
+    editor,
+    selector: ({ editor: current }) =>
+      current ? latexEquationReferencesKey.getState(current.state)?.titlePage === true : false,
+  });
+  const runningFields = (page: number) => {
+    const marks = (runningMarks ?? []).filter((mark) => mark.page <= page);
+    const left = marks.filter((mark) => mark.level === 1).at(-1)?.text ?? "";
+    const currentSubsections = marks.filter((mark) => mark.level === 2 && mark.page === page);
+    const right =
+      currentSubsections[0]?.text ?? marks.filter((mark) => mark.level === 2).at(-1)?.text ?? "";
+    return latexRunningPageFields(
+      runningStyle,
+      page,
+      left,
+      right,
+      printedPages?.[page - 1] === undefined ? String(page) : printedPages[page - 1],
+    );
+  };
   const headingStyles = LATEX_HEADING_STYLES.filter(
     (style) =>
       style.command !== "chapter" ||
@@ -5928,6 +6432,12 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   const pageGap = 28;
   const texPixels = (points: number) => `${(points * CSS_PIXELS_PER_INCH) / TEX_POINTS_PER_INCH}px`;
   const paperStyle = {
+    ...Object.fromEntries(
+      Object.entries(latexDocumentColors(props.rootSource ?? props.source)).map(([name, value]) => [
+        `--scient-color-${name}`,
+        value,
+      ]),
+    ),
     ...Object.fromEntries(
       Object.entries(latexVisualFontMetrics(layout.baseFontPt)).flatMap(
         ([name, [size, baseline]]) => [
@@ -6065,14 +6575,14 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     {
       label: "Bold",
       icon: <Bold strokeWidth={2.5} />,
-      action: () => toggleLatexProseMark(editor, "bold"),
+      action: () => toggleLatexProseMark(editor ? latexEditingTarget(editor) : null, "bold"),
       active: editor?.isActive("bold"),
       secondary: false,
     },
     {
       label: "Italic",
       icon: <Italic />,
-      action: () => toggleLatexProseMark(editor, "italic"),
+      action: () => toggleLatexProseMark(editor ? latexEditingTarget(editor) : null, "italic"),
       active: editor?.isActive("italic"),
       secondary: false,
     },
@@ -7055,6 +7565,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                           className="scient-latex-visual-paper"
                           data-indent-after-heading={layout.indentAfterHeading}
                           data-document-class={layout.documentClass}
+                          data-title-page={titlePage || undefined}
                           onDragOver={(event) => {
                             if (!event.dataTransfer.types.includes("Files")) return;
                             event.preventDefault();
@@ -7083,7 +7594,49 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                                 key={index}
                                 style={{ top: index * (pageHeight + pageGap) }}
                               >
-                                <span>{index + 1}</span>
+                                {runningStyle.style === "fancy" && (
+                                  <div
+                                    className="scient-latex-running-header"
+                                    style={{
+                                      top: Math.max(
+                                        0,
+                                        (layout.marginTopIn -
+                                          runningStyle.headSepIn -
+                                          runningStyle.headHeightIn) *
+                                          CSS_PIXELS_PER_INCH,
+                                      ),
+                                      height: runningStyle.headHeightIn * CSS_PIXELS_PER_INCH,
+                                      borderBottomWidth:
+                                        (runningStyle.headRulePt * CSS_PIXELS_PER_INCH) /
+                                        TEX_POINTS_PER_INCH,
+                                    }}
+                                  >
+                                    {runningFields(index + 1).head.map((source, slot) => (
+                                      <LatexProsePreview key={slot} source={source} />
+                                    ))}
+                                  </div>
+                                )}
+                                <div
+                                  className="scient-latex-running-footer"
+                                  style={{
+                                    top:
+                                      (layout.paperHeightIn -
+                                        layout.marginBottomIn +
+                                        runningStyle.footSkipIn) *
+                                        CSS_PIXELS_PER_INCH -
+                                      (layout.fontSizePt * CSS_PIXELS_PER_INCH) /
+                                        TEX_POINTS_PER_INCH,
+                                    borderTopWidth:
+                                      runningStyle.style === "fancy"
+                                        ? (runningStyle.footRulePt * CSS_PIXELS_PER_INCH) /
+                                          TEX_POINTS_PER_INCH
+                                        : 0,
+                                  }}
+                                >
+                                  {runningFields(index + 1).foot.map((source, slot) => (
+                                    <LatexProsePreview key={slot} source={source} />
+                                  ))}
+                                </div>
                               </div>
                             ))}
                           </div>

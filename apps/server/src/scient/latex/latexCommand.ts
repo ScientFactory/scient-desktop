@@ -15,6 +15,7 @@
  */
 
 export type LatexToolchainKind = "latexmk" | "tectonic";
+export type LatexEngine = "pdflatex" | "xelatex" | "lualatex";
 
 /**
  * `latexmk` drives `pdflatex`, `biber`, and friends by name, so a distribution
@@ -73,6 +74,7 @@ function pdfBaseName(rootRelativePath: string): string {
 
 export function buildLatexInvocation(input: {
   readonly toolchain: DiscoveredLatexToolchain;
+  readonly engine?: LatexEngine;
   /**
    * Basename of the validated root document. The caller runs the process from
    * that document's directory, so keeping this argument relative avoids
@@ -123,7 +125,9 @@ export function buildLatexInvocation(input: {
   return {
     command: input.toolchain.executable,
     args: [
-      "-pdf",
+      ({ pdflatex: "-pdf", xelatex: "-xelatex", lualatex: "-lualatex" } as const)[
+        input.engine ?? "pdflatex"
+      ],
       "-norc",
       "-interaction=nonstopmode",
       "-file-line-error",

@@ -27,6 +27,7 @@ that every operation preserves every supported LaTeX construct.
 | Equation, statement and table references | `latexEquationReferences.ts`, `mathEquationNumbers.ts`  | Derive one live number/label index for navigation; align equation tags with rendered MathLive rows without changing source or history.                                 |
 | Math setup                               | `latexDocumentMacros.ts`, `LatexDocumentMathContext.ts` | Parse bounded literal preamble definitions once, pass the root macro dictionary to every MathLive field, preserve calls in source, and expose setup in Document style. |
 | Environment declarations                 | `latexEnvironmentDeclarations.ts`                       | Interpret literal theorem names, standard styles, shared/scoped counters and simple quote wrappers; preserve declarations and reject unsupported definitions.          |
+| Literal text and code                    | `latexLiteral.ts`, `LatexLiteralCodeView.tsx`           | Bound literal source and listing options, paint supported syntax and presentation, and reuse native fields for body/caption edits.                                     |
 | Title conversion                         | `LatexTitleStep.ts`                                     | Keep the source before/after a paragraph-to-title conversion in the existing undo history.                                                                             |
 | Writing chrome                           | `markdownEditor/ui/dockChrome.tsx`                      | Shared button/menu styling and priority overflow. Visual opts into a permanent row and labels-before-overflow compression; other consumers retain their defaults.      |
 | Reading controls                         | `writing/DocumentReaderControls.tsx`                    | Shared PDF/Visual page, zoom, fit and search controls. Format adapters supply navigation and search operations.                                                        |
@@ -508,7 +509,7 @@ tables receive presentation gaps between rows through node-view decorations;
 their cell editors retain stable row identities. Ordinary tables and equations
 stay together when they fit on a sheet. A single object or table row taller than
 the printable area is still an overflow limitation; this does not reproduce
-TeX's float algorithm or longtable running headers.
+TeX's float algorithm or exact longtable break positions.
 Description lists and contents lists can break between entries. Description
 labels and bodies use the document baseline; `nextline` wraps the body only
 when the label cannot fit beside it, following
@@ -750,6 +751,11 @@ nodes. Recovery storage writes happen after painting or on explicit exit.
 Pagination waits 220 ms after input and maps existing decorations while waiting;
 measurements and resize-observer refreshes run after painting, not on every input.
 It never replaces the editable DOM. Layout profiles are cached by preamble.
+Physical page lookup uses binary search after checking each immutable page map's
+position order; unusual line order retains the sequential lookup. Printed page
+labels are reused while the document, page map and title-page setting are unchanged.
+Weak caches release discarded documents/maps. Heading decorations are reused until
+the document or reference index changes, including preamble-only index refreshes.
 
 Unescaped percent comments are hidden in Visual, including standalone comment lines
 and comments inside supported prose. Their source remains intact during ordinary
@@ -761,6 +767,117 @@ an editable paragraph, with new text inserted outside the comments.
 The parser intentionally leaves unknown commands, unsupported citation arguments,
 unsupported control symbols, custom macros and unsupported table cells as source-only
 blocks. Simple templates do not establish arbitrary-paper coverage.
+
+### Longtable sections and literal row templates
+
+`latexLongTable.ts` separates longtable header/footer sections and creates a
+bounded virtual source for literal row macros from the existing document macro
+dictionary. Only required braced arguments and direct definitions containing
+alignment separators and row terminators are expanded. It never executes TeX.
+Non-body sections are masked without moving offsets, then the ordinary table
+adapter supplies cell ranges, caption/label ranges, formatting and alignments.
+
+The longtable metadata retains the physical source, virtual source, expansion
+ranges, continuation bands and original structure. Cell edits map back to the
+physical source. An edit within a generated row materializes only that macro
+call; all other calls and the preamble definition remain unchanged. The existing
+native text-field, transaction, undo, draft and source-acceptance paths own edits.
+Structural row/column actions are disabled for these imported tables.
+
+`LatexLongTableBand.tsx` paints read-only continuation rows using projected spans,
+rules, sizes and the live table number. Pagination measures hidden header/footer
+bands at the body's actual column widths, reserves their heights, and inserts
+them around its existing row gaps. During measurement the rendered continuation
+rows collapse vertically while retaining their contribution to column widths.
+Page-gap decorations survive content-only atom replacements with the same
+source identity and row/column or item identities. Structural changes discard
+that map and require new measurements. Node views track position changes so
+derived table numbers continue to resolve after edits above them.
+Final footers use `endlastfoot`, falling back to `endfoot` when absent. Continuation
+definitions remain in Source. Oversized rows, advanced column specifications,
+recursive row macros and exact TeX page breaking remain limitations.
+
+### Columns, minipages and page furniture
+
+`latexPageLayouts.ts` bounds literal `multicols` counts, simple `minipage` widths
+and alignment, and common root-preamble `fancyhdr` slots and running fields.
+The source adapter projects editable layout bodies through the existing nested
+`latexScientific` container schema, distinguished by layout attributes. They
+do not acquire statement headings, counters or statement controls. Minipages
+joined by `\hfill` share a row; their original separators and environment options
+remain source-owned. Recursive body patches use the existing adapter and file
+save path. This does not add another editor, session or persistence mechanism.
+Widths and vertical alignment belong to Tiptap's outer node-view element, which
+is the actual flex item. The inner editable wrapper fills that item; a percentage
+width must not be applied again inside a content-sized renderer wrapper.
+
+Paragraph boundaries from `\par` remain in source gaps. Explicit `\noindent`
+uses a paragraph attribute and preserves its prefix during text edits. Standard
+skip commands and paragraph-boundary `\columnbreak` use the existing opaque
+preview node with a spacing kind. Inline `\columnbreak` is an existing inline
+command atom, preserving paragraph continuity and its original source.
+The forced `[4]` form uses the same distinction. A source newline alone never
+promotes an inline command to a paragraph-boundary break.
+`latexColumnBreaks.ts` measures the line containing each inline command and
+places a presentation-only break at that line's end, following the
+[multicol manual](https://tug.ctan.org/macros/latex/required/tools/multicol.pdf).
+The pagination plugin owns these decorations without adding source or undo
+steps. It hides previous column-break widgets during line measurement, then
+measures the actual column layout for page placement. A leading indentation
+spacer keeps the continuation in the next column from receiving a new paragraph
+indent. CSS handles balanced columns and forced column starts. Pagination
+measures each layout region as one indivisible object so side-by-side contents
+are not mistaken for sequential full-width lines. Column footnotes use the
+existing page-footnote path; minipage footnotes remain unsupported because they
+need a separate counter and local placement.
+
+Root-level `\vfill` contributes stretch to the existing pure pagination planner.
+It divides remaining printable space among fills before the next explicit page
+break, reserving room for following content and footnotes. Existing gap widgets
+apply this space and disappear during natural-flow measurement; source is never
+rewritten to implement the stretch.
+
+The paper sheets render running fields behind the editable DOM. Common fancyhdr
+left/center/right and odd/even assignments, cleared slots, numeric page fields
+and standard article section/subsection marks are supported. Geometry and literal
+length assignments supply header height, separation and footer baseline offsets.
+The default fancyhdr slots share the full printable header/footer width and
+align left, center or right within it, rather than occupying three separate
+columns. Text wraps within that width; the header's last baseline stays above
+its rule. Custom field widths and collision handling remain source-owned.
+These fields are display-only and use Visual's local page map. Custom page styles,
+mark redefinitions, multipage columns, fixed-height minipages and exact TeX
+balancing remain outside this approximation.
+
+### Literal text and listing coverage
+
+The inline adapter treats `\verb` as one existing inline-command atom. Structure,
+comment and package-inference scans skip its payload. Edits retain the original
+delimiter when possible, or choose an unused delimiter; multiline input cannot
+be serialized as inline literal text.
+
+`latexLiteralBlock` owns the exact body and option ranges for `verbatim`,
+`verbatim*` and `lstlisting`. Local options stay outside the editable code body.
+Literal source does not enter the prose grammar. Body edits patch only that range,
+preserving the opening/closing commands, options and surrounding whitespace.
+Caption edits use the existing inline source mapper. A line that would close the
+environment is refused rather than allowed to escape its wrapper.
+
+Listing presentation combines top-level root-preamble `\lstset` declarations
+with local options. Supported settings cover language, plain captions and labels,
+basic/keyword/comment/string/number styles, common font sizes and named xcolor
+mixes, left/right numbering, first/step numbers, blank-line numbering, tab size,
+single/top/bottom frames, wrapping, string-space visibility and caption placement.
+Unknown options or styles retain the exact source. Named styles, executable TeX
+and arbitrary package definitions are not evaluated. Caption numbering currently
+follows preceding captioned Visual listings rather than arbitrary custom counters.
+
+`LatexLiteralCodeView` uses the existing `LatexTextField` draft/save/undo path.
+The native textarea owns editing and selection; a noninteractive backdrop paints
+code with the installed CodeMirror/Lezer language parsers and places line numbers
+outside the frame. Language-load failure leaves plain editable code. No new
+session, persistence path, Tiptap node type or external highlighter is introduced.
+PDF typography and complex wrapping remain approximations requiring human review.
 
 ### Scientific statement coverage
 
@@ -821,6 +938,84 @@ Write editor loads lazily; Source uses the shared file editor and does not load 
 
 ## Adapter direction
 
+A single document-level count loop can project through a bounded virtual source
+map. The accepted form initializes a preamble-declared register, increments by
+one and stops at a literal integer. Safe zero-argument paragraph macros expand
+inside it; counter reads become literals in prose, headings and math. Limits
+bound iterations (100), template size and total expanded source. Nested loops,
+dynamic definitions and subsequent register uses retain the source fallback.
+
+The projected document contains ordinary flat blocks, so contents links,
+numbering, selections and explicit page breaks use the existing editor and
+pagination paths. Physical source locations point back to the owning loop.
+Edits are validated against the virtual projection; an unchanged expansion is
+collapsed back to its original loop. Editing generated content materializes the
+loop, retaining the preamble definitions and normal source/history pipeline.
+Matching original text can restore the loop within the editing session. Once
+materialized, subsequent edits use the ordinary incremental source map.
+
+Standard `algorithm` floats containing `algorithmic` use the existing structured
+block with native editable algorithm lines and inline comments. The bounded
+algpseudocode grammar covers requirements, guarantees, statements/returns,
+for/while/repeat/loop blocks and if/else branches. Structural validation derives
+indentation and line numbering; generated keywords are outside editable text.
+Caption and line edits patch their original ranges. Enter and the footer's Add
+step create a State line; row count changes serialize only the algorithmic body.
+The reference index maintains an independent algorithm counter and clickable
+labels. Unsupported pseudocode commands retain the source fallback. The float
+stays together in Visual; placement remains a TeX approximation.
+
+Literal `textcolor`, `colorbox` and `fcolorbox` use an attributed inline mark;
+serialization retains the color expression. Document-scoped CSS variables resolve
+basic xcolor names and literal `definecolor` declarations (HTML, rgb, RGB, gray),
+including chained percentage mixtures. Unknown colors retain source fallback.
+The `tcolorbox` adapter uses the existing structured block node, with an editable
+title and native prose/math/list children. It accepts literal title, colback,
+colframe, coltitle and breakable options. Breakable boxes participate in nested
+pagination; the CSS frame and continuation are an approximation of TeX output.
+
+A bounded literal newcount/advance/ifnum loop can project up to 100 repetitions.
+It is not a TeX interpreter. Unchanged generated text retains its exact loop;
+editing a generated paragraph materializes that loop into ordinary paragraphs.
+The footer explains this conversion, and normal document undo restores it.
+Unrecognized loop forms and box options remain exact source.
+
+Editable table cells use a single-paragraph editor with the document's inline
+formatting, references and MathLive views. Math and formatting commands follow
+the active cell caret. Cells publish source-preserving edits to the owning
+document and share its undo history; a cell does not keep a competing history.
+Mixed prose/formula cells preserve their original delimiters and table rules
+through editing, copying and row/column changes. Escaped dollar signs remain text.
+Re-entering a cell clears rectangle selection and restores a normal caret.
+Window focus restoration respects focused objects inside an editable document,
+including table selections and MathLive fields, so chat autofocus cannot take
+their next keystroke.
+Display equations stay unavailable inside inline-only table cells.
+
+Abstract bodies use the same structured paragraph and math editing as scientific
+environments, including Enter and inline/display math insertion. Empty MathLive
+slots use the shared blue dashed guides while editing, including fraction and
+root slots; guides do not appear in copied source or printed output.
+
+Figures accept a bounded TikZ adapter for numeric line paths, endpoint labels,
+filled circles and literal coordinate-pair `foreach` point lists. SVG renders the
+geometry; labels and captions use the existing on-page editors. The figure footer
+edits coordinates and explicit scale values by patching their original source
+ranges. Unknown commands/options reject the whole adapter; arbitrary TikZ is not
+evaluated. Stroke widths and node text stay unscaled while coordinates scale.
+
+Standard report/book structure uses the existing rich-preview nodes for literal
+document controls (`title`, `author`, `date`, `pagenumbering`, `appendix`) and
+generated contents/figure/table lists. Controls retain their exact source and
+occupy zero-height positions in the page map. Title edits replace the effective
+declaration before `maketitle`, including declarations inside `document`.
+The reference plugin derives chapter/appendix numbers, heading decorations,
+captions and list targets together. Pagination applies implicit chapter/list
+starts and title pages; printed page labels are derived separately from physical
+sheet indices. Contents indentation and leaders follow standard class levels.
+This remains a CSS approximation: TeX float placement, custom class counters and
+two-sided blank recto pages require the compiled PDF.
+
 Expand coverage through bounded command/environment adapters that own recognition,
 source mapping, rendering, round-trip validation and package requirements. Use the
 same adapter capabilities for insertion and editing so controls cannot promise an
@@ -828,3 +1023,20 @@ unsupported edit. Compiled measurements may refine presentation, but never autho
 source mutations from PDF coordinates. The shared Markdown/LaTeX foundation proposed
 in PR #373 remains a proposal; these fixes do not adopt a new framework or persistence
 architecture ahead of that decision.
+
+Scientific blocks accept scoped legacy math font declarations (`rm`, `bf`, `it`,
+`sf`, `tt`, `cal`). The shared MathLive boundary translates these into font groups,
+including supported document macro definitions. Loading a field is silent and
+retains the original source; editing a formula may serialize modern font commands.
+Proof titles retain their original inline source and resolve `ref`/`eqref` through
+the same reference index as body text. Algorithm floats accept a standard font-size
+declaration before `algorithmic`; prose spacing commands round-trip as spacing.
+
+For external BibTeX bibliographies, the project Visual editor reads an existing
+`.bbl` beside the resolved root `.tex` as presentation data. A bounded parser
+extracts ordinary `thebibliography`/`bibitem` entries without executing generated
+helper definitions. Citation numbers follow that saved compiled order. The `.bbl`
+is never a save target; Document → References continues editing the original `.bib`
+files. Missing output gets an explicit message. This does not implement BibLaTeX
+output or refresh the adjacent `.bbl` from Scient's private PDF build directory;
+saved output can be stale after bibliography edits.

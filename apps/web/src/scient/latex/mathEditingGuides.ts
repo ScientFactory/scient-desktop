@@ -31,10 +31,31 @@ export function installMathEditingGuides(math: MathfieldElement): () => void {
       border-radius: 3px;
       pointer-events: none;
     }
-    [data-scient-math-cell][data-empty] .ML__placeholder {
-      opacity: 0;
+    .ML__placeholder {
+      color: transparent !important;
+      background: transparent !important;
+      box-shadow: none !important;
+      position: relative;
     }
-    @media print { [data-scient-math-cell]::after { display: none !important; } }
+    :host(:not([read-only]):focus-within) .ML__placeholder::after {
+      content: "";
+      position: absolute;
+      width: .65em;
+      height: .9em;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      border: 1px dashed var(--scient-empty-guide, #b8c7da);
+      border-radius: 3px;
+      pointer-events: none;
+    }
+    [data-scient-math-cell][data-empty] .ML__placeholder::after {
+      display: none;
+    }
+    [data-scient-math-cell][data-empty] .ML__empty-line-anchor::after {
+      display: none;
+    }
+    @media print { [data-scient-math-cell]::after, .ML__placeholder::after { display: none !important; } }
   `;
   root.append(style);
   let frame = 0;

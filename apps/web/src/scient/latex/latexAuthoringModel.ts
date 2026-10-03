@@ -45,7 +45,9 @@ export function documentReferenceChoices(source: string): LatexReferenceChoice[]
     const equation = environments.some((entry) =>
       /^(?:equation|align|gather|multline|flalign)\*?$/u.test(entry.name),
     );
-    const float = environments.findLast((entry) => /^(?:figure|table)\*?$/u.test(entry.name));
+    const float = environments.findLast((entry) =>
+      /^(?:figure|table|algorithm)\*?$/u.test(entry.name),
+    );
     const statement = environments.findLast((entry) =>
       /^(?:theorem|lemma|proposition|corollary|claim|definition|example|remark|proof)\*?$/u.test(
         entry.name,

@@ -1,20 +1,15 @@
 /**
- * Whether a LaTeX document can compile under the engine Scient currently
- * drives, or asks for one it does not.
+ * Select a declared compiler and check whether the default pdfLaTeX lane can
+ * process the document. Only fixed engine names become invocation flags.
  *
- * `latexCommand.ts` invokes `latexmk` with `-pdf`, which drives `pdflatex`
- * underneath — Scient does not run XeLaTeX or LuaLaTeX yet. A document that
- * asks for one of those, through the `% !TEX program = …` magic comment
- * editors like TeXShop and TeXstudio read and write, or by loading
- * `fontspec`/`unicode-math` — packages pdfLaTeX cannot process at all — would
- * either compile with the wrong fonts silently accepted and ignored, or fail
- * deep inside a TeX error a reader has no way to map back to "wrong engine".
- * Reading the document before a build starts and saying plainly what it
- * found and what engine it wants is the honest alternative to either.
+ * Without a directive, `latexCommand.ts` uses `latexmk -pdf`. Explicit
+ * `% !TEX program = …` declarations select LuaLaTeX or XeLaTeX through latexmk.
+ * For the default pdfLaTeX lane, package checks explain incompatible
+ * `fontspec`/`unicode-math` loads before compilation.
  *
  * Two kinds of finding, and they are not equally strong. The magic comment is
  * an author's declaration — they wrote down which engine this document is for
- * — so it refuses unconditionally. A package load is an inference, and the
+ * — so selection honors it. A package load is an inference, and the
  * inference is wrong for every document that guards the load behind an engine
  * test. Pandoc's default template is exactly that document: it loads `iftex`
  * and then `\ifPDFTeX … \else \usepackage{unicode-math} \usepackage{fontspec}
@@ -25,15 +20,15 @@
  * text, not TeX; it cannot evaluate the branch, and refusing a document it
  * merely failed to understand is worse than letting the engine answer.
  *
- * Pure and read-only: everything here is a function of source text a caller
- * already has in memory, and it decides nothing about what happens next.
- * `LatexBuildService.ts` runs it on the root document's head, once per build,
- * before the engine starts and only on the `latexmk` path.
+ * Pure and read-only: selection uses source text already held by the caller.
+ * `LatexBuildService.ts` selects the compiler from the bounded preamble heads
+ * before running the existing build and publication pipeline.
  */
 
 import { stripLatexComments } from "./latexPreamble.ts";
+import type { LatexEngine, LatexToolchainKind } from "./latexCommand.ts";
 
-/** The two engines a document can ask for that Scient does not run. */
+/** Engines incompatible with the default pdfLaTeX lane. */
 export type LatexRequiredEngine = "xelatex" | "lualatex";
 
 export interface LatexEngineSupported {
@@ -123,7 +118,7 @@ function magicCommentVerdict(text: string): LatexEngineUnsupported | null {
       supported: false,
       requiredEngine,
       evidence,
-      message: `Scient currently compiles with pdfLaTeX only. This document's engine-selection comment asks for ${engineDisplayName(requiredEngine)} (found: ${evidence}).`,
+      message: `This document's engine-selection comment asks for ${engineDisplayName(requiredEngine)}, which cannot be compiled by pdfLaTeX (found: ${evidence}).`,
     };
   }
   return null;
@@ -171,7 +166,7 @@ function packageLoadVerdict(text: string): LatexEngineUnsupported | null {
         supported: false,
         requiredEngine,
         evidence,
-        message: `Scient currently compiles with pdfLaTeX only. This document loads "${hit}" (found: ${evidence}), which needs XeLaTeX or LuaLaTeX; pdfLaTeX cannot process it.`,
+        message: `This document loads "${hit}" (found: ${evidence}), which needs XeLaTeX or LuaLaTeX; pdfLaTeX cannot process it. Add % !TEX program = lualatex or % !TEX program = xelatex to select the compiler.`,
       };
     }
   }
@@ -196,6 +191,10 @@ export function evaluateLatexEngineGate(input: LatexEngineGateInput): LatexEngin
     const verdict = magicCommentVerdict(text);
     if (verdict !== null) return verdict;
   }
+  return evaluatePdfLatexPackages(texts);
+}
+
+function evaluatePdfLatexPackages(texts: readonly string[]): LatexEngineVerdict {
   // The document tests the engine itself, so whatever it loads it loads in a
   // branch this scan cannot evaluate. Let the compile answer.
   if (texts.some(hasEngineConditional)) return SUPPORTED_VERDICT;
@@ -204,4 +203,32 @@ export function evaluateLatexEngineGate(input: LatexEngineGateInput): LatexEngin
     if (verdict !== null) return verdict;
   }
   return SUPPORTED_VERDICT;
+}
+
+/** Root declarations take precedence over declarations in included preambles. */
+export function selectLatexBuildEngine(input: LatexEngineGateInput, toolchain: LatexToolchainKind) {
+  let declared: LatexEngine | null = null;
+  for (const text of [input.rootText, ...(input.includedTexts ?? [])]) {
+    for (const line of text.split(/\r?\n/u)) {
+      const token = MAGIC_COMMENT_PATTERN.exec(line)?.[1]?.toLowerCase();
+      if (!token) continue;
+      declared =
+        token === "pdflatex" || token === "pdftex" ? "pdflatex" : requiredEngineForToken(token);
+      if (declared) break;
+    }
+    if (declared) break;
+  }
+  const engine = declared ?? (toolchain === "tectonic" ? "xelatex" : "pdflatex");
+  if (toolchain === "tectonic") {
+    return {
+      engine,
+      error:
+        engine === "xelatex"
+          ? null
+          : `This document requests ${engine === "lualatex" ? "LuaLaTeX" : "pdfLaTeX"}, but the available toolchain is Tectonic. Install a TeX distribution with latexmk and the requested compiler, then refresh the LaTeX toolchain.`,
+    };
+  }
+  if (engine !== "pdflatex") return { engine, error: null };
+  const verdict = evaluatePdfLatexPackages([input.rootText, ...(input.includedTexts ?? [])]);
+  return { engine, error: verdict.supported ? null : verdict.message };
 }

@@ -26,6 +26,12 @@ const WARNING_LINE_SUFFIX_PATTERN = /on input line (\d+)\.?\s*$/u;
 const MISSING_FILE_PATTERN = /^No file\s+(.+?)\.\s*$/u;
 /** tectonic labels every line it forwards; the label is severity, not path. */
 const SEVERITY_PREFIX_PATTERN = /^(error|warning):\s+/iu;
+/** LaTeX upstream issue #1907: the engine explicitly ignores this longtable warning. */
+const IGNORED_GLUE_PATTERN =
+  /^ignored error:\s*Infinite glue shrinkage found in box being split\b/iu;
+const LONGTABLE_WIDTH_WARNING_PATTERN =
+  /^(?:Column widths have changed \(longtable\)|Table widths have changed\. Rerun LaTeX\.)/u;
+const ENGINE_PASS_PATTERN = /^Run number \d+ of rule '(?:pdf|xe|lua)?latex'/u;
 
 /**
  * Wrapper output that wears the `file:line:` shape without being an error in
@@ -118,6 +124,14 @@ function readMessage(lines: readonly string[], index: number, message: string) {
 /** Parses one combined engine transcript, retaining distinct diagnostics in order. */
 export function parseLatexLog(transcript: string): LatexDiagnostic[] {
   const diagnostics: LatexDiagnostic[] = [];
+  const lines = transcript.split(/\r?\n/u);
+  const finalEnginePass = lines.findLastIndex((line) => ENGINE_PASS_PATTERN.test(line.trim()));
+  const settled =
+    finalEnginePass >= 0 &&
+    lines.slice(finalEnginePass).some((line) => /^Output written on /u.test(line.trim())) &&
+    lines
+      .slice(finalEnginePass)
+      .some((line) => /^Latexmk: All targets .* are up-to-date\s*$/u.test(line.trim()));
   const seen = new Set<string>();
   const addDiagnostic = (diagnostic: LatexDiagnostic) => {
     const message = diagnostic.message.trim().replace(/\s+/gu, " ");
@@ -134,7 +148,6 @@ export function parseLatexLog(transcript: string): LatexDiagnostic[] {
     seen.add(key);
     diagnostics.push({ ...diagnostic, message: clampMessage(message) });
   };
-  const lines = transcript.split(/\r?\n/u);
 
   // Continue through the bounded engine transcript: repeats must not consume
   // the budget, and late errors must not be hidden by earlier warnings.
@@ -158,6 +171,16 @@ export function parseLatexLog(transcript: string): LatexDiagnostic[] {
       ) {
         continue;
       }
+      const ignored = IGNORED_GLUE_PATTERN.exec(fileLineError[3] ?? "");
+      if (ignored) {
+        addDiagnostic({
+          severity: "warning",
+          file: normalizeEnginePath(fileLineError[1]),
+          line: Number.parseInt(fileLineError[2], 10),
+          message: ignored[0],
+        });
+        continue;
+      }
       const continued = readMessage(lines, index, fileLineError[3] ?? "");
       index = continued.index;
       addDiagnostic({
@@ -171,19 +194,29 @@ export function parseLatexLog(transcript: string): LatexDiagnostic[] {
 
     const bareError = BARE_ERROR_PATTERN.exec(line);
     if (bareError?.[1] !== undefined) {
+      const ignored = IGNORED_GLUE_PATTERN.exec(bareError[1]);
       addDiagnostic({
-        severity: "error",
+        severity: ignored ? "warning" : "error",
         file: null,
         line: null,
-        message: bareError[1],
+        message: ignored?.[0] ?? bareError[1],
       });
       continue;
     }
 
     const warning = WARNING_PATTERN.exec(line);
     if (warning?.[1] !== undefined) {
+      const started = index;
       const continued = readMessage(lines, index, warning[1]);
       index = continued.index;
+      // latexmk reruns TeX until widths converge. Earlier width warnings are
+      // obsolete only after a completed later engine pass and a settled target.
+      if (
+        settled &&
+        started < finalEnginePass &&
+        LONGTABLE_WIDTH_WARNING_PATTERN.test(continued.message)
+      )
+        continue;
       const lineMatch = WARNING_LINE_SUFFIX_PATTERN.exec(continued.message);
       addDiagnostic({
         severity: "warning",

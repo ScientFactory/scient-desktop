@@ -103,12 +103,9 @@ A concise introduction.
 `;
     const projection = projectLatexVisualDocument(source);
     expect(projection.rawBlocks).toBe(0);
-    expect(projection.content.content?.map((node) => node.attrs?.kind)).toEqual([
-      "title",
-      "abstract",
-      "toc",
-      "pagebreak",
-    ]);
+    expect(
+      projection.content.content?.map((node) => node.attrs?.kind ?? node.attrs?.environment),
+    ).toEqual(["title", "abstract", "toc", "pagebreak"]);
     const nodes = structuredClone(projection.content.content!);
     nodes[0]!.attrs = { ...nodes[0]!.attrs, title: "A Better Guide" };
     const titleChange = applyLatexVisualDocumentChange(source, projection, {
@@ -120,7 +117,7 @@ A concise introduction.
     expect(titleChange?.source).toContain("\\maketitle");
 
     const abstractNodes = structuredClone(titleChange!.projection.content.content!);
-    abstractNodes[1]!.attrs = { ...abstractNodes[1]!.attrs, body: "A revised introduction." };
+    abstractNodes[1]!.content = [paragraph("A revised introduction.")];
     const abstractChange = applyLatexVisualDocumentChange(
       titleChange!.source,
       titleChange!.projection,
@@ -327,14 +324,14 @@ Systems & Prototypes~and measurements \\\\
     expect(projection.blocks[0]!.editable).toBe(true);
     expect(projection.blocks[0]!.node.attrs?.caption).toBe("Research options.");
     expect(projection.blocks[0]!.node.attrs?.rows).toEqual([
-      ["Area", "Evidence"],
+      ["\\textbf{Area}", "\\textbf{Evidence}"],
       ["Theory", "Proofs and formal models"],
-      ["Systems", "Prototypes and measurements"],
+      ["Systems", "Prototypes~and measurements"],
     ]);
     expect(source).toContain(projection.blocks[0]!.source);
     expect(projection.blocks[0]!.source).toContain("\\end{table}");
     const nodes = structuredClone(projection.content.content!);
-    (nodes[0]!.attrs!.rows as string[][])[1]![1] = "Proofs & verified models";
+    (nodes[0]!.attrs!.rows as string[][])[1]![1] = "Proofs \\& verified models";
     nodes[0]!.attrs!.caption = "Research areas & evidence.";
     (nodes[0]!.attrs!.rows as string[][]).push(["Security", "Threat models"]);
     (nodes[0]!.attrs!.rowIds as string[]).push("table-new-test");
@@ -378,7 +375,7 @@ Theory & Proofs \\\\
     Object.assign(nodes[0]!.attrs!, {
       rows: [
         ["Area", "Evidence", "Owner"],
-        ["Theory", "Proofs & models", "Ada"],
+        ["Theory", "Proofs \\& models", "Ada"],
         ["Systems", "Measurements", "Grace"],
       ],
       rowIds: ["row-1", "row-2", "row-3"],
@@ -545,10 +542,10 @@ Text
     );
   });
 
-  it("keeps structurally complex table cells protected", () => {
+  it("keeps unsupported cell commands protected even in supported spans", () => {
     const source = document(`\\begin{tabular}{ll}
 \\multicolumn{2}{c}{Heading} \\\\
-Value & $x^2$ \\\\
+Value & \\unsupported{x^2} \\\\
 \\end{tabular}`);
     const projection = projectLatexVisualDocument(source);
     expect(projection.blocks[0]!.node.type).toBe("latexRawBlock");

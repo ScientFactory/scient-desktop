@@ -3,6 +3,8 @@ import type { Node as DocumentNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey, NodeSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import { afterEditorPaint } from "./afterEditorPaint";
+import { latexCounterLabel } from "./latexDocumentStructure";
+import { latexInlineColumnBreakPositions } from "./latexColumnBreaks";
 import { appendLatexProsePreview } from "./LatexProsePreview";
 import { latexEquationReferencesKey, navigateToFootnote } from "./latexEquationReferences";
 import {
@@ -24,6 +26,13 @@ type PaginationUpdate =
 
 export const latexPaginationKey = new PluginKey<PaginationState>("scientLatexPagination");
 
+const emptyPages: PaginationState["pages"] = [];
+const orderedPageMaps = new WeakMap<PaginationState["pages"], boolean>();
+const printedPageLabels = new WeakMap<
+  DocumentNode,
+  { pages: PaginationState["pages"]; titlePage: boolean; labels: readonly (string | null)[] }
+>();
+
 /** Local CSS page map; these values are not compiled TeX page evidence. */
 export function latexVisualPageAt(
   state: import("@tiptap/pm/state").EditorState,
@@ -31,12 +40,78 @@ export function latexVisualPageAt(
 ): number | null {
   const pages = latexPaginationKey.getState(state)?.pages;
   if (!pages?.length) return null;
+  let ordered = orderedPageMaps.get(pages);
+  if (ordered === undefined) {
+    ordered = pages.every(
+      (entry, index) => index === 0 || pages[index - 1]!.position <= entry.position,
+    );
+    orderedPageMaps.set(pages, ordered);
+  }
+  if (ordered) {
+    // Upper bound retains the last entry at duplicate positions (split objects).
+    let low = 0,
+      high = pages.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (pages[middle]!.position <= position) low = middle + 1;
+      else high = middle;
+    }
+    return pages[Math.max(0, low - 1)]!.page + 1;
+  }
+  // Unusual rendered line order retains the existing sequential lookup semantics.
   let page = pages[0]!.page;
   for (const entry of pages) {
     if (entry.position > position) break;
     page = entry.page;
   }
   return page + 1;
+}
+
+/** Printed labels are separate from physical sheets and reset at document controls. */
+export function latexVisualPageLabels(
+  state: import("@tiptap/pm/state").EditorState,
+): readonly (string | null)[] {
+  const pages = latexPaginationKey.getState(state)?.pages ?? emptyPages;
+  const titlePage = latexEquationReferencesKey.getState(state)?.titlePage === true;
+  const cached = printedPageLabels.get(state.doc);
+  if (cached?.pages === pages && cached.titlePage === titlePage) return cached.labels;
+  const count = pages.reduce((maximum, entry) => Math.max(maximum, entry.page + 1), 1);
+  const resets = new Map<number, string>();
+  const covers = new Set<number>();
+  state.doc.forEach((node, position) => {
+    if (node.type.name !== "latexRichPreview") return;
+    const cover = node.attrs.kind === "title" && titlePage;
+    const numbering =
+      node.attrs.kind === "documentCommand" && node.attrs.environment === "pagenumbering";
+    if (!cover && !numbering) return;
+    const page = (latexVisualPageAt(state, position) ?? 1) - 1;
+    if (cover) {
+      covers.add(page);
+      resets.set(page + 1, "arabic");
+    }
+    if (numbering) resets.set(page, String(node.attrs.body));
+  });
+  let style = "arabic",
+    counter = 0;
+  const labels = Array.from({ length: count }, (_, page) => {
+    const reset = resets.get(page);
+    if (reset) {
+      style = reset;
+      counter = 0;
+    }
+    counter++;
+    return covers.has(page) ? null : latexCounterLabel(counter, style);
+  });
+  printedPageLabels.set(state.doc, { pages, titlePage, labels });
+  return labels;
+}
+
+export function latexVisualPageLabelAt(
+  state: import("@tiptap/pm/state").EditorState,
+  position: number,
+): string | null {
+  const page = latexVisualPageAt(state, position);
+  return page === null ? null : (latexVisualPageLabels(state)[page - 1] ?? null);
 }
 
 export function setLatexPaginationDimensions(
@@ -58,6 +133,40 @@ interface MeasuredUnit extends LatexVisualPaginationBlock {
 interface ObjectPagination {
   readonly node: DocumentNode;
   readonly gaps: Readonly<Record<number, number>>;
+  readonly continuation?: { head: number; foot: number };
+}
+
+/** Content edits retain the page map until the new measurements settle. */
+function sameObjectStructure(previous: DocumentNode, current: DocumentNode): boolean {
+  if (previous === current) return true;
+  if (
+    previous.type !== current.type ||
+    previous.attrs.sourceId == null ||
+    previous.attrs.sourceId !== current.attrs.sourceId ||
+    previous.attrs.kind !== current.attrs.kind
+  )
+    return false;
+  const keys =
+    current.attrs.kind === "table"
+      ? ["rowIds", "columnIds", "tableKind", "hasHeader"]
+      : ["itemIds"];
+  if (!Array.isArray(current.attrs[keys[0]!]) || !Array.isArray(previous.attrs[keys[0]!]))
+    return false;
+  return keys.every(
+    (key) => JSON.stringify(previous.attrs[key]) === JSON.stringify(current.attrs[key]),
+  );
+}
+
+export function latexObjectContinuationHeights(
+  decorations: readonly Decoration[],
+  node: DocumentNode,
+) {
+  for (const decoration of decorations) {
+    const object = decoration.spec.latexObjectPagination as ObjectPagination | undefined;
+    if (object && sameObjectStructure(object.node, node))
+      return object.continuation ?? { head: 0, foot: 0 };
+  }
+  return { head: 0, foot: 0 };
 }
 
 export function latexObjectPageGaps(
@@ -66,7 +175,7 @@ export function latexObjectPageGaps(
 ): Readonly<Record<number, number>> {
   for (const decoration of decorations) {
     const object = decoration.spec.latexObjectPagination as ObjectPagination | undefined;
-    if (object?.node === node) return object.gaps;
+    if (object && sameObjectStructure(object.node, node)) return object.gaps;
   }
   return {};
 }
@@ -82,6 +191,37 @@ interface CachedLines {
   readonly height: number;
   readonly font: string;
   readonly lines: readonly TextFragment[];
+}
+
+/** Measure continuation rows at the body's column widths, including merged cells. */
+function measureLongTableBand(dom: HTMLElement, kind: "head" | "foot", scale: number): number {
+  const template = dom.querySelector<HTMLTableElement>(`[data-latex-longtable-measure="${kind}"]`);
+  const body = dom.querySelector<HTMLTableElement>(".scient-latex-rich-table-scroll > table");
+  const host = template?.parentElement;
+  if (!template || !body || !host) return 0;
+  const copy = template.cloneNode(true) as HTMLTableElement;
+  const columns = copy.ownerDocument.createElement("colgroup");
+  const firstRow = [...body.querySelectorAll<HTMLTableRowElement>("tr[data-latex-table-row]")].find(
+    (row) => [...row.cells].every((cell) => cell.colSpan === 1),
+  );
+  if (!firstRow) return template.getBoundingClientRect().height / scale;
+  for (const cell of firstRow.cells) {
+    const column = copy.ownerDocument.createElement("col");
+    column.style.width = `${cell.getBoundingClientRect().width / scale}px`;
+    columns.append(column);
+  }
+  copy.prepend(columns);
+  copy.style.width = `${body.getBoundingClientRect().width / scale}px`;
+  copy.style.maxWidth = "none";
+  copy.style.tableLayout = "fixed";
+  copy.style.fontSize = getComputedStyle(body).fontSize;
+  copy.style.lineHeight = getComputedStyle(body).lineHeight;
+  host.append(copy);
+  try {
+    return copy.getBoundingClientRect().height / scale;
+  } finally {
+    copy.remove();
+  }
 }
 
 /** Find line starts in rendered text, including text split by marks or view widgets. */
@@ -186,6 +326,8 @@ function measureDocument(
   const scale = width > 0 ? bounds.width / width : 1;
   if (!Number.isFinite(scale) || scale <= 0) return [];
   const units: MeasuredUnit[] = [];
+  const references = latexEquationReferencesKey.getState(view.state);
+  const chapters = ["report", "book"].includes(references?.documentClass ?? "");
   const computed = getComputedStyle(root);
   const font = `${computed.font}|${computed.textAlign}|${computed.textIndent}|${computed.letterSpacing}`;
   const y = (value: number) => (value - bounds.top) / scale;
@@ -203,9 +345,21 @@ function measureDocument(
       return;
     }
     const rect = dom.getBoundingClientRect();
-    if (node.type.name === "latexScientific") {
+    const breakBefore =
+      (chapters &&
+        ((node.type.name === "heading" && node.attrs.level === 6) ||
+          (node.type.name === "latexRichPreview" && node.attrs.kind === "toc"))) ||
+      (references?.titlePage === true &&
+        node.type.name === "latexRichPreview" &&
+        node.attrs.kind === "title");
+    if (
+      node.type.name === "latexScientific" &&
+      (!node.attrs.layout || (node.attrs.layout.kind === "colorBox" && node.attrs.layout.breakable))
+    ) {
       const firstUnit = units.length;
-      const heading = dom.querySelector<HTMLElement>(".scient-latex-scientific-heading");
+      const heading = dom.querySelector<HTMLElement>(
+        ".scient-latex-scientific-heading, .scient-latex-color-box-title",
+      );
       if (heading) {
         const headingRect = heading.getBoundingClientRect();
         units.push({
@@ -217,7 +371,10 @@ function measureDocument(
       }
       node.forEach((child, offset) => visit(child, position + 1 + offset));
       const lastUnit = units.length - 1;
-      if (dom.dataset.proofEnd === "square" && lastUnit >= firstUnit) {
+      if (
+        (dom.dataset.proofEnd === "square" || node.attrs.layout?.kind === "colorBox") &&
+        lastUnit >= firstUnit
+      ) {
         // Include the generated ending when a proof finishes with a display/list.
         units[lastUnit] = {
           ...units[lastUnit]!,
@@ -243,8 +400,11 @@ function measureDocument(
             position: before,
             top: y(index === 0 ? rect.top : itemRect.top),
             bottom: y(index === items.length - 1 ? rect.bottom : itemRect.bottom),
+            breakBefore: index === 0 && breakBefore,
             keepWithNext:
-              node.attrs.kind === "toc" && item.dataset.level === "1" && index < items.length - 1,
+              node.attrs.kind === "toc" &&
+              item.dataset.level === (chapters ? "0" : "1") &&
+              index < items.length - 1,
             ...(index > 0 ? { objectPart: { index, node } } : {}),
           });
         });
@@ -254,10 +414,12 @@ function measureDocument(
     if (
       node.type.name === "latexRichPreview" &&
       node.attrs.kind === "table" &&
-      node.attrs.sourceMeta?.preserveStructure !== true &&
+      (node.attrs.sourceMeta?.preserveStructure !== true || node.attrs.sourceMeta?.longtable) &&
       (rect.height / scale > contentHeight || node.attrs.tableKind === "long")
     ) {
       const rows = [...dom.querySelectorAll<HTMLElement>("tr[data-latex-table-row]")];
+      const headHeight = measureLongTableBand(dom, "head", scale);
+      const footHeight = measureLongTableBand(dom, "foot", scale);
       if (rows.length > 1) {
         rows.forEach((row, index) => {
           const rowRect = row.getBoundingClientRect();
@@ -266,6 +428,8 @@ function measureDocument(
             top: y(index === 0 ? rect.top : rowRect.top),
             bottom: y(index === rows.length - 1 ? rect.bottom : rowRect.bottom),
             keepWithNext: index === 0 && node.attrs.hasHeader === true,
+            continuationHeaderHeight: index > 0 ? headHeight : 0,
+            continuationFooterHeight: index < rows.length - 1 ? footHeight : 0,
             ...(index > 0 ? { objectPart: { index, node } } : {}),
           });
         });
@@ -307,6 +471,11 @@ function measureDocument(
         top: y(rect.top),
         bottom: y(rect.bottom),
         explicitBreak: node.type.name === "latexRichPreview" && node.attrs.kind === "pagebreak",
+        breakBefore,
+        stretch:
+          node.type.name === "latexRichPreview" &&
+          node.attrs.kind === "spacing" &&
+          node.attrs.environment === "vfill",
         keepWithNext: heading,
       });
       return;
@@ -364,11 +533,33 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
       }),
       apply(transaction, previous) {
         const update = transaction.getMeta(latexPaginationKey) as PaginationUpdate | undefined;
+        let mapped = previous.decorations.map(transaction.mapping, transaction.doc);
+        if (transaction.docChanged && !update) {
+          // Replacing an atom's attributes can drop its node decoration. Restore
+          // only the same object and row/item identities, never a new structure.
+          const objects = previous.decorations.find().flatMap((decoration) => {
+            const object = decoration.spec.latexObjectPagination as ObjectPagination | undefined;
+            if (!object) return [];
+            const position = transaction.mapping.map(decoration.from);
+            const node = transaction.doc.nodeAt(position);
+            return node && sameObjectStructure(object.node, node)
+              ? [
+                  Decoration.node(
+                    position,
+                    position + node.nodeSize,
+                    {},
+                    { latexObjectPagination: { ...object, node } },
+                  ),
+                ]
+              : [];
+          });
+          mapped = mapped.remove(
+            mapped.find().filter((decoration) => decoration.spec.latexObjectPagination),
+          );
+          mapped = mapped.add(transaction.doc, objects);
+        }
         return {
-          decorations:
-            update && "decorations" in update
-              ? update.decorations
-              : previous.decorations.map(transaction.mapping, transaction.doc),
+          decorations: update && "decorations" in update ? update.decorations : mapped,
           dimensions: update && "dimensions" in update ? update.dimensions : previous.dimensions,
           revision: previous.revision + (update && "dimensions" in update ? 1 : 0),
           pages:
@@ -450,6 +641,14 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
           // Hiding only our widgets exposes natural flow without replacing the
           // editable DOM or touching its native selection and composition.
           root.dataset.latexMeasuring = "true";
+          root.dataset.latexColumnMeasuring = "true";
+          const columnBreaks = latexInlineColumnBreakPositions(view);
+          delete root.dataset.latexColumnMeasuring;
+          const previousColumnBreaks = state.decorations
+            .find(0, view.state.doc.content.size, (spec) => spec.latexColumnBreak === true)
+            .map((decoration) => decoration.from);
+          const columnBreaksChanged =
+            JSON.stringify(previousColumnBreaks) !== JSON.stringify(columnBreaks);
           const units = measureDocument(view, lineCache, state.dimensions);
           const rootStyle = getComputedStyle(root);
           const rootBox = root.getBoundingClientRect();
@@ -512,18 +711,31 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
             list.push(note);
             notesByPage.set(page, list);
           }
-          const objects = new Map<number, { node: DocumentNode; gaps: Record<number, number> }>();
+          const objects = new Map<
+            number,
+            {
+              node: DocumentNode;
+              gaps: Record<number, number>;
+              continuation?: { head: number; foot: number };
+            }
+          >();
           const gaps = plan.placements.flatMap((placement, index) => {
             const unit = units[index]!;
             if (unit.objectPart) {
               if (placement.offset > 0.5) {
-                const object: { node: DocumentNode; gaps: Record<number, number> } = objects.get(
-                  unit.position,
-                ) ?? {
+                const object: {
+                  node: DocumentNode;
+                  gaps: Record<number, number>;
+                  continuation?: { head: number; foot: number };
+                } = objects.get(unit.position) ?? {
                   node: unit.objectPart.node,
                   gaps: {},
                 };
                 object.gaps[unit.objectPart.index] = Math.round(placement.offset * 100) / 100;
+                object.continuation = {
+                  head: unit.continuationHeaderHeight ?? 0,
+                  foot: units[index - 1]?.continuationFooterHeight ?? 0,
+                };
                 objects.set(unit.position, object);
               }
               return [];
@@ -540,8 +752,9 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
           });
           delete root.dataset.latexMeasuring;
           const nextSignature = JSON.stringify([
+            columnBreaks,
             gaps,
-            [...objects].map(([position, object]) => [position, object.gaps]),
+            [...objects].map(([position, object]) => [position, object.gaps, object.continuation]),
             plan.placements.map((placement, index) => [units[index]!.position, placement.page]),
             [...notesByPage].map(([page, items]) => [
               page,
@@ -559,6 +772,24 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
                     page: placement.page,
                   })),
                   decorations: DecorationSet.create(view.state.doc, [
+                    ...columnBreaks.map((position) =>
+                      Decoration.widget(
+                        position,
+                        () => {
+                          const gap = document.createElement("span");
+                          gap.className = "scient-latex-column-break-gap";
+                          gap.contentEditable = "false";
+                          gap.setAttribute("aria-hidden", "true");
+                          return gap;
+                        },
+                        {
+                          side: -1,
+                          key: `column:${position}`,
+                          ignoreSelection: true,
+                          latexColumnBreak: true,
+                        },
+                      ),
+                    ),
                     ...[...notesByPage].map(([page, items]) =>
                       Decoration.widget(
                         view.state.doc.content.size,
@@ -633,6 +864,7 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
                 } satisfies PaginationUpdate)
                 .setMeta("addToHistory", false),
             );
+            if (columnBreaksChanged) schedule();
           }
           root.style.setProperty(
             "--scient-latex-document-height",
@@ -656,6 +888,7 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
             else if (box.top < visible.top + 20) viewport.scrollTop += box.top - visible.top - 20;
           }
         } finally {
+          delete root.dataset.latexColumnMeasuring;
           delete root.dataset.latexMeasuring;
           measuring = false;
         }

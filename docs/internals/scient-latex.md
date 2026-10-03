@@ -167,19 +167,23 @@ is not a failed build. What that leaves behind — a binding still marked
 settle: `GeneratedDocumentStore` reconciles interrupted productions at startup,
 before it is published to any caller, so no reader ever observes one.
 
-**The engine gate.** `latexEngineGate.ts` reads the root document's head
-before any process starts and refuses, with one plain sentence, a document that
-asks for an engine this lane does not drive. `latexmk -pdf` drives pdfLaTeX,
-and handing it a XeLaTeX document produces pages of macro errors no reader can
-map back to "wrong engine"; saying so up front is the honest alternative. Only
-the `latexmk` path is gated — Tectonic's engine is XeTeX-based, so those
-documents build fine there and `compileAndPublish` skips the check entirely
-when that is the resolved toolchain.
+**Compiler selection and the engine gate.** `latexEngineGate.ts` reads the root
+document's bounded head and included preamble heads before a compiler starts.
+`selectLatexBuildEngine` honors a `% !TEX program = lualatex`, `xelatex`, or
+`pdflatex` directive, including TeXShop's `TS-program` spelling. A declaration
+in the root takes precedence over declarations in included preambles. Only
+fixed compiler names are accepted; source text never supplies executable paths
+or additional command arguments.
 
-Two findings, deliberately unequal in strength. A `% !TEX program = xelatex`
-magic comment (or TeXShop's `TS-program` spelling) is an author's declaration
-of intent, and it refuses unconditionally. A load of `fontspec` or
-`unicode-math` is only an inference, and it is suppressed whenever the document
+`latexCommand.ts` maps the selection to `latexmk -lualatex`, `-xelatex`, or
+`-pdf`. The existing subprocess environment, shell-escape restriction, isolated
+output directory, recorder, retries, diagnostics and publication path remain in
+use. The selected compiler must exist in the resolved distribution. Tectonic
+keeps its XeTeX-based invocation and rejects explicit LuaLaTeX/pdfLaTeX requests.
+
+Without a directive, latexmk defaults to pdfLaTeX. A load of `fontspec` or
+`unicode-math` prompts the author to select LuaLaTeX or XeLaTeX. This package
+inference is suppressed whenever the document
 shows an engine-conditional idiom: a load of `iftex`, `ifxetex` or `ifluatex`,
 or a use of `\ifPDFTeX`/`\ifxetex`/`\ifluatex`/`\iftutex` in any of the casings
 those get written in. That suppression exists because Pandoc's default template

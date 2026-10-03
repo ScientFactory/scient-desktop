@@ -1,9 +1,15 @@
 import type { Node as DocumentNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
-import type { EditorView } from "@tiptap/pm/view";
+import {
+  compiledBibliographyItems,
+  type CompiledBibliographyItem,
+} from "./latexCompiledBibliography";
+import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
+import { latexCounterLabel } from "./latexDocumentStructure";
 import { projectMathNumbering } from "./latexMathNumbering";
 import { latexWithoutComments } from "./latexPackages";
 import { latexRomanNumber } from "./latexVisualDocument";
+import { algorithmLineLayout } from "./latexAlgorithm";
 import {
   latexEnvironmentDeclarations,
   type LatexEnvironmentDeclaration,
@@ -18,7 +24,15 @@ interface EquationTarget {
   position: number;
   row: number;
   number: string | null;
-  kind: "equation" | "statement" | "table" | "figure" | "heading" | "anchor" | "bibliography";
+  kind:
+    | "equation"
+    | "statement"
+    | "table"
+    | "figure"
+    | "algorithm"
+    | "heading"
+    | "anchor"
+    | "bibliography";
   title?: string;
   panelIndex?: number;
   panelNumber?: string | null;
@@ -35,16 +49,31 @@ interface StatementPresentation {
 }
 
 interface EquationReferences {
+  documentClass: string;
+  titlePage: boolean;
+  headings: Map<number, { number: string | null; chapterName: string }>;
+  floatContents: {
+    position: number;
+    level: number;
+    number: string | null;
+    title: string;
+    kind: "figure" | "table";
+  }[];
   equations: Map<number, EquationRow[]>;
   labels: Map<string, EquationTarget>;
   statements: Map<number, StatementPresentation>;
   tables: Map<number, { number: string | null }>;
   figures: Map<number, { number: string | null; panels: (string | null)[] }>;
+  algorithms: Map<number, { number: string | null }>;
+  algorithmLines: Map<number, { indent: number; number: string }>;
   anchors: Map<string, EquationTarget>;
   contents: { position: number; level: number; number: string | null; title: string }[];
   footnotes: Map<number, { number: string | null; body: string }>;
   citations: Map<string, EquationTarget>;
-  bibliographies: Map<number, { title: string; labels: (string | null)[] }>;
+  bibliographies: Map<
+    number,
+    { title: string; labels: (string | null)[]; items?: CompiledBibliographyItem[] | null }
+  >;
   manualCitations: boolean;
   environments: LatexEnvironmentDeclaration[];
   defaultProofEnd: boolean;
@@ -70,15 +99,17 @@ function clearHighlight(view: EditorView) {
 export function navigateToEquation(view: EditorView, target: EquationTarget): void {
   const node = view.nodeDOM(target.position);
   const selector =
-    target.kind === "statement"
-      ? ".scient-latex-scientific-structure"
-      : target.kind === "table"
-        ? '.scient-latex-rich-preview[data-kind="table"]'
-        : target.kind === "figure"
-          ? ".scient-latex-figure-preview"
-          : target.kind === "bibliography"
-            ? ".scient-latex-bibliography-preview"
-            : ".scient-latex-visual-display-math";
+    target.kind === "algorithm"
+      ? ".scient-latex-algorithm"
+      : target.kind === "statement"
+        ? ".scient-latex-scientific-structure"
+        : target.kind === "table"
+          ? '.scient-latex-rich-preview[data-kind="table"]'
+          : target.kind === "figure"
+            ? ".scient-latex-figure-preview"
+            : target.kind === "bibliography"
+              ? ".scient-latex-bibliography-preview"
+              : ".scient-latex-visual-display-math";
   const direct = target.kind === "heading" || target.kind === "anchor";
   const equation =
     node instanceof HTMLElement
@@ -130,7 +161,11 @@ export function navigateToFootnote(view: EditorView, position: number, toNote = 
 }
 
 /** Derived presentation only: numbering never becomes a source-editing attribute. */
-function equationReferences(doc: DocumentNode, source: string): EquationReferences {
+function equationReferences(
+  doc: DocumentNode,
+  source: string,
+  compiled: CompiledBibliographyItem[] | null,
+): EquationReferences {
   const clean = latexWithoutComments(source);
   const begin = clean.indexOf("\\begin{document}");
   const preamble = begin < 0 ? "" : clean.slice(0, begin);
@@ -144,17 +179,26 @@ function equationReferences(doc: DocumentNode, source: string): EquationReferenc
     !(documentClass === "article" && scope === "chapter") &&
     scopeCommands.length <= 1 &&
     [...preamble.matchAll(/\\numberwithin\b/gu)].length === scopeCommands.length &&
-    !/\\(?:setcounter|addtocounter|counterwithin|counterwithout|theequation|catcode|appendix|frontmatter|backmatter|includeonly)\b|\\(?:renewcommand|def)\s*\{?\\the(?:equation|section|chapter)\b|\\newtheorem\s*\{[^{}]+\}\s*\[equation\]|showonlyrefs/u.test(
+    !/\\(?:setcounter|addtocounter|counterwithin|counterwithout|theequation|catcode|frontmatter|backmatter|includeonly)\b|\\(?:renewcommand|def)\s*\{?\\the(?:equation|section|chapter)\b|\\newtheorem\s*\{[^{}]+\}\s*\[equation\]|showonlyrefs/u.test(
       clean,
     ) &&
     !/\\numberwithin\b/u.test(begin < 0 ? clean : clean.slice(begin));
   const declarations = latexEnvironmentDeclarations(source);
   const result: EquationReferences = {
+    documentClass: documentClass ?? "article",
+    titlePage:
+      /\\documentclass\s*\[[^\]]*\btitlepage\b/u.test(preamble) ||
+      (["report", "book"].includes(documentClass ?? "") &&
+        !/\\documentclass\s*\[[^\]]*\bnotitlepage\b/u.test(preamble)),
+    headings: new Map(),
+    floatContents: [],
     equations: new Map(),
     labels: new Map(),
     statements: new Map(),
     tables: new Map(),
     figures: new Map(),
+    algorithms: new Map(),
+    algorithmLines: new Map(),
     anchors: new Map(),
     contents: [],
     footnotes: new Map(),
@@ -190,7 +234,7 @@ function equationReferences(doc: DocumentNode, source: string): EquationReferenc
   let statementsReliable =
     !!documentClass &&
     ["article", "book", "report"].includes(documentClass) &&
-    !/\\(?:setcounter|addtocounter|counterwithin|counterwithout|numberwithin|catcode|appendix|frontmatter|backmatter|includeonly|newtheoremstyle)\b|\\(?:renewcommand|def|gdef|xdef)\s*\*?\s*\{?\\the[A-Za-z]+/u.test(
+    !/\\(?:setcounter|addtocounter|counterwithin|counterwithout|numberwithin|catcode|frontmatter|backmatter|includeonly|newtheoremstyle)\b|\\(?:renewcommand|def|gdef|xdef)\s*\*?\s*\{?\\the[A-Za-z]+/u.test(
       clean,
     ) &&
     !/\\(?:newtheorem|theoremstyle|newenvironment|renewenvironment)\b/u.test(
@@ -199,19 +243,27 @@ function equationReferences(doc: DocumentNode, source: string): EquationReferenc
   let counter = 0;
   let tableCounter = 0;
   let figureCounter = 0;
+  let algorithmCounter = 0;
+  let algorithmsReliable =
+    !/\\(?:setcounter|addtocounter|counterwithin|counterwithout|numberwithin|catcode)\b|\\(?:renewcommand|def|gdef|xdef)\s*\*?\s*\{?\\thealgorithm\b|\\usepackage\s*\[[^\]]*\]\s*\{algorithm\}/u.test(
+      clean,
+    );
   let figuresReliable =
     !!documentClass &&
     ["article", "book", "report"].includes(documentClass) &&
-    !/\\(?:setcounter|addtocounter|counterwithin|counterwithout|catcode|appendix|frontmatter|backmatter|includeonly|captionof|captionsetup|subcaptionsetup|thefigure|thesubfigure)\b|\\(?:renewcommand|def|gdef|xdef)\s*\*?\s*\{?\\(?:thefigure|thesubfigure|p@subfigure|thechapter)\b|\\numberwithin\s*\{(?:figure|subfigure)\}/u.test(
+    !/\\(?:setcounter|addtocounter|counterwithin|counterwithout|catcode|frontmatter|backmatter|includeonly|captionof|captionsetup|subcaptionsetup|thefigure|thesubfigure)\b|\\(?:renewcommand|def|gdef|xdef)\s*\*?\s*\{?\\(?:thefigure|thesubfigure|p@subfigure|thechapter)\b|\\numberwithin\s*\{(?:figure|subfigure)\}/u.test(
       clean,
     );
   let tablesReliable =
     !!documentClass &&
     ["article", "book", "report"].includes(documentClass) &&
-    !/\\(?:setcounter|addtocounter|counterwithin|counterwithout|catcode|appendix|frontmatter|backmatter|includeonly|captionof|captionsetup|thetable)\b|\\(?:renewcommand|def|gdef|xdef)\s*\*?\s*\{?\\the(?:table|chapter)\b|\\numberwithin\s*\{table\}/u.test(
+    !/\\(?:setcounter|addtocounter|counterwithin|counterwithout|catcode|frontmatter|backmatter|includeonly|captionof|captionsetup)\b|\\(?:renewcommand|def|gdef|xdef)\s*\*?\s*\{?\\the(?:table|chapter)\b|\\numberwithin\s*\{table\}/u.test(
       clean,
     );
   let chapter = 0;
+  let appendix = false;
+  const chapterLabel = () => latexCounterLabel(chapter, appendix ? "Alph" : "arabic");
+  const chapterPrefix = () => (documentClass === "article" ? "" : `${chapterLabel()}.`);
   let section = 0;
   let subsection = 0;
   let subsubsection = 0;
@@ -220,7 +272,7 @@ function equationReferences(doc: DocumentNode, source: string): EquationReferenc
   let headingsReliable =
     !!documentClass &&
     ["article", "book", "report"].includes(documentClass) &&
-    !/\\(?:setcounter|addtocounter|counterwithin|counterwithout|catcode|appendix|frontmatter|backmatter|includeonly)\b|\\(?:renewcommand|def)\s*\{?\\the(?:section|subsection|subsubsection|chapter)\b/u.test(
+    !/\\(?:setcounter|addtocounter|counterwithin|counterwithout|catcode|frontmatter|backmatter|includeonly)\b|\\(?:renewcommand|def)\s*\{?\\the(?:section|subsection|subsubsection|chapter)\b/u.test(
       clean,
     );
   let footnotesReliable =
@@ -246,12 +298,26 @@ function equationReferences(doc: DocumentNode, source: string): EquationReferenc
     return title;
   };
   doc.descendants((node, position) => {
+    if (node.type.name === "latexRichPreview" && node.attrs.kind === "documentCommand") {
+      if (node.attrs.environment === "appendix") {
+        appendix = true;
+        chapter = section = subsection = subsubsection = 0;
+      }
+      return false;
+    }
     if (node.type.name === "latexRichPreview" && node.attrs.kind === "bibliography") {
       result.manualCitations ||= citationsReliable;
-      const items = Array.isArray(node.attrs.items) ? node.attrs.items : [];
-      const entries = Array.isArray(node.attrs.sourceMeta?.entries)
-        ? (node.attrs.sourceMeta.entries as { key: string; displayLabel: string | null }[])
-        : [];
+      const external = node.attrs.sourceMeta?.externalBibliography === true;
+      const items = external
+        ? (compiled ?? [])
+        : Array.isArray(node.attrs.items)
+          ? node.attrs.items
+          : [];
+      const entries = external
+        ? (compiled ?? []).map((entry) => ({ key: entry.label, displayLabel: entry.displayLabel }))
+        : Array.isArray(node.attrs.sourceMeta?.entries)
+          ? (node.attrs.sourceMeta.entries as { key: string; displayLabel: string | null }[])
+          : [];
       let counter = 0;
       const labels = items.map((item: { label?: unknown }, row: number) => {
         const key = String(item.label ?? "");
@@ -272,6 +338,7 @@ function equationReferences(doc: DocumentNode, source: string): EquationReferenc
         return number;
       });
       result.bibliographies.set(position, {
+        ...(external ? { items: compiled } : {}),
         title:
           documentClass === "book" || documentClass === "report" ? "Bibliography" : "References",
         labels,
@@ -346,20 +413,21 @@ function equationReferences(doc: DocumentNode, source: string): EquationReferenc
       }
       const local =
         level === 6
-          ? String(chapter)
-          : `${documentClass === "article" || chapter === 0 ? "" : `${chapter}.`}${section}${level >= 2 ? `.${subsection}` : ""}${level >= 3 ? `.${subsubsection}` : ""}`;
+          ? chapterLabel()
+          : `${chapterPrefix()}${latexCounterLabel(section, appendix && documentClass === "article" ? "Alph" : "arabic")}${level >= 2 ? `.${subsection}` : ""}${level >= 3 ? `.${subsubsection}` : ""}`;
       const number =
         headingsReliable && node.attrs.unnumbered !== true && (level <= 3 || level === 6)
           ? local
           : null;
       const title = inlineTitle(node);
+      result.headings.set(position, { number, chapterName: appendix ? "Appendix" : "Chapter" });
       if (node.attrs.referenceLabel)
         addLabel(String(node.attrs.referenceLabel), {
           position,
           row: 0,
           number,
           kind: "heading",
-          title: level === 6 ? "Chapter" : "Section",
+          title: level === 6 ? (appendix ? "Appendix" : "Chapter") : "Section",
         });
       if (node.attrs.unnumbered !== true && (level <= 3 || level === 6))
         result.contents.push({ position, level: level === 6 ? 0 : level, number, title });
@@ -370,9 +438,31 @@ function equationReferences(doc: DocumentNode, source: string): EquationReferenc
       statementsReliable = false;
       tablesReliable = false;
       figuresReliable = false;
+      algorithmsReliable = false;
       headingsReliable = false;
       footnotesReliable = false;
       return false;
+    }
+    if (node.type.name === "latexScientific" && node.attrs.layout?.kind === "algorithm") {
+      if (node.attrs.layout.captioned) algorithmCounter++;
+      const number =
+        algorithmsReliable && node.attrs.layout.captioned ? String(algorithmCounter) : null;
+      result.algorithms.set(position, { number });
+      const names: string[] = [];
+      node.forEach((line) => names.push(String(line.attrs.command)));
+      const lines = algorithmLineLayout(names, Number(node.attrs.layout.interval));
+      if (lines)
+        node.forEach((_line, offset, index) =>
+          result.algorithmLines.set(position + 1 + offset, lines[index]!),
+        );
+      if (node.attrs.layout.label)
+        addLabel(String(node.attrs.layout.label), {
+          position,
+          row: 0,
+          number,
+          kind: "algorithm",
+          title: "Algorithm",
+        });
     }
     if (
       node.type.name === "latexRichPreview" &&
@@ -385,10 +475,7 @@ function equationReferences(doc: DocumentNode, source: string): EquationReferenc
         (node.attrs.kind === "figure" && String(node.attrs.caption ?? "") !== "");
       if (captioned) figureCounter++;
       if (/\\caption\s*\*/u.test(raw)) figuresReliable = false;
-      const number =
-        captioned && figuresReliable
-          ? `${documentClass === "article" || chapter === 0 ? "" : `${chapter}.`}${figureCounter}`
-          : null;
+      const number = captioned && figuresReliable ? `${chapterPrefix()}${figureCounter}` : null;
       const label = String(node.attrs.label ?? "");
       const captionAt = raw.indexOf("\\caption");
       const labelAt = raw.indexOf("\\label");
@@ -424,6 +511,14 @@ function equationReferences(doc: DocumentNode, source: string): EquationReferenc
         });
       }
       result.figures.set(position, { number, panels });
+      if (captioned)
+        result.floatContents.push({
+          position,
+          level: 1,
+          number,
+          title: String(node.attrs.caption ?? ""),
+          kind: "figure",
+        });
       return false;
     }
     if (node.type.name === "latexRichPreview" && node.attrs.kind === "table") {
@@ -433,14 +528,22 @@ function equationReferences(doc: DocumentNode, source: string): EquationReferenc
         (node.attrs.sourceMeta?.hasFloat === true && String(node.attrs.caption ?? "") !== "");
       const captions = [...raw.matchAll(/\\caption\b/gu)];
       const numbered =
-        hasCaption && (/\\begin\{table\*?\}/u.test(raw) || node.attrs.tableKind === "long");
+        hasCaption &&
+        (/\\begin\{(?:table\*?|longtable)\}/u.test(raw) ||
+          node.attrs.tableKind === "long" ||
+          node.attrs.sourceMeta?.longtable != null);
       if (numbered) tableCounter++;
       if (captions.length > 1 || /\\caption\s*\*/u.test(raw)) tablesReliable = false;
-      const number =
-        numbered && tablesReliable
-          ? `${documentClass === "article" || chapter === 0 ? "" : `${chapter}.`}${tableCounter}`
-          : null;
+      const number = numbered && tablesReliable ? `${chapterPrefix()}${tableCounter}` : null;
       result.tables.set(position, { number });
+      if (numbered)
+        result.floatContents.push({
+          position,
+          level: 1,
+          number,
+          title: String(node.attrs.caption ?? ""),
+          kind: "table",
+        });
       const label = String(node.attrs.label ?? "");
       const captionAt = captions[0]?.index;
       const labelAt = raw.indexOf("\\label");
@@ -455,16 +558,16 @@ function equationReferences(doc: DocumentNode, source: string): EquationReferenc
         addLabel(label, { position, row: 0, number, kind: "table", title: "Table" });
       return false;
     }
-    if (node.type.name === "latexScientific") {
+    if (node.type.name === "latexScientific" && !node.attrs.layout) {
       const environment = String(node.attrs.environment);
       const declaration = declarations.environments.get(environment);
       let number: string | null = null;
       if (declaration?.counter) {
         const counterScope =
           declaration.within === "chapter"
-            ? String(chapter)
+            ? chapterLabel()
             : declaration.within === "section"
-              ? `${documentClass === "article" ? "" : `${chapter}.`}${section}`
+              ? `${chapterPrefix()}${latexCounterLabel(section, appendix && documentClass === "article" ? "Alph" : "arabic")}`
               : "";
         const current = statementCounters.get(declaration.counter);
         const value = current?.scope === counterScope ? current.value + 1 : 1;
@@ -527,14 +630,11 @@ function equationReferences(doc: DocumentNode, source: string): EquationReferenc
         : (projected?.commands ?? [[]]);
     if (!projected || (environment === "equation" && commands.length !== 1)) reliable = false;
     const numbered = /^(?:equation|align|gather)$/u.test(environment);
-    const chapterPrefix = chapter > 0 ? `${chapter}.` : "";
     const prefix =
       scope === "chapter"
-        ? scopeCommands.length
-          ? `${chapter}.`
-          : chapterPrefix
+        ? chapterPrefix()
         : scope === "section"
-          ? `${documentClass === "article" ? "" : chapterPrefix}${section}.`
+          ? `${chapterPrefix()}${latexCounterLabel(section, appendix && documentClass === "article" ? "Alph" : "arabic")}.`
           : "";
     const rows = commands.map((row, rowIndex) => {
       const tags = row.filter((command) => /^\\tag\b/u.test(command));
@@ -578,16 +678,56 @@ function equationReferences(doc: DocumentNode, source: string): EquationReferenc
   return result;
 }
 
-export function latexEquationReferences(source: () => string) {
+export function latexEquationReferences(
+  source: () => string,
+  compiledSource: () => string | null = () => null,
+) {
+  let cachedSource: string | null | undefined;
+  let compiled: CompiledBibliographyItem[] | null = null;
+  const bibliography = () => {
+    const value = compiledSource();
+    if (value !== cachedSource) {
+      cachedSource = value;
+      compiled = compiledBibliographyItems(value);
+    }
+    return compiled;
+  };
+  let decoratedDocument: DocumentNode | undefined;
+  let decoratedReferences: EquationReferences | undefined;
+  let headingDecorations = DecorationSet.empty;
   return new Plugin({
     key: latexEquationReferencesKey,
     state: {
-      init: (_config, state) => equationReferences(state.doc, source()),
+      init: (_config, state) => equationReferences(state.doc, source(), bibliography()),
       apply: (transaction, previous, _oldState, state) =>
         transaction.docChanged || transaction.getMeta(latexEquationReferencesKey)
-          ? equationReferences(state.doc, source())
+          ? equationReferences(state.doc, source(), bibliography())
           : previous,
     },
     view: (view) => ({ destroy: () => clearHighlight(view) }),
+    props: {
+      decorations(state) {
+        const references = latexEquationReferencesKey.getState(state);
+        if (decoratedDocument === state.doc && decoratedReferences === references)
+          return headingDecorations;
+        headingDecorations = DecorationSet.create(
+          state.doc,
+          [...(references?.headings ?? [])].flatMap(([position, heading]) => {
+            const node = state.doc.nodeAt(position);
+            return node
+              ? [
+                  Decoration.node(position, position + node.nodeSize, {
+                    "data-latex-heading-number": heading.number ?? "",
+                    "data-latex-chapter-name": heading.chapterName,
+                  }),
+                ]
+              : [];
+          }),
+        );
+        decoratedDocument = state.doc;
+        decoratedReferences = references;
+        return headingDecorations;
+      },
+    },
   });
 }
