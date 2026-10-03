@@ -97,7 +97,7 @@ not a visual or native interaction sweep; size varies by window.
 | Insert › Citation | Unavailable | Modal reference picker | Pending: nonmodal source picker panel. |
 | Insert › Cross-reference | Unavailable | Same modal reference picker | Pending: anchored picker or nonmodal panel. |
 | Insert › More › Bibliography | Unavailable | Modal bibliography form | Pending: compact popover or nonmodal panel. |
-| Document › Document settings | Unavailable | Nonmodal popover beside Document, with the original card layout and controls (512px, capped to viewport) | **Fixed in local pilot; code not pushed.** Original sizes, spacing, labels and help restored at the owner's request; redesign deferred. No backdrop. |
+| Document › Document settings | Unavailable | Nonmodal popover beside Document (512px, capped to viewport); original control style | **Fixed in local pilot; code not pushed.** No repeated title or whole-document description. Paper size and Orientation side by side; Top, Right, Left, Bottom in one row under Margin. Narrow margin fields; margin help removed. No backdrop. |
 | Title & authors: missing title or custom formatting fallback | Unavailable | Modal Document title guidance | Pending: inline guidance or compact popover. Ordinary title fields are inline, not modal. |
 | Keyboard shortcuts (Markdown More / LaTeX Document) | Large modal shortcut settings | Same large modal shortcut settings | Pending: nonmodal shortcuts panel. |
 | Keyboard shortcuts › My shortcut reference | Nested modal reference sheet | Same nested modal reference sheet | Pending: view within shortcuts panel. |
