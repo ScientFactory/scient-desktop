@@ -1984,6 +1984,10 @@ export default function FilePreviewPanel({
             >
               <WrapTextIcon className="size-3.5" />
             </FileSurfaceAction>
+          ) : canToggleRenderedForSurface ? (
+            // The rich view has no word wrap; its place stays, so Open in and
+            // the buttons after it do not move when the view changes.
+            <span aria-hidden="true" className="h-8 w-8 shrink-0 sm:h-7 sm:w-7" />
           ) : null}
           {canToggleRenderedForSurface ? (
             <FileSurfaceAction
