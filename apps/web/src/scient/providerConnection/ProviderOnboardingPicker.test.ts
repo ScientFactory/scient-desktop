@@ -40,7 +40,7 @@ describe("readyProviderDefaultModel", () => {
         { slug: "openai-codex/gpt-6.1-sol", name: "Sol", isCustom: false, capabilities: null },
       ],
     });
-    const scient = { ...provider, driverKind: ProviderDriverKind.make("scient") };
+    const scient = { ...provider!, driverKind: ProviderDriverKind.make("scient") };
     expect(readyProviderModelSelection(scient)?.model).toBe("openai-codex/gpt-6.1-sol");
     expect(readyProviderModelSelection(scient, null, ["openai-codex/gpt-6.1-sol"])?.model).toBe(
       "openai-codex/gpt-6-astra",
