@@ -1714,8 +1714,8 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Ran 2 commands");
-    expect(markup).toContain("lucide-terminal");
-    expect(markup).not.toContain("lucide-x");
+    expect(markup).toContain("lucide-square-terminal-lowered");
+    expect(markup).not.toContain("lucide-circle-x");
     expect(markup).not.toContain("text-destructive");
     // The failure stays discoverable for screen readers.
     expect(markup).toContain("tool call failed");
@@ -2034,8 +2034,56 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Thinking");
-    expect(markup).toContain("lucide-brain");
+    expect(markup).toContain("lucide-cloud");
     expect(markup).toContain('data-timeline-row-id="live-activity-row"');
+  });
+
+  it.each([
+    [
+      "a command that lists files",
+      { itemType: "command_execution", command: "ls -la src" },
+      "lucide-folder-open",
+    ],
+    [
+      "a command that fetches from the web",
+      { itemType: "command_execution", command: "curl -s https://example.com" },
+      "lucide-globe",
+    ],
+    ["an image view", { itemType: "image_view", detail: "chart.png" }, "lucide-image"],
+    [
+      "a Scient skill tool",
+      { itemType: "mcp_tool_call", toolTitle: "mcp__t3-code__scient_skill_load" },
+      "lucide-layers",
+    ],
+    [
+      "an approval",
+      { sourceActivityKind: "approval.requested", tone: "info" },
+      "lucide-shield-check",
+    ],
+  ] as const)("marks %s with its trace icon", (_name, fields, iconClass) => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-trace-icon",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "work-trace-icon",
+              createdAt: MESSAGE_CREATED_AT,
+              toolCallId: "call-trace-icon",
+              label: "Tool call",
+              tone: "tool",
+              toolLifecycleStatus: "completed",
+              ...fields,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toMatch(new RegExp(`\\b${iconClass}[" ]`));
   });
 
   it("marks an agent's own tool with the one-colour Scient symbol", () => {
@@ -2102,7 +2150,7 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Running pnpm");
-    expect(markup).toContain("lucide-terminal");
+    expect(markup).toContain("lucide-square-terminal-lowered");
     expect(markup).not.toContain("Ran pnpm");
     expect(markup).not.toContain("Thinking");
     expect(markup).not.toContain('data-timeline-row-kind="thinking"');
