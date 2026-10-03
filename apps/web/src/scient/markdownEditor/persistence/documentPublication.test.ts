@@ -29,6 +29,7 @@ const initial: ProjectReadFileResult = {
 function setup() {
   let disk = { source: "A", revision: "rA" };
   let fail: unknown = null;
+  let loseNextAcknowledgement = false;
   const registry = new MarkdownPersistenceRegistry({
     debounceMs: 250,
     reconcile: documentReconcileStrategy,
@@ -37,10 +38,15 @@ function setup() {
         if (fail !== null) throw fail;
         if (intent.expectedRevision !== disk.revision) throw "conflict";
         disk = { source: intent.source, revision: `r${intent.source}` };
+        if (loseNextAcknowledgement) {
+          loseNextAcknowledgement = false;
+          throw "lost";
+        }
         return { revision: disk.revision };
       },
       read: async () => disk,
-      classifyFailure: (error) => (error === "conflict" ? "conflict" : "terminal"),
+      classifyFailure: (error) =>
+        error === "conflict" ? "conflict" : error === "lost" ? "transient" : "terminal",
       subscribe: () => () => {},
       project: () => {},
     }),
@@ -57,6 +63,9 @@ function setup() {
     },
     failWith(error: unknown) {
       fail = error;
+    },
+    loseNextAcknowledgement() {
+      loseNextAcknowledgement = true;
     },
   };
 }
@@ -78,6 +87,21 @@ describe("onDocumentSaved", () => {
     expect(await h.lease.flushNow()).toBe(true);
     expect(h.saved).toHaveBeenCalledTimes(2);
     expect(h.saved).toHaveBeenLastCalledWith({ source: "C", revision: "rC" });
+  });
+
+  it("reports a save whose acknowledgement was lost once a read finds it on disk", async () => {
+    const h = setup();
+    h.loseNextAcknowledgement();
+    h.lease.change("B", 0);
+    const flushed = h.lease.flushNow();
+    await vi.runAllTimersAsync();
+    expect(await flushed).toBe(true);
+    expect(h.lease.getSnapshot()).toMatchObject({
+      baselineSource: "B",
+      baselineRevision: "rB",
+      pending: false,
+    });
+    expect(h.saved).toHaveBeenCalledExactlyOnceWith({ source: "B", revision: "rB" });
   });
 
   it("stays silent when an outside change is adopted", async () => {
