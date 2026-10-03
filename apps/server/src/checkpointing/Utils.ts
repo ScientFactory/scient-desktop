@@ -9,6 +9,7 @@ export function checkpointRefForThreadTurn(threadId: ThreadId, turnCount: number
   );
 }
 
+// SCIENT-FORK:START — also used by the V1 checkpoint and provider-command reactors.
 export function resolveThreadWorkspaceCwd(input: {
   readonly thread: {
     readonly projectId: ProjectId | null;
@@ -31,3 +32,4 @@ export function resolveThreadWorkspaceCwd(input: {
 
   return input.projects.find((project) => project.id === input.thread.projectId)?.workspaceRoot;
 }
+// SCIENT-FORK:END

@@ -22,8 +22,8 @@ import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Lay
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
-import * as ThreadBackgroundLiveness from "../../orchestration/ThreadBackgroundLiveness.ts";
-import * as ThreadPlanProgress from "../../orchestration/ThreadPlanProgress.ts";
+import * as ThreadBackgroundLiveness from "../../orchestration-v2/ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "../../orchestration-v2/ThreadPlanProgress.ts";
 import { OrchestrationEngineLive } from "../../orchestration/Layers/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "../../orchestration/Layers/ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "../../orchestration/Layers/ProjectionSnapshotQuery.ts";

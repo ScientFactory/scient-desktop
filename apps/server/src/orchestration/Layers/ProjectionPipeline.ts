@@ -68,8 +68,8 @@ import {
 import {
   SCIENT_FORK_LINEAGE_PROJECTOR_NAME,
   applyScientThreadLineageProjection,
-} from "../scient-fork/lineageProjection.ts";
-import { readInheritedTurnIds } from "../scient-fork/importRepository.ts";
+} from "../../orchestration-v2/scient-fork/lineageProjection.ts";
+import { readInheritedTurnIds } from "../../orchestration-v2/scient-fork/importRepository.ts";
 // SCIENT-FORK:END
 
 export const ORCHESTRATION_PROJECTOR_NAMES = {

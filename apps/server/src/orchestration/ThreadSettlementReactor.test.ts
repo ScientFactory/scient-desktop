@@ -1,5 +1,8 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  CommandId,
+  MessageId,
+  ProviderSessionId,
   EventId,
   ProjectId,
   ProviderInstanceId,
@@ -41,7 +44,7 @@ import {
 } from "../pullRequest/PullRequestService.ts";
 import { ServerActivation } from "../serverActivation.ts";
 import { ServerSettingsService, customModelsTestMethods } from "../serverSettings.ts";
-import { OrchestrationCommandInvariantError } from "./Errors.ts";
+import { OrchestrationCommandInvariantError } from "../orchestration-v2/Errors.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./Layers/ProjectionSnapshotQuery.ts";
 import {
   OrchestrationEngineService,
@@ -51,8 +54,8 @@ import {
   ProjectionSnapshotQuery,
   type ProjectionSnapshotQueryShape,
 } from "./Services/ProjectionSnapshotQuery.ts";
-import * as ThreadBackgroundLiveness from "./ThreadBackgroundLiveness.ts";
-import * as ThreadPlanProgress from "./ThreadPlanProgress.ts";
+import * as ThreadBackgroundLiveness from "../orchestration-v2/ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "../orchestration-v2/ThreadPlanProgress.ts";
 import * as ThreadSettlementReactor from "./ThreadSettlementReactor.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Path from "effect/Path";
@@ -63,8 +66,16 @@ import { withComputeWorkspaceReservation } from "../scient/compute/ComputeWorksp
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import { TerminalManager } from "../terminal/Manager.ts";
 import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
-import { ThreadDeletionReactor } from "./Services/ThreadDeletionReactor.ts";
-import { ProviderService } from "../provider/Services/ProviderService.ts";
+import * as NativeOrchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as NativeProjection from "../orchestration-v2/ProjectionStore.ts";
+import * as NativeProjects from "../orchestration-v2/ProjectStore.ts";
+import * as NativeEvents from "../orchestration-v2/EventStore.ts";
+import * as NativeSink from "../orchestration-v2/EventSink.ts";
+import * as NativeOutbox from "../orchestration-v2/EffectOutbox.ts";
+import * as NativeReceipts from "../orchestration-v2/CommandReceiptStore.ts";
+import * as NativePositions from "../orchestration-v2/TurnItemPositionStore.ts";
+import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import { threadCreated as nativeThreadCreated } from "../../integration/TransferBudgetV2Fixture.integration.ts";
 
 const NOW = "2026-08-28T12:00:00.000Z";
 const PROJECT_ID = ProjectId.make("settlement-project");
@@ -261,6 +272,8 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     ready: Effect.void,
     getSettings: Ref.get(settings).pipe(Effect.tap((value) => Queue.offer(settingsReads, value))),
     updateSettings,
+    updateProviderInstance: () => Effect.die("Unexpected provider mutation"),
+    withSettingsSnapshot: (use) => Ref.get(settings).pipe(Effect.flatMap(use)),
     streamChanges: Stream.fromPubSub(settingsChanges),
     subscribeChanges: PubSub.subscribe(settingsChanges).pipe(
       Effect.map((subscription) => Stream.fromSubscription(subscription)),
@@ -1585,6 +1598,16 @@ describe("ThreadSettlementReactor", () => {
   );
 });
 
+const cleanupStores = Layer.mergeAll(
+  NativeEvents.layer,
+  NativeProjection.layer,
+  NativeProjects.layer,
+  NativeOutbox.layer,
+  NativeReceipts.layer,
+  NativePositions.layer,
+).pipe(Layer.provideMerge(SqlitePersistenceMemory));
+const cleanupPersistence = NativeSink.layerFromStores.pipe(Layer.provideMerge(cleanupStores));
+
 describe("storage cleanup", () => {
   it.effect("serializes users of one workspace while other workspaces can start", () =>
     Effect.gen(function* () {
@@ -1721,9 +1744,11 @@ describe("storage cleanup", () => {
           });
           const snapshotRead = yield* Deferred.make<void>();
           const deletionStarted = yield* Deferred.make<void>();
-          const deletionStopped = yield* Deferred.make<void>();
-          if (protection !== "deleted-event") yield* Deferred.succeed(deletionStopped, undefined);
-          const domainEvents = yield* PubSub.unbounded<OrchestrationEvent>();
+          const completionSweepRead = yield* Deferred.make<void>();
+          let deletionCleanupCompleted = false;
+          const sink = yield* NativeSink.EventSinkV2;
+          const projections = yield* NativeProjection.ProjectionStoreV2;
+          const outbox = yield* NativeOutbox.EffectOutboxV2;
           const deleteRule = protection.startsWith("deleted");
           let tombstoned = deleteRule && protection !== "deleted-event";
           const removals: string[] = [];
@@ -1772,6 +1797,189 @@ describe("storage cleanup", () => {
               }),
             ),
           );
+          const commitProject = (id: ProjectId, workspaceRoot: string, deleted = false) =>
+            sink
+              .commitProjectCommand({
+                commandId: CommandId.make(`cleanup-project:${id}`),
+                projectId: id,
+                commandType: "project.create",
+                acceptedAt: DateTime.makeUnsafe(NOW),
+                event: {
+                  eventId: EventId.make(`cleanup-project:${id}`),
+                  aggregateKind: "project",
+                  aggregateId: id,
+                  occurredAt: NOW,
+                  commandId: null,
+                  causationEventId: null,
+                  correlationId: null,
+                  metadata: {},
+                  type: "project.created",
+                  payload: {
+                    projectId: id,
+                    title: String(id),
+                    workspaceRoot,
+                    defaultModelSelection: null,
+                    scripts: [],
+                    createdAt: NOW,
+                    updatedAt: NOW,
+                  },
+                },
+              })
+              .pipe(
+                Effect.andThen(
+                  deleted
+                    ? sink.commitProjectCommand({
+                        commandId: CommandId.make(`cleanup-project-delete:${id}`),
+                        projectId: id,
+                        commandType: "project.delete",
+                        acceptedAt: DateTime.makeUnsafe(NOW),
+                        event: {
+                          eventId: EventId.make(`cleanup-project-delete:${id}`),
+                          aggregateKind: "project",
+                          aggregateId: id,
+                          occurredAt: NOW,
+                          commandId: null,
+                          causationEventId: null,
+                          correlationId: null,
+                          metadata: {},
+                          type: "project.deleted",
+                          payload: { projectId: id, deletedAt: NOW },
+                        },
+                      })
+                    : Effect.void,
+                ),
+              );
+          const storedThread = {
+            ...nativeThreadCreated(ProviderDriverKind.make("codex")).payload,
+            id: thread.id,
+            projectId: PROJECT_ID,
+            title: thread.title,
+            branch: thread.branch,
+            worktreePath: thread.worktreePath,
+            createdAt: DateTime.makeUnsafe(thread.createdAt),
+            updatedAt: DateTime.makeUnsafe(thread.updatedAt),
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: thread.id },
+          };
+          const commitThread = (payload: typeof storedThread) =>
+            sink.write({
+              events: [
+                {
+                  type: "thread.created",
+                  id: EventId.make(`cleanup-thread:${payload.id}`),
+                  threadId: payload.id,
+                  occurredAt: payload.createdAt,
+                  payload,
+                },
+              ],
+            });
+          yield* commitProject(
+            PROJECT_ID,
+            protection === "deleted-owner-root"
+              ? worktreePath
+              : protection === "deleted-owner-nested"
+                ? path.join(worktreePath, "nested")
+                : config.baseDir,
+            protection.startsWith("deleted-owner"),
+          );
+          yield* commitThread(storedThread);
+          yield* sink.write({
+            events: [
+              {
+                type: "message.updated",
+                id: EventId.make("cleanup-last-user"),
+                threadId: thread.id,
+                occurredAt: DateTime.makeUnsafe(thread.latestUserMessageAt!),
+                payload: {
+                  id: MessageId.make("cleanup-last-user"),
+                  threadId: thread.id,
+                  role: "user",
+                  runId: null,
+                  nodeId: null,
+                  text: "Earlier work",
+                  attachments: [],
+                  streaming: false,
+                  createdBy: "user",
+                  creationSource: "web",
+                  createdAt: DateTime.makeUnsafe(thread.latestUserMessageAt!),
+                  updatedAt: DateTime.makeUnsafe(thread.latestUserMessageAt!),
+                },
+              },
+            ],
+          });
+          if (protection === "shared" || protection === "deleted-shared")
+            yield* commitThread({
+              ...storedThread,
+              id: ThreadId.make("sharing-thread"),
+              archivedAt: protection === "shared" ? DateTime.makeUnsafe(NOW) : null,
+            });
+          if (protection === "unchanged-two-worktrees")
+            yield* commitThread({
+              ...storedThread,
+              id: ThreadId.make("second-worktree-thread"),
+              branch: "feature-two",
+              worktreePath: secondWorktreePath,
+            });
+          if (
+            ["deleted-project", "project-root", "nested-project"].some(
+              (value) => value === protection,
+            )
+          ) {
+            yield* commitProject(
+              LINKED_PROJECT_ID,
+              protection === "nested-project" ? path.join(worktreePath, "nested") : worktreePath,
+            );
+          }
+          if (protection === "session" || protection === "deleted-provider")
+            yield* sink.write({
+              events: [
+                {
+                  type: "provider-session.updated",
+                  id: EventId.make("cleanup-live-session"),
+                  threadId: thread.id,
+                  occurredAt: DateTime.makeUnsafe(NOW),
+                  payload: {
+                    id: ProviderSessionId.make("cleanup-live-session"),
+                    driver: ProviderDriverKind.make("codex"),
+                    providerInstanceId: ProviderInstanceId.make("codex"),
+                    status: "ready",
+                    cwd: worktreePath,
+                    model: "gpt-5",
+                    capabilities: CodexProviderCapabilitiesV2,
+                    createdAt: DateTime.makeUnsafe(NOW),
+                    updatedAt: DateTime.makeUnsafe(NOW),
+                    lastError: null,
+                  },
+                },
+              ],
+            });
+          const deleteThread = (pendingCleanup: boolean) =>
+            sink.commitCommand({
+              commandId: CommandId.make("cleanup-thread-delete"),
+              threadId: thread.id,
+              commandType: "thread.delete",
+              acceptedAt: DateTime.makeUnsafe(NOW),
+              events: [
+                {
+                  type: "thread.deleted",
+                  id: EventId.make("cleanup-thread-delete"),
+                  threadId: thread.id,
+                  occurredAt: DateTime.makeUnsafe(NOW),
+                  payload: { ...storedThread, deletedAt: DateTime.makeUnsafe(NOW) },
+                },
+              ],
+              effects: pendingCleanup
+                ? [
+                    {
+                      id: "cleanup-terminal-effect",
+                      commandId: CommandId.make("cleanup-thread-delete"),
+                      threadId: thread.id,
+                      request: { type: "terminal.cleanup" },
+                    },
+                  ]
+                : [],
+            });
+          if (tombstoned) yield* deleteThread(false);
+          const initialSequence = yield* sink.latestSequence();
           const cleanup = yield* StorageCleanup.make.pipe(
             Effect.provide(
               Layer.mergeAll(
@@ -1797,87 +2005,27 @@ describe("storage cleanup", () => {
                       }),
                     ),
                 }),
-                Layer.mock(ProjectionSnapshotQuery)({
-                  getDeletedWorktreeThreads: () =>
-                    Effect.succeed(
-                      tombstoned
-                        ? [
-                            {
-                              id: thread.id,
-                              projectId: PROJECT_ID,
-                              branch: "feature",
-                              worktreePath,
-                              workspaceRoot:
-                                protection === "deleted-owner-root"
-                                  ? worktreePath
-                                  : protection === "deleted-owner-nested"
-                                    ? path.join(worktreePath, "nested")
-                                    : config.baseDir,
-                              deletedAt: NOW,
-                            },
-                          ]
-                        : [],
-                    ),
-                  getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 2 }),
-                  getShellSnapshot: () =>
-                    Deferred.succeed(snapshotRead, undefined).pipe(
-                      Effect.andThen(
-                        Effect.sync(() => {
-                          snapshotReads++;
-                          const projects =
-                            protection.startsWith("deleted-owner") ||
-                            protection === "deleted-project-off" ||
-                            protection === "deleted-project-custom"
-                              ? []
-                              : [makeProject(PROJECT_ID, config.baseDir)];
-                          const threads = tombstoned ? [] : [thread];
-                          if (protection === "deleted-shared")
-                            threads.push({ ...thread, id: ThreadId.make("surviving-thread") });
-                          if (protection === "deleted-project")
-                            projects.push(makeProject(LINKED_PROJECT_ID, worktreePath));
-                          if (
-                            protection === "project-root" ||
-                            protection === "nested-project" ||
-                            (protection === "new-nested-project" && snapshotReads > 1)
-                          ) {
-                            projects.push(
-                              makeProject(
-                                LINKED_PROJECT_ID,
-                                protection === "project-root"
-                                  ? worktreePath
-                                  : path.join(worktreePath, "nested"),
-                              ),
-                            );
-                            threads.push(
-                              makeThread("local-project-thread", { projectId: LINKED_PROJECT_ID }),
-                            );
-                          }
-                          if (protection === "unchanged-two-worktrees") {
-                            threads.push({
-                              ...thread,
-                              id: ThreadId.make("second-worktree-thread"),
-                              branch: "feature-two",
-                              worktreePath: secondWorktreePath,
-                            });
-                          }
-                          return makeSnapshot(threads, projects);
-                        }),
-                      ),
-                    ),
-                  getArchivedShellSnapshot: () =>
-                    Effect.succeed(
-                      makeSnapshot(
-                        protection === "shared"
-                          ? [
-                              {
-                                ...thread,
-                                id: ThreadId.make("archived-sharing-thread"),
-                                archivedAt: NOW,
-                              },
-                            ]
-                          : [],
-                      ),
-                    ),
+                Layer.succeed(NativeProjection.ProjectionStoreV2, {
+                  ...projections,
+                  getShellSnapshot: (options) =>
+                    Effect.gen(function* () {
+                      if (options?.location !== "archive") {
+                        snapshotReads++;
+                        if (protection === "new-nested-project" && snapshotReads === 2) {
+                          yield* commitProject(
+                            LINKED_PROJECT_ID,
+                            path.join(worktreePath, "nested"),
+                          ).pipe(Effect.orDie);
+                        }
+                        yield* Deferred.succeed(snapshotRead, undefined);
+                        if (protection === "deleted-event" && tombstoned) {
+                          yield* Deferred.succeed(deletionStarted, undefined);
+                          if (deletionCleanupCompleted)
+                            yield* Deferred.succeed(completionSweepRead, undefined);
+                        }
+                      }
+                      return yield* projections.getShellSnapshot(options);
+                    }),
                 }),
                 Layer.mock(GitManager)({
                   invalidateStatus: () => Effect.void,
@@ -1888,36 +2036,11 @@ describe("storage cleanup", () => {
                     );
                   },
                 }),
-                Layer.mock(OrchestrationEngineService)({
-                  subscribeDomainEvents: PubSub.subscribe(domainEvents).pipe(
-                    Effect.map((subscription) => Stream.fromSubscription(subscription)),
+                Layer.mock(NativeOrchestrator.OrchestratorV2)({
+                  streamDomainEvents: sink.stream({ afterSequence: initialSequence }).pipe(
+                    Stream.map((stored) => stored.event),
+                    Stream.orDie,
                   ),
-                }),
-                Layer.mock(ThreadDeletionReactor)({
-                  drainThrough: (sequence) => {
-                    assert.strictEqual(sequence, 2);
-                    return Deferred.succeed(deletionStarted, undefined).pipe(
-                      Effect.andThen(Deferred.await(deletionStopped)),
-                    );
-                  },
-                }),
-                Layer.mock(ProviderService)({
-                  listSessions: () =>
-                    Effect.succeed(
-                      protection === "deleted-provider"
-                        ? [
-                            {
-                              threadId: thread.id,
-                              provider: ProviderDriverKind.make("codex"),
-                              status: "ready",
-                              runtimeMode: "full-access",
-                              cwd: worktreePath,
-                              createdAt: NOW,
-                              updatedAt: NOW,
-                            },
-                          ]
-                        : [],
-                    ),
                 }),
                 Layer.mock(GitVcsDriver)({
                   resolvePrimaryRemoteName: () => Effect.succeed("origin"),
@@ -2048,22 +2171,19 @@ describe("storage cleanup", () => {
           if (protection === "deleted-event") {
             assert.strictEqual(yield* fs.exists(worktreePath), true);
             tombstoned = true;
-            yield* PubSub.publish(domainEvents, {
-              type: "thread.deleted",
-              sequence: 2,
-              eventId: EventId.make("storage-thread-deleted"),
-              aggregateKind: "thread",
-              aggregateId: thread.id,
-              occurredAt: NOW,
-              commandId: null,
-              causationEventId: null,
-              correlationId: null,
-              metadata: {},
-              payload: { threadId: thread.id, deletedAt: NOW },
-            });
+            yield* deleteThread(true);
             yield* Deferred.await(deletionStarted);
             assert.strictEqual(yield* fs.exists(worktreePath), true);
-            yield* Deferred.succeed(deletionStopped, undefined);
+            const claimed = yield* outbox.claimNext({
+              workerId: "cleanup-fixture",
+              leaseDurationMs: 60_000,
+            });
+            assert.isTrue(Option.isSome(claimed));
+            deletionCleanupCompleted = true;
+            if (Option.isSome(claimed))
+              yield* outbox.succeed({ effectId: claimed.value.id, workerId: "cleanup-fixture" });
+            // The durable completion hint enqueues a fresh sweep.
+            yield* Deferred.await(completionSweepRead);
             yield* cleanup.drain;
           }
           const removed =
@@ -2106,7 +2226,7 @@ describe("storage cleanup", () => {
                 const canonicalDirectory = yield* fs.realPath(directory);
                 return ServerConfig.layerTest(process.cwd(), canonicalDirectory);
               }),
-            ).pipe(Layer.provideMerge(NodeServices.layer)),
+            ).pipe(Layer.provideMerge(NodeServices.layer), Layer.provideMerge(cleanupPersistence)),
           ),
           Effect.scoped,
         ),

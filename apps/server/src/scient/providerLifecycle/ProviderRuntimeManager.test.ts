@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   type ProviderRuntimeSummary,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -22,6 +23,11 @@ import type {
   ProviderVoiceTranscriptCorrection,
 } from "../../provider/ProviderDriver.ts";
 import { ProviderAdapterProcessError } from "../../provider/Errors.ts";
+import {
+  ProviderSessionCloseError,
+  ProviderSessionManagerV2,
+  type ProviderSessionManagerV2Shape,
+} from "../../orchestration-v2/ProviderSessionManager.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../../provider/providerMaintenance.ts";
 import {
   ProviderRegistry,
@@ -121,12 +127,15 @@ function makeHarness(
     readonly afterSetRuntime?: (runtime: ProviderRuntimeSummary | null) => Effect.Effect<void>;
     readonly useProductionLayer?: boolean;
     readonly isBusy?: ProviderActivityShape["isBusy"];
+    readonly closeInstance?: ProviderSessionManagerV2Shape["closeInstance"];
   } = {},
 ) {
   return Effect.gen(function* () {
     const providersRef = yield* Ref.make(initialProviders);
     const actionsRef = yield* Ref.make(actions);
     const reloadCountRef = yield* Ref.make(0);
+    const reloadedInstancesRef = yield* Ref.make<ReadonlyArray<ProviderInstanceId>>([]);
+    const closedInstancesRef = yield* Ref.make<ReadonlyArray<ProviderInstanceId>>([]);
     const stopCountRef = yield* Ref.make(0);
     const reloadOperationsRef = yield* Ref.make<ReadonlyArray<string | null>>([]);
     const setRuntime: ProviderRegistryShape["setProviderManagedRuntimeSummary"] = (input) =>
@@ -164,7 +173,10 @@ function makeHarness(
       refreshInstanceStrict: () => Ref.get(providersRef),
       refreshInstanceAfterAccountChange: () => Ref.get(providersRef),
       reloadInstance: () => reloadInstance.pipe(Effect.catch(() => Ref.get(providersRef))),
-      reloadInstanceStrict: () => reloadInstance,
+      reloadInstanceStrict: (instanceId) =>
+        Ref.update(reloadedInstancesRef, (instances) => [...instances, instanceId]).pipe(
+          Effect.andThen(reloadInstance),
+        ),
       getProviderMaintenanceCapabilitiesForInstance: (_instanceId, driver) =>
         Effect.succeed(
           makeManualOnlyProviderMaintenanceCapabilities({ provider: driver, packageName: null }),
@@ -175,10 +187,7 @@ function makeHarness(
       getVoiceTranscriptCorrectionForInstance: () =>
         // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
         Effect.succeed<ProviderVoiceTranscriptCorrection | undefined>(undefined),
-      stopProviderSessions: (provider) =>
-        Ref.update(stopCountRef, (count) => count + 1).pipe(
-          Effect.andThen(stopProviderSessions(provider)),
-        ),
+      stopProviderSessions: () => Effect.die("Managed activation must close V2 instance sessions"),
       setProviderMaintenanceActionState: () => Ref.get(providersRef),
       setProviderConnectionOperation: () => Ref.get(providersRef),
       setProviderAuthenticationFailure: () => Ref.get(providersRef),
@@ -199,6 +208,24 @@ function makeHarness(
     });
     const managerScope = yield* Scope.make();
     yield* Effect.addFinalizer(() => Scope.close(managerScope, Exit.void));
+    const providerSessionsLayer = Layer.mock(ProviderSessionManagerV2)({
+      closeInstance: (instanceId) =>
+        Ref.update(stopCountRef, (count) => count + 1).pipe(
+          Effect.andThen(Ref.update(closedInstancesRef, (instances) => [...instances, instanceId])),
+          Effect.andThen(
+            hooks.closeInstance?.(instanceId) ??
+              stopProviderSessions(CODEX).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderSessionCloseError({
+                      providerSessionId: ProviderSessionId.make(`test-session:${instanceId}`),
+                      cause,
+                    }),
+                ),
+              ),
+          ),
+        ),
+    });
     const manager = hooks.useProductionLayer
       ? yield* Layer.build(
           ProviderRuntimeManagerLayer.pipe(
@@ -207,6 +234,7 @@ function makeHarness(
                 Layer.succeed(ProviderRegistry, registry),
                 Layer.succeed(ProviderLifecycleCoordinator, trackedCoordinator),
                 Layer.succeed(ProviderActivity, activity),
+                providerSessionsLayer,
                 NodeServices.layer,
               ),
             ),
@@ -219,13 +247,15 @@ function makeHarness(
           Effect.provideService(ProviderRegistry, registry),
           Effect.provideService(ProviderLifecycleCoordinator, trackedCoordinator),
           Effect.provideService(ProviderActivity, activity),
-          Effect.provide(NodeServices.layer),
+          Effect.provide(Layer.mergeAll(providerSessionsLayer, NodeServices.layer)),
           Scope.provide(managerScope),
         );
     return {
       manager,
       providersRef,
       reloadCountRef,
+      reloadedInstancesRef,
+      closedInstancesRef,
       reloadOperationsRef,
       stopCountRef,
       coordinator: trackedCoordinator,
@@ -298,10 +328,82 @@ describe("ProviderRuntimeManager", () => {
       assert.strictEqual(completed[1]?.connection?.runtime?.source, "scient_managed");
       assert.strictEqual(completed[1]?.connection?.runtime?.managedVersion, "0.147.0");
       assert.strictEqual(yield* Ref.get(reloadCountRef), 2);
-      assert.strictEqual(yield* Ref.get(stopCountRef), 1);
+      assert.strictEqual(yield* Ref.get(stopCountRef), 4);
       assert.deepStrictEqual(yield* Ref.get(reloadOperationsRef), ["downloading", "downloading"]);
     }),
   );
+
+  for (const action of ["install", "update", "repair", "remove"] as const) {
+    it.effect(
+      `closes V2 default-runtime peers before ${action} without touching custom accounts`,
+      () =>
+        Effect.gen(function* () {
+          const customInstance = ProviderInstanceId.make("codex-custom-executable");
+          const unavailableCustom = ProviderInstanceId.make("codex-unavailable-custom");
+          const unrelatedInstance = ProviderInstanceId.make("pi-native-instance");
+          const closed = yield* Ref.make<ReadonlyArray<ProviderInstanceId>>([]);
+          const activated = yield* Ref.make(false);
+          const actions: ProviderManagedRuntimeActions = {
+            getSummary: Effect.succeed({ ...systemRuntime, actions: [action] }),
+            plan: () => Effect.succeed({ ...installPlan(), action }),
+            run: (_action, _revision, _report, activation = Effect.void) =>
+              activation.pipe(
+                Effect.andThen(
+                  Effect.gen(function* () {
+                    assert.deepEqual(yield* Ref.get(closed), [INSTANCE, SECOND_INSTANCE]);
+                    yield* Ref.set(activated, true);
+                  }),
+                ),
+              ),
+          };
+          const withRuntime = (
+            instanceId: ProviderInstanceId,
+            source: ProviderRuntimeSummary["source"],
+          ): ServerProvider => ({
+            ...systemProvider,
+            instanceId,
+            connection: { ...systemProvider.connection!, runtime: { ...systemRuntime, source } },
+          });
+          const { manager, providersRef, reloadedInstancesRef, lifecycleReleaseCountRef } =
+            yield* makeHarness(
+              actions,
+              [
+                systemProvider,
+                withRuntime(SECOND_INSTANCE, "scient_managed"),
+                withRuntime(customInstance, "custom"),
+                withRuntime(unavailableCustom, "unknown"),
+                {
+                  ...withRuntime(unrelatedInstance, "scient_managed"),
+                  driver: ProviderDriverKind.make("pi"),
+                },
+              ],
+              undefined,
+              undefined,
+              undefined,
+              {
+                useProductionLayer: true,
+                closeInstance: (instanceId) =>
+                  Ref.update(closed, (instances) => [...instances, instanceId]),
+              },
+            );
+
+          yield* manager.start({ instanceId: INSTANCE, action, catalogRevision: "reviewed:1" });
+          yield* yieldUntil(
+            Ref.get(providersRef),
+            (providers) => providers[0]?.connection?.runtime?.operation?.status === "succeeded",
+          );
+          assert.equal(yield* Ref.get(activated), true);
+          assert.deepEqual(yield* Ref.get(closed), [
+            INSTANCE,
+            SECOND_INSTANCE,
+            INSTANCE,
+            SECOND_INSTANCE,
+          ]);
+          assert.deepEqual(yield* Ref.get(reloadedInstancesRef), [INSTANCE, SECOND_INSTANCE]);
+          assert.equal(yield* Ref.get(lifecycleReleaseCountRef), 1);
+        }),
+    );
+  }
 
   it.effect("does not report success when post-mutation runtime reconciliation fails", () =>
     Effect.gen(function* () {
@@ -606,7 +708,7 @@ describe("ProviderRuntimeManager", () => {
         (providers) => providers[0]?.connection?.runtime?.operation?.status === "succeeded",
       );
       assert.strictEqual(yield* Ref.get(installed), true);
-      assert.strictEqual(yield* Ref.get(stopCountRef), 1);
+      assert.strictEqual(yield* Ref.get(stopCountRef), 2);
     }),
   );
 

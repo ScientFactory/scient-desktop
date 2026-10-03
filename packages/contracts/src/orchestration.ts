@@ -1,17 +1,51 @@
 import { ScientCompletedAnswer } from "./scientAnswerAttention.ts";
+export { ForkDisposition, OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
+import {
+  OrchestrationConversationImport,
+  OrchestrationConversationImportSource,
+  OrchestrationForkLineage,
+} from "./scientConversationOrigin.ts";
+// The attachment and screenshot schemas moved to chatAttachment.ts upstream. They
+// are imported here so the V1 contract keeps resolving while the engine port is
+// in flight, and re-exported below so one declaration owns each name: two
+// `export *` paths reaching the same symbol is unambiguous, but two separate
+// definitions of it are not.
+import {
+  ChatAttachment,
+  ChatAttachmentId,
+  SNAP_SHOT_ACCESSIBLE_TEXT_MAX_CHARS,
+  SnapShotAccessibilityNode,
+  UploadChatAttachment,
+} from "./chatAttachment.ts";
+// Upstream relocated these two schemas to providerPolicy.ts. They are imported
+// here rather than redeclared so one definition owns each name: two `export *`
+// paths reaching different declarations is ambiguous and resolves to nothing.
+import {
+  DEFAULT_PROVIDER_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
+  ProviderApprovalDecision,
+  ProviderApprovalOption,
+  ProviderApprovalPolicy,
+  ProviderInteractionMode,
+  ProviderRequestKind,
+  ProviderSandboxMode,
+  ProviderUserInputAnswers,
+  RuntimeMode,
+  UserInputAttachments,
+  UserInputAttachmentAnswerPayload,
+} from "./providerPolicy.ts";
+export * from "./chatAttachment.ts";
+
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { SelectedScientSkillNames } from "./scientSkillSelection.ts";
-import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import * as Struct from "effect/Struct";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { ProviderOptionSelections } from "./model.ts";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
 import {
   ApprovalRequestId,
   CheckpointRef,
-  ClientSurface,
   CommandId,
   EventId,
   IsoDateTime,
@@ -25,17 +59,10 @@ import {
   ThreadSectionId,
   // SCIENT-FORK:END
   TrimmedNonEmptyString,
-  TrimmedString,
   TurnId,
+  RunId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
-import {
-  PullRequestActor,
-  PullRequestChecksState,
-  PullRequestMergeability,
-  PullRequestReviewDecision,
-  PullRequestState,
-} from "./pullRequest.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -48,20 +75,6 @@ export const ORCHESTRATION_WS_METHODS = {
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
 } as const;
-
-export const ProviderApprovalPolicy = Schema.Literals([
-  "untrusted",
-  "on-failure",
-  "on-request",
-  "never",
-]);
-export type ProviderApprovalPolicy = typeof ProviderApprovalPolicy.Type;
-export const ProviderSandboxMode = Schema.Literals([
-  "read-only",
-  "workspace-write",
-  "danger-full-access",
-]);
-export type ProviderSandboxMode = typeof ProviderSandboxMode.Type;
 
 /**
  * `ModelSelection` — selection of a model on a configured provider instance.
@@ -78,130 +91,32 @@ export type ProviderSandboxMode = typeof ProviderSandboxMode.Type;
  * post-decode compatibility code lives in the runtime; the transform is the
  * only compat surface.
  */
-const ModelSelectionWire = Schema.Struct({
-  instanceId: ProviderInstanceId,
-  model: TrimmedNonEmptyString,
-  options: Schema.optionalKey(ProviderOptionSelections),
-});
+// `ModelSelection` moved to its own module during the V2 extraction. The two
+// definitions were identical (same source struct, same wire target, same
+// transform), so V1 re-exports the canonical one rather than keeping a copy
+// that can drift from it.
+import { ModelSelection } from "./modelSelection.ts";
+export { ModelSelection };
 
-// Source shape for persisted legacy payloads. Fields are typed as
-// `Schema.Unknown` so malformed drafts still make it into the transform and
-// fail validation through the target schema (with proper error messages)
-// rather than at the source-struct layer where the error is less actionable.
-const ModelSelectionSource = Schema.Struct({
-  provider: Schema.optional(Schema.Unknown),
-  instanceId: Schema.optional(Schema.Unknown),
-  model: Schema.Unknown,
-  options: Schema.optional(Schema.Unknown),
-});
+// The provider policy literals moved to providerPolicy.ts upstream. Every
+// declaration was identical to its canonical counterpart, so V1 imports the
+// canonical one and re-exports it rather than keeping a copy that can drift.
+export {
+  DEFAULT_PROVIDER_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
+  ProviderApprovalDecision,
+  ProviderApprovalOption,
+  ProviderApprovalPolicy,
+  ProviderInteractionMode,
+  ProviderRequestKind,
+  ProviderSandboxMode,
+  ProviderUserInputAnswers,
+  RuntimeMode,
+};
 
-export const ModelSelection = ModelSelectionSource.pipe(
-  Schema.decodeTo(
-    ModelSelectionWire,
-    SchemaTransformation.transformEffect({
-      decode: (raw) => {
-        // Resolve the routing key: prefer an explicit `instanceId`; fall
-        // back to promoting the legacy `provider` slug (the canonical
-        // `defaultInstanceIdForDriver` mapping) so persisted rollout-era
-        // payloads decode without data loss. The target schema brands the
-        // string as `ProviderInstanceId`.
-        const instanceIdSource =
-          raw.instanceId !== undefined
-            ? raw.instanceId
-            : typeof raw.provider === "string"
-              ? raw.provider
-              : undefined;
-        const base: Record<string, unknown> = {
-          instanceId: instanceIdSource,
-          model: raw.model,
-        };
-        if (raw.options !== undefined) base.options = raw.options;
-        return Effect.succeed(base as typeof ModelSelectionWire.Encoded);
-      },
-      encode: (value) => {
-        const base: Record<string, unknown> = {
-          model: value.model,
-          instanceId: value.instanceId,
-        };
-        if (value.options !== undefined) base.options = value.options;
-        return Effect.succeed(base as typeof ModelSelectionSource.Encoded);
-      },
-    }),
-  ),
-);
-export type ModelSelection = typeof ModelSelection.Type;
-
-export const RuntimeMode = Schema.Literals([
-  "approval-required",
-  "auto-accept-edits",
-  "auto",
-  "full-access",
-]);
-export type RuntimeMode = typeof RuntimeMode.Type;
-export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
-export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
-export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
-export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";
-export const ProviderRequestKind = Schema.Literals([
-  "command",
-  "file-read",
-  "file-change",
-  "mcp-elicitation",
-  "permission",
-]);
-export type ProviderRequestKind = typeof ProviderRequestKind.Type;
-export const ProviderApprovalDecision = Schema.Literals([
-  "accept",
-  "acceptForSession",
-  "acceptAlways",
-  "decline",
-  "cancel",
-]);
-export type ProviderApprovalDecision = typeof ProviderApprovalDecision.Type;
-export const ProviderApprovalOption = Schema.Struct({
-  decision: ProviderApprovalDecision,
-  label: TrimmedNonEmptyString,
-  /** Provider-supplied caution shown next to the option, such as a prompt injection warning. */
-  warning: Schema.optional(TrimmedNonEmptyString),
-});
-export type ProviderApprovalOption = typeof ProviderApprovalOption.Type;
-export const ProviderUserInputAnswers = Schema.Record(Schema.String, Schema.Unknown);
-export type ProviderUserInputAnswers = typeof ProviderUserInputAnswers.Type;
-
-export const PROVIDER_SEND_TURN_MAX_INPUT_CHARS = 120_000;
-export const PROVIDER_SEND_TURN_MAX_ATTACHMENTS = 100;
-export const PROVIDER_SEND_TURN_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-const PROVIDER_SEND_TURN_MAX_TOTAL_IMAGE_BYTES = 80 * 1024 * 1024;
-export const PROVIDER_SEND_TURN_MAX_FILE_BYTES = 50 * 1024 * 1024;
-export const PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES = [
-  "image/gif",
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-] as const;
-const PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPE_SET = new Set<string>(
-  PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
-);
-
-/** Whether a pasted or picked image mime type can be sent on a provider turn. */
-export function isProviderSendTurnSupportedImageMimeType(mimeType: string): boolean {
-  return PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPE_SET.has(mimeType.toLowerCase());
-}
-const PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS = 14_000_000;
-const CHAT_ATTACHMENT_ID_MAX_CHARS = 128;
 // Correlation id is command id by design in this model.
 export const CorrelationId = CommandId;
 export type CorrelationId = typeof CorrelationId.Type;
-
-const ChatAttachmentId = TrimmedNonEmptyString.check(
-  Schema.isMaxLength(CHAT_ATTACHMENT_ID_MAX_CHARS),
-  Schema.isPattern(/^[a-z0-9_-]+$/i),
-);
-export type ChatAttachmentId = typeof ChatAttachmentId.Type;
-
-export const SNAP_SHOT_ACCESSIBLE_TEXT_MAX_CHARS = 32_000;
-export const SNAP_SHOT_ACCESSIBILITY_MAX_NODES = 10_000;
-export const SNAP_SHOT_ACCESSIBILITY_MAX_SERIALIZED_CHARS = 32_000;
 
 const SnapShotAccessibilityBounds = Schema.Struct({
   x: NonNegativeInt,
@@ -222,36 +137,6 @@ const SnapShotAccessibilityState = Schema.Struct({
   visible: Schema.optional(Schema.Boolean),
 });
 
-export interface SnapShotAccessibilityNode {
-  readonly role: string;
-  readonly name?: string;
-  readonly value?: string;
-  readonly description?: string;
-  readonly bounds: typeof SnapShotAccessibilityBounds.Type | null;
-  readonly state?: typeof SnapShotAccessibilityState.Type;
-  readonly actions?: Array<string>;
-  readonly children: Array<SnapShotAccessibilityNode>;
-}
-
-export const SnapShotAccessibilityNode: Schema.Codec<SnapShotAccessibilityNode> = Schema.Struct({
-  role: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
-  name: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(1_000))),
-  value: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(8_000))),
-  description: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(2_000))),
-  bounds: Schema.NullOr(SnapShotAccessibilityBounds),
-  state: Schema.optionalKey(SnapShotAccessibilityState),
-  actions: Schema.optionalKey(
-    Schema.mutable(Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(100)))).check(
-      Schema.isMaxLength(32),
-    ),
-  ),
-  children: Schema.mutable(
-    Schema.Array(
-      Schema.suspend((): Schema.Codec<SnapShotAccessibilityNode> => SnapShotAccessibilityNode),
-    ),
-  ).check(Schema.isMaxLength(SNAP_SHOT_ACCESSIBILITY_MAX_NODES)),
-});
-
 const SnapShotAccessibilityWire = Schema.Union([
   Schema.Struct({
     format: Schema.Literal("flat-text"),
@@ -266,160 +151,6 @@ const SnapShotAccessibilityWire = Schema.Union([
     root: SnapShotAccessibilityNode,
   }),
 ]);
-export const SnapShotAccessibility = SnapShotAccessibilityWire.check(
-  Schema.makeFilter((accessibility: typeof SnapShotAccessibilityWire.Type) => {
-    if (accessibility.format === "flat-text") return undefined;
-    let nodes = 0;
-    const stack = [accessibility.root];
-    while (stack.length > 0) {
-      const node = stack.pop()!;
-      nodes += 1;
-      if (nodes > SNAP_SHOT_ACCESSIBILITY_MAX_NODES) {
-        return `Accessibility trees must not exceed ${SNAP_SHOT_ACCESSIBILITY_MAX_NODES} nodes.`;
-      }
-      stack.push(...node.children);
-    }
-    return (
-      JSON.stringify(accessibility).length <= SNAP_SHOT_ACCESSIBILITY_MAX_SERIALIZED_CHARS ||
-      `Accessibility trees must not exceed ${SNAP_SHOT_ACCESSIBILITY_MAX_SERIALIZED_CHARS} serialized characters.`
-    );
-  }),
-);
-export type SnapShotAccessibility = typeof SnapShotAccessibility.Type;
-
-export const SnapShotSource = Schema.Struct({
-  kind: Schema.Literal("snap-shot"),
-  capturedAt: IsoDateTime,
-  appName: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
-  windowTitle: TrimmedString.check(Schema.isMaxLength(1_000)),
-  accessibleText: Schema.optional(
-    TrimmedNonEmptyString.check(Schema.isMaxLength(SNAP_SHOT_ACCESSIBLE_TEXT_MAX_CHARS)),
-  ),
-  accessibility: Schema.optional(SnapShotAccessibility),
-  appIdentifier: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(255))),
-  appIconDataUrl: Schema.optional(
-    TrimmedNonEmptyString.check(
-      Schema.isMaxLength(100_000),
-      Schema.isPattern(/^data:image\/png;base64,/i),
-    ),
-  ),
-});
-export type SnapShotSource = typeof SnapShotSource.Type;
-
-export const ChatImageAttachment = Schema.Struct({
-  type: Schema.Literal("image"),
-  id: ChatAttachmentId,
-  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
-  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100), Schema.isPattern(/^image\//i)),
-  sizeBytes: NonNegativeInt.check(Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES)),
-  source: Schema.optional(SnapShotSource),
-});
-export type ChatImageAttachment = typeof ChatImageAttachment.Type;
-
-export const PastedTextAttachmentSource = Schema.TaggedStruct("pasted-text", {});
-export type PastedTextAttachmentSource = typeof PastedTextAttachmentSource.Type;
-
-export const ChatFileAttachment = Schema.Struct({
-  type: Schema.Literal("file"),
-  id: ChatAttachmentId,
-  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
-  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
-  sizeBytes: NonNegativeInt.check(
-    Schema.isGreaterThanOrEqualTo(1),
-    Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_FILE_BYTES),
-  ),
-  /** Clipboard text folded by a client. Providers keep these path-only so the
-      agent can inspect the file selectively instead of eagerly spending the
-      same context the fold is intended to preserve. */
-  source: Schema.optional(PastedTextAttachmentSource),
-});
-export type ChatFileAttachment = typeof ChatFileAttachment.Type;
-
-/**
- * Catch-all for attachment types this build does not know. Attachments ride on
- * persisted events and thread streams, so a newer server or client must be able
- * to introduce a type without making older readers fail to decode the whole
- * message. Decoders keep the shared base fields; consumers skip these or render
- * them as unsupported. Mirrors how `OrchestrationThreadActivity` keeps `kind`
- * open. The known discriminators are excluded so a malformed image or file
- * attachment fails its own schema instead of sliding through here with its
- * size and mime constraints unchecked.
- */
-export const ChatUnknownAttachment = Schema.Struct({
-  type: TrimmedNonEmptyString.check(
-    Schema.isMaxLength(50),
-    Schema.isPattern(/^(?!(?:image|file)$)/),
-  ),
-  id: ChatAttachmentId,
-  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
-  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
-  sizeBytes: NonNegativeInt,
-});
-export type ChatUnknownAttachment = typeof ChatUnknownAttachment.Type;
-
-const UploadChatImageAttachment = Schema.Struct({
-  type: Schema.Literal("image"),
-  /** Client-side id, so context records can bind to the attachment before it has a server id. */
-  id: Schema.optional(ChatAttachmentId),
-  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
-  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100), Schema.isPattern(/^image\//i)),
-  sizeBytes: NonNegativeInt.check(Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES)),
-  dataUrl: TrimmedNonEmptyString.check(
-    Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_IMAGE_DATA_URL_CHARS),
-  ),
-  source: Schema.optional(SnapShotSource),
-});
-export type UploadChatImageAttachment = typeof UploadChatImageAttachment.Type;
-
-export const ChatAttachment = Schema.Union([
-  ChatImageAttachment,
-  ChatFileAttachment,
-  ChatUnknownAttachment,
-]);
-export type ChatAttachment = typeof ChatAttachment.Type;
-
-export function getProviderAttachmentLimitError(
-  attachments: ReadonlyArray<Pick<ChatAttachment, "type" | "mimeType" | "sizeBytes">>,
-): string | undefined {
-  if (attachments.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
-    return `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message or question response.`;
-  }
-  const imageBytes = attachments.reduce(
-    (total, attachment) =>
-      total +
-      (attachment.type === "image" || isProviderSendTurnSupportedImageMimeType(attachment.mimeType)
-        ? attachment.sizeBytes
-        : 0),
-    0,
-  );
-  if (imageBytes > PROVIDER_SEND_TURN_MAX_TOTAL_IMAGE_BYTES) {
-    return "Images can total up to 80 MiB per message or question response. Use smaller images or send fewer at once.";
-  }
-}
-
-export const UserInputAttachments = Schema.Record(
-  Schema.String,
-  Schema.Array(Schema.Union([ChatImageAttachment, ChatFileAttachment])).pipe(
-    Schema.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS)),
-  ),
-);
-export type UserInputAttachments = typeof UserInputAttachments.Type;
-
-export const UserInputAttachmentAnswerPayload = Schema.Struct({
-  requestId: ApprovalRequestId,
-  questionTextById: Schema.optional(Schema.Record(Schema.String, Schema.String)),
-  answers: ProviderUserInputAnswers,
-  attachmentsByQuestionId: UserInputAttachments,
-  // SCIENT-FORK:START — imported history names the message that carries an answer.
-  /**
-   * The user message that carries this answer, when it is not
-   * `async-answer:<requestId>`: imported history gives every message an ID
-   * that sorts in its source order, so the answer names its message instead.
-   */
-  messageId: Schema.optional(MessageId),
-  // SCIENT-FORK:END
-});
-export type UserInputAttachmentAnswerPayload = typeof UserInputAttachmentAnswerPayload.Type;
 
 // SCIENT-FORK:START — imported history names the message that carries an answer.
 /** The ID of the user message chat folds into this submitted answer. */
@@ -427,141 +158,32 @@ export function questionAnswerMessageId(answer: UserInputAttachmentAnswerPayload
   return answer.messageId ?? `async-answer:${answer.requestId}`;
 }
 // SCIENT-FORK:END
+
 // SCIENT-FORK:START — the Scient thread queue stores upload-shaped
 // attachments so a queued item dispatches through thread.turn.start
-// unchanged. Export the wire schema instead of duplicating it.
-export const UploadChatAttachment = Schema.Union([UploadChatImageAttachment]);
+// unchanged. Re-export the wire schema rather than duplicating it.
+export { UploadChatAttachment } from "./chatAttachment.ts";
 // SCIENT-FORK:END
-export type UploadChatAttachment = typeof UploadChatAttachment.Type;
 
-export const ProjectScriptIcon = Schema.Literals([
-  "play",
-  "test",
-  "lint",
-  "configure",
-  "build",
-  "debug",
-]);
-export type ProjectScriptIcon = typeof ProjectScriptIcon.Type;
-
-export const ProjectScript = Schema.Struct({
-  id: TrimmedNonEmptyString,
-  name: TrimmedNonEmptyString,
-  command: TrimmedNonEmptyString,
-  icon: ProjectScriptIcon,
-  runOnWorktreeCreate: Schema.Boolean,
-  /**
-   * For `runOnWorktreeCreate` scripts: when false, the agent's first turn waits
-   * for the script to exit. Absent or true starts the agent right away and
-   * lets the script finish in the background.
-   */
-  async: Schema.optional(Schema.Boolean),
-  /**
-   * URL to open in the in-app browser preview when this script runs (or
-   * when the user explicitly requests a preview). Optional; only honored on
-   * the desktop build.
-   */
-  previewUrl: Schema.optional(TrimmedNonEmptyString),
-  /**
-   * When true, automatically open the preview panel pointed at `previewUrl`
-   * the moment this script starts. Ignored without `previewUrl` or on web.
-   */
-  autoOpenPreview: Schema.optional(Schema.Boolean),
-});
-export type ProjectScript = typeof ProjectScript.Type;
-
-export const ProjectFaviconPath = TrimmedNonEmptyString.check(
-  Schema.isMaxLength(1024),
-  Schema.isPattern(/\.(?:avif|gif|ico|jpe?g|png|svg|webp)$/i),
-);
-export type ProjectFaviconPath = typeof ProjectFaviconPath.Type;
-
-export const ProjectIconColor = Schema.Literals([
-  "gray",
-  "red",
-  "orange",
-  "amber",
-  "yellow",
-  "lime",
-  "green",
-  "emerald",
-  "teal",
-  "cyan",
-  "sky",
-  "blue",
-  "indigo",
-  "violet",
-  "purple",
-  "fuchsia",
-  "pink",
-  "rose",
-]);
-export type ProjectIconColor = typeof ProjectIconColor.Type;
-
-const ProjectLucideIconName = TrimmedNonEmptyString.check(
-  Schema.isMaxLength(64),
-  Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
-);
-
-const ProjectEmoji = TrimmedNonEmptyString.check(Schema.isMaxLength(32));
-
-// Grapheme-count validation belongs to the server command boundary, not snapshot decoding.
-export const ProjectMonogramText = TrimmedNonEmptyString.check(
-  Schema.isMaxLength(32),
-  Schema.isPattern(/^[\p{L}\p{N}][\p{L}\p{N}\p{M}\u200c\u200d]*$/u),
-);
-
-const ProjectLucideIcon = Schema.Struct({
-  kind: Schema.Literal("lucide"),
-  name: ProjectLucideIconName,
-  color: ProjectIconColor,
-});
-const ProjectEmojiIcon = Schema.Struct({
-  kind: Schema.Literal("emoji"),
-  emoji: ProjectEmoji,
-});
-const ProjectMonogramIcon = Schema.Struct({
-  kind: Schema.Literal("monogram"),
-  text: ProjectMonogramText,
-  color: ProjectIconColor,
-});
-const ProjectIcon = Schema.Union([ProjectLucideIcon, ProjectEmojiIcon, ProjectMonogramIcon]);
-const ProjectLucideIconWire = Schema.Struct({
-  ...ProjectLucideIcon.fields,
-  monogramText: Schema.optional(ProjectMonogramText),
-  monogram: Schema.optional(ProjectMonogramText),
-});
-
-// Older peers only know lucide/emoji. Keep monograms out of their validated
-// `monogram` field too: old grapheme counters can reject otherwise valid text.
-export const ProjectIconOverride = Schema.Union([
-  ProjectLucideIconWire,
-  ProjectEmojiIcon,
-  ProjectMonogramIcon,
-]).pipe(
-  Schema.decodeTo(
-    ProjectIcon,
-    SchemaTransformation.transform({
-      decode: (icon): typeof ProjectIcon.Type => {
-        if (icon.kind !== "lucide") return icon;
-        const text = icon.monogramText ?? icon.monogram;
-        return text === undefined
-          ? { kind: "lucide", name: icon.name, color: icon.color }
-          : { kind: "monogram", text, color: icon.color };
-      },
-      encode: (icon) =>
-        icon.kind === "monogram"
-          ? {
-              kind: "lucide" as const,
-              name: "folder-code",
-              color: icon.color,
-              monogramText: icon.text,
-            }
-          : icon,
-    }),
-  ),
-);
-export type ProjectIconOverride = typeof ProjectIconOverride.Type;
+// The project script and icon schemas moved to project.ts upstream. Every
+// declaration was identical to its canonical counterpart, so V1 imports the
+// canonical ones and re-exports them rather than keeping copies that can drift.
+import {
+  ProjectFaviconPath,
+  ProjectIconColor,
+  ProjectIconOverride,
+  ProjectMonogramText,
+  ProjectScript,
+  ProjectScriptIcon,
+} from "./project.ts";
+export {
+  ProjectFaviconPath,
+  ProjectIconColor,
+  ProjectIconOverride,
+  ProjectMonogramText,
+  ProjectScript,
+  ProjectScriptIcon,
+};
 
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
@@ -691,84 +313,6 @@ export type OrchestrationForkBoundary = typeof OrchestrationForkBoundary.Type;
 export const isForkBaselineBoundary = (boundary: OrchestrationForkBoundary): boolean =>
   boundary.conversationTurnCount === 0 && boundary.turnId !== null;
 
-/** What an imported conversation's file did not carry, as the thread's import banner lists it. */
-export const OrchestrationConversationImportOmission = Schema.Union([
-  Schema.TaggedStruct("work-log-excluded", {}),
-  Schema.TaggedStruct("reasoning-excluded", {}),
-  Schema.TaggedStruct("range-truncated", { throughMessageN: PositiveInt }),
-  Schema.TaggedStruct("running-turn-omitted", {}),
-  Schema.TaggedStruct("attachments-unavailable", { count: PositiveInt }),
-  Schema.TaggedStruct("records-skipped", { count: PositiveInt }),
-]);
-export type OrchestrationConversationImportOmission =
-  typeof OrchestrationConversationImportOmission.Type;
-
-/** At most this many file notices are kept on an imported thread. */
-export const CONVERSATION_IMPORT_MAX_NOTICES = 10;
-
-/**
- * A note the imported file carried about itself that no omission states (for
- * example that attachment contents were not included): one line of plain
- * text, without paths or codes, shown by the thread's import banner.
- */
-export const OrchestrationConversationImportNotice = TrimmedNonEmptyString.check(
-  Schema.isMaxLength(300),
-);
-export type OrchestrationConversationImportNotice =
-  typeof OrchestrationConversationImportNotice.Type;
-
-/**
- * External source identity and known omissions of imported history. The
- * identifiers came from a package: they are provenance only, never local ids.
- */
-export const OrchestrationConversationImportSource = Schema.Struct({
-  source: Schema.Literals(["scic", "markdown"]),
-  exportId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
-  sourceThreadId: Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
-  packageDigest: TrimmedNonEmptyString.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/)),
-  sourceFormat: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
-  sourceFormatVersion: PositiveInt,
-  importedAt: IsoDateTime,
-  omissions: Schema.Array(OrchestrationConversationImportOmission),
-  /**
-   * How far the imported times were moved back, in milliseconds, because some
-   * were later than the importing server's clock (the sender's clock was
-   * ahead). Absent when nothing was moved; earlier transfers' moves add up.
-   */
-  timesShiftedMs: Schema.optional(PositiveInt),
-  /** The file's own notes, deduplicated against the omissions; absent when there are none. */
-  notices: Schema.optional(
-    Schema.Array(OrchestrationConversationImportNotice).check(
-      Schema.isMaxLength(CONVERSATION_IMPORT_MAX_NOTICES),
-    ),
-  ),
-});
-export type OrchestrationConversationImportSource =
-  typeof OrchestrationConversationImportSource.Type;
-
-export const OrchestrationConversationImport = Schema.Struct({
-  ...OrchestrationConversationImportSource.fields,
-  /**
-   * Server read model only: turns holding imported history. Revert keeps
-   * them, as it keeps a fork's inherited turns. Client-facing payloads omit it.
-   */
-  inheritedTurnIds: Schema.optional(Schema.Array(TurnId)),
-});
-export type OrchestrationConversationImport = typeof OrchestrationConversationImport.Type;
-
-/** Fork lineage and any external source history retained through the fork. */
-export const OrchestrationForkLineage = Schema.Struct({
-  originThreadId: ThreadId,
-  baselineAssistantMessageId: Schema.NullOr(MessageId),
-  sourceImport: Schema.optional(OrchestrationConversationImportSource),
-  /**
-   * Server read model only: destination turns holding inherited transcript.
-   * Revert never removes them. Client-facing payloads omit it.
-   */
-  inheritedTurnIds: Schema.optional(Schema.Array(TurnId)),
-});
-export type OrchestrationForkLineage = typeof OrchestrationForkLineage.Type;
-
 /**
  * One imported turn. Imported turns are completed history with no provider
  * turn or checkpoint behind them, like a fork's inherited turns.
@@ -830,98 +374,32 @@ export const ThreadTitleState = Schema.Struct({
 });
 export type ThreadTitleState = typeof ThreadTitleState.Type;
 
-export const ThreadTitleRegeneration = Schema.Struct({
-  requestId: CommandId,
-  startedAt: IsoDateTime,
-});
-export type ThreadTitleRegeneration = typeof ThreadTitleRegeneration.Type;
+// The in-flight title regeneration moved to threadTitle.ts upstream; the two
+// definitions were identical, so V1 imports the canonical one.
+import { ThreadTitleRegeneration } from "./threadTitle.ts";
+export { ThreadTitleRegeneration };
 
-/**
- * Legacy single-PR link. Still emitted as the thread's derived current pull
- * request (see `@t3tools/shared/threadPullRequests`) so clients from before
- * `pullRequests` keep working independently of their release schedule.
- */
-export const ThreadLinkedPullRequest = Schema.Struct({
-  projectId: ProjectId,
-  repository: TrimmedNonEmptyString,
-  number: PositiveInt,
-  url: TrimmedNonEmptyString,
-});
-export type ThreadLinkedPullRequest = typeof ThreadLinkedPullRequest.Type;
-
-/** Who created a thread ↔ pull request link. `stack-dismissed` is a tombstone
- * for a native-stack member the user unlinked, so the sync reactor does not
- * re-add it; clients hide it. */
-export const ThreadPullRequestLinkSource = Schema.Literals([
-  "manual",
-  "created",
-  "agent",
-  "stack",
-  "stack-dismissed",
-]);
-export type ThreadPullRequestLinkSource = typeof ThreadPullRequestLinkSource.Type;
-
-/**
- * Host state persisted on a link by the sync reactor; null until first sync. The overview
- * fields are optional: a host whose cheap read lacks them leaves them out, and snapshots
- * written before they existed still decode.
- */
-export const ThreadPullRequestSnapshot = Schema.Struct({
-  state: PullRequestState,
-  title: TrimmedNonEmptyString,
-  headBranch: TrimmedNonEmptyString,
-  baseBranch: TrimmedNonEmptyString,
-  isDraft: Schema.Boolean,
-  updatedAt: Schema.NullOr(IsoDateTime),
-  syncedAt: IsoDateTime,
-  closedAt: Schema.optional(Schema.NullOr(Schema.String)),
-  mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
-  author: Schema.optional(Schema.NullOr(PullRequestActor)),
-  additions: Schema.optional(NonNegativeInt),
-  deletions: Schema.optional(NonNegativeInt),
-  changedFiles: Schema.optional(NonNegativeInt),
-  reviewDecision: Schema.optional(Schema.NullOr(PullRequestReviewDecision)),
-  checksState: Schema.optional(Schema.NullOr(PullRequestChecksState)),
-  mergeability: Schema.optional(PullRequestMergeability),
-});
-export type ThreadPullRequestSnapshot = typeof ThreadPullRequestSnapshot.Type;
-
-export const ThreadPullRequestStackLayer = Schema.Struct({
-  number: PositiveInt,
-  headBranch: TrimmedNonEmptyString,
-  state: PullRequestState,
-});
-export type ThreadPullRequestStackLayer = typeof ThreadPullRequestStackLayer.Type;
-
-/** A host-native stack the pull request belongs to. Layers run bottom to top. */
-export const ThreadPullRequestStack = Schema.Struct({
-  kind: Schema.Literal("native"),
-  id: TrimmedNonEmptyString,
-  number: PositiveInt,
-  url: TrimmedNonEmptyString,
-  base: TrimmedNonEmptyString,
-  layers: Schema.Array(ThreadPullRequestStackLayer),
-});
-export type ThreadPullRequestStack = typeof ThreadPullRequestStack.Type;
-
-/** Identity of a pull request as a thread link sees it: host-level, so the
- * same PR linked from two projects (or two environments) compares equal. */
-export const ThreadPullRequestKey = Schema.Struct({
-  host: TrimmedNonEmptyString,
-  repository: TrimmedNonEmptyString,
-  number: PositiveInt,
-});
-export type ThreadPullRequestKey = typeof ThreadPullRequestKey.Type;
-
-export const ThreadPullRequestLink = Schema.Struct({
-  ...ThreadPullRequestKey.fields,
-  url: TrimmedNonEmptyString,
-  source: ThreadPullRequestLinkSource,
-  linkedAt: IsoDateTime,
-  snapshot: Schema.NullOr(ThreadPullRequestSnapshot),
-  stack: Schema.NullOr(ThreadPullRequestStack),
-});
-export type ThreadPullRequestLink = typeof ThreadPullRequestLink.Type;
+// The thread ↔ pull request schemas moved to threadPullRequest.ts upstream.
+// Every declaration was identical to its canonical counterpart, so V1 imports
+// the canonical ones and re-exports them.
+import {
+  ThreadLinkedPullRequest,
+  ThreadPullRequestKey,
+  ThreadPullRequestLink,
+  ThreadPullRequestLinkSource,
+  ThreadPullRequestSnapshot,
+  ThreadPullRequestStack,
+  ThreadPullRequestStackLayer,
+} from "./threadPullRequest.ts";
+export {
+  ThreadLinkedPullRequest,
+  ThreadPullRequestKey,
+  ThreadPullRequestLink,
+  ThreadPullRequestLinkSource,
+  ThreadPullRequestSnapshot,
+  ThreadPullRequestStack,
+  ThreadPullRequestStackLayer,
+};
 
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
@@ -1014,22 +492,10 @@ export const OrchestrationReadModel = Schema.Struct({
 });
 export type OrchestrationReadModel = typeof OrchestrationReadModel.Type;
 
-export const OrchestrationProjectShell = Schema.Struct({
-  id: ProjectId,
-  title: TrimmedNonEmptyString,
-  workspaceRoot: TrimmedNonEmptyString,
-  repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
-  defaultModelSelection: Schema.NullOr(ModelSelection),
-  defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
-  autoPull: Schema.optional(Schema.Boolean),
-  // Optional on the wire so cached snapshots from older servers still decode.
-  faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
-  projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
-  scripts: Schema.Array(ProjectScript),
-  createdAt: IsoDateTime,
-  updatedAt: IsoDateTime,
-});
-export type OrchestrationProjectShell = typeof OrchestrationProjectShell.Type;
+// The project shell moved to orchestrationProject.ts upstream; the two
+// definitions were identical field for field, so V1 imports the canonical one.
+import { OrchestrationProjectShell } from "./orchestrationProject.ts";
+export { OrchestrationProjectShell };
 
 export const OrchestrationThreadShell = Schema.Struct({
   id: ThreadId,
@@ -1666,6 +1132,7 @@ export const ThreadForkCommand = Schema.Struct({
   // The running turn itself: retain every completed turn plus that turn's
   // latest state (reasoning, tool work and text produced so far).
   sourceRunningTurnId: Schema.optional(TurnId),
+  sourceRunningRunId: Schema.optional(RunId),
   workspaceMode: OrchestrationForkWorkspaceMode,
   // Explicit destination title chosen by the user. When absent, the server
   // allocates the automatic collision-safe title at commit time.
@@ -1677,6 +1144,7 @@ export const ThreadForkCommand = Schema.Struct({
         command.sourceAssistantMessageId,
         command.sourceUserMessageId,
         command.sourceRunningTurnId,
+        command.sourceRunningRunId,
       ].filter((source) => source !== undefined).length === 1 ||
       "exactly one fork source must be specified",
   ),
@@ -1689,6 +1157,7 @@ export const GetForkOptionsInput = Schema.Struct({
   sourceAssistantMessageId: Schema.optional(MessageId),
   sourceUserMessageId: Schema.optional(MessageId),
   sourceRunningTurnId: Schema.optional(TurnId),
+  sourceRunningRunId: Schema.optional(RunId),
 });
 export type GetForkOptionsInput = typeof GetForkOptionsInput.Type;
 export const ForkOptions = Schema.Struct({
@@ -1698,19 +1167,10 @@ export const ForkOptions = Schema.Struct({
   sourceAssistantMessageId: Schema.NullOr(MessageId),
   sourceUserMessageId: Schema.NullOr(MessageId),
   sourceRunningTurnId: Schema.optional(Schema.NullOr(TurnId)),
+  sourceRunningRunId: Schema.optional(Schema.NullOr(RunId)),
   newWorktree: Schema.Boolean,
 });
 export type ForkOptions = typeof ForkOptions.Type;
-export const ForkDisposition = Schema.Literals([
-  "unknown",
-  "rejected",
-  "pending",
-  "provisioning",
-  "failed",
-  "abandoned",
-  "ready",
-]);
-export type ForkDisposition = typeof ForkDisposition.Type;
 // SCIENT-FORK:END
 
 const DispatchableClientOrchestrationCommand = Schema.Union([
@@ -2507,11 +1967,10 @@ export const ThreadActivityAppendedPayload = Schema.Struct({
  * provider/server-originated events and on commands from clients too old to
  * report it.
  */
-export const OrchestrationClientOrigin = Schema.Struct({
-  surface: Schema.optional(ClientSurface),
-  appVersion: Schema.optional(TrimmedNonEmptyString),
-});
-export type OrchestrationClientOrigin = typeof OrchestrationClientOrigin.Type;
+// The client-origin stamp moved to applicationEvent.ts upstream; the two
+// definitions were identical, so V1 imports the canonical one.
+import { OrchestrationClientOrigin } from "./applicationEvent.ts";
+export { OrchestrationClientOrigin };
 
 export const OrchestrationEventMetadata = Schema.Struct({
   providerTurnId: Schema.optional(TrimmedNonEmptyString),
@@ -2746,27 +2205,29 @@ export type OrchestrationThreadStreamItem = typeof OrchestrationThreadStreamItem
 export const OrchestrationCommandReceiptStatus = Schema.Literals(["accepted", "rejected"]);
 export type OrchestrationCommandReceiptStatus = typeof OrchestrationCommandReceiptStatus.Type;
 
-export const TurnCountRange = Schema.Struct({
-  fromTurnCount: NonNegativeInt,
-  toTurnCount: NonNegativeInt,
-}).check(
-  Schema.makeFilter(
-    (input) =>
-      input.fromTurnCount <= input.toTurnCount ||
-      new SchemaIssue.InvalidValue({
-        message: "fromTurnCount must be less than or equal to toTurnCount",
-      }),
-    { identifier: "OrchestrationTurnDiffRange" },
-  ),
-);
-
-export const ThreadTurnDiff = TurnCountRange.mapFields(
-  Struct.assign({
-    threadId: ThreadId,
-    diff: Schema.String,
-  }),
-  { unsafePreserveChecks: true },
-);
+// The turn-diff schemas moved to checkpointDiff.ts upstream. Every declaration
+// was identical to its canonical counterpart, so V1 imports the canonical ones
+// and re-exports them rather than keeping copies that can drift.
+import {
+  OrchestrationGetFullThreadDiffError,
+  OrchestrationGetFullThreadDiffInput,
+  OrchestrationGetFullThreadDiffResult,
+  OrchestrationGetTurnDiffError,
+  OrchestrationGetTurnDiffInput,
+  OrchestrationGetTurnDiffResult,
+  ThreadTurnDiff,
+  TurnCountRange,
+} from "./checkpointDiff.ts";
+export {
+  OrchestrationGetFullThreadDiffError,
+  OrchestrationGetFullThreadDiffInput,
+  OrchestrationGetFullThreadDiffResult,
+  OrchestrationGetTurnDiffError,
+  OrchestrationGetTurnDiffInput,
+  OrchestrationGetTurnDiffResult,
+  ThreadTurnDiff,
+  TurnCountRange,
+};
 
 export const ProviderSessionRuntimeStatus = Schema.Literals([
   "starting",
@@ -2796,39 +2257,26 @@ export const DispatchResult = Schema.Struct({
 });
 export type DispatchResult = typeof DispatchResult.Type;
 
-export const OrchestrationGetTurnDiffInput = TurnCountRange.mapFields(
-  Struct.assign({
-    threadId: ThreadId,
-    ignoreWhitespace: Schema.optionalKey(Schema.Boolean),
-  }),
-  { unsafePreserveChecks: true },
-);
-export type OrchestrationGetTurnDiffInput = typeof OrchestrationGetTurnDiffInput.Type;
+// The thread-search scan input and match source moved to threadSearch.ts
+// upstream; those two declarations were identical. The match itself is not —
+// see the V1 definition below.
+import {
+  OrchestrationSearchThreadsError,
+  OrchestrationSearchThreadsInput,
+  OrchestrationThreadSearchSource,
+} from "./threadSearch.ts";
+export {
+  OrchestrationSearchThreadsError,
+  OrchestrationSearchThreadsInput,
+  OrchestrationThreadSearchSource,
+};
 
-export const OrchestrationGetTurnDiffResult = ThreadTurnDiff;
-export type OrchestrationGetTurnDiffResult = typeof OrchestrationGetTurnDiffResult.Type;
-
-export const OrchestrationGetFullThreadDiffInput = Schema.Struct({
-  threadId: ThreadId,
-  toTurnCount: NonNegativeInt,
-  ignoreWhitespace: Schema.optionalKey(Schema.Boolean),
-});
-export type OrchestrationGetFullThreadDiffInput = typeof OrchestrationGetFullThreadDiffInput.Type;
-
-export const OrchestrationGetFullThreadDiffResult = ThreadTurnDiff;
-export type OrchestrationGetFullThreadDiffResult = typeof OrchestrationGetFullThreadDiffResult.Type;
-
-export const OrchestrationThreadSearchSource = Schema.Literals(["user", "assistant"]);
-export type OrchestrationThreadSearchSource = typeof OrchestrationThreadSearchSource.Type;
-
-// The server's SQLite client is synchronous and single-connection. Bound both
-// scan input and response size so a search cannot monopolize that connection.
-export const OrchestrationSearchThreadsInput = Schema.Struct({
-  query: TrimmedString.check(Schema.isMinLength(2), Schema.isMaxLength(200)),
-  limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
-});
-export type OrchestrationSearchThreadsInput = typeof OrchestrationSearchThreadsInput.Type;
-
+// SCIENT-FORK:START — a V1 thread-search match carries a nullable project id.
+// The V1 scan keeps threads whose `project_id` is NULL
+// (ProjectionSnapshotQuery.searchThreads), so a match can report no project.
+// Upstream's V2 scan only covers threads inside a project and declares
+// `projectId` non-null, which would reject a V1 response outright. The two
+// definitions therefore stay distinct, and index.ts re-exports this pair.
 export const OrchestrationThreadSearchMatch = Schema.Struct({
   threadId: ThreadId,
   projectId: Schema.NullOr(ProjectId),
@@ -2842,6 +2290,7 @@ export const OrchestrationSearchThreadsResult = Schema.Struct({
   matches: Schema.Array(OrchestrationThreadSearchMatch),
 });
 export type OrchestrationSearchThreadsResult = typeof OrchestrationSearchThreadsResult.Type;
+// SCIENT-FORK:END
 
 export const OrchestrationGetWorkflowScriptInput = Schema.Struct({
   threadId: ThreadId,
@@ -2858,38 +2307,10 @@ export const OrchestrationGetWorkflowScriptResult = Schema.Struct({
 });
 export type OrchestrationGetWorkflowScriptResult = typeof OrchestrationGetWorkflowScriptResult.Type;
 
-const WORKFLOW_SCRIPT_ERROR_MESSAGES = {
-  "invalid-path": "Workflow scripts must be absolute .js paths.",
-  "root-unavailable": "Script root unavailable.",
-  "not-found": "Script not found.",
-  "outside-root": "Script path is outside the workflow scripts root.",
-  "not-js": "Resolved script is not a .js file.",
-  "not-regular-file": "Script is not a regular file.",
-  "changed-during-read": "Script changed between resolution and open.",
-  "read-failed": "Script read failed.",
-} as const;
-
-export class OrchestrationGetWorkflowScriptError extends Schema.TaggedError<OrchestrationGetWorkflowScriptError>()(
-  "OrchestrationGetWorkflowScriptError",
-  {
-    reason: Schema.Literals([
-      "invalid-path",
-      "root-unavailable",
-      "not-found",
-      "outside-root",
-      "not-js",
-      "not-regular-file",
-      "changed-during-read",
-      "read-failed",
-    ]),
-    scriptPath: Schema.String,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
-  override get message(): string {
-    return WORKFLOW_SCRIPT_ERROR_MESSAGES[this.reason];
-  }
-}
+// The workflow-script failure moved to orchestrationV2.ts upstream; both
+// declarations carried the same fields and the same reason-to-message table.
+import { OrchestrationGetWorkflowScriptError } from "./orchestrationV2.ts";
+export { OrchestrationGetWorkflowScriptError };
 
 export const OrchestrationRpcSchemas = {
   dispatchCommand: {
@@ -2928,40 +2349,6 @@ export const OrchestrationRpcSchemas = {
 
 export class OrchestrationGetSnapshotError extends Schema.TaggedError<OrchestrationGetSnapshotError>()(
   "OrchestrationGetSnapshotError",
-  {
-    message: TrimmedNonEmptyString,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {}
-
-export class OrchestrationDispatchCommandError extends Schema.TaggedError<OrchestrationDispatchCommandError>()(
-  "OrchestrationDispatchCommandError",
-  {
-    message: TrimmedNonEmptyString,
-    cause: Schema.optional(Schema.Defect()),
-    bootstrapThreadDisposition: Schema.optional(Schema.Literals(["deleted", "not-created"])),
-    forkDisposition: Schema.optional(ForkDisposition),
-  },
-) {}
-
-export class OrchestrationGetTurnDiffError extends Schema.TaggedError<OrchestrationGetTurnDiffError>()(
-  "OrchestrationGetTurnDiffError",
-  {
-    message: TrimmedNonEmptyString,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {}
-
-export class OrchestrationGetFullThreadDiffError extends Schema.TaggedError<OrchestrationGetFullThreadDiffError>()(
-  "OrchestrationGetFullThreadDiffError",
-  {
-    message: TrimmedNonEmptyString,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {}
-
-export class OrchestrationSearchThreadsError extends Schema.TaggedError<OrchestrationSearchThreadsError>()(
-  "OrchestrationSearchThreadsError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),

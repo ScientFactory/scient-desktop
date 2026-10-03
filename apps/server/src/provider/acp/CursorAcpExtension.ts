@@ -3,7 +3,13 @@
  * Additional reference provided by the Cursor team: https://anysphere.enterprise.slack.com/files/U068SSJE141/F0APT1HSZRP/cursor-acp-extension-method-schemas.md
  */
 import type { UserInputQuestion } from "@t3tools/contracts";
+// NOTE: unlike the other legacy v1 adapters, this module must keep the VALUE
+// import from `effect-acp/schema`. `AcpSchema.SessionConfigOption` is used
+// inside `Schema.Array(...)`, so it needs the generated v2 schema constant.
+// `effect-acp/compat` exports that name as a type only, so importing compat
+// here type-checks no and fails at runtime with `AcpSchema is not defined`.
 import * as AcpSchema from "effect-acp/schema";
+import type { AcpPlanUpdate } from "./AcpRuntimeModel.ts";
 import * as Schema from "effect/Schema";
 
 const CursorAskQuestionOption = Schema.Struct({
@@ -86,13 +92,9 @@ export function extractPlanMarkdown(params: typeof CursorCreatePlanRequest.Type)
   return params.plan || "# Plan\n\n(Cursor did not supply plan text.)";
 }
 
-export function extractTodosAsPlan(params: typeof CursorUpdateTodosRequest.Type): {
-  readonly explanation?: string;
-  readonly plan: ReadonlyArray<{
-    readonly step: string;
-    readonly status: "pending" | "inProgress" | "completed";
-  }>;
-} {
+export function extractTodosAsPlan(
+  params: typeof CursorUpdateTodosRequest.Type,
+): Extract<AcpPlanUpdate, { readonly kind: "items" }> {
   const plan = params.todos.flatMap((todo) => {
     // Fall back to the title when content is missing OR blank. `??` only
     // covers a missing content, so a present-but-empty content ("" or
@@ -109,5 +111,8 @@ export function extractTodosAsPlan(params: typeof CursorUpdateTodosRequest.Type)
           : "pending";
     return [{ step, status }];
   });
-  return { plan };
+  // `update_todos` carries no plan id of its own: the tool call it arrives on
+  // is the identity the todo list keeps across updates, so it is what keys the
+  // plan and lets a later update replace these steps in place.
+  return { nativePlanId: params.toolCallId, kind: "items", plan };
 }

@@ -130,6 +130,14 @@ const makeFakeInstance = (
       applyUsageLimits: () => Effect.void,
     },
     adapter,
+    orchestrationAdapter: {
+      instanceId: defaultInstanceIdForDriver(driverKind),
+      driver: driverKind,
+      getCapabilities: () => Effect.die("Legacy adapter registry must not use V2 capabilities."),
+      planSelectionTransition: () =>
+        Effect.die("Legacy adapter registry must not use V2 selection transitions."),
+      openSession: () => Effect.die("Legacy adapter registry must not open a V2 session."),
+    },
     textGeneration: {} as unknown as TextGeneration.TextGeneration["Service"],
   };
 };

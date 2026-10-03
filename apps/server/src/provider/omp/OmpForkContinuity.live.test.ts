@@ -26,8 +26,8 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import {
   ScientForkContextDelivery,
   ScientForkContextDeliveryLive,
-} from "../../orchestration/scient-fork/ForkContextDelivery.ts";
-import { nativeThreadKey } from "../../orchestration/scient-fork/context/nativeThreadKey.ts";
+} from "../../orchestration-v2/scient-fork/ForkContextDelivery.ts";
+import { nativeThreadKey } from "../../orchestration-v2/scient-fork/context/nativeThreadKey.ts";
 import { makeOmpAdapter } from "../Layers/OmpAdapter.ts";
 import * as OmpExecutableGate from "./OmpExecutableGate.ts";
 import { makeOmpCustomModelsClientFactory } from "./OmpCustomModels.ts";

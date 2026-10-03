@@ -1,25 +1,24 @@
-import * as NodeOS from "node:os";
+import type { SDKModel, SDKUser } from "@cursor/sdk";
 import type {
   CursorSettings,
   ModelCapabilities,
+  ProviderOptionDescriptor,
   ProviderOptionSelection,
   ServerProvider,
   ServerProviderAuth,
   ServerProviderModel,
   ServerProviderState,
 } from "@t3tools/contracts";
-import type * as EffectAcpSchema from "effect-acp/schema";
+import type * as AcpSchemaV2 from "effect-acp/schema";
+import type * as EffectAcpSchema from "effect-acp/compat";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
-import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -34,13 +33,13 @@ import {
 } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
+import { cursorSdkParameterPriority, cursorSdkProviderOptionId } from "../cursorSdkModel.ts";
 import {
   buildBooleanOptionDescriptor,
   buildSelectOptionDescriptor,
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
   collectStreamAsString,
-  isCommandMissingCause,
   providerModelsFromSettings,
   type CommandResult,
   type ServerProviderDraft,
@@ -53,6 +52,7 @@ import * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 import { CursorListAvailableModelsResponse } from "../acp/CursorAcpExtension.ts";
 import { cursorCliArgs } from "./CursorCli.ts";
 import type { ServerProviderShape } from "../Services/ServerProvider.ts";
+import * as CursorSdkCatalog from "./CursorSdkCatalog.ts";
 
 /** Session command catalogs stay scoped to their workspace across health refreshes. */
 export const makeCursorCommandCatalog = Effect.fn("makeCursorCommandCatalog")(function* (
@@ -147,6 +147,7 @@ export const makeCursorCommandCatalog = Effect.fn("makeCursorCommandCatalog")(fu
 const decodeCursorListAvailableModelsResponse = Schema.decodeUnknownEffect(
   CursorListAvailableModelsResponse,
 );
+
 const CURSOR_PRESENTATION = {
   displayName: "Cursor",
   supportsConversationRollback: false,
@@ -156,15 +157,9 @@ const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
 
-const CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
 const CURSOR_PARAMETERIZED_MODEL_PICKER_MIN_VERSION_DATE = 2026_04_08;
-const CURSOR_CLI_INSTALLATION_DOCS_URL = "https://cursor.com/docs/cli/installation";
-const CURSOR_ACP_MODEL_DISCOVERY_FAILED_MESSAGE = [
-  "Cursor ACP model discovery failed.",
-  "Cursor CLI setup may be incomplete; install or enable the Cursor CLI, restart Scient, and try again.",
-  `See ${CURSOR_CLI_INSTALLATION_DOCS_URL}.`,
-  "Check server logs for ACP details.",
-].join(" ");
+const CURSOR_SDK_CATALOG_TIMEOUT_MS = 15_000;
+
 export const CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES = {
   _meta: {
     parameterizedModelPicker: true,
@@ -204,7 +199,7 @@ export function buildInitialCursorProviderSnapshot(
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Checking Cursor Agent availability...",
+        message: "Checking Cursor SDK availability...",
       },
     });
   });
@@ -305,12 +300,6 @@ function isCursorFastConfigOption(option: EffectAcpSchema.SessionConfigOption): 
   return id === "fast" || name === "fast" || name.includes("fast mode");
 }
 
-function isCursorThinkingConfigOption(option: EffectAcpSchema.SessionConfigOption): boolean {
-  const id = option.id.trim().toLowerCase();
-  const name = option.name.trim().toLowerCase();
-  return id === "thinking" || name.includes("thinking");
-}
-
 function isBooleanLikeConfigOption(option: EffectAcpSchema.SessionConfigOption): boolean {
   if (option.type === "boolean") {
     return true;
@@ -396,11 +385,7 @@ export function buildCursorCapabilitiesFromConfigOptions(
   const fastOption = configOptions.find(
     (option) => option.category === "model_config" && isCursorFastConfigOption(option),
   );
-  const thinkingOption = configOptions.find(
-    (option) => option.category === "model_config" && isCursorThinkingConfigOption(option),
-  );
   const fastCurrentValue = getBooleanCurrentValue(fastOption);
-  const thinkingCurrentValue = getBooleanCurrentValue(thinkingOption);
   const optionDescriptors = [
     ...(reasoningEffortLevels.length > 0
       ? [
@@ -434,20 +419,6 @@ export function buildCursorCapabilitiesFromConfigOptions(
               }),
         ]
       : []),
-    ...(thinkingOption && isBooleanLikeConfigOption(thinkingOption)
-      ? [
-          typeof thinkingCurrentValue === "boolean"
-            ? buildBooleanOptionDescriptor({
-                id: "thinking",
-                label: thinkingOption.name?.trim() || "Thinking",
-                currentValue: thinkingCurrentValue,
-              })
-            : buildBooleanOptionDescriptor({
-                id: "thinking",
-                label: thinkingOption.name?.trim() || "Thinking",
-              }),
-        ]
-      : []),
   ];
 
   return createModelCapabilities({
@@ -475,6 +446,52 @@ function buildCursorDiscoveredModels(
   });
 }
 
+type AcpConfigOptionV2 = AcpSchemaV2.SessionConfigOption;
+type DrivableAcpConfigOptionV2 = Extract<
+  AcpConfigOptionV2,
+  { readonly type: "select" } | { readonly type: "boolean" }
+>;
+
+function isDrivableCursorConfigOption(
+  option: AcpConfigOptionV2,
+): option is DrivableAcpConfigOptionV2 {
+  return option.type === "select" || option.type === "boolean";
+}
+
+/**
+ * ACP v2 renamed a session config option's `id` to `configId` and widened the
+ * union with option kinds this model picker cannot drive. The legacy
+ * config-option helpers address an option by its pre-v2 `id`, so map the
+ * decoded response back and drop the kinds they do not handle.
+ */
+function toLegacyCursorConfigOptions(
+  options: ReadonlyArray<AcpConfigOptionV2> | undefined,
+): ReadonlyArray<EffectAcpSchema.SessionConfigOption> {
+  return (
+    options?.flatMap((option): ReadonlyArray<EffectAcpSchema.SessionConfigOption> => {
+      if (!isDrivableCursorConfigOption(option)) {
+        return [];
+      }
+      const identity = {
+        id: option.configId,
+        name: option.name,
+        ...(option.description === undefined ? {} : { description: option.description }),
+        ...(option.category === undefined ? {} : { category: option.category }),
+      };
+      return option.type === "select"
+        ? [
+            {
+              ...identity,
+              type: "select" as const,
+              currentValue: option.currentValue,
+              options: option.options,
+            },
+          ]
+        : [{ ...identity, type: "boolean" as const, currentValue: option.currentValue }];
+    }) ?? []
+  );
+}
+
 function buildCursorDiscoveredModelsFromAvailableModelsResponse(
   response: typeof CursorListAvailableModelsResponse.Type,
 ): ReadonlyArray<ServerProviderModel> {
@@ -490,7 +507,9 @@ function buildCursorDiscoveredModelsFromAvailableModelsResponse(
         {
           slug,
           name,
-          capabilities: buildCursorCapabilitiesFromConfigOptions(model.configOptions),
+          capabilities: buildCursorCapabilitiesFromConfigOptions(
+            toLegacyCursorConfigOptions(model.configOptions),
+          ),
         },
       ];
     }),
@@ -506,7 +525,7 @@ const makeCursorAcpProbeRuntime = (
     const acpContext = yield* Layer.build(
       AcpSessionRuntime.layer({
         spawn: {
-          command: cursorSettings.binaryPath,
+          command: cursorSettings.binaryPath || "cursor-agent",
           args: [
             ...(cursorSettings.apiEndpoint ? (["-e", cursorSettings.apiEndpoint] as const) : []),
             "acp",
@@ -633,17 +652,6 @@ export function resolveCursorAcpConfigUpdates(
     }
   }
 
-  const thinkingOption = configOptions.find(
-    (option) => option.category === "model_config" && isCursorThinkingConfigOption(option),
-  );
-  const requestedThinking = getProviderOptionBooleanSelectionValue(selections, "thinking");
-  if (thinkingOption && typeof requestedThinking === "boolean") {
-    const value = findCursorBooleanConfigValue(thinkingOption, requestedThinking);
-    if (value !== undefined) {
-      updates.push({ configId: thinkingOption.id, value });
-    }
-  }
-
   return updates;
 }
 
@@ -694,8 +702,126 @@ function getCursorFallbackModels(
   return providerModelsFromSettings([], cursorSettings.customModels, EMPTY_CAPABILITIES);
 }
 
-/** Timeout for `agent about` — it's slower than a simple `--version` probe. */
-const ABOUT_TIMEOUT_MS = 8_000;
+function toTitleCaseWords(value: string): string {
+  const parts: Array<string> = [];
+  for (const part of value.split(/[\s_-]+/g)) {
+    if (part.length > 0) {
+      parts.push(part.charAt(0).toUpperCase() + part.slice(1).toLowerCase());
+    }
+  }
+  return parts.join(" ");
+}
+
+function cursorSdkDefaultParameterValue(model: SDKModel, parameterId: string): string | undefined {
+  return model.variants
+    ?.find((variant) => variant.isDefault)
+    ?.params.find((parameter) => parameter.id === parameterId)?.value;
+}
+
+export function buildCursorCapabilitiesFromSdkModel(model: SDKModel): ModelCapabilities {
+  const seen = new Set<string>();
+  const optionDescriptors: Array<ProviderOptionDescriptor> = [];
+  const parameters = (model.parameters ?? [])
+    .map((parameter, index) => ({ parameter, index }))
+    .toSorted(
+      (left, right) =>
+        cursorSdkParameterPriority(left.parameter.id) -
+          cursorSdkParameterPriority(right.parameter.id) || left.index - right.index,
+    );
+  for (const { parameter } of parameters) {
+    const nativeId = parameter.id.trim();
+    const id = cursorSdkProviderOptionId(nativeId);
+    if (!nativeId || !id || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+
+    const values = parameter.values.flatMap((entry) => {
+      const value = entry.value.trim();
+      if (!value) {
+        return [];
+      }
+      return [
+        {
+          value,
+          label: entry.displayName?.trim() || value,
+        },
+      ];
+    });
+    if (values.length === 0) {
+      continue;
+    }
+
+    const label = parameter.displayName?.trim() || toTitleCaseWords(id);
+    const defaultValue = cursorSdkDefaultParameterValue(model, nativeId);
+    const normalizedValues = new Set(values.map((entry) => entry.value.toLowerCase()));
+    if (values.length === 2 && normalizedValues.has("true") && normalizedValues.has("false")) {
+      if (defaultValue === "true" || defaultValue === "false") {
+        optionDescriptors.push(
+          buildBooleanOptionDescriptor({
+            id,
+            label,
+            currentValue: defaultValue === "true",
+          }),
+        );
+      } else {
+        optionDescriptors.push(buildBooleanOptionDescriptor({ id, label }));
+      }
+      continue;
+    }
+
+    optionDescriptors.push(
+      buildSelectOptionDescriptor({
+        id,
+        label,
+        options: values.map((entry) => ({
+          ...entry,
+          ...(entry.value === defaultValue ? { isDefault: true } : {}),
+        })),
+      }),
+    );
+  }
+
+  return createModelCapabilities({ optionDescriptors });
+}
+
+export function buildCursorDiscoveredModelsFromSdk(
+  models: ReadonlyArray<SDKModel>,
+): ReadonlyArray<ServerProviderModel> {
+  const seen = new Set<string>();
+  return models.flatMap((model) => {
+    const slug = model.id.trim();
+    const name = model.displayName.trim();
+    if (!slug || !name || seen.has(slug)) {
+      return [];
+    }
+    seen.add(slug);
+    return [
+      {
+        slug,
+        name,
+        isCustom: false,
+        capabilities: buildCursorCapabilitiesFromSdkModel(model),
+      } satisfies ServerProviderModel,
+    ];
+  });
+}
+
+function cursorSdkAuth(user: SDKUser, type: "api-key" | "browser"): ServerProviderAuth {
+  const email = user.userEmail?.trim();
+  const apiKeyName = user.apiKeyName.trim();
+  return {
+    status: "authenticated",
+    type,
+    label:
+      type === "browser"
+        ? "Cursor account"
+        : apiKeyName
+          ? `Cursor API key (${apiKeyName})`
+          : "Cursor API key",
+    ...(email ? { email } : {}),
+  };
+}
 
 /** Strip ANSI escape sequences so we can parse plain key-value lines. */
 function stripAnsi(text: string): string {
@@ -731,43 +857,6 @@ function joinProviderMessages(...messages: ReadonlyArray<string | undefined>): s
   return parts.length > 0 ? parts.join(" ") : undefined;
 }
 
-function buildCursorCliCommandMissingMessage(binaryPath: string): string {
-  return [
-    `Cursor CLI command \`${binaryPath}\` was not found.`,
-    `Install or enable the Cursor CLI, make sure \`${binaryPath}\` is on PATH, then restart Scient.`,
-    `See ${CURSOR_CLI_INSTALLATION_DOCS_URL}.`,
-  ].join(" ");
-}
-
-export function buildCursorProviderSnapshot(input: {
-  readonly checkedAt: string;
-  readonly cursorSettings: CursorSettings;
-  readonly parsed: CursorAboutResult;
-  readonly discoveredModels?: ReadonlyArray<ServerProviderModel>;
-  readonly discoveryWarning?: string;
-}): ServerProviderDraft {
-  const message = joinProviderMessages(input.parsed.message, input.discoveryWarning);
-  return buildServerProvider({
-    presentation: CURSOR_PRESENTATION,
-    enabled: input.cursorSettings.enabled,
-    checkedAt: input.checkedAt,
-    models: providerModelsFromSettings(
-      input.discoveredModels ?? [],
-      input.cursorSettings.customModels,
-      EMPTY_CAPABILITIES,
-    ),
-    slashCommands: [COMPACT_SLASH_COMMAND],
-    probe: {
-      installed: true,
-      version: input.parsed.version,
-      status:
-        input.discoveryWarning && input.parsed.status === "ready" ? "warning" : input.parsed.status,
-      auth: input.parsed.auth,
-      ...(message ? { message } : {}),
-    },
-  });
-}
-
 interface CursorAboutJsonPayload {
   readonly cliVersion?: unknown;
   readonly subscriptionTier?: unknown;
@@ -799,16 +888,6 @@ export function parseCursorCliConfigChannel(raw: string): string | undefined {
     return undefined;
   }
   return undefined;
-}
-
-function toTitleCaseWords(value: string): string {
-  const parts: Array<string> = [];
-  for (const part of value.split(/[\s_-]+/g)) {
-    if (part.length > 0) {
-      parts.push(part.charAt(0).toUpperCase() + part.slice(1).toLowerCase());
-    }
-  }
-  return parts.join(" ");
 }
 
 function cursorSubscriptionLabel(subscriptionType: string | undefined): string | undefined {
@@ -873,18 +952,6 @@ function isCursorAboutJsonFormatUnsupported(result: CommandResult): boolean {
     lowerOutput.includes("unknown argument '--format'")
   );
 }
-
-const readCursorCliConfigChannel = Effect.fn("readCursorCliConfigChannel")(function* (
-  environment?: NodeJS.ProcessEnv,
-) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const homeDirectory =
-    environment?.HOME?.trim() || environment?.USERPROFILE?.trim() || NodeOS.homedir();
-  const configPath = path.join(homeDirectory, ".cursor", "cli-config.json");
-  const raw = yield* fileSystem.readFileString(configPath).pipe(Effect.orElseSucceed(() => ""));
-  return parseCursorCliConfigChannel(raw);
-});
 
 export function getCursorParameterizedModelPickerUnsupportedMessage(input: {
   readonly version: string | null | undefined;
@@ -1071,7 +1138,7 @@ const runCursorCommand = (
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const spawnCommand = yield* resolveSpawnCommand(
-      cursorSettings.binaryPath,
+      cursorSettings.binaryPath || "cursor-agent",
       cursorCliArgs(args, environment),
       environment ? { env: environment } : {},
     );
@@ -1109,15 +1176,39 @@ export const runCursorAboutCommand = (
     return yield* runCursorCommand(cursorSettings, ["about"], environment);
   });
 
+export function buildCursorProviderSnapshot(input: {
+  readonly checkedAt: string;
+  readonly cursorSettings: CursorSettings;
+  readonly parsed: CursorAboutResult;
+  readonly discoveredModels?: ReadonlyArray<ServerProviderModel>;
+  readonly discoveryWarning?: string;
+}): ServerProviderDraft {
+  const message = joinProviderMessages(input.parsed.message, input.discoveryWarning);
+  return buildServerProvider({
+    presentation: CURSOR_PRESENTATION,
+    enabled: input.cursorSettings.enabled,
+    checkedAt: input.checkedAt,
+    models: providerModelsFromSettings(
+      input.discoveredModels ?? [],
+      input.cursorSettings.customModels,
+      EMPTY_CAPABILITIES,
+    ),
+    probe: {
+      installed: true,
+      version: input.parsed.version,
+      status:
+        input.discoveryWarning && input.parsed.status === "ready" ? "warning" : input.parsed.status,
+      auth: input.parsed.auth,
+      ...(message ? { message } : {}),
+    },
+  });
+}
+
 export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(function* (
   cursorSettings: CursorSettings,
   environment?: NodeJS.ProcessEnv,
-  discoverModels?: (about: CursorAboutResult) => ReturnType<typeof discoverCursorModelsViaAcp>,
-): Effect.fn.Return<
-  ServerProviderDraft,
-  never,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
-> {
+  authenticationType: "api-key" | "browser" = "api-key",
+): Effect.fn.Return<ServerProviderDraft, never, CursorSdkCatalog.CursorSdkCatalog> {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = getCursorFallbackModels(cursorSettings);
 
@@ -1137,35 +1228,53 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
     });
   }
 
-  // Single `agent about` probe: returns version + auth status in one call.
-  const aboutProbe = yield* runCursorAboutCommand(cursorSettings, environment).pipe(
-    Effect.timeoutOption(ABOUT_TIMEOUT_MS),
-    Effect.result,
-  );
-
-  if (Result.isFailure(aboutProbe)) {
-    const error = aboutProbe.failure;
-    yield* Effect.logWarning("Cursor Agent CLI health check failed.", {
-      errorTag: error._tag,
-    });
+  const sdkApiKey = environment?.CURSOR_API_KEY?.trim();
+  if (!sdkApiKey) {
     return buildServerProvider({
       presentation: CURSOR_PRESENTATION,
       enabled: cursorSettings.enabled,
       checkedAt,
       models: fallbackModels,
       probe: {
-        installed: !isCommandMissingCause(error),
+        installed: true,
         version: null,
         status: "error",
-        auth: { status: "unknown" },
-        message: isCommandMissingCause(error)
-          ? buildCursorCliCommandMissingMessage(cursorSettings.binaryPath)
-          : "Failed to execute Cursor Agent CLI health check.",
+        auth: { status: "unauthenticated" },
+        message: "Sign in with Cursor or add CURSOR_API_KEY in provider settings.",
       },
     });
   }
 
-  if (Option.isNone(aboutProbe.success)) {
+  const sdkCatalog = yield* CursorSdkCatalog.CursorSdkCatalog;
+  const catalogResult = yield* sdkCatalog
+    .read(sdkApiKey)
+    .pipe(Effect.timeoutOption(CURSOR_SDK_CATALOG_TIMEOUT_MS), Effect.result);
+
+  if (Result.isFailure(catalogResult)) {
+    yield* Effect.logWarning("Cursor SDK catalog probe failed", {
+      cause: catalogResult.failure.cause,
+    });
+    const authenticationFailure = catalogResult.failure.authenticationFailure;
+    return buildServerProvider({
+      presentation: CURSOR_PRESENTATION,
+      enabled: cursorSettings.enabled,
+      checkedAt,
+      models: fallbackModels,
+      probe: {
+        installed: true,
+        version: null,
+        status: "error",
+        auth: { status: authenticationFailure ? "unauthenticated" : "unknown" },
+        message: authenticationFailure
+          ? authenticationType === "browser"
+            ? "Cursor sign-in expired or was rejected. Sign in again in provider settings."
+            : "Cursor SDK authentication failed. Check CURSOR_API_KEY."
+          : "Cursor SDK catalog request failed. Check server logs for details.",
+      },
+    });
+  }
+
+  if (Option.isNone(catalogResult.success)) {
     return buildServerProvider({
       presentation: CURSOR_PRESENTATION,
       enabled: cursorSettings.enabled,
@@ -1176,67 +1285,25 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
         version: null,
         status: "error",
         auth: { status: "unknown" },
-        message: "Cursor Agent CLI is installed but timed out while running `agent about`.",
+        message: `Cursor SDK catalog request timed out after ${CURSOR_SDK_CATALOG_TIMEOUT_MS}ms.`,
       },
     });
   }
 
-  const parsed = parseCursorAboutOutput(aboutProbe.success.value);
-  const cursorCliConfigChannel = yield* readCursorCliConfigChannel(environment);
-  const parameterizedModelPickerUnsupportedMessage =
-    getCursorParameterizedModelPickerUnsupportedMessage({
-      version: parsed.version,
-      channel: cursorCliConfigChannel,
-    });
-  if (parameterizedModelPickerUnsupportedMessage) {
-    return buildServerProvider({
-      presentation: CURSOR_PRESENTATION,
-      enabled: cursorSettings.enabled,
-      checkedAt,
-      models: fallbackModels,
-      probe: {
-        installed: true,
-        version: parsed.version,
-        status: "error",
-        auth: parsed.auth,
-        message:
-          parsed.auth.status === "unauthenticated" && parsed.message
-            ? `${parameterizedModelPickerUnsupportedMessage} ${parsed.message}`
-            : parameterizedModelPickerUnsupportedMessage,
-      },
-    });
-  }
-  let discoveredModels = Option.none<ReadonlyArray<ServerProviderModel>>();
-  let discoveryWarning: string | undefined;
-  if (parsed.auth.status !== "unauthenticated") {
-    const discoveryExit = yield* Effect.exit(
-      (discoverModels
-        ? discoverModels(parsed)
-        : discoverCursorModelsViaAcp(cursorSettings, environment)
-      ).pipe(Effect.timeoutOption(CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS)),
-    );
-    if (Exit.isFailure(discoveryExit)) {
-      yield* Effect.logWarning("Cursor ACP model discovery failed", {
-        errorTag: causeErrorTag(discoveryExit.cause),
-      });
-      discoveryWarning = CURSOR_ACP_MODEL_DISCOVERY_FAILED_MESSAGE;
-    } else if (Option.isNone(discoveryExit.value)) {
-      discoveryWarning = `Cursor ACP model discovery timed out after ${CURSOR_ACP_MODEL_DISCOVERY_TIMEOUT_MS}ms.`;
-    } else if (discoveryExit.value.value.length === 0) {
-      discoveryWarning = "Cursor ACP model discovery returned no built-in models.";
-    } else {
-      discoveredModels = discoveryExit.value;
-    }
-  }
+  const snapshot = catalogResult.success.value;
+  const discoveredModels = buildCursorDiscoveredModelsFromSdk(snapshot.models);
   return buildCursorProviderSnapshot({
     checkedAt,
     cursorSettings,
-    parsed,
-    discoveredModels: Option.getOrElse(
-      Option.filter(discoveredModels, (models) => models.length > 0),
-      () => [] as const,
-    ),
-    ...(discoveryWarning ? { discoveryWarning } : {}),
+    parsed: {
+      version: null,
+      status: "ready",
+      auth: cursorSdkAuth(snapshot.user, authenticationType),
+    },
+    discoveredModels,
+    ...(discoveredModels.length === 0
+      ? { discoveryWarning: "Cursor SDK model discovery returned no built-in models." }
+      : {}),
   });
 });
 
@@ -1245,8 +1312,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
  *
  * Used by `CursorDriver` as the `makeManagedServerProvider.enrichSnapshot`
  * hook: republishes update/version advisory metadata without performing any
- * model or capability discovery. Cursor model data comes exclusively from
- * `cursor/list_available_models` during provider status checks.
+ * model or capability discovery.
  */
 export const enrichCursorSnapshot = (input: {
   readonly settings: CursorSettings;

@@ -39,7 +39,9 @@ import * as CodexErrors from "effect-codex-app-server/errors";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
+// SCIENT-FORK:START — merge self-import; see `Layers/ClaudeAdapter.ts`.
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
+// SCIENT-FORK:END
 import type { ProviderTurnEndConfirmation } from "../Services/ProviderAdapter.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import {

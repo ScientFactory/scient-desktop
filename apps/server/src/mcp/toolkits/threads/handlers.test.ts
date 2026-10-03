@@ -5,7 +5,10 @@ import {
   type OrchestrationMessage,
   type OrchestrationThread,
   type OrchestrationThreadActivity,
-  type OrchestrationThreadShell,
+  PlanId,
+  TurnItemId,
+  type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2TurnItem,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -13,13 +16,17 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
+import * as Layer from "effect/Layer";
+import * as DateTime from "effect/DateTime";
+import { threadShellFromProjection } from "@t3tools/shared/orchestrationV2ThreadShell";
 import { vi } from "vite-plus/test";
 
 import {
-  ProjectionSnapshotQuery,
-  type ProjectionSnapshotQueryShape,
-} from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+  ProjectionStoreV2,
+  emptyProjection,
+  type ProjectionTimelinePageOptions,
+} from "../../../orchestration-v2/ProjectionStore.ts";
+import { LegacyV1ThreadImporter } from "../../../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import {
   buildThreadReadResult,
@@ -109,29 +116,6 @@ function makeThread(overrides: Partial<OrchestrationThread> = {}): Orchestration
     ...overrides,
   };
 }
-
-const makeShell = (thread: OrchestrationThread): OrchestrationThreadShell => ({
-  id: thread.id,
-  projectId: thread.projectId,
-  title: thread.title,
-  modelSelection: thread.modelSelection,
-  runtimeMode: thread.runtimeMode,
-  interactionMode: thread.interactionMode,
-  branch: thread.branch,
-  worktreePath: thread.worktreePath,
-  pullRequests: [],
-  latestTurn: thread.latestTurn,
-  createdAt: thread.createdAt,
-  updatedAt: thread.updatedAt,
-  archivedAt: thread.archivedAt,
-  settledOverride: null,
-  settledAt: null,
-  session: null,
-  latestUserMessageAt: null,
-  hasPendingApprovals: false,
-  hasPendingUserInput: false,
-  hasActionableProposedPlan: false,
-});
 
 describe("thread timeline", () => {
   it("interleaves every projected row by creation time with stable positions", () => {
@@ -344,48 +328,146 @@ const makeInvocation = (
   issuedAt: 1,
 });
 
-/** Active threads resolve through shells; archived ones only through detail. */
+/** Native shell reads include archived threads; timeline reads follow authorization. */
 function makeSnapshots(
   threads: ReadonlyArray<OrchestrationThread>,
-  options: { readonly archived?: ReadonlySet<ThreadId> } = {},
+  options: {
+    readonly archived?: ReadonlySet<ThreadId>;
+  } = {},
 ) {
   const byId = new Map(threads.map((thread) => [thread.id, thread]));
-  const getThreadShellById = vi.fn((threadId: ThreadId) => {
+  const getThreadShell = vi.fn((threadId: ThreadId) => {
     const thread = byId.get(threadId);
-    return Effect.succeed(
-      thread === undefined || options.archived?.has(threadId) === true
-        ? Option.none()
-        : Option.some(makeShell(thread)),
-    );
+    if (thread === undefined || thread.deletedAt !== null) return Effect.succeed(null);
+    const now = DateTime.makeUnsafe(thread.createdAt);
+    const projection = emptyProjection({
+      id: EventId.make(`create:${thread.id}`),
+      type: "thread.created",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: threadId,
+        projectId: thread.projectId ?? ProjectId.make(`scratch:${thread.id}`),
+        title: thread.title,
+        createdBy: "user",
+        creationSource: "web",
+        providerInstanceId: thread.modelSelection.instanceId,
+        modelSelection: thread.modelSelection,
+        runtimeMode: thread.runtimeMode,
+        interactionMode: thread.interactionMode,
+        branch: thread.branch,
+        worktreePath: thread.worktreePath,
+        activeProviderThreadId: null,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: DateTime.makeUnsafe(thread.updatedAt),
+        archivedAt: options.archived?.has(threadId) === true ? now : null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      },
+    });
+    return Effect.succeed(threadShellFromProjection(projection));
   });
-  const getThreadDetailById = vi.fn((threadId: ThreadId) =>
-    Effect.succeed(Option.fromNullishOr(byId.get(threadId))),
-  );
-  const service = {
-    getThreadHistoryPage: (
-      input: Parameters<ProjectionSnapshotQueryShape["getThreadHistoryPage"]>[0],
-    ) => {
-      const result = buildThreadReadResult(byId.get(input.threadId)!, input);
-      return Effect.succeed({
-        items: result.items,
-        itemCount: result.thread.itemCount,
-        hasMore: result.hasMore,
-      });
-    },
-    getThreadShellById,
-    getThreadDetailById,
-  } as Partial<ProjectionSnapshotQueryShape> as ProjectionSnapshotQueryShape;
-  return { service, getThreadShellById, getThreadDetailById };
+  const getTimelinePage = vi.fn((threadId: ThreadId, input: ProjectionTimelinePageOptions) => {
+    const thread = byId.get(threadId)!;
+    const result = buildThreadReadResult(thread, { ...input, threadId });
+    const items: OrchestrationV2ProjectedTurnItem[] = result.items.map((entry) => {
+      const now = DateTime.makeUnsafe(entry.createdAt);
+      const base = {
+        id: TurnItemId.make(entry.itemId),
+        threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: entry.position,
+        status: "completed" as const,
+        title: entry.title,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+      };
+      let item: OrchestrationV2TurnItem;
+      switch (entry.type) {
+        case "user_message":
+          item = {
+            ...base,
+            type: "user_message",
+            messageId: MessageId.make(entry.itemId),
+            text: entry.text,
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+            inputIntent: "turn_start",
+          };
+          break;
+        case "assistant_message":
+          item = {
+            ...base,
+            type: "assistant_message",
+            messageId: MessageId.make(entry.itemId),
+            text: entry.text,
+            streaming: false,
+          };
+          break;
+        case "reasoning":
+          item = { ...base, type: "reasoning", text: entry.text, streaming: false };
+          break;
+        case "proposed_plan":
+          item = {
+            ...base,
+            type: "proposed_plan",
+            planId: PlanId.make(entry.itemId),
+            markdown: entry.text,
+            streaming: false,
+          };
+          break;
+        case "system_message":
+          item = { ...base, type: "system_notice", message: entry.text };
+          break;
+        default:
+          item = {
+            ...base,
+            type: "dynamic_tool",
+            toolName: entry.activityKind,
+            input: entry.text,
+            output: null,
+          };
+      }
+      return {
+        item,
+        position: entry.position,
+        sourceItemId: item.id,
+        sourceThreadId: threadId,
+        visibility: "local",
+      };
+    });
+    return Effect.succeed({ items, totalItems: result.thread.itemCount, hasMore: result.hasMore });
+  });
+  return {
+    service: Layer.mergeAll(
+      Layer.mock(ProjectionStoreV2)({ getThreadShell, getTimelinePage }),
+      Layer.mock(LegacyV1ThreadImporter)({
+        ensureTranscript: () => Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 }),
+      }),
+    ),
+    getThreadShell,
+    getTimelinePage,
+  };
 }
-
 const read = (
-  snapshots: ProjectionSnapshotQueryShape,
+  snapshots: ReturnType<typeof makeSnapshots>["service"],
   input: Parameters<typeof readScientThreadForInvocation>[0],
   invocation = makeInvocation(),
 ) =>
   readScientThreadForInvocation(input).pipe(
     Effect.provideService(AgentInvocationContext.AgentInvocationContext, invocation),
-    Effect.provideService(ProjectionSnapshotQuery, snapshots),
+    Effect.provide(snapshots),
   );
 
 describe("t3_thread_read authorization", () => {
@@ -403,8 +485,8 @@ describe("t3_thread_read authorization", () => {
       ).pipe(Effect.flip);
       expect(error).toBeInstanceOf(ScientThreadReadToolError);
       expect(error).toMatchObject({ code: "capability_denied" });
-      expect(snapshots.getThreadShellById).not.toHaveBeenCalled();
-      expect(snapshots.getThreadDetailById).not.toHaveBeenCalled();
+      expect(snapshots.getThreadShell).not.toHaveBeenCalled();
+      expect(snapshots.getTimelinePage).not.toHaveBeenCalled();
     }),
   );
 
@@ -432,18 +514,20 @@ describe("t3_thread_read authorization", () => {
       const error = yield* read(snapshots.service, { threadId: FOREIGN_ID }).pipe(Effect.flip);
       expect(error).toMatchObject({ code: "thread_outside_project" });
       expect(error.message).toContain("calling project");
-      expect(snapshots.getThreadDetailById).not.toHaveBeenCalled();
+      expect(snapshots.getTimelinePage).not.toHaveBeenCalled();
     }),
   );
 
-  it.effect("lets a projectless thread read only itself", () =>
+  it.effect("keeps separate scratch threads outside one another’s native project scope", () =>
     Effect.gen(function* () {
       const projectless = makeThread({ projectId: null });
       const snapshots = makeSnapshots([
         projectless,
         makeThread({ id: SIBLING_ID, projectId: null }),
       ]);
-      expect((yield* read(snapshots.service, { threadId: CALLER_ID })).thread.projectId).toBeNull();
+      expect((yield* read(snapshots.service, { threadId: CALLER_ID })).thread.projectId).toBe(
+        `scratch:${CALLER_ID}`,
+      );
       const error = yield* read(snapshots.service, { threadId: SIBLING_ID }).pipe(Effect.flip);
       expect(error).toMatchObject({ code: "thread_outside_project" });
     }),
@@ -459,14 +543,15 @@ describe("t3_thread_read authorization", () => {
     }),
   );
 
-  it.effect("resolves archived callers and targets through their detail rows", () =>
+  it.effect("resolves archived callers and targets through native shells", () =>
     Effect.gen(function* () {
       const snapshots = makeSnapshots([caller, sibling], {
         archived: new Set([CALLER_ID, SIBLING_ID]),
       });
       const result = yield* read(snapshots.service, { threadId: SIBLING_ID });
       expect(result.thread.threadId).toBe(SIBLING_ID);
-      expect(snapshots.getThreadDetailById).toHaveBeenCalledWith(CALLER_ID, { activityKinds: [] });
+      expect(snapshots.getThreadShell).toHaveBeenCalledWith(CALLER_ID);
+      expect(result.thread.archived).toBe(true);
     }),
   );
 });

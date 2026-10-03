@@ -13,25 +13,23 @@ import {
   type ConversationImportId,
   type ScientConversationExportRequest,
 } from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as yauzl from "yauzl";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
-import { OrchestrationProjectionSnapshotQueryLive } from "../../orchestration/Layers/ProjectionSnapshotQuery.ts";
-import * as ThreadBackgroundLiveness from "../../orchestration/ThreadBackgroundLiveness.ts";
-import * as ThreadPlanProgress from "../../orchestration/ThreadPlanProgress.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
-import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import * as ConversationExportFiles from "../conversationExport/ConversationExportFiles.ts";
 import * as ConversationExportService from "../conversationExport/ConversationExportService.ts";
+import {
+  nativeExportStorage,
+  seedNativeExportThread,
+} from "../conversationExport/conversationExport.testkit.ts";
 import * as ConversationSnapshotService from "../conversationExport/ConversationSnapshotService.ts";
 import { PandocWordConverter } from "../pandoc/PandocWordConverter.ts";
 import { readScicPackage } from "./ScicReader.ts";
@@ -60,8 +58,6 @@ vi.mock("./ScicWriter.ts", async (importOriginal) => {
 });
 
 const THREAD = ThreadId.make("thread-1");
-const encodeAttachments = Schema.encodeSync(Schema.fromJsonString(Schema.Array(ChatAttachment)));
-const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeManifestJson = Schema.decodeEffect(Schema.fromJsonString(ScicManifest));
 const PNG = new Uint8Array([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
@@ -74,16 +70,6 @@ const image: ChatAttachment = {
   mimeType: "image/png",
   sizeBytes: PNG.byteLength,
 };
-
-const QueryLive = OrchestrationProjectionSnapshotQueryLive.pipe(
-  Layer.provide(ThreadBackgroundLiveness.layer),
-  Layer.provide(ThreadPlanProgress.layer),
-  Layer.provide(
-    Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
-      resolve: () => Effect.succeed(null),
-    }),
-  ),
-);
 
 const TestLayer = ConversationExportService.layer.pipe(
   Layer.provide(
@@ -101,66 +87,31 @@ const TestLayer = ConversationExportService.layer.pipe(
   ),
   Layer.provideMerge(ConversationSnapshotService.layer),
   Layer.provideMerge(ConversationExportFiles.layer),
-  Layer.provideMerge(QueryLive),
+  Layer.provideMerge(nativeExportStorage),
   Layer.provideMerge(SqlitePersistenceMemory),
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "scient-scic-export-" })),
   Layer.provideMerge(NodeServices.layer),
 );
-
-const at = (index: number) =>
-  DateTime.formatIso(DateTime.makeUnsafe(Date.parse("2026-09-27T10:00:00.000Z") + index * 1_000));
 
 /** One settled turn: a prompt with an image, a tool call carrying a secret, reasoning, and an answer. */
 const seedThread = Effect.fn("seedThread")(function* (
   attachments: ReadonlyArray<ChatAttachment> = [image],
   bytes: Uint8Array = PNG,
 ) {
-  const sql = yield* SqlClient.SqlClient;
   const config = yield* ServerConfig.ServerConfig;
-  yield* sql`INSERT INTO projection_projects
-    (project_id, title, workspace_root, scripts_json, created_at, updated_at, deleted_at)
-    VALUES ('project-1', 'Project', '/work/project', '[]', ${at(0)}, ${at(0)}, NULL)`;
-  yield* sql`INSERT INTO projection_threads
-    (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
-     latest_turn_id, created_at, updated_at, deleted_at)
-    VALUES (${THREAD}, 'project-1', 'Transfer study', '{"provider":"codex","model":"gpt-5"}',
-     'full-access', 'default', 'turn-1', ${at(0)}, ${at(0)}, NULL)`;
-  yield* sql`INSERT INTO projection_thread_messages
-    (message_id, thread_id, turn_id, role, text, attachments_json, is_streaming, created_at, updated_at)
-    VALUES ('user-1', ${THREAD}, NULL, 'user', ${`See ${config.stateDir}/logs/server.log`},
-      ${encodeAttachments(attachments)}, 0, ${at(1)}, ${at(1)})`;
-  yield* sql`INSERT INTO projection_thread_activities
-    (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at)
-    VALUES ('activity-1', ${THREAD}, 'turn-1', 'tool', 'tool.completed', 'Ran command',
-      ${encodeJson({
-        itemType: "command_execution",
-        toolCallId: "call-1",
-        title: "Ran command",
-        data: { item: { command: "echo hi" }, token: "sk-hidden" },
-      })}, 1, ${at(2)})`;
-  yield* sql`INSERT INTO projection_thread_messages
-    (message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at)
-    VALUES ('reasoning-1', ${THREAD}, 'turn-1', 'reasoning', 'Thinking it over', 0, ${at(3)}, ${at(3)})`;
-  yield* sql`INSERT INTO projection_thread_messages
-    (message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at)
-    VALUES ('assistant-1', ${THREAD}, 'turn-1', 'assistant', 'Done.', 0, ${at(4)}, ${at(4)})`;
-  yield* sql`INSERT INTO projection_turns
-    (thread_id, turn_id, pending_message_id, assistant_message_id, state, requested_at, started_at,
-     completed_at, checkpoint_files_json)
-    VALUES (${THREAD}, 'turn-1', NULL, 'assistant-1', 'completed', ${at(1)}, ${at(1)}, ${at(5)}, '[]')`;
-  yield* sql`INSERT INTO projection_thread_sessions
-    (thread_id, status, provider_name, provider_session_id, provider_thread_id, runtime_mode,
-     active_turn_id, last_error, updated_at)
-    VALUES (${THREAD}, 'ready', 'codex', 'provider-session-secret', 'provider-thread-secret',
-      'full-access', NULL, NULL, ${at(6)})`;
-
+  yield* seedNativeExportThread({
+    threadId: THREAD,
+    title: "Transfer study",
+    pairs: 1,
+    firstUserText: `See ${config.stateDir}/logs/server.log`,
+    activitiesPerTurn: 1,
+    reasoning: true,
+    attachmentsForPrompt: () => attachments,
+  });
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   for (const attachment of attachments) {
-    const imagePath = resolveAttachmentPath({
-      attachmentsDir: config.attachmentsDir,
-      attachment,
-    })!;
+    const imagePath = resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment })!;
     yield* fileSystem.makeDirectory(path.dirname(imagePath), { recursive: true });
     yield* fileSystem.writeFile(imagePath, bytes);
   }

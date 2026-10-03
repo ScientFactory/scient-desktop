@@ -27,6 +27,28 @@ import { projectQuestionAnswers, projectWorkLog } from "./workLogProjection.ts";
 
 export type ConversationSnapshotContent = Omit<ConversationSnapshotV1, "contentDigest">;
 
+/** A read-only snapshot source; no execution engine or provider authority is required. */
+export type ConversationSnapshotThread = Pick<
+  OrchestrationThread,
+  | "id"
+  | "title"
+  | "createdAt"
+  | "updatedAt"
+  | "workspaceRoot"
+  | "worktreePath"
+  | "modelSelection"
+  | "messages"
+  | "activities"
+  | "proposedPlans"
+  | "forkLineage"
+  | "conversationImport"
+> & {
+  readonly latestTurn?: OrchestrationThread["latestTurn"];
+  readonly session?: OrchestrationThread["session"];
+  readonly activeTurn?: { readonly turnId: TurnId; readonly requestedAt: string } | null;
+  readonly providerName?: string | null;
+};
+
 /** The range's last message is not a completed user or assistant message of the thread. */
 export class SnapshotRangeError extends Data.TaggedError("SnapshotRangeError")<{
   readonly messageId: MessageId;
@@ -65,10 +87,11 @@ function isChatAttachment(value: unknown): value is ChatAttachment {
  * The turn that is still in progress, if any: the session's active turn while
  * it runs, otherwise a latest turn that has not recorded its completion.
  */
-export function runningTurnId(thread: OrchestrationThread): TurnId | null {
+export function runningTurnId(thread: ConversationSnapshotThread): TurnId | null {
+  if (thread.activeTurn !== undefined) return thread.activeTurn?.turnId ?? null;
   const sessionTurn =
     thread.session?.status === "running" ? (thread.session.activeTurnId ?? null) : null;
-  return deriveUnsettledTurnId(thread.latestTurn, sessionTurn);
+  return deriveUnsettledTurnId(thread.latestTurn ?? null, sessionTurn);
 }
 
 /**
@@ -96,7 +119,7 @@ export interface SelectedConversationContent {
  * the chosen message and updated after it keeps its later content.
  */
 export function selectConversationContent(
-  thread: OrchestrationThread,
+  thread: ConversationSnapshotThread,
   throughMessageId: MessageId | null,
 ): SelectedConversationContent {
   // The running turn and everything from its prompt on are left out.
@@ -104,6 +127,7 @@ export function selectConversationContent(
   let cutoff: string | null = null;
   if (running !== null) {
     const starts = [
+      ...(thread.activeTurn?.turnId === running ? [thread.activeTurn.requestedAt] : []),
       ...(thread.latestTurn?.turnId === running ? [thread.latestTurn.requestedAt] : []),
       ...thread.messages.filter((message) => message.turnId === running).map((m) => m.createdAt),
       ...thread.activities
@@ -219,7 +243,7 @@ function foldedAnswerMessageIds(
 }
 
 export function buildConversationSnapshot(input: {
-  readonly thread: OrchestrationThread;
+  readonly thread: ConversationSnapshotThread;
   readonly snapshotSequence: number;
   readonly threadSequence: number;
   readonly capturedAt: string;
@@ -312,7 +336,7 @@ export function buildConversationSnapshot(input: {
       title: thread.title,
       createdAt: thread.createdAt,
       updatedAt: thread.updatedAt,
-      provider: thread.session?.providerName ?? null,
+      provider: thread.providerName ?? thread.session?.providerName ?? null,
       model: thread.modelSelection.model,
     },
     provenance: thread.forkLineage

@@ -1,7 +1,7 @@
 import type {
   OrchestrationConversationImport,
   OrchestrationConversationImportOmission,
-  OrchestrationThread,
+  OrchestrationV2AppThread,
 } from "@t3tools/contracts";
 import { importTimesShiftedNotice } from "@scientfactory/conversation";
 import { ImportIcon } from "lucide-react";
@@ -115,11 +115,15 @@ export function ConversationImportProvenanceBadge({
  * starts, when "the next message starts a fresh session" stops being true.
  */
 export function conversationImportBannerItem(
-  thread: Pick<OrchestrationThread, "id" | "conversationImport" | "session"> | undefined,
+  thread:
+    | Pick<OrchestrationV2AppThread, "id" | "conversationImport" | "activeProviderThreadId">
+    | null
+    | undefined,
   onDismiss: () => void,
 ): ComposerBannerStackItem | null {
   const conversationImport = thread?.conversationImport ?? null;
-  if (thread === undefined || conversationImport === null || thread.session !== null) return null;
+  if (thread == null || conversationImport === null || thread.activeProviderThreadId !== null)
+    return null;
   return {
     id: `conversation-import:${thread.id}`,
     variant: "info",

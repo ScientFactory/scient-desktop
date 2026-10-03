@@ -22,6 +22,7 @@
  */
 import { compareProviderDriverKinds } from "@t3tools/contracts";
 
+import { AcpRegistryDriver, type AcpRegistryDriverEnv } from "./Drivers/AcpRegistryDriver.ts";
 import { AntigravityDriver, type AntigravityDriverEnv } from "./Drivers/AntigravityDriver.ts";
 import { ClaudeDriver, type ClaudeDriverEnv } from "./Drivers/ClaudeDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "./Drivers/CodexDriver.ts";
@@ -39,6 +40,7 @@ import type { AnyProviderDriver } from "./ProviderDriver.ts";
  * layer must provide every service in this union.
  */
 export type BuiltInDriversEnv =
+  | AcpRegistryDriverEnv
   | AntigravityDriverEnv
   | ClaudeDriverEnv
   | CodexDriverEnv
@@ -55,6 +57,7 @@ export type BuiltInDriversEnv =
  * iteration order has no functional effect on instance lookup.
  */
 export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv>> = [
+  AcpRegistryDriver,
   AntigravityDriver,
   CodexDriver,
   ClaudeDriver,

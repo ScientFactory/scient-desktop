@@ -46,7 +46,9 @@ import {
   ProviderAdapterValidationError,
 } from "../Errors.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
+// SCIENT-FORK:START — merge self-import; see `Layers/ClaudeAdapter.ts`.
 import { type OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
+// SCIENT-FORK:END
 import {
   buildOpenCodePermissionRules,
   OpenCodeRuntime,

@@ -73,6 +73,7 @@ describe("previewMiniPlayerStore", () => {
       },
       position: { x: 24, y: 48 },
       size: { width: 480, height: 320 },
+      lastInteraction: "resize",
     });
   });
 
@@ -88,6 +89,7 @@ describe("previewMiniPlayerStore", () => {
       content: { kind: "browser", id: "browser:tab-b", tabId: "tab-b" },
       position: null,
       size: null,
+      lastInteraction: "drag",
     });
   });
 
@@ -137,6 +139,7 @@ describe("previewMiniPlayerStore", () => {
       content: { kind: "static-artifact", id: updated.surfaceId, artifact: updated },
       position: { x: 90, y: 70 },
       size: { width: 500, height: 340 },
+      lastInteraction: "resize",
     });
   });
 
@@ -150,6 +153,30 @@ describe("previewMiniPlayerStore", () => {
     usePreviewMiniPlayerStore.getState().close(refA);
     usePreviewMiniPlayerStore.getState().updateArtifact(refA, updated);
     expect(usePreviewMiniPlayerStore.getState().byThreadKey).toEqual({});
+  });
+
+  it("keeps a resize placement after release and clears it when dragging", () => {
+    const store = usePreviewMiniPlayerStore.getState();
+    store.open(refA, tabA);
+    store.setRect(refA, "browser:tab-a", {
+      position: { x: 1112, y: 275 },
+      size: { width: 460, height: 300 },
+    });
+    expect(
+      selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, refA),
+    ).toMatchObject({
+      size: { width: 460 },
+      position: { x: 1112, y: 275 },
+      lastInteraction: "resize",
+    });
+    store.move(refA, "browser:tab-a", { x: 1104, y: 275 });
+    expect(
+      selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, refA),
+    ).toMatchObject({
+      size: { width: 460 },
+      position: { x: 1104, y: 275 },
+      lastInteraction: "drag",
+    });
   });
 
   it("floats one source per thread, so a device replaces the browser tab", () => {

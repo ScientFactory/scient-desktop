@@ -1,4 +1,5 @@
-import type { OrchestrationShellSnapshot } from "@t3tools/contracts";
+import type { OrchestrationV2ShellSnapshot } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { create } from "zustand";
 import { completedAnswer } from "./completion";
 
@@ -25,13 +26,19 @@ export const useAnswerBaselines = create<{ byEnvironment: Readonly<Record<string
   () => ({ byEnvironment: readBaselines() }),
 );
 
+const asIsoTimestamp = (value: DateTime.Utc | string | null | undefined): string | null =>
+  value == null ? null : typeof value === "string" ? value : DateTime.formatIso(value);
+
 /** Server timestamps avoid client clock skew; the first live snapshot is the adoption boundary. */
-export function snapshotBaseline(snapshot: OrchestrationShellSnapshot): string {
+export function snapshotBaseline(snapshot: OrchestrationV2ShellSnapshot): string {
+  const threads = [...snapshot.threads, ...snapshot.archivedThreads];
   return [
-    snapshot.updatedAt,
-    ...snapshot.threads.map((thread) => completedAnswer(thread)?.completedAt),
+    ...threads.map((thread) => asIsoTimestamp(thread.updatedAt)),
+    ...threads.map((thread) => completedAnswer(thread)?.completedAt),
   ]
-    .filter((value): value is string => !!value && Number.isFinite(Date.parse(value)))
+    .filter(
+      (value): value is string => !!value && value.length > 0 && Number.isFinite(Date.parse(value)),
+    )
     .reduce(
       (latest, value) => (Date.parse(value) > Date.parse(latest) ? value : latest),
       "1970-01-01T00:00:00.000Z",
@@ -40,7 +47,7 @@ export function snapshotBaseline(snapshot: OrchestrationShellSnapshot): string {
 
 export function getOrCreateBaseline(
   environmentId: string,
-  snapshot: OrchestrationShellSnapshot,
+  snapshot: OrchestrationV2ShellSnapshot,
 ): string {
   const cached = useAnswerBaselines.getState().byEnvironment[environmentId];
   if (typeof cached === "string") return cached;

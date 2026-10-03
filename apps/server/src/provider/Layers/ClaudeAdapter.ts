@@ -113,7 +113,11 @@ import {
   ProviderAdapterValidationError,
   type ProviderAdapterError,
 } from "../Errors.ts";
+// SCIENT-FORK:START — the merge rewrote this to a self-import once the v1
+// `Services/ClaudeAdapter.ts` anchor was dropped; it now points back at the
+// restored anchor module.
 import { type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
+// SCIENT-FORK:END
 import { spawnAndCollect } from "../providerSnapshot.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
@@ -5510,8 +5514,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         .fromFileUrl(
           new URL(
             import.meta.url.endsWith(".ts")
-              ? "../../claudeHistoryWorker.ts"
-              : "./claudeHistoryWorker.mjs",
+              ? "../../claude-history-worker.ts"
+              : "./claude-history-worker.mjs",
             import.meta.url,
           ),
         )

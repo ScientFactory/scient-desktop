@@ -22,7 +22,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as yauzl from "yauzl";
 
 import { issueAssetUrl, resolveAsset } from "../../assets/AssetAccess.ts";
@@ -33,13 +32,14 @@ import * as ProjectFaviconResolver from "../../project/ProjectFaviconResolver.ts
 import * as T3ProjectFileLoader from "../../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import * as ServerConfig from "../../config.ts";
-import { OrchestrationProjectionSnapshotQueryLive } from "../../orchestration/Layers/ProjectionSnapshotQuery.ts";
-import * as ThreadBackgroundLiveness from "../../orchestration/ThreadBackgroundLiveness.ts";
-import * as ThreadPlanProgress from "../../orchestration/ThreadPlanProgress.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
-import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import * as ConversationExportFiles from "./ConversationExportFiles.ts";
 import * as ConversationExportService from "./ConversationExportService.ts";
+import {
+  nativeExportStorage,
+  seedNativeExportThread,
+  updateNativeExportThread,
+} from "./conversationExport.testkit.ts";
 import * as ConversationSnapshotService from "./ConversationSnapshotService.ts";
 import { prepareConversationPdf } from "../documentExport/ConversationPdfPreparation.ts";
 import {
@@ -58,7 +58,6 @@ import {
 const pandocBinary = pandocBinaryForTests();
 
 const THREAD = ThreadId.make("thread-1");
-const encodeAttachments = Schema.encodeSync(Schema.fromJsonString(Schema.Array(ChatAttachment)));
 
 const image: ChatAttachment = {
   type: "image",
@@ -74,16 +73,6 @@ const missing: ChatAttachment = {
   mimeType: "application/pdf",
   sizeBytes: 10,
 };
-
-const QueryLive = OrchestrationProjectionSnapshotQueryLive.pipe(
-  Layer.provide(ThreadBackgroundLiveness.layer),
-  Layer.provide(ThreadPlanProgress.layer),
-  Layer.provide(
-    Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
-      resolve: () => Effect.succeed(null),
-    }),
-  ),
-);
 
 /**
  * A stand-in for the Word converter: unavailable (Pandoc not installed), or
@@ -160,7 +149,7 @@ const exportLayer = (prefix: string, word: WordMode = { _tag: "unavailable" }) =
     ),
     Layer.provideMerge(ConversationSnapshotService.layer),
     Layer.provideMerge(ConversationExportFiles.layer),
-    Layer.provideMerge(QueryLive),
+    Layer.provideMerge(nativeExportStorage),
     Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
     Layer.provideMerge(NodeServices.layer),
@@ -198,7 +187,7 @@ const recordingLayer = (accesses: Array<FileAccess>) =>
     Layer.provideMerge(wordLayer({ _tag: "converts", seen: [] })),
     Layer.provideMerge(ConversationSnapshotService.layer),
     Layer.provideMerge(ConversationExportFiles.layer),
-    Layer.provideMerge(QueryLive),
+    Layer.provideMerge(nativeExportStorage),
     Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), { prefix: "scient-convexport-reads-" }),
@@ -238,35 +227,17 @@ const AssetTestLayer = ConversationExportFiles.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
 );
 
-const at = (index: number) =>
-  DateTime.formatIso(DateTime.makeUnsafe(Date.parse("2026-09-27T10:00:00.000Z") + index * 1_000));
-const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
-
 const seedThread = Effect.fn("seedThread")(function* (input: {
   readonly pairs: number;
   readonly activitiesPerTurn?: number;
   readonly running?: boolean;
   readonly firstUserText?: string;
   readonly attachments?: ReadonlyArray<ChatAttachment>;
-  /** Every prompt gets its own stored attachment, and every turn a reasoning message. */
   readonly attachmentPerPrompt?: boolean;
   readonly reasoning?: boolean;
 }) {
-  const sql = yield* SqlClient.SqlClient;
-  yield* sql`INSERT INTO projection_projects
-    (project_id, title, workspace_root, scripts_json, created_at, updated_at, deleted_at)
-    VALUES ('project-1', 'Project', '/work/project', '[]', ${at(0)}, ${at(0)}, NULL)`;
-  yield* sql`INSERT INTO projection_threads
-    (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
-     latest_turn_id, created_at, updated_at, deleted_at)
-    VALUES (${THREAD}, 'project-1', 'Long / study: results?', '{"provider":"codex","model":"gpt-5"}',
-     'full-access', 'default', ${`turn-${input.pairs}`}, ${at(0)}, ${at(0)}, NULL)`;
-  let clock = 1;
-  let activity = 0;
-  for (let pair = 1; pair <= input.pairs; pair += 1) {
-    const turnId = `turn-${pair}`;
-    const userText =
-      pair === 1 && input.firstUserText !== undefined ? input.firstUserText : `Question ${pair}`;
+  const promptAttachments = new Map<number, ReadonlyArray<ChatAttachment>>();
+  for (let pair = 1; pair <= input.pairs; pair++) {
     const own: ReadonlyArray<ChatAttachment> = input.attachmentPerPrompt
       ? [
           {
@@ -279,50 +250,14 @@ const seedThread = Effect.fn("seedThread")(function* (input: {
         ]
       : [];
     for (const attachment of own) yield* storeAttachment(attachment, new Uint8Array([97, 44, 98]));
-    const listed = [...(pair === 1 ? (input.attachments ?? []) : []), ...own];
-    const attachments = listed.length > 0 ? encodeAttachments(listed) : null;
-    const userAt = at(clock);
-    yield* sql`INSERT INTO projection_thread_messages
-      (message_id, thread_id, turn_id, role, text, attachments_json, is_streaming, created_at, updated_at)
-      VALUES (${`user-${pair}`}, ${THREAD}, NULL, 'user', ${userText}, ${attachments}, 0, ${userAt}, ${userAt})`;
-    clock += 1;
-    for (let index = 0; index < (input.activitiesPerTurn ?? 0); index += 1) {
-      activity += 1;
-      yield* sql`INSERT INTO projection_thread_activities
-        (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at)
-        VALUES (${`activity-${activity}`}, ${THREAD}, ${turnId}, 'tool', 'tool.completed', 'Ran command',
-          ${encodeJson({
-            itemType: "command_execution",
-            toolCallId: `call-${activity}`,
-            title: "Ran command",
-            data: { item: { command: `echo ${activity}` }, token: "sk-hidden" },
-          })}, ${activity}, ${at(clock)})`;
-      clock += 1;
-    }
-    if (input.reasoning) {
-      yield* sql`INSERT INTO projection_thread_messages
-        (message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at)
-        VALUES (${`reasoning-${pair}`}, ${THREAD}, ${turnId}, 'reasoning', ${`Thinking ${pair}`},
-          0, ${at(clock)}, ${at(clock)})`;
-      clock += 1;
-    }
-    const isRunning = input.running === true && pair === input.pairs;
-    yield* sql`INSERT INTO projection_thread_messages
-      (message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at)
-      VALUES (${`assistant-${pair}`}, ${THREAD}, ${turnId}, 'assistant', ${`Answer ${pair}`},
-        ${isRunning ? 1 : 0}, ${at(clock)}, ${at(clock)})`;
-    clock += 1;
-    yield* sql`INSERT INTO projection_turns
-      (thread_id, turn_id, pending_message_id, assistant_message_id, state, requested_at, started_at,
-       completed_at, checkpoint_files_json)
-      VALUES (${THREAD}, ${turnId}, NULL, ${`assistant-${pair}`}, ${isRunning ? "running" : "completed"},
-        ${userAt}, ${userAt}, ${isRunning ? null : at(clock)}, '[]')`;
+    promptAttachments.set(pair, [...(pair === 1 ? (input.attachments ?? []) : []), ...own]);
   }
-  yield* sql`INSERT INTO projection_thread_sessions
-    (thread_id, status, provider_name, provider_session_id, provider_thread_id, runtime_mode,
-     active_turn_id, last_error, updated_at)
-    VALUES (${THREAD}, ${input.running ? "running" : "ready"}, 'codex', 'provider-session-secret',
-      'provider-thread-secret', 'full-access', ${input.running ? `turn-${input.pairs}` : null}, NULL, ${at(clock)})`;
+  yield* seedNativeExportThread({
+    ...input,
+    threadId: THREAD,
+    title: "Long / study: results?",
+    attachmentsForPrompt: (pair) => promptAttachments.get(pair) ?? [],
+  });
 });
 
 const request = (
@@ -677,13 +612,14 @@ describe("ConversationExportService", () => {
         activitiesPerTurn: 1,
         firstUserText: `Look in ${config.stateDir}/logs/server_1.log`,
       });
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`UPDATE projection_threads SET title = ${`Logs in ${config.baseDir}`}`;
-      yield* sql`UPDATE projection_thread_activities SET payload_json = ${encodeJson({
-        title: "Ran command",
-        itemType: "command_execution",
-        data: { item: { command: `cat ${config.stateDir}/logs/a_b.log` } },
-      })}`;
+      yield* updateNativeExportThread(THREAD, {
+        title: `Logs in ${config.baseDir}`,
+        activityPayload: {
+          title: "Ran command",
+          itemType: "command_execution",
+          data: { item: { command: `cat ${config.stateDir}/logs/a_b.log` } },
+        },
+      });
       const { produced, text } = yield* produceText(
         request({ delivery: "clipboard" }, { includeWorkLog: true }),
       );
@@ -699,8 +635,7 @@ describe("ConversationExportService", () => {
   it.effect("writes a long non-Latin title as a file name the file system accepts", () =>
     Effect.gen(function* () {
       yield* seedThread({ pairs: 1 });
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`UPDATE projection_threads SET title = ${"研究結果".repeat(23)}`;
+      yield* updateNativeExportThread(THREAD, { title: "研究結果".repeat(23) });
       const service = yield* ConversationExportService.ConversationExportService;
       const produced = yield* service.produce(
         request({}, { markdownPackaging: "with-attachments" }),
@@ -1084,9 +1019,9 @@ describe("conversation PDF preparation", () => {
     Effect.gen(function* () {
       yield* seedThread({ pairs: 1, activitiesPerTurn: 1 });
       const config = yield* ServerConfig.ServerConfig;
-      const sql = yield* SqlClient.SqlClient;
-      const secretTitle = `Report from ${config.stateDir}/attachments`;
-      yield* sql`UPDATE projection_threads SET title = ${secretTitle} WHERE thread_id = ${THREAD}`;
+      yield* updateNativeExportThread(THREAD, {
+        title: `Report from ${config.stateDir}/attachments`,
+      });
       const prepared = yield* prepareConversationPdf(
         request({ format: "pdf" }, { includeWorkLog: true }),
       );

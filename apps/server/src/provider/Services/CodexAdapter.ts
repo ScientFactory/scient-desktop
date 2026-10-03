@@ -7,6 +7,10 @@
  * instance as a captured closure instead, so the tag is gone — we only
  * retain the shape interface as a naming anchor for the driver bundle.
  *
+ * SCIENT-FORK:START — restored; see `Services/ClaudeAdapter.ts` for why the
+ * v1 anchor layer survives the merge.
+ * SCIENT-FORK:END
+ *
  * @module CodexAdapter
  */
 import type { ProviderAdapterError } from "../Errors.ts";

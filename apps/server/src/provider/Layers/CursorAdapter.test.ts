@@ -30,7 +30,9 @@ import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+// SCIENT-FORK:START — merge self-import; see `Layers/ClaudeAdapter.ts`.
 import type { CursorAdapterShape } from "../Services/CursorAdapter.ts";
+// SCIENT-FORK:END
 import { makeCursorAdapter } from "./CursorAdapter.ts";
 import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -138,10 +140,24 @@ const makeResolveCursorSettings = Effect.gen(function* () {
   const serverSettings = yield* ServerSettingsService;
   return yield* Effect.succeed(
     serverSettings.getSettings.pipe(
-      Effect.map((snapshot) => snapshot.providers.cursor),
+      Effect.map((snapshot) =>
+        decodeCursorSettings(
+          snapshot.providerInstances[ProviderInstanceId.make("cursor")]?.config ?? {},
+        ),
+      ),
       Effect.orDie,
     ),
   );
+});
+
+const cursorTestSettingsPatch = (binaryPath: string) => ({
+  providerInstances: {
+    [ProviderInstanceId.make("cursor")]: {
+      driver: ProviderDriverKind.make("cursor"),
+      enabled: true,
+      config: { binaryPath },
+    },
+  },
 });
 
 const cursorAdapterTestLayer = it.layer(
@@ -179,7 +195,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const wrapperPath = yield* Effect.promise(() =>
         makeProbeWrapper(requestLogPath, argvLogPath),
       );
-      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      yield* settings.updateSettings(cursorTestSettingsPatch(wrapperPath));
 
       const mcp = {
         environmentId: EnvironmentId.make("cursor-scient-mcp-test"),
@@ -228,7 +244,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const settings = yield* ServerSettingsService;
       const threadId = ThreadId.make("cursor-unsupported-rollback");
       const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
-      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      yield* settings.updateSettings(cursorTestSettingsPatch(wrapperPath));
       yield* adapter.startSession({
         threadId,
         cwd: process.cwd(),
@@ -254,7 +270,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
           T3_ACP_PROMPT_RESPONSE_TEXT: "Error: RetriableError: WritableIterable is closed",
         }),
       );
-      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      yield* settings.updateSettings(cursorTestSettingsPatch(wrapperPath));
       const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
         Stream.takeUntil((event) => event.type === "session.exited"),
         Stream.runCollect,
@@ -287,7 +303,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const threadId = ThreadId.make("cursor-mock-thread");
 
       const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
-      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      yield* settings.updateSettings(cursorTestSettingsPatch(wrapperPath));
 
       const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 9).pipe(
         Stream.runCollect,
@@ -381,7 +397,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const wrapperPath = yield* Effect.promise(() =>
         makeProbeWrapper(requestLogPath, argvLogPath),
       );
-      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      yield* settings.updateSettings(cursorTestSettingsPatch(wrapperPath));
 
       yield* adapter.startSession({
         threadId,
@@ -437,7 +453,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const wrapperPath = yield* Effect.promise(() =>
         makeMockAgentWrapper({ T3_ACP_PROMPT_DELAY_MS: "1500" }),
       );
-      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      yield* settings.updateSettings(cursorTestSettingsPatch(wrapperPath));
 
       const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
         Stream.filter((event) => event.threadId === threadId),
@@ -518,7 +534,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
           T3_ACP_EXIT_LOG_PATH: exitLogPath,
         }),
       );
-      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      yield* settings.updateSettings(cursorTestSettingsPatch(wrapperPath));
 
       yield* adapter.startSession({
         threadId,
@@ -555,7 +571,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
             { initialDelaySeconds: 0.2 },
           ),
         );
-        yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+        yield* settings.updateSettings(cursorTestSettingsPatch(wrapperPath));
 
         const [firstSession, secondSession] = yield* Effect.all(
           [
@@ -624,7 +640,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
           "process.exit(1);",
         ].join("\n"),
       });
-      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      yield* settings.updateSettings(cursorTestSettingsPatch(wrapperPath));
 
       const error = yield* adapter
         .startSession({
@@ -660,7 +676,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const wrapperPath = yield* Effect.promise(() =>
         makeProbeWrapper(requestLogPath, argvLogPath),
       );
-      yield* serverSettings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      yield* serverSettings.updateSettings(cursorTestSettingsPatch(wrapperPath));
 
       yield* adapter.startSession({
         threadId,
@@ -718,9 +734,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         const wrapperPath = yield* Effect.promise(() =>
           makeProbeWrapper(requestLogPath, argvLogPath),
         );
-        yield* serverSettings.updateSettings({
-          providers: { cursor: { binaryPath: wrapperPath } },
-        });
+        yield* serverSettings.updateSettings(cursorTestSettingsPatch(wrapperPath));
 
         const modelSelection = createModelSelection(ProviderInstanceId.make("cursor"), "gpt-5.4", [
           { id: "reasoning", value: "xhigh" },
@@ -791,9 +805,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         const wrapperPath = yield* Effect.promise(() =>
           makeMockAgentWrapper({ T3_ACP_EMIT_TOOL_CALLS: "1" }),
         );
-        yield* serverSettings.updateSettings({
-          providers: { cursor: { binaryPath: wrapperPath } },
-        });
+        yield* serverSettings.updateSettings(cursorTestSettingsPatch(wrapperPath));
 
         yield* Stream.runForEach(adapter.streamEvents, (event) =>
           Effect.gen(function* () {
@@ -966,9 +978,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         const wrapperPath = yield* Effect.promise(() =>
           makeProbeWrapper(requestLogPath, argvLogPath, { T3_ACP_EMIT_TOOL_CALLS: "1" }),
         );
-        yield* serverSettings.updateSettings({
-          providers: { cursor: { binaryPath: wrapperPath } },
-        });
+        yield* serverSettings.updateSettings(cursorTestSettingsPatch(wrapperPath));
 
         const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
           Effect.gen(function* () {
@@ -1059,9 +1069,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const wrapperPath = yield* Effect.promise(() =>
         makeMockAgentWrapper({ T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS: "1" }),
       );
-      yield* serverSettings.updateSettings({
-        providers: { cursor: { binaryPath: wrapperPath } },
-      });
+      yield* serverSettings.updateSettings(cursorTestSettingsPatch(wrapperPath));
 
       const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
         Effect.gen(function* () {
@@ -1189,7 +1197,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const wrapperPath = yield* Effect.promise(() =>
         makeProbeWrapper(requestLogPath, argvLogPath, { T3_ACP_EMIT_TOOL_CALLS: "1" }),
       );
-      yield* serverSettings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      yield* serverSettings.updateSettings(cursorTestSettingsPatch(wrapperPath));
 
       const requestResolvedReady = yield* Deferred.make<ProviderRuntimeEvent>();
       const turnCompletedReady = yield* Deferred.make<ProviderRuntimeEvent>();
@@ -1280,7 +1288,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const wrapperPath = yield* Effect.promise(() =>
         makeMockAgentWrapper({ T3_ACP_EMIT_TOOL_CALLS: "1" }),
       );
-      yield* serverSettings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      yield* serverSettings.updateSettings(cursorTestSettingsPatch(wrapperPath));
 
       yield* Stream.runForEach(adapter.streamEvents, (event) => {
         if (String(event.threadId) !== String(threadId) || event.type !== "request.opened") {
@@ -1323,7 +1331,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const wrapperPath = yield* Effect.promise(() =>
         makeMockAgentWrapper({ T3_ACP_EMIT_ASK_QUESTION: "1" }),
       );
-      yield* serverSettings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      yield* serverSettings.updateSettings(cursorTestSettingsPatch(wrapperPath));
 
       yield* Stream.runForEach(adapter.streamEvents, (event) => {
         if (String(event.threadId) !== String(threadId) || event.type !== "user-input.requested") {
@@ -1366,7 +1374,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const wrapperPath = yield* Effect.promise(() =>
         makeMockAgentWrapper({ T3_ACP_EMIT_ASK_QUESTION: "1" }),
       );
-      yield* serverSettings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      yield* serverSettings.updateSettings(cursorTestSettingsPatch(wrapperPath));
 
       yield* Stream.runForEach(adapter.streamEvents, (event) => {
         if (String(event.threadId) !== String(threadId) || event.type !== "user-input.requested") {
@@ -1407,7 +1415,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const threadId = ThreadId.make("cursor-runtime-event-broadcast");
 
       const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
-      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      yield* settings.updateSettings(cursorTestSettingsPatch(wrapperPath));
 
       const firstConsumer = yield* Stream.take(adapter.streamEvents, 3).pipe(
         Stream.runCollect,
@@ -1456,7 +1464,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const wrapperPath = yield* Effect.promise(() =>
         makeProbeWrapper(requestLogPath, argvLogPath),
       );
-      yield* serverSettings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      yield* serverSettings.updateSettings(cursorTestSettingsPatch(wrapperPath));
 
       yield* adapter.startSession({
         threadId,
@@ -1521,7 +1529,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const wrapperPath = yield* Effect.promise(() =>
         makeProbeWrapper(requestLogPath, argvLogPath),
       );
-      yield* serverSettings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      yield* serverSettings.updateSettings(cursorTestSettingsPatch(wrapperPath));
 
       yield* adapter.startSession({
         threadId,
@@ -1607,9 +1615,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         const wrapperPath = yield* Effect.promise(() =>
           makeProbeWrapper(requestLogPath, argvLogPath),
         );
-        yield* serverSettings.updateSettings({
-          providers: { cursor: { binaryPath: wrapperPath } },
-        });
+        yield* serverSettings.updateSettings(cursorTestSettingsPatch(wrapperPath));
 
         yield* adapter.startSession({
           threadId,
@@ -1669,7 +1675,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       const threadId = ThreadId.make("cursor-consumer-outlives-start-session");
 
       const wrapperPath = yield* Effect.promise(() => makeMockAgentWrapper());
-      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      yield* settings.updateSettings(cursorTestSettingsPatch(wrapperPath));
 
       const runtimeEvents: ProviderRuntimeEvent[] = [];
       const sawContentDelta = yield* Deferred.make<void>();

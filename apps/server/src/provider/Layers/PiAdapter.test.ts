@@ -1120,47 +1120,50 @@ describe("PiAdapter", () => {
     );
   });
 
-  it.effect("allocates an exact durable session and rejects non-full-access before spawn", () => {
-    const h = makeHarness();
-    return withAdapter(h, (adapter) =>
-      Effect.gen(function* () {
-        const rejected = yield* adapter
-          .startSession({
-            threadId: ThreadId.make("rejected"),
-            runtimeMode: "approval-required",
-          })
-          .pipe(Effect.result);
-        assert.equal(rejected._tag, "Failure");
-        if (rejected._tag === "Failure")
-          assert.equal(rejected.failure._tag, "ProviderAdapterValidationError");
-        assert.equal(h.spawns.length, 0);
+  it.effect(
+    "allocates an exact durable session and rejects unsupported auto mode before spawn",
+    () => {
+      const h = makeHarness();
+      return withAdapter(h, (adapter) =>
+        Effect.gen(function* () {
+          const rejected = yield* adapter
+            .startSession({
+              threadId: ThreadId.make("rejected"),
+              runtimeMode: "auto",
+            })
+            .pipe(Effect.result);
+          assert.equal(rejected._tag, "Failure");
+          if (rejected._tag === "Failure")
+            assert.equal(rejected.failure._tag, "ProviderAdapterValidationError");
+          assert.equal(h.spawns.length, 0);
 
-        const session = yield* start(adapter);
-        const cursor = session.resumeCursor as {
-          schemaVersion: number;
-          sessionFile: string;
-          sessionId: string;
-        };
-        assert.equal(cursor.schemaVersion, 1);
-        assert.equal(h.client.state.sessionFile, cursor.sessionFile);
-        assert.equal(h.client.state.sessionId, cursor.sessionId);
-        const args = h.spawns[0]?.args ?? [];
-        assert.deepEqual(args.slice(args.indexOf("--session"), args.indexOf("--session") + 2), [
-          "--session",
-          cursor.sessionFile,
-        ]);
-        assert.equal(args.includes("--no-session"), false);
-        assert.equal(args.includes("--offline"), true);
-        for (const arg of [
-          "--no-context-files",
-          "--no-extensions",
-          "--no-skills",
-          "--no-prompt-templates",
-        ])
-          assert.equal(args.includes(arg), false);
-      }),
-    );
-  });
+          const session = yield* start(adapter);
+          const cursor = session.resumeCursor as {
+            schemaVersion: number;
+            sessionFile: string;
+            sessionId: string;
+          };
+          assert.equal(cursor.schemaVersion, 1);
+          assert.equal(h.client.state.sessionFile, cursor.sessionFile);
+          assert.equal(h.client.state.sessionId, cursor.sessionId);
+          const args = h.spawns[0]?.args ?? [];
+          assert.deepEqual(args.slice(args.indexOf("--session"), args.indexOf("--session") + 2), [
+            "--session",
+            cursor.sessionFile,
+          ]);
+          assert.equal(args.includes("--no-session"), false);
+          assert.equal(args.includes("--offline"), true);
+          for (const arg of [
+            "--no-context-files",
+            "--no-extensions",
+            "--no-skills",
+            "--no-prompt-templates",
+          ])
+            assert.equal(args.includes(arg), false);
+        }),
+      );
+    },
+  );
 
   it.effect("sends persisted image attachments through Pi RPC", () => {
     const h = makeHarness();

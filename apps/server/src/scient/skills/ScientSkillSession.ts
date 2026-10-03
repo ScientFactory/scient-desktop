@@ -24,6 +24,7 @@ import { resolveEffectiveUserSkillPolicies } from "./ScientSkillEffectivePolicy.
  * that spontaneous discovery has been qualified.
  */
 export const SCIENT_SKILL_DELIVERY = {
+  acpRegistry: "mcp",
   antigravity: "mcp",
   claudeAgent: "mcp",
   codex: "mcp",

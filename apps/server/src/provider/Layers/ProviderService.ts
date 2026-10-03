@@ -52,7 +52,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as Stream from "effect/Stream";
 
-import { fitsForkRequestBudget } from "../../orchestration/scient-fork/context/finalRequestBudget.ts";
+import { fitsForkRequestBudget } from "../../orchestration-v2/scient-fork/context/finalRequestBudget.ts";
 import { appendUserInputAttachmentPaths } from "../userInputAttachments.ts";
 // SCIENT-FORK: failures after adapter dispatch may have reached the provider.
 import { markTurnDispatchAttempted } from "../turnDispatchPhase.ts";
@@ -61,16 +61,15 @@ import * as ServerConfig from "../../config.ts";
 import * as DeviceService from "../../device/DeviceService.ts";
 import { ensureAgentDeviceShim } from "../../device/AgentDeviceShim.ts";
 import type * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
+import { increment, withMetrics } from "../../observability/Metrics.ts";
 import {
-  increment,
   providerMetricAttributes,
   providerRuntimeEventsTotal,
   providerSessionsTotal,
   providerTurnDuration,
   providerTurnsTotal,
   providerTurnMetricAttributes,
-  withMetrics,
-} from "../../observability/Metrics.ts";
+} from "./ProviderMetrics.ts";
 import {
   ProviderAdapterRequestError,
   type ProviderAdapterError,

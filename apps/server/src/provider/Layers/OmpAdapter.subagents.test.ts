@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
-import { make as makeLiveness } from "../../orchestration/ThreadBackgroundLiveness.ts";
+import { make as makeLiveness } from "../../orchestration-v2/ThreadBackgroundLiveness.ts";
 import { makeOmpRpcClient } from "effect-omp-rpc/client";
 
 import { makeOmpScriptedWire } from "../omp/OmpCaptureReplay.testFixtures.ts";

@@ -60,6 +60,8 @@ export const ScientThreadQueueItem = Schema.Struct({
 export type ScientThreadQueueItem = typeof ScientThreadQueueItem.Type;
 
 export const ScientThreadQueueSnapshot = Schema.Struct({
+  /** Native run projections own this queue; modern clients use their V2 controls. */
+  nativeQueue: Schema.optional(Schema.Boolean),
   unchanged: Schema.optional(Schema.Boolean),
   threadId: ThreadId,
   revision: Schema.optional(Schema.Number),

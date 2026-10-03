@@ -80,7 +80,11 @@ export type WorktreeSetupSnapshot = typeof WorktreeSetupSnapshot.Type;
  * after a reload.
  */
 export const WORKTREE_SETUP_ACTIVITY_KIND = "worktree-setup";
+// SCIENT-FORK:START — the bootstrap writes the setup activity under this fixed
+// id so a re-attach finds the latest known state; apps/server/src/ws.ts keys
+// the projection on it.
 export const worktreeSetupActivityId = (threadId: ThreadId) => `worktree-setup:${threadId}`;
+// SCIENT-FORK:END
 
 export const WorktreeSetupSubscribeInput = Schema.Struct({
   threadId: ThreadId,

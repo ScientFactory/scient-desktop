@@ -3,6 +3,7 @@ import * as NodeAssert from "node:assert/strict";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
 import { describe } from "vite-plus/test";
 import { DEFAULT_MODEL, ThreadId } from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
@@ -10,14 +11,15 @@ import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
+import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "../T3OrchestrationInstructions.ts";
 
 import {
   buildCodexAdditionalContext,
   buildCodexDeveloperInstructions,
 } from "../CodexDeveloperInstructions.ts";
-import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
   buildTurnStartParams,
+  codexSessionAppServerArgs,
   describeMcpElicitation,
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
@@ -29,6 +31,11 @@ import {
   toMcpElicitationResponse,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
+const encodeDirectProtocolDiagnostics = Schema.encodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct(Struct.omit(CodexErrors.CodexAppServerProtocolParseError.fields, ["cause"])),
+  ),
+);
 
 describe("Codex thread history", () => {
   for (const numTurns of [1, 2, 3, 5]) {
@@ -180,10 +187,10 @@ describe("buildTurnStartParams", () => {
     }),
   );
 
-  it("keeps invalid turn values only in the schema cause", () => {
-    const secret = "codex-turn-input-secret-sentinel";
-    const error = Effect.runSync(
-      buildTurnStartParams({
+  it.effect("keeps invalid turn values only in the schema cause", () =>
+    Effect.gen(function* () {
+      const secret = "codex-turn-input-secret-sentinel";
+      const error = yield* buildTurnStartParams({
         threadId: "provider-thread-1",
         runtimeMode: "full-access",
         attachments: [
@@ -192,65 +199,68 @@ describe("buildTurnStartParams", () => {
             path: { secret } as unknown as string,
           },
         ],
-      }).pipe(Effect.flip),
-    );
-    const { cause, ...directDiagnostics } = error;
+      }).pipe(Effect.flip);
+      const { cause, ...directDiagnostics } = error;
 
-    NodeAssert.equal(error.operation, "decode-request-payload");
-    NodeAssert.equal(error.method, "turn/start");
-    NodeAssert.ok((error.issueCount ?? 0) > 0);
-    NodeAssert.ok(error.issueKinds?.includes("Pointer"));
-    NodeAssert.ok((error.maximumPathDepth ?? 0) > 0);
-    NodeAssert.ok(Schema.isSchemaError(cause));
-    NodeAssert.doesNotMatch(error.message, new RegExp(secret));
-    NodeAssert.doesNotMatch(JSON.stringify(directDiagnostics), new RegExp(secret));
-  });
+      NodeAssert.equal(error.operation, "decode-request-payload");
+      NodeAssert.equal(error.method, "turn/start");
+      NodeAssert.ok((error.issueCount ?? 0) > 0);
+      NodeAssert.ok(error.issueKinds?.includes("Pointer"));
+      NodeAssert.ok((error.maximumPathDepth ?? 0) > 0);
+      NodeAssert.ok(Schema.isSchemaError(cause));
+      NodeAssert.doesNotMatch(error.message, new RegExp(secret));
+      NodeAssert.doesNotMatch(
+        yield* encodeDirectProtocolDiagnostics(directDiagnostics),
+        new RegExp(secret),
+      );
+    }),
+  );
 
-  it("includes plan collaboration mode when requested", () => {
-    const params = Effect.runSync(
-      buildTurnStartParams({
+  it.effect("includes plan collaboration mode when requested", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
         threadId: "provider-thread-1",
         runtimeMode: "full-access",
         prompt: "Make a plan",
         model: "gpt-5.3-codex",
         effort: "medium",
         interactionMode: "plan",
-      }),
-    );
+      });
 
-    NodeAssert.deepStrictEqual(params, {
-      threadId: "provider-thread-1",
-      approvalPolicy: "never",
-      approvalsReviewer: "user",
-      sandboxPolicy: {
-        type: "dangerFullAccess",
-      },
-      input: [
-        {
-          type: "text",
-          text: "Make a plan",
+      NodeAssert.deepStrictEqual(params, {
+        threadId: "provider-thread-1",
+        approvalPolicy: "never",
+        approvalsReviewer: "user",
+        sandboxPolicy: {
+          type: "dangerFullAccess",
         },
-      ],
-      model: "gpt-5.3-codex",
-      effort: "medium",
-      collaborationMode: {
-        mode: "plan",
-        settings: {
-          model: "gpt-5.3-codex",
-          reasoning_effort: "medium",
-          developer_instructions: buildCodexDeveloperInstructions("plan"),
-        },
-      },
-      additionalContext: buildCodexAdditionalContext({
+        input: [
+          {
+            type: "text",
+            text: "Make a plan",
+          },
+        ],
         model: "gpt-5.3-codex",
-        reasoningEffort: "medium",
-      }),
-    });
-  });
+        effort: "medium",
+        collaborationMode: {
+          mode: "plan",
+          settings: {
+            model: "gpt-5.3-codex",
+            reasoning_effort: "medium",
+            developer_instructions: buildCodexDeveloperInstructions("plan"),
+          },
+        },
+        additionalContext: buildCodexAdditionalContext({
+          model: "gpt-5.3-codex",
+          reasoningEffort: "medium",
+        }),
+      });
+    }),
+  );
 
-  it("includes default collaboration mode and image attachments", () => {
-    const params = Effect.runSync(
-      buildTurnStartParams({
+  it.effect("includes default collaboration mode and image attachments", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
         threadId: "provider-thread-1",
         runtimeMode: "auto-accept-edits",
         prompt: "Implement it",
@@ -262,59 +272,61 @@ describe("buildTurnStartParams", () => {
             path: "/tmp/generated.png",
           },
         ],
-      }),
-    );
+      });
 
-    NodeAssert.deepStrictEqual(params, {
-      threadId: "provider-thread-1",
-      approvalPolicy: "on-request",
-      approvalsReviewer: "user",
-      sandboxPolicy: {
-        type: "workspaceWrite",
-      },
-      input: [
-        {
-          type: "text",
-          text: "Implement it",
+      NodeAssert.deepStrictEqual(params, {
+        threadId: "provider-thread-1",
+        approvalPolicy: "on-request",
+        approvalsReviewer: "user",
+        sandboxPolicy: {
+          type: "workspaceWrite",
         },
-        {
-          type: "localImage",
-          path: "/tmp/generated.png",
-        },
-      ],
-      model: "gpt-5.3-codex",
-      collaborationMode: {
-        mode: "default",
-        settings: {
-          model: "gpt-5.3-codex",
-          reasoning_effort: "medium",
-          developer_instructions: buildCodexDeveloperInstructions("default"),
-        },
-      },
-      additionalContext: buildCodexAdditionalContext({
+        input: [
+          {
+            type: "text",
+            text: "Implement it",
+          },
+          {
+            type: "localImage",
+            path: "/tmp/generated.png",
+          },
+        ],
         model: "gpt-5.3-codex",
-        reasoningEffort: "medium",
-      }),
-    });
-  });
+        collaborationMode: {
+          mode: "default",
+          settings: {
+            model: "gpt-5.3-codex",
+            reasoning_effort: "medium",
+            developer_instructions: buildCodexDeveloperInstructions("default"),
+          },
+        },
+        additionalContext: buildCodexAdditionalContext({
+          model: "gpt-5.3-codex",
+          reasoningEffort: "medium",
+        }),
+      });
+    }),
+  );
 
-  it("reports the same fallback model and effort in settings and instructions", () => {
-    const params = Effect.runSync(
-      buildTurnStartParams({
+  it.effect("reports the same fallback model and effort in settings and instructions", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
         threadId: "provider-thread-1",
         runtimeMode: "full-access",
         prompt: "Go",
         interactionMode: "default",
-      }),
-    );
+      });
 
-    const settings = params.collaborationMode?.settings;
-    NodeAssert.equal(settings?.model, DEFAULT_MODEL);
-    NodeAssert.equal(settings?.reasoning_effort, "medium");
-    NodeAssert.ok(
-      params.additionalContext?.t3_code_runtime?.value.includes(`as ${DEFAULT_MODEL} with medium`),
-    );
-  });
+      const settings = params.collaborationMode?.settings;
+      NodeAssert.equal(settings?.model, DEFAULT_MODEL);
+      NodeAssert.equal(settings?.reasoning_effort, "medium");
+      NodeAssert.ok(
+        params.additionalContext?.t3_code_runtime?.value.includes(
+          `as ${DEFAULT_MODEL} with medium`,
+        ),
+      );
+    }),
+  );
 
   it.effect("names the model by display name and slug in the runtime context", () =>
     Effect.gen(function* () {
@@ -371,42 +383,42 @@ describe("buildTurnStartParams", () => {
     }),
   );
 
-  it("defaults an absent interaction mode and still delivers the product awareness", () => {
-    const params = Effect.runSync(
-      buildTurnStartParams({
+  it.effect("defaults an absent interaction mode and still delivers the product awareness", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
         threadId: "provider-thread-1",
         runtimeMode: "approval-required",
         prompt: "Review",
-      }),
-    );
+      });
 
-    NodeAssert.deepStrictEqual(params, {
-      threadId: "provider-thread-1",
-      approvalPolicy: "untrusted",
-      approvalsReviewer: "user",
-      sandboxPolicy: {
-        type: "readOnly",
-      },
-      input: [
-        {
-          type: "text",
-          text: "Review",
+      NodeAssert.deepStrictEqual(params, {
+        threadId: "provider-thread-1",
+        approvalPolicy: "untrusted",
+        approvalsReviewer: "user",
+        sandboxPolicy: {
+          type: "readOnly",
         },
-      ],
-      collaborationMode: {
-        mode: "default",
-        settings: {
+        input: [
+          {
+            type: "text",
+            text: "Review",
+          },
+        ],
+        collaborationMode: {
+          mode: "default",
+          settings: {
+            model: DEFAULT_MODEL,
+            reasoning_effort: "medium",
+            developer_instructions: buildCodexDeveloperInstructions("default"),
+          },
+        },
+        additionalContext: buildCodexAdditionalContext({
           model: DEFAULT_MODEL,
-          reasoning_effort: "medium",
-          developer_instructions: buildCodexDeveloperInstructions("default"),
-        },
-      },
-      additionalContext: buildCodexAdditionalContext({
-        model: DEFAULT_MODEL,
-        reasoningEffort: "medium",
-      }),
-    });
-  });
+          reasoningEffort: "medium",
+        }),
+      });
+    }),
+  );
 });
 
 describe("Codex MCP elicitation approvals", () => {
@@ -720,10 +732,21 @@ describe("Scient awareness", () => {
     }
   });
 
-  it("carries the runtime and awareness entries, and nothing else", () => {
+  it("carries complete orchestration, workspace, runtime, and awareness entries", () => {
     const context = buildCodexAdditionalContext(runtime);
 
-    NodeAssert.deepStrictEqual(Object.keys(context), ["t3_code_runtime", "scient_awareness"]);
+    NodeAssert.deepStrictEqual(Object.keys(context), [
+      "t3_code_orchestration",
+      "t3_code_workspace",
+      "t3_code_runtime",
+      "scient_awareness",
+    ]);
+    NodeAssert.equal(
+      (context.t3_code_orchestration?.value ?? "") + (context.t3_code_workspace?.value ?? ""),
+      T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+    );
+    NodeAssert.match(context.t3_code_orchestration?.value ?? "", /Use `delegate_task`/);
+    NodeAssert.match(context.t3_code_workspace?.value ?? "", /Choose the workspace/);
     NodeAssert.equal(context.scient_awareness?.kind, "application");
   });
 });

@@ -44,6 +44,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
@@ -53,15 +54,130 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import { buildUnavailableProviderSnapshot } from "../unavailableProviderSnapshot.ts";
-import {
-  ProviderInstanceRegistry,
-  type ProviderInstanceRegistryShape,
-} from "../Services/ProviderInstanceRegistry.ts";
-import {
-  ProviderInstanceRegistryMutator,
-  type ProviderInstanceRegistryMutatorShape,
-} from "../Services/ProviderInstanceRegistryMutator.ts";
+import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
+import * as ProviderInstanceRegistryMutator from "../Services/ProviderInstanceRegistryMutator.ts";
 import type { AnyProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
+import {
+  ProviderAdapterOpenSessionError,
+  ProviderAdapterProtocolError,
+  type ProviderAdapterV2SessionRuntime,
+} from "../../orchestration-v2/ProviderAdapter.ts";
+
+/** A retired instance must never reach its old native transport again. */
+const guardSessionLifetime = (
+  runtime: ProviderAdapterV2SessionRuntime,
+  scope: Scope.Scope,
+): ProviderAdapterV2SessionRuntime => {
+  const guard = <A, E>(
+    operation: () => Effect.Effect<A, E>,
+  ): Effect.Effect<A, E | ProviderAdapterProtocolError> =>
+    Effect.suspend((): Effect.Effect<A, E | ProviderAdapterProtocolError> =>
+      scope.state._tag === "Closed"
+        ? Effect.fail(
+            new ProviderAdapterProtocolError({
+              driver: runtime.driver,
+              detail: "The provider instance or session lifetime has ended.",
+            }),
+          )
+        : operation(),
+    );
+  const {
+    injectHistory,
+    compactThread,
+    unloadThread,
+    uploadFeedback,
+    hasPendingBackgroundWork,
+    hasPendingBackgroundWorkForThread,
+  } = runtime;
+  return {
+    ...runtime,
+    get providerSession() {
+      return runtime.providerSession;
+    },
+    ensureThread: (input) => guard(() => runtime.ensureThread(input)),
+    resumeThread: (input) => guard(() => runtime.resumeThread(input)),
+    startTurn: (input) => guard(() => runtime.startTurn(input)),
+    steerTurn: (input) => guard(() => runtime.steerTurn(input)),
+    interruptTurn: (input) => guard(() => runtime.interruptTurn(input)),
+    respondToRuntimeRequest: (input) => guard(() => runtime.respondToRuntimeRequest(input)),
+    readThreadSnapshot: (input) => guard(() => runtime.readThreadSnapshot(input)),
+    rollbackThread: (input) => guard(() => runtime.rollbackThread(input)),
+    forkThread: (input) => guard(() => runtime.forkThread(input)),
+    ...(injectHistory ? { injectHistory: (input) => guard(() => injectHistory(input)) } : {}),
+    ...(compactThread ? { compactThread: (input) => guard(() => compactThread(input)) } : {}),
+    ...(unloadThread ? { unloadThread: (input) => guard(() => unloadThread(input)) } : {}),
+    ...(uploadFeedback ? { uploadFeedback: (input) => guard(() => uploadFeedback(input)) } : {}),
+    ...(hasPendingBackgroundWork
+      ? {
+          hasPendingBackgroundWork: Effect.suspend(() =>
+            scope.state._tag === "Closed" ? Effect.succeed(false) : hasPendingBackgroundWork,
+          ),
+        }
+      : {}),
+    ...(hasPendingBackgroundWorkForThread
+      ? {
+          hasPendingBackgroundWorkForThread: (input) =>
+            Effect.suspend(() =>
+              scope.state._tag === "Closed"
+                ? Effect.succeed(false)
+                : hasPendingBackgroundWorkForThread(input),
+            ),
+        }
+      : {}),
+  };
+};
+
+/** Native sessions are children of both their configured instance and caller. */
+const ownNativeSessionLifetimes = (
+  instance: ProviderInstance,
+  instanceScope: Scope.Scope,
+): ProviderInstance => {
+  const adapter = instance.orchestrationAdapter;
+  return {
+    ...instance,
+    orchestrationAdapter: {
+      ...adapter,
+      openSession: (input) =>
+        Effect.gen(function* () {
+          const callerScope = yield* Scope.Scope;
+          const retired = () =>
+            new ProviderAdapterOpenSessionError({
+              driver: instance.driverKind,
+              providerSessionId: input.providerSessionId,
+              cause: "The configured provider instance has been retired.",
+            });
+          if (instanceScope.state._tag === "Closed" || callerScope.state._tag === "Closed")
+            return yield* retired();
+          const sessionScope = yield* Scope.fork(instanceScope);
+          yield* Scope.addFinalizerExit(callerScope, (exit) => Scope.close(sessionScope, exit));
+          if (yield* Effect.sync(() => sessionScope.state._tag === "Closed"))
+            return yield* retired();
+          const opening = yield* adapter
+            .openSession(input)
+            .pipe(
+              Effect.provideService(Scope.Scope, sessionScope),
+              Effect.interruptible,
+              Effect.forkIn(sessionScope),
+            );
+          const runtime = yield* Fiber.join(opening).pipe(
+            // Instance retirement is an opening failure, so the manager's
+            // failure path also revokes newly issued MCP credentials.
+            Effect.catchCause((cause) =>
+              instanceScope.state._tag === "Closed"
+                ? Effect.fail(retired())
+                : Effect.failCause(cause),
+            ),
+            Effect.onExit((exit) =>
+              Exit.isFailure(exit) ? Scope.close(sessionScope, exit) : Effect.void,
+            ),
+          );
+          if (yield* Effect.sync(() => sessionScope.state._tag === "Closed"))
+            return yield* retired();
+          return guardSessionLifetime(runtime, sessionScope);
+        }),
+    },
+  };
+};
 
 /**
  * Live registry entry: the materialized `ProviderInstance` + the fresh
@@ -207,7 +323,7 @@ const buildEntry = <R>(input: {
     return {
       kind: "live" as const,
       live: {
-        instance: createResult.success,
+        instance: ownNativeSessionLifetimes(createResult.success, childScope),
         scope: childScope,
         entry,
       },
@@ -352,8 +468,8 @@ export const makeProviderInstanceRegistry = <R>(input: {
   readonly configMap: ProviderInstanceConfigMap;
 }): Effect.Effect<
   {
-    readonly registry: ProviderInstanceRegistryShape;
-    readonly mutator: ProviderInstanceRegistryMutatorShape;
+    readonly registry: ProviderInstanceRegistry.ProviderInstanceRegistryShape;
+    readonly mutator: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape;
   },
   never,
   R | Scope.Scope
@@ -384,10 +500,11 @@ export const makeProviderInstanceRegistry = <R>(input: {
 
     const state: RegistryState = { entries, unavailable, configMap, changes };
     const reconcileWithR = makeReconcile({ state, driversById, parentScope });
-    const reconcile: ProviderInstanceRegistryMutatorShape["reconcile"] = (nextConfigMap) =>
-      reconcileSemaphore.withPermit(
-        reconcileWithR(nextConfigMap).pipe(Effect.provideContext(driverContext)),
-      );
+    const reconcile: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape["reconcile"] =
+      (nextConfigMap) =>
+        reconcileSemaphore.withPermit(
+          reconcileWithR(nextConfigMap).pipe(Effect.provideContext(driverContext)),
+        );
     const rebuildInstanceUnserialized = Effect.fn(
       "ProviderInstanceRegistry.rebuildInstanceUnserialized",
     )(function* (instanceId: ProviderInstanceId) {
@@ -397,14 +514,14 @@ export const makeProviderInstanceRegistry = <R>(input: {
         Effect.provideContext(driverContext),
       );
     });
-    const rebuildInstance: ProviderInstanceRegistryShape["rebuildInstance"] = (instanceId) =>
-      reconcileSemaphore.withPermit(rebuildInstanceUnserialized(instanceId));
+    const rebuildInstance: ProviderInstanceRegistry.ProviderInstanceRegistryShape["rebuildInstance"] =
+      (instanceId) => reconcileSemaphore.withPermit(rebuildInstanceUnserialized(instanceId));
 
     // Hydrate the initial configMap synchronously so callers can read
     // `listInstances` immediately after this effect completes.
     yield* reconcile(input.configMap);
 
-    const registry: ProviderInstanceRegistryShape = {
+    const registry: ProviderInstanceRegistry.ProviderInstanceRegistryShape = {
       getInstance: (id) => Ref.get(entries).pipe(Effect.map((map) => map.get(id)?.instance)),
       rebuildInstance,
       listInstances: Ref.get(entries).pipe(
@@ -433,7 +550,9 @@ export const makeProviderInstanceRegistry = <R>(input: {
       },
     };
 
-    const mutator: ProviderInstanceRegistryMutatorShape = { reconcile };
+    const mutator: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape = {
+      reconcile,
+    };
 
     return { registry, mutator };
   });
@@ -447,13 +566,23 @@ export const makeProviderInstanceRegistry = <R>(input: {
 export const ProviderInstanceRegistryMutableLayer = <R>(input: {
   readonly drivers: ReadonlyArray<AnyProviderDriver<R>>;
   readonly configMap: ProviderInstanceConfigMap;
-}): Layer.Layer<ProviderInstanceRegistry | ProviderInstanceRegistryMutator, never, R> =>
+}): Layer.Layer<
+  | ProviderInstanceRegistry.ProviderInstanceRegistry
+  | ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
+  never,
+  R
+> =>
   Layer.effectContext(
     makeProviderInstanceRegistry(input).pipe(
       Effect.map(({ registry, mutator }) =>
-        Context.make(ProviderInstanceRegistry, registry).pipe(
-          Context.add(ProviderInstanceRegistryMutator, mutator),
+        Context.make(ProviderInstanceRegistry.ProviderInstanceRegistry, registry).pipe(
+          Context.add(ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator, mutator),
         ),
       ),
     ),
-  ) as Layer.Layer<ProviderInstanceRegistry | ProviderInstanceRegistryMutator, never, R>;
+  ) as Layer.Layer<
+    | ProviderInstanceRegistry.ProviderInstanceRegistry
+    | ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
+    never,
+    R
+  >;

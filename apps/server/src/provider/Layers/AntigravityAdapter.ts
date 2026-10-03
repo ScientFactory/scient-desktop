@@ -33,7 +33,10 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as EffectAcpErrors from "effect-acp/errors";
-import type * as EffectAcpSchema from "effect-acp/schema";
+// SCIENT-FORK:START — legacy v1 adapter vocabulary; see compat rationale in
+// `acp/DroidAcpSupport.ts`.
+import type * as EffectAcpSchema from "effect-acp/compat";
+// SCIENT-FORK:END
 
 import { ServerConfig } from "../../config.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";

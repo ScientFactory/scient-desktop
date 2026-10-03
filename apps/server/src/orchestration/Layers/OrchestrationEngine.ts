@@ -42,18 +42,21 @@ import {
   OrchestrationCommandPreviouslyRejectedError,
   type OrchestrationDispatchError,
   type OrchestrationProjectorDecodeError,
-} from "../Errors.ts";
+} from "../../orchestration-v2/Errors.ts";
 import { decideOrchestrationCommand } from "../decider.ts";
-import { withForkLiveImages } from "../scient-fork/liveImages.ts";
-import { withForkOriginDetail } from "../scient-fork/forkDecisionReadModel.ts";
-import { forkNotReadyDetail, getForkStatus } from "../scient-fork/forkRepository.ts";
-import { FORK_HYDRATION_ACTIVITY_KINDS } from "../scient-fork/forkActivityCopy.ts";
-import { makeForkBoundaryResolver } from "../scient-fork/ForkBoundaryReadModel.ts";
-import type { ResolvedForkBoundaries } from "../scient-fork/forkBoundaryTypes.ts";
+import { withForkLiveImages } from "../../orchestration-v2/scient-fork/liveImages.ts";
+import { withForkOriginDetail } from "../../orchestration-v2/scient-fork/forkDecisionReadModel.ts";
+import {
+  forkNotReadyDetail,
+  getForkStatus,
+} from "../../orchestration-v2/scient-fork/forkRepository.ts";
+import { FORK_HYDRATION_ACTIVITY_KINDS } from "../../orchestration-v2/scient-fork/forkActivityCopy.ts";
+import { makeForkBoundaryResolver } from "../../orchestration-v2/scient-fork/ForkBoundaryReadModel.ts";
+import type { ResolvedForkBoundaries } from "../../orchestration-v2/scient-fork/forkBoundaryTypes.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
-import { ThreadBackgroundLivenessService } from "../ThreadBackgroundLiveness.ts";
+import { ThreadBackgroundLivenessService } from "../../orchestration-v2/ThreadBackgroundLiveness.ts";
 import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
@@ -417,6 +420,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
               );
               if (queued) {
                 yield* commandReceiptRepository.upsert({
+                  commandType: envelope.command.type,
                   commandId: envelope.command.commandId,
                   aggregateKind: aggregateRef.aggregateKind,
                   aggregateId: aggregateRef.aggregateId,
@@ -457,6 +461,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
               }
 
               yield* commandReceiptRepository.upsert({
+                commandType: envelope.command.type,
                 commandId: envelope.command.commandId,
                 aggregateKind: lastSavedEvent.aggregateKind,
                 aggregateId: lastSavedEvent.aggregateId,
@@ -576,6 +581,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             if (isOrchestrationCommandRejection(error)) {
               yield* commandReceiptRepository
                 .upsert({
+                  commandType: envelope.command.type,
                   commandId: envelope.command.commandId,
                   aggregateKind: aggregateRef.aggregateKind,
                   aggregateId: aggregateRef.aggregateId,

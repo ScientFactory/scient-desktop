@@ -12,7 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { runScientMigrations } from "../../orchestration/scient-fork/scientMigrator.ts";
+import { runScientMigrations } from "../../orchestration-v2/scient-fork/scientMigrator.ts";
 
 const SummaryJson = Schema.fromJsonString(AnalysisRunSummary);
 const CursorJson = Schema.fromJsonString(

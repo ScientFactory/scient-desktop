@@ -359,7 +359,7 @@ const OMP_IMAGES_ARRAY_BYTES = Buffer.byteLength(',"images":[]');
  * model request. Moving an image to a file lengthens the message, so the plan
  * is recomputed until it is stable.
  */
-const planOmpImages = (input: {
+export const planOmpImages = (input: {
   readonly buildMessage: (imageFiles: ReadonlyArray<string>) => string;
   readonly images: ReadonlyArray<OmpImageAttachment>;
   readonly maxFrameBytes: number;

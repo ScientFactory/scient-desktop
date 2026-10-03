@@ -11,7 +11,11 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import { listThreadsByProjectId, requireThread, requireThreadAbsent } from "./commandInvariants.ts";
+import {
+  listThreadsByProjectId,
+  requireThread,
+  requireThreadAbsent,
+} from "../orchestration-v2/commandInvariants.ts";
 
 const now = "2026-01-01T00:00:00.000Z";
 

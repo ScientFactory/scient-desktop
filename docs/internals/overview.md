@@ -78,6 +78,20 @@ select known environment-local checkouts; the group itself does not store inheri
 
 ## Durable intent and side effects
 
+The event log is the source of truth for orchestration state. The
+[v2 orchestrator](../../apps/server/src/orchestration-v2/Orchestrator.ts) serializes commands and
+decides events without performing provider or filesystem work.
+[EventSink](../../apps/server/src/orchestration-v2/EventSink.ts) commits events, persisted projections,
+the accepted command receipt, and outbox effects in one database transaction. Subscribers receive
+events after that commit. This keeps command retries idempotent and prevents a persisted projection
+from getting ahead of the event log.
+
+The [effect worker](../../apps/server/src/orchestration-v2/EffectWorker.ts) performs side effects
+after intent has been recorded, then feeds results back into orchestration. A command acknowledgement
+therefore means the intent committed, not that the provider, checkpoint, or other follow-up work
+finished. Keep external I/O out of command decisions and the database transaction. Effects tied to
+a lost provider process cannot simply replay; recovery retires them before admitting new work.
+
 ## Shared client runtime
 
 `packages/client-runtime` holds every non-visual client concern: connection lifecycle,
@@ -119,6 +133,11 @@ A turn is complete when its session leaves `running` status, projected by
 `settledTurnStateForSessionStatus` in [`projector.ts`][projector]. Checkpoint work settling later
 does not define turn end.
 
+Orchestration v2 keeps the same split. It records provider turn and run state independently from
+[run finalization](../../apps/server/src/orchestration-v2/RunFinalizationService.ts), so a late
+checkpoint or diff cannot extend the recorded provider duration or keep the client showing provider
+work as active.
+
 Thread settlement is server-owned. Each server's own settings control PR and inactivity
 settlement. Those keys are user preferences, so clients write them to every shared-settings sync
 target (`SHARED_SERVER_SETTING_KEYS` in `packages/client-runtime/src/state/sharedSettings.ts`) and
@@ -135,11 +154,20 @@ request. Clients render the persisted settlement state and do not derive settlem
 inactivity state. A committed `thread.settled` event also lets `ProviderCommandReactor` stop an idle
 provider session.
 
+Orchestration v2 evaluates those rules in the
+[settlement service](../../apps/server/src/orchestration-v2/ThreadSettlementService.ts) rather than
+a reactor. It needs no connected client, merge notifications invalidate cached PR state and trigger
+a check, and the guarded `thread.auto-settle` command rejects newer activity, explicit settlement
+overrides, and live or blocked work. It records the activity timestamp for stable sorting and
+detaches idle provider sessions, and clients still render the persisted result instead of deriving
+settlement from their own clocks or PR caches.
+
 At turn completion, `CheckpointReactor` refreshes PR discovery when the checkout matches the
-thread's non-default branch. `VcsStatusBroadcaster` requires loaded remote status and permission
-from background policy. `GitManager` retries only a successful "no PR" cache entry for the current
-branch, preserving known PRs and failure backoff without fetching remotes. Remote status reads
-that write the broadcaster cache share a lock per cwd, including the initial status load.
+thread's non-default branch and no newer run is active. `VcsStatusBroadcaster` requires loaded remote
+status and permission from background policy. `GitManager` retries only a successful "no PR" cache
+entry for the current branch, preserving known PRs and failure backoff without fetching remotes.
+Remote status reads that write the broadcaster cache share a lock per cwd, including the initial
+status load.
 
 ## Drainable workers
 
@@ -153,6 +181,11 @@ Follow-up work runs asynchronously in queue-backed workers built on [`DrainableW
 `enqueue` atomically offers and increments; processing always decrements. `drain` retries until the
 count reaches zero, so a test can await "queue empty and current item finished" instead of sleeping.
 Each of these four services exposes `drain` for exactly this.
+
+Orchestration v2 tests drain the effect worker or await a specific persisted event or receipt
+instead. Those test signals stay separate from the durable command receipts that make dispatch
+idempotent, and production behavior must use persisted state and events rather than test
+instrumentation or assumptions about elapsed time.
 
 Runtime receipts are a test-only mechanism. `RuntimeReceiptBusLive` in
 [`RuntimeReceiptBus.ts`][receipts] publishes nothing; only the test layer is PubSub-backed. Do not

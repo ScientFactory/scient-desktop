@@ -3,8 +3,9 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
+  RunId,
   TurnId,
-  ApprovalRequestId,
+  RuntimeRequestId,
   type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
 import {
@@ -26,11 +27,15 @@ const env = EnvironmentId.make("issue-presentation-fixture");
 const base = {
   listRef,
   isWorking: false,
+  activeTurnInProgress: false,
   activeTurnStartedAt: null,
-  latestTurn: null,
-  runningTurnId: null,
+  latestRun: null,
+  runningRunId: null,
   turnDiffSummaries: [],
   onOpenTurnDiff: () => {},
+  onOpenThread: () => {},
+  onForkFromRun: () => Promise.resolve(),
+  onRollbackCheckpoint: () => {},
   supportsConversationRollback: false,
   onRevertToTurnCount: () => {},
   isRevertingCheckpoint: false,
@@ -40,8 +45,11 @@ const base = {
   resolvedTheme: "light" as const,
   timestampFormat: "locale" as const,
   workspaceRoot: undefined,
+  runs: [],
+  providerStatuses: [],
   anchorMessageId: null,
   onAnchorReady: () => {},
+  onAnchorSizeChanged: () => {},
   contentInsetEndAdjustment: 100,
   onIsAtEndChange: vi.fn(),
   onManualNavigation: () => {},
@@ -81,7 +89,7 @@ it("keeps a successful answer clean and puts retry feedback on its approval", as
       id: MessageId.make("user"),
       role: "user" as const,
       text: "hey, are you there?",
-      turnId,
+      runId: RunId.make("fixture-run"),
       createdAt: date,
       updatedAt: date,
       streaming: false,
@@ -90,7 +98,7 @@ it("keeps a successful answer clean and puts retry feedback on its approval", as
       id: MessageId.make("answer"),
       role: "assistant" as const,
       text: "Here. What do you need?",
-      turnId,
+      runId: RunId.make("fixture-run"),
       createdAt: date,
       updatedAt: date,
       streaming: false,
@@ -114,7 +122,8 @@ it("keeps a successful answer clean and puts retry feedback on its approval", as
           <div style={{ padding: "24px", borderTop: "1px solid #ddd" }}>
             <ComposerPendingApprovalPanel
               approval={{
-                requestId: ApprovalRequestId.make("approval"),
+                requestId: RuntimeRequestId.make("approval"),
+                responseCapability: "live" as const,
                 requestKind: "command",
                 createdAt: date,
                 detail: "git status",
@@ -158,6 +167,7 @@ it("shows running sub-agents and a long wait as alive, on one line, with a ticki
   const start = Date.now() - 125_000;
   const at = (seconds: number) => new Date(start + seconds * 1_000).toISOString();
   const turnId = TurnId.make("turn-subagents");
+  const runId = RunId.make("run-subagents");
   const activity = (
     id: string,
     kind: string,
@@ -204,10 +214,10 @@ it("shows running sub-agents and a long wait as alive, on one line, with a ticki
       {...base}
       routeThreadKey="fixture"
       isWorking
-      runningTurnId={turnId}
       activeTurnStartedAt={at(0)}
-      latestTurn={{ turnId, state: "running", startedAt: at(0), completedAt: null }}
+      runningRunId={runId}
       agentPanelModel={deriveAgentPanelModel({ agents: foldSubagentActivities(activities) })}
+      latestRun={{ runId, status: "running", startedAt: at(0), completedAt: null }}
       timelineEntries={deriveTimelineEntries([], [], deriveWorkLogEntries(activities))}
     />
   );

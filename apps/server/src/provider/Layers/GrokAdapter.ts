@@ -36,7 +36,10 @@ import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
-import type * as EffectAcpSchema from "effect-acp/schema";
+// SCIENT-FORK:START — legacy v1 adapter vocabulary; see compat rationale in
+// `acp/DroidAcpSupport.ts`.
+import type * as EffectAcpSchema from "effect-acp/compat";
+// SCIENT-FORK:END
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
@@ -59,7 +62,11 @@ import {
   makeAcpRequestResolvedEvent,
   makeAcpToolCallEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
-import { parsePermissionRequest } from "../acp/AcpRuntimeModel.ts";
+import {
+  type AcpPlanUpdate,
+  type AcpToolCallState,
+  parsePermissionRequest,
+} from "../acp/AcpRuntimeModel.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import {
   applyGrokAcpModelSelection,
@@ -84,7 +91,9 @@ import {
   XAiAskUserQuestionRequest,
   XAiExitPlanModeRequest,
 } from "../acp/XAiAcpExtension.ts";
+// SCIENT-FORK:START — merge self-import; see `Layers/ClaudeAdapter.ts`.
 import { type GrokAdapterShape } from "../Services/GrokAdapter.ts";
+// SCIENT-FORK:END
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
@@ -264,7 +273,7 @@ export function nextGrokPlanModeActive(
   currentlyActive: boolean,
   toolCall: {
     readonly title?: string;
-    readonly status?: "pending" | "inProgress" | "completed" | "failed";
+    readonly status?: AcpToolCallState["status"];
     readonly data: Record<string, unknown>;
   },
 ): boolean {
@@ -859,13 +868,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       ctx: GrokSessionContext,
       turnId: TurnId | undefined,
       stamp: { readonly eventId: EventId; readonly createdAt: string },
-      payload: {
-        readonly explanation?: string | null;
-        readonly plan: ReadonlyArray<{
-          readonly step: string;
-          readonly status: "pending" | "inProgress" | "completed";
-        }>;
-      },
+      payload: AcpPlanUpdate,
       rawPayload: unknown,
       method: string,
     ) =>

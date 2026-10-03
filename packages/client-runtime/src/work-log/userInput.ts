@@ -1,8 +1,8 @@
+// A value import: `isQuestionAnswer` feeds this schema to `Schema.is`, so the
+// erased type-only form upstream uses cannot resolve it.
+import { UserInputAttachmentAnswerPayload } from "@t3tools/contracts";
 import { projectQuestionToolInput } from "@t3tools/shared/toolActivity";
-import {
-  type OrchestrationThreadActivity,
-  UserInputAttachmentAnswerPayload,
-} from "@t3tools/contracts";
+import type { OrchestrationThreadActivity } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 function record(value: unknown): Record<string, unknown> | undefined {

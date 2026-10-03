@@ -21,6 +21,11 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { customModelDiscoverySnapshot } from "../../customModelCapabilities.ts";
 import { makeDroidTextGeneration } from "../../textGeneration/DroidTextGeneration.ts";
+import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
+import { makeDroidAdapterV2 } from "../../orchestration-v2/Adapters/DroidAdapterV2.ts";
+import { IdAllocatorV2 } from "../../orchestration-v2/IdAllocator.ts";
+import { ProviderContinuationRequests } from "../../orchestration-v2/ProviderContinuationRequests.ts";
+import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeDroidAdapter } from "../Layers/DroidAdapter.ts";
 import {
@@ -86,6 +91,7 @@ export type DroidDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
+  | IdAllocatorV2
   | HttpClient.HttpClient
   | Path.Path
   | ProviderEventLoggers
@@ -243,6 +249,35 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
         makeAcpRuntime,
+        onAuthenticationRejected: (message) =>
+          Effect.suspend(() => status?.reportAccountRejected(message) ?? Effect.void),
+      });
+      const nativeLogger = yield* makeAcpNativeLoggerFactory();
+      const orchestrationAdapter = makeDroidAdapterV2({
+        instanceId,
+        settings: effectiveConfig,
+        environment: processEnv,
+        sensitiveEnvironmentValues,
+        makeRuntime: makeAcpRuntime,
+        childProcessSpawner: spawner,
+        crypto,
+        fileSystem,
+        serverConfig,
+        idAllocator: yield* IdAllocatorV2,
+        selfInvocation: yield* resolveSelfInvocation().pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderDriverError({
+                driver: DRIVER_KIND,
+                instanceId,
+                detail: "Could not resolve the Droid MCP bridge command.",
+                cause,
+              }),
+          ),
+        ),
+        continuationRequests: yield* ProviderContinuationRequests,
+        nativeLogging: (threadId) =>
+          nativeLogger({ provider: DRIVER_KIND, threadId, nativeEventLogger: eventLoggers.native }),
         onAuthenticationRejected: (message) =>
           Effect.suspend(() => status?.reportAccountRejected(message) ?? Effect.void),
       });
@@ -404,6 +439,7 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
                 ),
               ),
         adapter,
+        orchestrationAdapter,
         textGeneration,
         skillActions,
         ...(connectionActions ? { connectionActions } : {}),

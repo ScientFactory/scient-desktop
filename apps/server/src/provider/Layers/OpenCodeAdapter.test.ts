@@ -38,7 +38,9 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { buildScientAwareness } from "../ScientAwareness.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
+// SCIENT-FORK:START — merge self-import; see `Layers/ClaudeAdapter.ts`.
 import type { OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
+// SCIENT-FORK:END
 import {
   OpenCodeRuntime,
   OpenCodeRuntimeError,

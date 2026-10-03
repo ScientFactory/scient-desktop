@@ -150,3 +150,44 @@ it("keeps bounded browser snapshot content model-facing and full metadata in det
     text: JSON.stringify(output.structuredContent),
   });
 });
+
+for (const [mode, tool, hasUI, accepted, expected] of [
+  ["approval-required", "edit", true, false, "blocked"],
+  ["auto-accept-edits", "edit", true, false, "allowed"],
+  ["auto-accept-edits", "bash", true, false, "blocked"],
+  ["auto-accept-edits", "scient_fixture", true, true, "allowed"],
+  ["approval-required", "bash", false, true, "blocked"],
+  ["full-access", "bash", false, false, "allowed"],
+] as const) {
+  it(`${mode} enforces ${tool} permission with UI=${hasUI} and accepted=${accepted}`, async () => {
+    type Context = {
+      hasUI: boolean;
+      ui: { confirm: (title: string, message: string) => Promise<boolean> };
+    };
+    type ToolEvent = { toolName: string; input: unknown };
+    let toolCall: ((event: ToolEvent, context: Context) => Promise<unknown>) | undefined;
+    const pi = {
+      on: (name: string, handler: (event: ToolEvent, context: Context) => Promise<unknown>) => {
+        if (name === "tool_call") toolCall = handler;
+      },
+      registerCommand: () => undefined,
+      registerTool: () => undefined,
+    };
+    const install = NodeVM.runInNewContext(
+      `(${piScientExtensionSource()
+        .replace(/^export default /u, "")
+        .replace(/;\s*$/u, "")})`,
+      { process: { env: { SCIENT_PI_RUNTIME_MODE: mode } } },
+    ) as (runtime: typeof pi) => Promise<void>;
+    await install(pi);
+    if (!toolCall) throw new Error("The native permission hook was not installed.");
+    const decision = await toolCall(
+      { toolName: tool, input: { command: "fixture" } },
+      {
+        hasUI,
+        ui: { confirm: async () => accepted },
+      },
+    );
+    expect(decision === undefined ? "allowed" : "blocked").toBe(expected);
+  });
+}

@@ -206,6 +206,85 @@ entire staged diff for conflict markers, duplicated branches, stale product copy
 changes, and silently reintroduced upstream authority. Regenerate generated artifacts and lockfiles
 from the composed sources; do not hand-edit generated conflict blocks.
 
+### 5.1 Read an error count only when the syntax gate is open
+
+`tsc` suppresses semantic diagnostics **program-wide** while any file in the program has a syntax
+error. With one unparseable file, `tsc` reports zero type errors even in sibling files with
+obvious mismatches. A "0 errors" reading taken while syntax errors remain means only that the
+file parsed.
+
+This is not theoretical. During the 2026-10 alignment several packages reported zero errors while
+their program was semantically unchecked; when the last syntax error cleared in `apps/server`, the
+same command went from "clean" to thousands of real errors. The marker count and the error count
+were both correct and both misleading.
+
+So, before quoting any diagnostic count:
+
+1. Measure the syntax gate first, with an explicit error-class list. Do **not** use a `TS1[0-9]{3}`
+   pattern — it also matches `TS18046`, a semantic code, and over-reports badly.
+2. If the gate is open, the count is meaningful. If it is not, say "parses" and nothing more.
+3. Re-check the gate after any bulk edit. One bad file silently invalidates every other number.
+
+```text
+grep -cE "error TS(1128|1135|1109|1005|1010|1011|1161|1434|1129|1110|1136)"
+```
+
+The same caution applies to `Cannot find module`: it reads zero while the gate is shut, for the
+same reason. Treat "zero missing modules" as evidence only alongside an open syntax gate.
+
+### 5.2 Zero conflict markers is not resolution
+
+A file with no conflict markers can still be wrong. Concatenating both sides of a region removes
+the marker and leaves the breakage behind — duplicated declarations, an orphaned block spliced
+after a construct upstream replaced, or a comment left describing code that is no longer there.
+
+Marker count, parse success, and semantic correctness are three different claims. Only the third
+one is worth reporting as "resolved", and the only reliable way to reach it is the compiler.
+
+When a region needs re-deriving, prefer the pre-resolution blobs over the concatenated text:
+
+```text
+git show :1:<path>    # merge base
+git show :2:<path>    # ours
+git show :3:<path>    # theirs
+```
+
+### 5.3 Structural hazards that recur on every alignment
+
+Each of these cost real debugging time during the 2026-10 alignment and will recur unless the
+check is written down.
+
+**Duplicate wire strings defeat constant-based searches.** `ORCHESTRATION_WS_METHODS` and
+`ORCHESTRATION_V2_WS_METHODS` both map `dispatchCommand` to the literal
+`"orchestration.dispatchCommand"`. A grep for "does any client call the V1 constant" therefore
+returns nothing _even while the V1 transport is the live path_ — clients reach it under the V2
+constant's name. Before deleting a registration as dead, grep the **literal**, and check which
+body actually survives in the handler map. Because both constants share one string, a handler
+object can hold exactly one body; "delete the old one" silently chooses for you.
+
+**Where two unions declare the same `type`, the tag cannot separate them.** `thread.fork` is
+declared by both the V1 and V2 command unions. Route on the command's fields, not its `type`
+alone.
+
+**Migration numbering drifts non-uniformly.** Upstream and the fork insert different migrations,
+so the same logical migration can sit at a different id on each side, and the offset changes
+along the tail. Never assume "migration NNN is the same migration on both sides". The fork's
+ledger contract is pinned in `apps/server/src/persistence/Migrations.compatibility.test.ts`; a
+test asserting ids must track **that** ledger, and the number in the filename and the asserted id
+must agree. A name-based slot-collision check cannot detect a drift that changes what runs.
+
+**A generated file shorter than both parents may be correct.** `effect-acp`'s generator now emits
+two outputs — `_generated/schema.gen.ts` (ACP v2) and `_generated/schema-v1.gen.ts` (ACP v1).
+Seeing v1 declarations "missing" from `schema.gen.ts` is the split working as designed. Check the
+generator's output list before concluding anything was lost, and never hand-edit generated output
+to make a count look better.
+
+**A deleted test is only worth restoring if its behaviour still exists.** Before restoring a
+deleted suite, find what it tested and whether that module was superseded. `threads-pagination`
+was replaced upstream by a history-merge model (`mergeOlderHistoryIntoProjection`), so restoring
+its 664-line suite would have tested a subsystem that no longer exists. Restoring the file would
+have bought a green line and cost the reader a false assurance.
+
 When a quality rule, shared UI API, or cross-client contract changes, resolve the merge and run the
 **affected broad static check early** (for example web lint or affected-package typecheck), before
 an expensive full test run. Group diagnostics by underlying contract and fix repeated patterns

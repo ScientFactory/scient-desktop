@@ -56,32 +56,32 @@ import * as RepositoryIdentityResolver from "../src/project/RepositoryIdentityRe
 import { OrchestrationEngineLive } from "../src/orchestration/Layers/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "../src/orchestration/Layers/ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "../src/orchestration/Layers/ProjectionSnapshotQuery.ts";
-import * as ThreadBackgroundLiveness from "../src/orchestration/ThreadBackgroundLiveness.ts";
-import * as ThreadPlanProgress from "../src/orchestration/ThreadPlanProgress.ts";
-import { RuntimeReceiptBusTest } from "../src/orchestration/Layers/RuntimeReceiptBus.ts";
+import * as ThreadBackgroundLiveness from "../src/orchestration-v2/ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "../src/orchestration-v2/ThreadPlanProgress.ts";
+import { RuntimeReceiptBusTest } from "../src/orchestration-v2/Layers/RuntimeReceiptBus.ts";
 import { OrchestrationReactorLive } from "../src/orchestration/Layers/OrchestrationReactor.ts";
 import { ProviderCommandReactorLive } from "../src/orchestration/Layers/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionLive } from "../src/orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { CheckpointReactor } from "../src/orchestration/Services/CheckpointReactor.ts";
 // SCIENT-FORK:START
-import { ScientForkReactor } from "../src/orchestration/Services/ScientForkReactor.ts";
-import { ScientForkContextDeliveryLive } from "../src/orchestration/scient-fork/ForkContextDelivery.ts";
+import { ScientForkReactor } from "../src/orchestration-v2/Services/ScientForkReactor.ts";
+import { ScientForkContextDeliveryLive } from "../src/orchestration-v2/scient-fork/ForkContextDelivery.ts";
 // SCIENT-FORK:END
 import { ProviderRuntimeIngestionService } from "../src/orchestration/Services/ProviderRuntimeIngestion.ts";
 import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
 } from "../src/orchestration/Services/OrchestrationEngine.ts";
-import { ThreadDeletionReactor } from "../src/orchestration/Services/ThreadDeletionReactor.ts";
+import { ThreadDeletionReactor } from "../src/orchestration-v2/Services/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "../src/orchestration/ThreadSettlementReactor.ts";
-import * as PullRequestSyncReactor from "../src/orchestration/PullRequestSyncReactor.ts";
-import * as ThreadPullRequestReactor from "../src/orchestration/ThreadPullRequestReactor.ts";
+import * as PullRequestSyncReactor from "../src/orchestration-v2/PullRequestSyncReactor.ts";
+import * as ThreadPullRequestReactor from "../src/orchestration-v2/ThreadPullRequestReactor.ts";
 import { OrchestrationReactor } from "../src/orchestration/Services/OrchestrationReactor.ts";
 import { ProjectionSnapshotQuery } from "../src/orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
   RuntimeReceiptBus,
   type OrchestrationRuntimeReceipt,
-} from "../src/orchestration/Services/RuntimeReceiptBus.ts";
+} from "../src/orchestration-v2/Services/RuntimeReceiptBus.ts";
 
 import {
   makeTestProviderAdapterHarness,
@@ -357,10 +357,10 @@ export const makeOrchestrationIntegrationHarness = (
         readonly newBranch: string;
       }) => Effect.succeed({ branch: input.newBranch }),
     });
-    const textGenerationLayer = Layer.succeed(TextGeneration, {
+    const textGenerationLayer = Layer.mock(TextGeneration)({
       generateBranchName: () => Effect.succeed({ branch: "update" }),
       generateThreadTitle: () => Effect.succeed({ title: "New thread" }),
-    } as unknown as TextGeneration["Service"]);
+    });
     const providerCommandReactorLayer = ProviderCommandReactorLive.pipe(
       Layer.provide(ScientForkContextDeliveryLive.pipe(Layer.provide(serverSettingsLayer))),
       Layer.provide(
@@ -468,6 +468,7 @@ export const makeOrchestrationIntegrationHarness = (
         Layer.succeed(AgentAwarenessRelay.AgentAwarenessRelay, {
           publishThread: () => Effect.void,
           requestCatchUp: () => Effect.void,
+          drain: Effect.void,
           start: () => Effect.void,
         }),
       ),

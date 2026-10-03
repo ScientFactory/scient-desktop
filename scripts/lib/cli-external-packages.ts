@@ -26,6 +26,8 @@
  * enforced by a test, not by inspection.
  */
 export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
+  // Cursor ships computed Webpack imports and platform helper packages.
+  "@cursor/sdk",
   "node-pty",
   // PDF.js loads this native canvas implementation through createRequire at
   // runtime, which the bundler cannot see. Keep the wrapper and its
@@ -55,6 +57,21 @@ export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   "utf-8-validate",
 ] as const;
 
+// Cursor's SDK reaches these packages through its generated helper graph. Keep
+// that graph on disk with the SDK instead of relying on the bundler to discover
+// computed imports.
+const CURSOR_RUNTIME_DEPENDENCIES = [
+  "@bufbuild/protobuf",
+  "@connectrpc/connect",
+  "@connectrpc/connect-node",
+  "@connectrpc/connect-web",
+  "@statsig/js-client",
+  "@statsig/client-core",
+  "zod",
+  "undici",
+  "@fastify/busboy",
+] as const;
+
 /**
  * External only so the bundler never has to resolve them.
  *
@@ -74,7 +91,10 @@ export const CLI_EXTERNAL_PACKAGE_PREFIXES = [
 ] as const;
 
 export function isRuntimeExternalCliDependency(id: string): boolean {
-  return CLI_RUNTIME_EXTERNAL_PREFIXES.some((prefix) => id.startsWith(prefix));
+  return (
+    CLI_RUNTIME_EXTERNAL_PREFIXES.some((prefix) => id.startsWith(prefix)) ||
+    CURSOR_RUNTIME_DEPENDENCIES.some((name) => id === name || id.startsWith(`${name}/`))
+  );
 }
 
 /**
@@ -88,7 +108,10 @@ export function isRuntimeExternalCliDependency(id: string): boolean {
  * dependency) stayed external.
  */
 export function isExternalCliDependency(id: string): boolean {
-  return CLI_EXTERNAL_PACKAGE_PREFIXES.some((prefix) => id.startsWith(prefix));
+  return (
+    isRuntimeExternalCliDependency(id) ||
+    CLI_BUILD_ONLY_EXTERNAL_PREFIXES.some((prefix) => id.startsWith(prefix))
+  );
 }
 
 /** True when the CLI bundle should inline `id` rather than leave it external. */

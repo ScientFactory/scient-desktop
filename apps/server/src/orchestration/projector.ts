@@ -27,9 +27,12 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Predicate from "effect/Predicate";
 
-import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "./Errors.ts";
+import {
+  toProjectorDecodeError,
+  type OrchestrationProjectorDecodeError,
+} from "../orchestration-v2/Errors.ts";
 // SCIENT-FORK: inherited transcript turns survive revert.
-import { inheritedTurnIdsOf } from "./scient-fork/inheritedTurns.ts";
+import { inheritedTurnIdsOf } from "../orchestration-v2/scient-fork/inheritedTurns.ts";
 import {
   MessageSentPayloadSchema,
   ProjectCreatedPayload,
@@ -58,7 +61,7 @@ import {
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
-} from "./Schemas.ts";
+} from "../orchestration-v2/Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
 const MAX_THREAD_MESSAGES = 2_000;

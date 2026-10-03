@@ -69,8 +69,8 @@ import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityRes
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
-import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
-import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
+import * as ThreadBackgroundLiveness from "../../orchestration-v2/ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "../../orchestration-v2/ThreadPlanProgress.ts";
 import {
   providerErrorLabelFromInstanceHint,
   ProviderCommandReactorLive,
@@ -88,7 +88,7 @@ import {
   testLayer as ScientForkContextDeliveryTest,
   type ForkTurnContext,
   type ScientForkContextDeliveryShape,
-} from "../scient-fork/ForkContextDelivery.ts";
+} from "../../orchestration-v2/scient-fork/ForkContextDelivery.ts";
 import { markTurnDispatchAttempted } from "../../provider/turnDispatchPhase.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);

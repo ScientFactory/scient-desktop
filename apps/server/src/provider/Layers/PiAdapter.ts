@@ -937,8 +937,11 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (options: PiAd
       input.threadId,
       Effect.scoped(
         Effect.gen(function* () {
-          if (input.runtimeMode !== "full-access")
-            return yield* validation("startSession", "Pi supports only full-access runtime mode.");
+          if (input.runtimeMode === "auto")
+            return yield* validation(
+              "startSession",
+              "Pi has no native auto permission classifier.",
+            );
           if (input.provider && input.provider !== PROVIDER)
             return yield* validation("startSession", `Expected provider '${PROVIDER}'.`);
           if (input.providerInstanceId && input.providerInstanceId !== options.providerInstanceId)
@@ -1052,6 +1055,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (options: PiAd
               SCIENT_PI_MCP_ENDPOINT: mcp?.endpoint,
               SCIENT_PI_MCP_AUTHORIZATION: mcp?.authorizationHeader,
               SCIENT_PI_AWARENESS: buildScientAwareness(mcp?.capabilities),
+              SCIENT_PI_RUNTIME_MODE: input.runtimeMode,
             },
           }).pipe(
             Effect.provideService(Scope.Scope, scope),
@@ -1121,7 +1125,7 @@ export const makePiAdapter = Effect.fn("makePiAdapter")(function* (options: PiAd
             providerInstanceId: options.providerInstanceId,
             threadId: input.threadId,
             status: "ready",
-            runtimeMode: "full-access",
+            runtimeMode: input.runtimeMode,
             cwd,
             ...(input.modelSelection ? { model: input.modelSelection.model } : {}),
             resumeCursor: cursor,

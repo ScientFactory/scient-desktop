@@ -48,13 +48,9 @@ import { applyAutomaticModelDefaults } from "@t3tools/shared/model";
 
 import * as ModelManifest from "../ModelManifest.ts";
 import { applyProviderCompatibility } from "../providerCompatibility.ts";
-import { ServerConfig } from "../../config.ts";
-import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
-import {
-  ProviderRegistry,
-  ProviderRegistryRefreshError,
-  type ProviderRegistryShape,
-} from "../Services/ProviderRegistry.ts";
+import * as ServerConfig from "../../config.ts";
+import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
+import * as ProviderRegistry from "../Services/ProviderRegistry.ts";
 import {
   hydrateCachedProvider,
   isCachedProviderCorrelated,
@@ -142,6 +138,19 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
       provider.enabled && !provider.installed && provider.status === "warning";
     const didInstalledProviderProbeFail = provider.installed && provider.status === "error";
     return isPendingInitialProbe || didInstalledProviderProbeFail;
+  }
+
+  if (provider.driver === ProviderDriverKind.make("acpRegistry")) {
+    // ACP Registry discovery probes return the agent's complete inventory, so
+    // a completed probe (ready and authenticated) replaces the model list —
+    // otherwise agents that rename or collapse models leave stale entries
+    // pinned forever through the snapshot cache. Readiness-only and failed
+    // probe snapshots only know the "default" placeholder and stay partial.
+    return !(
+      provider.installed &&
+      provider.status === "ready" &&
+      provider.auth.status === "authenticated"
+    );
   }
 
   const isAntigravity = provider.driver === ProviderDriverKind.make("antigravity");
@@ -282,6 +291,30 @@ export const mergeProviderSnapshot = (
   };
 };
 
+export const mergeProviderSnapshots = (
+  previousProviders: ReadonlyArray<ServerProvider>,
+  nextProviders: ReadonlyArray<ServerProvider>,
+): ReadonlyArray<ServerProvider> => {
+  const mergedProviders = new Map(
+    previousProviders.map((provider) => [snapshotInstanceKey(provider), provider] as const),
+  );
+
+  for (const provider of nextProviders) {
+    mergedProviders.set(
+      snapshotInstanceKey(provider),
+      mergeProviderSnapshot(mergedProviders.get(snapshotInstanceKey(provider)), provider),
+    );
+  }
+
+  return orderProviderSnapshots([...mergedProviders.values()]);
+};
+
+export const selectProvidersByKind = (
+  providers: ReadonlyArray<ServerProvider>,
+  providerKinds: ReadonlySet<ProviderDriverKind>,
+): ReadonlyArray<ServerProvider> =>
+  providers.filter((provider) => providerKinds.has(provider.driver));
+
 const haveProvidersChanged = (
   previousProviders: ReadonlyArray<ServerProvider>,
   nextProviders: ReadonlyArray<ServerProvider>,
@@ -331,12 +364,12 @@ const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource
 });
 
 export const ProviderRegistryLive = Layer.effect(
-  ProviderRegistry,
+  ProviderRegistry.ProviderRegistry,
   Effect.gen(function* () {
-    const instanceRegistry = yield* ProviderInstanceRegistry;
+    const instanceRegistry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
     const manifestService = yield* ModelManifest.ModelManifest;
     const serviceScope = yield* Effect.scope;
-    const config = yield* ServerConfig;
+    const config = yield* ServerConfig.ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const layerScope = yield* Scope.Scope;
@@ -1112,14 +1145,14 @@ export const ProviderRegistryLive = Layer.effect(
     });
 
     const failStrictRefresh = (
-      operation: ProviderRegistryRefreshError["operation"],
+      operation: ProviderRegistry.ProviderRegistryRefreshError["operation"],
       instanceId: ProviderInstanceId,
     ) =>
       Effect.catchCause((cause: Cause.Cause<unknown>) =>
         Cause.hasInterruptsOnly(cause)
           ? Effect.interrupt
           : Effect.fail(
-              new ProviderRegistryRefreshError({
+              new ProviderRegistry.ProviderRegistryRefreshError({
                 operation,
                 instanceId,
                 message: `Provider ${operation} failed for ${instanceId}.`,
@@ -1134,7 +1167,7 @@ export const ProviderRegistryLive = Layer.effect(
       const sources = yield* getLiveSources;
       const providerSource = sources.find((candidate) => candidate.instanceId === instanceId);
       if (!providerSource) {
-        return yield* new ProviderRegistryRefreshError({
+        return yield* new ProviderRegistry.ProviderRegistryRefreshError({
           operation: "refresh",
           instanceId,
           message: `Provider refresh failed for ${instanceId}: no live source is available.`,
@@ -1150,7 +1183,7 @@ export const ProviderRegistryLive = Layer.effect(
       const sources = yield* getLiveSources;
       const providerSource = sources.find((candidate) => candidate.instanceId === instanceId);
       if (!providerSource) {
-        return yield* new ProviderRegistryRefreshError({
+        return yield* new ProviderRegistry.ProviderRegistryRefreshError({
           operation: "refresh",
           instanceId,
           message: `Provider refresh failed for ${instanceId}: no live source is available.`,
@@ -1185,7 +1218,7 @@ export const ProviderRegistryLive = Layer.effect(
         const sources = yield* getLiveSources;
         const providerSource = sources.find((candidate) => candidate.instanceId === instanceId);
         if (!providerSource) {
-          return yield* new ProviderRegistryRefreshError({
+          return yield* new ProviderRegistry.ProviderRegistryRefreshError({
             operation: "reload",
             instanceId,
             message: `Provider reload failed for ${instanceId}: no live source is available.`,
@@ -1314,6 +1347,6 @@ export const ProviderRegistryLive = Layer.effect(
       get streamChanges() {
         return Stream.fromPubSub(changesPubSub);
       },
-    } satisfies ProviderRegistryShape;
+    } satisfies ProviderRegistry.ProviderRegistryShape;
   }),
 );

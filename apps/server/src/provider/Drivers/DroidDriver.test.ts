@@ -19,6 +19,8 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { vi } from "vite-plus/test";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
+import * as ProviderContinuationRequests from "../../orchestration-v2/ProviderContinuationRequests.ts";
 import { ServerConfig } from "../../config.ts";
 import type { ResolvedModelConnection } from "../../customModels.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -37,6 +39,8 @@ const makeTestLayer = (settings: Parameters<typeof ServerSettingsService.layerTe
     prefix: "scient-droid-driver-test-",
   }).pipe(
     Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(IdAllocator.layer),
+    Layer.provideMerge(ProviderContinuationRequests.layer),
     Layer.provideMerge(
       Layer.mock(BackgroundPolicy.BackgroundPolicy)({
         reportClientActivity: () => Effect.void,
@@ -137,6 +141,7 @@ function makeRecordingDroid(directory: string): string {
       'for arg in "$@"; do',
       '  if [ "$arg" = "acp" ]; then',
       "    export T3_ACP_DROID_ASYNC_CONFIG_REFRESH=1",
+      "    export T3_ACP_DROID_AUTONOMY=normal",
       `    exec ${JSON.stringify(process.execPath)} ${JSON.stringify(mockAgentPath)}`,
       "  fi",
       "done",

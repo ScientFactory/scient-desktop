@@ -2,21 +2,21 @@ import { hasOperationCapabilities } from "@scientfactory/operations";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import { McpServer, Tool } from "effect/unstable/ai";
 
 import { ScientThreadsToolkitRegistrationLive } from "../../McpHttpServer.ts";
 import { scientOperationCatalog } from "../../ScientOperationCatalog.ts";
-import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProjectionStoreV2 } from "../../../orchestration-v2/ProjectionStore.ts";
+import { LegacyV1ThreadImporter } from "../../../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import { workspaceResolverForTest } from "../../../scient/projectScope/WorkspaceBindingTestUtils.ts";
 import { ScientThreadReadTool } from "./tools.ts";
 
 const TestLayer = ScientThreadsToolkitRegistrationLive.pipe(
+  Layer.provide(Layer.mock(ProjectionStoreV2)({ getThreadShell: () => Effect.succeed(null) })),
   Layer.provide(
-    Layer.mock(ProjectionSnapshotQuery)({
-      getThreadShellById: () => Effect.succeed(Option.none()),
-      getThreadDetailById: () => Effect.succeed(Option.none()),
+    Layer.mock(LegacyV1ThreadImporter)({
+      ensureTranscript: () => Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 }),
     }),
   ),
   Layer.provide(Layer.succeed(WorkspaceBindingResolver, workspaceResolverForTest(new Map()))),

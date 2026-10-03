@@ -16,7 +16,8 @@ import { Tool, Toolkit } from "effect/unstable/ai";
 
 import { ScientOperation } from "../../ScientOperationTool.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProjectionStoreV2 } from "../../../orchestration-v2/ProjectionStore.ts";
+import { LegacyV1ThreadImporter } from "../../../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 
 /**
  * Bridge until T3 Orchestration V2 lands. The tool name, input fields and
@@ -79,10 +80,16 @@ export type ScientThreadReadInput = typeof ScientThreadReadInput.Type;
 /** V2's thread status vocabulary: idle, or the latest run's state. */
 export const ScientThreadReadStatus = Schema.Literals([
   "idle",
+  "preparing",
+  "queued",
+  "starting",
   "running",
+  "waiting",
   "completed",
   "interrupted",
   "failed",
+  "cancelled",
+  "rolled_back",
 ]);
 
 export const ScientThreadReadThread = Schema.Struct({
@@ -157,7 +164,8 @@ export class ScientThreadReadToolError extends Schema.TaggedError<ScientThreadRe
 
 const dependencies = [
   AgentInvocationContext.AgentInvocationContext,
-  ProjectionSnapshotQuery.ProjectionSnapshotQuery,
+  ProjectionStoreV2,
+  LegacyV1ThreadImporter,
 ];
 
 export const ScientThreadReadTool = Tool.make("t3_thread_read", {

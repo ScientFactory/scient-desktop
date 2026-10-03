@@ -41,7 +41,7 @@ import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
-import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
+import { codexAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import {
   buildCodexAdditionalContext,
@@ -72,6 +72,18 @@ const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
 export function hasConfiguredMcpServer(appServerArgs: ReadonlyArray<string> | undefined): boolean {
   return appServerArgs?.some((argument) => argument.includes("mcp_servers.")) === true;
 }
+
+// SCIENT-FORK:START — a session's explicit `appServerArgs` (the app-server
+// configuration T3 adds, such as its own `mcp_servers` entry) are appended after
+// the launch args, so a configured launch arg still comes first.
+export const codexSessionAppServerArgs = (
+  appServerArgs: ReadonlyArray<string> | undefined,
+  launchArgs: string | undefined,
+) => {
+  const launchAppServerArgs = codexAppServerArgs(launchArgs);
+  return appServerArgs ? [...launchAppServerArgs, ...appServerArgs] : launchAppServerArgs;
+};
+// SCIENT-FORK:END
 
 export const CodexResumeCursorSchema = Schema.Struct({
   threadId: Schema.String,

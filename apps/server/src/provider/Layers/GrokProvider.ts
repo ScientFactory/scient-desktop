@@ -7,7 +7,7 @@ import {
   type ServerProviderModel,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
-import * as EffectAcpSchema from "effect-acp/schema";
+import type * as EffectAcpSchema from "effect-acp/compat";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -40,6 +40,7 @@ import {
   GROK_AUTH_EXTENSION_METHOD,
   GROK_AUTH_METHOD_CACHED_TOKEN,
   GROK_DEFAULT_MODEL_SLUG,
+  GROK_SUPPORTED_RUNTIME_MODES,
   isValidGrokReasoningEffortToken,
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
@@ -51,6 +52,7 @@ const GROK_PRESENTATION = {
   displayName: "Grok",
   supportsConversationRollback: false,
   showInteractionModeToggle: false,
+  supportedRuntimeModes: GROK_SUPPORTED_RUNTIME_MODES,
 } as const;
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -342,7 +344,13 @@ const runGrokCliCommand = (
   });
 
 const decodeAvailableCommands = Schema.decodeUnknownOption(Schema.Array(Schema.Unknown));
-const decodeAvailableCommand = Schema.decodeUnknownOption(EffectAcpSchema.AvailableCommand);
+const decodeAvailableCommand = Schema.decodeUnknownOption(
+  Schema.Struct({
+    name: Schema.String,
+    description: Schema.String,
+    input: Schema.optional(Schema.NullOr(Schema.Struct({ hint: Schema.String }))),
+  }),
+);
 
 export function grokSlashCommandsFromInitialize(
   initialized: EffectAcpSchema.InitializeResponse,

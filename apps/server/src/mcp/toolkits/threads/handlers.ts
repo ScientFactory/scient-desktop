@@ -1,15 +1,19 @@
-import type {
-  OrchestrationMessage,
-  OrchestrationProposedPlan,
-  OrchestrationThread,
-  OrchestrationThreadActivity,
-  ProjectId,
-  ThreadId,
+import {
+  TurnId,
+  TurnItemId,
+  type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2ThreadShell,
+  type OrchestrationMessage,
+  type OrchestrationProposedPlan,
+  type OrchestrationThread,
+  type OrchestrationThreadActivity,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 
-import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as DateTime from "effect/DateTime";
+import { ProjectionStoreV2 } from "../../../orchestration-v2/ProjectionStore.ts";
+import { LegacyV1ThreadImporter } from "../../../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import {
   THREAD_READ_DEFAULT_LIMIT,
@@ -224,16 +228,84 @@ const toolError = (code: ScientThreadReadToolError["code"], message: string) =>
 const readFailed = (threadId: ThreadId) => () =>
   toolError("orchestration_error", `Thread ${threadId} could not be read.`);
 
-/** A non-deleted thread's project; archived threads fall back to their detail row. */
-const threadProjectId = Effect.fn("ScientThreadsToolkit.threadProjectId")(function* (
-  snapshots: ProjectionSnapshotQuery.ProjectionSnapshotQueryShape,
-  threadId: ThreadId,
-) {
-  const shell = yield* snapshots.getThreadShellById(threadId);
-  if (Option.isSome(shell)) return Option.some<ProjectId | null>(shell.value.projectId);
-  const detail = yield* snapshots.getThreadDetailById(threadId, { activityKinds: [] });
-  return Option.map(detail, (thread): ProjectId | null => thread.projectId);
-});
+function nativeThreadSummary(
+  thread: OrchestrationV2ThreadShell,
+  itemCount: number,
+): ScientThreadReadThread {
+  return {
+    threadId: thread.id,
+    projectId: thread.projectId,
+    title: thread.title,
+    status: thread.status,
+    providerInstanceId: thread.modelSelection.instanceId,
+    model: thread.modelSelection.model,
+    runtimeMode: thread.runtimeMode,
+    interactionMode: thread.interactionMode,
+    branch: thread.branch,
+    worktreePath: thread.worktreePath,
+    parentThreadId: thread.lineage.parentThreadId,
+    relationshipToParent: thread.lineage.relationshipToParent === "fork" ? "fork" : null,
+    itemCount,
+    archived: thread.archivedAt !== null,
+    createdAt: DateTime.formatIso(thread.createdAt),
+    updatedAt: DateTime.formatIso(thread.updatedAt),
+  };
+}
+
+export function nativeTimelineEntry(row: OrchestrationV2ProjectedTurnItem): TimelineEntry {
+  const { item } = row;
+  let text: string;
+  let type: ScientThreadReadItemType = "activity";
+  let messageId: ScientThreadReadItem["messageId"] = null;
+  switch (item.type) {
+    case "user_message":
+    case "assistant_message":
+      type = item.type;
+      messageId = item.messageId;
+      text = item.text;
+      break;
+    case "reasoning":
+      type = "reasoning";
+      text = item.text;
+      break;
+    case "proposed_plan":
+      type = "proposed_plan";
+      text = item.markdown;
+      break;
+    case "system_notice":
+      type = "system_message";
+      text = item.message;
+      break;
+    case "dynamic_tool":
+      text = [item.title ?? item.toolName, payloadText(item.input), payloadText(item.output)]
+        .filter((part) => part !== null)
+        .join("\n");
+      break;
+    case "command_execution":
+      text = [item.input, item.output].filter((part) => part !== undefined).join("\n");
+      break;
+    case "notification":
+      text = [item.summary, item.detail].filter((part) => part !== undefined).join("\n");
+      break;
+    case "error":
+      text = item.failure.message;
+      break;
+    default:
+      text = payloadText(item) ?? "";
+  }
+  return {
+    itemId: row.sourceItemId,
+    type,
+    status: ["pending", "running", "waiting"].includes(item.status) ? "running" : "completed",
+    title: item.title,
+    activityKind: type === "activity" ? item.type : null,
+    messageId,
+    turnId: item.runId === null ? (item.historyTurnId ?? null) : TurnId.make(item.runId),
+    text,
+    createdAt: DateTime.formatIso(item.startedAt ?? item.completedAt ?? item.updatedAt),
+    updatedAt: DateTime.formatIso(item.updatedAt),
+  };
+}
 
 /**
  * Authority comes from the host-issued invocation, never from the input: a
@@ -249,50 +321,53 @@ export const readScientThreadForInvocation = Effect.fn("ScientThreadsToolkit.rea
       "This provider session does not grant read access to T3 threads.",
     );
   }
-  const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const projections = yield* ProjectionStoreV2;
+  const importer = yield* LegacyV1ThreadImporter;
+  const target = yield* projections
+    .getThreadShell(input.threadId)
+    .pipe(Effect.mapError(readFailed(input.threadId)));
+  if (target === null) {
+    return yield* toolError(
+      "thread_not_found",
+      `Thread ${input.threadId} does not exist or is no longer available.`,
+    );
+  }
   if (input.threadId !== invocation.threadId) {
-    const [caller, target] = yield* Effect.all([
-      threadProjectId(snapshots, invocation.threadId),
-      threadProjectId(snapshots, input.threadId),
-    ]).pipe(Effect.mapError(readFailed(input.threadId)));
-    if (Option.isNone(target)) {
-      return yield* toolError(
-        "thread_not_found",
-        `Thread ${input.threadId} does not exist or is no longer available.`,
-      );
-    }
-    const projectId = Option.getOrNull(caller);
-    if (projectId === null || target.value !== projectId) {
+    const caller = yield* projections
+      .getThreadShell(invocation.threadId)
+      .pipe(Effect.mapError(readFailed(input.threadId)));
+    if (caller === null || caller.projectId !== target.projectId) {
       return yield* toolError(
         "thread_outside_project",
         `Thread ${input.threadId} is not in the calling thread's project. t3_thread_read only reads threads in the calling project.`,
       );
     }
   }
-  // Load thread metadata without its UI activity window. Paging and item
-  // positions come from the complete durable history below.
-  const thread = yield* snapshots
-    .getThreadDetailById(input.threadId, { activityKinds: [] })
+  yield* importer
+    .ensureTranscript(input.threadId)
     .pipe(Effect.mapError(readFailed(input.threadId)));
-  if (Option.isNone(thread)) {
-    return yield* toolError(
-      "thread_not_found",
-      `Thread ${input.threadId} does not exist or is no longer available.`,
-    );
-  }
-  const page = yield* snapshots
-    .getThreadHistoryPage(input)
+  const page = yield* projections
+    .getTimelinePage(input.threadId, {
+      ...(input.afterPosition === undefined ? {} : { afterPosition: input.afterPosition }),
+      ...(input.itemId === undefined ? {} : { itemId: TurnItemId.make(input.itemId) }),
+      view: input.view ?? "messages",
+      limit: input.limit ?? THREAD_READ_DEFAULT_LIMIT,
+    })
     .pipe(Effect.mapError(readFailed(input.threadId)));
   const offset = input.itemId === undefined ? 0 : (input.textOffset ?? 0);
   const end = offset + (input.maxCharsPerItem ?? THREAD_READ_DEFAULT_MAX_CHARS_PER_ITEM);
   return {
-    thread: threadSummary(thread.value, page.itemCount),
-    items: page.items.map((entry) => ({
-      ...entry,
-      text: entry.text.slice(offset, end),
-      textTruncated: entry.text.length > end,
-      nextTextOffset: entry.text.length > end ? end : null,
-    })),
+    thread: nativeThreadSummary(target, page.totalItems),
+    items: page.items.map((row) => {
+      const entry = nativeTimelineEntry(row);
+      return {
+        ...entry,
+        position: row.position,
+        text: entry.text.slice(offset, end),
+        textTruncated: entry.text.length > end,
+        nextTextOffset: entry.text.length > end ? end : null,
+      };
+    }),
     nextPosition: page.items.at(-1)?.position ?? null,
     hasMore: page.hasMore,
   };

@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, RunId } from "@t3tools/contracts";
 import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
   decodeComposerContextClipboardHtml,
@@ -107,13 +107,19 @@ afterEach(async () => {
 function timelineProps() {
   return {
     isWorking: false,
+    activeTurnInProgress: false,
     activeTurnStartedAt: null,
     listRef: createRef<LegendListRef | null>(),
-    latestTurn: null,
-    runningTurnId: null,
+    latestRun: null,
+    runningRunId: null,
     turnDiffSummaries: [],
     routeThreadKey: "environment-local:thread-1",
     onOpenTurnDiff: () => {},
+    onOpenThread: () => {},
+    onForkFromRun: async () => {},
+    onRollbackCheckpoint: () => {},
+    providerStatuses: [],
+    runs: [],
     supportsConversationRollback: false,
     onRevertToTurnCount: () => {},
     isRevertingCheckpoint: false,
@@ -125,6 +131,7 @@ function timelineProps() {
     workspaceRoot: undefined,
     anchorMessageId: null,
     onAnchorReady: () => {},
+    onAnchorSizeChanged: () => {},
     contentInsetEndAdjustment: 0,
     liveFollowEnabled: true,
     onIsAtEndChange: () => {},
@@ -141,7 +148,7 @@ function message(id: string, role: "user" | "assistant", text: string) {
       id: MessageId.make(id),
       role,
       text,
-      turnId: role === "assistant" ? TurnId.make("turn-1") : null,
+      runId: role === "assistant" ? RunId.make("run-1") : null,
       createdAt: CREATED_AT,
       updatedAt: CREATED_AT,
       streaming: false,
@@ -264,17 +271,17 @@ describe("Copy message button content", () => {
   });
 
   it("still copies direction-marked HTML when the answer's row is virtualized away", async () => {
-    const turnId = TurnId.make("turn-trailing-tools");
+    const runId = RunId.make("run-trailing-tools");
     virtualized.rowIds.add("assistant-entry");
     root = createRoot(host);
     await act(() =>
       root!.render(
         <MessagesTimeline
           {...timelineProps()}
-          latestTurn={{
-            turnId,
-            // A settled turn that ended in a failed tool stays unfolded.
-            state: "error",
+          latestRun={{
+            runId,
+            // A settled run that ended in a failed tool stays unfolded.
+            status: "failed" as const,
             startedAt: "2026-09-29T07:59:50.000Z",
             completedAt: "2026-09-29T08:00:10.000Z",
           }}
@@ -287,7 +294,7 @@ describe("Copy message button content", () => {
                 id: MessageId.make("assistant-trailing"),
                 role: "assistant",
                 text: HEBREW_ASSISTANT,
-                turnId,
+                runId,
                 createdAt: CREATED_AT,
                 updatedAt: CREATED_AT,
                 streaming: false,
@@ -300,7 +307,7 @@ describe("Copy message button content", () => {
               entry: {
                 id: "trailing-work",
                 createdAt: "2026-09-29T08:00:05.000Z",
-                turnId,
+                runId,
                 label: "Ran command",
                 tone: "tool",
                 itemType: "command_execution",

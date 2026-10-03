@@ -1,23 +1,10 @@
 /**
- * Native-provider subagent observability: a tolerant fold over persisted
- * task.* / tool.* thread activities into orchestration-v2-shaped subagent
- * state, plus the source-neutral panel model every client renders.
- *
- * This module is deliberately legacy-bridge code. When orchestration-v2's
- * subagent projection is available for a thread, deriveAgentPanelModel
- * prefers it (see the v2Projection parameter) and the fold is skipped; when
- * the v1 orchestrator is retired this file is deleted. Field names and
- * transition semantics copy the v2 stack (#4779) exactly so that swap is
- * mechanical.
- *
- * Invariants encoded here trace to shipped bugs in the prior PRs (#4220,
- * #3650, #4662): reusable identity vs one-shot activations, idle as a real
- * nonterminal state, provider-specific usage merges, first-write terminal
- * timestamps, reactivation clearing terminal detail, and order-robust
- * folding (completion can create an agent; a late start only fills
- * metadata).
+ * Subagent status helpers shared by web and mobile, and the runtime shape the
+ * web agent rows render.
  */
-import type { OrchestrationThreadActivity } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import type { OrchestrationThreadActivity, OrchestrationV2Subagent } from "@t3tools/contracts";
+import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 
 export type RuntimeSubagentStatus =
   | "pending"
@@ -101,9 +88,79 @@ export function isTerminalSubagentStatus(status: RuntimeSubagentStatus): boolean
 /** Active = the user may still need to care while it runs. Idle is settled-ish
  * but resumable; waiting counts as active because it needs the user. */
 export function isActiveSubagentStatus(status: RuntimeSubagentStatus): boolean {
-  return status === "pending" || status === "running" || status === "waiting";
+  return isOrchestrationV2WorkActive(status);
 }
 
+/**
+ * Projects orchestration-v2 subagent entities into the runtime shape the web
+ * agent rows render.
+ */
+export function projectedSubagentsToRuntime(
+  subagents: ReadonlyArray<{
+    readonly id: string;
+    readonly title: string | null;
+    readonly prompt: string;
+    readonly model: string | null;
+    readonly status: OrchestrationV2Subagent["status"];
+    readonly progress?: string | undefined;
+    readonly result: string | null;
+    readonly startedAt: DateTime.Utc | null;
+    readonly completedAt: DateTime.Utc | null;
+    readonly updatedAt: DateTime.Utc;
+  }>,
+): ReadonlyArray<RuntimeSubagent> {
+  return subagents.map((subagent) => {
+    const updatedAt = DateTime.formatIso(subagent.updatedAt);
+    const startedAt = subagent.startedAt === null ? null : DateTime.formatIso(subagent.startedAt);
+    return {
+      id: subagent.id,
+      kind: "subagent" as const,
+      title:
+        subagent.title ??
+        (subagent.prompt.length > 80 ? `${subagent.prompt.slice(0, 77)}...` : subagent.prompt),
+      role: null,
+      model: subagent.model,
+      effort: null,
+      status: subagent.status,
+      activationCount: 1,
+      usage: null,
+      progress: subagent.progress ?? null,
+      lastToolName: null,
+      result: subagent.result,
+      error: subagent.status === "failed" ? (subagent.result ?? null) : null,
+      outputFile: null,
+      parentAgentId: null,
+      agentIndex: null,
+      phaseIndex: null,
+      phaseTitle: null,
+      attempt: null,
+      workflowName: null,
+      phases: [],
+      runHandles: null,
+      recentActivity: [],
+      firstSeenAt: startedAt ?? updatedAt,
+      startedAt,
+      completedAt: subagent.completedAt === null ? null : DateTime.formatIso(subagent.completedAt),
+      updatedAt,
+    } satisfies RuntimeSubagent;
+  });
+}
+
+// SCIENT-FORK:START — agent-panel subsystem. A tolerant fold over persisted
+// task.* / tool.* thread activities into the same RuntimeSubagent shape
+// upstream projects from orchestration-v2 entities, plus the source-neutral
+// panel model every client renders. Deliberately legacy-bridge code: when
+// the v2 projection is available for a thread, deriveAgentPanelModel
+// prefers it (see the v2Projection parameter) and the fold is skipped; when
+// the v1 orchestrator is retired this block is deleted.
+/*
+ * Invariants encoded here trace to shipped bugs in the prior PRs (#4220,
+ * #3650, #4662): reusable identity vs one-shot activations, idle as a real
+ * nonterminal state, provider-specific usage merges, first-write terminal
+ * timestamps, reactivation clearing terminal detail, and order-robust
+ * folding (completion can create an agent; a late start only fills
+ * metadata).
+ */
 const RECENT_ACTIVITY_LIMIT = 6;
 const SUMMARY_CHAR_LIMIT = 180;
 const ROSTER_LIMIT = 100;
@@ -890,3 +947,4 @@ export function formatSubagentTokenCount(totalTokens: number): string {
   }
   return `${(totalTokens / 1_000_000).toFixed(1)}M`;
 }
+// SCIENT-FORK:END

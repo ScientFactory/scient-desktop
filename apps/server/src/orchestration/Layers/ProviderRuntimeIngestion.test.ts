@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import { withForkLiveImages } from "../scient-fork/liveImages.ts";
+import { withForkLiveImages } from "../../orchestration-v2/scient-fork/liveImages.ts";
 import * as NodeFS from "node:fs";
 import { MODEL_TOKEN_LIMIT_MESSAGE } from "@t3tools/shared/model";
 import * as NodeOS from "node:os";
@@ -60,15 +60,18 @@ import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
-import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
-import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
+import * as ThreadBackgroundLiveness from "../../orchestration-v2/ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "../../orchestration-v2/ThreadPlanProgress.ts";
 import {
   ProviderRuntimeIngestionLive,
   runtimeEventToActivities,
   splitBufferedAssistantText,
 } from "./ProviderRuntimeIngestion.ts";
-import { ScientLiveTurnFlush, ScientLiveTurnFlushLive } from "../scient-fork/liveTurnFlush.ts";
-import { DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
+import {
+  ScientLiveTurnFlush,
+  ScientLiveTurnFlushLive,
+} from "../../orchestration-v2/scient-fork/liveTurnFlush.ts";
+import { DEFAULT_THREAD_TITLE } from "../../orchestration-v2/threadTitles.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -815,7 +818,7 @@ describe("ProviderRuntimeIngestion", () => {
 
   it.each([
     { delivery: "buffered", responseStreamingMode: "paragraph" as const },
-    { delivery: "streamed", responseStreamingMode: "token" as const },
+    { delivery: "streamed", responseStreamingMode: "paragraph" as const },
   ])("settles OpenCode aborted turns and saves $delivery assistant text", async (settings) => {
     const harness = await createHarness({
       serverSettings: { responseStreamingMode: settings.responseStreamingMode },
@@ -955,7 +958,7 @@ describe("ProviderRuntimeIngestion", () => {
     { source: "an unspecified turn", turnId: undefined },
   ])("ignores late OpenCode aborts for $source across newer turns", async (lateAbort) => {
     const harness = await createHarness({
-      serverSettings: { responseStreamingMode: "token" },
+      serverSettings: { responseStreamingMode: "paragraph" },
     });
     const threadId = asThreadId("thread-1");
     const stoppedTurnId = asTurnId("opencode-stopped-turn");
@@ -990,7 +993,7 @@ describe("ProviderRuntimeIngestion", () => {
       eventId: asEventId("opencode-next-partial-text"),
       turnId: nextTurnId,
       itemId: asItemId("opencode-next-text-part"),
-      payload: { streamKind: "assistant_text", delta: "The next turn is running." },
+      payload: { streamKind: "assistant_text", delta: "The next turn is running.\n\n" },
     });
     await harness.drain();
 
@@ -1009,7 +1012,7 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread?.messages).toEqual([
       expect.objectContaining({
         turnId: nextTurnId,
-        text: "The next turn is running.",
+        text: "The next turn is running.\n\n",
         streaming: true,
       }),
     ]);
@@ -3530,7 +3533,7 @@ describe("ProviderRuntimeIngestion", () => {
   });
 
   it("keeps streaming while an async question is pending", async () => {
-    const harness = await createHarness({ serverSettings: { responseStreamingMode: "token" } });
+    const harness = await createHarness({ serverSettings: { responseStreamingMode: "paragraph" } });
     const base = {
       provider: ProviderDriverKind.make("codex"),
       createdAt: "2026-01-01T00:00:00.000Z",
@@ -3543,7 +3546,7 @@ describe("ProviderRuntimeIngestion", () => {
       type: "content.delta",
       eventId: asEventId("async-before"),
       itemId: asItemId("message-1"),
-      payload: { streamKind: "assistant_text", delta: "Before. " },
+      payload: { streamKind: "assistant_text", delta: "Before.\n\n" },
     });
     harness.emit({
       ...base,
@@ -3563,17 +3566,19 @@ describe("ProviderRuntimeIngestion", () => {
         ],
       },
     });
+    await harness.drain();
+    harness.advanceClock(1_000);
     harness.emit({
       ...base,
       type: "content.delta",
       eventId: asEventId("async-after"),
       itemId: asItemId("message-1"),
-      payload: { streamKind: "assistant_text", delta: "After." },
+      payload: { streamKind: "assistant_text", delta: "After.\n\n" },
     });
     await harness.drain();
     const thread = (await harness.readModel()).threads[0];
     expect(thread?.session?.status).toBe("running");
-    expect(thread?.messages).toMatchObject([{ text: "Before. After.", streaming: true }]);
+    expect(thread?.messages).toMatchObject([{ text: "Before.\n\nAfter.\n\n", streaming: true }]);
     expect(
       thread?.activities.find((activity) => activity.kind === "user-input.requested")?.payload,
     ).toMatchObject({ responseMode: "message", requestId: "codex-async:question-1" });
@@ -3772,7 +3777,7 @@ describe("ProviderRuntimeIngestion", () => {
   });
 
   it("starts a new streaming assistant message segment after approval", async () => {
-    const harness = await createHarness({ serverSettings: { responseStreamingMode: "token" } });
+    const harness = await createHarness({ serverSettings: { responseStreamingMode: "paragraph" } });
     const startedAt = "2026-03-28T07:00:00.000Z";
     const pausedAt = "2026-03-28T07:00:01.000Z";
     const resumedAt = "2026-03-28T07:00:02.000Z";
@@ -3879,7 +3884,7 @@ describe("ProviderRuntimeIngestion", () => {
   });
 
   it("streams assistant deltas when thread.turn.start requests streaming mode", async () => {
-    const harness = await createHarness({ serverSettings: { responseStreamingMode: "token" } });
+    const harness = await createHarness({ serverSettings: { responseStreamingMode: "paragraph" } });
     const now = "2026-01-01T00:00:00.000Z";
 
     await Effect.runPromise(
@@ -3925,7 +3930,7 @@ describe("ProviderRuntimeIngestion", () => {
       itemId: asItemId("item-streaming-mode"),
       payload: {
         streamKind: "assistant_text",
-        delta: "hello live",
+        delta: "hello live\n\n",
       },
     });
 
@@ -3934,7 +3939,7 @@ describe("ProviderRuntimeIngestion", () => {
         (message: ProviderRuntimeTestMessage) =>
           message.id === "assistant:item-streaming-mode" &&
           message.streaming &&
-          message.text === "hello live",
+          message.text === "hello live\n\n",
       ),
     );
     const liveMessage = liveThread.messages.find(
@@ -3966,7 +3971,7 @@ describe("ProviderRuntimeIngestion", () => {
     const finalMessage = finalThread.messages.find(
       (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:item-streaming-mode",
     );
-    expect(finalMessage?.text).toBe("hello live");
+    expect(finalMessage?.text).toBe("hello live\n\n");
     expect(finalMessage?.streaming).toBe(false);
   });
 

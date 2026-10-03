@@ -30,6 +30,7 @@ import type {
   ProviderManagedRuntimeProgress,
 } from "../../provider/ProviderDriver.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import { ProviderSessionManagerV2 } from "../../orchestration-v2/ProviderSessionManager.ts";
 import { ProviderActivity } from "./ProviderActivity.ts";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 import { ProviderLifecycleCoordinator } from "./ProviderLifecycleCoordinator.ts";
@@ -153,6 +154,7 @@ const RESELECT_INTERVAL = "10 minutes";
 
 export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
   const providerRegistry = yield* ProviderRegistry;
+  const providerSessions = yield* ProviderSessionManagerV2;
   const lifecycleCoordinator = yield* ProviderLifecycleCoordinator;
   const activity = yield* ProviderActivity;
   const crypto = yield* Crypto.Crypto;
@@ -318,17 +320,45 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
     },
   );
 
+  // Default installations share the driver's managed runtime selection. Custom
+  // paths (healthy or unavailable) retain independent executable authority.
+  const affectedRuntimeInstances = (provider: ProviderDriverKind, target: ProviderInstanceId) =>
+    providerRegistry.getProviders.pipe(
+      Effect.map((providers) =>
+        providers.filter((candidate) => {
+          if (candidate.instanceId === target) return true;
+          if (candidate.driver !== provider) return false;
+          const source = candidate.connection?.runtime?.source;
+          return source === "system" || source === "missing" || source === "scient_managed";
+        }),
+      ),
+    );
+
+  const closeRuntimeInstances = (provider: ProviderDriverKind, target: ProviderInstanceId) =>
+    affectedRuntimeInstances(provider, target).pipe(
+      Effect.flatMap((providers) =>
+        Effect.forEach(
+          providers,
+          (candidate) => providerSessions.closeInstance(candidate.instanceId),
+          {
+            discard: true,
+          },
+        ),
+      ),
+    );
+
   const refreshRuntimeInstances = Effect.fn("ProviderRuntimeManager.refreshRuntimeInstances")(
-    function* (provider: ProviderDriverKind) {
-      const providers = yield* providerRegistry.getProviders;
+    function* (provider: ProviderDriverKind, target: ProviderInstanceId) {
+      const providers = yield* affectedRuntimeInstances(provider, target);
       const refreshCauses = yield* Effect.forEach(
-        providers.filter((candidate) => candidate.driver === provider),
+        providers,
         (candidate) =>
           Effect.gen(function* () {
             const currentOperation = candidate.connection?.runtime?.operation ?? null;
             // Runtime selection happens while constructing the provider. Reload
             // first so removing a private runtime can discover a healthy system
             // fallback before the durable summary is published.
+            yield* providerSessions.closeInstance(candidate.instanceId);
             yield* providerRegistry.reloadInstanceStrict(candidate.instanceId);
             const actions = yield* providerRegistry.getProviderManagedRuntimeActionsForInstance(
               candidate.instanceId,
@@ -508,7 +538,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
           waitingForIdle: true,
         }),
       ).pipe(
-        Effect.andThen(providerRegistry.stopProviderSessions(target.provider)),
+        Effect.andThen(closeRuntimeInstances(target.provider, input.instanceId)),
         Effect.mapError(
           (cause) =>
             new ProviderConnectionActionError({
@@ -587,9 +617,10 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
                   message: `Finishing: ${displayName} restarts once its running work completes.`,
                 }),
               );
-              const reconciliation = yield* refreshRuntimeInstances(target.provider).pipe(
-                Effect.result,
-              );
+              const reconciliation = yield* refreshRuntimeInstances(
+                target.provider,
+                input.instanceId,
+              ).pipe(Effect.result);
               if (reconciliation._tag === "Failure") {
                 completion = Result.fail(reconciliation.failure);
               }
@@ -769,7 +800,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
       const current = yield* readTarget(instanceId).pipe(Effect.option);
       const rebuilt = Option.isNone(current) || current.value.actions !== checkedActions;
       if (changing || rebuilt || (yield* activity.isBusy(provider))) return false;
-      yield* refreshRuntimeInstances(provider);
+      yield* refreshRuntimeInstances(provider, instanceId);
       return true;
     }).pipe(
       Effect.ensuring(lifecycleCoordinator.release({ operationId }).pipe(Effect.asVoid)),

@@ -31,7 +31,10 @@ import * as Context from "effect/Context";
 import type * as Option from "effect/Option";
 import type * as Effect from "effect/Effect";
 
-import type { HistoryReadQuery, HistoryPage } from "../scient-fork/historyRead.ts";
+import type {
+  HistoryReadQuery,
+  HistoryPage,
+} from "../../orchestration-v2/scient-fork/historyRead.ts";
 import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
 
 export interface ProjectionSnapshotCounts {

@@ -54,8 +54,8 @@ import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityRes
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
-import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
-import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
+import * as ThreadBackgroundLiveness from "../../orchestration-v2/ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "../../orchestration-v2/ThreadPlanProgress.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
   OrchestrationProjectionPipeline,
@@ -343,7 +343,7 @@ describe("OrchestrationEngine", () => {
 
   it("bootstraps command handling from persisted projections without reading the full snapshot", async () => {
     let nextSequence = 8;
-    const eventStore: OrchestrationEventStoreShape = {
+    const eventStore: Partial<OrchestrationEventStoreShape> = {
       append: (event) =>
         Effect.sync(() => {
           const savedEvent = {
@@ -353,8 +353,7 @@ describe("OrchestrationEngine", () => {
           nextSequence += 1;
           return savedEvent;
         }),
-      readFromSequence: () => Stream.empty,
-      readAll: () =>
+      readFromSequence: () =>
         Stream.fail(
           new PersistenceSqlError({
             operation: "test.readAll",
@@ -479,7 +478,7 @@ describe("OrchestrationEngine", () => {
           projectEventDeferred: () => Effect.succeed(Effect.void),
         } satisfies OrchestrationProjectionPipelineShape),
       ),
-      Layer.provide(Layer.succeed(OrchestrationEventStore, eventStore)),
+      Layer.provide(Layer.mock(OrchestrationEventStore)(eventStore)),
       Layer.provide(ThreadBackgroundLiveness.layer),
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
       Layer.provide(SqlitePersistenceMemory),
@@ -1507,7 +1506,7 @@ describe("OrchestrationEngine", () => {
     let nextSequence = 1;
     let shouldFailFirstAppend = true;
 
-    const flakyStore: OrchestrationEventStoreShape = {
+    const flakyStore: Partial<OrchestrationEventStoreShape> = {
       append(event) {
         if (shouldFailFirstAppend && event.commandId === CommandId.make("cmd-flaky-1")) {
           shouldFailFirstAppend = false;
@@ -1529,9 +1528,6 @@ describe("OrchestrationEngine", () => {
       readFromSequence(sequenceExclusive) {
         return Stream.fromIterable(events.filter((event) => event.sequence > sequenceExclusive));
       },
-      readAll() {
-        return Stream.fromIterable(events);
-      },
       hasEventAfter: () => Effect.succeed(false),
       readAggregateRange: () => Stream.die("unused aggregate replay"),
       getAggregateReplayStats: () => Effect.die("unused aggregate replay stats"),
@@ -1547,7 +1543,7 @@ describe("OrchestrationEngine", () => {
         Layer.provide(ThreadBackgroundLiveness.layer),
         Layer.provide(ThreadPlanProgress.layer),
         Layer.provide(OrchestrationProjectionPipelineLive),
-        Layer.provide(Layer.succeed(OrchestrationEventStore, flakyStore)),
+        Layer.provide(Layer.mock(OrchestrationEventStore)(flakyStore)),
         Layer.provide(OrchestrationCommandReceiptRepositoryLive),
         Layer.provide(RepositoryIdentityResolver.layer),
         Layer.provide(SqlitePersistenceMemory),
@@ -1756,7 +1752,7 @@ describe("OrchestrationEngine", () => {
     const events: StoredEvent[] = [];
     let nextSequence = 1;
 
-    const nonTransactionalStore: OrchestrationEventStoreShape = {
+    const nonTransactionalStore: Partial<OrchestrationEventStoreShape> = {
       append(event) {
         const savedEvent = {
           ...event,
@@ -1768,9 +1764,6 @@ describe("OrchestrationEngine", () => {
       },
       readFromSequence(sequenceExclusive) {
         return Stream.fromIterable(events.filter((event) => event.sequence > sequenceExclusive));
-      },
-      readAll() {
-        return Stream.fromIterable(events);
       },
       hasEventAfter: () => Effect.succeed(false),
       readAggregateRange: () => Stream.die("unused aggregate replay"),
@@ -1804,7 +1797,7 @@ describe("OrchestrationEngine", () => {
         Layer.provide(ThreadBackgroundLiveness.layer),
         Layer.provide(ThreadPlanProgress.layer),
         Layer.provide(Layer.succeed(OrchestrationProjectionPipeline, flakyProjectionPipeline)),
-        Layer.provide(Layer.succeed(OrchestrationEventStore, nonTransactionalStore)),
+        Layer.provide(Layer.mock(OrchestrationEventStore)(nonTransactionalStore)),
         Layer.provide(OrchestrationCommandReceiptRepositoryLive),
         Layer.provide(RepositoryIdentityResolver.layer),
         Layer.provide(SqlitePersistenceMemory),

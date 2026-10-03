@@ -1,28 +1,42 @@
-import {
-  PiSettings,
-  ProviderDriverKind,
-  type ServerProvider,
-  type ServerSettings,
-} from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+/**
+ * PiDriver — configured Pi provider instances, composing the
+ * orchestrator-v2 adapter (`PiAdapterV2`), the snapshot/probe layer
+ * (`PiProvider`), and Pi-backed text generation.
+ *
+ * Pi keeps native sessions/settings/auth in its configured state directory;
+ * continuation authority is conservatively scoped to the configured instance.
+ */
+import { PiSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
 import { HttpClient } from "effect/unstable/http";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { BackgroundPolicy } from "../../background/BackgroundPolicy.ts";
-import { ServerConfig } from "../../config.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
-import { customModelDiscoverySnapshot } from "../../customModelCapabilities.ts";
+import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+import * as ServerConfig from "../../config.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import { makePiTextGeneration } from "../../textGeneration/PiTextGeneration.ts";
-import { makePiManagedRuntimeResolution } from "../../scient/providerLifecycle/PiManagedRuntimeActions.ts";
+import * as Crypto from "effect/Crypto";
+import {
+  makePiAdapterV2,
+  type PiAdapterV2DriverEnv,
+} from "../../orchestration-v2/Adapters/PiAdapterV2.ts";
 import { ProviderDriverError } from "../Errors.ts";
+// SCIENT-FORK:START — instance-owned runtime and custom-model integration.
 import { makePiAdapter } from "../Layers/PiAdapter.ts";
 import { makePiCustomModelsClientFactory } from "../pi/PiCustomModels.ts";
-import { checkPiProviderStatus, makePendingPiProvider } from "../Layers/PiProvider.ts";
+import { makePiCustomModelsConnectionFactory } from "../pi/PiCustomModelsConnection.ts";
+import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
+import { makePiManagedRuntimeResolution } from "../../scient/providerLifecycle/PiManagedRuntimeActions.ts";
+import { expandHomePath } from "../../pathExpansion.ts";
+// SCIENT-FORK:END
+import {
+  buildInitialPiProviderSnapshot,
+  checkPiProviderStatus,
+  enrichPiSnapshot,
+} from "../Layers/PiProvider.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -32,45 +46,100 @@ import {
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
-  enrichProviderSnapshotWithVersionAdvisory,
   makeCachedProviderMaintenanceResolution,
-  makeManualOnlyProviderMaintenanceCapabilities,
+  makePackageManagedProviderMaintenanceResolver,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "../providerMaintenance.ts";
-import { piMaintenance } from "../piDroidMaintenance.ts";
-import { withInstanceIdentity } from "./instanceIdentity.ts";
 import {
   haveProviderSnapshotSettingsChanged,
+  makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
 
+const decodePiSettings = Schema.decodeSync(PiSettings);
+
 const DRIVER_KIND = ProviderDriverKind.make("pi");
-const decodeSettings = Schema.decodeSync(PiSettings);
+const UPDATE = makePackageManagedProviderMaintenanceResolver({
+  provider: DRIVER_KIND,
+  npmPackageName: "@earendil-works/pi-coding-agent",
+  nativeUpdate: null,
+});
 
 export type PiDriverEnv =
-  | BackgroundPolicy
+  | PiAdapterV2DriverEnv
+  | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
+  // SCIENT-FORK:START — native identity and custom-model bootstrap ownership.
   | Crypto.Crypto
+  // SCIENT-FORK:END
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | Path.Path
-  | ServerConfig
-  | ServerSettingsService;
+  | ServerConfig.ServerConfig
+  | ServerSettings.ServerSettingsService;
+
+const withInstanceIdentity =
+  (input: {
+    readonly instanceId: ProviderInstance["instanceId"];
+    readonly displayName: string | undefined;
+    readonly accentColor: string | undefined;
+    readonly continuationGroupKey: string;
+  }) =>
+  (snapshot: ServerProviderDraft): ServerProvider => ({
+    ...snapshot,
+    instanceId: input.instanceId,
+    driver: DRIVER_KIND,
+    ...(input.displayName ? { displayName: input.displayName } : {}),
+    ...(input.accentColor ? { accentColor: input.accentColor } : {}),
+    continuation: { groupKey: input.continuationGroupKey },
+  });
 
 export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
   driverKind: DRIVER_KIND,
-  metadata: { displayName: "Pi", supportsMultipleInstances: true },
+  metadata: {
+    displayName: "Pi",
+    supportsMultipleInstances: true,
+  },
   configSchema: PiSettings,
-  defaultConfig: () => decodeSettings({}),
+  defaultConfig: (): PiSettings => decodePiSettings({}),
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
-      const serverConfig = yield* ServerConfig;
-      const serverSettings = yield* ServerSettingsService;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const { cwd } = serverConfig;
+      const serverSettings = yield* ServerSettings.ServerSettingsService;
       const processEnv = mergeProviderInstanceEnvironment(environment);
+      const continuationIdentity = defaultProviderContinuationIdentity({
+        driverKind: DRIVER_KIND,
+        instanceId,
+      });
+      const stampIdentity = withInstanceIdentity({
+        instanceId,
+        displayName,
+        accentColor,
+        continuationGroupKey: continuationIdentity.continuationKey,
+      });
+      // SCIENT-FORK:START — use one resolved executable for native V2 sessions,
+      // one-shot text generation, retained library clients, and status probes.
+      const managedRuntime = yield* makePiManagedRuntimeResolution({
+        settings: config,
+        baseDir: serverConfig.baseDir,
+        environment: processEnv,
+        spawner,
+        managedInstallationAllowed: serverConfig.mode === "desktop",
+      });
+      const effectiveConfig = {
+        ...config,
+        enabled,
+        binaryPath: expandHomePath(managedRuntime.effectiveBinaryPath),
+      } satisfies PiSettings;
+      // SCIENT-FORK:END
+      // SCIENT-FORK:START — native V2 sessions and one-shot text generation use
+      // the same instance-scoped custom-model authority and extension bootstrap.
+      // The typed factory also supplies the retained library compatibility seam.
       const makeRpcClient = yield* makePiCustomModelsClientFactory(
         serverSettings,
         instanceId,
@@ -86,38 +155,35 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
             }),
         ),
       );
-      const managedRuntime = yield* makePiManagedRuntimeResolution({
-        settings: config,
-        baseDir: serverConfig.baseDir,
+      // SCIENT-FORK:END
+      const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
+        resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
+          binaryPath: effectiveConfig.binaryPath,
+          env: processEnv,
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, pathService),
+        ),
+      );
+
+      const makeConnection = yield* makePiCustomModelsConnectionFactory(
+        serverSettings,
+        instanceId,
+        serverConfig.stateDir,
+      );
+      const orchestrationAdapter = makePiAdapterV2({
+        instanceId,
+        settings: effectiveConfig,
         environment: processEnv,
         spawner,
-        managedInstallationAllowed: serverConfig.mode === "desktop",
+        fileSystem,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        serverConfig,
+        makeConnection,
       });
-      const effectiveConfig = {
-        ...config,
-        enabled,
-        binaryPath: managedRuntime.effectiveBinaryPath,
-      } satisfies PiSettings;
-      const continuationIdentity = defaultProviderContinuationIdentity({
-        driverKind: DRIVER_KIND,
-        instanceId,
-      });
-      const stampIdentity = withInstanceIdentity({
-        instanceId,
-        driverKind: DRIVER_KIND,
-        displayName,
-        accentColor,
-        continuationGroupKey: continuationIdentity.continuationKey,
-      });
-      const stamp = (snapshot: ServerProviderDraft): ServerProvider => ({
-        ...stampIdentity(snapshot),
-        connection: {
-          methods: [],
-          canDisconnect: false,
-          operation: null,
-          runtime: managedRuntime.summary,
-        },
-      });
+      // SCIENT-FORK:START — retained library adapter for compatibility callers.
+      // Production orchestration executes through `orchestrationAdapter`.
       const adapter = yield* makePiAdapter({
         binaryPath: effectiveConfig.binaryPath,
         providerInstanceId: instanceId,
@@ -136,62 +202,38 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
             }),
         ),
       );
+      // SCIENT-FORK:END
       const textGeneration = yield* makePiTextGeneration(
         effectiveConfig,
         processEnv,
         makeRpcClient,
       );
-      const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
-        (managedRuntime.usesManagedPath
-          ? Effect.succeed(
-              makeManualOnlyProviderMaintenanceCapabilities({
-                provider: DRIVER_KIND,
-                packageName: null,
-              }),
-            )
-          : resolveProviderMaintenanceCapabilitiesEffect(piMaintenance, {
-              binaryPath: effectiveConfig.binaryPath,
-              env: processEnv,
-            })
-        ).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(Path.Path, pathService),
-        ),
+
+      const checkProvider = checkPiProviderStatus(effectiveConfig, processEnv, cwd).pipe(
+        Effect.map(stampIdentity),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
-      const mapSettings = (settings: ServerSettings) => ({
-        provider: effectiveConfig,
-        enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
-        customModels: customModelDiscoverySnapshot(settings.customModels.connections, instanceId),
-      });
-      const source = {
-        getSettings: serverSettings.getSettings.pipe(Effect.map(mapSettings)),
-        streamSettings: serverSettings.streamChanges.pipe(Stream.map(mapSettings)),
-      };
-      const snapshot = yield* makeManagedServerProvider<
-        ProviderSnapshotSettings<PiSettings> & {
-          customModels: ReturnType<typeof customModelDiscoverySnapshot>;
-        }
-      >({
+
+      const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
+      const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<PiSettings>>({
         resolveMaintenance,
-        getSettings: source.getSettings,
-        streamSettings: source.streamSettings,
+        getSettings: snapshotSettings.getSettings,
+        streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: (settings) =>
-          makePendingPiProvider(settings.provider).pipe(Effect.map(stamp)),
-        checkProvider: checkPiProviderStatus(effectiveConfig, processEnv, makeRpcClient).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          Effect.map(stamp),
-        ),
+          buildInitialPiProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
+        checkProvider,
         enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
           resolveMaintenance().pipe(
-            Effect.flatMap((capabilities) =>
-              enrichProviderSnapshotWithVersionAdvisory(currentSnapshot, capabilities, {
+            Effect.flatMap((maintenanceCapabilities) =>
+              enrichPiSnapshot({
+                snapshot: currentSnapshot,
+                maintenanceCapabilities,
                 enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+                publishSnapshot,
+                httpClient,
               }),
             ),
-            Effect.provideService(HttpClient.HttpClient, httpClient),
-            Effect.flatMap(publishSnapshot),
           ),
       }).pipe(
         Effect.mapError(
@@ -199,11 +241,12 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
             new ProviderDriverError({
               driver: DRIVER_KIND,
               instanceId,
-              detail: `Failed to build Pi snapshot: ${String(cause)}`,
+              detail: "Failed to build Pi snapshot.",
               cause,
             }),
         ),
       );
+
       return {
         instanceId,
         driverKind: DRIVER_KIND,
@@ -212,14 +255,18 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
         accentColor,
         enabled,
         snapshot,
+        orchestrationAdapter,
+        textGeneration,
+        // SCIENT-FORK:START — workspace probes and managed runtime actions belong
+        // to this instance; the adapter field retains library compatibility.
         snapshotForCwd: (cwd) =>
-          checkPiProviderStatus(effectiveConfig, processEnv, makeRpcClient, cwd).pipe(
+          checkPiProviderStatus(effectiveConfig, processEnv, cwd).pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-            Effect.map(stamp),
+            Effect.map(stampIdentity),
           ),
         adapter,
-        textGeneration,
         managedRuntimeActions: managedRuntime.actions,
+        // SCIENT-FORK:END
       } satisfies ProviderInstance;
     }),
 };

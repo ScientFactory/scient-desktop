@@ -4,6 +4,13 @@ import { piContextExtension } from "./PiContextExtension.ts";
 interface PiExtensionApi {
   on(event: "before_agent_start", handler: (event: { systemPrompt: string }) => unknown): void;
   on(
+    event: "tool_call",
+    handler: (
+      event: { toolName: string; input: unknown },
+      ctx: { hasUI: boolean; ui: { confirm(title: string, message: string): Promise<boolean> } },
+    ) => Promise<{ block: true; reason: string } | undefined>,
+  ): void;
+  on(
     event: "tool_result",
     handler: (event: { toolName: string; details?: unknown }) => unknown,
   ): void;
@@ -39,6 +46,8 @@ async function piScientExtension(pi: PiExtensionApi): Promise<void> {
   const endpoint = process.env.SCIENT_PI_MCP_ENDPOINT;
   const authorization = process.env.SCIENT_PI_MCP_AUTHORIZATION;
   const awareness = process.env.SCIENT_PI_AWARENESS ?? "";
+  const runtimeMode = process.env.SCIENT_PI_RUNTIME_MODE ?? "full-access";
+  delete process.env.SCIENT_PI_RUNTIME_MODE;
   delete process.env.SCIENT_PI_MCP_ENDPOINT;
   delete process.env.SCIENT_PI_MCP_AUTHORIZATION;
   delete process.env.SCIENT_PI_AWARENESS;
@@ -193,6 +202,19 @@ async function piScientExtension(pi: PiExtensionApi): Promise<void> {
       seen.add(cursor);
     }
   }
+  pi.on("tool_call", async (event, ctx) => {
+    if (runtimeMode === "full-access") return undefined;
+    const readOnly: Record<string, true> = { read: true, grep: true, find: true, ls: true };
+    const edits: Record<string, true> = { edit: true, write: true };
+    if (readOnly[event.toolName]) return undefined;
+    if (runtimeMode === "auto-accept-edits" && edits[event.toolName]) return undefined;
+    if (!ctx.hasUI) return { block: true, reason: "Scient approval is unavailable." };
+    const accepted = await ctx.ui.confirm(
+      `Allow ${event.toolName}?`,
+      JSON.stringify(event.input, null, 2)?.slice(0, 4_000) ?? "",
+    );
+    return accepted ? undefined : { block: true, reason: "The user declined this tool call." };
+  });
   pi.on("tool_result", (event) => {
     if (toolNames.includes(event.toolName) && record(event.details)?.isError === true)
       return { isError: true };
@@ -205,7 +227,7 @@ async function piScientExtension(pi: PiExtensionApi): Promise<void> {
     description: "Show the Scient connection for this Pi session",
     async handler(_args, ctx) {
       ctx.ui.notify(
-        `Scient connected: ${toolNames.length} tools. Full access; no native sandbox.`,
+        `Scient connected: ${toolNames.length} tools. ${runtimeMode}; no native sandbox.`,
         "info",
       );
     },

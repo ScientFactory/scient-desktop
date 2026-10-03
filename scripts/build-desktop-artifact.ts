@@ -1112,6 +1112,11 @@ export function renderWindowsConversationAssociationInclude(
 }
 // SCIENT-FORK:END
 export const DESKTOP_FILE_EXCLUSIONS = [
+  // Cursor finds platform assets by walking up from argv[1]. Keep them outside
+  // asar so spawning helpers and loading native addons both use real paths.
+  "!**/node_modules/@cursor/sdk-*/**/*",
+  "!apps/desktop/prod-resources/cursor-sdk",
+  "!apps/desktop/prod-resources/cursor-sdk/**/*",
   // Scient always passes the user's installed Claude executable to the SDK,
   // so the SDK's optional platform packages (each a ~200MB bundled executable)
   // are dead weight. The trailing dash keeps the SDK's own JS package.
@@ -1162,6 +1167,10 @@ export const WINDOWS_EXTRA_RESOURCE_FILE_EXCLUSIONS = [
   "!apps/desktop/prod-resources/whisper-runtime/**/*",
   "!apps/desktop/prod-resources/synctex-runtime",
   "!apps/desktop/prod-resources/synctex-runtime/**/*",
+  "!apps/desktop/resources/cursor-sdk",
+  "!apps/desktop/resources/cursor-sdk/**/*",
+  "!apps/desktop/prod-resources/cursor-sdk",
+  "!apps/desktop/prod-resources/cursor-sdk/**/*",
 ] as const;
 
 // node-pty publishes both Darwin prebuilds in one package. Single-architecture
@@ -1196,6 +1205,8 @@ export const COMPUTE_BRIDGE_ASAR_UNPACK_DIR = "apps/server/dist/scient-compute-b
 // are never spawned at runtime (and are symlinks on POSIX build hosts, which
 // the asar extraction path deliberately does not support).
 export const WINDOWS_SERVER_ASAR_IGNORE_GLOBS = [
+  "**/node_modules/@cursor/sdk-*",
+  "**/node_modules/@cursor/sdk-*/**",
   "**/node_modules/@anthropic-ai/claude-agent-sdk-*",
   "**/node_modules/@anthropic-ai/claude-agent-sdk-*/**",
   "**/node_modules/.bin",
@@ -1287,6 +1298,10 @@ export const WSL_RUNTIME_EXTRA_RESOURCES = [
   WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE,
 ] as const;
 export const DESKTOP_EXTRA_RESOURCES = [
+  {
+    from: "apps/desktop/prod-resources/cursor-sdk",
+    to: "node_modules/@cursor",
+  },
   {
     from: "apps/desktop/prod-resources/resource-monitor",
     to: "resource-monitor",
@@ -1577,6 +1592,40 @@ export function resolveMergedStageDependencies(input: {
     ...resolveFffNativeDependencies(input.platform, input.arch, input.fffNodeVersion),
   };
 }
+
+export class CursorSdkPlatformPackagesMissingError extends Schema.TaggedError<CursorSdkPlatformPackagesMissingError>()(
+  "CursorSdkPlatformPackagesMissingError",
+  { nodeModulesDir: Schema.String },
+) {
+  override get message(): string {
+    return `Cursor SDK platform helpers are missing from ${this.nodeModulesDir}. Install the target platform optional dependencies before packaging.`;
+  }
+}
+
+/** Cursor's helper lookup falls through the archive to this real resources tree. */
+export const stageCursorSdkPlatformPackages = Effect.fn("stageCursorSdkPlatformPackages")(
+  function* (nodeModulesDir: string, destination: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* fs.makeDirectory(destination, { recursive: true });
+    const sdkDirectory = path.join(nodeModulesDir, "@cursor/sdk");
+    if (!(yield* fs.exists(sdkDirectory))) {
+      return yield* new CursorSdkPlatformPackagesMissingError({ nodeModulesDir });
+    }
+    // pnpm's isolated layout puts optional packages beside the real SDK directory.
+    const cursorDirectory = path.dirname(yield* fs.realPath(sdkDirectory));
+    const packages = (yield* fs.readDirectory(cursorDirectory)).filter((name) =>
+      name.startsWith("sdk-"),
+    );
+    if (packages.length === 0) {
+      return yield* new CursorSdkPlatformPackagesMissingError({ nodeModulesDir });
+    }
+    for (const name of packages) {
+      const source = yield* fs.realPath(path.join(cursorDirectory, name));
+      yield* fs.copy(source, path.join(destination, name));
+    }
+  },
+);
 
 export interface ClerkPasskeyNativeArtifact {
   readonly packageName: string;
@@ -3268,6 +3317,23 @@ export const packWindowsServerAsar = Effect.fn("packWindowsServerAsar")(function
   }
 });
 
+/** Move spawnable Cursor resources out before the Windows packer excludes them. */
+export const stageAndPackWindowsServerAsar = Effect.fn("stageAndPackWindowsServerAsar")(
+  function* (input: {
+    readonly sourceDir: string;
+    readonly asarPath: string;
+    readonly arch: typeof BuildArch.Type;
+    readonly cursorSdkResourcesPath: string;
+  }) {
+    const path = yield* Path.Path;
+    yield* stageCursorSdkPlatformPackages(
+      path.join(input.sourceDir, "node_modules"),
+      input.cursorSdkResourcesPath,
+    );
+    yield* packWindowsServerAsar(input);
+  },
+);
+
 export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(function* (input: {
   readonly stageRoot: string;
   readonly repoRoot: string;
@@ -3282,6 +3348,7 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
   readonly wslPrebuildPath: string | undefined;
   readonly wslSyncTexRuntimePath: string | undefined;
   readonly asarPath: string;
+  readonly cursorSdkResourcesPath: string;
   readonly wslRuntimeArchivePath: string;
   readonly wslRuntimeArchiveHashPath: string;
   readonly verbose: boolean;
@@ -3373,9 +3440,10 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
 
   yield* Effect.log("[desktop-artifact] Packing server.asar...");
   yield* fs.makeDirectory(path.dirname(input.asarPath), { recursive: true });
-  yield* packWindowsServerAsar({
+  yield* stageAndPackWindowsServerAsar({
     sourceDir: serverStageDir,
     asarPath: input.asarPath,
+    cursorSdkResourcesPath: input.cursorSdkResourcesPath,
     arch: input.arch,
   });
   const packedStat = yield* fs.stat(input.asarPath);
@@ -4275,6 +4343,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   );
   yield* stageClerkPasskeyNativeBinaries(stageAppDir, options.platform, options.arch);
   yield* stageKeyringNativeBinaries(stageAppDir, options.platform, options.arch);
+  const cursorSdkResourcesPath = path.join(stageAppDir, "apps/desktop/prod-resources/cursor-sdk");
+  if (options.platform !== "win") {
+    yield* stageCursorSdkPlatformPackages(
+      path.join(stageAppDir, "node_modules"),
+      cursorSdkResourcesPath,
+    );
+  }
 
   // WSL is Windows-only, so only the Windows artifact carries the server
   // sidecar (which embeds the Linux node-pty prebuild); other platforms
@@ -4294,6 +4369,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       wslPrebuildPath: options.wslPrebuild,
       wslSyncTexRuntimePath: options.wslSyncTexRuntime,
       asarPath: windowsServerAsarPath,
+      cursorSdkResourcesPath,
       wslRuntimeArchivePath: path.join(stageAppDir, WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE.from),
       wslRuntimeArchiveHashPath: path.join(
         stageAppDir,

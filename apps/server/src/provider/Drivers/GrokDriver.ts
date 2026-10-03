@@ -20,15 +20,22 @@ import {
   withGrokSessionShutdown,
 } from "../../scient/providerLifecycle/GrokConnectionActions.ts";
 import { makeGrokManagedRuntimeResolution } from "../../scient/providerLifecycle/GrokManagedRuntimeActions.ts";
-import { makeGrokTextGeneration } from "../../textGeneration/GrokTextGeneration.ts";
-import { ProviderDriverError } from "../Errors.ts";
+import * as ProviderEventLoggers from "../Layers/ProviderEventLoggers.ts";
+// SCIENT-FORK:START — v1 adapter factory; see the construction site below.
 import { makeGrokAdapter } from "../Layers/GrokAdapter.ts";
+// SCIENT-FORK:END
+import * as ServerSettings from "../../serverSettings.ts";
+import { makeGrokTextGeneration } from "../../textGeneration/GrokTextGeneration.ts";
+import {
+  GrokAdapterV2Driver,
+  type GrokAdapterV2DriverEnv,
+} from "../../orchestration-v2/Adapters/GrokAdapterV2.ts";
+import { ProviderDriverError } from "../Errors.ts";
 import {
   buildInitialGrokProviderSnapshot,
   checkGrokProviderStatus,
   enrichGrokSnapshot,
 } from "../Layers/GrokProvider.ts";
-import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { readGrokAccount } from "../Layers/grokUsageLimits.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
@@ -82,15 +89,16 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
 };
 
 export type GrokDriverEnv =
+  | GrokAdapterV2DriverEnv
   | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | Path.Path
-  | ProviderEventLoggers
+  | ProviderEventLoggers.ProviderEventLoggers
   | ServerConfig
-  | ServerSettingsService;
+  | ServerSettings.ServerSettingsService;
 
 const withInstanceIdentity =
   (input: {
@@ -134,7 +142,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
       const path = yield* Path.Path;
       const serverSettings = yield* ServerSettingsService;
       const { cwd } = yield* ServerConfig;
-      const eventLoggers = yield* ProviderEventLoggers;
+      const eventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
       const serverConfig = yield* ServerConfig;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
@@ -183,11 +191,34 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
           Effect.provideService(Path.Path, path),
         ),
       );
+      // SCIENT-FORK:START — v1 adapter. Upstream deleted `makeGrokAdapter`'s
+      // construction here when it moved Grok to `GrokAdapterV2`, but the fork's
+      // live `Layers/ProviderService.ts` still drives turns through the v1
+      // `ProviderAdapterShape` (see `ProviderDriver.ts`). Restored.
       const adapter = yield* makeGrokAdapter(effectiveConfig, {
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
       });
+      // SCIENT-FORK:END
+      const orchestrationAdapter = yield* GrokAdapterV2Driver.create({
+        instanceId,
+        displayName,
+        accentColor,
+        environment,
+        enabled,
+        config,
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderDriverError({
+              driver: DRIVER_KIND,
+              instanceId,
+              detail: "Failed to build Grok orchestration adapter.",
+              cause,
+            }),
+        ),
+      );
       const textGeneration = yield* makeGrokTextGeneration(effectiveConfig, processEnv);
       const connectionActions = withGrokSessionShutdown(
         yield* makeGrokConnectionActions(effectiveConfig, processEnv, spawner),
@@ -195,22 +226,16 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
       );
 
       const checkProvider = checkGrokProviderStatus(effectiveConfig, processEnv, cwd).pipe(
-        Effect.filterOrElse(
-          (snapshot) =>
-            !(
-              effectiveConfig.enabled &&
-              snapshot.installed &&
-              snapshot.auth.status === "authenticated"
-            ),
-          (snapshot) =>
-            readGrokAccount(processEnv).pipe(
-              // The email lets clients recognize one account signed in on several environments.
-              Effect.map(({ email, usageLimits }) => ({
-                ...snapshot,
-                auth: email ? { ...snapshot.auth, email } : snapshot.auth,
-                usageLimits,
-              })),
-            ),
+        Effect.flatMap((snapshot) =>
+          effectiveConfig.enabled && snapshot.installed && snapshot.auth.status === "authenticated"
+            ? readGrokAccount(processEnv).pipe(
+                Effect.map(({ email, usageLimits }) => ({
+                  ...snapshot,
+                  auth: email ? { ...snapshot.auth, email } : snapshot.auth,
+                  usageLimits,
+                })),
+              )
+            : Effect.succeed(snapshot),
         ),
         Effect.map(stampIdentity),
         Effect.provideService(HttpClient.HttpClient, httpClient),
@@ -300,6 +325,8 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         snapshotForCwd,
         skillActions,
         adapter,
+
+        orchestrationAdapter,
         textGeneration,
         connectionActions,
         managedRuntimeActions: managedRuntime.actions,

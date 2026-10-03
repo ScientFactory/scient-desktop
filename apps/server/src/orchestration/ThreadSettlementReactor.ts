@@ -27,12 +27,12 @@ import {
   type ProjectThreadShell,
   pullRequestMatchesProject,
   readSweepSnapshot,
-} from "./ThreadPullRequestReactor.ts";
+} from "../orchestration-v2/ThreadPullRequestReactor.ts";
 import {
   isAutoSettlementCandidate,
   resolveAutoSettlementAt,
   type SettlementPullRequest,
-} from "./ThreadSettlementPolicy.ts";
+} from "../orchestration-v2/ThreadSettlementPolicy.ts";
 
 export class ThreadSettlementReactor extends Context.Service<
   ThreadSettlementReactor,

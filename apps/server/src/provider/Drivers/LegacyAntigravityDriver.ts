@@ -30,6 +30,9 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeAntigravityTextGeneration } from "../../textGeneration/LegacyAntigravityTextGeneration.ts";
+import { makeLegacyAntigravityAdapterV2 } from "../../orchestration-v2/Adapters/LegacyAntigravityAdapterV2.ts";
+import { IdAllocatorV2 } from "../../orchestration-v2/IdAllocator.ts";
+import { ProviderContinuationRequests } from "../../orchestration-v2/ProviderContinuationRequests.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeAntigravityAdapter } from "../Layers/LegacyAntigravityAdapter.ts";
 import {
@@ -77,6 +80,7 @@ export type LegacyAntigravityDriverEnv =
   | Crypto.Crypto
   | FileSystem.FileSystem
   | HttpClient.HttpClient
+  | IdAllocatorV2
   | Path.Path
   | ProviderEventLoggers
   | PtyAdapter
@@ -183,6 +187,17 @@ export const LegacyAntigravityDriver = {
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
       });
+      const orchestrationAdapter = makeLegacyAntigravityAdapterV2({
+        instanceId,
+        settings: effectiveConfig,
+        environment: processEnv,
+        spawner,
+        fileSystem,
+        path,
+        serverConfig,
+        idAllocator: yield* IdAllocatorV2,
+        continuations: yield* ProviderContinuationRequests,
+      });
       const textGeneration = yield* makeAntigravityTextGeneration(effectiveConfig, processEnv);
       const voiceTranscriptCorrection = yield* makeAntigravityVoiceTranscriptCorrection(
         effectiveConfig,
@@ -196,7 +211,14 @@ export const LegacyAntigravityDriver = {
         spawner,
         ptyAdapter,
         makeAntigravityLocalCredentialStore(processEnv, fileSystem, path, spawner, platform),
-      ).pipe(Effect.map((actions) => withAntigravitySessionShutdown(actions, adapter.stopAll())));
+      ).pipe(
+        Effect.map((actions) =>
+          withAntigravitySessionShutdown(
+            actions,
+            adapter.stopAll().pipe(Effect.andThen(orchestrationAdapter.stopAll())),
+          ),
+        ),
+      );
       const checkProvider = Effect.all(
         {
           snapshot: checkAntigravityProviderStatus(effectiveConfig, processEnv),
@@ -266,6 +288,7 @@ export const LegacyAntigravityDriver = {
                 ),
               ),
         adapter,
+        orchestrationAdapter,
         textGeneration,
         voiceTranscriptCorrection,
         connectionActions,

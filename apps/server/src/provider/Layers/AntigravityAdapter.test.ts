@@ -22,7 +22,11 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as AcpErrors from "effect-acp/errors";
-import type * as AcpSchema from "effect-acp/schema";
+import type * as AcpProtocol from "effect-acp/protocol";
+// SCIENT-FORK:START — legacy v1 vocabulary; see compat rationale in
+// `acp/DroidAcpSupport.ts`.
+import type * as AcpSchema from "effect-acp/compat";
+// SCIENT-FORK:END
 
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
@@ -57,6 +61,16 @@ interface NativePrompt {
 }
 
 type Runtime = Effect.Success<ReturnType<AntigravityAdapterOptions["makeRuntime"]>>;
+
+/**
+ * The request context every ACP handler now receives alongside its request.
+ * The adapter's own handlers read identity off the request, not the context,
+ * so a fixed value keeps these tests focused on request behaviour.
+ */
+const ACP_REQUEST_CONTEXT: AcpProtocol.AcpRequestContext = {
+  requestId: "test-request",
+  method: "session/request_permission",
+};
 
 function nativeToolUpdate(
   update: Extract<
@@ -99,11 +113,7 @@ const makeHarness = Effect.fn("makeAntigravityAdapterHarness")(function* (option
     read?: Parameters<Runtime["handleReadTextFile"]>[0];
     write?: Parameters<Runtime["handleWriteTextFile"]>[0];
   } = {};
-  let permissionHandler:
-    | ((
-        request: AcpSchema.RequestPermissionRequest,
-      ) => Effect.Effect<AcpSchema.RequestPermissionResponse, AcpErrors.AcpError>)
-    | undefined;
+  let permissionHandler: Parameters<Runtime["handleRequestPermission"]>[0] | undefined;
 
   const configOptions = (): ReadonlyArray<AcpSchema.SessionConfigOption> => [
     {
@@ -273,7 +283,7 @@ const makeHarness = Effect.fn("makeAntigravityAdapterHarness")(function* (option
   const invokePermission = (request: AcpSchema.RequestPermissionRequest) =>
     Effect.suspend(() =>
       permissionHandler
-        ? permissionHandler(request)
+        ? permissionHandler(request, ACP_REQUEST_CONTEXT)
         : Effect.die("Missing native permission handler"),
     );
   return {
@@ -305,140 +315,143 @@ const layer = ServerConfig.layerTest(process.cwd(), {
 }).pipe(Layer.provideMerge(NodeServices.layer));
 
 it.layer(layer)("AntigravityAdapter", (it) => {
-  it.effect(
-    "runs native auth, resume, scoped MCP, models, commands, and streaming through the ACP transport",
-    () =>
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const crypto = yield* Crypto.Crypto;
-        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const cwd = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "t3-antigravity-transport-",
-        });
-        const mockAgentPath = yield* path.fromFileUrl(
-          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-        );
-        const requestLog = path.join(cwd, "requests.ndjson");
-        const commands: string[] = [];
-        const modelSelections: string[] = [];
-        const observed: ProviderRuntimeEvent[] = [];
-        const completed = yield* Deferred.make<void>();
-        const mcp = {
-          environmentId: EnvironmentId.make("antigravity-transport-test"),
-          threadId,
-          providerSessionId: "antigravity-mcp-test",
-          providerInstanceId: instanceId,
-          endpoint: "http://127.0.0.1:12345/mcp",
-          authorizationHeader: "Bearer synthetic-first-session",
-          capabilities: new Set<never>(),
-        };
-        yield* Effect.acquireRelease(
-          Effect.sync(() => McpProviderSession.setMcpProviderSession(mcp)),
-          () => Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
-        );
-        const adapter = yield* makeAntigravityAdapter(decodeSettings({ enabled: true }), {
-          instanceId,
-          withProcess: (_stop, task) => task,
-          makeRuntime: (input) =>
-            makeAntigravityAcpRuntime({
-              ...input,
-              childProcessSpawner,
-              spawn: {
-                command: process.execPath,
-                args: [mockAgentPath],
-                cwd: input.cwd,
-                env: {
-                  ...process.env,
-                  T3_ACP_ANTIGRAVITY: "1",
-                  T3_ACP_REQUEST_LOG_PATH: requestLog,
-                },
-                extendEnv: false,
+  it.effect("runs auth, resume, scoped MCP, models, commands, and streaming through ACP v2", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const crypto = yield* Crypto.Crypto;
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-antigravity-transport-",
+      });
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const requestLog = path.join(cwd, "requests.ndjson");
+      const commands: string[] = [];
+      const modelSelections: string[] = [];
+      const observed: ProviderRuntimeEvent[] = [];
+      const completed = yield* Deferred.make<void>();
+      const mcp = {
+        environmentId: EnvironmentId.make("antigravity-transport-test"),
+        threadId,
+        providerSessionId: "antigravity-mcp-test",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:12345/mcp",
+        authorizationHeader: "Bearer synthetic-first-session",
+        capabilities: new Set<never>(),
+      };
+      yield* Effect.acquireRelease(
+        Effect.sync(() => McpProviderSession.setMcpProviderSession(mcp)),
+        () => Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+      );
+      const adapter = yield* makeAntigravityAdapter(decodeSettings({ enabled: true }), {
+        instanceId,
+        withProcess: (_stop, task) => task,
+        makeRuntime: (input) =>
+          makeAntigravityAcpRuntime({
+            ...input,
+            childProcessSpawner,
+            spawn: {
+              command: process.execPath,
+              args: [mockAgentPath],
+              cwd: input.cwd,
+              env: {
+                ...process.env,
+                T3_ACP_ANTIGRAVITY: "1",
+                T3_ACP_REQUEST_LOG_PATH: requestLog,
               },
-            }).pipe(Effect.provideService(Crypto.Crypto, crypto)),
-          onAvailableCommands: (available) =>
-            Effect.sync(() => {
-              commands.push(...available.map((command) => command.name));
+              extendEnv: false,
+            },
+          }).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+        onAvailableCommands: (available) =>
+          Effect.sync(() => {
+            commands.push(...available.map((command) => command.name));
+          }),
+        onConfigOptionsUpdated: (configOptions) =>
+          Effect.sync(() => {
+            const model = configOptions.find((option) => option.category === "model");
+            if (model?.type === "select") modelSelections.push(model.currentValue);
+          }),
+      });
+      yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) =>
+          Effect.gen(function* () {
+            observed.push(event);
+            if (event.type === "turn.completed") yield* Deferred.succeed(completed, undefined);
+          }),
+        ),
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      const original = yield* adapter.startSession({
+        threadId,
+        cwd,
+        runtimeMode: "auto-accept-edits",
+        modelSelection: { instanceId, model: nativeAlternative },
+      });
+      yield* adapter.stopSession(threadId);
+      McpProviderSession.setMcpProviderSession({
+        ...mcp,
+        authorizationHeader: "Bearer synthetic-resumed-session",
+      });
+      const resumed = yield* adapter.startSession({
+        threadId,
+        cwd,
+        runtimeMode: "auto-accept-edits",
+        modelSelection: { instanceId, model: nativeAlternative },
+        resumeCursor: original.resumeCursor,
+      });
+      expect(resumed.model).toBe(nativeAlternative);
+      yield* adapter.sendTurn({ threadId, input: "Reply with one short line." });
+      yield* Deferred.await(completed);
+      expect(commands).toEqual(["plan", "logout", "plan", "logout"]);
+      expect(modelSelections.length).toBeGreaterThan(0);
+      expect(modelSelections.every((model) => model === nativeAlternative)).toBe(true);
+      expect(
+        observed
+          .filter((event) => event.type === "content.delta")
+          .map((event) => event.payload.delta)
+          .join(""),
+      ).toBe("hello from mock");
+      const lines = (yield* fileSystem.readFileString(requestLog)).trim().split("\n");
+      const requests = yield* decodeRequestLog(lines);
+      expect(
+        requests
+          .filter((request) => request.method === "auth/login")
+          .map((request) => request.params),
+      ).toEqual([{ methodId: "oauth-personal" }, { methodId: "oauth-personal" }]);
+      expect(requests.some((request) => request.method === "session/resume")).toBe(true);
+      expect(requests.some((request) => request.method === "session/load")).toBe(false);
+      for (const [method, authorization] of [
+        ["session/new", "Bearer synthetic-first-session"],
+        ["session/resume", "Bearer synthetic-resumed-session"],
+      ]) {
+        expect(requests.filter((request) => request.method === method)).toEqual([
+          expect.objectContaining({
+            params: expect.objectContaining({
+              mcpServers: [
+                {
+                  type: "http",
+                  name: "t3-code",
+                  url: mcp.endpoint,
+                  headers: [{ name: "Authorization", value: authorization }],
+                },
+              ],
             }),
-          onConfigOptionsUpdated: (configOptions) =>
-            Effect.sync(() => {
-              const model = configOptions.find((option) => option.category === "model");
-              if (model?.type === "select") modelSelections.push(model.currentValue);
-            }),
-        });
-        yield* adapter.streamEvents.pipe(
-          Stream.runForEach((event) =>
-            Effect.gen(function* () {
-              observed.push(event);
-              if (event.type === "turn.completed") yield* Deferred.succeed(completed, undefined);
-            }),
-          ),
-          Effect.forkScoped({ startImmediately: true }),
-        );
-        const original = yield* adapter.startSession({
-          threadId,
-          cwd,
-          runtimeMode: "auto-accept-edits",
-          modelSelection: { instanceId, model: nativeAlternative },
-        });
-        yield* adapter.stopSession(threadId);
-        McpProviderSession.setMcpProviderSession({
-          ...mcp,
-          authorizationHeader: "Bearer synthetic-resumed-session",
-        });
-        const resumed = yield* adapter.startSession({
-          threadId,
-          cwd,
-          runtimeMode: "auto-accept-edits",
-          modelSelection: { instanceId, model: nativeAlternative },
-          resumeCursor: original.resumeCursor,
-        });
-        expect(resumed.model).toBe(nativeAlternative);
-        yield* adapter.sendTurn({ threadId, input: "Reply with one short line." });
-        yield* Deferred.await(completed);
-        expect(commands).toEqual(["plan", "logout", "plan", "logout"]);
-        expect(modelSelections.length).toBeGreaterThan(0);
-        expect(modelSelections.every((model) => model === nativeAlternative)).toBe(true);
-        expect(
-          observed
-            .filter((event) => event.type === "content.delta")
-            .map((event) => event.payload.delta)
-            .join(""),
-        ).toBe("hello from mock");
-        const lines = (yield* fileSystem.readFileString(requestLog)).trim().split("\n");
-        const requests = yield* decodeRequestLog(lines);
-        expect(
-          requests
-            .filter((request) => request.method === "authenticate")
-            .map((request) => request.params),
-        ).toEqual([{ methodId: "oauth-personal" }, { methodId: "oauth-personal" }]);
-        expect(requests.some((request) => request.method === "session/resume")).toBe(true);
-        expect(requests.some((request) => request.method === "session/load")).toBe(false);
-        for (const [method, authorization] of [
-          ["session/new", "Bearer synthetic-first-session"],
-          ["session/resume", "Bearer synthetic-resumed-session"],
-        ]) {
-          expect(requests.filter((request) => request.method === method)).toEqual([
-            expect.objectContaining({
-              params: expect.objectContaining({
-                mcpServers: [
-                  {
-                    type: "http",
-                    name: "t3-code",
-                    url: mcp.endpoint,
-                    headers: [{ name: "Authorization", value: authorization }],
-                  },
-                ],
-              }),
-            }),
-          ]);
-        }
-        expect(
-          requests
-            .filter((request) => request.method === "session/set_config_option")
-            .map((request) => request.params),
-        ).toContainEqual({ sessionId: "mock-session-1", configId: "mode", value: "auto_edit" });
-      }),
+          }),
+        ]);
+      }
+      expect(
+        requests
+          .filter((request) => request.method === "session/set_config_option")
+          .map((request) => request.params),
+      ).toContainEqual({
+        sessionId: "mock-session-1",
+        configId: "mode",
+        value: "auto_edit",
+        type: "id",
+      });
+    }),
   );
 
   it.effect("reapplies the exact saved model and mode after a native resume", () =>
@@ -1390,9 +1403,14 @@ it.layer(layer)("AntigravityAdapter", (it) => {
       yield* h.adapter.startSession({ threadId, cwd, runtimeMode: "approval-required" });
       expect(h.launches[0]?.clientFileSystem).toBe(true);
       expect(h.launches[0]?.additionalDirectories).toEqual([attachmentsDir]);
-      const read = h.fileHandlers.read;
-      const write = h.fileHandlers.write;
-      if (!read || !write) return yield* Effect.die("File handlers were not registered.");
+      const nativeRead = h.fileHandlers.read;
+      const nativeWrite = h.fileHandlers.write;
+      if (!nativeRead || !nativeWrite)
+        return yield* Effect.die("File handlers were not registered.");
+      const read = (request: Parameters<typeof nativeRead>[0]) =>
+        nativeRead(request, { requestId: "fs/read", method: "fs/read_text_file" });
+      const write = (request: Parameters<typeof nativeWrite>[0]) =>
+        nativeWrite(request, { requestId: "fs/write", method: "fs/write_text_file" });
 
       const full = yield* read({ sessionId: nativeSessionId, path: path.join(cwd, "notes.txt") });
       expect(full.content).toBe("one\ntwo\nthree\n");

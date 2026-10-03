@@ -1,13 +1,19 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { ChatAttachment, ModelSelection } from "@t3tools/contracts";
 import {
   OMP_DEFAULT_TEXT_GENERATION_MODEL,
   PI_DEFAULT_TEXT_GENERATION_MODEL,
   TextGenerationError,
 } from "@t3tools/contracts";
 import { resolveAutomaticModel } from "@t3tools/shared/model";
+
+import type {
+  BranchNamingOptions,
+  ChatAttachment,
+  ModelSelection,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
@@ -54,6 +60,7 @@ export interface PrContentGenerationResult {
 }
 
 export interface BranchNameGenerationInput {
+  naming?: BranchNamingOptions | undefined;
   cwd: string;
   message: string;
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
@@ -150,6 +157,7 @@ const resolveGeneration = Effect.fn("TextGeneration.resolveGeneration")(function
     return decoded && encodeAgentModelSlug(decoded.provider, decoded.modelId) === model.slug;
   });
   const model =
+    models.length > 0 &&
     instance.enabled &&
     snapshot.instanceId === instanceId &&
     snapshot.driver === instance.driverKind &&

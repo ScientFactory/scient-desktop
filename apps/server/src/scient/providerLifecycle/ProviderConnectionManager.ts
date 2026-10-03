@@ -22,6 +22,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import { ProviderSessionManagerV2 } from "../../orchestration-v2/ProviderSessionManager.ts";
 import type { ProviderConnectionAttempt } from "../../provider/ProviderDriver.ts";
 import { ProviderLifecycleCoordinator } from "./ProviderLifecycleCoordinator.ts";
 import { observeAnalyticsEffect } from "../../telemetry/OperationAnalytics.ts";
@@ -119,6 +120,7 @@ const makeError = (input: {
 
 export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
   const providerRegistry = yield* ProviderRegistry;
+  const providerSessions = yield* ProviderSessionManagerV2;
   const lifecycleCoordinator = yield* ProviderLifecycleCoordinator;
   const crypto = yield* Crypto.Crypto;
   const activeRef = yield* Ref.make<ReadonlyMap<ProviderInstanceId, ActiveConnection>>(new Map());
@@ -739,6 +741,18 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
     }
 
     return yield* Effect.gen(function* () {
+      // Native V2 sessions have their own scopes; closing the retained library
+      // adapter or refreshing the account snapshot cannot retire those scopes.
+      yield* providerSessions.closeInstance(input.instanceId).pipe(
+        Effect.mapError(() =>
+          makeError({
+            provider: target.provider,
+            instanceId: input.instanceId,
+            reason: "disconnect_failed",
+            message: "Could not stop live sessions before signing out of the provider.",
+          }),
+        ),
+      );
       const result = yield* actions.disconnect.pipe(
         Effect.scoped,
         Effect.result,

@@ -1,5 +1,5 @@
 import "../../index.css";
-import { EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, RunId, TurnId } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
 import { createRef } from "react";
 import { flushSync } from "react-dom";
@@ -22,7 +22,7 @@ function message(
   index: number,
   role: "user" | "assistant",
   text: string,
-  turn = `turn-${index}`,
+  run = `run-${index}`,
   createdAt = "2026-09-29T00:00:00.000Z",
   streaming = false,
 ) {
@@ -34,7 +34,7 @@ function message(
       id: MessageId.make(`message-${index}`),
       role,
       text,
-      turnId: TurnId.make(turn),
+      runId: RunId.make(run),
       createdAt,
       updatedAt: createdAt,
       streaming,
@@ -47,11 +47,15 @@ const history = (count: number) =>
 const base = {
   listRef,
   isWorking: false,
+  activeTurnInProgress: false,
   activeTurnStartedAt: null,
-  latestTurn: null,
-  runningTurnId: null,
+  latestRun: null,
+  runningRunId: null,
   turnDiffSummaries: [],
   onOpenTurnDiff: () => {},
+  onOpenThread: () => {},
+  onForkFromRun: () => Promise.resolve(),
+  onRollbackCheckpoint: () => {},
   supportsConversationRollback: false,
   onRevertToTurnCount: () => {},
   isRevertingCheckpoint: false,
@@ -61,8 +65,11 @@ const base = {
   resolvedTheme: "light" as const,
   timestampFormat: "locale" as const,
   workspaceRoot: undefined,
+  runs: [],
+  providerStatuses: [],
   anchorMessageId: null,
   onAnchorReady: () => {},
+  onAnchorSizeChanged: () => {},
   contentInsetEndAdjustment: COMPOSER_INSET,
   onIsAtEndChange: vi.fn(),
   onManualNavigation: () => {},
@@ -163,7 +170,7 @@ it("counts one unread per response, not one per progress note", async () => {
     render(key, timeline, {
       onUnreadBelowChange,
       isWorking: true,
-      runningTurnId: TurnId.make("turn-40"),
+      runningRunId: RunId.make("turn-40"),
     });
     await frames(3);
   }
@@ -285,7 +292,7 @@ it("reveals the latest message after very tall notes", async () => {
   // A running turn keeps its notes as rows; a settled one would fold them.
   const running = {
     isWorking: true,
-    runningTurnId: TurnId.make("turn-20"),
+    runningRunId: RunId.make("turn-20"),
     readingFollowPromptId: prompt.message.id,
   };
   render(key, [...entries, prompt], running);
@@ -317,7 +324,8 @@ it("waits for a history page still loading before giving up on the saved message
   rememberTimelinePosition(key, {
     rowId: saved.id,
     messageId: saved.message.id,
-    turnId: saved.message.turnId,
+    // The persisted field is still named `turnId`; the timeline is keyed on runs.
+    ...(saved.message.runId ? { turnId: saved.message.runId } : {}),
     offsetWithinRow: 0,
     scrollOffset: 5000,
     atEnd: false,
@@ -551,6 +559,7 @@ it("shows the end control while a running turn has new activity below the reader
     entry: {
       id: `tool-${i}`,
       createdAt: "2026-09-29T02:00:00.000Z",
+      runId: RunId.make("turn-40"),
       turnId: TurnId.make("turn-40"),
       label: `Run command ${i}`,
       tone: "tool" as const,
@@ -558,7 +567,7 @@ it("shows the end control while a running turn has new activity below the reader
       detail: `Command output ${i}`,
     },
   }));
-  const running = { isWorking: true, runningTurnId: TurnId.make("turn-40"), onIsAtEndChange };
+  const running = { isWorking: true, runningRunId: RunId.make("turn-40"), onIsAtEndChange };
   render(key, [...history(8), answer, prompt, ...tools], running);
   await expect.poll(() => readTimelinePosition(key)).toBeDefined();
   await listRef.current!.scrollToEnd({ animated: false });
@@ -579,15 +588,16 @@ it("shows the end control while a running turn has new activity below the reader
   expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(false);
 });
 
-function toolRows(turn: string, count: number) {
+function toolRows(run: string, count: number) {
   return Array.from({ length: count }, (_, i) => ({
-    id: `${turn}-tool-${i}`,
+    id: `${run}-tool-${i}`,
     kind: "work" as const,
     createdAt: "2026-09-29T02:00:00.000Z",
     entry: {
-      id: `${turn}-tool-${i}`,
+      id: `${run}-tool-${i}`,
       createdAt: "2026-09-29T02:00:00.000Z",
-      turnId: TurnId.make(turn),
+      runId: RunId.make(run),
+      turnId: TurnId.make(run),
       label: `Run command ${i}`,
       tone: "tool" as const,
       toolLifecycleStatus: "completed" as const,
@@ -612,7 +622,7 @@ it("keeps an interrupted turn's unseen activity below the reader counted", async
       entry: { ...row.entry, tone: "error" as const, detail: "Command failed" },
     })),
   ];
-  render(key, rows, { isWorking: true, runningTurnId: TurnId.make("turn-40"), onIsAtEndChange });
+  render(key, rows, { isWorking: true, runningRunId: RunId.make("turn-40"), onIsAtEndChange });
   await expect.poll(() => readTimelinePosition(key)).toBeDefined();
   await listRef.current!.scrollToEnd({ animated: false });
   await frames(6);
@@ -630,15 +640,15 @@ it("keeps an interrupted turn's unseen activity below the reader counted", async
   expect(isAtEndNow(true)).toBe(false);
   // The turn is stopped before it answers: its tool steps are still unseen.
   const interrupted = {
-    turnId: TurnId.make("turn-40"),
-    state: "interrupted" as const,
+    runId: RunId.make("turn-40"),
+    status: "interrupted" as const,
     startedAt: "2026-09-29T02:00:00.000Z",
     completedAt: "2026-09-29T02:01:00.000Z",
   };
   render(key, rows, {
     isWorking: false,
-    runningTurnId: null,
-    latestTurn: interrupted,
+    runningRunId: null,
+    latestRun: interrupted,
     onIsAtEndChange,
   });
   await frames(6);
@@ -659,7 +669,7 @@ it("judges a finished turn by its answer, and a busy thread without a running tu
     ...toolRows("turn-40-tail", 8),
   ];
   // Forking or reverting keeps the thread busy without a running turn.
-  render(key, rows, { isWorking: true, runningTurnId: null, onIsAtEndChange });
+  render(key, rows, { isWorking: true, runningRunId: null, onIsAtEndChange });
   await expect.poll(() => readTimelinePosition(key)).toBeDefined();
   await listRef.current!.scrollToEnd({ animated: false });
   await frames(6);

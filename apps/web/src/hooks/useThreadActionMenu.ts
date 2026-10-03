@@ -1,4 +1,6 @@
+// SCIENT-FORK:START answer completion timestamps drive the unread marker.
 import { completedAnswer } from "../scient/answerAttention/completion";
+// SCIENT-FORK:END
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
 import { scopeProjectRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
@@ -168,7 +170,7 @@ export function useThreadActionMenu(input: {
           isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
           canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
           isRegeneratingTitle,
-          isRunning: thread.session?.status === "running" && thread.session.activeTurnId != null,
+          isRunning: thread.runtime?.status === "running" && thread.runtime.activeRunId != null,
           supports,
           snoozePresets,
           // SCIENT-FORK:START
@@ -273,7 +275,10 @@ export function useThreadActionMenu(input: {
             );
             return;
           case "mark-unread":
+            // SCIENT-FORK:START the fork keys unread state by scoped key and stamps the
+            // latest completed answer so a completed-but-unread thread stays highlighted.
             markThreadUnread(scopedThreadKey(threadRef), completedAnswer(thread)?.completedAt);
+            // SCIENT-FORK:END
             return;
           case "copy-path": {
             const workspacePath = thread.worktreePath ?? projectCwd;

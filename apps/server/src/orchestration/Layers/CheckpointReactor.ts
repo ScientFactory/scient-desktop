@@ -36,9 +36,9 @@ import { CheckpointReactor, type CheckpointReactorShape } from "../Services/Chec
 import { forkParked } from "../../serverActivation.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
-import { RuntimeReceiptBus } from "../Services/RuntimeReceiptBus.ts";
+import { RuntimeReceiptBus } from "../../orchestration-v2/Services/RuntimeReceiptBus.ts";
 import type { CheckpointStoreError } from "../../checkpointing/Errors.ts";
-import type { OrchestrationDispatchError } from "../Errors.ts";
+import type { OrchestrationDispatchError } from "../../orchestration-v2/Errors.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import * as PullRequestService from "../../pullRequest/PullRequestService.ts";

@@ -72,7 +72,6 @@ it("offers an accessible inactive issue tab without adding routine Markdown indi
     sourcesAvailable: false,
     computeAvailable: false,
     deviceAvailable: false,
-    liveAgentCount: 0,
     children: <div>Editor</div>,
   };
   await act(() => root.render(<RightPanelTabs {...props} />));

@@ -1,5 +1,8 @@
 import * as Effect from "effect/Effect";
-import type * as EffectAcpSchema from "effect-acp/schema";
+// SCIENT-FORK:START — legacy v1 vocabulary; see compat rationale in
+// `acp/DroidAcpSupport.ts`.
+import type * as EffectAcpSchema from "effect-acp/compat";
+// SCIENT-FORK:END
 import { describe, expect, it } from "vite-plus/test";
 
 import { applyCursorAcpModelSelection, buildCursorAcpSpawnInput } from "./CursorAcpSupport.ts";

@@ -62,7 +62,10 @@ import {
   formatThreadTitleContext,
   type ThreadTitleMessage,
 } from "../../textGeneration/ThreadTitleContext.ts";
-import { canReplaceThreadTitle, DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
+import {
+  canReplaceThreadTitle,
+  DEFAULT_THREAD_TITLE,
+} from "../../orchestration-v2/threadTitles.ts";
 import {
   resolveSourceControlWriterModelSelection,
   ServerSettingsService,
@@ -76,8 +79,8 @@ import {
   type ForkDeliveryOutcome,
   type ForkTurnContext,
   type NativeForkPlan,
-} from "../scient-fork/ForkContextDelivery.ts";
-import { nativeThreadKey } from "../scient-fork/context/nativeThreadKey.ts";
+} from "../../orchestration-v2/scient-fork/ForkContextDelivery.ts";
+import { nativeThreadKey } from "../../orchestration-v2/scient-fork/context/nativeThreadKey.ts";
 import { classifyTurnDispatchFailure } from "../../provider/turnDispatchPhase.ts";
 import * as TerminalManager from "../../terminal/Manager.ts";
 const isProviderAdapterProcessError = Schema.is(ProviderAdapterProcessError);

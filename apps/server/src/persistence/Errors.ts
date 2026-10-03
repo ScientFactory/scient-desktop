@@ -70,8 +70,6 @@ export class PersistenceDecodeError extends Schema.TaggedError<PersistenceDecode
     return `Decode error in ${this.operation}: ${this.issue}`;
   }
 }
-const isPersistenceSqlError = Schema.is(PersistenceSqlError);
-const isPersistenceDecodeError = Schema.is(PersistenceDecodeError);
 
 /**
  * Read a SQLite condition through SQL error wrappers.
@@ -130,8 +128,14 @@ export function toPersistenceDecodeError(operation: string) {
     PersistenceDecodeError.fromSchemaError(operation, cause);
 }
 
+// SCIENT-FORK:START — the V1 projection snapshot query still tags a batch of
+// domain errors as persistence failures before surfacing them.
+const isPersistenceSqlError = Schema.is(PersistenceSqlError);
+const isPersistenceDecodeError = Schema.is(PersistenceDecodeError);
+
 export const isPersistenceError = (u: unknown) =>
   isPersistenceSqlError(u) || isPersistenceDecodeError(u);
+// SCIENT-FORK:END
 
 export type OrchestrationEventStoreError = PersistenceSqlError | PersistenceDecodeError;
 

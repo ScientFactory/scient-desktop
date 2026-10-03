@@ -69,12 +69,17 @@ it.effect.skipIf(!binary)(
         );
         const settings = decodePiSettings({ enabled: true, binaryPath: binary! });
         const env = { PATH: process.env.PATH, HOME: root, PI_CODING_AGENT_DIR: profile };
-        const workspace = yield* checkPiProviderStatus(settings, env, undefined, project);
+        // SCIENT-FORK:START — the old signature was
+        // `checkPiProviderStatus(settings, env, makeRpcClient, cwd)`; these call
+        // sites passed `undefined` for the client, so dropping the argument keeps
+        // the identical default behaviour against the current upstream signature.
+        const workspace = yield* checkPiProviderStatus(settings, env, project);
+        // SCIENT-FORK:END
         expect(workspace.skills.some((skill) => skill.name === "fixture")).toBe(true);
         expect(workspace.slashCommands.some((command) => command.name === "fixture-prompt")).toBe(
           true,
         );
-        const outside = yield* checkPiProviderStatus(settings, env, undefined, root);
+        const outside = yield* checkPiProviderStatus(settings, env, root);
         expect(outside.skills.some((skill) => skill.name === "fixture")).toBe(false);
         expect(yield* fs.exists(marker)).toBe(false);
       }),

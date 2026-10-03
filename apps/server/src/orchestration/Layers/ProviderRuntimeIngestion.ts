@@ -1,4 +1,4 @@
-import { writeForkLiveImages } from "../scient-fork/liveImages.ts";
+import { writeForkLiveImages } from "../../orchestration-v2/scient-fork/liveImages.ts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { finalizeQueueTurn } from "../../scient/threadQueue/Ledger.ts";
 import {
@@ -58,14 +58,14 @@ import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/
 import { ProjectionThreadProposedPlanRepository } from "../../persistence/Services/ProjectionThreadProposedPlans.ts";
 import { ProjectionThreadProposedPlanRepositoryLive } from "../../persistence/Layers/ProjectionThreadProposedPlans.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
-import { ThreadBackgroundLivenessService } from "../ThreadBackgroundLiveness.ts";
-import { ThreadPlanProgressService } from "../ThreadPlanProgress.ts";
+import { ThreadBackgroundLivenessService } from "../../orchestration-v2/ThreadBackgroundLiveness.ts";
+import { ThreadPlanProgressService } from "../../orchestration-v2/ThreadPlanProgress.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
   ProviderRuntimeIngestionService,
   type ProviderRuntimeIngestionShape,
 } from "../Services/ProviderRuntimeIngestion.ts";
-import { projectActivityPayload } from "../ActivityPayloadProjection.ts";
+import { projectActivityPayload } from "../../orchestration-v2/ActivityPayloadProjection.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ServerConfig } from "../../config.ts";
@@ -80,14 +80,17 @@ import {
   materializeGeneratedImageAttachment,
 } from "../../generatedImageAttachments.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { canReplaceThreadTitle } from "../threadTitles.ts";
+import { canReplaceThreadTitle } from "../../orchestration-v2/threadTitles.ts";
 // SCIENT-FORK: running-turn forks flush buffered text through ingestion.
-import { nativeThreadKey } from "../scient-fork/context/nativeThreadKey.ts";
-import { ScientLiveTurnFlush, ScientLiveTurnFlushError } from "../scient-fork/liveTurnFlush.ts";
+import { nativeThreadKey } from "../../orchestration-v2/scient-fork/context/nativeThreadKey.ts";
+import {
+  ScientLiveTurnFlush,
+  ScientLiveTurnFlushError,
+} from "../../orchestration-v2/scient-fork/liveTurnFlush.ts";
 import {
   canRenderProviderCitationMarkdown,
   renderProviderCitationMarkdown,
-} from "../providerCitationMarkdown.ts";
+} from "../../orchestration-v2/providerCitationMarkdown.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 // Suffixed, not prefixed: `clearTurnStateForSession` sweeps by thread prefix.
@@ -2551,7 +2554,7 @@ const make = Effect.gen(function* () {
         // event-store write and a fan-out per token would buy nothing. Traces
         // are longer than the answers they precede.
         const streamingMode = yield* resolveResponseStreamingMode(thread.projectId);
-        const reasoningMode = streamingMode === "token" ? "paragraph" : streamingMode;
+        const reasoningMode = streamingMode;
         const spillChunk = yield* appendBufferedAssistantText(
           reasoningMessageId,
           delta,
@@ -2597,33 +2600,21 @@ const make = Effect.gen(function* () {
         }
 
         const streamingMode = yield* resolveResponseStreamingMode(thread.projectId);
-        if (streamingMode !== "token") {
-          // Pace on the server clock. OpenCode stamps every delta of a part
-          // with the part's start time, so the event time cannot measure gaps.
-          const spillChunk = yield* appendBufferedAssistantText(
-            assistantMessageId,
-            assistantDelta,
-            streamingMode,
-            yield* Clock.currentTimeMillis,
-          );
-          if (spillChunk.length > 0) {
-            yield* orchestrationEngine.dispatch({
-              type: "thread.message.assistant.delta",
-              commandId: yield* providerCommandId(event, "assistant-delta-buffer-spill"),
-              threadId: thread.id,
-              messageId: assistantMessageId,
-              delta: spillChunk,
-              ...(turnId ? { turnId } : {}),
-              createdAt: now,
-            });
-          }
-        } else {
+        // Pace on the server clock. OpenCode stamps every delta of a part
+        // with the part's start time, so the event time cannot measure gaps.
+        const spillChunk = yield* appendBufferedAssistantText(
+          assistantMessageId,
+          assistantDelta,
+          streamingMode,
+          yield* Clock.currentTimeMillis,
+        );
+        if (spillChunk.length > 0) {
           yield* orchestrationEngine.dispatch({
             type: "thread.message.assistant.delta",
-            commandId: yield* providerCommandId(event, "assistant-delta"),
+            commandId: yield* providerCommandId(event, "assistant-delta-buffer-spill"),
             threadId: thread.id,
             messageId: assistantMessageId,
-            delta: assistantDelta,
+            delta: spillChunk,
             ...(turnId ? { turnId } : {}),
             createdAt: now,
           });
@@ -2641,20 +2632,16 @@ const make = Effect.gen(function* () {
           turnId: pauseForUserTurnId,
           streamingOnly: true,
         });
-        const streamingMode = yield* resolveResponseStreamingMode(thread.projectId);
-        const flushedMessageIds =
-          streamingMode !== "token"
-            ? yield* flushBufferedAssistantMessagesForTurn({
-                event,
-                threadId: thread.id,
-                turnId: pauseForUserTurnId,
-                createdAt: now,
-                commandTag:
-                  event.type === "request.opened"
-                    ? "assistant-delta-flush-on-request-opened"
-                    : "assistant-delta-flush-on-user-input-requested",
-              })
-            : new Set<MessageId>();
+        const flushedMessageIds = yield* flushBufferedAssistantMessagesForTurn({
+          event,
+          threadId: thread.id,
+          turnId: pauseForUserTurnId,
+          createdAt: now,
+          commandTag:
+            event.type === "request.opened"
+              ? "assistant-delta-flush-on-request-opened"
+              : "assistant-delta-flush-on-user-input-requested",
+        });
         yield* finalizeActiveSegmentForTurn({
           event,
           threadId: thread.id,

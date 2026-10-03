@@ -29,6 +29,7 @@ export const importLegacyQueue = Effect.fn("ScientQueue.importLegacy")(function*
             threadId,
             state: "waiting" as const,
             steerRequested: false,
+            sendRequested: false,
             editToken: undefined,
           })),
       ];
@@ -43,7 +44,12 @@ export const importLegacyQueue = Effect.fn("ScientQueue.importLegacy")(function*
           });
         yield* sql`INSERT OR IGNORE INTO scient_queue_receipts (queue_item_id, thread_id) VALUES (${item.queueItemId}, ${threadId})`;
       }
-      return yield* writeQueue(threadId, { ...source, migrated: true, items });
+      return yield* writeQueue(threadId, {
+        ...source,
+        migrated: true,
+        items,
+        ...(legacy.items.length > 0 ? { awaitingCompletion: true } : {}),
+      });
     }),
   );
 });

@@ -5,6 +5,10 @@
 A provider is the agent runtime that does the actual work. Scient supports several, and the
 orchestration layer does not know which one is behind a thread.
 
+Provider protocols, account ownership, permissions, and capabilities belong at the
+[adapter boundary](../../apps/server/src/orchestration-v2/ProviderAdapter.ts). Normalize there
+instead of spreading provider checks through reactors and clients.
+
 ## Built-in drivers
 
 [`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with nine entries:
@@ -107,6 +111,16 @@ For these requests, the decider saves the resolution and a user message in one t
 The standard turn path delivers the message, including session resume and active-turn input.
 It does not send a JSON-RPC response to Codex. Other providers and blocking Codex questions
 keep their existing response paths.
+
+Orchestration v2 persists the same requests as `user_input_request` turn items and runtime
+requests with `responseCapability: { type: "message" }`. Their execution nodes do not block the
+run, the normal question panels still answer them, and a request stays pending after a turn
+finishes, a provider exits, or the server restarts. `runtime-request.respond` reads the persisted
+request and question item, validates required answers, and commits the resolution and a user
+message in one transaction; repeating the command returns its receipt without posting the answer
+twice. The message path itself starts or resumes a run, queues behind active work, or steers when
+the adapter supports it. Do not infer that a request has disappeared merely because it is outside
+the recent history window.
 
 ## Registry and routing
 
@@ -498,6 +512,13 @@ qualified official Pi 0.85.1 archives.
   target currently qualified. `supportedRuntimeModes` restricts clients to explicit Full access;
   no native sandbox or approval enforcement is claimed.
 
+Orchestration v2 runs the user's own `pi` install in RPC mode and owns native extension, package,
+and project-trust discovery. Scient injects only its namespaced MCP bridge, so a Pi session behaves
+as it does in the Pi TUI. Pi session files back native resume, rollback, and same-instance thread
+forks. Forks use Pi's CLI in the destination directory because RPC session switching retains the
+source session's cwd. Provider switches still use portable handoff summaries. See the
+[adapter](../../apps/server/src/orchestration-v2/Adapters/PiAdapterV2.ts).
+
 The native adapter/test foundation was selectively adapted from the main-based
 [T3 Pi proposal #5688](https://github.com/pingdotgg/t3code/pull/5688), donor
 `f3eb5d0f6779059aa463ee5e7b54439f7eea4aa2`. It was not merged wholesale and is not inherited T3 main
@@ -765,6 +786,10 @@ The server stores uploaded attachments outside the project workspace. Scient's c
 images and generic files, while each provider decides whether to receive a native content block or
 a safe path reference according to its real capabilities.
 
+The [attachment boundary](../../apps/server/src/orchestration-v2/AttachmentClaims.ts) validates
+and claims uploads for a thread; adapters choose native input formats for those environment-local
+files.
+
 - Codex, Claude, Cursor, and Grok send images as native image inputs and skip generic files. For
   these providers, generic files reach the agent only as file paths in the turn text.
 - OpenCode sends PNG/JPEG/GIF/WebP images, text files, and PDFs up to 20 MB as native file parts
@@ -890,3 +915,18 @@ but are not enabled in Scient. Native Codex sign-in remains the active connectio
 Antigravity sign-out closes admission to new processes and stops existing processes before clearing account
 metadata. Otherwise a helper or resumed session could retain the old account. Cached model lists
 do not establish current access, and an authoritative empty catalog must clear the old list.
+
+## Provider diagnostics
+
+Native event logs retain lifecycle events, responses, and failures. Token deltas and duplicate raw
+frames are filtered before adapters copy or redact payloads. The filter accepts both legacy native
+events and v2 protocol envelopes; decode failures remain visible through diagnostic frames.
+
+Log payloads have a 64 KiB encoded budget. Large or deeply nested payloads become structural
+summaries that retain routing identifiers, methods, status, and error fields. Traversal is bounded
+before redaction and serialization, so logging a large response does not require several full
+copies. These limits apply to diagnostics; provider event handling is unchanged.
+
+Codex resumes with metadata-only reads when it needs a thread's identity and update time. Its
+initialization capabilities opt out of `turn/diff/updated`: Scient derives diffs from checkpoints.
+The logger filters those notifications before traversal when an older provider still sends them.

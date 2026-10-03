@@ -20,8 +20,12 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type * as EffectAcpErrors from "effect-acp/errors";
 import { AcpProcessExitedError, AcpRequestError } from "effect-acp/errors";
-import type * as EffectAcpSchema from "effect-acp/schema";
-import type { SessionConfigOption } from "effect-acp/schema";
+// SCIENT-FORK:START — legacy v1 vocabulary; see compat rationale in
+// `acp/DroidAcpSupport.ts`. Upstream moved the pre-v2 hand-written ACP module
+// from `effect-acp/schema` to `effect-acp/compat`.
+import type * as EffectAcpSchema from "effect-acp/compat";
+import type { SessionConfigOption } from "effect-acp/compat";
+// SCIENT-FORK:END
 
 import { droidCanUseKey, type ResolvedModelConnection } from "../../customModels.ts";
 import { assessModelConnections } from "../../customModelReadiness.ts";

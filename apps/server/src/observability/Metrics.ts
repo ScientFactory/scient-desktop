@@ -19,6 +19,8 @@ export const rpcRequestDuration = Metric.timer("t3_rpc_request_duration", {
   description: "RPC request handling duration.",
 });
 
+// SCIENT-FORK:START — the fork keeps the V1 orchestration engine and its reactors
+// live alongside V2, so the V1 command and event metrics stay on the module.
 export const orchestrationCommandsTotal = Metric.counter("t3_orchestration_commands_total", {
   description: "Total orchestration commands dispatched.",
 });
@@ -41,20 +43,33 @@ export const orchestrationEventsProcessedTotal = Metric.counter(
     description: "Total orchestration intent events processed by runtime reactors.",
   },
 );
+// SCIENT-FORK:END
 
-export const providerSessionsTotal = Metric.counter("t3_provider_sessions_total", {
+export const orchestrationEffectClaimsTotal = Metric.counter(
+  "t3_orchestration_effect_claims_total",
+  {
+    description: "Total completed orchestration effect outbox claim attempts by result.",
+  },
+);
+
+export const orchestrationEffectQueueWait = Metric.timer("t3_orchestration_effect_queue_wait", {
+  description:
+    "Time from an orchestration effect's temporal availability until claim, including same-thread blocking.",
+});
+
+const providerSessionsTotal = Metric.counter("t3_provider_sessions_total", {
   description: "Total provider session lifecycle operations.",
 });
 
-export const providerTurnsTotal = Metric.counter("t3_provider_turns_total", {
+const providerTurnsTotal = Metric.counter("t3_provider_turns_total", {
   description: "Total provider turn lifecycle operations.",
 });
 
-export const providerTurnDuration = Metric.timer("t3_provider_turn_duration", {
+const providerTurnDuration = Metric.timer("t3_provider_turn_duration", {
   description: "Provider turn request duration.",
 });
 
-export const providerRuntimeEventsTotal = Metric.counter("t3_provider_runtime_events_total", {
+const providerRuntimeEventsTotal = Metric.counter("t3_provider_runtime_events_total", {
   description: "Total canonical provider runtime events processed.",
 });
 
@@ -143,16 +158,13 @@ export const withMetrics: {
   <A, E, R>(effect: Effect.Effect<A, E, R>, options: WithMetricsOptions): Effect.Effect<A, E, R>;
 } = dual(2, withMetricsImpl);
 
-export const providerMetricAttributes = (
-  provider: string,
-  extra?: Readonly<Record<string, unknown>>,
-) =>
+const providerMetricAttributes = (provider: string, extra?: Readonly<Record<string, unknown>>) =>
   compactMetricAttributes({
     provider,
     ...extra,
   });
 
-export const providerTurnMetricAttributes = (input: {
+const providerTurnMetricAttributes = (input: {
   readonly provider: string;
   readonly model: string | null | undefined;
   readonly extra?: Readonly<Record<string, unknown>>;

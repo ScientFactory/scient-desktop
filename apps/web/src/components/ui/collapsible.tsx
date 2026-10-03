@@ -20,16 +20,28 @@ function CollapsibleTrigger({ className, ...props }: CollapsiblePrimitive.Trigge
 
 function CollapsiblePanel({
   className,
+  // SCIENT-FORK:START `motion` shortens the disclosure travel for surfaces that
+  // toggle constantly (file lists, settings sub-nav). Upstream independently
+  // added `animate` to drop the height transition outright; both knobs have
+  // live callers, so the panel keeps both.
   motion = "default",
+  animate = true,
   ...props
-}: CollapsiblePrimitive.Panel.Props & { motion?: "default" | "fast" }) {
+}: CollapsiblePrimitive.Panel.Props & {
+  motion?: "default" | "fast";
+  animate?: boolean;
+}) {
+  // SCIENT-FORK:END
   // Reuses the local shadcn/Base UI panel; skip height travel for reduced motion.
   // https://ui.shadcn.com/docs/components/base/collapsible
   return (
     <CollapsiblePrimitive.Panel
       className={cn(
-        "h-(--collapsible-panel-height) overflow-hidden transition-[height] motion-reduce:transition-none data-ending-style:h-0 data-starting-style:h-0 data-open:data-ending-style:[height:var(--collapsible-panel-height)]",
-        motion === "fast" ? "duration-150 ease-out" : "duration-200",
+        "overflow-hidden",
+        animate && [
+          "h-(--collapsible-panel-height) transition-[height] motion-reduce:transition-none data-ending-style:h-0 data-starting-style:h-0 data-open:data-ending-style:[height:var(--collapsible-panel-height)]",
+          motion === "fast" ? "duration-150 ease-out" : "duration-200",
+        ],
         className,
       )}
       data-slot="collapsible-panel"

@@ -191,6 +191,9 @@ const makeHarness = Effect.fn("ProviderRegistryTransientState.makeHarness")(func
       streamChanges: Stream.fromPubSub(sourceChanges),
     },
     adapter: {} as ProviderInstance["adapter"],
+    get orchestrationAdapter(): never {
+      throw new Error("Snapshot projection must not start an orchestration adapter.");
+    },
     textGeneration: {} as ProviderInstance["textGeneration"],
   });
 

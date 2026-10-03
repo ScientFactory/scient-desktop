@@ -1,7 +1,9 @@
 /**
- * A real orchestration engine on in-memory SQLite, with the conversation
+ * Retained V1 protocol fixtures on SQLite, with the conversation
  * importer and the context-delivery service, for importer and scenario tests.
- * Providers and project clones are controlled by the test.
+ * Providers and project clones are controlled by the test. This consumer
+ * qualifies journal/publication recovery only; native V2 commit and lifecycle
+ * behavior are exercised in ConversationImportCommit.test.ts.
  */
 import {
   CommandId,
@@ -18,10 +20,10 @@ import { ServerConfig } from "../../config.ts";
 import { OrchestrationEngineLive } from "../../orchestration/Layers/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "../../orchestration/Layers/ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "../../orchestration/Layers/ProjectionSnapshotQuery.ts";
-import { ScientForkContextDeliveryLive } from "../../orchestration/scient-fork/ForkContextDelivery.ts";
+import { ScientForkContextDeliveryLive } from "../../orchestration-v2/scient-fork/ForkContextDelivery.ts";
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
-import * as ThreadBackgroundLiveness from "../../orchestration/ThreadBackgroundLiveness.ts";
-import * as ThreadPlanProgress from "../../orchestration/ThreadPlanProgress.ts";
+import * as ThreadBackgroundLiveness from "../../orchestration-v2/ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "../../orchestration-v2/ThreadPlanProgress.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import * as SqlitePersistence from "../../persistence/Layers/Sqlite.ts";
@@ -29,6 +31,8 @@ import { ProjectCloneTracker } from "../../project/ProjectCloneTracker.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
+import * as ImportCommit from "./ConversationImportCommit.ts";
 import * as ConversationImporterLive from "./ConversationImporterLive.ts";
 import { OTHER_PROJECT_ID, PROJECT_ID, PROVIDER_ID } from "./conversationImport.test-fixtures.ts";
 
@@ -57,6 +61,7 @@ const orchestrationLayer = (persistence: "memory" | "file") =>
     ),
     OrchestrationProjectionSnapshotQueryLive,
     ScientForkContextDeliveryLive,
+    ProjectStore.layer,
   ).pipe(
     Layer.provide(ServerSettingsService.layerTest()),
     Layer.provideMerge(ThreadBackgroundLiveness.layer),
@@ -75,24 +80,29 @@ const orchestrationLayer = (persistence: "memory" | "file") =>
 
 export function importTestLayer(controls: ImportTestControls = {}) {
   const providers = controls.providers ?? new Map([[PROVIDER_ID, true]]);
-  const importerEngine = Layer.effect(
-    OrchestrationEngineService,
+  const protocolCommit = Layer.effect(
+    ImportCommit.ConversationImportCommit,
     Effect.gen(function* () {
       const engine = yield* OrchestrationEngineService;
-      return {
-        ...engine,
-        dispatch: (command, options) =>
+      return ImportCommit.ConversationImportCommit.of({
+        dispatch: (command) =>
           (controls.beforeDispatch?.(command) ?? Effect.void).pipe(
             Effect.provideService(OrchestrationEngineService, engine),
-            Effect.andThen(
-              controls.dispatch?.(command, engine) ?? engine.dispatch(command, options),
+            Effect.andThen(controls.dispatch?.(command, engine) ?? engine.dispatch(command)),
+            Effect.asVoid,
+            Effect.mapError(
+              (cause) =>
+                new ImportCommit.ConversationImportCommitError({
+                  message: cause.message,
+                  cause,
+                }),
             ),
           ),
-      } satisfies OrchestrationEngineService["Service"];
+      });
     }),
   );
   const importer = ConversationImporterLive.layer.pipe(
-    Layer.provide(importerEngine),
+    Layer.provide(protocolCommit),
     Layer.provide(
       Layer.mock(ProviderRegistry, {
         getProviders: Effect.succeed(

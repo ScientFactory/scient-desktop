@@ -14,7 +14,7 @@ import * as Stream from "effect/Stream";
 import { makeOmpRpcClient } from "effect-omp-rpc/client";
 
 import { liveActivityToolStatus } from "../../../../../packages/client-runtime/src/work-log/presentation.ts";
-import { projectActivityPayload } from "../../orchestration/ActivityPayloadProjection.ts";
+import { projectActivityPayload } from "../../orchestration-v2/ActivityPayloadProjection.ts";
 import { runtimeEventToActivities } from "../../orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { makeOmpScriptedWire } from "../omp/OmpCaptureReplay.testFixtures.ts";
 import { makeOmpAdapter } from "./OmpAdapter.ts";

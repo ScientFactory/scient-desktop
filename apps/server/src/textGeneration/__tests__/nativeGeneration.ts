@@ -59,6 +59,13 @@ export const makeNativeTextGeneration = (
       }),
     },
     adapter: {} as ProviderInstance["adapter"],
+    orchestrationAdapter: {
+      instanceId,
+      driver: ProviderDriverKind.make(driver),
+      getCapabilities: () => Effect.die("Metadata generation must not use orchestration"),
+      planSelectionTransition: () => Effect.die("Metadata generation must not switch sessions"),
+      openSession: () => Effect.die("Metadata generation must not open an agent session"),
+    },
     textGeneration,
   };
   return TextGeneration.make.pipe(

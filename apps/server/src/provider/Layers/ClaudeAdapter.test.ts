@@ -52,7 +52,9 @@ import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../
 import { buildScientAwareness } from "../ScientAwareness.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import { CLAUDE_SCIENT_TOOL_PROJECTION } from "../ScientToolProjection.ts";
+// SCIENT-FORK:START — merge self-import; see `Layers/ClaudeAdapter.ts`.
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
+// SCIENT-FORK:END
 import type { ClaudeScopedLimitNames } from "./claudeUsageLimits.ts";
 import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);

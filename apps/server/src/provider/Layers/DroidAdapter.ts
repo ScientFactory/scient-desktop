@@ -60,7 +60,16 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
-import * as EffectAcpSchema from "effect-acp/schema";
+// SCIENT-FORK:START — legacy v1 adapter vocabulary; see compat rationale in
+// `acp/DroidAcpSupport.ts`.
+import * as EffectAcpSchema from "effect-acp/compat";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — `effect-acp/compat` exports `ElicitationContentValue` as a
+// TYPE only, but `Schema.Record` below needs the real v2 Schema VALUE; reading it
+// off the compat namespace throws at module init. compat's alias is a direct
+// alias of the v2 type, so decoding with the v2 Schema yields the identical type.
+import { ElicitationContentValue as ElicitationContentValueSchema } from "effect-acp/schema";
+// SCIENT-FORK:END
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
@@ -82,7 +91,11 @@ import {
   makeAcpRequestResolvedEvent,
   makeAcpToolCallEvent,
 } from "../acp/AcpCoreRuntimeEvents.ts";
-import { parsePermissionRequest, type AcpToolCallState } from "../acp/AcpRuntimeModel.ts";
+import {
+  type AcpPlanUpdate,
+  parsePermissionRequest,
+  type AcpToolCallState,
+} from "../acp/AcpRuntimeModel.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import {
   applyDroidModelAndEffort,
@@ -212,7 +225,7 @@ function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
 }
 
 const decodeDroidElicitationAnswers = Schema.decodeUnknownEffect(
-  Schema.Record(Schema.String, EffectAcpSchema.ElicitationContentValue),
+  Schema.Record(Schema.String, ElicitationContentValueSchema),
 );
 
 export interface DroidAdapterLiveOptions {
@@ -429,25 +442,64 @@ function selectAutoApprovedPermissionOption(
   );
 }
 
-function extractElicitationQuestions(request: EffectAcpSchema.ElicitationRequest): ReadonlyArray<{
+/** The form-mode arm of the ACP elicitation request, minus the open-ended
+ * `mode: string` members ACP v2 admits for agents that send their own. */
+type DroidElicitationFormRequest = Extract<
+  EffectAcpSchema.CreateElicitationRequest,
+  { readonly mode: "form" }
+>;
+type DroidElicitationProperty = NonNullable<
+  DroidElicitationFormRequest["requestedSchema"]["properties"]
+>[string];
+type DroidElicitationStringProperty = Extract<
+  DroidElicitationProperty,
+  { readonly type: "string" }
+>;
+
+function isDroidElicitationFormRequest(
+  request: EffectAcpSchema.CreateElicitationRequest,
+): request is DroidElicitationFormRequest {
+  if (request.mode !== "form") return false;
+  const { requestedSchema } = request;
+  return typeof requestedSchema === "object" && requestedSchema !== null;
+}
+
+function isDroidElicitationStringProperty(
+  property: DroidElicitationProperty,
+): property is DroidElicitationStringProperty {
+  return property.type === "string";
+}
+
+function extractElicitationQuestions(
+  request: EffectAcpSchema.CreateElicitationRequest,
+): ReadonlyArray<{
   readonly id: string;
   readonly header: string;
   readonly question: string;
   readonly options: ReadonlyArray<{ readonly label: string; readonly description: string }>;
 }> {
-  if (request.mode === "form" && request.requestedSchema?.properties) {
-    const entries = Object.entries(request.requestedSchema.properties);
+  const properties = isDroidElicitationFormRequest(request)
+    ? request.requestedSchema.properties
+    : undefined;
+  if (properties) {
+    const entries = Object.entries(properties);
     if (entries.length > 0) {
       return entries.map(([key, prop]) => {
-        const title = prop.title?.trim() || key;
-        const description = prop.description?.trim() || request.message?.trim() || title;
-        const options =
-          prop.type === "string" && Array.isArray(prop.oneOf)
+        // ACP v2 admits an open-ended property (`{ type: string }` plus any JSON),
+        // so a non-string title/description is treated as absent.
+        const title = (typeof prop.title === "string" ? prop.title.trim() : "") || key;
+        const description =
+          (typeof prop.description === "string" ? prop.description.trim() : "") ||
+          request.message?.trim() ||
+          title;
+        const options = !isDroidElicitationStringProperty(prop)
+          ? []
+          : Array.isArray(prop.oneOf)
             ? prop.oneOf.map((option) => ({
                 label: option.const,
                 description: option.title,
               }))
-            : prop.type === "string" && Array.isArray(prop.enum)
+            : Array.isArray(prop.enum)
               ? prop.enum.map((option) => ({ label: option, description: option }))
               : [];
         return {
@@ -706,13 +758,7 @@ export function makeDroidAdapter(droidSettings: DroidSettings, options?: DroidAd
       ctx: DroidSessionContext,
       turnId: TurnId | undefined,
       stamp: { readonly eventId: EventId; readonly createdAt: string },
-      payload: {
-        readonly explanation?: string | null;
-        readonly plan: ReadonlyArray<{
-          readonly step: string;
-          readonly status: "pending" | "inProgress" | "completed";
-        }>;
-      },
+      payload: AcpPlanUpdate,
       rawPayload: unknown,
       method: string,
     ) =>
@@ -1329,14 +1375,14 @@ export function makeDroidAdapter(droidSettings: DroidSettings, options?: DroidAd
                   });
                   const hasAnswers = Object.keys(resolvedAnswers).length > 0;
                   if (!hasAnswers) {
-                    return { action: { action: "cancel" as const } };
+                    return { action: "cancel" as const };
                   }
                   const content = yield* decodeDroidElicitationAnswers(resolvedAnswers);
+                  // The v1 `session/elicitation` envelope is added by the client
+                  // from this flat action; the handler returns the action itself.
                   return {
-                    action: {
-                      action: "accept" as const,
-                      content,
-                    },
+                    action: "accept" as const,
+                    content,
                   };
                 }),
               ),

@@ -44,7 +44,7 @@ export const makeCursorManagedRuntimeResolution = Effect.fn("CursorManagedRuntim
     const targetLabel = target ? managedRuntimeTargetKey(target) : `${platform}-${arch}`;
 
     return yield* makeManagedProviderRuntimeResolution({
-      configuredBinaryPath: input.settings.binaryPath,
+      configuredBinaryPath: input.settings.binaryPath ?? "",
       defaultBinary: DEFAULT_CURSOR_BINARY,
       providerName: "Cursor",
       providerSlug: "cursor",

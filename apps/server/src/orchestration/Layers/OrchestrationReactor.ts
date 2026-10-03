@@ -8,14 +8,14 @@ import {
 } from "../Services/OrchestrationReactor.ts";
 import { CheckpointReactor } from "../Services/CheckpointReactor.ts";
 // SCIENT-FORK:START
-import { ScientForkReactor } from "../Services/ScientForkReactor.ts";
+import { ScientForkReactor } from "../../orchestration-v2/Services/ScientForkReactor.ts";
 // SCIENT-FORK:END
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
-import { ThreadDeletionReactor } from "../Services/ThreadDeletionReactor.ts";
+import { ThreadDeletionReactor } from "../../orchestration-v2/Services/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "../ThreadSettlementReactor.ts";
-import * as PullRequestSyncReactor from "../PullRequestSyncReactor.ts";
-import * as ThreadPullRequestReactor from "../ThreadPullRequestReactor.ts";
+import * as PullRequestSyncReactor from "../../orchestration-v2/PullRequestSyncReactor.ts";
+import * as ThreadPullRequestReactor from "../../orchestration-v2/ThreadPullRequestReactor.ts";
 import * as AgentAwarenessRelay from "../../relay/AgentAwarenessRelay.ts";
 import * as StorageCleanup from "../../storageCleanup.ts";
 

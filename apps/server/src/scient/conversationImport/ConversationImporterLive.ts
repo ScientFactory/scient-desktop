@@ -12,7 +12,7 @@
  *    file and rename, in staging's `copyAttachment`), before the history that
  *    references it commits.
  * 3. **Commit once.** Dispatch the command with the journal's command id. Its
- *    events, and the `import` context transfer projected from them, commit in
+ *    native history events commit in
  *    one transaction with the command receipt. From the dispatch on, nothing
  *    is interruptible.
  *
@@ -38,8 +38,7 @@ import * as Semaphore from "effect/Semaphore";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
-import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProjectStoreV2 } from "../../orchestration-v2/ProjectStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
 import { ProjectCloneTracker } from "../../project/ProjectCloneTracker.ts";
@@ -66,6 +65,7 @@ import {
   mintConversationImportIds,
   plannedAttachments,
 } from "./conversationImportPlan.ts";
+import * as ConversationImportCommit from "./ConversationImportCommit.ts";
 
 type Receipt =
   | { readonly _tag: "accepted"; readonly acceptedAt: string }
@@ -95,9 +95,9 @@ function completionOf(
 }
 
 const make = Effect.gen(function* () {
-  const engine = yield* OrchestrationEngineService;
+  const engine = yield* ConversationImportCommit.ConversationImportCommit;
   const receipts = yield* OrchestrationCommandReceiptRepository;
-  const snapshots = yield* ProjectionSnapshotQuery;
+  const projects = yield* ProjectStoreV2;
   const providers = yield* ProviderRegistry;
   const clones = yield* ProjectCloneTracker;
   const config = yield* ServerConfig.ServerConfig;
@@ -171,8 +171,8 @@ const make = Effect.gen(function* () {
       );
     }
     const { projectId, modelSelection } = request.destination;
-    const project = yield* snapshots
-      .getProjectShellById(projectId)
+    const project = yield* projects
+      .get(projectId)
       .pipe(
         Effect.mapError(() =>
           importerError("import-failed", "The destination project could not be read."),

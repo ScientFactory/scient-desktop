@@ -25,12 +25,12 @@ import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
-import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
-import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
+import * as ThreadBackgroundLiveness from "../../orchestration-v2/ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "../../orchestration-v2/ThreadPlanProgress.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
-import { encodeThreadDetailPageCursor } from "../threadDetailCursor.ts";
-import { projectThreadDetailSnapshot } from "../ActivityPayloadProjection.ts";
-import { readSweepSnapshot } from "../ThreadPullRequestReactor.ts";
+import { encodeThreadDetailPageCursor } from "../../orchestration-v2/threadDetailCursor.ts";
+import { projectThreadDetailSnapshot } from "../../orchestration-v2/ActivityPayloadProjection.ts";
+import { readSweepSnapshot } from "../../orchestration-v2/ThreadPullRequestReactor.ts";
 import { makeSqlStatementCounter } from "../../../integration/SqlStatementCounter.integration.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);

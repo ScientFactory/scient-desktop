@@ -19,7 +19,7 @@ import {
   OrchestrationConversationImportNotice,
   OrchestrationConversationImportOmission,
   OrchestrationConversationImportSource,
-} from "./orchestration.ts";
+} from "./scientConversationOrigin.ts";
 
 /**
  * Conversation export contracts: the versioned conversation snapshot, the

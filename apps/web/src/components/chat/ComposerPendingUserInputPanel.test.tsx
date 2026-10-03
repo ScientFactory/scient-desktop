@@ -1,12 +1,15 @@
-import { ApprovalRequestId } from "@t3tools/contracts";
+import { RuntimeRequestId } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
-import type { PendingUserInput } from "../../session-logic";
+import {
+  ComposerPendingUserInputPanel,
+  type ComposerPendingUserInput,
+} from "./ComposerPendingUserInputPanel";
 
-const prompt: PendingUserInput = {
-  requestId: ApprovalRequestId.make("request-1"),
+const prompt: ComposerPendingUserInput = {
+  requestId: RuntimeRequestId.make("request-1"),
+  responseCapability: "live" as const,
   createdAt: "2026-08-15T00:00:00.000Z",
   questions: [
     {
@@ -23,7 +26,7 @@ const prompt: PendingUserInput = {
   dismissible: true,
 };
 
-function renderPanel(pendingUserInput: PendingUserInput = prompt) {
+function renderPanel(pendingUserInput: ComposerPendingUserInput = prompt) {
   return renderToStaticMarkup(
     <ComposerPendingUserInputPanel
       pendingUserInputs={[pendingUserInput]}

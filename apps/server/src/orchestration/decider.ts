@@ -34,7 +34,7 @@ import {
   OrchestrationCommandInvariantError,
   OrchestrationThreadSettleBlockedError,
   type OrchestrationCommandRejection,
-} from "./Errors.ts";
+} from "../orchestration-v2/Errors.ts";
 import {
   listThreadsByProjectId,
   requireActiveProjectWorkspaceRootAbsent,
@@ -44,14 +44,14 @@ import {
   requireThreadArchived,
   requireThreadAbsent,
   requireThreadNotArchived,
-} from "./commandInvariants.ts";
+} from "../orchestration-v2/commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
 // SCIENT-FORK:START — delegate the Scient-owned thread.fork command out of T3.
-import type { ResolvedForkBoundaries } from "./scient-fork/forkBoundaryTypes.ts";
-import { decideForkComplete, forkThread } from "./scient-fork/forkDecider.ts";
-import { decideConversationImport } from "./scient-fork/conversationImportDecider.ts";
+import type { ResolvedForkBoundaries } from "../orchestration-v2/scient-fork/forkBoundaryTypes.ts";
+import { decideForkComplete, forkThread } from "../orchestration-v2/scient-fork/forkDecider.ts";
+import { decideConversationImport } from "../orchestration-v2/scient-fork/conversationImportDecider.ts";
 // SCIENT-FORK:END
-import { threadHasQueuedTurnStart } from "./ThreadSettlementPolicy.ts";
+import { threadHasQueuedTurnStart } from "../orchestration-v2/ThreadSettlementPolicy.ts";
 
 const monogramSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 

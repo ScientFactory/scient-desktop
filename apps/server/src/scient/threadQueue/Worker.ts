@@ -1,6 +1,6 @@
 import { importLegacyQueue } from "./migration.ts";
 import { discoverLegacyQueueThreads } from "./Store.ts";
-import { isOrchestrationCommandRejection } from "../../orchestration/Errors.ts";
+import { isOrchestrationCommandRejection } from "../../orchestration-v2/Errors.ts";
 import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";

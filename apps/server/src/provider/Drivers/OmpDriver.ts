@@ -21,6 +21,9 @@ import { BackgroundPolicy } from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeOmpManagedRuntimeResolution } from "../../scient/providerLifecycle/OmpManagedRuntimeActions.ts";
+import { makeOmpAdapterV2 } from "../../orchestration-v2/Adapters/OmpAdapterV2.ts";
+import { IdAllocatorV2 } from "../../orchestration-v2/IdAllocator.ts";
+import { ProviderContinuationRequests } from "../../orchestration-v2/ProviderContinuationRequests.ts";
 import { makeOmpCustomModelsClientFactory } from "../omp/OmpCustomModels.ts";
 import { sweepStaleOmpExtensionFiles } from "../omp/OmpExtensionBootstrap.ts";
 import type { OmpExecutableGate } from "../omp/OmpExecutableGate.ts";
@@ -58,6 +61,7 @@ export type OmpDriverEnv =
   | Crypto.Crypto
   | FileSystem.FileSystem
   | HttpClient.HttpClient
+  | IdAllocatorV2
   | OmpExecutableGate
   | Path.Path
   | ProviderEventLoggers
@@ -168,6 +172,19 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
       );
+      const orchestrationAdapter = makeOmpAdapterV2({
+        instanceId,
+        settings: launchConfig,
+        environment: processEnv,
+        spawner,
+        fileSystem: fs,
+        path,
+        crypto: yield* Crypto.Crypto,
+        serverConfig,
+        makeProcess: makeRpcClient,
+        idAllocator: yield* IdAllocatorV2,
+        continuations: yield* ProviderContinuationRequests,
+      });
       const textGeneration = yield* makeOmpTextGeneration(
         launchConfig,
         processEnv,
@@ -280,6 +297,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
             Effect.map(stamp),
           ),
         adapter,
+        orchestrationAdapter,
         textGeneration,
         managedRuntimeActions: managedRuntime.actions,
       } satisfies ProviderInstance;

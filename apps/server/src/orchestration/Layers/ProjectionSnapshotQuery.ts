@@ -1,4 +1,4 @@
-import { readHistoryPage } from "../scient-fork/historyRead.ts";
+import { readHistoryPage } from "../../orchestration-v2/scient-fork/historyRead.ts";
 import { ScientCompletedAnswer } from "@t3tools/contracts";
 import { completedAnswerSql } from "../../scient/answerAttention/completedAnswerSql.ts";
 import {
@@ -56,8 +56,8 @@ import {
   toPersistenceSqlError,
   type ProjectionRepositoryError,
 } from "../../persistence/Errors.ts";
-import { ThreadBackgroundLivenessService } from "../ThreadBackgroundLiveness.ts";
-import { ThreadPlanProgressService } from "../ThreadPlanProgress.ts";
+import { ThreadBackgroundLivenessService } from "../../orchestration-v2/ThreadBackgroundLiveness.ts";
+import { ThreadPlanProgressService } from "../../orchestration-v2/ThreadPlanProgress.ts";
 import { ProjectionProject } from "../../persistence/Services/ProjectionProjects.ts";
 import { ProjectionState } from "../../persistence/Services/ProjectionState.ts";
 import { ProjectionThreadActivity } from "../../persistence/Services/ProjectionThreadActivities.ts";
@@ -69,14 +69,14 @@ import { ProjectionThread } from "../../persistence/Services/ProjectionThreads.t
 import {
   decodeThreadDetailPageCursor,
   encodeThreadDetailPageCursor,
-} from "../threadDetailCursor.ts";
+} from "../../orchestration-v2/threadDetailCursor.ts";
 import {
   makeForkLineageQueries,
   toForkLineageMarker,
   importMarkerField,
   type ProjectionForkLineageRow,
-} from "../scient-fork/ForkBoundaryReadModel.ts";
-import { projectActivityPayload } from "../ActivityPayloadProjection.ts";
+} from "../../orchestration-v2/scient-fork/ForkBoundaryReadModel.ts";
+import { projectActivityPayload } from "../../orchestration-v2/ActivityPayloadProjection.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import {
@@ -92,7 +92,7 @@ import {
 import {
   CODEX_CITATION_MARKER_PREFIX,
   projectLegacyCitationText,
-} from "../legacyCitationProjection.ts";
+} from "../../orchestration-v2/legacyCitationProjection.ts";
 
 const decodeReadModel = Schema.decodeUnknownEffect(OrchestrationReadModel);
 const decodeThread = Schema.decodeUnknownEffect(OrchestrationThread);

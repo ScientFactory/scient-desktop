@@ -36,12 +36,25 @@ export interface PinnedRuntimePaths {
   readonly sentinelPath: string;
 }
 
+export const pinnedRuntimeVersionsDir = (path: Path.Path, baseDir: string): string =>
+  path.join(baseDir, PINNED_RUNTIME_DIR, "versions");
+
+/** Scient release assets contain a Node entry point and native dependencies. */
+export const pinnedRuntimeCommand = (paths: PinnedRuntimePaths, nodePath: string) => ({
+  command: nodePath,
+  args: [paths.entryPath],
+});
+
+export type PinnedRuntimeProgress = {
+  readonly stage: "prepare" | "install" | "validate" | "cached";
+};
+
 export function pinnedRuntimePaths(
   path: Path.Path,
   baseDir: string,
   version: string,
 ): PinnedRuntimePaths {
-  const versionDir = path.join(baseDir, PINNED_RUNTIME_DIR, "versions", version);
+  const versionDir = path.join(pinnedRuntimeVersionsDir(path, baseDir), version);
   return {
     versionDir,
     entryPath: path.join(versionDir, "node_modules", SCIENT_SERVER_PACKAGE_NAME, "dist", "bin.mjs"),
@@ -87,6 +100,7 @@ export class PinnedRuntimePreflightBlockedError extends Schema.TaggedError<Pinne
  * install leaves a plausible-looking but broken tree behind.
  */
 interface PinnedRuntimeInstallInput {
+  readonly onProgress?: (progress: PinnedRuntimeProgress) => void;
   readonly baseDir: string;
   readonly version: string;
   readonly fs: FileSystem.FileSystem;
@@ -114,9 +128,11 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
   const alreadyPinned =
     entryExists && Option.isSome(sentinel) && sentinel.value.trim() === input.version;
   if (alreadyPinned) {
+    input.onProgress?.({ stage: "cached" });
     yield* input.validate(paths);
     return paths;
   }
+  input.onProgress?.({ stage: "prepare" });
   if (versionDirExists) {
     yield* fs.remove(paths.versionDir, { recursive: true, force: true }).pipe(
       Effect.mapError(
@@ -195,6 +211,7 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
       "--no-audit",
       scientServerPackageSpec(input.version),
     ];
+    input.onProgress?.({ stage: "install" });
     yield* runner
       .run({
         command: "npm",
@@ -229,6 +246,7 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
         ),
       );
 
+    input.onProgress?.({ stage: "validate" });
     yield* input.validate(stagingPaths);
     yield* fs
       .writeFileString(stagingPaths.sentinelPath, `${input.version}\n`)

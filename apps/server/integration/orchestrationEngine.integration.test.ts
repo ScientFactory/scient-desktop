@@ -33,7 +33,7 @@ import { checkpointRefForThreadTurn } from "../src/checkpointing/Utils.ts";
 import type {
   CheckpointDiffFinalizedReceipt,
   TurnProcessingQuiescedReceipt,
-} from "../src/orchestration/Services/RuntimeReceiptBus.ts";
+} from "../src/orchestration-v2/Services/RuntimeReceiptBus.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 const asMessageId = (value: string): MessageId => MessageId.make(value);

@@ -31,7 +31,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { ServerConfig } from "../../config.ts";
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { ScientForkContextDelivery } from "../../orchestration/scient-fork/ForkContextDelivery.ts";
+import { ScientForkContextDelivery } from "../../orchestration-v2/scient-fork/ForkContextDelivery.ts";
 import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
 import {
   ConversationImporter,
@@ -2145,6 +2145,7 @@ describe("ConversationImporter", () => {
           const receipts = yield* OrchestrationCommandReceiptRepository;
           yield* receipts.upsert({
             commandId: journal.ids.commandId,
+            commandType: "thread.conversation.import",
             aggregateKind: "thread",
             aggregateId: journal.ids.threadId,
             acceptedAt: "2026-09-28T10:00:01.000Z",
@@ -2170,6 +2171,7 @@ describe("ConversationImporter", () => {
           const receipts = yield* OrchestrationCommandReceiptRepository;
           yield* receipts.upsert({
             commandId: journal.ids.commandId,
+            commandType: "thread.conversation.import",
             aggregateKind: "thread",
             aggregateId: journal.ids.threadId,
             acceptedAt: "2026-09-28T10:00:01.000Z",
