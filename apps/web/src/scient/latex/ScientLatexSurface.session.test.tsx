@@ -351,9 +351,10 @@ describe("the LaTeX surface on a document session", () => {
       expect(slot().hidden).toBe(false);
       expect(slot().parentElement).toBe(toolbar());
       expect(visual.host?.slot).toBe(slot());
-      // The view switch and the build status follow the zoom, inside the
-      // hosted controls; the row does not draw them a second time.
-      expect(visual.host?.afterZoom).toBeTruthy();
+      // The build status leads and the view switch follows the search, inside
+      // the hosted controls; the row does not draw them a second time.
+      expect(visual.host?.leading).toBeTruthy();
+      expect(visual.host?.afterSearch).toBeTruthy();
       expect(toolbar().querySelector(":scope > .scient-latex-modes")).toBeNull();
       expect(toolbar().querySelector(":scope > .scient-latex-status")).toBeNull();
       // Rebuild and the document's commands travel with the hosted controls,
@@ -363,7 +364,7 @@ describe("the LaTeX surface on a document session", () => {
       expect(visual.host?.trailing).toBeTruthy();
       expect(visual.host?.moreActions).toBeTruthy();
       // Only Split has a second switch to offer.
-      expect(visual.host?.beforeTrailing).toBeNull();
+      expect(visual.host?.afterPage).toBeNull();
     });
 
     it("keeps its own Rebuild until some controls are drawn in the row", async () => {
@@ -402,7 +403,7 @@ describe("the LaTeX surface on a document session", () => {
       await mount("split");
       expect(slot().hidden).toBe(false);
       expect(reader.host?.slot).toBe(slot());
-      expect(reader.host?.beforeTrailing).toBeTruthy();
+      expect(reader.host?.afterPage).toBeTruthy();
       expect(reader.host?.trailing).toBeTruthy();
     });
 
@@ -410,11 +411,11 @@ describe("the LaTeX surface on a document session", () => {
       visual.hosts = true;
       await mount("source");
       expect(slot().hidden).toBe(true);
-      // The reader controls' room stays, empty, so the view switch does not move.
-      const lead = toolbar().querySelector<HTMLElement>(":scope > .scient-latex-view-switch-lead")!;
-      expect(lead).not.toBeNull();
-      expect(parseFloat(lead.style.flexBasis)).toBeGreaterThan(100);
-      expect(lead.nextElementSibling?.getAttribute("aria-label")).toBe("Document view");
+      // The search field's room stays, empty, so the view switch does not move.
+      const room = toolbar().querySelector<HTMLElement>(":scope > .scient-latex-search-room")!;
+      expect(room).not.toBeNull();
+      expect(room.classList.contains("scient-reader-search")).toBe(true);
+      expect(room.nextElementSibling?.getAttribute("aria-label")).toBe("Document view");
       expect(toolbar().hasAttribute("data-reader-hosted")).toBe(false);
       expect(ownActions().querySelector("button")).not.toBeNull();
     });

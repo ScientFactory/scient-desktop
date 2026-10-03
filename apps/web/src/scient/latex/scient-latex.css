@@ -3502,17 +3502,25 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   margin-top: 1px;
 }
 
-/* With reader controls in the row, the view switch and the build status follow
-   the zoom, inside the same toolbar. */
+/* With reader controls in the row, the build status, search and view switch
+   lead the same toolbar. */
 .scient-pdf-toolbar-hosted > .scient-latex-status {
   /* A count such as "1 warning" is read whole or not at all. */
   flex: none;
 }
 
-/* The room the reader controls take in the other views, kept empty in Source. */
-.scient-latex-view-switch-lead {
-  flex: 0 1 auto;
-  min-width: 0;
+/* Sidebar, page and zoom stand a little apart from Rebuild. */
+.scient-latex-before-build {
+  flex: 0 0 16px;
+}
+.scient-latex-toolbar[data-fit~="separators"] .scient-latex-before-build {
+  flex-basis: 4px;
+}
+
+/* The search field's room, kept empty in Source. */
+.scient-latex-search-room {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 /* Recovered work offered by the surface itself (Source and Split): one quiet

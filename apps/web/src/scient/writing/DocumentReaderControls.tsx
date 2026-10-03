@@ -205,13 +205,11 @@ export function DocumentReaderControls(props: {
     if (page === null) setPageInput(String(props.page));
     else props.onPage(page);
   };
-  const toolbar = (
-    <div
-      ref={toolbarRef}
-      className={cn("scient-pdf-toolbar", host ? "scient-pdf-toolbar-hosted" : null)}
-      role="toolbar"
-      aria-label={props.label + " controls"}
-    >
+  const searchField = props.search ? (
+    <ReaderSearchField label={props.label} {...props.search} />
+  ) : null;
+  const pageControls = (
+    <>
       <ReaderButton
         className="scient-pdf-action-sidebar"
         label={
@@ -256,7 +254,10 @@ export function DocumentReaderControls(props: {
       >
         <ChevronRight />
       </ReaderButton>
-      <div className="scient-pdf-toolbar-separator" />
+    </>
+  );
+  const zoomControls = (
+    <>
       <ReaderButton
         className="scient-pdf-action-zoom-step"
         label={
@@ -292,11 +293,39 @@ export function DocumentReaderControls(props: {
       >
         <Plus />
       </ReaderButton>
-      {host?.afterZoom}
-      {props.search ? <ReaderSearchField label={props.label} {...props.search} /> : null}
-      {host?.afterSearch}
-      {(host ? null : props.contextControls) ?? <div className="min-w-1 flex-1" />}
-      {host?.beforeTrailing}
+    </>
+  );
+  const toolbar = (
+    <div
+      ref={toolbarRef}
+      className={cn("scient-pdf-toolbar", host ? "scient-pdf-toolbar-hosted" : null)}
+      role="toolbar"
+      aria-label={props.label + " controls"}
+    >
+      {host ? (
+        // In a surface's header: its status, search and view switch first;
+        // sidebar, page and zoom at the end, before the surface's own actions.
+        <>
+          {host.leading}
+          {searchField}
+          {host.afterSearch}
+          <div className="min-w-1 flex-1" />
+          {host.beforeTrailing}
+          {pageControls}
+          <div className="scient-pdf-toolbar-separator" />
+          {host.afterPage}
+          {zoomControls}
+          {host.afterZoom}
+        </>
+      ) : (
+        <>
+          {pageControls}
+          <div className="scient-pdf-toolbar-separator" />
+          {zoomControls}
+          {searchField}
+          {props.contextControls ?? <div className="min-w-1 flex-1" />}
+        </>
+      )}
       {props.search ? null : (
         <ReaderButton
           className="scient-pdf-action-search"

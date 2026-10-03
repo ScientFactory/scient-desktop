@@ -325,13 +325,6 @@ const HEADER_FIT_STEPS = [
   "percent",
   "page-number",
 ] as const;
-/**
- * Where the view switch starts in the header row while reader controls sit
- * before it, measured from the row's edge. Source has no reader controls; it
- * keeps the switch at this place so changing the view never moves it. The
- * first value is an estimate, replaced as soon as a reader has been shown.
- */
-let viewSwitchPlace = 292;
 const SPLIT_SWITCH = ".scient-latex-split-modes";
 
 function LatexDiagnosticsRow(props: {
@@ -588,14 +581,6 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const [hostedReaders, setHostedReaders] = useState(0);
   const switchKeepsFocus = useRef<string | null>(null);
   const headerRow = useRef<HTMLDivElement>(null);
-  const [viewSwitchLead, setViewSwitchLead] = useState(0);
-  const rememberViewSwitchPlace = useCallback(() => {
-    const row = headerRow.current;
-    const place = row?.querySelector<HTMLElement>(VIEW_SWITCH);
-    if (!row || !place || !row.hasAttribute("data-reader-hosted")) return;
-    const start = place.getBoundingClientRect().left - row.getBoundingClientRect().left;
-    if (Number.isFinite(start) && start > 0) viewSwitchPlace = start;
-  }, []);
   const onReaderHosted = useCallback(
     (hosted: boolean) => setHostedReaders((count) => count + (hosted ? 1 : -1)),
     [],
@@ -1078,19 +1063,6 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       content.disconnect();
     };
   }, []);
-  // Without reader controls the row leaves their room empty, so the view
-  // switch stays where it is in every view. The room gives way in a narrow pane.
-  useLayoutEffect(() => {
-    const row = headerRow.current;
-    if (!row) return;
-    if (readerHosted) {
-      rememberViewSwitchPlace();
-      return;
-    }
-    const style = getComputedStyle(row);
-    const edge = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.columnGap) || 0);
-    setViewSwitchLead(Math.max(0, Math.round((viewSwitchPlace - edge) * 10) / 10));
-  }, [mode, readerHosted, rememberViewSwitchPlace]);
   // Changing the view, or Split's right pane, redraws the switch that had
   // focus. Give focus to the same switch once it is back in the row.
   useEffect(() => {
@@ -1240,7 +1212,6 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
             // The switch is drawn with the pane it replaces; keep the place.
             switchKeepsFocus.current =
               event.currentTarget === document.activeElement ? VIEW_SWITCH : null;
-            rememberViewSwitchPlace();
             selectMode(candidate);
           }}
         >
@@ -1378,14 +1349,12 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   // The Visual editor has a Document menu of its own; Export goes there.
   const readerBarHost = (slot: HTMLElement | null, editor = false): ReaderBarHost => ({
     slot,
-    afterZoom: (
-      <>
-        <div className="scient-pdf-toolbar-separator" />
-        {viewSwitch}
-      </>
-    ),
-    afterSearch: statusStrip,
-    beforeTrailing: splitPreviewSwitch,
+    // Status, search and the view switch first; page controls at the end.
+    leading: statusStrip,
+    afterSearch: viewSwitch,
+    afterPage: splitPreviewSwitch,
+    // Room between the zoom and Rebuild, which keeps its place at the end.
+    afterZoom: <div className="scient-latex-before-build" aria-hidden="true" />,
     trailing: buildButton,
     moreActions: documentMenuItems(!editor),
     ...(editor ? { documentActions: exportMenu(true) } : {}),
@@ -1412,15 +1381,13 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         // Visual's More holds only what the row has no room for.
         data-more-when-full={readerHosted && showVisual ? "" : undefined}
       >
+        {readerHosted ? null : statusStrip}
         {readerHosted ? null : (
-          <div
-            className="scient-latex-view-switch-lead"
-            style={{ flexBasis: viewSwitchLead }}
-            aria-hidden="true"
-          />
+          // Source has no search field; its room is kept so the view switch
+          // stays where it is in every view.
+          <div className="scient-reader-search scient-latex-search-room" aria-hidden="true" />
         )}
         {readerHosted ? null : viewSwitch}
-        {readerHosted ? null : statusStrip}
         <div ref={setReaderSlot} className="scient-latex-reader-slot" hidden={!mergesReaderBar} />
         <div className="scient-latex-actions">
           {readerHosted ? null : splitPreviewSwitch}
