@@ -3,8 +3,8 @@
 For discussion between the owner and the LaTeX Visual author, 2026-10-03. Read
 from the bars pilot app (the Markdown bar and the LaTeX Visual writing row, with
 their menus), which includes the Visual work from PR #353. "—" means the editor does not
-have it. The last column is a proposal for option A (one Text menu, hover opens
-the second card).
+have it. The last column records the proposed homes and the owner's decisions. The shared
+Text menu with hover cards is implemented in the local pilot; code is not pushed.
 
 ## Proposed bar, in both editors
 
@@ -20,15 +20,15 @@ only what its file format can save.
 | Command | Markdown today | LaTeX today | Proposed home |
 | --- | --- | --- | --- |
 | Undo, Redo | Bar | Bar | Bar |
-| Text, Heading 1–6 / Section… | Style menu | Style menu | **Text** |
-| Numbered headings | — | Style menu | **Text** (LaTeX only) |
-| Quote | Style menu | Style menu | **Text** |
-| Bold | Bar | Bar | **Text › Formatting** |
-| Italic | Bar | Bar | **Text › Formatting** |
-| Strikethrough | Bar | — | **Text › Formatting** (Markdown only) |
-| Inline code | Bar | Bar | **Text › Formatting** |
+| Paragraph, Heading 1–6 / Section… | Style menu | Style menu | **Text › Paragraph style** — decided, in pilot |
+| Numbered headings | — | Style menu | **Text › Paragraph style** (LaTeX only) — decided, in pilot |
+| Quote | Style menu | Style menu | **Text › Paragraph style** — decided, in pilot |
+| Bold | Bar | Bar | **Text › Formatting** — decided, in pilot |
+| Italic | Bar | Bar | **Text › Formatting** — decided, in pilot |
+| Strikethrough | Bar | — | **Text › Formatting** (Markdown only)  — decided, in pilot |
+| Inline code | Bar | Bar | **Text › Formatting** — decided, in pilot |
 | Subscript, Superscript | — | — | Not now (decided) |
-| Clear formatting | More | — | **Text › Formatting** |
+| Clear formatting | More | — | **Text › Formatting**  — decided, in pilot |
 | Font size | — | — | **Text › Size** (LaTeX only, later) |
 | Text direction (Auto, LTR, RTL) | Bar | — | **Text › Direction** (Markdown only) — decided |
 | Bullet list, Numbered list, No list | Lists menu | Lists menu | **Lists** |
@@ -76,10 +76,25 @@ only what its file format can save.
 Decisions 1–4 and 7–9 are built in the owner's local test app for review; that code is
 not pushed yet.
 
+## Shared Text menu (decided; local pilot)
+
+The bar button reads **Text** in both editors. Hover opens these categories:
+
+- **Paragraph style:** Paragraph, heading levels, Quote. LaTeX also has its
+  Numbered headings switch alongside its heading choices.
+- **Formatting:** Bold, Italic, Inline code in both; Strikethrough and Clear
+  formatting in Markdown. Active formatting has a checkmark; shortcuts remain.
+- **Direction:** Auto, Left-to-right, Right-to-left in Markdown. In a table this
+  category reads Table direction.
+
+Bold, Italic, Inline code and Markdown's Strikethrough are removed from the main
+bar. Clear formatting is removed from Markdown's More menu. The selection
+floating toolbar is unchanged. Size remains deferred; subscript/superscript
+remain out of scope. `apps/web/src/scient/writing/TextMenu.tsx` owns the shared
+categories; each editor supplies its supported commands.
+
 ## Still open
 
-1. **Bold, Italic and Inline code inside Text › Formatting** (option A: hover opens
-   the second card, so two clicks), or kept as bar buttons.
 2. **Markdown's More becomes Document**, so both editors end with the same menu.
 3. **Font size** in Text › Size (LaTeX only): which sizes, and when.
 
