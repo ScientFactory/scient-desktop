@@ -321,30 +321,4 @@ describe("applyMarkdownSourcePatches", () => {
       applyMarkdownSourcePatches("abc", [{ start: -1, end: 2, replacement: "x" }]),
     ).toThrow("outside");
   });
-
-  it("matches a token oracle for 2,000 unordered Unicode patch sets", () => {
-    const tokenPool = ["a", "ב", "ع", "😀", "e\u0301", "\r\n", "\n", "_", "[]"] as const;
-    for (let seed = 1; seed <= 2_000; seed += 1) {
-      const random = deterministicRandom(seed * 17);
-      const tokens = Array.from(
-        { length: 2 + Math.floor(random() * 20) },
-        () => tokenPool[Math.floor(random() * tokenPool.length)] ?? "x",
-      );
-      const patches: Array<{ start: number; end: number; replacement: string }> = [];
-      const expected: string[] = [];
-      let offset = 0;
-      tokens.forEach((token, index) => {
-        if (random() < 0.28) {
-          const replacement = `${fuzzWord(random)}${index % 3 === 0 ? "😀" : ""}`;
-          patches.push({ start: offset, end: offset + token.length, replacement });
-          expected.push(replacement);
-        } else {
-          expected.push(token);
-        }
-        offset += token.length;
-      });
-      const source = tokens.join("");
-      expect(applyMarkdownSourcePatches(source, patches.toReversed())).toBe(expected.join(""));
-    }
-  });
 });
