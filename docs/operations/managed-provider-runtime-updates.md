@@ -35,7 +35,8 @@ and publication use this registry. Each bundled provider entry must declare the
 same revision; its version and artifact receipts must remain previously qualified.
 
 A new family may ship compiled packaging policy before its first release. Scient Agent does
-this for macOS Apple silicon: its policy fixes the repository, stable version floor, asset name,
+this for macOS, Linux (glibc) and Windows on x86-64 and ARM64: its policy fixes the repository,
+stable version floor, each platform's asset name,
 checksum algorithm, executable, and qualification behavior, but the bundled catalog contains
 no Scient entry. Discovery keeps it absent when GitHub reports no stable release. Only a real
 release that passes native qualification can add the first entry. No placeholder checksum or

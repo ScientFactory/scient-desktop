@@ -13,14 +13,14 @@ started in one cannot be continued in the other.
 ## Setup
 
 Scient Agent is on by default and is the first provider in **Settings > Providers** and in the
-model picker. On macOS Apple silicon, **Install** is available when Scient has a qualified Scient
-Agent release. **Manage** provides update, repair, and removal for that private installation.
+model picker. On macOS (Apple silicon and Intel), Linux (x86-64 and ARM64, glibc) and Windows
+(x86-64 and ARM64), **Install** is available when Scient has a qualified Scient Agent release. **Manage** provides update, repair, and removal for that private installation.
 Installing the executable does not connect a model account.
 
 Until the first qualified release is published, setup explains that no release is available.
 You can use a locally built `scient-agent` executable (0.1.0 or newer): set **Binary path** if it
 is not on the server's `PATH`. Scient preserves an explicit custom path rather than replacing
-it with a managed installation. Other platforms do not yet offer managed installation.
+it with a managed installation. Linux with musl (Alpine) does not offer managed installation.
 
 Until Scient finds the executable and a model, a new conversation starts with the next provider
 that is ready.

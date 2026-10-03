@@ -34,11 +34,39 @@ describe("Scient Agent managed release policy", () => {
       expect(policy).not.toHaveProperty(key);
     }
     expect(policy.checksum).not.toHaveProperty("digest");
-    expect(resolveScientAgentArtifactPolicy({ platform: "darwin", arch: "x64" })).toBeUndefined();
-    expect(
-      resolveScientAgentArtifactPolicy({ platform: "linux", arch: "arm64", libc: "glibc" }),
-    ).toBeUndefined();
-    expect(resolveScientAgentArtifactPolicy({ platform: "win32", arch: "arm64" })).toBeUndefined();
+  });
+
+  it("names each platform's release binary as the agent's release workflow does", () => {
+    const named = (target: Parameters<typeof resolveScientAgentArtifactPolicy>[0]) => {
+      const entry = resolveScientAgentArtifactPolicy(target);
+      return entry && [entry.artifactName, entry.executablePath];
+    };
+    expect(named({ platform: "darwin", arch: "arm64" })).toEqual([
+      "scient-agent-darwin-arm64",
+      "scient-agent",
+    ]);
+    expect(named({ platform: "darwin", arch: "x64" })).toEqual([
+      "scient-agent-darwin-x64",
+      "scient-agent",
+    ]);
+    expect(named({ platform: "linux", arch: "arm64", libc: "glibc" })).toEqual([
+      "scient-agent-linux-arm64",
+      "scient-agent",
+    ]);
+    expect(named({ platform: "linux", arch: "x64", libc: "glibc" })).toEqual([
+      "scient-agent-linux-x64",
+      "scient-agent",
+    ]);
+    expect(named({ platform: "win32", arch: "arm64" })).toEqual([
+      "scient-agent-windows-arm64.exe",
+      "scient-agent.exe",
+    ]);
+    expect(named({ platform: "win32", arch: "x64" })).toEqual([
+      "scient-agent-windows-x64.exe",
+      "scient-agent.exe",
+    ]);
+    // No musl build: the desktop app needs glibc.
+    expect(named({ platform: "linux", arch: "x64", libc: "musl" })).toBeUndefined();
   });
 
   it.each([

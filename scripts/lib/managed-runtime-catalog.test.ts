@@ -23,27 +23,28 @@ const currentCatalog: ManagedRuntimeCatalogData = validateManagedRuntimeCatalog(
 
 const scientApi = "https://api.github.com/repos/ScientFactory/scient-agent/releases/latest";
 const scientArtifactName = "scient-agent-darwin-arm64";
+/** Every binary a Scient Agent release carries, one per supported platform. */
+const scientArtifactNames = [
+  scientArtifactName,
+  "scient-agent-darwin-x64",
+  "scient-agent-linux-arm64",
+  "scient-agent-linux-x64",
+  "scient-agent-windows-arm64.exe",
+  "scient-agent-windows-x64.exe",
+];
 const scientDigest = "a".repeat(64);
 function scientRelease(version = "0.1.0") {
-  const url = `https://github.com/ScientFactory/scient-agent/releases/download/v${version}/${scientArtifactName}`;
   return {
     tag_name: `v${version}`,
     draft: false,
     prerelease: false,
-    assets: [
-      {
-        name: scientArtifactName,
-        browser_download_url: url,
-        size: 123456,
-        digest: `sha256:${scientDigest}`,
-      },
-      {
-        name: `${scientArtifactName}.sha256`,
-        browser_download_url: `${url}.sha256`,
-        size: 94,
-        digest: null,
-      },
-    ],
+    assets: scientArtifactNames.flatMap((name) => {
+      const url = `https://github.com/ScientFactory/scient-agent/releases/download/v${version}/${name}`;
+      return [
+        { name, browser_download_url: url, size: 123456, digest: `sha256:${scientDigest}` },
+        { name: `${name}.sha256`, browser_download_url: `${url}.sha256`, size: 94, digest: null },
+      ];
+    }),
   };
 }
 function scientFetch(
@@ -57,7 +58,8 @@ function scientFetch(
   return async (url: URL, init?: RequestInit) => {
     if (url.toString() === scientApi) return Response.json(release);
     if (url.toString().endsWith(".sha256")) {
-      return new Response(input.checksum ?? `${scientDigest}  ${scientArtifactName}\n`);
+      const name = url.pathname.split("/").pop()!.slice(0, -".sha256".length);
+      return new Response(input.checksum ?? `${scientDigest}  ${name}\n`);
     }
     expect(init?.method).toBe("HEAD");
     return new Response(null, { headers: { "content-length": String(input.size ?? 123456) } });
@@ -94,6 +96,11 @@ describe("Scient Agent first managed release", () => {
           checksum: { algorithm: "sha256", digest: scientDigest },
           size: 123456,
         },
+        "darwin-x64": { artifactName: "scient-agent-darwin-x64" },
+        "linux-arm64-glibc": { artifactName: "scient-agent-linux-arm64" },
+        "linux-x64-glibc": { artifactName: "scient-agent-linux-x64" },
+        "win32-arm64": { artifactName: "scient-agent-windows-arm64.exe" },
+        "win32-x64": { artifactName: "scient-agent-windows-x64.exe" },
       },
     });
     const promoted = mergeQualifiedManagedRuntimeProvider({
@@ -175,6 +182,7 @@ describe("Scient Agent first managed release", () => {
       {
         ...release,
         artifacts: {
+          ...release.artifacts,
           "darwin-arm64": {
             ...artifact,
             checksum: { algorithm: "sha512", digest: "a".repeat(128) },
@@ -184,6 +192,7 @@ describe("Scient Agent first managed release", () => {
       {
         ...release,
         artifacts: {
+          ...release.artifacts,
           "darwin-arm64": { ...artifact, url: artifact.url.replace("v0.1.0/", "v0.2.0/") },
         },
       },
@@ -206,7 +215,10 @@ describe("Scient Agent first managed release", () => {
         ...first.providers,
         scient: {
           ...release,
-          artifacts: { "darwin-arm64": { ...artifact, size: artifact.size + 1 } },
+          artifacts: {
+            ...release.artifacts,
+            "darwin-arm64": { ...artifact, size: artifact.size + 1 },
+          },
         },
       },
     };

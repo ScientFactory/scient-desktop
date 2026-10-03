@@ -16,15 +16,42 @@ export function isSupportedScientAgentVersion(version: string): boolean {
   );
 }
 
+/**
+ * The release binary for each platform, as ScientFactory/scient-agent's
+ * release workflow names it. Linux builds link glibc; the desktop app, where
+ * managed installation runs, needs glibc too, so musl has no entry.
+ */
+const ARTIFACTS = {
+  "darwin-arm64": { artifactName: "scient-agent-darwin-arm64", executablePath: "scient-agent" },
+  "darwin-x64": { artifactName: "scient-agent-darwin-x64", executablePath: "scient-agent" },
+  "linux-arm64": { artifactName: "scient-agent-linux-arm64", executablePath: "scient-agent" },
+  "linux-x64": { artifactName: "scient-agent-linux-x64", executablePath: "scient-agent" },
+  "win32-arm64": {
+    artifactName: "scient-agent-windows-arm64.exe",
+    executablePath: "scient-agent.exe",
+  },
+  "win32-x64": { artifactName: "scient-agent-windows-x64.exe", executablePath: "scient-agent.exe" },
+} as const satisfies Readonly<
+  Record<string, { readonly artifactName: string; readonly executablePath: string }>
+>;
+
+function artifactKey(target: ManagedRuntimeTarget): keyof typeof ARTIFACTS | undefined {
+  if (target.platform === "linux" && target.libc === "musl") return undefined;
+  const key = `${target.platform}-${target.arch}`;
+  return key in ARTIFACTS ? (key as keyof typeof ARTIFACTS) : undefined;
+}
+
 /** Packaging policy only: an installable artifact requires a qualified published release. */
 export function resolveScientAgentArtifactPolicy(
   target: ManagedRuntimeTarget,
 ): ManagedRuntimeArtifactPolicy | undefined {
-  if (target.platform !== "darwin" || target.arch !== "arm64") return undefined;
+  const key = artifactKey(target);
+  if (!key) return undefined;
+  const { artifactName, executablePath } = ARTIFACTS[key];
   return {
     provider: "scient",
     target,
-    artifactName: "scient-agent-darwin-arm64",
+    artifactName,
     allowedHosts: ["github.com", "release-assets.githubusercontent.com"],
     allowedUrlPathPrefixes: ["/ScientFactory/scient-agent/releases/download/"],
     releaseUrlPrefix: "https://github.com/ScientFactory/scient-agent/releases/download/v",
@@ -32,7 +59,7 @@ export function resolveScientAgentArtifactPolicy(
     minimumVersion: SCIENT_AGENT_MINIMUM_VERSION,
     maximumVersionExclusive: SCIENT_AGENT_MAXIMUM_VERSION_EXCLUSIVE,
     archiveFormat: "raw",
-    executablePath: "scient-agent",
+    executablePath,
     smokeArgs: ["--runtime-info"],
     supportTier: "fully_assisted",
     supportMessage:
