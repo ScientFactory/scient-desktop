@@ -16,9 +16,9 @@ vi.mock("@effect/atom-react", async () => {
   return { useAtomValue: () => AsyncResult.initial() };
 });
 vi.mock("~/components/files/projectFilesQueryState", () => ({
-  useProjectFileQuery: () => ({
+  useProjectFileQuery: (_environment: unknown, _cwd: unknown, path: string) => ({
     authoritativeData: {
-      relativePath: "refs.bib",
+      relativePath: path,
       contents: disk.source,
       revision: disk.revision,
       byteLength: disk.source.length,
@@ -39,7 +39,7 @@ import {
 } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { createMarkdownPersistenceTransport } from "~/scient/markdownEditor/persistence/markdownPersistenceTransport";
 import { createMarkdownPersistenceGuards } from "~/scient/markdownEditor/persistence/useMarkdownPersistenceGuards";
-import { LatexReferencesPanel } from "./LatexReferencesPanel";
+import { LatexReferencesPanel, type BibliographyDocument } from "./LatexReferencesPanel";
 import { readStoredRecovery } from "./visualRecovery";
 import { readPersistedVisualDraft } from "./visualDrafts";
 
@@ -75,7 +75,7 @@ describe("References bibliography session", () => {
     publication = deferred();
     const environmentId = EnvironmentId.make(`synthetic-references-${sequence++}`);
     const cwd = "/synthetic-workspace";
-    draftKey = `${environmentId}\0${cwd}\0refs.bib`;
+    draftKey = `${environmentId}\0${cwd}\0refsA.bib`;
     vi.mocked(createMarkdownPersistenceTransport).mockReset();
     vi.mocked(createMarkdownPersistenceTransport).mockReturnValue({
       read: async () => ({ source: disk.source, revision: disk.revision }),
@@ -93,9 +93,9 @@ describe("References bibliography session", () => {
     });
     // The tab opens first; References must acquire a second lease on this owner.
     tab = markdownPersistenceRegistry.acquire(
-      { environmentId, cwd, relativePath: "refs.bib" },
+      { environmentId, cwd, relativePath: "refsA.bib" },
       {
-        relativePath: "refs.bib",
+        relativePath: "refsA.bib",
         contents: disk.source,
         revision: disk.revision,
         byteLength: disk.source.length,
@@ -112,15 +112,18 @@ describe("References bibliography session", () => {
     host.remove();
     vi.unstubAllGlobals();
   });
-  const mount = () =>
+  const mount = (
+    setupSource = "\\addbibresource{refsA.bib}",
+    documents: readonly BibliographyDocument[] = [],
+  ) =>
     act(async () =>
       root.render(
         <LatexReferencesPanel
           open
           request={{ key: "known", sequence: 1 }}
           onClose={() => {}}
-          documents={[]}
-          setupSource="\\addbibresource{refs.bib}"
+          documents={documents}
+          setupSource={setupSource}
           rootRelativePath="paper.tex"
           environmentId={tab.target.environmentId}
           cwd={tab.target.cwd}
@@ -172,8 +175,8 @@ describe("References bibliography session", () => {
       scope: { kind: "path", environmentId: tab.target.environmentId, cwd: tab.target.cwd },
       genericPendingIds: new Set(),
     });
-    expect([...guards.pendingSurfaceIds]).toEqual(["refs.bib"]);
-    expect([...guards.quietSurfaceIds]).toEqual(["refs.bib"]);
+    expect([...guards.pendingSurfaceIds]).toEqual(["refsA.bib"]);
+    expect([...guards.quietSurfaceIds]).toEqual(["refsA.bib"]);
     await act(async () => {
       publication.resolve({ revision: "r2" });
       expect(await tab.flushNow()).toBe(true);
@@ -183,6 +186,157 @@ describe("References bibliography session", () => {
     expect(host.textContent).toContain("Reference saved.");
     expect(tab.getSnapshot().pending).toBe(false);
   });
+
+  it("keeps refsA's draft when the document switches its resource to refsB", async () => {
+    await mount();
+    await type("Draft for A");
+    const original = tab.getSnapshot().baselineSource;
+    disk.source += "@misc{other, title = {Only in B}}\n";
+    await mount("\\addbibresource{refsB.bib}");
+    await save();
+    expect(write).not.toHaveBeenCalled();
+    expect(tab.getSnapshot().draftSource).toBe(original);
+    expect(disk.source).not.toContain("Draft for A");
+    expect(field()?.value).toBe("Draft for A");
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(host.textContent).toContain("refsA.bib is no longer part of this document");
+    expect(host.textContent).toContain("Your entry draft is retained");
+    expect(host.textContent).not.toContain("Reference saved.");
+    // Restoring the original destination makes the same retained draft saveable again.
+    disk.source = original;
+    await mount();
+    await save();
+    await act(async () => {
+      publication.resolve({ revision: "r2" });
+      expect(await tab.flushNow()).toBe(true);
+    });
+    expect(disk.source).toContain("Draft for A");
+    expect(field()).toBeNull();
+    expect(onSaved).toHaveBeenCalledOnce();
+  });
+
+  it("confirms a unique entry while unrelated keys are duplicated", async () => {
+    const unrelated = "@misc{other, title = {First}}\n@misc{other, title = {Second}}\n";
+    await act(async () => {
+      tab.change(disk.source + unrelated, 0);
+      publication.resolve({ revision: "r2" });
+      expect(await tab.flushNow()).toBe(true);
+    });
+    publication = deferred();
+    write.mockClear();
+    await mount();
+    await type("Unique update");
+    await save();
+    expect(write).toHaveBeenCalledOnce();
+    await act(async () => {
+      publication.resolve({ revision: "r3" });
+      expect(await tab.flushNow()).toBe(true);
+    });
+    expect(field()).toBeNull();
+    expect(onSaved).toHaveBeenCalledOnce();
+    expect(disk.source).toContain(unrelated);
+  });
+
+  it("retains a manual draft when its document ID is reused for a different file path", async () => {
+    const apply = vi.fn(() => true);
+    const original: BibliographyDocument = {
+      id: "root",
+      path: "paperA.tex",
+      source: "\\begin{thebibliography}{99}\n\\bibitem{known} Original\n\\end{thebibliography}",
+      kind: "bibitem",
+      readOnly: false,
+      apply,
+    };
+    await mount("", [original]);
+    const body = () =>
+      host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Reference entry text"]');
+    await act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+        body()!,
+        "Draft for paper A",
+      );
+      body()!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await mount("", [{ ...original, path: "paperB.tex" }]);
+    await save();
+    expect(apply).not.toHaveBeenCalled();
+    expect(body()?.value).toBe("Draft for paper A");
+    expect(host.textContent).toContain("paperA.tex is no longer part of this document");
+    expect(onSaved).not.toHaveBeenCalled();
+  });
+
+  it.each(["repair unrelated duplicate", "introduce unrelated malformed entry"])(
+    "confirms the submitted entry when a pending save is followed by: %s",
+    async (change) => {
+      if (change === "repair unrelated duplicate") {
+        await act(async () => {
+          tab.change(
+            disk.source + "@misc{other, title = {First}}\n@misc{other, title = {Second}}\n",
+            0,
+          );
+          publication.resolve({ revision: "r2" });
+          expect(await tab.flushNow()).toBe(true);
+        });
+        publication = deferred();
+        write.mockClear();
+      }
+      await mount();
+      await type("Entry A");
+      await save();
+      expect(write).toHaveBeenCalledOnce();
+      let flushed!: Promise<boolean>;
+      await act(() => {
+        const snapshot = tab.getSnapshot();
+        const next =
+          change === "repair unrelated duplicate"
+            ? snapshot.draftSource.replace("@misc{other, title = {First}}\n", "")
+            : snapshot.draftSource + "@misc{unclosed,";
+        expect(tab.change(next, snapshot.editVersion)).toBe(true);
+        flushed = tab.flushNow();
+      });
+      const first = publication;
+      publication = deferred();
+      await act(async () => first.resolve({ revision: "r3" }));
+      expect(write).toHaveBeenCalledTimes(2);
+      await act(async () => {
+        publication.resolve({ revision: "r4" });
+        expect(await flushed).toBe(true);
+      });
+      expect(field()).toBeNull();
+      expect(onSaved).toHaveBeenCalledOnce();
+      expect(host.textContent).toContain("Reference saved.");
+      expect(disk.source).toContain("Entry A");
+    },
+  );
+
+  it.each(["original", "concurrent"])(
+    "refuses a duplicated submitted key before writing (%s)",
+    async (when) => {
+      const duplicate = "@misc{known, title = {Duplicate}}\n";
+      if (when === "original") {
+        await act(async () => {
+          tab.change(disk.source + duplicate, 0);
+          publication.resolve({ revision: "r2" });
+          expect(await tab.flushNow()).toBe(true);
+        });
+        write.mockClear();
+      }
+      await mount();
+      await type("Ambiguous update");
+      if (when === "concurrent") await act(() => tab.change(disk.source + duplicate, 0));
+      await save();
+      expect(write).not.toHaveBeenCalled();
+      expect(field()?.value).toBe("Ambiguous update");
+      expect(host.textContent).toContain("Citation key known appears more than once");
+      expect(onSaved).not.toHaveBeenCalled();
+      if (when === "concurrent") {
+        await act(async () => {
+          publication.resolve({ revision: "r2" });
+          expect(await tab.flushNow()).toBe(true);
+        });
+      }
+    },
+  );
 
   it("keeps a failed save's form draft, shows the session notice and writes no recovery record", async () => {
     await mount();
@@ -212,7 +366,7 @@ describe("References bibliography session", () => {
       scope: { kind: "path", environmentId: tab.target.environmentId, cwd: tab.target.cwd },
       genericPendingIds: new Set(),
     });
-    expect([...guards.attentionSurfaceIds]).toEqual(["refs.bib"]);
+    expect([...guards.attentionSurfaceIds]).toEqual(["refsA.bib"]);
     // A confirmed retry can be acknowledged by Save reference without duplicating the edit.
     publication = deferred();
     await act(async () => {

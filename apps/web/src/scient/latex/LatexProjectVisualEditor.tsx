@@ -447,7 +447,7 @@ export function LatexProjectVisualEditor(props: Props) {
                   revision: saved.baselineRevision,
                   truncated: false,
                 });
-              } else if (path !== props.relativePath && !isLatexPreviewFile(path) && file.data) {
+              } else if (path !== props.relativePath && file.data) {
                 confirmed.set(path, file.data);
               }
             }

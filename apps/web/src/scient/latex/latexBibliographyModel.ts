@@ -264,6 +264,97 @@ export function normalizedBibliographyEntryText(raw: string) {
   return raw.replace(/\r\n/gu, "\n").trimEnd();
 }
 
+type BibliographyPublicationEntry = { key: string; raw: string | null };
+
+function changedBibliographyKeys(
+  before: BibliographyPublicationEntry[],
+  after: BibliographyPublicationEntry[],
+) {
+  const keys = new Set([...before, ...after].map((entry) => entry.key));
+  return [...keys].filter((key) => {
+    const texts = (entries: BibliographyPublicationEntry[]) =>
+      entries
+        .filter((entry) => entry.key === key)
+        .map((entry) => (entry.raw === null ? null : normalizedBibliographyEntryText(entry.raw)));
+    const original = texts(before),
+      replacement = texts(after);
+    return (
+      original.length !== replacement.length ||
+      original.some((raw, index) => raw !== replacement[index])
+    );
+  });
+}
+
+/** Inspect every published record, including malformed records that could duplicate the submitted key. */
+function publishedBibtexEntries(source: string) {
+  const entries: BibliographyPublicationEntry[] = [];
+  for (let at = 0; at < source.length;) {
+    if (source[at] === "%") {
+      const end = source.indexOf("\n", at);
+      if (end < 0) break;
+      at = end + 1;
+      continue;
+    }
+    const command = source[at] === "@" ? /^@([A-Za-z]+)\s*([({])/u.exec(source.slice(at)) : null;
+    if (!command) {
+      at++;
+      continue;
+    }
+    const opening = at + command[0].length - 1;
+    const end = groupEnd(source, opening, command[2]!, command[2] === "{" ? "}" : ")");
+    if (!/^(comment|string|preamble)$/iu.test(command[1]!)) {
+      const key = /^\s*([^,\s{}]+)(?:\s*,|\s*$)/u.exec(
+        source.slice(opening + 1, end < 0 ? undefined : end),
+      );
+      if (key) {
+        const raw = end < 0 ? null : source.slice(at, end + 1);
+        const parsed = raw === null ? null : bibtexEntries(raw);
+        entries.push({ key: key[1]!, raw: parsed?.error === null ? raw : null });
+      }
+    }
+    // An unclosed unrelated record must not hide later entry headers.
+    at = end < 0 ? opening + 1 : end + 1;
+  }
+  return entries;
+}
+
+/** Parse manual entries separately so one malformed item cannot hide a later key. */
+function publishedManualEntries(source: string) {
+  const clean = latexWithoutComments(source);
+  const entries: BibliographyPublicationEntry[] = [];
+  const containers = /\\begin\s*\{thebibliography\}\s*\{/gu;
+  let opening: RegExpExecArray | null;
+  while ((opening = containers.exec(clean))) {
+    const widthEnd = groupEnd(clean, containers.lastIndex - 1);
+    if (widthEnd < 0) continue;
+    const ending = /\\end\s*\{thebibliography\}/gu;
+    ending.lastIndex = widthEnd + 1;
+    const close = ending.exec(clean);
+    const end = close?.index ?? source.length;
+    const items = /\\bibitem\b/gu;
+    items.lastIndex = widthEnd + 1;
+    const offsets: number[] = [];
+    let item: RegExpExecArray | null;
+    while ((item = items.exec(clean)) && item.index < end) offsets.push(item.index);
+    offsets.forEach((from, index) => {
+      const raw = source.slice(from, offsets[index + 1] ?? end);
+      const parsed = manualBibliography(
+        `\\begin{thebibliography}{99}\n${raw}\n\\end{thebibliography}`,
+      );
+      const entry = parsed.error === null ? parsed.entries[0] : undefined;
+      if (entry) entries.push({ key: entry.key, raw });
+      else {
+        const key = /^\\bibitem\s*(?:\[[\s\S]*?\]\s*)?\{([^{}]+)\}/u.exec(
+          latexWithoutComments(raw),
+        );
+        if (key) entries.push({ key: key[1]!, raw: null });
+      }
+    });
+    containers.lastIndex = close ? ending.lastIndex : source.length;
+  }
+  return entries;
+}
+
 /** A clean save lane only confirms this submission if its entry is in the published source. */
 export function bibliographyChangePublished(
   expected: string,
@@ -271,37 +362,33 @@ export function bibliographyChangePublished(
   published: string,
   kind: BibliographyEntry["kind"],
 ) {
-  const parse = (source: string) =>
-    kind === "bibtex" ? bibtexEntries(source) : manualBibliography(source);
+  const parse = kind === "bibtex" ? publishedBibtexEntries : publishedManualEntries;
   const before = parse(expected),
-    after = parse(next),
-    saved = parse(published);
-  if (
-    [before, after, saved].some(
-      (parsed) =>
-        parsed.error !== null ||
-        new Set(parsed.entries.map((entry) => entry.key)).size !== parsed.entries.length,
+    after = parse(next);
+  const saved = parse(published);
+  const confirms = (key: string) => {
+    const original = before.filter((entry) => entry.key === key);
+    const replacement = after.filter((entry) => entry.key === key);
+    const existing = saved.filter((entry) => entry.key === key);
+    if (
+      original.length > 1 ||
+      replacement.length > 1 ||
+      original[0]?.raw === null ||
+      replacement[0]?.raw === null
     )
-  )
-    return false;
-  const text = (entry: BibliographyEntry | undefined) =>
-    entry === undefined ? undefined : normalizedBibliographyEntryText(entry.raw);
-  const keys = new Set([...before.entries, ...after.entries].map((entry) => entry.key));
-  const changed = [...keys].filter(
-    (key) =>
-      text(before.entries.find((entry) => entry.key === key)) !==
-      text(after.entries.find((entry) => entry.key === key)),
-  );
-  if (changed.length === 0)
-    return after.entries.every(
-      (entry) => text(entry) === text(saved.entries.find((item) => item.key === entry.key)),
+      return false;
+    if (replacement.length === 0) return existing.length === 0;
+    return (
+      existing.length === 1 &&
+      existing[0]!.raw !== null &&
+      normalizedBibliographyEntryText(existing[0]!.raw) ===
+        normalizedBibliographyEntryText(replacement[0]!.raw!)
     );
+  };
+  const changed = changedBibliographyKeys(before, after);
+  if (changed.length === 0) return after.every((entry) => confirms(entry.key));
   if (changed.length !== 1) return false;
-  const key = changed[0]!;
-  return (
-    text(after.entries.find((entry) => entry.key === key)) ===
-    text(saved.entries.find((entry) => entry.key === key))
-  );
+  return confirms(changed[0]!);
 }
 
 function replaceRanges(source: string, changes: { from: number; to: number; value: string }[]) {
@@ -441,28 +528,24 @@ export function mergeBibliographyChange(
   current: string,
   kind: "bibitem" | "bibtex",
 ) {
-  if (current === expected) return next;
-  if (current === next) return current;
   const parse = (source: string) =>
     kind === "bibtex" ? bibtexEntries(source) : manualBibliography(source);
   const before = parse(expected),
     after = parse(next),
     live = parse(current);
   if (before.error || after.error || live.error) return null;
+  const changed = changedBibliographyKeys(before.entries, after.entries);
+  if (changed.length === 0) return current === expected || current === next ? next : null;
+  if (changed.length !== 1) return null;
+  const key = changed[0]!;
   if (
     [before, after, live].some(
-      (parsed) => new Set(parsed.entries.map((entry) => entry.key)).size !== parsed.entries.length,
+      (parsed) => parsed.entries.filter((entry) => entry.key === key).length > 1,
     )
   )
     return null;
-  const keys = new Set([...before.entries, ...after.entries].map((entry) => entry.key));
-  const changed = [...keys].filter(
-    (key) =>
-      before.entries.find((entry) => entry.key === key)?.raw !==
-      after.entries.find((entry) => entry.key === key)?.raw,
-  );
-  if (changed.length !== 1) return null;
-  const key = changed[0]!;
+  if (current === expected) return next;
+  if (current === next) return current;
   const original = before.entries.find((entry) => entry.key === key);
   const replacement = after.entries.find((entry) => entry.key === key);
   const existing = live.entries.find((entry) => entry.key === key);

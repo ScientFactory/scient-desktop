@@ -158,6 +158,7 @@ const types = [
 ];
 type EntryDraft = {
   documentId: string;
+  documentPath: string;
   original: string;
   entry: BibliographyEntry;
   isNew: boolean;
@@ -179,6 +180,7 @@ function entryDraft(
 ): EntryDraft {
   return {
     documentId: document.id,
+    documentPath: document.path,
     original: document.source,
     entry,
     isNew,
@@ -296,8 +298,15 @@ export function LatexReferencesPanel(props: {
       ),
     [candidates, catalogChanged],
   );
-  const target =
-    documents.find((document) => document.id === (draft?.documentId ?? documentId)) ?? documents[0];
+  const target = draft
+    ? documents.find(
+        (document) => document.id === draft.documentId && document.path === draft.documentPath,
+      )
+    : (documents.find((document) => document.id === documentId) ?? documents[0]);
+  const missingDestination =
+    draft && !target
+      ? `${draft.documentPath} is no longer part of this document. Your entry draft is retained; restore that destination or cancel the draft.`
+      : null;
   const raw = draft ? draftSource(draft) : null;
   const dirty = !!draft && (draft.isNew || raw !== draft.entry.raw);
   useEffect(() => {
@@ -404,11 +413,27 @@ export function LatexReferencesPanel(props: {
     }
   };
   const apply = async (remove = false) => {
+    if (missingDestination) {
+      setNotice(missingDestination);
+      return;
+    }
     if (!draft || !target || saving || props.disabled || target.readOnly) return;
     const source = raw;
     const parsed =
       target.kind === "bibtex" ? bibtexEntries(draft.original) : manualBibliography(draft.original);
     const key = draft.isNew ? draft.key : draft.entry.key;
+    const current =
+      target.kind === "bibtex" ? bibtexEntries(target.source) : manualBibliography(target.source);
+    if (
+      [parsed, current].some(
+        (value) => value.entries.filter((entry) => entry.key === key).length > 1,
+      )
+    ) {
+      setNotice(
+        `Citation key ${key} appears more than once in ${target.path}. Repair it in Source before saving. Your entry draft is retained.`,
+      );
+      return;
+    }
     if (
       parsed.error ||
       !validBibliographyKey(key) ||
@@ -749,7 +774,9 @@ export function LatexReferencesPanel(props: {
                 Edit entry source
               </Button>
             ) : null}
-            {notice ? <p role="status">{notice}</p> : null}
+            {missingDestination || notice ? (
+              <p role="status">{missingDestination ?? notice}</p>
+            ) : null}
             <div className="scient-latex-references-actions">
               <Button size="sm" type="submit" disabled={!writable || saving || !dirty}>
                 {saving ? "Saving…" : "Save reference"}

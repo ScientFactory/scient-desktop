@@ -499,6 +499,10 @@ or `\eqref` by default. Bibliography management does not insert a citation.
 Reference saves preserve unrelated entries, unknown fields and literal TeX
 formatting. Unrelated document edits can be merged while the entry itself remains
 unchanged; conflicting edits retain the form draft instead of overwriting it.
+An entry draft stays bound to the bibliography where it was opened. If that
+destination is removed from the document, restore it or cancel the retained draft;
+saving cannot redirect the entry to another file. Duplicate copies of the entry's
+citation key must be repaired in Source before saving that entry.
 Linked `.bib` files use the same document session and revision checks whether
 edited in References or in their own Source tab. The entry form clears and reports
 success only after the owning sessions' published source contains the submitted

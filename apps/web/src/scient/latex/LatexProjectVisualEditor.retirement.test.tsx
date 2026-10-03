@@ -11,7 +11,7 @@ const { disk, optimistic, visual, saveProject, projectState } = vi.hoisted(() =>
   projectState: { current: { pending: false, error: null as string | null } },
   saveProject: { current: null as null | (() => Promise<boolean>) },
   // What is on disk for each file of the synthetic workspace.
-  disk: new Map<string, { source: string; revision: string }>(),
+  disk: new Map<string, { source: string; revision: string; readOnly?: boolean }>(),
   visual: {
     props: null as null | {
       source: string;
@@ -36,7 +36,12 @@ vi.mock("~/components/files/projectFilesQueryState", () => ({
     const data =
       onDisk === undefined
         ? null
-        : { relativePath: file, contents: onDisk.source, revision: onDisk.revision };
+        : {
+            relativePath: file,
+            contents: onDisk.source,
+            revision: onDisk.revision,
+            readOnly: onDisk.readOnly,
+          };
     const unsaved = optimistic.get(file);
     return {
       data: data && unsaved !== undefined ? { ...data, contents: unsaved } : data,
@@ -63,6 +68,7 @@ import {
 import { createMarkdownPersistenceTransport } from "~/scient/markdownEditor/persistence/markdownPersistenceTransport";
 
 import { assembleVisualProject } from "./latexProjectVisual";
+import { bibliographyChangePublished } from "./latexBibliographyModel";
 import { LatexProjectVisualEditor } from "./LatexProjectVisualEditor";
 import { clearVisualDraft } from "./visualDrafts";
 
@@ -116,7 +122,10 @@ describe("retiring the project's recovery copy", () => {
         selectedPending={snapshot.pending}
         draftKey="unused"
         disabled={false}
-        onEdit={() => true}
+        onEdit={(expected, next) =>
+          expected === props.lease.getSnapshot().draftSource &&
+          props.lease.change(next, props.lease.getSnapshot().editVersion)
+        }
         flushReferenceEdits={props.lease.flushNow}
         documentPersistence={[props.lease]}
         onEditingChange={() => {}}
@@ -268,6 +277,45 @@ describe("retiring the project's recovery copy", () => {
       expect(await saved).toBe(true);
     });
     expect(visual.props!.confirmedReferenceSource()).toContain("Changed root.");
+  });
+
+  it("confirms a saved manual reference in a writable root with a read-only TeX include", async () => {
+    disk.set(path, {
+      source: tex(
+        "\\input{chapter}\n\\begin{thebibliography}{99}\n\\bibitem{known} Original entry\n\\end{thebibliography}",
+      ),
+      revision: "r1",
+    });
+    disk.set("chapter.tex", { source: "Read-only chapter.\n", revision: "c1", readOnly: true });
+    const selected = acquire(path);
+    await mount(<Surface lease={selected} />);
+    const before = visual.props!.source;
+    const next = before.replace("Original entry", "Updated entry");
+    expect(before).toContain("Read-only chapter.");
+    expect(visual.props!.confirmedReferenceSource()).toBe(before);
+    await act(() => expect(visual.props!.onEdit(before, next)).toBe(true));
+    expect(visual.props!.confirmedReferenceSource()).toBe(before);
+    let flushed!: Promise<boolean>;
+    await act(() => {
+      flushed = visual.props!.flushReferenceEdits();
+    });
+    expect(writes).toBe(1);
+    await act(async () => {
+      acknowledge();
+      expect(await flushed).toBe(true);
+    });
+    const published = visual.props!.confirmedReferenceSource();
+    expect(published).toBe(next);
+    expect(bibliographyChangePublished(before, next, published!, "bibitem")).toBe(true);
+    expect(disk.get(path)!.source).toContain("Updated entry");
+    expect(disk.get("chapter.tex")!.source).toBe("Read-only chapter.\n");
+    expect(
+      vi
+        .mocked(createMarkdownPersistenceTransport)
+        .mock.calls.filter(
+          ([target]) => target.cwd === cwd && target.relativePath === "chapter.tex",
+        ),
+    ).toHaveLength(0);
   });
 
   it("keeps it when a second view opens while the file's session still has that source unsaved", async () => {

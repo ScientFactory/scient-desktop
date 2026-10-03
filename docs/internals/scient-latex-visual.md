@@ -47,6 +47,13 @@ entry with the same key and line-ending-normalized text, or confirms its absence
 for a removal. A clean persistence lane alone does not prove the submission was
 published. A refused, failed or superseded save retains the form; save failures
 also expose the session's persistence notice.
+Drafts stay bound to their original document identity and path. Removing that
+destination from the document refuses the save and retains the draft rather than
+selecting another bibliography. Publication confirmation checks only the submitted
+key; unrelated duplicate keys or malformed BibTeX records do not invalidate its
+confirmed text. A duplicated submitted key is refused before writing. Project
+confirmation combines session baselines with read contents for sessionless files,
+including read-only TeX dependencies.
 
 A supported edit passes from the canvas transaction to the source adapter, then
 to the project/file save path. Accepted source is projected back into the editor;
