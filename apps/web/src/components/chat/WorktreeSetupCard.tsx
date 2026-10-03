@@ -10,6 +10,7 @@ import {
   ChevronRightIcon,
   CircleAlertIcon,
   CircleIcon,
+  GitBranchIcon,
   LaptopIcon,
   MinusIcon,
   TerminalIcon,
@@ -22,6 +23,7 @@ import { Spinner } from "~/components/ui/spinner";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import { cn } from "~/lib/utils";
+import { TRACE_ICON_STROKE } from "~/scient/presentation/traceIcons";
 
 interface WorktreeSetupCardProps {
   snapshot: WorktreeSetupSnapshot;
@@ -55,8 +57,21 @@ function useNowWhile(active: boolean): number {
   return nowMs;
 }
 
-function StageIcon({ status }: { status: WorktreeSetupStage["status"] }) {
-  const className = "size-4 shrink-0 stroke-2";
+/**
+ * A setup stage's status icon. The card's summary row shows the worktree's branch
+ * once setup is not running, failed or warning.
+ */
+function StageIcon({
+  status,
+  summary = false,
+}: {
+  status: WorktreeSetupStage["status"];
+  summary?: boolean;
+}) {
+  const className = cn("size-4 shrink-0", TRACE_ICON_STROKE);
+  if (summary && (status === "done" || status === "pending" || status === "skipped")) {
+    return <GitBranchIcon aria-hidden className={className} />;
+  }
   switch (status) {
     case "done":
       return <CheckIcon aria-hidden className={className} />;
@@ -321,7 +336,7 @@ function CollapsedSummaryRow({
       data-worktree-setup-status={status}
     >
       <span className="flex size-6 shrink-0 items-center justify-center text-icon-muted">
-        <StageIcon status={status} />
+        <StageIcon status={status} summary />
       </span>
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {totalElapsed !== null ? (
