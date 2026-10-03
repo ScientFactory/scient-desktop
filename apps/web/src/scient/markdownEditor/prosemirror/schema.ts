@@ -308,6 +308,15 @@ nodes = nodes.addBefore("image", "footnote_reference", footnoteReferenceSpec);
 nodes = nodes.addBefore("image", "display_math", displayMathSpec);
 nodes = nodes.addBefore("image", "footnote_definition", footnoteDefinitionSpec);
 nodes = nodes.addBefore("image", "raw_block", rawBlockSpec);
+const headingSpec = nodes.get("heading");
+if (!headingSpec) throw new Error("Missing ProseMirror node spec 'heading'.");
+// A heading holds the same inline content as a paragraph (math, citations,
+// wiki links, footnote markers), except line breaks, which a Markdown heading
+// cannot contain.
+nodes = nodes.update("heading", {
+  ...headingSpec,
+  content: "(text | image | inline_math | wiki_link | citation | footnote_reference)*",
+});
 const imageSpec = nodes.get("image");
 if (!imageSpec) throw new Error("Missing ProseMirror node spec 'image'.");
 nodes = nodes.update("image", {

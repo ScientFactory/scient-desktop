@@ -7,6 +7,7 @@ import {
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 
 import { findScientBackslashMathSpans } from "~/scient/math/scientMathText";
+import { makeFaithfulMarkdownParse } from "./faithfulParse";
 import {
   scientMarkdownParser,
   scientMarkdownSchema,
@@ -88,6 +89,33 @@ function footnoteDefinitionBlock(block: MarkdownSourceBlock): ProseMirrorNode | 
   return nodeType.create({ label: match[1], source: block.source, sourceId: block.id });
 }
 
+const parseFaithfully = makeFaithfulMarkdownParse(scientMarkdownParser);
+
+const NODE_NAMES_BY_BLOCK_KIND: Partial<Record<MarkdownSourceBlock["kind"], ReadonlySet<string>>> =
+  {
+    blockquote: new Set(["blockquote"]),
+    code: new Set(["code_block"]),
+    heading: new Set(["heading"]),
+    list: new Set(["bullet_list", "ordered_list"]),
+    paragraph: new Set(["paragraph"]),
+    table: new Set(["table"]),
+    thematicBreak: new Set(["horizontal_rule"]),
+  };
+
+/** Whether the rich node is the kind of block the source ledger found. */
+function matchesBlockKind(block: MarkdownSourceBlock, node: ProseMirrorNode): boolean {
+  const names = NODE_NAMES_BY_BLOCK_KIND[block.kind];
+  if (!names) return true;
+  if (names.has(node.type.name)) return true;
+  // A `<div dir>` region is one ledger "paragraph" whose content may be a
+  // directed heading or table.
+  return (
+    block.kind === "paragraph" &&
+    typeof node.attrs.dir === "string" &&
+    (node.type.name === "heading" || node.type.name === "table")
+  );
+}
+
 function parseBlock(
   block: MarkdownSourceBlock,
   environment: MarkdownParseEnvironment,
@@ -98,9 +126,14 @@ function parseBlock(
   const footnote = footnoteDefinitionBlock(block);
   if (footnote) return footnote;
   if (!COMMONMARK_BLOCK_KINDS.has(block.kind)) return rawBlock(block);
-  const parsed = parseWithContext(block.source, environment);
-  if (parsed.childCount !== 1) return rawBlock(block);
-  return withMarkdownSourceId(parsed.child(0), block.id);
+  // A block the rich editor cannot show faithfully stays editable source:
+  // a dropped node or a different kind of block would hide content that a
+  // later edit then removes from the file.
+  const parsed = parseFaithfully(block.source, { references: { ...environment.references } });
+  if (!parsed || parsed.childCount !== 1) return rawBlock(block);
+  const node = parsed.child(0);
+  if (!matchesBlockKind(block, node)) return rawBlock(block);
+  return withMarkdownSourceId(node, block.id);
 }
 
 export function createScientMarkdownProjection(source: string): ScientMarkdownProjection {
