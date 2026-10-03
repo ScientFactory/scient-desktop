@@ -432,6 +432,39 @@ export function toCustomModelSetting(entry: CustomModelDefinition): CustomModelS
   };
 }
 
+const PREFERRED_ACCOUNT_MODELS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  anthropic: ["claude-opus-5-5"],
+  "openai-codex": ["gpt-6.1-sol"],
+  cursor: ["grok-4.7-high", "cursor-grok-4.7-high", "grok-4.7", "cursor-grok-4.7"],
+  "google-antigravity": ["gemini-3.8-flash-high", "gemini-3.8-flash"],
+};
+
+function preferredAccountModel<T extends SelectableModelOption>(
+  driver: ProviderDriverKind,
+  models: ReadonlyArray<T>,
+): T | undefined {
+  // Preserve account order; choose within the first account, without jumping
+  // to another account when its preferred model is absent.
+  const accounts =
+    driver === "scient"
+      ? [models[0]?.slug.split("/")[0] ?? ""]
+      : driver === "cursor"
+        ? ["cursor"]
+        : driver === "antigravity"
+          ? ["google-antigravity"]
+          : [];
+  for (const account of accounts) {
+    for (const id of PREFERRED_ACCOUNT_MODELS[account] ?? []) {
+      const slug = driver === "scient" ? `${account}/${id}` : id;
+      const match = models.find(
+        (model) => model.slug.split("[")[0] === slug || model.aliases?.includes(slug),
+      );
+      if (match) return match;
+    }
+  }
+  return undefined;
+}
+
 /** Resolve only implicit selections; explicit and persisted picks never pass through here. */
 export function resolveAutomaticModel(
   driver: ProviderDriverKind,
@@ -452,13 +485,15 @@ export function resolveAutomaticModel(
       : driver === "claudeAgent"
         ? ["claude-opus-5-5", "claude-fable-5-1"]
         : [];
-  const preferred = preferences.flatMap((slug) =>
-    builtIns.filter((model) =>
-      driver === "codex"
-        ? codexModelFamily(model.slug) === slug
-        : model.slug === slug || model.aliases?.includes(slug),
-    ),
-  )[0];
+  const preferred =
+    preferredAccountModel(driver, builtIns) ??
+    preferences.flatMap((slug) =>
+      builtIns.filter((model) =>
+        driver === "codex"
+          ? codexModelFamily(model.slug) === slug
+          : model.slug === slug || model.aliases?.includes(slug),
+      ),
+    )[0];
   const reported = available.find((model) => model.isDefault);
   const fallback = DEFAULT_MODEL_BY_PROVIDER[driver];
   const selected =
@@ -490,27 +525,36 @@ export function applyAutomaticModelDefaults(
   driver: ProviderDriverKind,
   models: ReadonlyArray<ServerProviderModel>,
 ): ReadonlyArray<ServerProviderModel> {
-  const selected = resolveAutomaticModel(driver, models);
+  const selected = resolveAutomaticModel(
+    driver,
+    driver === "scient" ? sortAgentModelsByAccount(driver, models) : models,
+  );
   return models.map((model) => {
     // Built-in capability defaults affect new selections, not saved selection options.
     const capabilities =
-      !model.isCustom && (driver === "codex" || driver === "claudeAgent") && model.capabilities
+      !model.isCustom &&
+      (driver === "codex" ||
+        driver === "claudeAgent" ||
+        preferredAccountModel(driver, [model]) !== undefined) &&
+      model.capabilities
         ? {
             ...model.capabilities,
             optionDescriptors: (model.capabilities.optionDescriptors ?? []).map((descriptor) => {
               if (
                 descriptor.type !== "select" ||
-                !["reasoningEffort", "effort"].includes(descriptor.id) ||
-                !descriptor.options.some((option) => option.id === "medium")
+                !["reasoningEffort", "effort", "thinkingLevel", "reasoning"].includes(
+                  descriptor.id,
+                ) ||
+                !descriptor.options.some((option) => option.id === "high")
               )
                 return descriptor;
               return {
                 ...descriptor,
                 concreteReasoning: true,
-                currentValue: "medium",
+                currentValue: "high",
                 options: descriptor.options.map((option) => ({
                   ...option,
-                  isDefault: option.id === "medium",
+                  isDefault: option.id === "high",
                 })),
               };
             }),

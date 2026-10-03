@@ -8,8 +8,10 @@ import type {
 } from "@t3tools/contracts";
 import {
   createModelSelection,
+  getDefaultHiddenAgentModels,
   resolveAutomaticModel,
   resolveSelectableModel,
+  sortAgentModelsByAccount,
 } from "@t3tools/shared/model";
 import { ANTIGRAVITY_DEFAULT_MODEL } from "@t3tools/contracts";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
@@ -62,38 +64,45 @@ export function providerOnboardingStatusLabel(entry: ProviderInstanceEntry | und
 }
 
 /** Resolve the first model a newly connected provider can safely hand to T3's composer. */
-export function readyProviderDefaultModel(entry: ProviderInstanceEntry | undefined): string | null {
+export function readyProviderDefaultModel(
+  entry: ProviderInstanceEntry | undefined,
+  hiddenModels: ReadonlyArray<string> | undefined = undefined,
+): string | null {
   if (!entry || !isProviderInstancePickerReady(entry) || entry.models.length === 0) return null;
-  return resolveAutomaticModel(entry.driverKind, entry.models) ?? null;
+  const hidden = hiddenModels ?? getDefaultHiddenAgentModels(entry.driverKind, entry.models);
+  const models = entry.models.filter((model) => model.isCustom || !hidden.includes(model.slug));
+  return (
+    resolveAutomaticModel(
+      entry.driverKind,
+      entry.driverKind === "scient" ? sortAgentModelsByAccount(entry.driverKind, models) : models,
+    ) ?? null
+  );
 }
 
 export function readyProviderModelSelection(
   entry: ProviderInstanceEntry | undefined,
   saved?: ModelSelection | null,
-  hiddenModels: ReadonlyArray<string> = [],
+  hiddenModels?: ReadonlyArray<string>,
 ): ModelSelection | null {
-  const defaultModel = readyProviderDefaultModel(entry);
+  const hidden =
+    hiddenModels ?? (entry ? getDefaultHiddenAgentModels(entry.driverKind, entry.models) : []);
+  const defaultModel = readyProviderDefaultModel(entry, hidden);
   if (!entry || !defaultModel) return null;
   if (saved?.instanceId === entry.instanceId && entry.driverKind !== "antigravity") {
     const model = resolveSelectableModel(entry.driverKind, saved.model, entry.models);
-    if (model && !hiddenModels.includes(model)) return saved;
+    if (model && !hidden.includes(model)) return saved;
   }
   if (entry.driverKind === "antigravity" && saved?.instanceId === entry.instanceId) {
-    const selection =
-      resolveAntigravityDraftSelection(saved, entry.snapshot, hiddenModels) ?? saved;
+    const selection = resolveAntigravityDraftSelection(saved, entry.snapshot, hidden) ?? saved;
     const model = resolveSelectableModel(entry.driverKind, selection.model, entry.models);
     // Missing/ambiguous variants require a choice, not a silent reasoning change.
     if (saved.model !== ANTIGRAVITY_DEFAULT_MODEL) {
-      return model && !hiddenModels.includes(model)
+      return model && !hidden.includes(model)
         ? createModelSelection(entry.instanceId, model, selection.options)
         : null;
     }
   }
-  const model =
-    entry.driverKind === "antigravity" && hiddenModels.includes(defaultModel)
-      ? entry.models.find((candidate) => !hiddenModels.includes(candidate.slug))?.slug
-      : defaultModel;
-  return model ? createModelSelection(entry.instanceId, model) : null;
+  return createModelSelection(entry.instanceId, defaultModel);
 }
 
 export function ProviderOnboardingPicker(props: {
