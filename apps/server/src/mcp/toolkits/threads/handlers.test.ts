@@ -388,7 +388,7 @@ const read = (
     Effect.provideService(ProjectionSnapshotQuery, snapshots),
   );
 
-describe("t3_thread_read authorization", () => {
+describe("scient_thread_read authorization", () => {
   const caller = makeThread();
   const sibling = makeThread({ id: SIBLING_ID, title: "Sibling" });
   const foreign = makeThread({ id: FOREIGN_ID, projectId: OTHER_PROJECT_ID, title: "Foreign" });

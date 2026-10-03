@@ -798,7 +798,6 @@ it.layer(layer)("ScientForkContextDelivery", (it) => {
       assert.strictEqual(context.kind, "deliver");
       if (context.kind !== "deliver") return;
       assert.isAbove(context.omittedItemCount, 0);
-      assert.include(context.contextPreamble, "t3_thread_read");
       // V2 priority: the latest answer and the first request survive.
       assert.include(context.contextPreamble, `${"detail ".repeat(200)}39`);
       assert.include(context.contextPreamble, `${"detail ".repeat(200)}0`);

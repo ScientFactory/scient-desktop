@@ -566,6 +566,14 @@ does not mint a credential or advertise MCP-delivered Skills. Managed OpenCode
 opts in; an externally managed OpenCode server does not.
 See [workspace authority and agent capabilities](docs/internals/scient-workspace-binding.md).
 
+Scient's injected MCP connection is named `scient`, and the omitted-history
+reader is `scient_thread_read`. Tool descriptions, provider-qualified names,
+generated handoff instructions and activity presentation use Scient identity.
+Preserve this public boundary when adopting upstream toolkits. Historical
+`t3-code`/`t3_` activity identities are normalized only for display; they are not
+callable aliases. Credentials, capability grants, operation IDs, storage and
+compatibility environment-variable names are unchanged.
+
 Explicit Skill selections travel as optional `selectedScientSkillNames`
 metadata through composer, turn commands/events, queue and provider preparation.
 Do not infer them from augmented prompts, captured text or assistant plans.

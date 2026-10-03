@@ -246,7 +246,7 @@ export const readScientThreadForInvocation = Effect.fn("ScientThreadsToolkit.rea
   if (!invocation.capabilities.has("threads:read")) {
     return yield* toolError(
       "capability_denied",
-      "This provider session does not grant read access to T3 threads.",
+      "This provider session does not grant read access to Scient threads.",
     );
   }
   const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
@@ -265,7 +265,7 @@ export const readScientThreadForInvocation = Effect.fn("ScientThreadsToolkit.rea
     if (projectId === null || target.value !== projectId) {
       return yield* toolError(
         "thread_outside_project",
-        `Thread ${input.threadId} is not in the calling thread's project. t3_thread_read only reads threads in the calling project.`,
+        `Thread ${input.threadId} is not in the calling thread's project. scient_thread_read only reads threads in the calling project.`,
       );
     }
   }
@@ -299,7 +299,7 @@ export const readScientThreadForInvocation = Effect.fn("ScientThreadsToolkit.rea
 });
 
 const handlers = {
-  t3_thread_read: (input) => readScientThreadForInvocation(input),
+  scient_thread_read: (input) => readScientThreadForInvocation(input),
 } satisfies Parameters<typeof ScientThreadsToolkit.toLayer>[0];
 
 export const ScientThreadsToolkitHandlersLive = ScientThreadsToolkit.toLayer(handlers);

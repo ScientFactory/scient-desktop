@@ -19,10 +19,10 @@ import * as AgentInvocationContext from "../../../scient/operations/AgentInvocat
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 
 /**
- * Bridge until T3 Orchestration V2 lands. The tool name, input fields and
- * defaults mirror V2's `t3_thread_read` (`OrchestratorMcpThreadReadInput`) so
- * prompts that name it keep working when V2's orchestrator toolkit replaces
- * this one. Delete this toolkit then; see docs/internals/scient-fork-divergence.md.
+ * Scient's omitted-history reader uses V2's input fields, defaults and paging
+ * semantics under the Scient-owned `scient_thread_read` name. Preserve that
+ * public name when V2's orchestrator toolkit replaces this bridge, then delete
+ * this toolkit; see docs/internals/scient-fork-divergence.md.
  *
  * Upstream reference: pingdotgg/t3code PR #2829 at a3fbbe45315e (2026-09-27),
  * `packages/contracts/src/orchestratorMcp.ts` (`OrchestratorMcpThreadReadInput`)
@@ -160,15 +160,15 @@ const dependencies = [
   ProjectionSnapshotQuery.ProjectionSnapshotQuery,
 ];
 
-export const ScientThreadReadTool = Tool.make("t3_thread_read", {
+export const ScientThreadReadTool = Tool.make("scient_thread_read", {
   description:
-    "Read durable state and a paginated timeline from a T3 thread in the calling project, including this thread. Use it to recover conversation history that was omitted from a forked or bounded transcript. The default messages view returns user messages, assistant messages, and proposed plans; activity returns all summarized timeline items. Continue with afterPosition=nextPosition while hasMore is true. Recover long item text with itemId and textOffset=nextTextOffset until nextTextOffset is null; offsets count UTF-16 code units. Read-only.",
+    "Read durable state and a paginated timeline from a Scient thread in the calling project, including this thread. Use it to recover conversation history that was omitted from a forked or bounded transcript. The default messages view returns user messages, assistant messages, and proposed plans; activity returns all summarized timeline items. Continue with afterPosition=nextPosition while hasMore is true. Recover long item text with itemId and textOffset=nextTextOffset until nextTextOffset is null; offsets count UTF-16 code units. Read-only.",
   parameters: ScientThreadReadInput,
   success: ScientThreadReadResult,
   failure: ScientThreadReadToolError,
   dependencies,
 })
-  .annotate(Tool.Title, "Read a T3 thread")
+  .annotate(Tool.Title, "Read a Scient thread")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)

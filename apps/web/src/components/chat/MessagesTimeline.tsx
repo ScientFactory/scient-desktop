@@ -4648,7 +4648,7 @@ type WorkEntryIconName =
   | "terminal"
   | "pull-request"
   | "scient-mono"
-  | "t3-code"
+  | "scient"
   | "wrench"
   | "x"
   | "zap";
@@ -4824,7 +4824,7 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
       return <ComputerUseAppIcon className={className} />;
     case "device":
       return <SmartphoneIcon className={className} aria-hidden />;
-    case "t3-code":
+    case "scient":
       return <ScientSymbol className={className} />;
     case "scient-mono":
       return <ScientSymbolMono className={className} />;
