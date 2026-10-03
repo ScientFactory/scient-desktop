@@ -1,0 +1,10 @@
+/*
+ * Agent traces (action rows, reasoning and their summaries) sit one step
+ * lighter than the conversation's own text. Both colours derive from the
+ * contrast-adjusted theme tokens, so they follow light, dark and custom themes
+ * and the appearance contrast setting.
+ */
+@theme inline {
+  --color-trace-label: color-mix(in oklab, var(--contrast-secondary-label) 85%, var(--background));
+  --color-trace-icon: color-mix(in oklab, var(--contrast-icon-muted) 85%, var(--background));
+}
