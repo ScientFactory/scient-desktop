@@ -860,6 +860,7 @@ describe.runIf(binary)("native OMP ordinary tool activity", () => {
             );
             let client: OmpRpcProcess | undefined;
             const adapter = yield* makeOmpAdapter({
+              target: ompQualifyTarget,
               binaryPath: binary!,
               providerInstanceId: instanceId,
               stateDir: NodePath.join(root, "state"),
