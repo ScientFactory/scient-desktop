@@ -102,7 +102,7 @@ From the fork redesign (#376, merged on `main`):
 | `scient_context_transfers` / `scient_context_handoffs` with a `type` column (default `'fork'`) and `ForkContextDelivery` | Import continuation: an imported thread gets a transfer row with `type = 'import'`                                                                                            |
 | Handoff history built from the **thread's own local** messages, activities, and plans                                    | Works for imported history once imports are modelled (PR 4)                                                                                                                   |
 | Budgeted handoff, retry-safe delivery, evidence-based confirmation                                                       | No new bootstrap logic for import                                                                                                                                             |
-| `t3_thread_read` MCP tool                                                                                                | The agent can read imported history the handoff had to omit                                                                                                                   |
+| `scient_thread_read` MCP tool                                                                                            | The agent can read imported history the handoff had to omit                                                                                                                   |
 | `forkActivityCopy.ts`: which activity kinds a fork copies, and size bounding                                             | Reference only. It bounds size but does not sanitize content, and it is not on `main`; exports use their own projection (see [Conversation snapshot](#conversation-snapshot)) |
 
 What does **not** exist today: any conversation export, any Markdown→PDF path, any Word output, any
@@ -747,7 +747,7 @@ text-only and was not built for this.
 
 **First new message.** The context-delivery path builds a budgeted handoff from the imported thread's
 own history and delivers it to a fresh session of the chosen provider. Omitted items stay visible in
-Scient and readable by the agent through `t3_thread_read`. Old tool calls are history only and never
+Scient and readable by the agent through `scient_thread_read`. Old tool calls are history only and never
 run again.
 
 **Required PR 4 work on the #376 model.** #376 was designed for forks, which always have a local source

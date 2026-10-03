@@ -682,7 +682,7 @@ meaning is the same.
   latest turn's thinking ranks right after the anchors, older thinking last; a
   running-turn cut ranks first. Anchors that do not fit are kept truncated,
   never silently lost. The coverage header lists omitted and truncated item ids
-  and names `t3_thread_read` for reading them.
+  and names `scient_thread_read` for reading them.
 - Every delivery adds a `scient.fork.context` activity to the fork's timeline
   saying whether it continued natively or received history as a summary.
 
@@ -739,7 +739,7 @@ provider message ids their fork APIs need.
 | fork point turn id / checkpoint count                | `sourcePoint.runId` / `checkpointId`                                        |
 | running-turn cut (`mid_turn_cut_json`)               | `sourcePoint.turnItemId` + relaxed forkable-status guard (Scient extension) |
 | `handoffBudget` / `selectHistory` / coverage header  | `ContextHandoffBudget` (Scient cap + estimator override)                    |
-| `t3_thread_read` (Scient bridge)                     | V2 orchestrator `t3_thread_read`                                            |
+| `scient_thread_read` (Scient bridge)                 | V2 orchestrator `t3_thread_read`, exposed as `scient_thread_read` in Scient |
 | `nativeFork` / `forkFrom`                            | `ProviderAdapter.forkThread`                                                |
 
 On the V2 day, the transfer and handoff rows translate one-to-one; the
@@ -839,17 +839,18 @@ Interface-wide provider and VCS changes from the prototype were deliberately
 removed. They forced unrelated adapters and test doubles to understand Scient
 forking and would have increased every future upstream merge.
 
-## Omitted-history recovery: `t3_thread_read` bridge
+## Omitted-history recovery: `scient_thread_read` bridge
 
 A fork's first provider turn receives a bounded transcript, so older messages
-can be omitted. The Scient MCP tool `t3_thread_read` lets the model read them
-back from the projections. It is a temporary bridge: it keeps the tool name,
-input fields, defaults, and paging semantics of T3 Orchestration V2's
-`t3_thread_read` (`OrchestratorMcpThreadReadInput`, upstream
-`apps/server/src/mcp/toolkits/orchestrator/tools.ts`), so prompts that name the
-tool keep working. **Delete `apps/server/src/mcp/toolkits/threads/`, the
+can be omitted. The Scient MCP tool `scient_thread_read` lets the model read them
+back from the projections. It is a temporary bridge: its input fields, defaults
+and paging semantics mirror T3 Orchestration V2's `t3_thread_read`
+(`OrchestratorMcpThreadReadInput`, upstream
+`apps/server/src/mcp/toolkits/orchestrator/tools.ts`). Scient keeps its own public
+tool name and the `scient` MCP connection name; upstream toolkit adoption must
+preserve those names. **Delete `apps/server/src/mcp/toolkits/threads/`, the
 `threads:read` grant, and the `SCIENT-THREAD-READ` seams when V2's orchestrator
-toolkit lands.**
+toolkit replaces this bridge without changing Scient's public tool identity.**
 
 - Input: `threadId` (required), `view` (`messages` default, or `activity`),
   `afterPosition` (exclusive), `limit` (1–100, default 50), `itemId`,
@@ -906,7 +907,7 @@ toolkit lands.**
 - Every retained attachment gets a new fork-owned ID and verified file copy, so
   deletion or cleanup of the origin cannot invalidate the fork.
 - Portable handoffs keep whole items within a model-window-derived budget and
-  never emit invalid JSON; omitted items stay readable through `t3_thread_read`.
+  never emit invalid JSON; omitted items stay readable through `scient_thread_read`.
 - Provider acceptance cannot be made globally exactly-once without provider
   idempotency. Scient therefore re-delivers uncertain context on a fresh
   provider session: the abandoned session may hold a duplicate, the new one

@@ -20,7 +20,7 @@ export type McpCapability =
   | "skills:read"
   | "sources:read"
   | "sources:write"
-  // SCIENT-THREAD-READ: read-only t3_thread_read bridge until V2's orchestrator toolkit lands.
+  // SCIENT-THREAD-READ: read-only scient_thread_read bridge until V2's orchestrator toolkit lands.
   | "threads:read";
 
 export interface McpInvocationScope {
