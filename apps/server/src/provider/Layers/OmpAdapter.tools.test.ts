@@ -141,6 +141,43 @@ describe("Oh My Pi ordinary tool activity", () => {
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.live("labels a row by what the tool acted on, never by the tool's output", () =>
+    Effect.gen(function* () {
+      const h = yield* toolsHarness();
+      const text = (value: string) => ({ content: [{ type: "text", text: value }] });
+      yield* h.wire.send(
+        start("skills", "scient_skills_list", {}),
+        end("skills", "scient_skills_list", text('{"skills":[{"name":"html-pdf-authoring"}]}')),
+        start("search", "grep", { pattern: "TODO", path: "src" }),
+        end("search", "grep", text("src/app.ts:1: TODO")),
+        start("missing", "read", { path: "gone.txt" }),
+        end("missing", "read", text("File not found: gone.txt\nChecked the workspace."), true),
+      );
+      yield* h.until(completed("missing"));
+      const finished = (id: string) =>
+        h
+          .items()
+          .find(
+            (event) => event.type === "item.completed" && event.providerRefs?.providerItemId === id,
+          )?.payload;
+      expect(finished("skills")).not.toHaveProperty("detail");
+      expect(finished("search")).toMatchObject({ detail: "TODO in src" });
+      expect(finished("missing")).toMatchObject({
+        status: "failed",
+        detail: "File not found: gone.txt",
+      });
+      expect(h.workLog()).toMatchObject([
+        {
+          title: "scient_skills_list",
+          output: { text: '{"skills":[{"name":"html-pdf-authoring"}]}' },
+        },
+        { title: "grep", detail: { text: "TODO in src" } },
+        { title: "read", status: "failed" },
+      ]);
+      yield* h.adapter.stopAll();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   for (const trigger of ["stop", "process-exit"] as const) {
     it.live(
       `terminalizes open ordinary calls before ${trigger} receipts and retains partial output`,

@@ -659,6 +659,21 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
     }
     return clipped();
   };
+  /**
+   * What a tool call acts on, from its input: a path, a search pattern, a
+   * query, or a URL. A row is labelled by this, never by the tool's output.
+   */
+  const ompToolInvocationDetail = (input: unknown): string | undefined => {
+    if (!isRecord(input)) return undefined;
+    const field = (key: string) => {
+      const value = input[key];
+      return typeof value === "string" && value.trim() ? value.trim() : undefined;
+    };
+    const path = field("path") ?? field("file_path");
+    const pattern = field("pattern") ?? field("pat");
+    if (pattern) return path ? `${pattern} in ${path}` : pattern;
+    return path ?? field("query") ?? field("url");
+  };
   const toolOutputText = (data: unknown): string | undefined => {
     if (typeof data === "string") return data;
     if (!isRecord(data)) return undefined;
@@ -1029,7 +1044,8 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
           update.input !== undefined
             ? clipToolData(ctx.redaction.exact(update.input), Math.floor(toolDataByteLimit / 2))
             : previous?.input;
-        const target = isRecord(input) ? (input.path ?? input.file_path) : undefined;
+        const invocation = ompToolInvocationDetail(input);
+        const failure = update.status === "failed" ? update.detail?.split(/\r?\n/u)[0] : undefined;
         const content = toolOutputText(ctx.redaction.exact(update.data));
         const inputBytes = input === undefined ? 0 : Buffer.byteLength(encodeOmpJson(input));
         const item: OmpToolItem = {
@@ -1049,10 +1065,10 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
             : previous?.output
               ? { output: previous.output }
               : {}),
-          ...(typeof target === "string"
-            ? { detail: target }
-            : update.detail
-              ? { detail: update.detail }
+          ...(failure
+            ? { detail: failure }
+            : invocation
+              ? { detail: invocation }
               : previous?.detail
                 ? { detail: previous.detail }
                 : {}),

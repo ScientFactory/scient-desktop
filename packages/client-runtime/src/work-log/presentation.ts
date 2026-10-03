@@ -10,6 +10,7 @@ import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-im
 import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
+import { SCIENT_MCP_TOOL_LABELS, scientMcpToolTarget } from "./scientToolPresentation.ts";
 
 /**
  * Activities the worktree setup card already represents. The settled record
@@ -123,6 +124,7 @@ const T3_MCP_TOOL_LABELS: Record<
     "the device",
   ],
   device_close: ["Close", "Closing", "Closed", "a device"],
+  ...SCIENT_MCP_TOOL_LABELS,
 };
 
 const PR_TOOL_ACTIONS: Readonly<Record<string, ToolGroupAction>> = {
@@ -164,13 +166,14 @@ function resolveT3McpToolPresentation(
   const urlTarget = typeof input?.url === "string" ? parseChangeRequestUrl(input.url) : null;
   const number = urlTarget?.number ?? input?.number;
   const target =
-    actionKind !== undefined &&
+    scientMcpToolTarget(name, input) ??
+    (actionKind !== undefined &&
     actionKind !== "list-prs" &&
     typeof number === "number" &&
     Number.isSafeInteger(number) &&
     number > 0
       ? `PR #${number}`
-      : detail;
+      : detail);
   return {
     displayName: `${verb} ${target}`,
     icon:
