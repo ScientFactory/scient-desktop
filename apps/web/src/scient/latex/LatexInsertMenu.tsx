@@ -40,48 +40,71 @@ const withIcons = (actions: readonly LatexInsertAction[]): readonly LatexInsertA
   actions.map((action) => (action.icon ? action : { ...action, icon: ICONS[action.id] }));
 
 /** LaTeX's arrangement of the shared Insert menu. */
-function latexInsertLayout(): InsertMenuLayout {
-  return (item, table) => (
-    <>
-      {item("figure")}
-      {table}
-      {item("code")}
-      {item("verbatim")}
-      <MenuSeparator />
-      <MenuSub>
-        <MenuSubTrigger>
-          <BookOpen className={ICON} />
-          <span>References</span>
-        </MenuSubTrigger>
-        <MenuSubPopup {...SUBMENU}>
-          {["citation", "reference", "link"].map(item)}
-          <MenuSeparator />
-          {item("footnote")}
-        </MenuSubPopup>
-      </MenuSub>
-      <MenuSub>
-        <MenuSubTrigger>
-          <Shapes className={ICON} />
-          <span>Theorems &amp; proofs</span>
-        </MenuSubTrigger>
-        <MenuSubPopup {...SUBMENU}>
-          {STATEMENTS.slice(0, 5).map(item)}
-          <MenuSeparator />
-          {STATEMENTS.slice(5, 8).map(item)}
-          <MenuSeparator />
-          {item("proof")}
-        </MenuSubPopup>
-      </MenuSub>
-      <MenuSub>
-        <MenuSubTrigger>Document blocks</MenuSubTrigger>
-        <MenuSubPopup {...SUBMENU}>
-          {["abstract", "contents", "bibliography"].map(item)}
-        </MenuSubPopup>
-      </MenuSub>
-      <MenuSeparator />
-      {item("pagebreak")}
-    </>
-  );
+function latexInsertLayout(actions: readonly LatexInsertAction[]): InsertMenuLayout {
+  return (renderItem, table) => {
+    const placed = new Set<string>();
+    const item = (id: string) => {
+      placed.add(id);
+      return renderItem(id);
+    };
+    const layout = (
+      <>
+        {item("figure")}
+        {table}
+        {item("code")}
+        {item("verbatim")}
+        <MenuSeparator />
+        <MenuSub>
+          <MenuSubTrigger>
+            <BookOpen className={ICON} />
+            <span>References</span>
+          </MenuSubTrigger>
+          <MenuSubPopup {...SUBMENU}>
+            {["citation", "reference", "link"].map(item)}
+            <MenuSeparator />
+            {item("footnote")}
+          </MenuSubPopup>
+        </MenuSub>
+        <MenuSub>
+          <MenuSubTrigger>
+            <Shapes className={ICON} />
+            <span>Theorems &amp; proofs</span>
+          </MenuSubTrigger>
+          <MenuSubPopup {...SUBMENU}>
+            {STATEMENTS.slice(0, 5).map(item)}
+            <MenuSeparator />
+            {STATEMENTS.slice(5, 8).map(item)}
+            <MenuSeparator />
+            {item("proof")}
+            <MenuSeparator />
+            {["question", "subquestions"].map(item)}
+          </MenuSubPopup>
+        </MenuSub>
+        <MenuSub>
+          <MenuSubTrigger>Document blocks</MenuSubTrigger>
+          <MenuSubPopup {...SUBMENU}>
+            {["abstract", "contents", "bibliography"].map(item)}
+            <MenuSeparator />
+            {item("verse")}
+          </MenuSubPopup>
+        </MenuSub>
+        <MenuSeparator />
+        {item("pagebreak")}
+      </>
+    );
+    const extras = actions.filter((action) => !placed.has(action.id));
+    return (
+      <>
+        {layout}
+        {extras.length > 0 && (
+          <>
+            <MenuSeparator />
+            {extras.map((action) => renderItem(action.id))}
+          </>
+        )}
+      </>
+    );
+  };
 }
 
 /** The regular and overflow menus share the same categories and command availability. */
@@ -94,7 +117,7 @@ export function LatexInsertMenuContent(props: {
   return (
     <InsertMenuContent
       actions={withIcons(props.actions)}
-      layout={latexInsertLayout()}
+      layout={latexInsertLayout(props.actions)}
       onInsertTable={props.onInsertTable}
       unavailableReason={props.unavailableReason}
       onRun={props.onRun}
@@ -116,7 +139,7 @@ export function LatexInsertMenu(props: {
       open={props.open}
       onOpenChange={props.onOpenChange}
       actions={withIcons(props.actions)}
-      layout={latexInsertLayout()}
+      layout={latexInsertLayout(props.actions)}
       disabled={props.disabled}
       unavailableReason={props.unavailableReason}
       onInsertTable={props.onInsertTable}

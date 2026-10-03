@@ -74,7 +74,7 @@ formatting controls preserves scroll and selection where the surfaces allow.
   Visual editor also uses. Command names and icons that both editors offer come from
   `writing/commandNames.ts` and `writing/commandIcons.tsx`. Insert is the shared
   `writing/InsertMenu.tsx`; Markdown supplies its own items and arrangement. Find and replace
-  is the shared `writing/ScientFindBar.tsx`, shown under this row. **More actions** ends with
+  is the shared `writing/ScientFindBar.tsx`, shown under this row. **Document** is the last menu and ends with
   **Keyboard shortcuts**, which opens the writing shortcuts dialog. Shortcut presentation helpers
   live in `apps/web/src/scient/keyboard/presentation.ts`.
 - A thin footer (`ui/ScientMarkdownFooter.tsx` over the shared `writing/DocumentFooter.tsx`) is

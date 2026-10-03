@@ -99,7 +99,7 @@ owned by each feature.
 | Previous / page number / total / Next | Navigate the local Visual page map or compiled PDF page map. Page input uses shared validation. Previous/Next remain in More when hidden to make room.                                                                                                                                                                                                                                                                    |
 | Minus / percentage / Plus             | Shared PDF zoom stepping and range. The percentage displays a whole number; clicking it fits the page to the pane width.                                                                                                                                                                                                                                                                                                  |
 | Split preview: PDF / Visual           | Choose the right-hand view; sits before Rebuild, and moves into More when the row runs out of room.                                                                                                                                                                                                                                                                                                                       |
-| Search                                | A quiet field before the view switch (`ReaderSearchField`): type to search, Enter and the arrows move, Escape clears. Visual searches supported prose; More > Find and replace opens the full bar with Replace. PDF uses its own search engine.                                                                                                                                                                           |
+| Search                                | A quiet field before the view switch (`ReaderSearchField`): type to search, Enter and the arrows move, Escape clears. Visual searches supported prose; Document > Find and replace opens the full bar with Replace. PDF uses its own search engine.                                                                                                                                                                       |
 | Rebuild / Cancel                      | Save and request a manual PDF build; while cancellable, the same slot cancels it. The prior PDF stays available.                                                                                                                                                                                                                                                                                                          |
 | More actions                          | Only what the row does not show right now: zoom steps, Fit width, the sidebar, search, page arrows, the split-preview choice and build messages appear while their own control is hidden by the narrowing order. Visual keeps Find and replace and Export in its writing row’s Document menu. The other views keep the PDF/Word Export submenu here, alongside format-specific PDF actions. There is no Actual size item. |
 
@@ -134,22 +134,22 @@ PDF/Visual switch in the new pane's controls.
 
 ### Permanent writing row
 
-| Control     | Role and behavior                                                                                                                                                                                                                                                                                                                |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Undo / Redo | Use the active math field's history while editing math; otherwise use document history.                                                                                                                                                                                                                                          |
-| Text        | Shared menu categories for Paragraph style and Formatting, with editor-specific commands. Paragraph style offers Text, supported headings and Quote; Formatting includes Bold, Italic, Inline code (Ctrl/Cmd+E) and Link (Ctrl/Cmd+K). Link is unavailable outside ordinary text or across paragraphs (`linkUnavailableReason`). |
-| Numbered    | Inside Text > Paragraph style: update the current heading without closing the menu, or choose numbering before applying a heading to ordinary text.                                                                                                                                                                              |
-| Insert      | Insert tables, figures, statements, references, footnotes, bibliography, abstract, contents and page breaks where supported. Root declarations and source context can restrict insertion.                                                                                                                                        |
-| Math        | Inline math, Display math, Aligned equations, Matrix, Cases, and Symbols & structures.                                                                                                                                                                                                                                           |
-| Lists       | Bullet list, Numbered list and No list; existing description lists remain editable. Check the current type and disable unsupported conversions. Tab and Shift+Tab indent and outdent; the menu has no indent items.                                                                                                              |
-| Document    | Edit title/authors/date, add a standard title block, use a plain paragraph as the document title, manage References in a side panel, open Document settings, Find and replace, Export, or Keyboard shortcuts (a plain text item without an icon).                                                                                |
-| More        | Retain lower-priority groups as the pane narrows. Contains only overflowed toolbar groups; no additional source or shortcut actions.                                                                                                                                                                                             |
+| Control     | Role and behavior                                                                                                                                                                                                                                                                                                                                           |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Undo / Redo | Use the active math field's history while editing math; otherwise use document history.                                                                                                                                                                                                                                                                     |
+| Text        | Shared menu categories for Paragraph style and Formatting, with editor-specific commands. Paragraph style offers Text, supported headings and Quote; Formatting includes Bold, Italic and Inline code (Ctrl/Cmd+E). Link (Ctrl/Cmd+K) lives in Insert > References and is unavailable outside ordinary text or across paragraphs (`linkUnavailableReason`). |
+| Numbered    | Inside Text > Paragraph style: update the current heading without closing the menu, or choose numbering before applying a heading to ordinary text.                                                                                                                                                                                                         |
+| Insert      | Insert tables, figures, statements, references, footnotes, bibliography, abstract, contents and page breaks where supported. Root declarations and source context can restrict insertion.                                                                                                                                                                   |
+| Math        | Inline math, Display math, Aligned equations, Matrix, Cases, and Symbols & structures.                                                                                                                                                                                                                                                                      |
+| Lists       | Bullet list, Numbered list and No list; existing description lists remain editable. Check the current type and disable unsupported conversions. Tab and Shift+Tab indent and outdent; the menu has no indent items.                                                                                                                                         |
+| Document    | Edit title/authors/date, add a standard title block, manage References in a side panel, open Document settings, Find and replace, Export, or Keyboard shortcuts (a plain text item without an icon).                                                                                                                                                        |
+| More        | Retain lower-priority groups as the pane narrows. Contains only overflowed toolbar groups; no additional source or shortcut actions.                                                                                                                                                                                                                        |
 
 The row stays at the top and follows the Markdown bar's order. Command names
 and icons that both editors offer come from `writing/commandNames.ts` and
 `writing/commandIcons.tsx`. Text and Insert use word buttons; Document uses its
-file icon. The Math label disappears before action groups overflow, leaving
-its sigma. Further narrowing moves complete groups into More; menus
+file icon. Math keeps its word label without an icon. Narrowing moves complete
+groups into More; menus
 keep their full labels and accessible names. Selection-specific fields belong
 in the footer, not in an extra row or on the document paper.
 
@@ -288,8 +288,13 @@ Insert is the shared `writing/InsertMenu.tsx`, with each editor's own arrangemen
 of its actions and no search field; the menu is as wide as its longest item. `LatexInsertMenu.tsx`
 supplies the LaTeX actions and layout, and `LatexInsertMenuContent` is used in
 both the regular and overflow menus.
-Its top level is Figure, Table, Citation, Cross-reference, Footnote, Link,
-Theorems & proofs and More. Unsupported insertion
+Its top level is Figure, Table, Code block, Literal text, References,
+Theorems & proofs, Document blocks and Page break. References contains Citation,
+Cross-reference, Link and Footnote. Theorems & proofs groups the statements and
+Proof, followed by Question and solution and Subquestions. Document blocks contains
+Abstract, Table of contents, Bibliography and Verse. A final group keeps every
+unplaced action reachable (currently Long quotation, Left-aligned text,
+Right-aligned text and Part). Unsupported insertion
 contexts keep these choices visible with a reason instead of changing the menu.
 `DocumentTableSizeMenu` keeps the shared grid and exposes an optional custom-size
 callback used by Visual's numeric dialog; existing callers retain their behavior.
@@ -345,11 +350,11 @@ explicitly linked bibliography files and root setup.
 
 The Visual writing bar uses the shared `writing/dockChrome.tsx` button/menu
 primitives, the same ones as the Markdown bar, with its own
-LaTeX action groups, in the Markdown bar's order: history; bold, italic, inline
-code and link; style; lists; Insert; math; and Document. It stays visible at the
-top and never collapses or scrolls
-horizontally. As the pane narrows, labels disappear first (Math keeps its sigma),
-then lower-priority groups move into More if the symbols still do not fit.
+LaTeX action groups, in the Markdown bar's order: Undo/Redo; Text; Insert; Math;
+Lists; Document. Formatting lives inside Text; Link lives in Insert > References.
+The row stays visible at the top and never collapses or scrolls horizontally.
+Math keeps its word label without an icon. As the pane narrows, lower-priority
+groups move into More.
 The Text menu keeps its name while the paragraph style changes; selection
 does not rename or replace the top-row controls. Settings and keyboard shortcut help live
 under Document. The document header hosts the reader controls for Visual and
@@ -391,7 +396,8 @@ prose; title
 attributes, math fields and exact-source objects are not indexed by that plugin.
 Replace and Replace all dispatch ordinary text edits, so the source adapter
 writes them like typing.
-Navigation does not edit LaTeX. PDF/Word Export is in the header's More menu.
+Navigation does not edit LaTeX. PDF/Word Export is in Visual's Document menu
+and the header's More menu in the other views.
 
 Title, author and date remain editable on paper. Editing existing metadata
 never inserts a title block. Document > Title & authors shows Edit title, authors
@@ -402,8 +408,8 @@ unsupported title formatting remain source-owned. Standard article/report/book
 classes can be selected in Document settings; incompatible switches and custom
 classes stay protected.
 
-Document has these entries: Title & authors, Document settings, Find and
-replace, Export and Keyboard shortcuts. Document settings opens one card showing
+Document has Title & authors, Document settings, References, Find and replace
+(when editable), Export (when hosted) and Keyboard shortcuts. Document settings opens one card showing
 the current values read by `latexVisualLayoutProfile`, with a draft of changes only, explicit Apply/Cancel, and a source snapshot checked again
 before mutation. Unchanged fields remain source-controlled. Margin updates carry
 only edited sides; adding geometry to a standard class retains the other projected

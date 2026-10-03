@@ -6653,7 +6653,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       commandScope="latex"
       label="Math"
       // The word alone: "Math" says what it is.
-      icon={<span className="scient-latex-tool-label">Math</span>}
+      icon={<span className="text-[13px]">Math</span>}
       disabled={readOnly}
       // As wide as its longest item, "Symbols & structures", and no wider.
       popupClassName="w-max [&_[role=menuitem]]:whitespace-nowrap [&_[role=menuitemradio]]:whitespace-nowrap"

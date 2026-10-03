@@ -45,14 +45,13 @@ Quote are unaffected. Ctrl/Cmd+Alt+0 is Text and Ctrl/Cmd+Alt+1, 2 and 3 are the
 three heading levels. Quote is not available inside a list item.
 Chapter-based classes also offer Chapter. The toolbar holds, in order: undo and
 redo; Text; Insert; Math; Lists; and Document. **Text > Formatting** offers bold,
-italic, inline code (Ctrl/Cmd+E), link (Ctrl/Cmd+K) and other supported marks. Link is unavailable when the selection spans more than one
-paragraph. **Insert** opens a menu for figures, tables, citations, cross-references,
-footnotes, links and statements. Equations and structures live in **Math**. Heading styles live in Text > Paragraph style rather
+italic and inline code (Ctrl/Cmd+E). **Insert > References > Link** (Ctrl/Cmd+K)
+links text within one paragraph. **Insert** groups figures,
+tables, text blocks, references and statements. Equations and structures live in **Math**. Heading styles live in Text > Paragraph style rather
 than being duplicated in Insert. Type `/` on an empty
 paragraph or press Ctrl/Cmd+/ to open it; use the arrow keys and Enter to choose.
 The writing toolbar stays fixed at the top on one row. When the pane narrows,
-the Math label disappears first (its sigma stays); less-used groups then move into
-**More**. Insert holds elements and references; Lists holds list actions.
+**Math** keeps its word label, without an icon; less-used groups move into **More**. Insert holds elements and references; Lists holds list actions.
 **Document > Document settings** opens one card with every document setting.
 **Document** also holds Find and replace and Export. **Outline** is a tab
 in the sidebar, which opens from the header row. Selected-object options appear
@@ -94,7 +93,7 @@ count and two arrows appear at its end, Enter moves to the next result, and
 Escape clears it. Ctrl/Cmd+F puts the caret there. The view switch stays in the same place in
 Source, where the room before it is empty. Minus and plus sit on either side of the zoom percentage and use
 five-percent steps in the 25–500% range. Click the percentage to fit the page
-to the pane width; the fit follows pane resizing automatically. In Visual, **More > Find and replace** opens the full bar under the writing
+to the pane width; the fit follows pane resizing automatically. In Visual, **Document > Find and replace** opens the full bar under the writing
 toolbar, with Replace and Replace all. Replace all works through the document one paragraph
 at a time, so a very long document takes a few seconds, and each paragraph is
 its own undo step. It stops if you type or undo while it is working. Text
@@ -428,18 +427,17 @@ available for editing without adding a caption command until you enter text.
 
 The Insert menu keeps the same choices while you work. Math-only insertion belongs
 in Math; finish editing a formula before inserting document elements.
-Search finds entries inside the submenus too.
 
-| Option            | Behavior                                                                                                                        |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Figure            | Choose a project PNG, JPEG or PDF, or import a PNG/JPEG. Preview raster images, set an optional caption and width, then insert. |
-| Table             | Choose a size from the grid to insert a table.                                                                                  |
-| Citation          | Select one or more bibliography sources and choose a citation form supported by the document.                                   |
-| Cross-reference   | Find a labelled object in this file and insert its reference or page number.                                                    |
-| Footnote          | Insert a note at the cursor, or move selected inline content into a note.                                                       |
-| Link              | Give selected text a web/email address, or enter new link text.                                                                 |
-| Theorems & proofs | Insert Theorem, Lemma, Proposition, Corollary, Claim, Definition, Example, Remark or Proof.                                     |
-| More              | Code block, Page break, Abstract, Table of contents, Bibliography and other specialized blocks.                                 |
+| Menu entry                | Behavior                                                                                                                |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Figure                    | Choose a project PNG, JPEG or PDF, or import a PNG/JPEG; set an optional caption and width.                             |
+| Table                     | Choose a size from the grid.                                                                                            |
+| Code block / Literal text | Insert a code or verbatim block.                                                                                        |
+| References                | Citation, Cross-reference and Link, followed by Footnote.                                                               |
+| Theorems & proofs         | Theorem, Lemma, Proposition, Corollary, Claim; Definition, Example, Remark; Proof; Question and solution, Subquestions. |
+| Document blocks           | Abstract, Table of contents, Bibliography; Verse.                                                                       |
+| Page break                | Start a new page.                                                                                                       |
+| Final group               | Long quotation, Left-aligned text, Right-aligned text and Part; any additional actions not assigned above remain here.  |
 
 Block insertion preserves the surrounding text. Selecting ordinary prose before
 choosing a theorem wraps that selection; with a caret inside an existing theorem,
@@ -494,8 +492,8 @@ changing the document's bibliography approach.
 Clicking a citation exposes its known entry details and **Edit reference** (or
 **Find reference**) in the contextual footer. Selecting the bibliography offers
 **Manage references** there. The paper keeps formatted entries without code or
-editing controls. **Insert > Citation** still inserts a citation at the captured
-caret; **Insert > Cross-reference** chooses a labelled object and uses `\ref`
+editing controls. **Insert > References > Citation** still inserts a citation at the captured
+caret; **Insert > References > Cross-reference** chooses a labelled object and uses `\ref`
 or `\eqref` by default. Bibliography management does not insert a citation.
 
 Reference saves preserve unrelated entries, unknown fields and literal TeX
@@ -512,7 +510,7 @@ Read-only or truncated files remain read-only. Entry form drafts survive moving
 between file views during the app session. Linked `.bib` source and reference form
 drafts have no recovery offer after an app restart.
 
-**More > Bibliography** finds an existing bibliography, uses linked biblatex
+**Insert > Document blocks > Bibliography** finds an existing bibliography, uses linked biblatex
 resources, or asks you to choose a BibTeX file/style or manual entries. It preserves
 an existing bibliography style. File paths are relative to the root document;
 file/style availability and the final bibliography are resolved during compilation.

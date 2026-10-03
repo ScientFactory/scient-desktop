@@ -67,7 +67,7 @@ export function InsertMenuContent(props: {
   const table =
     onInsertTable === undefined ? null : props.unavailableReason ? (
       <DockCommandItem disabled title={props.unavailableReason}>
-        <MenuRow icon={<TableIcon className="size-4 text-muted-foreground" />} label="Table" />
+        <MenuRow icon={<TableIcon className="size-4" />} label="Table" />
       </DockCommandItem>
     ) : (
       <DocumentTableSizeMenu

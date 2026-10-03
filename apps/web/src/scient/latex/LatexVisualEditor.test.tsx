@@ -82,7 +82,6 @@ describe("writing editor source transactions", () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
-  // The full find and replace bar opens from the reader controls' More menu.
   // Find and replace is in the writing row's Document menu.
   async function openFindAndReplace(_headerSlot: HTMLElement) {
     await act(() =>
@@ -109,7 +108,7 @@ describe("writing editor source transactions", () => {
       [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
         (element) => element.textContent?.trim() === name,
       );
-    // Items in submenus (Theorems & proofs, More) are reached by opening them.
+    // Open each category to reach its nested actions.
     for (const submenu of ["References", "Theorems & proofs", "Document blocks"]) {
       if (find()) break;
       const trigger = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
@@ -471,6 +470,10 @@ describe("writing editor source transactions", () => {
       "Theorems & proofs",
       "Document blocks",
       "Page break",
+      "Long quotation",
+      "Left-aligned text",
+      "Right-aligned text",
+      "Part",
     ]);
     await act(() => rows.find((row) => row.textContent?.trim() === "References")!.click());
     expect(
