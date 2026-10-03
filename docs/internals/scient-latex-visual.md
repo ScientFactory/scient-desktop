@@ -2,6 +2,10 @@
 
 Status: implementation candidate; human visual review pending.
 
+The [Visual authoring proposal](./scient-latex-visual-authoring-proposal.md)
+describes planned capabilities, source ownership, minimal menu placement and a
+phased implementation sequence. It is a proposal, not implemented behavior.
+
 ## Review direction and implementation boundary
 
 Yaacov's [architecture note](https://github.com/ScientFactory/scient-desktop/blob/claude/shared-editor-layer-design-20260926/docs/internals/scient-latex-visual-architecture-note.md)
@@ -204,6 +208,16 @@ which is always the case inside `ScientLatexSurface.tsx`. Without a host it
 keeps the reader controls in its own footer, with the object options between
 zoom and Search.
 
+Plain clicks activate context controls without implicitly selecting an entire
+preview node. `latexObjectCaret.ts` keeps a collapsed document caret for generated
+blocks, retains native field/button focus, and sends statement-heading clicks
+into the first editable paragraph. Explicit object selection, modifier clicks
+and drag selections remain distinct actions. Table border clicks enter a cell;
+the Select table command remains the whole-table selection action.
+Math fields release their internal node-selection anchor when editing is
+dismissed, including focus moves to Source and view changes. Dismissal does not
+focus Visual, insert a paragraph, or clear a deliberate drag/Shift selection.
+
 ## Fidelity target
 
 The writing surface should remain a comfortable CSS-based document editor, with
@@ -220,6 +234,16 @@ to source-text guesses when available. Bundle or resolve compatible fonts and
 calibrate line breaking, hyphenation, and pagination against representative
 compiled PDFs. Keep this evidence revision-scoped so a changed preamble or
 dependency cannot silently style a new source revision using an old profile.
+
+Before measuring pagination, `latexParagraphSpacing.ts` fits short justified
+text paragraphs that exceed one line only by shrinkable interword space.
+It measures the rendered fonts and applies the smallest spacing reduction,
+bounded to one third of the normal space advance. Node decorations keep this
+adjustment out of source and undo history; glyph sizes, margins and indentation
+remain unchanged. Results are cached by paragraph and typography, and refreshed
+after font loading. Longer paragraphs, explicit line breaks, inline objects and
+unsupported font features retain browser wrapping. This is a bounded fit rule,
+not TeX's full paragraph optimization.
 
 Classify edits by their layout reach. Prose and edits inside supported math or
 table objects can update the CSS document immediately; local pagination is a
@@ -584,6 +608,13 @@ adapter are not implemented.
 
 ### CSS page layout
 
+Paragraph and subparagraph headings run into the following editable paragraph.
+Pagination measures their shared leading space once when moving the pair to a
+new page. Nested lists use the standard class's second-level spacing and indent,
+with the existing supported list overrides retained. Contents reserve distinct
+number widths for subsections and subsubsections; an unnumbered entry has no
+empty number column. Abstract text follows the class's small-font baseline.
+
 The pagination plugin publishes a derived position-to-page map alongside its
 decorations. Contents entries and `\pageref` read that local map, never claiming
 compiled TeX page evidence. The live reference index supplies current heading
@@ -645,6 +676,20 @@ Scient supplies its own layout, labels, selection-aware insertion templates, and
 keyboard interactions. `mathSymbols.ts` also supplies source completions and
 package requirements. `mathSymbolPresentation.ts` caches local glyph previews;
 Unicode display macros retain their original LaTeX command on serialization.
+The Common and Braces & annotations groups expose labeled over/underbraces,
+annotations above/below an expression, and extensible arrows with both label
+slots. Templates wrap the selected expression and supply empty editable slots;
+Tab navigates those slots. Text in math supplies ordinary words for annotations.
+Palette tooltips and details show effective keyboard bindings (including user
+overrides) and enabled typing shortcuts from the same table used by the field.
+Simple symbol-plus-script combinations do not get additional palette entries.
+`mathMacroEditing.ts` unlocks document macros whose entire definition is a
+single `\left...#1\right...` delimiter wrapper. It adapts MathLive's per-field
+serialization to read the current fence body rather than its cached original
+macro arguments, including inserted and undo-restored atoms. The macro call is
+retained while the wrapper matches; structural wrapper edits serialize the
+expanded occurrence. Other macro shapes remain atomic. No extra argument
+metadata is injected into the rendered formula or document source.
 Commands without an editor glyph are explicit source entries. Palette preferences
 contain symbol IDs only and live in local storage. Package additions pass through
 the same source transaction and projection guard as the math edit.
@@ -652,6 +697,8 @@ the same source transaction and projection guard as the math edit.
 The Math menu separates placement, equation layout, and insertion. Its six
 entries are Inline math, Display math, Aligned equations, Matrix, Cases,
 and Symbols & structures. The first two reflect current placement. With active
+math, the contextual footer exposes these same actions through the shared
+`LatexMathMenuItems` component, including the matrix size picker. With active
 math, the Math menu opens that field's existing footer symbol palette. Outside
 math, the same palette opens at the footer corner and retains the document and
 selection until insertion; a changed document cancels insertion. Matrix uses
@@ -707,6 +754,12 @@ and crossing the visible outer boundary of a nested array selects that array
 as a whole before continuing in the outer scope. Gaps inside an array resolve
 to the nearest cell. MathLive supplies symbol offsets and rendering;
 the scope boxes are used only for hit testing and are never drawn on the paper.
+Named math branches use the same selection resolver: dragging or extending a
+selection out of a fraction slot, script, brace body/label, arrow label, or other
+nested branch includes its entire owning structure. An underbrace's expression
+and annotation therefore select together before the range continues into nearby
+math. Within one branch, character selection stays precise; reversing a pointer
+drag back into it restores that precision. Plain clicks still place a caret.
 The MathLive adapter clears selected cells through one deferred content edit,
 retaining array dimensions. Deleting in an empty cell unwraps its nearest
 structure and moves the remaining atoms into the parent in row/branch order.
@@ -922,19 +975,29 @@ recursive row macros and exact TeX page breaking remain limitations.
 
 ### Columns, minipages and page furniture
 
-`latexPageLayouts.ts` bounds literal `multicols` counts, simple `minipage` widths
-and alignment, and common root-preamble `fancyhdr` slots and running fields.
+`latexPageLayouts.ts` bounds literal `multicols` counts, `minipage` widths,
+literal fixed heights and inner/outer alignment, and common root-preamble
+`fancyhdr` slots and running fields.
 The source adapter projects editable layout bodies through the existing nested
 `latexScientific` container schema, distinguished by layout attributes. They
 do not acquire statement headings, counters or statement controls. Minipages
-joined by `\hfill` share a row; their original separators and environment options
+joined by `\hfill`, literal `\hspace`, whitespace or comment joins share a row;
+their original separators and environment options
 remain source-owned. Recursive body patches use the existing adapter and file
 save path. This does not add another editor, session or persistence mechanism.
 Widths and vertical alignment belong to Tiptap's outer node-view element, which
 is the actual flex item. The inner editable wrapper fills that item; a percentage
 width must not be applied again inside a content-sized renderer wrapper.
+Each panel's `layoutGap` supplies its leading margin: auto for stretch glue,
+a bounded CSS length for explicit glue, an interword space for whitespace and
+zero for a comment join. A blank source line prevents grouping. Root-preamble
+column separation/rule assignments enter the shared layout profile. Heading
+styles target `data-latex-command` throughout the document, including nested
+containers, while leaving generated preview headings independent.
 
-Paragraph boundaries from `\par` remain in source gaps. Explicit `\noindent`
+Paragraph terminators directly after content remain in source gaps instead of
+creating extra empty lines. Isolated empty paragraphs remain editable.
+Explicit `\noindent`
 uses a paragraph attribute and preserves its prefix during text edits. Standard
 skip commands and paragraph-boundary `\columnbreak` use the existing opaque
 preview node with a spacing kind. Inline `\columnbreak` is an existing inline
@@ -969,8 +1032,13 @@ align left, center or right within it, rather than occupying three separate
 columns. Text wraps within that width; the header's last baseline stays above
 its rule. Custom field widths and collision handling remain source-owned.
 These fields are display-only and use Visual's local page map. Custom page styles,
-mark redefinitions, multipage columns, fixed-height minipages and exact TeX
+mark redefinitions, multipage columns and exact TeX
 balancing remain outside this approximation.
+
+`fixtures/layouts.tex` exercises two/three columns, lists, math, tables, theorem
+blocks, color boxes, nested panels, explicit gaps and fixed-height alignment.
+`latexPageLayouts.test.ts` checks source-preserving edits and math insertion
+inside those containers in addition to parsing their layout options.
 
 ### Literal text and listing coverage
 
@@ -1156,11 +1224,14 @@ Proof titles retain their original inline source and resolve `ref`/`eqref` throu
 the same reference index as body text. Algorithm floats accept a standard font-size
 declaration before `algorithmic`; prose spacing commands round-trip as spacing.
 
-For external BibTeX bibliographies, the project Visual editor reads an existing
-`.bbl` beside the resolved root `.tex` as presentation data. A bounded parser
-extracts ordinary `thebibliography`/`bibitem` entries without executing generated
-helper definitions. Citation numbers follow that saved compiled order. The `.bbl`
-is never a save target; Document → References continues editing the original `.bib`
-files. Missing output gets an explicit message. This does not implement BibLaTeX
-output or refresh the adjacent `.bbl` from Scient's private PDF build directory;
-saved output can be stale after bibliography edits.
+For external BibTeX bibliographies, the build service captures the generated
+`.bbl` from the private build directory after a successful compile. Presentation
+is bounded to 1 MB and persisted with the PDF artifact/revision in build evidence;
+status exposes it only for that successful, current revision. Older evidence
+without it remains readable and needs a rebuild to populate it. A bounded client
+parser extracts ordinary `thebibliography`/`bibitem` entries without executing
+helper definitions. Citation numbers follow the compiled order. Generated output
+is never a save target; Document ? References edits the original `.bib` files.
+Bibliography/style commands split from adjacent prose without requiring blank
+lines, and the style command remains invisible and source-preserved. Missing or
+stale presentation requests a PDF rebuild. BibLaTeX output remains unsupported.

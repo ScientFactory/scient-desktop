@@ -38,12 +38,14 @@ export function LatexObjectToolbar(props: {
     };
     element?.addEventListener("focusin", activate);
     element?.addEventListener("pointerdown", activate);
+    element?.addEventListener("scient-latex-object-activate", activate);
     document.addEventListener("focusin", outside);
     document.addEventListener("pointerdown", outside);
     document.addEventListener("scient-latex-context-activate", other);
     return () => {
       element?.removeEventListener("focusin", activate);
       element?.removeEventListener("pointerdown", activate);
+      element?.removeEventListener("scient-latex-object-activate", activate);
       document.removeEventListener("focusin", outside);
       document.removeEventListener("pointerdown", outside);
       document.removeEventListener("scient-latex-context-activate", other);

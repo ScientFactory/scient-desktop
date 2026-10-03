@@ -1,6 +1,8 @@
 /** Literal document controls. Ranges always refer to the original source. */
 export function latexDocumentCommand(source: string, from = 0) {
-  const match = /^\\(title|author|date|pagenumbering|appendix)\b/u.exec(source.slice(from));
+  const match = /^\\(title|author|date|pagenumbering|appendix|bibliographystyle)\b/u.exec(
+    source.slice(from),
+  );
   if (!match) return null;
   const name = match[1]!;
   let end = from + match[0].length;

@@ -528,17 +528,32 @@
 }
 .scient-latex-page-layout[data-layout="columns"] > .scient-latex-page-layout-body > div {
   column-count: var(--scient-latex-columns, 2);
-  column-gap: calc(10 * 1.32835px);
+  column-gap: var(--scient-latex-column-gap, calc(10 * 1.32835px));
+  column-rule: var(--scient-latex-column-rule, 0px) solid currentColor;
   column-fill: balance;
 }
 .scient-latex-page-layout[data-layout="row"] > .scient-latex-page-layout-body > div {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
 }
 .scient-latex-page-layout[data-layout="minipage"] {
   --scient-latex-par-indent: 0em;
   flex-shrink: 0;
+}
+.scient-latex-page-layout[data-inner-alignment] > .scient-latex-page-layout-body > div {
+  display: flex;
+  flex-direction: column;
+  height: var(--scient-latex-panel-height);
+}
+.scient-latex-page-layout[data-inner-alignment="c"] > .scient-latex-page-layout-body > div {
+  justify-content: center;
+}
+.scient-latex-page-layout[data-inner-alignment="b"] > .scient-latex-page-layout-body > div {
+  justify-content: flex-end;
+}
+.scient-latex-page-layout[data-inner-alignment="s"] > .scient-latex-page-layout-body > div {
+  justify-content: space-between;
 }
 [data-latex-page-layout="minipage"][data-alignment="t"] {
   align-self: flex-start;
@@ -715,11 +730,11 @@ tr[data-latex-longtable-band] {
 }
 .scient-latex-visual-paper[data-indent-after-heading="false"]
   .scient-latex-visual-document
-  > :is(h1, h2, h3, h4, h5, h6)
+  :is(h1, h2, h3, h4, h5, h6)[data-latex-command]
   + p,
 .scient-latex-visual-paper[data-indent-after-heading="false"]
   .scient-latex-visual-document
-  > :is(h1, h2, h3, h4, h5, h6)
+  :is(h1, h2, h3, h4, h5, h6)[data-latex-command]
   + .scient-latex-pagination-gap
   + p {
   text-indent: 0;
@@ -729,70 +744,84 @@ tr[data-latex-longtable-band] {
 .scient-latex-visual-document th p {
   text-indent: 0;
 }
-.scient-latex-visual-document > h1 {
+.scient-latex-visual-document h1[data-latex-command] {
   counter-reset: scient-subsection;
   margin: 1.8ex 0 1.2ex;
   font-size: var(--scient-latex-section-size, 19.13px);
   font-weight: 700;
   line-height: 1.25;
 }
-.scient-latex-visual-document > h1:not([data-latex-unnumbered]) {
+.scient-latex-visual-document h1[data-latex-command]:not([data-latex-unnumbered]) {
   counter-increment: scient-section;
 }
-.scient-latex-visual-document > h1:not([data-latex-unnumbered])::before {
+.scient-latex-visual-document h1[data-latex-command]:not([data-latex-unnumbered])::before {
   content: counter(scient-section);
   margin-right: 1em;
 }
-.scient-latex-visual-document > h2 {
+.scient-latex-visual-document h2[data-latex-command] {
   counter-reset: scient-subsubsection;
   margin: 2ex 0 1ex;
   font-size: var(--scient-latex-subsection-size, 15.94px);
   font-weight: 700;
   line-height: 1.3;
 }
-.scient-latex-visual-document > h2:not([data-latex-unnumbered]) {
+.scient-latex-visual-document h2[data-latex-command]:not([data-latex-unnumbered]) {
   counter-increment: scient-subsection;
 }
-.scient-latex-visual-document > h2:not([data-latex-unnumbered])::before {
+.scient-latex-visual-document h2[data-latex-command]:not([data-latex-unnumbered])::before {
   content: counter(scient-section) "." counter(scient-subsection);
   margin-right: 1em;
 }
-.scient-latex-visual-document > h3 {
+.scient-latex-visual-document h3[data-latex-command] {
   margin: 2.6ex 0 1.2ex;
   font-size: var(--scient-latex-subsubsection-size, 13.2835px);
   font-weight: 700;
 }
-.scient-latex-visual-document > h3:not([data-latex-unnumbered]) {
+.scient-latex-visual-document h3[data-latex-command]:not([data-latex-unnumbered]) {
   counter-increment: scient-subsubsection;
 }
-.scient-latex-visual-document > h3:not([data-latex-unnumbered])::before {
+.scient-latex-visual-document h3[data-latex-command]:not([data-latex-unnumbered])::before {
   content: counter(scient-section) "." counter(scient-subsection) "." counter(scient-subsubsection)
     "";
   margin-right: 1em;
 }
-.scient-latex-visual-document > :is(h1, h2, h3, h4, h5, h6) {
+.scient-latex-visual-document :is(h1, h2, h3, h4, h5, h6)[data-latex-command] {
   text-align: left;
   text-indent: 0;
   text-wrap: pretty;
 }
-.scient-latex-visual-document > :is(h4, h5) {
+.scient-latex-visual-document :is(h4, h5)[data-latex-command] {
   font-size: 1em;
   font-weight: bold;
   margin: 1.5em 0 0.5em;
 }
-.scient-latex-visual-document > h5 {
+.scient-latex-visual-document h5[data-latex-command] {
   margin-left: var(--scient-latex-par-indent);
 }
-.scient-latex-visual-document > h6 {
+/* Paragraph/subparagraph headings share the following paragraph's first line. */
+.scient-latex-visual-document :is(h4, h5)[data-latex-command]:has(+ p) {
+  float: left;
+  clear: left;
+  max-width: calc(100% - 1em);
+  margin-top: 3.25ex;
+  margin-right: 1em;
+  margin-bottom: 0;
+  line-height: var(--scient-latex-line-height, 1.2);
+}
+.scient-latex-visual-document :is(h4, h5)[data-latex-command] + p {
+  padding-top: 3.25ex;
+  text-indent: 0;
+}
+.scient-latex-visual-document h6[data-latex-command] {
   font-size: var(--scient-latex-title-size);
   font-weight: bold;
   margin: 2em 0 1.5em;
   counter-reset: scient-section;
 }
-.scient-latex-visual-document > h6:not([data-latex-unnumbered]) {
+.scient-latex-visual-document h6[data-latex-command]:not([data-latex-unnumbered]) {
   counter-increment: scient-chapter;
 }
-.scient-latex-visual-document > h6:not([data-latex-unnumbered])::before {
+.scient-latex-visual-document h6[data-latex-command]:not([data-latex-unnumbered])::before {
   content: "Chapter " counter(scient-chapter);
   display: block;
   font-size: 0.8em;
@@ -810,12 +839,12 @@ tr[data-latex-longtable-band] {
 }
 .scient-latex-visual-paper:is([data-document-class="book"], [data-document-class="report"])
   .scient-latex-visual-document
-  > h1:not([data-latex-unnumbered])::before {
+  h1[data-latex-command]:not([data-latex-unnumbered])::before {
   content: counter(scient-chapter) "." counter(scient-section);
 }
 .scient-latex-visual-paper:is([data-document-class="book"], [data-document-class="report"])
   .scient-latex-visual-document
-  > h2:not([data-latex-unnumbered])::before {
+  h2[data-latex-command]:not([data-latex-unnumbered])::before {
   content: counter(scient-chapter) "." counter(scient-section) "." counter(scient-subsection);
 }
 .scient-latex-visual-document blockquote {
@@ -873,8 +902,17 @@ tr[data-latex-longtable-band] {
 .scient-latex-visual-document li > p + p {
   margin-top: var(--scient-latex-list-parsep, 0.4em);
 }
-.scient-latex-visual-document :is(ul, ol) :is(ul, ol) {
-  margin-block: 0.35em;
+.scient-latex-visual-document :is(ul, ol) ul {
+  --scient-latex-list-itemsep: var(--scient-latex-itemize-nested-itemsep, 0.4em);
+  --scient-latex-list-parsep: var(--scient-latex-itemize-nested-parsep, 0.2em);
+  margin-block: var(--scient-latex-itemize-nested-topsep, 0.4em);
+  padding-left: var(--scient-latex-itemize-nested-leftmargin, 2.2em);
+}
+.scient-latex-visual-document :is(ul, ol) ol {
+  --scient-latex-list-itemsep: var(--scient-latex-enumerate-nested-itemsep, 0.4em);
+  --scient-latex-list-parsep: var(--scient-latex-enumerate-nested-parsep, 0.2em);
+  margin-block: var(--scient-latex-enumerate-nested-topsep, 0.4em);
+  padding-left: var(--scient-latex-enumerate-nested-leftmargin, 2.2em);
 }
 .scient-latex-visual-document strong {
   font-weight: bold;
@@ -1677,7 +1715,8 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 }
 .scient-latex-abstract-preview {
   margin: 1.5em 3em;
-  font-size: 0.9em;
+  font-size: var(--scient-latex-size-small, 0.9em);
+  line-height: var(--scient-latex-baseline-small, 1.2222);
 }
 .scient-latex-abstract-preview h2,
 .scient-latex-toc-preview h2 {
@@ -1694,6 +1733,10 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-abstract-preview h2::before,
 .scient-latex-toc-preview h2::before {
   content: none !important;
+}
+.scient-latex-abstract-preview h2 {
+  font-size: 1em;
+  font-weight: bold;
 }
 .scient-latex-abstract-preview textarea {
   width: 100%;
@@ -1983,8 +2026,17 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   padding-left: 1.5em;
 }
 .scient-latex-toc-preview li[data-level="3"] {
-  padding-left: 3em;
-  font-size: 0.94em;
+  padding-left: 3.8em;
+  font-size: inherit;
+}
+.scient-latex-toc-preview li[data-level="2"] > button {
+  grid-template-columns: 2.3em minmax(0, 1fr) 1.55em;
+}
+.scient-latex-toc-preview li[data-level="3"] > button {
+  grid-template-columns: 3.2em minmax(0, 1fr) 1.55em;
+}
+.scient-latex-toc-preview li[data-unnumbered] > button {
+  grid-template-columns: 0 minmax(0, 1fr) 1.55em;
 }
 /* Source-owned controls occupy a position for pagination but print no content. */
 .scient-latex-document-command {
@@ -2011,15 +2063,18 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 /* Numbering comes from the same source traversal as references and contents. */
 .scient-latex-visual-paper[data-document-class]
   .scient-latex-visual-document
-  > :is(h1, h2, h3)[data-latex-heading-number]:not([data-latex-unnumbered])::before {
+  :is(h1, h2, h3)[data-latex-command][data-latex-heading-number]:not(
+    [data-latex-unnumbered]
+  )::before {
   content: attr(data-latex-heading-number);
 }
-.scient-latex-visual-document > h6[data-latex-heading-number]:not([data-latex-unnumbered])::before {
+.scient-latex-visual-document
+  h6[data-latex-command][data-latex-heading-number]:not([data-latex-unnumbered])::before {
   content: attr(data-latex-chapter-name) " " attr(data-latex-heading-number);
 }
 .scient-latex-visual-paper:is([data-document-class="report"], [data-document-class="book"])
   .scient-latex-visual-document
-  > h6,
+  h6[data-latex-command],
 .scient-latex-visual-paper:is([data-document-class="report"], [data-document-class="book"])
   .scient-latex-toc-preview {
   margin-top: 0;
@@ -2027,14 +2082,14 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 }
 .scient-latex-visual-paper:is([data-document-class="report"], [data-document-class="book"])
   .scient-latex-visual-document
-  > h6 {
+  h6[data-latex-command] {
   font-size: calc(24.88 * 96px / 72.27);
   line-height: 1.2;
   margin-bottom: calc(40 * 96px / 72.27);
 }
 .scient-latex-visual-paper:is([data-document-class="report"], [data-document-class="book"])
   .scient-latex-visual-document
-  > h6::before {
+  h6[data-latex-command]::before {
   font-size: calc(20.74 * 96px / 72.27);
   margin-bottom: calc(20 * 96px / 72.27);
 }

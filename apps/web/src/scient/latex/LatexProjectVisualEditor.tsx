@@ -26,34 +26,6 @@ import {
 } from "./latexProjectVisual";
 import { checkpointVisualDraft, confirmVisualDraft } from "./visualDrafts";
 
-/** The .bbl is presentation data; writes continue to target the user's .bib files. */
-function CompiledBibliographyFile({
-  owner,
-  path,
-  onSource,
-}: {
-  owner: Props;
-  path: string;
-  onSource: (source: string | null) => void;
-}) {
-  const query = useProjectFileQuery(owner.environmentId, owner.cwd, path);
-  const changes = useAtomValue(
-    projectEnvironment.fileChanges({
-      environmentId: owner.environmentId,
-      input: { cwd: owner.cwd, relativePath: path },
-    }),
-  );
-  const change = Option.getOrNull(AsyncResult.value(changes));
-  useEffect(() => {
-    query.refresh();
-  }, [change, query.refresh]);
-  useEffect(() => {
-    onSource(query.data && !query.data.truncated ? query.data.contents : null);
-  }, [query.data, onSource]);
-  useEffect(() => () => onSource(null), [path, onSource]);
-  return null;
-}
-
 interface FileState {
   data: VisualProjectFile | null;
   error: string | null;
@@ -232,7 +204,6 @@ function ProjectFileSession(props: {
 
 /** One editor for the compiled root, with revision-checked sessions for its source files. */
 export function LatexProjectVisualEditor(props: Props) {
-  const [compiledBibliography, setCompiledBibliography] = useState<string | null>(null);
   const [states, setStates] = useState(new Map<string, FileState>());
   useEffect(() => {
     props.registerSaveProject?.(async () => {
@@ -431,14 +402,6 @@ export function LatexProjectVisualEditor(props: Props) {
     paths.every((path) => states.get(path)?.data);
   return (
     <>
-      {root && document && /\\bibliography\s*\{/u.test(document.source) && (
-        <CompiledBibliographyFile
-          key={root}
-          owner={props}
-          path={root.replace(/\.tex$/iu, ".bbl")}
-          onSource={setCompiledBibliography}
-        />
-      )}
       {[...new Set([...paths, ...pendingPaths, ...saveErrors.keys()])].map((path) => (
         <ProjectFileSession
           key={path}
@@ -457,7 +420,6 @@ export function LatexProjectVisualEditor(props: Props) {
           key={root}
           source={document.source}
           rootSource={document.source}
-          compiledBibliography={compiledBibliography}
           canEditRoot={!error}
           singleFileDocument={paths.length === 1}
           relativePath={root!}

@@ -203,6 +203,7 @@ export interface MathRectangleSelection {
 export interface MathSelectionGeometry {
   readonly arrays: WeakMap<object, DOMRect | null>;
   readonly cells: WeakMap<object, Map<string, DOMRect | null>>;
+  readonly branches: WeakMap<object, Map<unknown, DOMRect | null>>;
   readonly scopes: readonly MathCellSelection[];
 }
 
@@ -230,7 +231,7 @@ export function createMathSelectionGeometry(math: MathfieldElement): MathSelecti
     return count;
   };
   scopes.sort((a, b) => depth(a.array) - depth(b.array));
-  return { arrays: new WeakMap(), cells: new WeakMap(), scopes };
+  return { arrays: new WeakMap(), cells: new WeakMap(), branches: new WeakMap(), scopes };
 }
 
 // MathLive 0.108 exposes offsets publicly but not the array cell that owns an
@@ -551,6 +552,105 @@ export type MathDragSelection =
     }
   | { readonly kind: "rectangle"; readonly rectangle: MathRectangleSelection };
 
+interface MathBranchScope {
+  readonly owner: MathAtom;
+  readonly branch: unknown;
+  readonly content: readonly [number, number];
+  readonly whole: readonly [number, number];
+}
+
+/** Named branches are slots too: fraction bodies, scripts, brace/arrow labels, etc. */
+function mathBranchPath(model: MathModel, offset: number): MathBranchScope[] {
+  const result: MathBranchScope[] = [];
+  let atom = model.at(offset);
+  while (atom?.parent && !atom.parent.isRoot) {
+    const owner = atom.parent;
+    const branch = atom.parentBranch;
+    const contents = owner.branch?.(branch);
+    // Array branches retain their existing rectangle and visible-boundary rules.
+    if (owner.type !== "array" && contents?.length && owner.leftSibling) {
+      const from = model.offsetOf(contents[0]!);
+      const to = model.offsetOf(contents[contents.length - 1]!);
+      const before = model.offsetOf(owner.leftSibling);
+      const after = model.offsetOf(owner);
+      if (from >= 0 && to >= from && before >= 0 && after > before)
+        result.push({ owner, branch, content: [from, to], whole: [before, after] });
+    }
+    atom = owner;
+  }
+  return result;
+}
+
+function mathBranchBounds(
+  math: MathfieldElement,
+  scope: MathBranchScope,
+  geometry: MathSelectionGeometry,
+): DOMRect | null {
+  let branches = geometry.branches.get(scope.owner);
+  if (!branches) {
+    branches = new Map();
+    geometry.branches.set(scope.owner, branches);
+  }
+  const cached = branches.get(scope.branch);
+  if (cached !== undefined) return cached;
+  let left = Infinity,
+    top = Infinity,
+    right = -Infinity,
+    bottom = -Infinity;
+  for (let offset = scope.content[0]; offset <= scope.content[1]; offset++) {
+    const bounds = math.getElementInfo(offset)?.bounds;
+    if (!bounds) continue;
+    left = Math.min(left, bounds.left);
+    top = Math.min(top, bounds.top);
+    right = Math.max(right, bounds.right);
+    bottom = Math.max(bottom, bounds.bottom);
+  }
+  const bounds = left === Infinity ? null : new DOMRect(left, top, right - left, bottom - top);
+  branches.set(scope.branch, bounds);
+  return bounds;
+}
+
+function includeCrossedMathBranches(
+  math: MathfieldElement,
+  anchor: MathSelectionPoint,
+  head: MathSelectionPoint,
+  range: readonly [number, number],
+  geometry?: MathSelectionGeometry,
+): readonly [number, number] {
+  const model = mathModel(math);
+  if (!model) return range;
+  const anchorPath = mathBranchPath(model, anchor.offset);
+  const headPath = mathBranchPath(model, head.offset);
+  let [from, to] = range;
+  const include = (
+    path: MathBranchScope[],
+    other: MathBranchScope[],
+    point: MathSelectionPoint,
+  ) => {
+    for (const scope of path) {
+      const sameSlot = other.some(
+        (candidate) => candidate.owner === scope.owner && candidate.branch === scope.branch,
+      );
+      const bounds = geometry ? mathBranchBounds(math, scope, geometry) : null;
+      // Hit testing may keep returning the last character after the pointer has
+      // already left its slot. Geometry disambiguates that for pointer drags;
+      // keyboard selections use branch ownership alone.
+      const inside =
+        !bounds ||
+        (point.x >= bounds.left - 2 &&
+          point.x <= bounds.right + 2 &&
+          point.y >= bounds.top - 2 &&
+          point.y <= bounds.bottom + 2);
+      if (sameSlot && inside) continue;
+      from = Math.min(from, scope.whole[0]);
+      to = Math.max(to, scope.whole[1]);
+    }
+  };
+  include(anchorPath, headPath, head);
+  include(headPath, anchorPath, anchor);
+  return [from, to];
+}
+
 export function resolveMathDragSelection(
   math: MathfieldElement,
   anchor: MathSelectionPoint,
@@ -623,7 +723,13 @@ export function resolveMathDragSelection(
   end = forward ? Math.max(start, end) : Math.min(start, end);
   return {
     kind: "range",
-    range: [Math.min(start, end), Math.max(start, end)],
+    range: includeCrossedMathBranches(
+      math,
+      anchor,
+      head,
+      [Math.min(start, end), Math.max(start, end)],
+      geometry,
+    ),
     direction: forward ? "forward" : "backward",
   };
 }

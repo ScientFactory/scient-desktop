@@ -97,6 +97,7 @@ export const PublishedLatexBuildEvidence = Schema.Struct({
   artifactId: ArtifactId,
   revisionId: ArtifactRevisionId,
   evidence: LatexBuildEvidence,
+  compiledBibliography: Schema.optional(Schema.String.check(Schema.isMaxLength(1_000_000))),
 });
 export type PublishedLatexBuildEvidence = typeof PublishedLatexBuildEvidence.Type;
 

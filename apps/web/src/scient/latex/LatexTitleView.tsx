@@ -13,7 +13,8 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
-import { NodeSelection, Selection } from "@tiptap/pm/state";
+import { Selection } from "@tiptap/pm/state";
+import { preserveLatexCaret } from "./latexObjectCaret";
 import { LatexTextField } from "./LatexTextField";
 
 type Props = Pick<NodeViewProps, "node" | "editor" | "updateAttributes" | "selected" | "getPos"> & {
@@ -143,11 +144,7 @@ export function LatexTitleView({
       onFocusCapture={(event: FocusEvent<HTMLDivElement>) => {
         activate();
         if (event.target instanceof HTMLTextAreaElement) {
-          const position = getPos();
-          if (typeof position === "number" && editor.state.selection.from !== position)
-            editor.view.dispatch(
-              editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, position)),
-            );
+          preserveLatexCaret(editor.view);
         }
       }}
       onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {

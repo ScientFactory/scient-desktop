@@ -165,6 +165,10 @@ export const MATH_COMMANDS: readonly MathCommand[] = [
   structure("subscript", "Subscript", "_{@}", "x"),
   structure("superscript", "Superscript", "^{@}", "e"),
   structure("text", "Text in math", "\\text{@}", "", "Structures"),
+  {
+    ...structure("boxed", "Boxed expression", "\\boxed{@}", "", "Structures"),
+    requires: "amsmath",
+  },
   ...(
     [
       "hat:h",
@@ -181,13 +185,29 @@ export const MATH_COMMANDS: readonly MathCommand[] = [
       "breve:shift+u",
       "widehat:",
       "widetilde:",
-      "overbrace:",
-      "underbrace:",
     ] as const
   ).map((entry) => {
     const [name = "", key = ""] = entry.split(":");
     return structure(name, name, `\\${name}{@}`, key, "Accents");
   }),
+  structure("overbrace", "Overbrace with label", "\\overbrace{@}^{|}", "", "Accents"),
+  structure("underbrace", "Underbrace with label", "\\underbrace{@}_{|}", "", "Accents"),
+  {
+    ...structure("overset", "Annotation above", "\\overset{|}{@}", "", "Accents"),
+    requires: "amsmath",
+  },
+  {
+    ...structure("underset", "Annotation below", "\\underset{|}{@}", "", "Accents"),
+    requires: "amsmath",
+  },
+  {
+    ...structure("xleftarrow", "Left arrow with labels", "\\xleftarrow[|]{@}", "", "Arrows"),
+    requires: "amsmath",
+  },
+  {
+    ...structure("xrightarrow", "Right arrow with labels", "\\xrightarrow[|]{@}", "", "Arrows"),
+    requires: "amsmath",
+  },
   structure("parentheses", "Parentheses", "\\left(@\\right)", "(", "Delimiters"),
   structure("brackets", "Square brackets", "\\left[@\\right]", "[", "Delimiters"),
   structure("braces", "Braces", "\\left\\{@\\right\\}", "{", "Delimiters"),

@@ -8,6 +8,7 @@ export interface LatexVisualListLayout {
   readonly itemSepEm: number;
   readonly parsepEm: number;
   readonly leftMarginEm: number;
+  readonly nested?: LatexVisualListLayout;
 }
 
 /** Standard class font sizes and baselines, in TeX points. */
@@ -53,6 +54,8 @@ export interface LatexVisualLayoutProfile {
   readonly lineHeight: number;
   readonly paragraphIndentEm: number;
   readonly paragraphGapEm: number;
+  readonly columnGapPt: number;
+  readonly columnRulePt: number;
   readonly indentAfterHeading: boolean;
   readonly textAlign: "justify" | "left";
   readonly sectionSizePt: number;
@@ -255,6 +258,14 @@ export function latexVisualLayoutProfile(source: string): LatexVisualLayoutProfi
   [marginTopIn, marginBottomIn] = fitMargins(marginTopIn, marginBottomIn, paperHeightIn);
 
   let spread = 1;
+  let columnGapPt = 10,
+    columnRulePt = 0;
+  for (const match of topLevel(/\\setlength\s*\{\\(columnsep|columnseprule)\}\s*\{([^{}]+)\}/gu)) {
+    const value = lengthEm(match[2]!, fontSizePt);
+    if (value === null || value < 0) continue;
+    if (match[1] === "columnsep") columnGapPt = value * fontSizePt;
+    else columnRulePt = value * fontSizePt;
+  }
   let paragraphIndentEm = packages.has("parskip") ? 0 : baseFontPt === 10 ? 1.5 : 17 / fontSizePt;
   let paragraphGapEm = packages.has("parskip") ? baselinePt / fontSizePt / 2 : 0;
   for (const match of topLevel(
@@ -322,6 +333,19 @@ export function latexVisualLayoutProfile(source: string): LatexVisualLayoutProfi
     const length = (name: string, points: number) =>
       lengthEm(settings.get(name) ?? `${points}pt`, fontSizePt) ?? points / fontSizePt;
     lists[kind] = {
+      nested: {
+        topSepEm: length("topsep", baseFontPt === 12 ? 5 : baseFontPt === 11 ? 4.5 : 4),
+        itemSepEm: length("itemsep", baseFontPt === 12 ? 2.5 : 2),
+        parsepEm: length("parsep", baseFontPt === 12 ? 2.5 : 2),
+        leftMarginEm:
+          settings.get("leftmargin") === "*"
+            ? kind === "itemize"
+              ? 1
+              : kind === "enumerate"
+                ? 1.25
+                : 2.2
+            : (lengthEm(settings.get("leftmargin") ?? "2.2em", fontSizePt) ?? 2.2),
+      },
       topSepEm: length("topsep", baseFontPt === 12 ? 10 : baseFontPt === 11 ? 9 : 8),
       itemSepEm: length("itemsep", baseFontPt === 10 ? 4 : baseFontPt === 11 ? 4.5 : 5),
       parsepEm: length("parsep", baseFontPt === 10 ? 4 : baseFontPt === 11 ? 4.5 : 5),
@@ -352,6 +376,8 @@ export function latexVisualLayoutProfile(source: string): LatexVisualLayoutProfi
     lineHeight: (baselinePt * spread) / fontSizePt,
     paragraphIndentEm,
     paragraphGapEm,
+    columnGapPt,
+    columnRulePt,
     indentAfterHeading: packages.has("indentfirst"),
     textAlign: topLevel(/\\(?:raggedright|RaggedRight)\b/gu).length > 0 ? "left" : "justify",
     sectionSizePt: baseFontPt === 12 ? 17.28 : 14.4,

@@ -1,9 +1,19 @@
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type KeyboardEvent,
+} from "react";
 import { ChevronUp } from "lucide-react";
 import "mathlive/static.css";
 import { MATH_SYMBOL_CATEGORIES, MATH_SYMBOLS, type MathSymbol } from "./mathSymbols";
 import { mathSymbolPreview } from "./mathSymbolPresentation";
+import { getKeyboardPreferences, subscribeKeyboardPreferences } from "../keyboard/preferences";
+import { mathSymbolShortcuts } from "./mathSymbolShortcuts";
 
 const STORAGE_KEY = "scient.latex.math-palette.v1";
 const byId = new Map(MATH_SYMBOLS.map((symbol) => [symbol.id, symbol]));
@@ -12,8 +22,9 @@ const PALETTE_GROUPS = [
     id: "common",
     label: "Common",
     icon: "√",
-    categories: ["structures", "frac-square", "sqrt-square"],
+    categories: ["structures", "frac-square", "sqrt-square", "annotations"],
   },
+  { id: "annotations", label: "Braces & annotations", icon: "⏟", categories: ["annotations"] },
   { id: "greek", label: "Greek letters", icon: "α", categories: ["latex_greek"] },
   {
     id: "operators",
@@ -95,6 +106,21 @@ export function LatexMathPalette({
   const [query, setQuery] = useState("");
   const [preferences, setPreferences] = useState(readPreferences);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const keyboard = useSyncExternalStore(
+    subscribeKeyboardPreferences,
+    getKeyboardPreferences,
+    getKeyboardPreferences,
+  );
+  const shortcuts = useMemo(
+    () =>
+      new Map(
+        MATH_SYMBOLS.map((symbol) => [
+          symbol.id,
+          mathSymbolShortcuts(symbol, keyboard.preferences).join(" · "),
+        ]),
+      ),
+    [keyboard],
+  );
   const panelId = useId();
   const root = useRef<HTMLDivElement>(null);
   const search = useRef<HTMLInputElement>(null);
@@ -291,11 +317,14 @@ export function LatexMathPalette({
                 key={`${category}:${query}`}
               >
                 {symbols.map((symbol, index) => (
-                  <ScientTooltip key={symbol.id} content={`${symbol.label} (${symbol.command})`}>
+                  <ScientTooltip
+                    key={symbol.id}
+                    content={`${symbol.label} (${symbol.command})${shortcuts.get(symbol.id) ? ` · ${shortcuts.get(symbol.id)}` : ""}`}
+                  >
                     <button
                       type="button"
                       data-symbol=""
-                      aria-label={`${symbol.label}, ${symbol.command}`}
+                      aria-label={`${symbol.label}, ${symbol.command}${shortcuts.get(symbol.id) ? `, ${shortcuts.get(symbol.id)}` : ""}`}
                       tabIndex={active?.id === symbol.id ? 0 : -1}
                       data-active={active?.id === symbol.id || undefined}
                       onMouseEnter={() => setActiveId(symbol.id)}
@@ -324,6 +353,12 @@ export function LatexMathPalette({
             <div>
               <strong>{active?.label ?? "Math symbols"}</strong>
               <code>{active?.command ?? ""}</code>
+              {active && shortcuts.get(active.id) && (
+                <small>Shortcut: {shortcuts.get(active.id)}</small>
+              )}
+              {active?.latex.includes("#?") && (
+                <small>Tab moves between the expression and label slots.</small>
+              )}
               <small>
                 {activePreview?.sourceOnly
                   ? "LaTeX command · glyph appears in the compiled PDF"

@@ -19,6 +19,7 @@ export interface MathSymbol {
 // and search vocabulary here are Scient's. No LyX icons or implementation code.
 export const MATH_SYMBOL_CATEGORIES = [
   ["structures", "Structures", "√"],
+  ["annotations", "Braces & annotations", "⏟"],
   ["latex_greek", "Greek letters", "α"],
   ["latex_bop", "Operators", "±"],
   ["latex_brel", "Relations & logic", "≤"],
@@ -102,8 +103,14 @@ const names: Record<string, string> = {
   ddot: "Double dot accent",
   overline: "Overline",
   underline: "Underline",
-  overbrace: "Overbrace",
-  underbrace: "Underbrace",
+  overbrace: "Overbrace with label",
+  underbrace: "Underbrace with label",
+  overset: "Annotation above",
+  underset: "Annotation below",
+  stackrel: "Relation with annotation above",
+  stackrelthree: "Annotations above and below",
+  xleftarrow: "Left arrow with labels",
+  xrightarrow: "Right arrow with labels",
   mathbb: "Blackboard bold",
   mathds: "Double stroke",
   mathcal: "Calligraphic",
@@ -149,8 +156,10 @@ const templates: Record<string, string> = {
   unitfracthree: "\\unitfrac[]{#0}{}",
   smasht: "\\smash[t]{#0}",
   smashb: "\\smash[b]{#0}",
-  overset: "\\overset{}{#0}",
-  underset: "\\underset{}{#0}",
+  overbrace: "\\overbrace{#0}^{#?}",
+  underbrace: "\\underbrace{#0}_{#?}",
+  overset: "\\overset{#?}{#0}",
+  underset: "\\underset{#?}{#0}",
   stackrel: "\\stackrel{}{#0}",
   stackrelthree: "\\overset{}{\\underset{}{#0}}",
   cancelto: "\\cancelto{}{#0}",
@@ -158,8 +167,8 @@ const templates: Record<string, string> = {
   sidesetl: "\\sideset{_{}^{}}{}{#0}",
   sidesetr: "\\sideset{}{_{}^{}}{#0}",
   sidesetn: "\\sideset{}{}{#0}",
-  xleftarrow: "\\xleftarrow{#0}",
-  xrightarrow: "\\xrightarrow{#0}",
+  xleftarrow: "\\xleftarrow[#?]{#0}",
+  xrightarrow: "\\xrightarrow[#?]{#0}",
   not: "\\not{#0}",
   mathcircumflex: "\\text{\\textasciicircum}",
   mathdollar: "\\text{\\$}",
@@ -199,6 +208,8 @@ const packageOverrides: Record<string, string[]> = {
   mathparagraph: ["amsmath"],
   mathsection: ["amsmath"],
   textdegree: [],
+  xleftarrow: ["amsmath"],
+  xrightarrow: ["amsmath"],
 };
 
 function fromCatalog(row: (typeof catalog)[number]): MathSymbol {
@@ -223,12 +234,18 @@ function fromCatalog(row: (typeof catalog)[number]): MathSymbol {
   const categoryLabel = MATH_SYMBOL_CATEGORIES.find(([id]) => id === row.category)?.[1] ?? "";
   return {
     id: `${row.category}:${row.command}`,
-    category: row.category,
+    category:
+      /^(?:overbrace|underbrace|overset|underset|stackrel|stackrelthree|xleftarrow|xrightarrow)$/u.test(
+        name,
+      )
+        ? "annotations"
+        : row.category,
     command: row.command,
     label,
     latex,
     preview: latex
       .replaceAll("#0", row.category === "font" ? "A" : "x")
+      .replaceAll("#?", "\\square")
       .replaceAll("{}", "{\\square}"),
     ...(row.glyph === undefined ? {} : { glyph: row.glyph }),
     packages,
@@ -237,6 +254,8 @@ function fromCatalog(row: (typeof catalog)[number]): MathSymbol {
 }
 
 const structures: [string, string, string][] = [
+  ["Text in math", "\\text{#0}", "\\text{words}"],
+  ["Boxed expression", "\\boxed{#0}", "\\boxed{x}"],
   ["Superscript", "{#0}^{}", "x^2"],
   ["Subscript", "{#0}_{}", "x_i"],
   ["Parentheses", "\\left(#0\\right)", "(x)"],

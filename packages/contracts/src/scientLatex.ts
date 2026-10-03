@@ -133,6 +133,8 @@ export const ScientLatexBuildSnapshot = Schema.Struct({
   pendingRerun: Schema.Boolean,
   /** Source byte identities checked on both sides of this compile, never a navigation guess. */
   visualSourceRevisions: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  /** BibTeX presentation from this successful PDF revision, never an editable source file. */
+  compiledBibliography: Schema.optional(Schema.String.check(Schema.isMaxLength(1_000_000))),
   /**
    * Present only while this build is fetching packages the last compile said
    * were missing. The state stays `running` throughout, so a client polls as

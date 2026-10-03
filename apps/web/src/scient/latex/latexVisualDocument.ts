@@ -22,7 +22,11 @@ import {
 import { latexDocumentMathSetup } from "./latexDocumentMacros";
 import { latexEnvironmentDeclarations } from "./latexEnvironmentDeclarations";
 import { latexListOptionsSource, parseLatexListOptions } from "./latexListOptions";
-import { latexPageLayoutOpening, latexLayoutSpacing } from "./latexPageLayouts";
+import {
+  latexPageLayoutOpening,
+  latexLayoutSpacing,
+  latexMinipageSeparator,
+} from "./latexPageLayouts";
 import {
   expandLongTableRows,
   longTableSections,
@@ -1121,6 +1125,8 @@ function nextBlockEnd(body: string, from: number): number {
   if (standalone) return from + standalone[0].length;
   const documentCommand = latexDocumentCommand(body, from);
   if (documentCommand) return documentCommand.end;
+  const bibliography = /^\\bibliography\s*\{[^{}]+\}/u.exec(body.slice(from));
+  if (bibliography) return from + bibliography[0].length;
   const contentsEntry = contentsEntryRange(body, from);
   if (contentsEntry) return contentsEntry.end;
   if (
@@ -1150,7 +1156,7 @@ function nextBlockEnd(body: string, from: number): number {
     if (depth === 0 && index > from) {
       if (
         latexDocumentCommand(body, index) ||
-        /^\\(?:listoffigures|listoftables)\b/u.test(body.slice(index))
+        /^\\(?:listoffigures|listoftables|bibliography)\b/u.test(body.slice(index))
       )
         return index;
       if (body.startsWith("\\end{document}", index)) return index;
@@ -3174,23 +3180,20 @@ function supportedScientificMath(node: JSONContent, setup: LatexVisualSetup): bo
   return node.content?.every((child) => supportedScientificMath(child, setup)) ?? true;
 }
 
-/** Adjacent minipages joined by hfill share one editable row and retain the separator. */
+/** Adjacent minipages share one editable row and retain their exact glue/comments. */
 function minipageRowRanges(source: string) {
   if (!source.startsWith("\\begin{minipage}")) return null;
-  const ranges: { from: number; to: number }[] = [];
+  const ranges: { from: number; to: number; gap: string }[] = [];
   let from = 0;
+  let gap = "0px";
   for (let count = 0; count < 16; count++) {
     const to = matchingEnvironmentEnd(source, from);
     if (to === null) return null;
-    ranges.push({ from, to });
-    const gap = /^[\t \r\n]*\\hfill\b[\t \r\n]*/u.exec(source.slice(to));
-    if (
-      !gap ||
-      /\r?\n[\t ]*\r?\n/u.test(gap[0]) ||
-      !source.startsWith("\\begin{minipage}", to + gap[0].length)
-    )
-      break;
-    from = to + gap[0].length;
+    ranges.push({ from, to, gap });
+    const separator = latexMinipageSeparator(source.slice(to));
+    if (!separator) break;
+    gap = separator.gap;
+    from = to + separator.end;
   }
   return ranges.length > 1 ? ranges : null;
 }
@@ -3232,9 +3235,10 @@ function parsePageLayoutStructure(
   }
   const row = minipageRowRanges(source);
   if (row && row.at(-1)!.to === source.length) {
-    const content = row.map((range) =>
-      parsePageLayoutStructure(source.slice(range.from, range.to), depth + 1, setup),
-    );
+    const content = row.map((range) => {
+      const node = parsePageLayoutStructure(source.slice(range.from, range.to), depth + 1, setup);
+      return node ? { ...node, attrs: { ...node.attrs, layoutGap: range.gap } } : null;
+    });
     if (content.some((node) => node === null)) return null;
     return {
       type: "latexScientific",
@@ -3505,6 +3509,19 @@ export function projectLatexVisualDocument(
     const raw = body.slice(cursor, rawEnd).replace(/[\r\n]+$/u, "");
     const from = bodyFrom + cursor;
     const to = from + raw.length;
+    // A paragraph terminator after content does not itself produce an empty
+    // paragraph in TeX. Keep it in the source gap, while retaining isolated
+    // empty paragraphs (including those inserted by Enter) as editable nodes.
+    const previous = blocks.at(-1);
+    if (
+      raw.trim() === "\\par" &&
+      previous &&
+      previous.source.trim() !== "\\par" &&
+      /^[\t ]*(?:\r?\n[\t ]*)?$/u.test(source.slice(previous.to, from))
+    ) {
+      cursor = rawEnd;
+      continue;
+    }
     const id = sourceId(blocks.length);
     dynamicSyntax ||=
       /\\(?:catcode|def|gdef|edef|xdef|let|newcommand|renewcommand|newenvironment|renewenvironment)\b/u.test(
@@ -5383,7 +5400,12 @@ function minimallyPatchedBlock(block: LatexVisualSourceBlock, next: JSONContent)
   const right = oldUnits[oldEnd];
   const starts = prefix < oldEnd ? [oldUnits[prefix]!.from] : [left?.to ?? from, right?.from ?? to];
   const ends = prefix < oldEnd ? [oldUnits[oldEnd - 1]!.to] : starts;
-  const contexts = [oldUnits[prefix]?.marks ?? [], left?.marks ?? [], right?.marks ?? [], []];
+  // At a pure insertion, the left endpoint can still be inside its formatting
+  // command. Prefer that context before wrapping the inserted text again.
+  const contexts =
+    prefix === oldEnd
+      ? [left?.marks ?? [], right?.marks ?? [], []]
+      : [oldUnits[prefix]?.marks ?? [], left?.marks ?? [], right?.marks ?? [], []];
   for (const start of starts)
     for (const end of ends)
       for (const context of contexts) {

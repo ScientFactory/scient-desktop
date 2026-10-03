@@ -111,6 +111,11 @@ Zoom changes only the on-screen view, not the LaTeX
 page dimensions or PDF layout. Pinch with two fingers on a trackpad, or hold Ctrl
 while scrolling, to zoom smoothly around the pointer without fixed percentage
 steps. Ordinary two-finger scrolling continues to move through the document.
+Clicking a generated heading such as Contents keeps the current caret without
+selecting the whole block. Contents entries still navigate to their targets.
+Clicking a statement heading such as Definition or Proof places the caret in
+its editable body. Object fields keep their own caret, with options in the footer.
+
 Math normally stays rendered in the document. Click a symbol to place the caret
 directly there; drag to select part of a formula. The contextual bar opens at the
 bottom of the document workspace. Centered equations have a single editing
@@ -152,11 +157,13 @@ inserts it and moves into its editable slot when applicable. In-progress command
 suggestions remain local until accepted, so ghost completions are not saved into
 the document. Clicking a suggestion keeps you inside the formula.
 
-The existing bottom bar holds **Placement**, **Numbered**, **Reference label**,
+The existing bottom bar holds **Math**, **Numbered**, **Reference label**,
 **Symbols & structures**, and **Edit LaTeX**. Aligned equations use a **Numbering**
 menu with **None**, **Whole block**, and **Each row**. **Rows & columns** edits the
 structure at the math cursor; cases and aligned equations keep their two-column
 structure. The footer keeps its height when entering or leaving math.
+The footer's **Math** menu has the same six actions as the top menu, including
+placement, aligned equations, and the matrix size picker.
 
 Imported equation labels, tags, and suppressed numbers remain protected. Their
 placement, numbering, and outer row structure are changed in Source. A single
@@ -175,13 +182,25 @@ the compiled PDF remains authoritative. Table references also show the derived
 caption number and navigate to their labelled table. The label must exist in the
 document; an unlabelled nonfloating table does not create a reference target.
 
-**Symbols & structures** groups Common, Greek letters, Operators & relations,
+**Symbols & structures** groups Common, Braces & annotations, Greek letters, Operators & relations,
 Arrows, Sums/integrals/limits, Brackets & accents, Functions & math alphabets, and
 More symbols. Search spans all categories. Hover or focus a tile to see its name
-and command. Arrow keys browse the grid; Enter inserts, and Escape returns to the
+and command, plus assigned keyboard shortcuts and enabled typing shortcuts.
+These follow your shortcut settings. Arrow keys browse the grid; Enter inserts, and Escape returns to the
 formula. Recent symbols and starred favorites are saved locally on this device.
 A fraction, root, accent, or paired delimiter wraps the selected math; without a
 selection, entry slots are blank.
+
+For an annotated brace, select an expression and choose **Underbrace with label**
+or **Overbrace with label** in Common or Braces & annotations. Fill the empty
+slots using Tab to move between them. Choose **Text in math** inside a label to
+type ordinary words, such as “terms.” This group also offers annotations above
+or below an expression and arrows with labels on both sides. **Boxed expression**
+is in Common. Templates insert empty slots, with no sample text to erase.
+When extending a selection out of an inner math slot, its enclosing structure
+is included first. For example, dragging from an underbrace label into the
+surrounding equation selects the brace, expression, and label together. Dragging
+within the label selects its text; an ordinary click places the caret.
 
 The palette is bundled locally and needs no network. Known package requirements
 are added to the document root's preamble, including when editing an included
@@ -200,7 +219,7 @@ the compiled PDF. The editor never replaces them with a different source symbol.
 Choose **Edit LaTeX** to edit just the formula body in a compact box above the
 footer. Supported edits update the equation and document as you type; there are
 no Apply or Cancel buttons. Escape or Ctrl/Cmd+Enter returns to the formula.
-Placement and Numbering manage the outer delimiters and environment. Equations
+The Math menu's placement choices and Numbering manage the outer delimiters and environment. Equations
 with `\label`, `\tag`, `\notag`, or `\nonumber` allow edits to the math in their
 existing rows. The commands remain outside the formula field and retain their
 source. The Reference label field edits a single outer label; per-row labels,
@@ -212,7 +231,11 @@ including the starred form, so `\DeclareMathOperator{\rank}{rank}` makes `\rank`
 render as an upright operator without changing the command in source. Simple
 `\newcommand`, `\renewcommand`, `\providecommand`, `\DeclareRobustCommand`, and
 undelimited `\def`/`\gdef` math definitions support required arguments. Macro
-calls remain single units in the formula; use Edit LaTeX to change their arguments.
+calls generally remain single units in the formula. One-argument delimiter
+wrappers such as `\newcommand{\norm}[1]{\left\lVert #1\right\rVert}` allow
+editing inside the delimiters directly; argument edits retain `\norm{...}` in
+source. Changing the delimiters expands that occurrence into ordinary math.
+Use Edit LaTeX for arguments of other macro shapes.
 Preamble changes update the shared math setup without adding definitions to each
 included file. Optional/default arguments, conditional or recursive definitions,
 paired-delimiter declarations and commands requiring TeX execution remain
@@ -351,7 +374,13 @@ the listing layout; the compiled PDF remains authoritative.
 `multicols` regions render editable text in the requested columns, including
 explicit `\columnbreak` commands and page footnotes. Supported `minipage` widths
 and top/center/bottom alignment are reflected on the page; adjacent minipages
-joined by `\hfill` stay side by side. Edits retain these environments and widths.
+joined by `\hfill`, literal `\hspace`, or ordinary spaces stay side by side.
+Comment joins preserve zero spacing, and blank lines start a separate row.
+Nested panels use the available local width. Literal fixed heights and their
+independent inner alignment are supported. Edits retain these environments,
+dimensions and separators. Root-preamble `\columnsep` and `\columnseprule`
+settings control the column gaps and dividers. Headings inside panels and
+columns share the document's numbering and heading styles.
 An inline `\columnbreak` keeps the surrounding text in one paragraph and breaks
 after its rendered line, without adding a new paragraph indentation.
 To start the next paragraph at the top of the next column, end the preceding
@@ -479,7 +508,8 @@ Select row and Select column. Delete or Backspace clears all selected cells;
 the table structure stays in place. Ctrl/Cmd+C copies the selected cells as a
 LaTeX table fragment, and Ctrl/Cmd+X copies and clears them.
 
-Use Table > Select table to select the whole table. Ctrl/Cmd+A inside a cell
+Clicking a table border focuses the active cell. Use Table > Select table to
+select the whole table. Ctrl/Cmd+A inside a cell
 first selects its text; pressing it again selects the table. Copy then includes
 the full table with its caption and settings. Delete, Backspace or Cut removes
 a selected whole table. Escape returns to editing a cell.
@@ -856,7 +886,8 @@ Math → Inline math. Table cells share document undo. Deleting a rectangle clea
 its cells; re-entering a cell returns to caret editing. Display math requires a
 paragraph outside the table.
 
-For BibTeX documents, an existing `.bbl` beside the main `.tex` supplies the printed
-bibliography and citation numbers in Visual. Use Document → References to edit the
-original `.bib` entries. This display follows the saved `.bbl`; it may need updating
-after bibliography changes. It is not generated by Visual itself.
+For BibTeX documents, a successful PDF build supplies the printed bibliography
+and citation numbers in Visual. Use Document ? References to edit the original
+`.bib` entries, then rebuild the PDF to refresh the bibliography. No generated
+`.bbl` file needs to be copied into the project. Older builds need one rebuild
+to supply this presentation data. Visual does not run BibTeX itself.

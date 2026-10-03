@@ -210,7 +210,9 @@ export function useLatexTableSelection(props: {
           event.target.closest("textarea, input, button")
         )
           return;
-        select(wholeTable());
+        // A plain border/background click enters the active cell. Whole-table
+        // selection is an explicit toolbar/keyboard action, not caret placement.
+        focusCell(current.current.activeCell);
         event.preventDefault();
         event.stopImmediatePropagation();
         return;

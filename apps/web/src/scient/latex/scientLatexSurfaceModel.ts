@@ -382,6 +382,7 @@ export function latexSnapshotsEqual(
     descriptorsEqual(left.descriptor, right.descriptor) &&
     toolchainsEqual(left.toolchain, right.toolchain) &&
     sourceRevisionsEqual(left.visualSourceRevisions, right.visualSourceRevisions) &&
+    left.compiledBibliography === right.compiledBibliography &&
     diagnosticsEqual(left.diagnostics, right.diagnostics)
   );
 }

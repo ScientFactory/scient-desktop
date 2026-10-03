@@ -1603,6 +1603,13 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                         )
                       }
                       rootRelativePath={resolvedRootRelativePath}
+                      compiledBibliography={
+                        build.snapshot?.rootRelativePath === resolvedRootRelativePath &&
+                        build.snapshot.state === "succeeded" &&
+                        !build.snapshot.pendingRerun
+                          ? (build.snapshot.compiledBibliography ?? null)
+                          : null
+                      }
                       key={visualDraftKey}
                       source={props.contents}
                       onLocalDraftChange={reportLocalVisualDraft}

@@ -3,6 +3,7 @@ import type { Node as DocumentNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey, NodeSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import { afterEditorPaint } from "./afterEditorPaint";
+import { latexParagraphSpacing, type ParagraphSpacingCache } from "./latexParagraphSpacing";
 import { latexCounterLabel } from "./latexDocumentStructure";
 import { latexInlineColumnBreakPositions } from "./latexColumnBreaks";
 import { appendLatexProsePreview } from "./LatexProsePreview";
@@ -466,9 +467,19 @@ function measureDocument(
       }
     }
     if (lines.length < 2) {
+      // A run-in heading floats on the paragraph's first line. Include the
+      // paragraph's leading space in its unit, so moving the pair to a new
+      // page does not insert a second gap before the paragraph.
+      const followingParagraph =
+        heading &&
+        dom.matches("h4, h5") &&
+        getComputedStyle(dom).float !== "none" &&
+        dom.nextElementSibling?.tagName === "P"
+          ? dom.nextElementSibling.getBoundingClientRect()
+          : null;
       units.push({
         position: before,
-        top: y(rect.top),
+        top: y(followingParagraph ? Math.min(rect.top, followingParagraph.top) : rect.top),
         bottom: y(rect.bottom),
         explicitBreak: node.type.name === "latexRichPreview" && node.attrs.kind === "pagebreak",
         breakBefore,
@@ -586,6 +597,7 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
       let signature = "";
       let measuredDocument: DocumentNode | null = null;
       let lineCache = new WeakMap<DocumentNode, CachedLines>();
+      let spacingCache: ParagraphSpacingCache = new WeakMap();
       const root = view.dom;
       const scroll = () => root.closest<HTMLElement>(".scient-latex-visual-scroll");
       const anchor = () => {
@@ -641,6 +653,29 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
           // Hiding only our widgets exposes natural flow without replacing the
           // editable DOM or touching its native selection and composition.
           root.dataset.latexMeasuring = "true";
+          const spacing = latexParagraphSpacing(view, spacingCache);
+          const previousSpacing = state.decorations
+            .find()
+            .filter((item) => item.spec.latexParagraphSpacing !== undefined);
+          const spacingSignature = (items: readonly Decoration[]) =>
+            JSON.stringify(
+              items.map((item) => [item.from, item.to, item.spec.latexParagraphSpacing]),
+            );
+          if (spacingSignature(spacing) !== spacingSignature(previousSpacing)) {
+            lineCache = new WeakMap();
+            view.dispatch(
+              view.state.tr
+                .setMeta(latexPaginationKey, {
+                  pages: state.pages,
+                  decorations: state.decorations
+                    .remove(previousSpacing)
+                    .add(view.state.doc, spacing),
+                })
+                .setMeta("addToHistory", false),
+            );
+            schedule();
+            return;
+          }
           root.dataset.latexColumnMeasuring = "true";
           const columnBreaks = latexInlineColumnBreakPositions(view);
           delete root.dataset.latexColumnMeasuring;
@@ -772,6 +807,7 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
                     page: placement.page,
                   })),
                   decorations: DecorationSet.create(view.state.doc, [
+                    ...spacing,
                     ...columnBreaks.map((position) =>
                       Decoration.widget(
                         position,
@@ -908,6 +944,7 @@ export function createLatexVisualPagination(onPageCount: (count: number) => void
       };
       const fontsChanged = () => {
         lineCache = new WeakMap();
+        spacingCache = new WeakMap();
         schedule();
       };
       const compositionStart = () => {

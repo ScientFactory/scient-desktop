@@ -99,8 +99,9 @@ export interface LatexBuildInput {
 
 function staleSnapshot(snapshot: ScientLatexBuildSnapshot): ScientLatexBuildSnapshot {
   const reason = "Sources changed. Rebuild to update the PDF.";
+  const { compiledBibliography: _bibliography, ...current } = snapshot;
   return {
-    ...snapshot,
+    ...current,
     state: "idle",
     visualSourceRevisions: {},
     descriptor:
@@ -308,6 +309,7 @@ type CancellationClaim =
  * that is not there.
  */
 interface LatexEvidenceCacheEntry {
+  readonly compiledBibliography?: string | undefined;
   /** Exact immutable PDF revision this evidence is allowed to vouch for. */
   readonly revision: {
     readonly artifactId: ArtifactId;
@@ -682,7 +684,11 @@ export const make = Effect.gen(function* () {
   });
 
   const withToolchain = (entry: LatexBuildEntry) =>
-    toolchainProbe.probe(false).pipe(Effect.map((toolchain) => snapshotOf(entry, toolchain)));
+    toolchainProbe
+      .probe(false)
+      .pipe(
+        Effect.flatMap((toolchain) => restoreCompiledBibliography(snapshotOf(entry, toolchain))),
+      );
 
   const readEntrySnapshot = (key: string) =>
     getEntry(key).pipe(
@@ -864,6 +870,14 @@ export const make = Effect.gen(function* () {
   }) =>
     Effect.gen(function* () {
       const bytes = yield* fileSystem.readFile(input.pdfPath);
+      // Keep generated presentation with the PDF revision, not beside editable project files.
+      const compiledBibliography = yield* Effect.gen(function* () {
+        const bibliographyPath = input.pdfPath.replace(/\.pdf$/iu, ".bbl");
+        const info = yield* fileSystem.stat(bibliographyPath);
+        if (info.size > 1_000_000n) return undefined;
+        const source = yield* fileSystem.readFileString(bibliographyPath);
+        return source.length <= 1_000_000 ? source : undefined;
+      }).pipe(Effect.orElseSucceed(() => undefined));
       const failDescriptorVerification = (detail: string, descriptor: PdfSourceDescriptor) =>
         Effect.logWarning("published latex PDF binding could not be verified", {
           logicalDocumentKey: input.key,
@@ -941,6 +955,7 @@ export const make = Effect.gen(function* () {
                 artifactId: descriptor.artifactId,
                 revisionId: descriptor.revisionId,
                 evidence: input.evidence,
+                compiledBibliography,
               });
               // Evidence persistence is outside the document-store lock. A
               // producer may have claimed the binding while it ran, so verify
@@ -1124,11 +1139,32 @@ export const make = Effect.gen(function* () {
             ? null
             : { artifactId: published.artifactId, revisionId: published.revisionId },
         evidence: published?.evidence ?? null,
+        compiledBibliography: published?.compiledBibliography,
         marks: EMPTY_EVIDENCE_MARKS,
         reverifiedUnverifiedPaths: new Set(),
       };
       yield* Ref.update(evidenceRef, (all) => new Map(all).set(key, entry));
       return entry;
+    });
+
+  const restoreCompiledBibliography = (snapshot: ScientLatexBuildSnapshot) =>
+    Effect.gen(function* () {
+      const descriptor = snapshot.descriptor;
+      if (
+        snapshot.state !== "succeeded" ||
+        snapshot.pendingRerun ||
+        descriptor?._tag !== "generated-pdf" ||
+        descriptor.bindingStatus !== "current"
+      )
+        return snapshot;
+      const cached = yield* loadEvidence(snapshot.logicalDocumentKey);
+      if (
+        cached.revision?.artifactId !== descriptor.artifactId ||
+        cached.revision.revisionId !== descriptor.revisionId ||
+        cached.compiledBibliography === undefined
+      )
+        return snapshot;
+      return { ...snapshot, compiledBibliography: cached.compiledBibliography };
     });
 
   /**
@@ -1265,6 +1301,7 @@ export const make = Effect.gen(function* () {
     readonly artifactId: ArtifactId;
     readonly revisionId: ArtifactRevisionId;
     readonly evidence: LatexBuildEvidence;
+    readonly compiledBibliography?: string | undefined;
   }) =>
     Effect.gen(function* () {
       const published = {
@@ -1272,6 +1309,7 @@ export const make = Effect.gen(function* () {
         artifactId: input.artifactId,
         revisionId: input.revisionId,
         evidence: input.evidence,
+        compiledBibliography: input.compiledBibliography,
       };
       // Publish the in-memory identity first. If the cache write fails, this
       // process can still verify the revision it just produced; after restart,
@@ -1281,6 +1319,7 @@ export const make = Effect.gen(function* () {
         return new Map(all).set(input.key, {
           revision: { artifactId: input.artifactId, revisionId: input.revisionId },
           evidence: input.evidence,
+          compiledBibliography: input.compiledBibliography,
           marks: current?.marks ?? EMPTY_EVIDENCE_MARKS,
           reverifiedUnverifiedPaths: current?.reverifiedUnverifiedPaths ?? new Set<string>(),
         });
@@ -1995,6 +2034,9 @@ export const make = Effect.gen(function* () {
         return snapshot;
       return {
         ...snapshot,
+        ...(cached.compiledBibliography === undefined
+          ? {}
+          : { compiledBibliography: cached.compiledBibliography }),
         visualSourceRevisions: latexVisualSourceRevisions(cached.evidence, cached.evidence),
       };
     });

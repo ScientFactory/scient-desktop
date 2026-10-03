@@ -1,5 +1,6 @@
 import { TextMenu, TextMenuItems } from "../writing/TextMenu";
 import { randomUUID } from "~/lib/utils";
+import { LatexMathMenuItems, LATEX_CASES_TEMPLATE } from "./LatexMathMenuItems";
 import { LatexSelect } from "./LatexSelect";
 import { LatexLongTableBand, type LongTableBand } from "./LatexLongTableBand";
 import { latexRunningPageStyle, latexRunningPageFields } from "./latexPageLayouts";
@@ -130,7 +131,6 @@ import {
 import { LatexMathField, type LatexMathFieldHandle } from "./LatexMathField";
 import { LatexMathPalette } from "./LatexMathPalette";
 import { LatexMatrixDialog } from "./LatexMatrixDialog";
-import { LatexMatrixSizeMenu } from "./LatexMatrixSizeMenu";
 import type { MathSymbol } from "./mathSymbols";
 import { LatexTextField, LatexDraftContext, replaceLatexFieldDraft } from "./LatexTextField";
 import { LatexLiteralCodeView } from "./LatexLiteralCodeView";
@@ -148,6 +148,11 @@ import {
   selectionIncludingLatexObject,
 } from "./latexObjectSelection";
 import { afterEditorPaint } from "./afterEditorPaint";
+import {
+  enterLatexObjectBody,
+  handleLatexObjectClick,
+  preserveLatexCaret,
+} from "./latexObjectCaret";
 import {
   projectMathNumbering,
   singleMathReferenceLabel,
@@ -327,6 +332,7 @@ interface ActiveMathEditor {
   changeType: (type: string) => void;
   command: LatexMathFieldHandle["command"];
   flush: () => boolean;
+  dismiss: (keepDocumentSelection?: boolean) => void;
   focus: () => void;
   symbols: () => void;
   undo: (redo: boolean) => void;
@@ -538,6 +544,7 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
   const [dragOutside, setDragOutside] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
   const [paletteRequest, setPaletteRequest] = useState(0);
+  const [matrixEnvironment, setMatrixEnvironment] = useState<MatrixEnvironment>("bmatrix");
   const [shortcutHint, setShortcutHint] = useState("");
   const [draft, setDraft] = useState(attributes.tex);
   const [sourceError, setSourceError] = useState<string | null>(null);
@@ -547,18 +554,31 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
     [caret, draft],
   );
 
+  const dismiss = useCallback(
+    (keepDocumentSelection = false) => {
+      mathField.current?.clearSelection();
+      if (!keepDocumentSelection && !editor.isDestroyed && activeMath.get()?.id === activationId) {
+        const position = getPos();
+        const selection = editor.state.selection;
+        // Activation uses a node selection as the math field's edit anchor.
+        // Release only that anchor, never a range made by dragging out of math.
+        if (selection instanceof NodeSelection && selection.from === position)
+          preserveLatexCaret(editor.view);
+      }
+      setEditing(false);
+      setSourceOpen(false);
+      activeMath.deactivate(activationId);
+    },
+    [editor, getPos, activeMath, activationId],
+  );
+
   useEffect(() => {
     const deactivate = (event: Event) => {
-      if ((event as CustomEvent<string>).detail !== activationId) {
-        mathField.current?.clearSelection();
-        setEditing(false);
-        setSourceOpen(false);
-        activeMath.deactivate(activationId);
-      }
+      if ((event as CustomEvent<string>).detail !== activationId) dismiss();
     };
     document.addEventListener("scient-latex-context-activate", deactivate);
     return () => document.removeEventListener("scient-latex-context-activate", deactivate);
-  }, [activationId, activeMath]);
+  }, [activationId, dismiss]);
 
   const activate = (focus = true) => {
     if (!editable) return;
@@ -602,7 +622,15 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
 
   useEffect(() => {
     if (!editing) return;
-    const outside = (event: PointerEvent) => {
+    const outside = (event: Event) => {
+      // Document focus is also used to extend a deliberate drag selection.
+      if (
+        event.type === "focusin" &&
+        (event.target === editor.view.dom ||
+          mathPointerId.current !== null ||
+          externalSelection.current !== null)
+      )
+        return;
       const path = event.composedPath();
       if (
         path.includes(mathRoot.current!) ||
@@ -627,14 +655,20 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
         )
       )
         return;
-      mathField.current?.clearSelection();
-      setEditing(false);
-      setSourceOpen(false);
-      activeMath.deactivate(activationId);
+      dismiss(
+        event instanceof PointerEvent &&
+          event.shiftKey &&
+          event.target instanceof Element &&
+          editor.view.dom.contains(event.target),
+      );
     };
     document.addEventListener("pointerdown", outside, true);
-    return () => document.removeEventListener("pointerdown", outside, true);
-  }, [editing, activeMath, activationId]);
+    document.addEventListener("focusin", outside, true);
+    return () => {
+      document.removeEventListener("pointerdown", outside, true);
+      document.removeEventListener("focusin", outside, true);
+    };
+  }, [editing, editor, dismiss]);
 
   useEffect(
     () => () => {
@@ -986,6 +1020,7 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
       changeType,
       command: (command) => mathField.current?.command(command) ?? false,
       flush: () => mathField.current?.flush() ?? false,
+      dismiss,
       focus: () => mathField.current?.focus(),
       undo: (redo) => {
         mathField.current?.command(redo ? "redo" : "undo");
@@ -1088,27 +1123,21 @@ function LatexMathView({ node, updateAttributes, editor, getPos, selected }: Nod
             aria-label="Math tools"
             onClick={(event) => event.stopPropagation()}
           >
-            <label>
-              Placement
-              <LatexSelect
-                aria-label="Equation placement"
-                value={display ? "standalone" : "inline"}
-                disabled={Boolean(attributes.numberingSource)}
-                title={
-                  attributes.numberingSource
-                    ? "Change placement in Source to preserve labels and numbering."
-                    : undefined
-                }
-                onValueChange={(value) =>
-                  changeType(value === "inline" ? "inline-paren" : "display-bracket")
-                }
-                size="compact"
-                options={[
-                  { value: "inline", label: "Inline math" },
-                  { value: "standalone", label: "Display math" },
-                ]}
+            <DockMenu commandScope="latex" label="Math" icon={<span>Math</span>}>
+              <LatexMathMenuItems
+                placement={display ? "equation" : "inline-math"}
+                protectedSource={Boolean(attributes.numberingSource)}
+                onPlacement={(display) => changeType(display ? "display-bracket" : "inline-paren")}
+                onAligned={() => changeType("aligned-equations")}
+                matrixEnvironment={matrixEnvironment}
+                onMatrixEnvironment={setMatrixEnvironment}
+                onInsert={(tex) => mathField.current?.insert(tex)}
+                onSymbols={() => {
+                  setSourceOpen(false);
+                  setPaletteRequest((value) => value + 1);
+                }}
               />
-            </label>
+            </DockMenu>
             {display &&
               (aligned || gathered ? (
                 <label>
@@ -1577,10 +1606,7 @@ function LatexInlineCommandView({
           spellCheck={false}
           disabled={!editable}
           value={argument}
-          onFocus={() => {
-            const position = getPos();
-            if (typeof position === "number") editor.commands.setNodeSelection(position);
-          }}
+          onFocus={() => preserveLatexCaret(editor.view)}
           onValueChange={(value) => {
             const raw = inlineLatexLiteralSource(value, String(node.attrs.raw ?? ""));
             if (raw !== null) updateAttributes({ argument: value, raw });
@@ -2078,13 +2104,7 @@ function LatexRichPreviewView({
   const objectRoot = useRef<HTMLElement | null>(null);
   const [descriptionItem, setDescriptionItem] = useState(0);
   const [captionEditing, setCaptionEditing] = useState(false);
-  const selectObject = () => {
-    const position = getPos();
-    if (typeof position === "number" && editor.state.selection.from !== position)
-      editor.view.dispatch(
-        editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, position)),
-      );
-  };
+  const focusObject = () => preserveLatexCaret(editor.view);
   const leaveObject = (direction: -1 | 1) => {
     const position = getPos();
     if (typeof position !== "number") return;
@@ -2673,7 +2693,7 @@ function LatexRichPreviewView({
         ref={objectRoot}
         className="scient-latex-rich-preview scient-latex-part-preview"
         contentEditable={false}
-        onFocusCapture={selectObject}
+        onFocusCapture={focusObject}
       >
         <LatexObjectToolbar
           editor={editor}
@@ -2722,7 +2742,7 @@ function LatexRichPreviewView({
           className="scient-latex-simple-preview"
           data-environment={environment}
           contentEditable={false}
-          onFocusCapture={selectObject}
+          onFocusCapture={focusObject}
         >
           <LatexLiteralCodeView
             environment={environment}
@@ -2761,7 +2781,7 @@ function LatexRichPreviewView({
         className="scient-latex-simple-preview"
         data-environment={environment}
         contentEditable={false}
-        onFocusCapture={selectObject}
+        onFocusCapture={focusObject}
       >
         <LatexTextField
           aria-label={label}
@@ -2782,8 +2802,7 @@ function LatexRichPreviewView({
         ref={objectRoot}
         className="scient-latex-rich-preview scient-latex-bibliography-preview"
         contentEditable={false}
-        onFocusCapture={selectObject}
-        onPointerDown={selectObject}
+        onFocusCapture={focusObject}
       >
         <LatexObjectToolbar
           editor={editor}
@@ -2803,7 +2822,9 @@ function LatexRichPreviewView({
         </LatexObjectToolbar>
         <h2>{bibliographyPresentation?.title ?? "References"}</h2>
         {external && !bibliographyPresentation?.items && (
-          <p>Compiled bibliography unavailable. Manage entries in Document → References.</p>
+          <p>
+            Rebuild the PDF to display the bibliography. Manage entries in Document → References.
+          </p>
         )}
         <ol>
           {bibliographyItems.map((item, index) => (
@@ -2868,7 +2889,11 @@ function LatexRichPreviewView({
                     style={{ height: objectPageGaps[index] }}
                   />
                 ) : null}
-                <li data-level={Number(entry.level ?? 1)} data-latex-toc-entry={index}>
+                <li
+                  data-level={Number(entry.level ?? 1)}
+                  data-unnumbered={!entry.number || undefined}
+                  data-latex-toc-entry={index}
+                >
                   <button
                     type="button"
                     aria-label={`Go to ${entry.title}`}
@@ -2960,8 +2985,7 @@ function LatexRichPreviewView({
         ref={objectRoot}
         className="scient-latex-rich-preview scient-latex-figure-preview scient-latex-figure-layout"
         contentEditable={false}
-        onFocusCapture={selectObject}
-        onPointerDown={selectObject}
+        onFocusCapture={focusObject}
       >
         <LatexObjectToolbar
           editor={editor}
@@ -3120,8 +3144,7 @@ function LatexRichPreviewView({
     return (
       <NodeViewWrapper
         ref={objectRoot}
-        onFocusCapture={selectObject}
-        onPointerDown={selectObject}
+        onFocusCapture={focusObject}
         className="scient-latex-rich-preview scient-latex-figure-preview"
         contentEditable={false}
       >
@@ -3225,8 +3248,7 @@ function LatexRichPreviewView({
     return (
       <NodeViewWrapper
         ref={objectRoot}
-        onFocusCapture={selectObject}
-        onPointerDown={selectObject}
+        onFocusCapture={focusObject}
         className="scient-latex-rich-preview scient-latex-scientific-preview"
         data-environment={environment}
         contentEditable={false}
@@ -3355,7 +3377,7 @@ function LatexRichPreviewView({
           : undefined
       }
       onFocusCapture={() => {
-        selectObject();
+        focusObject();
         if (kind !== "table") setObjectActive(true);
       }}
       onBlurCapture={(event: FocusEvent<HTMLElement>) => {
@@ -4046,15 +4068,19 @@ function LatexScientificView({
       columns?: number;
       width?: string;
       alignment?: string;
+      height?: string;
+      innerAlignment?: string;
     };
     return (
       <NodeViewWrapper
         className="scient-latex-page-layout"
         data-layout={layout.kind}
         data-alignment={layout.alignment}
+        data-inner-alignment={layout.innerAlignment}
         style={
           {
             "--scient-latex-columns": layout.columns ?? 1,
+            "--scient-latex-panel-height": layout.height,
           } as CSSProperties
         }
       >
@@ -4111,9 +4137,10 @@ function LatexScientificView({
           argument: String(child.attrs.argument),
         });
     });
-  const select = () => {
+  const enterBody = (event: MouseEvent<HTMLElement>) => {
+    if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
     const position = getPos();
-    if (typeof position === "number") editor.commands.setNodeSelection(position);
+    if (typeof position === "number") enterLatexObjectBody(editor.view, position);
   };
   return (
     <NodeViewWrapper
@@ -4128,7 +4155,11 @@ function LatexScientificView({
       data-run-in={node.firstChild?.type.name === "paragraph" || undefined}
     >
       {(!quoted || displayTitle) && (
-        <div className="scient-latex-scientific-heading" contentEditable={false} onClick={select}>
+        <div
+          className="scient-latex-scientific-heading"
+          contentEditable={false}
+          onClick={enterBody}
+        >
           <span>
             {statement?.proof && node.attrs.title ? (
               <LatexProsePreview
@@ -4240,6 +4271,7 @@ const LatexScientific = Node.create({
       raw: { default: "", rendered: false },
       sourceId: { default: null, rendered: false },
       layout: { default: null, rendered: false },
+      layoutGap: { default: null, rendered: false },
     };
   },
   parseHTML() {
@@ -4257,7 +4289,7 @@ const LatexScientific = Node.create({
           "data-alignment": layout?.alignment ?? "",
           style:
             layout?.kind === "minipage"
-              ? `width: ${layout.width}; min-width: 0; flex-shrink: 0;`
+              ? `width: ${layout.width}; min-width: 0; flex-shrink: 0; margin-left: ${node.attrs.layoutGap ?? "0px"};`
               : "",
         };
       },
@@ -4374,10 +4406,6 @@ const baseExtensions = [
   LatexRawBlock,
   LatexScientific,
 ];
-
-const MATH_INSERTIONS = {
-  cases: "\\begin{cases}\n & \\\\\n & \n\\end{cases}",
-} as const;
 
 export interface LatexVisualEditorProps {
   /** Confirms accepted reference edits through their owning file sessions. */
@@ -5092,6 +5120,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     content: initial.content,
     editable: !readOnly,
     editorProps: {
+      handleClickOn: handleLatexObjectClick,
       clipboardTextSerializer: latexSelectionClipboard,
       handleDOMEvents: {
         copy: (view, event) => {
@@ -5321,10 +5350,10 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       return {
         placement:
           math?.type.name === "latexInlineMath"
-            ? "inline-math"
+            ? ("inline-math" as const)
             : math?.type.name === "latexDisplayMath"
-              ? "equation"
-              : "",
+              ? ("equation" as const)
+              : ("" as const),
         protected: Boolean(math?.attrs.numberingSource),
       };
     },
@@ -5536,12 +5565,13 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       )
         field.blur();
       editor?.commands.blur();
+      activeMath.get()?.dismiss();
       const typingFinished = flushTypingRef.current();
       const sourceFinished = flushSourceEditRef.current(pendingTyping.current !== null);
       return typingFinished && sourceFinished && pendingFields.current.size === 0;
     });
     return () => registerFinishEditing?.(null);
-  }, [editor, registerFinishEditing]);
+  }, [editor, registerFinishEditing, activeMath]);
 
   const onEditingChange = props.onEditingChange;
   useEffect(() => () => onEditingChange(false), [onEditingChange]);
@@ -5982,7 +6012,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       label: "Cases",
       description: "Write a piecewise expression with conditions",
       group: "Math",
-      run: () => insertMath(true, MATH_INSERTIONS.cases),
+      run: () => insertMath(true, LATEX_CASES_TEMPLATE),
     },
     {
       id: "math-symbols",
@@ -6568,6 +6598,13 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         [`--scient-latex-${kind}-itemsep`, `${list.itemSepEm + list.parsepEm}em`],
         [`--scient-latex-${kind}-parsep`, `${list.parsepEm}em`],
         [`--scient-latex-${kind}-leftmargin`, `${list.leftMarginEm}em`],
+        [`--scient-latex-${kind}-nested-topsep`, `${(list.nested ?? list).topSepEm}em`],
+        [
+          `--scient-latex-${kind}-nested-itemsep`,
+          `${(list.nested ?? list).itemSepEm + (list.nested ?? list).parsepEm}em`,
+        ],
+        [`--scient-latex-${kind}-nested-parsep`, `${(list.nested ?? list).parsepEm}em`],
+        [`--scient-latex-${kind}-nested-leftmargin`, `${(list.nested ?? list).leftMarginEm}em`],
       ]),
     ),
     "--scient-latex-paper-width": `${paperWidth}px`,
@@ -6580,6 +6617,8 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     "--scient-latex-font-size": texPixels(layout.fontSizePt),
     "--scient-latex-font-family": layout.fontFamily,
     "--scient-latex-text-align": layout.textAlign,
+    "--scient-latex-column-gap": texPixels(layout.columnGapPt),
+    "--scient-latex-column-rule": texPixels(layout.columnRulePt),
     "--scient-latex-section-size": texPixels(layout.sectionSizePt),
     "--scient-latex-subsection-size": texPixels(layout.subsectionSizePt),
     "--scient-latex-subsubsection-size": texPixels(layout.subsubsectionSizePt),
@@ -7127,45 +7166,17 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     </div>
   );
   const writingMathItems = (
-    <>
-      <MenuRadioGroup value={mathMenu?.placement ?? ""}>
-        {insertActions
-          .filter((action) => ["inline-math", "equation"].includes(action.id))
-          .map((action) => (
-            <DockCommandRadioItem
-              key={action.id}
-              value={action.id}
-              disabled={readOnly || mathMenu?.protected}
-              onClick={() => {
-                if (mathMenu?.placement !== action.id) action.run();
-              }}
-            >
-              {action.label}
-            </DockCommandRadioItem>
-          ))}
-      </MenuRadioGroup>
-      <DockCommandItem disabled={readOnly || mathMenu?.protected} onClick={alignedEquations}>
-        Aligned equations
-      </DockCommandItem>
-      <MenuSeparator />
-      <LatexMatrixSizeMenu
-        environment={matrixEnvironment}
-        onEnvironmentChange={setMatrixEnvironment}
-        disabled={readOnly}
-        onInsert={(tex) => insertMath(true, tex)}
-      />
-      {insertActions
-        .filter((action) => ["cases", "math-symbols"].includes(action.id))
-        .map((action) => (
-          <DockCommandItem
-            key={action.id}
-            disabled={readOnly || action.disabled}
-            onClick={action.run}
-          >
-            {action.label}
-          </DockCommandItem>
-        ))}
-    </>
+    <LatexMathMenuItems
+      placement={mathMenu?.placement ?? ""}
+      disabled={readOnly}
+      protectedSource={mathMenu?.protected}
+      onPlacement={(display) => insertMath(display)}
+      onAligned={alignedEquations}
+      matrixEnvironment={matrixEnvironment}
+      onMatrixEnvironment={setMatrixEnvironment}
+      onInsert={(tex) => insertMath(true, tex)}
+      onSymbols={() => openMathPicker("symbols")}
+    />
   );
   const writingMathTools = (
     <DockMenu

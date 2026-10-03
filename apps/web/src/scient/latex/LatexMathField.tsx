@@ -1,3 +1,4 @@
+import { MATH_TYPING_SHORTCUTS } from "./mathTypingShortcuts";
 import { attachShortcutHost } from "../keyboard/host";
 import { getKeyboardPreferences, subscribeKeyboardPreferences } from "../keyboard/preferences";
 import { mathCommand } from "../math/input/catalog";
@@ -15,6 +16,7 @@ import { LatexDraftContext, restoredLatexFieldDraft } from "./LatexTextField";
 import { afterEditorPaint } from "./afterEditorPaint";
 import "mathlive/fonts.css";
 import { installMathEditingGuides } from "./mathEditingGuides";
+import { editableMathMacros, installMathMacroEditing } from "./mathMacroEditing";
 import { mathSymbolMacros } from "./mathSymbolPresentation";
 import { LatexDocumentMathContext } from "./LatexDocumentMathContext";
 import { mathLiveFontDeclarations } from "./mathLiveFontDeclarations";
@@ -62,30 +64,6 @@ export interface LatexMathFieldHandle {
       | "redo",
   ) => boolean;
 }
-
-const INLINE_SHORTCUTS = {
-  alpha: "\\alpha",
-  beta: "\\beta",
-  gamma: "\\gamma",
-  delta: "\\delta",
-  theta: "\\theta",
-  lambda: "\\lambda",
-  mu: "\\mu",
-  pi: "\\pi",
-  sigma: "\\sigma",
-  phi: "\\phi",
-  omega: "\\omega",
-  inf: "\\infty",
-  sqrt: "\\sqrt{#0}",
-  sum: "\\sum_{#0}^{#1}",
-  prod: "\\prod_{#0}^{#1}",
-  int: "\\int_{#0}^{#1}",
-  lim: "\\lim_{#0 \\to #1}",
-  "->": "\\to",
-  "<=": "\\le",
-  ">=": "\\ge",
-  "!=": "\\ne",
-} as const;
 
 export const LatexMathField = forwardRef<
   LatexMathFieldHandle,
@@ -226,6 +204,7 @@ export const LatexMathField = forwardRef<
       const math = new MathfieldElement();
       host.current?.append(math);
       const removeEditingGuides = installMathEditingGuides(math);
+      const macroEditing = installMathMacroEditing(math);
       // Use native caret placement and command completion inside the formula.
       // Scient supplies the surrounding toolbar instead of a second menu/keyboard.
       // MathLive's option setters require the custom element to be connected.
@@ -239,11 +218,12 @@ export const LatexMathField = forwardRef<
       math.popoverPolicy = "auto";
       math.environmentPopoverPolicy = "off";
       baseMacros.current = { ...math.macros, ...mathSymbolMacros() };
-      math.macros = { ...baseMacros.current, ...initialMacros.current };
+      math.macros = { ...baseMacros.current, ...editableMathMacros(initialMacros.current) };
       appliedMacroSignature.current = JSON.stringify(initialMacros.current);
       lastAcknowledged.current = currentConfiguration.current.value;
       const recovered = restoredLatexFieldDraft(journalKey.current, lastAcknowledged.current);
       math.setValue(mathLiveFontDeclarations(recovered), { silenceNotifications: true });
+      macroEditing.refresh();
       const firstCell = firstMathCell(math);
       if (firstCell) math.position = firstCell.cell[0];
       dirty.current = recovered !== lastAcknowledged.current;
@@ -254,7 +234,7 @@ export const LatexMathField = forwardRef<
       math.placeholderSymbol = "\u25A2";
       const applyPreferences = () => {
         const preferences = getKeyboardPreferences().preferences;
-        math.inlineShortcuts = preferences.automaticOperators ? INLINE_SHORTCUTS : {};
+        math.inlineShortcuts = preferences.automaticOperators ? MATH_TYPING_SHORTCUTS : {};
         math.popoverPolicy = preferences.completion === "off" ? "off" : "auto";
       };
       applyPreferences();
@@ -417,10 +397,6 @@ export const LatexMathField = forwardRef<
         }
         const anchor = mathSelectionAtOffset(math, endpoints[0]);
         const head = mathSelectionAtOffset(math, endpoints[1]);
-        if (anchor.path.length === 0 && head.path.length === 0) {
-          rectangle = null;
-          return;
-        }
         const selection = resolveMathDragSelection(
           math,
           anchor,
@@ -817,6 +793,7 @@ export const LatexMathField = forwardRef<
         clearTimeout(publishTimer);
         cancelPublish?.();
         journal();
+        macroEditing.dispose();
         reportDraft(draftId, false);
         flush.current = () => true;
         clearSelection.current = () => {};
@@ -861,7 +838,7 @@ export const LatexMathField = forwardRef<
       if (math.mode === "latex" || signature === appliedMacroSignature.current) return;
       // MathLive reparses silently and preserves the command spelling and selection.
       // Start from built-ins each time so removed document definitions do not linger.
-      math.macros = { ...baseMacros.current, ...documentMacros };
+      math.macros = { ...baseMacros.current, ...editableMathMacros(documentMacros) };
       appliedMacroSignature.current = signature;
     };
     apply();

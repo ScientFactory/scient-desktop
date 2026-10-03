@@ -22,7 +22,10 @@ const COMMON_MATH_SOURCE_COMMANDS = [
 const MATH_SOURCE_COMMANDS = [
   ...new Map<string, string>([
     ...MATH_SYMBOLS.filter((symbol) => /^\\[A-Za-z]+$/u.test(symbol.command)).map(
-      (symbol): [string, string] => [symbol.command.slice(1), symbol.latex.replaceAll("#0", "")],
+      (symbol): [string, string] => [
+        symbol.command.slice(1),
+        symbol.latex.replace(/#[0-9?]/gu, ""),
+      ],
     ),
     ...COMMON_MATH_SOURCE_COMMANDS,
   ]).entries(),
