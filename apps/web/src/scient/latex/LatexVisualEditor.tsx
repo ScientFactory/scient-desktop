@@ -4141,6 +4141,25 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   useLayoutEffect(() => {
     editorRef.current = editor;
   }, [editor]);
+  // A document opens with the caret on its title block, which is an object, so
+  // the writing row had nothing to act on. Start in the first line of text.
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    const { selection, doc } = editor.state;
+    if (!(selection instanceof NodeSelection) && selection.$from.parent.isTextblock) return;
+    let target: number | null = null;
+    doc.descendants((node, position) => {
+      if (target !== null) return false;
+      if (node.isTextblock && node.type.name === "paragraph") target = position + 1;
+      return target === null;
+    });
+    if (target === null) return;
+    editor.view.dispatch(
+      editor.state.tr
+        .setSelection(TextSelection.create(editor.state.doc, target))
+        .setMeta("addToHistory", false),
+    );
+  }, [editor]);
   // Replace all writes each text block to the source before it edits the next.
   const commitTyping = useCallback(
     () => flushTypingRef.current() && flushSourceEditRef.current(),
@@ -5346,6 +5365,12 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   // The same inline formatting, in the same order, as the Markdown bar; LaTeX
   // has no strikethrough.
   const linkAction = insertActions.find((action) => action.id === "link");
+  // Inline formatting acts on text; on an object (title, figure, equation) it is off.
+  const caretInText = Boolean(
+    editor &&
+    !(editor.state.selection instanceof NodeSelection) &&
+    editor.state.selection.$from.parent.isTextblock,
+  );
   const formatActions = [
     {
       id: "latex.bold",
@@ -5354,7 +5379,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       action: () => toggleLatexProseMark(editor, "bold"),
       active: editor?.isActive("bold"),
       preserveIconWeight: true,
-      disabled: false,
+      disabled: !caretInText,
       secondary: false,
     },
     {
@@ -5364,7 +5389,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       action: () => toggleLatexProseMark(editor, "italic"),
       active: editor?.isActive("italic"),
       preserveIconWeight: false,
-      disabled: false,
+      disabled: !caretInText,
       secondary: false,
     },
     {
@@ -5374,7 +5399,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       action: () => toggleLatexProseMark(editor, "code"),
       active: editor?.isActive("code"),
       preserveIconWeight: true,
-      disabled: false,
+      disabled: !caretInText,
       secondary: false,
     },
     {
@@ -5569,23 +5594,6 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   const quoteUnavailable = !textReadOnly && Boolean(listState?.type);
   const writingStyleItems = (
     <>
-      {/* Whether new headings are numbered: one quiet line at the top. */}
-      <MenuCheckboxItem
-        className="min-h-6 py-0.5 text-muted-foreground sm:min-h-6 sm:text-xs"
-        checked={headingNumbered}
-        disabled={textReadOnly}
-        closeOnClick={false}
-        onCheckedChange={(numbered) => {
-          if (textReadOnly) return;
-          setNewHeadingNumbered(numbered);
-          // Keep focus in the open menu while updating the selected heading.
-          if (editor?.isActive("heading"))
-            editor.commands.updateAttributes("heading", { unnumbered: !numbered });
-        }}
-      >
-        Numbered headings
-      </MenuCheckboxItem>
-      <MenuSeparator />
       <MenuRadioGroup value={activeStyle}>
         <DockCommandRadioItem value="paragraph" disabled={textReadOnly} onClick={setStandardStyle}>
           <MenuRow
@@ -5617,6 +5625,23 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
           </DockCommandRadioItem>
         ))}
       </MenuRadioGroup>
+      {/* Whether headings are numbered: the last line of the headings, a small switch. */}
+      <MenuCheckboxItem
+        variant="switch"
+        className="min-h-7 ps-2.5 text-muted-foreground sm:min-h-7 sm:text-xs"
+        checked={headingNumbered}
+        disabled={textReadOnly}
+        closeOnClick={false}
+        onCheckedChange={(numbered) => {
+          if (textReadOnly) return;
+          setNewHeadingNumbered(numbered);
+          // Keep focus in the open menu while updating the selected heading.
+          if (editor?.isActive("heading"))
+            editor.commands.updateAttributes("heading", { unnumbered: !numbered });
+        }}
+      >
+        Numbered headings
+      </MenuCheckboxItem>
       <MenuSeparator />
       <MenuRadioGroup value={textStyle?.value ?? "paragraph"}>
         <DockCommandRadioItem
@@ -5731,7 +5756,11 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         </DockCommandRadioItem>
       </MenuRadioGroup>
       {listsUnavailable ? (
-        <p className="scient-latex-menu-note">A list can't be started at this place.</p>
+        <p className="scient-latex-menu-note">
+          {caretInText
+            ? "A list can't be started at this place."
+            : "Click in the text to start a list."}
+        </p>
       ) : null}
     </>
   );
