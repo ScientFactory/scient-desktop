@@ -21,7 +21,7 @@ describe("provider-native model catalogs", () => {
     container.remove();
     vi.unstubAllGlobals();
   });
-  async function render(driver: string) {
+  async function render(driver: string, unavailableReason?: string) {
     const kind = ProviderDriverKind.make(driver);
     const onChange = vi.fn();
     const onFavoriteModelsChange = vi.fn();
@@ -32,7 +32,13 @@ describe("provider-native model catalogs", () => {
           driverKind={kind}
           supportsCustomModels={getDriverOption(kind)?.supportsCustomModels !== false}
           models={[
-            { slug: "local/model", name: "Local model", isCustom: false, capabilities: null },
+            {
+              slug: "local/model",
+              name: "Local model",
+              isCustom: false,
+              capabilities: null,
+              ...(unavailableReason ? { unavailableReason } : {}),
+            },
           ]}
           customModels={[]}
           hiddenModels={[]}
@@ -62,6 +68,16 @@ describe("provider-native model catalogs", () => {
       expect(callbacks.onChange).not.toHaveBeenCalled();
     },
   );
+  it("keeps an unavailable model and its explanation on the provider page with picker visibility off", async () => {
+    await render("omp", "Account access required.");
+    expect(container.textContent).toContain("Local model");
+    expect(container.textContent).toContain("Unavailable: Account access required.");
+    const toggle = container.querySelector<HTMLButtonElement>(
+      '[role="switch"][aria-label="Show Local model in the model picker"]',
+    );
+    expect(toggle?.getAttribute("aria-checked")).toBe("false");
+    expect(toggle?.hasAttribute("data-disabled")).toBe(true);
+  });
   it("preserves custom-model entry for providers that support it", async () => {
     const callbacks = await render("opencode");
     const add = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) =>

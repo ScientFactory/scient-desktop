@@ -6,6 +6,7 @@ import type {
   ThreadSections,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { manualOrderForPlacement } from "./automaticPlacement";
 
 /**
  * Pure rules for user-defined thread sections: catalog edits, grouping the
@@ -685,6 +686,8 @@ export function planSectionsThreadDrop(input: {
   readonly lifecycleByKey: ReadonlyMap<string, SectionsLifecycle>;
   readonly pinnedKeysById: ReadonlyMap<string, string | null | undefined>;
   readonly activeKeysById: ReadonlyMap<string, string | null | undefined>;
+  /** Automatic presentation must not save the whole promoted order on a manual drop. */
+  readonly canonicalActiveOrder?: readonly string[] | undefined;
   readonly toSectionId: (groupId: string) => ThreadSectionId | null;
   /** Whether these threads' servers accept order-key writes (default: yes). */
   readonly canWriteOrderKeys?: (ids: readonly string[], group: "pinned" | "active") => boolean;
@@ -716,7 +719,10 @@ export function planSectionsThreadDrop(input: {
   const planned =
     orderChanged && orderedIds.length > 1
       ? planPinnedReorder({
-          orderedIds,
+          orderedIds:
+            group === "active" && input.canonicalActiveOrder !== undefined
+              ? manualOrderForPlacement(input.canonicalActiveOrder, orderedIds, source.key)
+              : orderedIds,
           keysById: group === "pinned" ? input.pinnedKeysById : input.activeKeysById,
           movedId: source.key,
         })
@@ -728,7 +734,18 @@ export function planSectionsThreadDrop(input: {
       group,
     ) ?? true;
   const assignments = writable ? planned : [];
-  if (!sectionChanged && !lifecycleChanged && assignments.length === 0) return { kind: "none" };
+  if (
+    !sectionChanged &&
+    !lifecycleChanged &&
+    assignments.length === 0 &&
+    !(
+      orderChanged &&
+      group === "active" &&
+      input.canonicalActiveOrder !== undefined &&
+      (input.canWriteOrderKeys?.([source.key], group) ?? true)
+    )
+  )
+    return { kind: "none" };
   return {
     kind: "move",
     ...(sectionChanged ? { sectionId: input.toSectionId(target.groupId) } : {}),

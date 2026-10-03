@@ -135,11 +135,50 @@ section when un-settled or woken.
 - **Rendering:** rows are T3's `SidebarThreadRow`, and shelves are T3's shelf
   headers.
 - **Ordering:** order keys come from T3's `planPinnedReorder`, over the same
-  `pinOrderKey`/`activeOrderKey` values. So Status and Sections always agree
-  on order within a lifecycle group.
+  `pinOrderKey`/`activeOrderKey` values. Status uses this canonical manual order. Sections may apply the local
+  automatic-placement presentation described below.
 - **Lone drops keep their key:** a thread dropped alone into an empty or
   collapsed section keeps its order key. With no neighbours, a new key would
   only move it in the Status view.
+
+**Automatic placement is a local presentation, not a new server order.**
+
+- **Preference:** `scient:sidebar:automatic-placement` defaults on. General →
+  Organization exposes **Keep active threads near the top**; Status view is unaffected.
+- **Membership:** unpinned, unshelved threads use the existing status, unread-answer,
+  and unread-Woke predicates. Working, Monitoring, Done, Approval, Input, Failed,
+  and Woke have equal placement priority. No execution or read semantics change.
+- **State:** `automaticPlacement.ts` reconciles complete synchronized section membership,
+  independently of project filtering and collapse. Scoped environment/thread keys
+  prevent collisions. An arrival appends below existing upper members; transitions
+  that remain eligible keep their place. Departures prepend to inactive rows, with
+  simultaneous departures preserving their visible order.
+- **Reading:** an open thread that loses eligibility retains placement. Leaving starts
+  one three-second deadline; reopening or renewed eligibility cancels it. Timers pause
+  during drags, acknowledged drop writes, native menus, and unsynchronized snapshots.
+  Resume revalidates current state rather than replaying stale decisions.
+- **Manual moves:** the existing lifecycle and membership-first drop transaction stays
+  intact. The planner projects only the dragged row onto canonical manual neighbours,
+  without writing automatically promoted positions of other rows. After successful
+  writes, local presentation records the exact drop slot and bridges the old shell values
+  until membership and order echoes arrive. A newer external value releases that bridge.
+  An explicit inactive-above-active
+  exception is allowed and survives until that row's own next eligibility transition.
+  Remotely acknowledged order-key changes are deliberate placement too.
+- **Persistence:** positions live under `scient:sidebar:placement-order:<primary environment>`.
+  Storage contains scoped IDs, eligibility and order keys only. Read defensively;
+  unavailable storage still permits in-memory operation. Restart discards deadlines,
+  then reconciles current synchronized membership. Turning placement off cancels timers
+  and reveals canonical manual order. The settings action also clears saved presentation
+  while the sidebar is unmounted; re-enabling seeds from current manual order.
+- **Preserved:** section catalog, General position, project registration/scoping,
+  collapse, renaming, cleanup, pins, shelves, read markers, and server contracts.
+  Automatic transitions never issue server reorder commands or change `updatedAt`.
+
+`automaticPlacement.test.ts` covers ordering and eligibility transitions, including a
+10,000-row stability case. `useAutomaticPlacement.test.tsx` covers controlled timers,
+pause/reload/setting and cross-section acknowledgement. Chromium tests verify the
+settings control and pointer drops against promoted presentation.
 
 **Drops land where the list shows them.**
 

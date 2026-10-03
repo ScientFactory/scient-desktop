@@ -14,6 +14,7 @@ import { makeOmpManagedRuntimeResolution } from "../../scient/providerLifecycle/
 import * as OmpExecutableGate from "./OmpExecutableGate.ts";
 import { ompLiveInstance, ompQualifyManaged } from "./OmpLive.testFixtures.ts";
 import { makeOmpRpcProcess } from "./OmpRpcProcess.ts";
+import { ompTarget } from "./OmpTarget.ts";
 
 /**
  * Real managed-runtime qualification. It is intentionally opt-in because the
@@ -80,6 +81,7 @@ describe.runIf(ompQualifyManaged)("real Oh My Pi managed runtime qualification",
         yield* Effect.scoped(
           Effect.gen(function* () {
             const client = yield* makeOmpRpcProcess({
+              target: ompTarget,
               command: recreated.effectiveBinaryPath,
               cwd: root,
               env: environment,

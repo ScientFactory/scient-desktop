@@ -87,6 +87,8 @@ export const ServerProviderModel = Schema.Struct({
   isCustom: Schema.Boolean,
   isDefault: Schema.optional(Schema.Boolean),
   isLegacy: Schema.optional(Schema.Boolean),
+  /** Definite unavailability reported by discovery; omission does not prove account access. */
+  unavailableReason: Schema.optional(TrimmedNonEmptyString),
   /**
    * Opaque provider-formatted cost label (e.g. Droid's factory-token rate
    * label `"0.5×"`), extracted from the live model catalog when the agent

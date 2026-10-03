@@ -176,6 +176,9 @@ export function deriveProviderModelsForDisplay(input: {
     isCustom: true,
     capabilities:
       entry.capabilities ?? liveCustomModelsBySlug.get(entry.slug)?.capabilities ?? null,
+    ...(liveCustomModelsBySlug.get(entry.slug)?.unavailableReason
+      ? { unavailableReason: liveCustomModelsBySlug.get(entry.slug)!.unavailableReason }
+      : {}),
   }));
   return [...serverModels, ...customModels];
 }

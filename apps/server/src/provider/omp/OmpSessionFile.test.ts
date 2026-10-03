@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as NodeAssert from "node:assert/strict";
 
 import { assertReadableOmpSessionFile, ompSessionFilesEqual } from "./OmpSessionFile.ts";
+import { ompTarget } from "./OmpTarget.ts";
 
 describe("Oh My Pi session file", () => {
   it.effect("rejects a symlink that escapes the session directory", () =>
@@ -21,6 +22,7 @@ describe("Oh My Pi session file", () => {
       NodeFS.writeFileSync(outside, "{}\n");
       NodeFS.symlinkSync(outside, NodePath.join(session, "session.jsonl"));
       const escaped = yield* assertReadableOmpSessionFile({
+        target: ompTarget,
         sessionRoot: session,
         relativeSessionFile: "session.jsonl",
       }).pipe(
@@ -41,6 +43,7 @@ describe("Oh My Pi session file", () => {
       NodeFS.writeFileSync(NodePath.join(root, "session.jsonl"), "{}\n");
       NodeFS.symlinkSync(root, alias);
       const same = yield* ompSessionFilesEqual({
+        target: ompTarget,
         sessionRoot: root,
         expectedRelativeFile: "session.jsonl",
         reportedFile: NodePath.join(alias, "session.jsonl"),
@@ -48,6 +51,7 @@ describe("Oh My Pi session file", () => {
       NodeAssert.equal(same, true);
       NodeFS.writeFileSync(NodePath.join(root, "other.jsonl"), "{}\n");
       const different = yield* ompSessionFilesEqual({
+        target: ompTarget,
         sessionRoot: root,
         expectedRelativeFile: "session.jsonl",
         reportedFile: NodePath.join(root, "other.jsonl"),

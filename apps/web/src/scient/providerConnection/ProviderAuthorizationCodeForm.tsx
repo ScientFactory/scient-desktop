@@ -6,9 +6,13 @@ import { Button } from "../../components/ui/button";
 export function ProviderAuthorizationCodeForm(props: {
   readonly authorizationCode: string;
   readonly disabled?: boolean;
+  /** Replaces the default accessible name, for an answer that is not a sign-in code. */
+  readonly inputLabel?: string;
   readonly placeholder?: string;
   readonly providerName: string;
   readonly responseKind?: "code" | "callback_url";
+  /** The answer is a credential: do not show it as typed. */
+  readonly secret?: boolean;
   readonly submitting?: boolean;
   readonly onAuthorizationCodeChange: (value: string) => void;
   readonly onSubmit: () => void;
@@ -22,7 +26,10 @@ export function ProviderAuthorizationCodeForm(props: {
       }}
     >
       <input
-        aria-label={`${props.providerName} ${props.responseKind === "callback_url" ? "sign-in redirect URL" : "one-time authorization code"}`}
+        aria-label={
+          props.inputLabel ??
+          `${props.providerName} ${props.responseKind === "callback_url" ? "sign-in redirect URL" : "one-time authorization code"}`
+        }
         autoCapitalize="none"
         autoComplete="off"
         className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none transition-colors placeholder:text-placeholder focus-visible:border-ring disabled:opacity-64"
@@ -35,6 +42,7 @@ export function ProviderAuthorizationCodeForm(props: {
             : "Paste authorization code")
         }
         spellCheck={false}
+        type={props.secret ? "password" : "text"}
         value={props.authorizationCode}
       />
       <Button

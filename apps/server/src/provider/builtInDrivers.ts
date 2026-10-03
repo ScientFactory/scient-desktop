@@ -31,6 +31,7 @@ import { GrokDriver, type GrokDriverEnv } from "./Drivers/GrokDriver.ts";
 import { OpenCodeDriver, type OpenCodeDriverEnv } from "./Drivers/OpenCodeDriver.ts";
 import { OmpDriver, type OmpDriverEnv } from "./Drivers/OmpDriver.ts";
 import { PiDriver, type PiDriverEnv } from "./Drivers/PiDriver.ts";
+import { ScientAgentDriver, type ScientAgentDriverEnv } from "./Drivers/ScientAgentDriver.ts";
 import type { AnyProviderDriver } from "./ProviderDriver.ts";
 
 /**
@@ -47,7 +48,8 @@ export type BuiltInDriversEnv =
   | GrokDriverEnv
   | OpenCodeDriverEnv
   | OmpDriverEnv
-  | PiDriverEnv;
+  | PiDriverEnv
+  | ScientAgentDriverEnv;
 
 /**
  * Ordered list of built-in drivers. Order matters only for tie-breaking in
@@ -64,4 +66,5 @@ export const BUILT_IN_DRIVERS: ReadonlyArray<AnyProviderDriver<BuiltInDriversEnv
   OpenCodeDriver,
   OmpDriver,
   PiDriver,
+  ScientAgentDriver,
 ].toSorted((left, right) => compareProviderDriverKinds(left.driverKind, right.driverKind));

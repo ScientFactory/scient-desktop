@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-30T22:00:00Z",
+  "updatedAt": "2026-10-02T00:30:00Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -83,6 +83,16 @@
         { "range": ">=18.2.8 <19.0.0", "status": "supported" },
         { "range": ">=19.0.0", "status": "unsupported" },
         { "range": "<18.2.8", "status": "unsupported" }
+      ]
+    },
+    {
+      "driver": "scient",
+      "t3CodeRange": ">=0.6.21",
+      "recommendedRange": ">=0.1.0 <1.0.0",
+      "ranges": [
+        { "range": ">=0.1.0 <1.0.0", "status": "supported" },
+        { "range": ">=1.0.0", "status": "unsupported" },
+        { "range": "<0.1.0", "status": "unsupported" }
       ]
     }
   ],

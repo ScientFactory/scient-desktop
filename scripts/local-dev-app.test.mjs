@@ -28,6 +28,7 @@ import {
   stopApp,
   unloadLocalDevAppService,
   uninstallDevelopmentAppBundle,
+  shareDevelopmentVoiceRuntime,
 } from "./local-dev-app.mjs";
 
 const roots = [];
@@ -763,5 +764,34 @@ describe("local dev app runner lifecycle", () => {
 
     assert.isFalse(NodeFS.existsSync(paths.runnerDir));
     assert.deepEqual(lines, [`${LOCAL_DEV_APP_NAME} is already stopped for ${paths.root}`]);
+  });
+});
+
+describe("local dev app voice runtime", () => {
+  it("asks only for the shared copy, never a build, and never stops the app from starting", () => {
+    const calls = [];
+    shareDevelopmentVoiceRuntime({
+      root: "/repo",
+      spawnSync: (command, args, options) => {
+        calls.push({ command, args, options });
+        return { status: 1 };
+      },
+    });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].command, process.execPath);
+    assert.deepEqual(calls[0].args, [
+      NodePath.join("/repo", "scripts", "stage-whisper-runtime.ts"),
+      "--dev-cache-only",
+    ]);
+    assert.equal(calls[0].options.cwd, "/repo");
+    assert.isAbove(calls[0].options.timeout, 0);
+    assert.doesNotThrow(() =>
+      shareDevelopmentVoiceRuntime({
+        root: "/repo",
+        spawnSync: () => {
+          throw new Error("spawn failed");
+        },
+      }),
+    );
   });
 });

@@ -16,6 +16,7 @@ import type { OmpRpcResponse } from "effect-omp-rpc/schema";
 
 import { makeOmpAdapter } from "./OmpAdapter.ts";
 import type { OmpRpcProcessOptions } from "../omp/OmpRpcProcess.ts";
+import { ompTarget } from "../omp/OmpTarget.ts";
 
 const success = (command: string, data: unknown = {}): OmpRpcResponse => ({
   id: "req",
@@ -47,6 +48,7 @@ const resumeAcross = (first: Launch, second: Launch) =>
         const sessionFile = `${options.sessionDir ?? ""}/session.jsonl`;
         return {
           version,
+          runtimeVersion: version,
           ready: Effect.succeed({
             type: "ready" as const,
             protocolVersion: 1,
@@ -96,10 +98,14 @@ const resumeAcross = (first: Launch, second: Launch) =>
           hostToolResult: () => Effect.void,
           hostUriResult: () => Effect.void,
           close: () => Effect.void,
-        } satisfies OmpRpcClient & { readonly version: string };
+        } satisfies OmpRpcClient & {
+          readonly version: string;
+          readonly runtimeVersion: string;
+        };
       });
     const adapterFor = (launch: Launch) =>
       makeOmpAdapter({
+        target: ompTarget,
         binaryPath: launch.binaryPath,
         providerInstanceId: ProviderInstanceId.make("omp"),
         stateDir,

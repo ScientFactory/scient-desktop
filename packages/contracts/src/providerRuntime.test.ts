@@ -8,8 +8,25 @@ import {
 } from "./providerRuntime.ts";
 
 const decodeRuntimeEvent = Schema.decodeUnknownSync(ProviderRuntimeEvent);
+const encodeRuntimeEvent = Schema.encodeSync(ProviderRuntimeEvent);
 
 describe("ProviderRuntimeEvent", () => {
+  it("round-trips stopped ordinary items without changing existing statuses", () => {
+    for (const status of ["inProgress", "completed", "failed", "declined", "stopped"]) {
+      const event = decodeRuntimeEvent({
+        type: "item.completed",
+        eventId: "stopped-tool",
+        provider: "omp",
+        threadId: "thread",
+        turnId: "turn",
+        createdAt: "2026-10-02T00:00:00.000Z",
+        itemId: "tool",
+        payload: { itemType: "dynamic_tool_call", status },
+      });
+      expect(decodeRuntimeEvent(encodeRuntimeEvent(event))).toEqual(event);
+      expect(event.payload).toEqual({ itemType: "dynamic_tool_call", status });
+    }
+  });
   it("round-trips truncation stop reasons without changing legacy events", () => {
     const base = {
       type: "turn.completed",
@@ -26,7 +43,7 @@ describe("ProviderRuntimeEvent", () => {
       { state: "completed", stopReason: "max_tokens" },
     ]) {
       const event = decodeRuntimeEvent({ ...base, payload });
-      expect(decodeRuntimeEvent(Schema.encodeSync(ProviderRuntimeEvent)(event))).toEqual(event);
+      expect(decodeRuntimeEvent(encodeRuntimeEvent(event))).toEqual(event);
       expect(event.payload).toEqual(payload);
     }
   });

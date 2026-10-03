@@ -18,6 +18,7 @@ import { DroidDriver } from "../../provider/Drivers/DroidDriver.ts";
 import { GrokDriver } from "../../provider/Drivers/GrokDriver.ts";
 import { OmpDriver } from "../../provider/Drivers/OmpDriver.ts";
 import { PiDriver } from "../../provider/Drivers/PiDriver.ts";
+import { ScientAgentDriver } from "../../provider/Drivers/ScientAgentDriver.ts";
 
 import type { ProviderManagedRuntimeActions } from "../../provider/ProviderDriver.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
@@ -74,6 +75,7 @@ describe("ManagedRuntimeCatalogReconciler", () => {
       GrokDriver,
       PiDriver,
       OmpDriver,
+      ScientAgentDriver,
     ];
     assert.deepStrictEqual(
       drivers.map((driver) => catalogProviderForDriver(driver.driverKind)),

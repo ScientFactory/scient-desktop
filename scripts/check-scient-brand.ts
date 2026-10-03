@@ -42,13 +42,32 @@ const REQUIRED_SCIENT_ANCHORS = new Map<string, readonly string[]>([
     "scripts/local-dev-app.mjs",
     ['LOCAL_DEV_APP_NAME = "Scient (Dev)"', 'LOCAL_DEV_APP_STABLE_NAME = "Scient (Dev) Stable"'],
   ],
+  // The Möbius outline's opening segment pins the geometry; colours pin each variant.
   [
     "assets/prod/app-icon.icon/Assets/symbol.svg",
-    ['fill="#46587E"', 'fill="#471A1A"', 'd="M292 108', 'height="16"'],
+    [
+      'd="M246.52 503.73C322.54 503.73 398.52 472.32 450.13 416.07',
+      '<mask id="scient-strip"',
+      'fill="#5BA2C2"',
+      'fill="#F8AC8B"',
+    ],
+  ],
+  [
+    "assets/dev/app-icon.icon/Assets/symbol.svg",
+    ['d="M246.52 503.73C322.54 503.73 398.52 472.32 450.13 416.07', 'fill="#252B32"'],
+  ],
+  [
+    "assets/nightly/app-icon.icon/Assets/symbol.svg",
+    ['d="M246.52 503.73C322.54 503.73 398.52 472.32 450.13 416.07', 'fill="#FFFFFF"'],
   ],
   [
     "apps/web/src/assets/scient-symbol.svg",
-    ['fill="#46587E"', 'fill="#471A1A"', 'd="M292 108', 'height="16"'],
+    [
+      'd="M246.52 503.73C322.54 503.73 398.52 472.32 450.13 416.07',
+      '<mask id="scient-strip"',
+      'fill="#5BA2C2"',
+      'fill="#F8AC8B"',
+    ],
   ],
   ["apps/web/src/components/sidebar/SidebarChrome.tsx", ["APP_BASE_NAME", "<ScientSymbol"]],
   ["assets/dev/app-icon.icon/icon.json", ['"scale": 8.0', '"translation-in-points": [0, 0]']],

@@ -79,6 +79,14 @@ export type SectionsRowSortable = Pick<
 >;
 
 export interface SidebarSectionsViewProps {
+  readonly canonicalGroupOrders?: ReadonlyMap<string, readonly string[]> | undefined;
+  readonly onManualPlacement?: (
+    groupId: string,
+    order: readonly string[],
+    key: string,
+    orderKeys: ReadonlyMap<string, string>,
+  ) => void;
+  readonly onInteractionChange?: (active: boolean) => void;
   readonly groups: readonly SectionGroup<Shell>[];
   readonly collapsedGroupIds: ReadonlySet<string>;
   /** The open thread stays visible even inside a collapsed section. */
@@ -213,6 +221,12 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
   const { moveThreadsToSection } = useThreadSectionActions();
   const [drag, setDrag] = useState<DragState | null>(null);
   const [held, setHeld] = useState<HeldLayout | null>(null);
+  const [pendingDrops, setPendingDrops] = useState(0);
+  const onInteractionChange = props.onInteractionChange;
+  useEffect(() => {
+    onInteractionChange?.(drag !== null || pendingDrops > 0);
+  }, [drag, onInteractionChange, pendingDrops]);
+  useEffect(() => () => onInteractionChange?.(false), [onInteractionChange]);
   const listRef = useRef<HTMLUListElement>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
@@ -346,6 +360,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
       const id = String(event.active.id);
       const groupId = sectionGroupIdFromHeaderItemId(id);
       if (groupId === null) {
+        onInteractionChange?.(true);
         setDrag({ kind: "thread", key: id, target: null, placement: "before" });
         return;
       }
@@ -355,6 +370,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
       const pointer = event.activatorEvent as PointerEvent | null;
       if (blocks === null || pointer === null || typeof pointer.clientY !== "number") return;
       const scroller = scrollParentOf(list);
+      onInteractionChange?.(true);
       setDrag({
         kind: "section",
         groupId,
@@ -367,7 +383,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
         },
       });
     },
-    [groups],
+    [groups, onInteractionChange],
   );
 
   // Measure against the untransformed droppable rects: preview animations must
@@ -498,10 +514,21 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
               row !== undefined && readEnvironmentSupportsThreadReorder(row.environmentId, group)
             );
           }),
+        canonicalActiveOrder: props.canonicalGroupOrders?.get(
+          target.kind === "section" ? target.groupId : "",
+        ),
       });
       return plan.kind === "none" ? null : { thread, target, plan };
     },
-    [activeKeysById, fullOrderByGroup, items, pinnedKeysById, planLifecycleByKey, threadByKey],
+    [
+      activeKeysById,
+      fullOrderByGroup,
+      items,
+      pinnedKeysById,
+      planLifecycleByKey,
+      props.canonicalGroupOrders,
+      threadByKey,
+    ],
   );
 
   // Only a drop that changes something highlights its section or shelf.
@@ -560,6 +587,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
       }
 
       const release = () => setHeld(null);
+      setPendingDrops((count) => count + 1);
       void (async () => {
         if (plan.unsettle) {
           const result = await unsettleThread(threadRef);
@@ -596,18 +624,28 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
                 : "Failed to reorder threads",
               result,
             );
-            break;
+            release();
+            return;
           }
+        }
+        if (target.kind === "section" && plan.group === "active") {
+          props.onManualPlacement?.(
+            target.groupId,
+            target.order,
+            activeKey,
+            new Map(plan.assignments.map((assignment) => [assignment.id, assignment.orderKey])),
+          );
         }
         // Every write has been applied locally by now; show the store's order.
         release();
-      })();
+      })().finally(() => setPendingDrops((count) => count - 1));
     },
     [
       items,
       moveThreadsToSection,
       onSettleThread,
       planThreadDrop,
+      props.onManualPlacement,
       reorderActiveThread,
       reorderPinnedThread,
       reportFailure,

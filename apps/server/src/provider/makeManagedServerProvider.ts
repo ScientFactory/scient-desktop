@@ -18,6 +18,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { applyUsageLimitsUpdate, resolveUsageLimitsAfterProbe } from "./providerUsageLimits.ts";
+import { retainUnavailableAgentModels } from "./providerSnapshot.ts";
 import type { ServerProviderShape } from "./Services/ServerProvider.ts";
 
 interface ProviderSnapshotState {
@@ -161,7 +162,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           ? state.enrichmentGeneration + 1
           : state.enrichmentGeneration;
         const snapshot = withUsageLimits(
-          probedSnapshot,
+          input.haveSettingsChanged(previousSettings, nextSettings)
+            ? probedSnapshot
+            : retainUnavailableAgentModels(state.snapshot, probedSnapshot),
           resolveUsageLimitsAfterProbe({
             published: state.snapshot.usageLimits,
             probed: probedSnapshot.usageLimits,

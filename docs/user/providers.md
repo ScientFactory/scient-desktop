@@ -1,7 +1,7 @@
 # Providers in Scient
 
 A provider supplies the AI models that work inside Scient. For example, you
-can connect Codex, Claude, Cursor, Grok, Droid, Antigravity, Pi, or Oh My Pi, then choose an
+can connect Scient Agent, Codex, Claude, Cursor, Grok, Droid, Antigravity, Pi, or Oh My Pi, then choose an
 available model for each conversation. Different providers can have different
 models, tools, account requirements, and usage limits.
 
@@ -9,6 +9,14 @@ Scient connects the provider to your current project and presents its work in
 one interface. The provider still owns its account, subscription, and models.
 You can use an existing provider installation or, when available, let Scient
 install a qualified private copy on the machine where the project runs.
+
+Thread titles and other generated text use **Settings > Text generation**; source control can
+choose a separate writer. If Scient Agent, Pi, or Oh My Pi is the automatic fallback provider, Scient uses that
+instance's discovered default model, or its first available non-legacy built-in model (a custom
+model when only custom models remain). An explicit model choice takes priority. If discovery has
+not supplied a usable model, choose one in Settings or
+refresh the provider; automatic titles keep their normal fallback. This automatic choice does
+not guarantee the lowest price.
 
 ## The fastest setup path
 
@@ -159,6 +167,7 @@ You can still use an installation administered directly on the server when that 
 
 ## Provider guides
 
+- [Scient Agent](./providers-scient-agent.md)
 - [Codex](./providers-codex.md)
 - [Claude](./providers-claude.md)
 - [Antigravity](./providers-antigravity.md)
@@ -176,6 +185,9 @@ Oh My Pi uses the `omp` executable you install or, on the desktop app for macOS,
 Linux, a Scient-managed private copy. Scient never runs `omp update` on your installation; it shows the
 command when a newer release is available. Scient does not sign in to Oh My Pi. Full access is the
 only runtime mode, and Oh My Pi's own approval mode is explicit `yolo`.
+
+Scient Agent is ScientFactory's agent. It uses a `scient-agent` executable you point Scient at; Scient
+does not install it yet. It is a fork of Oh My Pi and shares nothing with an Oh My Pi installation.
 
 OpenCode uses its own multi-provider credential and runtime configuration. Scient does not present
 one universal OpenCode account, sign-out action, or Scient-managed installation because its upstream

@@ -17,6 +17,7 @@ import { makeOmpRpcClient } from "effect-omp-rpc/client";
 import { makeOmpScriptedWire } from "../omp/OmpCaptureReplay.testFixtures.ts";
 import { makeOmpRedaction } from "../omp/OmpRpcProcess.ts";
 import { makeOmpAdapter } from "./OmpAdapter.ts";
+import { ompTarget } from "../omp/OmpTarget.ts";
 
 const toJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -102,6 +103,7 @@ describe("Oh My Pi adapter redaction", () => {
       const logged: Array<unknown> = [];
       const stateDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-omp-redact-"));
       const adapter = yield* makeOmpAdapter({
+        target: ompTarget,
         binaryPath: "omp",
         providerInstanceId: ProviderInstanceId.make("omp"),
         stateDir,
@@ -131,7 +133,14 @@ describe("Oh My Pi adapter redaction", () => {
                     }),
                 }
               : {},
-          ).pipe(Effect.map((client) => ({ ...client, version: "18.3.1", redaction })));
+          ).pipe(
+            Effect.map((client) => ({
+              ...client,
+              version: "18.3.1",
+              runtimeVersion: "18.3.1",
+              redaction,
+            })),
+          );
         },
       });
       const events: Array<ProviderRuntimeEvent> = [];

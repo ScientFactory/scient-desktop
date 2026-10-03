@@ -17,6 +17,7 @@ import { DroidInlineSetup } from "./DroidInlineSetup";
 import { ConnectModelsButton } from "./ConnectModelsButton";
 import { GrokInlineSetup } from "./GrokInlineSetup";
 import { OmpInlineSetup } from "./OmpInlineSetup";
+import { ScientAgentInlineSetup } from "./ScientAgentInlineSetup";
 import { PiInlineSetup } from "./PiInlineSetup";
 import {
   isProviderAccountPresentedAsConnected,
@@ -40,6 +41,7 @@ export function supportsAssistedProviderSetupSurface(
     case "droid":
     case "grok":
     case "omp":
+    case "scient":
     case "pi":
       return true;
     default:
@@ -168,6 +170,17 @@ function SupportedAssistedProviderSetupHost(props: AssistedProviderSetupHostProp
     case "omp":
       setup = (
         <OmpInlineSetup
+          {...managementProps}
+          {...(!isManagement ? { composerController: controller } : {})}
+          environmentId={props.environmentId}
+          displayName={displayName}
+          provider={props.provider}
+        />
+      );
+      break;
+    case "scient":
+      setup = (
+        <ScientAgentInlineSetup
           {...managementProps}
           {...(!isManagement ? { composerController: controller } : {})}
           environmentId={props.environmentId}

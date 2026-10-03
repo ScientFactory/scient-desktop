@@ -1,6 +1,7 @@
 import {
   ProviderConnectionError,
   ProviderDriverKind,
+  publishedProviderConnectionOperation,
   type ProviderConnectionCancelInput,
   type ProviderConnectionDisconnectInput,
   type ProviderConnectionOperation,
@@ -22,7 +23,10 @@ import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
-import type { ProviderConnectionAttempt } from "../../provider/ProviderDriver.ts";
+import type {
+  ProviderConnectionActionFailure,
+  ProviderConnectionAttempt,
+} from "../../provider/ProviderDriver.ts";
 import { ProviderLifecycleCoordinator } from "./ProviderLifecycleCoordinator.ts";
 import { observeAnalyticsEffect } from "../../telemetry/OperationAnalytics.ts";
 
@@ -84,6 +88,8 @@ function operation(input: {
   readonly acceptsAuthorizationCode?: boolean;
   readonly authorizationResponseKind?: ProviderConnectionOperation["authorizationResponseKind"];
   readonly userCode?: string;
+  readonly account?: string | undefined;
+  readonly instructions?: string | undefined;
 }): ProviderConnectionOperation {
   return {
     operationId: input.operationId,
@@ -101,6 +107,8 @@ function operation(input: {
       ? { acceptsAuthorizationCode: input.acceptsAuthorizationCode }
       : {}),
     ...(input.userCode ? { userCode: input.userCode } : {}),
+    ...(input.account ? { account: input.account } : {}),
+    ...(input.instructions ? { instructions: input.instructions } : {}),
   };
 }
 
@@ -206,6 +214,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
       readonly instanceId: ProviderInstanceId;
       readonly operationId: string;
       readonly method: ProviderConnectionStartInput["method"];
+      readonly account: string | undefined;
       readonly startedAt: string;
     }) {
       const active = yield* takeIfCurrent(input.instanceId, input.operationId);
@@ -214,9 +223,11 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
         active,
         "interrupt",
         Effect.gen(function* () {
-          const previousOperation = (yield* providerRegistry.getProviders).find(
-            (provider) => provider.instanceId === input.instanceId,
-          )?.connection?.operation;
+          const previousOperation = publishedProviderConnectionOperation(
+            (yield* providerRegistry.getProviders).find(
+              (provider) => provider.instanceId === input.instanceId,
+            )?.connection,
+          );
           if (previousOperation?.operationId !== input.operationId) return;
           const finishedAt = yield* nowIso;
           yield* providerRegistry.setProviderConnectionOperation({
@@ -224,6 +235,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
             operation: operation({
               operationId: input.operationId,
               method: input.method,
+              account: input.account,
               status: "cancelled",
               startedAt: input.startedAt,
               finishedAt,
@@ -290,7 +302,31 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
         message: "The selected connection method is not valid for this provider.",
       });
     }
-    if (target.snapshot.auth.status === "authenticated" && input.mode !== "reauthenticate") {
+    // A provider that signs in to accounts takes one named entry of its own
+    // list, and nothing is started or published without it; any other provider
+    // takes no account. The driver says which it is: a list the latest check
+    // could not read is not a reason to start a sign-in to no account.
+    const listedAccounts = target.snapshot.connection?.accounts;
+    const accountValid =
+      actions.requiresAccount === true
+        ? listedAccounts?.some((candidate) => candidate.id === input.account) === true
+        : input.account === undefined && listedAccounts === undefined;
+    if (!accountValid) {
+      return yield* makeError({
+        provider: target.provider,
+        instanceId: input.instanceId,
+        reason: "invalid_method",
+        message:
+          actions.requiresAccount === true
+            ? "Choose an account from this provider's sign-in list."
+            : "This provider does not sign in to a named account.",
+      });
+    }
+    if (
+      input.account === undefined &&
+      target.snapshot.auth.status === "authenticated" &&
+      input.mode !== "reauthenticate"
+    ) {
       return { providers: target.providers };
     }
 
@@ -348,13 +384,14 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
         operation: operation({
           operationId,
           method: input.method,
+          account: input.account,
           status: "starting",
           startedAt,
           message: "Starting secure provider sign in.",
         }),
       });
 
-      const attemptResult = yield* actions.start(input.method).pipe(
+      const attemptResult = yield* actions.start(input.method, input.account).pipe(
         Effect.provideService(Scope.Scope, scope),
         Effect.result,
         Effect.catchCause(() =>
@@ -382,6 +419,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
             operation: operation({
               operationId,
               method: input.method,
+              account: input.account,
               status: "failed",
               startedAt,
               finishedAt,
@@ -422,6 +460,8 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
             operation: operation({
               operationId,
               method: input.method,
+              account: input.account,
+              instructions: attempt.instructions,
               status: waitingStatus,
               startedAt,
               message: waitingMessage,
@@ -446,6 +486,47 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
         return { providers: yield* providerRegistry.getProviders };
       }
 
+      if (attempt.laterQuestion) {
+        // The provider can ask its first question after the link was shown.
+        // Publish it on the operation that is still waiting, and nothing else.
+        yield* attempt.laterQuestion.pipe(
+          Effect.flatMap((question) =>
+            transitionLock.withPermits(1)(
+              Effect.gen(function* () {
+                const current = (yield* Ref.get(activeRef)).get(input.instanceId);
+                if (current?.operationId !== operationId) return;
+                const published = publishedProviderConnectionOperation(
+                  (yield* providerRegistry.getProviders).find(
+                    (provider) => provider.instanceId === input.instanceId,
+                  )?.connection,
+                );
+                if (
+                  published?.operationId !== operationId ||
+                  (published.status !== "waiting_for_browser" &&
+                    published.status !== "waiting_for_device_code")
+                ) {
+                  return;
+                }
+                yield* Ref.set(attemptRef, {
+                  ...attempt,
+                  submitAuthorizationCode: question.submitAuthorizationCode,
+                });
+                yield* providerRegistry.setProviderConnectionOperation({
+                  instanceId: input.instanceId,
+                  operation: {
+                    ...published,
+                    acceptsAuthorizationCode: true,
+                    ...(question.instructions ? { instructions: question.instructions } : {}),
+                  },
+                });
+              }),
+            ),
+          ),
+          Effect.ignoreCause({ log: true }),
+          Effect.forkIn(scope),
+        );
+      }
+
       const supervise = attempt.waitForCompletion.pipe(
         Effect.result,
         Effect.flatMap((result) =>
@@ -465,6 +546,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                   operation: operation({
                     operationId,
                     method: input.method,
+                    account: input.account,
                     status: "verifying",
                     startedAt,
                     message: "Verifying the connected provider account.",
@@ -479,11 +561,16 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                         (provider) => provider.instanceId === input.instanceId,
                       )
                     : undefined;
-                if (
-                  refreshResult._tag === "Failure" ||
-                  (refreshedProvider?.auth.required !== false &&
-                    refreshedProvider?.auth.status !== "authenticated")
-                ) {
+                // An account sign-in is verified by the provider's own list; the
+                // provider as a whole has no single signed-in state.
+                const verified =
+                  input.account === undefined
+                    ? refreshedProvider?.auth.required === false ||
+                      refreshedProvider?.auth.status === "authenticated"
+                    : refreshedProvider?.connection?.accounts?.some(
+                        (candidate) => candidate.id === input.account && candidate.connected,
+                      ) === true;
+                if (refreshResult._tag === "Failure" || !verified) {
                   completion = Result.fail({
                     message:
                       "The provider finished sign in, but Scient could not verify the connected account.",
@@ -496,6 +583,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                 operation: operation({
                   operationId,
                   method: input.method,
+                  account: input.account,
                   status: completion._tag === "Success" ? "connected" : "failed",
                   startedAt,
                   finishedAt,
@@ -521,6 +609,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
                   operation: operation({
                     operationId,
                     method: input.method,
+                    account: input.account,
                     status: "failed",
                     startedAt,
                     finishedAt,
@@ -563,6 +652,7 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
               instanceId: input.instanceId,
               operationId,
               method: input.method,
+              account: input.account,
               startedAt,
             }),
       ),
@@ -642,9 +732,11 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
               message: "The connection operation is no longer active.",
             });
           }
-          const previous = (yield* providerRegistry.getProviders).find(
-            (provider) => provider.instanceId === input.instanceId,
-          )?.connection?.operation;
+          const previous = publishedProviderConnectionOperation(
+            (yield* providerRegistry.getProviders).find(
+              (provider) => provider.instanceId === input.instanceId,
+            )?.connection,
+          );
           const providers = yield* providerRegistry.setProviderConnectionOperation({
             instanceId: input.instanceId,
             operation:
@@ -689,9 +781,11 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
       active,
       "interrupt",
       Effect.gen(function* () {
-        const previousOperation = (yield* providerRegistry.getProviders).find(
-          (provider) => provider.instanceId === input.instanceId,
-        )?.connection?.operation;
+        const previousOperation = publishedProviderConnectionOperation(
+          (yield* providerRegistry.getProviders).find(
+            (provider) => provider.instanceId === input.instanceId,
+          )?.connection,
+        );
         const finishedAt = yield* nowIso;
         return yield* providerRegistry.setProviderConnectionOperation({
           instanceId: input.instanceId,
@@ -713,15 +807,31 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
     "ProviderConnectionManager.disconnect",
   )(function* (input) {
     const target = yield* readTarget(input.instanceId);
-    if (!target.actions || !target.snapshot || target.snapshot.connection?.canDisconnect !== true) {
+    const account = input.account;
+    const disconnectAccount = target.actions?.disconnectAccount;
+    const supported =
+      account === undefined
+        ? target.snapshot?.connection?.canDisconnect === true
+        : disconnectAccount !== undefined &&
+          target.snapshot?.connection?.accounts?.some(
+            (candidate) => candidate.id === account && candidate.canDisconnect,
+          ) === true;
+    if (!target.actions || !target.snapshot || !supported) {
       return yield* makeError({
         provider: target.provider,
         instanceId: input.instanceId,
         reason: "unsupported_provider",
-        message: "This provider does not support assisted disconnection yet.",
+        message:
+          account === undefined
+            ? "This provider does not support assisted disconnection yet."
+            : "Scient has no stored sign-in to remove for this account.",
       });
     }
     const actions = target.actions;
+    const signOut =
+      account !== undefined && disconnectAccount !== undefined
+        ? disconnectAccount(account)
+        : actions.disconnect;
     const runtimeSource = target.snapshot.connection?.runtime?.source ?? "unknown";
     const operationId = `disconnect-${yield* crypto.randomUUIDv4.pipe(Effect.orDie)}`;
     const reserved = yield* lifecycleCoordinator.reserve({
@@ -739,17 +849,47 @@ export const make = Effect.fn("ProviderConnectionManager.make")(function* () {
     }
 
     return yield* Effect.gen(function* () {
-      const result = yield* actions.disconnect.pipe(
+      const attempt = signOut.pipe(
         Effect.scoped,
         Effect.result,
         Effect.catchCause(() =>
           Effect.succeed(
-            Result.fail({
+            Result.fail<ProviderConnectionActionFailure>({
               message: "The provider sign-out flow stopped unexpectedly.",
+              // It stopped somewhere between asking and hearing back.
+              signInMayBeRemoved: account !== undefined,
             }),
           ),
         ),
       );
+      // A conversation keeps the sign-in it loaded when it started. Removing an
+      // account's sign-in is therefore one step with stopping the provider's
+      // conversations: the sign-in goes first, so every process that could have
+      // read it already exists and the stop reaches it, and one that starts
+      // later finds nothing. The step is not interruptible (a client that
+      // disconnects midway must not leave conversations holding the sign-in),
+      // and it stops whichever instances are current, not the one that was
+      // current when the sign-out began.
+      const result =
+        account === undefined
+          ? yield* attempt
+          : yield* Effect.uninterruptible(
+              Effect.gen(function* () {
+                const removal = yield* attempt;
+                if (removal._tag === "Failure" && removal.failure.signInMayBeRemoved !== true) {
+                  return removal;
+                }
+                const stopped = yield* providerRegistry
+                  .stopProviderSessions(target.provider)
+                  .pipe(Effect.result);
+                return removal._tag === "Success" && stopped._tag === "Failure"
+                  ? Result.fail<ProviderConnectionActionFailure>({
+                      message:
+                        "The sign-in was removed, but Scient could not stop the provider's running conversations. Stop them to make sure none keeps it.",
+                    })
+                  : removal;
+              }),
+            );
       if (result._tag === "Failure") {
         return yield* makeError({
           provider: target.provider,

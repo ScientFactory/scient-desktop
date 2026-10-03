@@ -49,6 +49,15 @@ export interface VoiceModelManagerOptions {
   readonly modelsDirectory: string;
   readonly manifest: VoiceModelDefinition;
   readonly fetchImpl?: typeof fetch;
+  /**
+   * A folder of models that several installations on one machine may copy
+   * from and add to, so each need not download its own. A model found there
+   * is copied into `modelsDirectory` and verified exactly like a download; a
+   * model installed here is copied there. Nothing is ever read from it in
+   * place, so removing or repairing a model in one installation cannot affect
+   * another.
+   */
+  readonly sharedModelsDirectory?: string;
 }
 
 export class VoiceModelManager {
@@ -57,6 +66,13 @@ export class VoiceModelManager {
   readonly repairPartialPath: string;
   readonly receiptPath: string;
 
+  private readonly sharedModelPath: string | null;
+  private readonly sharedCopyPartialPath: string;
+  private activeSharedCopy: Promise<boolean> | null = null;
+  /** The shared copy failed verification, or was declined by an explicit removal. */
+  private sharedCopySkipped = false;
+  private sharedCopyFailedVerification = false;
+  private offeredToShare = false;
   private readonly modelsDirectory: string;
   private readonly manifest: VoiceModelDefinition;
   private readonly fetchImpl: typeof fetch;
@@ -73,6 +89,10 @@ export class VoiceModelManager {
     this.partialPath = `${this.modelPath}.partial`;
     this.repairPartialPath = `${this.modelPath}.repair.partial`;
     this.receiptPath = `${this.modelPath}.json`;
+    this.sharedModelPath = options.sharedModelsDirectory
+      ? NodePath.join(options.sharedModelsDirectory, options.manifest.fileName)
+      : null;
+    this.sharedCopyPartialPath = `${this.modelPath}.shared.partial`;
   }
 
   async getStatus(): Promise<VoiceModelState> {
@@ -90,8 +110,12 @@ export class VoiceModelManager {
       };
     }
 
-    const ready = await this.hasVerifiedReceipt();
+    const ready =
+      (await this.hasVerifiedReceipt()) ||
+      // A download may have started while the receipt was being read.
+      (!this.sharedCopySkipped && !this.activeDownload && (await this.takeSharedCopy()));
     if (ready) {
+      await this.offerToShare();
       return {
         state: "ready",
         modelPath: this.modelPath,
@@ -119,6 +143,14 @@ export class VoiceModelManager {
     if (this.activeDownload) {
       return this.activeDownload;
     }
+    // An explicit install may use the shared copy again after a removal.
+    if (!this.sharedCopyFailedVerification && (await this.takeSharedCopy())) {
+      this.sharedCopySkipped = false;
+      return this.modelPath;
+    }
+    if (this.activeDownload) {
+      return this.activeDownload;
+    }
 
     this.activeTransferPath = this.partialPath;
     this.activeOperation = "install";
@@ -141,6 +173,11 @@ export class VoiceModelManager {
       throw new Error("The offline voice model is already downloading.");
     }
     await NodeFSP.rm(this.repairPartialPath, { force: true });
+    // Nothing is awaited between this check and claiming the transfer below.
+    while (this.activeSharedCopy) await this.activeSharedCopy;
+    if (this.activeDownload) {
+      throw new Error("The offline voice model is already downloading.");
+    }
     this.activeTransferPath = this.repairPartialPath;
     this.activeOperation = "repair";
     const repair = this.downloadAndVerify(signal, onProgress, this.repairPartialPath).finally(
@@ -173,7 +210,12 @@ export class VoiceModelManager {
     if (this.activeDownload) {
       throw new Error("The offline voice model cannot be removed while it is downloading.");
     }
+    // Removed on purpose: it does not come back from the shared folder until
+    // asked for. Set before waiting, so no status probe starts another copy.
+    this.sharedCopySkipped = true;
+    while (this.activeSharedCopy) await this.activeSharedCopy;
     await Promise.all([
+      NodeFSP.rm(this.sharedCopyPartialPath, { force: true }),
       NodeFSP.rm(this.modelPath, { force: true }),
       NodeFSP.rm(this.partialPath, { force: true }),
       NodeFSP.rm(this.repairPartialPath, { force: true }),
@@ -268,6 +310,17 @@ export class VoiceModelManager {
       }
     }
 
+    const modelPath = await this.installVerified(partialPath);
+    // A fresh verified download is always offered: the shared copy may have
+    // gone missing or been damaged since this process last looked.
+    this.offeredToShare = false;
+    await this.offerToShare();
+    return modelPath;
+  }
+
+  /** Installs a complete transfer only after every verification passes. */
+  private async installVerified(partialPath: string): Promise<string> {
+    const manifest = this.manifest;
     const downloadedStats = await statOrNull(partialPath);
     if (downloadedStats?.size !== manifest.byteSize) {
       throw new Error(
@@ -298,12 +351,81 @@ export class VoiceModelManager {
       sourceRevision: manifest.sourceRevision,
       verifiedAt: new Date().toISOString(),
     };
-    const pendingReceiptPath = `${this.receiptPath}.tmp-${process.pid}`;
+    const pendingReceiptPath = `${this.receiptPath}.tmp-${process.pid}-${NodeCrypto.randomBytes(4).toString("hex")}`;
     await NodeFSP.writeFile(pendingReceiptPath, `${JSON.stringify(receipt, null, 2)}\n`, {
       mode: 0o600,
     });
     await NodeFSP.rename(pendingReceiptPath, this.receiptPath);
     return this.modelPath;
+  }
+
+  /** One copy at a time: status probes and an install may ask together. */
+  private takeSharedCopy(): Promise<boolean> {
+    if (this.sharedModelPath === null) return Promise.resolve(false);
+    this.activeSharedCopy ??= this.copySharedModel(this.sharedModelPath).finally(() => {
+      this.activeSharedCopy = null;
+    });
+    return this.activeSharedCopy;
+  }
+
+  private async copySharedModel(sharedModelPath: string): Promise<boolean> {
+    try {
+      const shared = await statOrNull(sharedModelPath);
+      if (!shared?.isFile() || shared.size !== this.manifest.byteSize) return false;
+      await NodeFSP.mkdir(this.modelsDirectory, { recursive: true, mode: 0o700 });
+      await NodeFSP.rm(this.sharedCopyPartialPath, { force: true });
+      // A clone where the filesystem supports it, so the copy takes no extra space.
+      await NodeFSP.copyFile(
+        sharedModelPath,
+        this.sharedCopyPartialPath,
+        NodeFS.constants.COPYFILE_FICLONE,
+      );
+      await NodeFSP.chmod(this.sharedCopyPartialPath, 0o600);
+      // A transfer that began meanwhile owns the installation and its partial file.
+      if (this.activeDownload) {
+        await NodeFSP.rm(this.sharedCopyPartialPath, { force: true });
+        return false;
+      }
+      await this.installVerified(this.sharedCopyPartialPath);
+      // A download left unfinished earlier is no longer needed.
+      if (!this.activeDownload) await NodeFSP.rm(this.partialPath, { force: true });
+      return true;
+    } catch {
+      // The shared folder is a convenience. A copy that cannot be read or
+      // verified is not tried again by this process; downloading still works,
+      // and a verified download then replaces the shared copy.
+      this.sharedCopySkipped = true;
+      this.sharedCopyFailedVerification = true;
+      this.offeredToShare = false;
+      await NodeFSP.rm(this.sharedCopyPartialPath, { force: true }).catch(() => undefined);
+      return false;
+    }
+  }
+
+  /**
+   * Adds this installation's verified model to the shared folder: once per
+   * process, and again after a shared copy was found damaged.
+   */
+  private async offerToShare(): Promise<void> {
+    if (this.sharedModelPath === null || this.offeredToShare) return;
+    this.offeredToShare = true;
+    const pendingPath = `${this.sharedModelPath}.tmp-${process.pid}-${NodeCrypto.randomBytes(4).toString("hex")}`;
+    try {
+      const shared = await statOrNull(this.sharedModelPath);
+      if (
+        shared?.isFile() &&
+        shared.size === this.manifest.byteSize &&
+        !this.sharedCopyFailedVerification
+      )
+        return;
+      await NodeFSP.mkdir(NodePath.dirname(this.sharedModelPath), { recursive: true, mode: 0o700 });
+      await NodeFSP.copyFile(this.modelPath, pendingPath, NodeFS.constants.COPYFILE_FICLONE);
+      // Appears complete or not at all: other installations copy it as it is.
+      await NodeFSP.rename(pendingPath, this.sharedModelPath);
+      this.sharedCopyFailedVerification = false;
+    } catch {
+      await NodeFSP.rm(pendingPath, { force: true }).catch(() => undefined);
+    }
   }
 }
 

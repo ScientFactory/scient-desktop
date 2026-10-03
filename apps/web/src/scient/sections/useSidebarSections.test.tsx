@@ -37,7 +37,10 @@ vi.mock("./pendingNewThreadSections", () => ({
 }));
 vi.mock("./loadedEnvironments", () => ({ loadedThreadEnvironmentsKeyAtom: {} }));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => "" }));
-vi.mock("../../state/environments", () => ({ useEnvironments: () => ({ environments: [] }) }));
+vi.mock("../../state/environments", () => ({
+  useEnvironments: () => ({ environments: [] }),
+  usePrimaryEnvironmentId: () => "local",
+}));
 vi.mock("../../state/entities", () => ({ readThreadShell: () => ({ projectId: "project-a" }) }));
 vi.mock("./NewSectionPopover", () => ({
   NewSectionPopover: (props: NonNullable<typeof mocks.popoverProps>) => {
