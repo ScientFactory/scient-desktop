@@ -113,31 +113,13 @@ export function ProviderIcon(props: ProviderIconProps) {
   }
 
   if (props.provider === "scient") {
-    // Match the web client's Scient Agent symbol and doubled line weight.
+    // Scient Agent's Möbius symbol, the same drawing the web client shows.
     return (
-      <Svg width={size} height={size} viewBox="-78.67 -66.67 533.33 533.33" fill="none">
-        <Path
-          d="M292 100H100V292"
-          stroke="#46587E"
-          strokeWidth={32}
-          strokeLinecap="butt"
-          strokeLinejoin="miter"
-        />
-        <Path
-          d="M192 0V192H0"
-          stroke="#471A1A"
-          strokeWidth={32}
-          strokeLinecap="butt"
-          strokeLinejoin="miter"
-        />
-        <Path
-          d="M376 208H208V400"
-          stroke="#471A1A"
-          strokeWidth={32}
-          strokeLinecap="butt"
-          strokeLinejoin="miter"
-        />
-      </Svg>
+      <Image
+        source={require("../../assets/scient-agent.png")}
+        style={{ width: size, height: size }}
+        contentFit="contain"
+      />
     );
   }
 

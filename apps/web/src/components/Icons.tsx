@@ -1,5 +1,6 @@
 import React, { type SVGProps, useId } from "react";
 import { cn } from "~/lib/utils";
+import scientAgentSymbolUrl from "../assets/scient-agent-symbol.svg?url";
 export type Icon = React.FC<SVGProps<SVGSVGElement>>;
 
 export const UltrafastIcon: Icon = (props) => (
@@ -812,14 +813,11 @@ export const OhMyPiIcon: Icon = ({ className, ...props }) => {
   );
 };
 
-// Scient Agent's symbol, with twice the original line weight for small icons.
+// Scient Agent's symbol: a Möbius strip blending from blue to peach. The drawing is a few hundred
+// masked slices, so it is kept as an asset and shown as an image.
 export const ScientAgentIcon: Icon = (props) => (
-  <svg viewBox="-78.67 -66.67 533.33 533.33" fill="none" {...props}>
-    <g strokeWidth="32" strokeLinecap="butt" strokeLinejoin="miter">
-      <path d="M292 100H100V292" stroke="#46587E" />
-      <path d="M192 0V192H0" stroke="#471A1A" />
-      <path d="M376 208H208V400" stroke="#471A1A" />
-    </g>
+  <svg {...props} viewBox="0 0 512 512" fill="none">
+    <image href={scientAgentSymbolUrl} width="512" height="512" />
   </svg>
 );
 
