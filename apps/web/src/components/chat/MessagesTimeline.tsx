@@ -3243,12 +3243,12 @@ function ReasoningTraceBlock({
           onClick={() => ctx.onToggleReasoning(first.id, !expanded, anchorKey)}
           className="flex min-h-6 cursor-pointer select-none items-center gap-1.5 rounded-md ps-0.5 pe-2 text-start text-sm leading-relaxed transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
         >
-          <span className="flex size-6 shrink-0 items-center justify-center text-icon-muted">
+          <span className="flex size-6 shrink-0 items-center justify-center text-trace-icon">
             <BrainIcon aria-hidden className="block size-4 shrink-0 stroke-2 opacity-70" />
           </span>
           <span
             ref={streaming ? observeVisibleAnimation : undefined}
-            className="relative min-w-0 flex-1 truncate text-secondary-label"
+            className="relative min-w-0 flex-1 truncate text-trace-label"
           >
             {headerText}
             {streaming ? <ActivityShimmerOverlay>{headerText}</ActivityShimmerOverlay> : null}
@@ -3316,11 +3316,11 @@ const ReasoningTimelineRow = memo(function ReasoningTimelineRow({
         onClick={toggle}
         className="flex cursor-pointer select-none items-center gap-1.5 rounded-md px-0.5 py-0.5 text-start transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
-        <span className="flex size-6 shrink-0 items-center justify-center text-icon-muted">
+        <span className="flex size-6 shrink-0 items-center justify-center text-trace-icon">
           <BrainIcon aria-hidden className="block size-4 shrink-0 stroke-2 opacity-70" />
         </span>
         <span className="flex min-w-0 flex-1 items-center gap-1.5">
-          <span className="relative min-w-0 flex-1 truncate text-secondary-label text-sm leading-relaxed">
+          <span className="relative min-w-0 flex-1 truncate text-trace-label text-sm leading-relaxed">
             Thought
           </span>
           <span className="flex size-4 shrink-0 items-center justify-center" aria-hidden>
@@ -3336,7 +3336,7 @@ const ReasoningTimelineRow = memo(function ReasoningTimelineRow({
       {expanded ? (
         <div className="mt-1 ms-7 flex max-h-96 flex-col gap-3 overflow-auto px-0.5 py-1 select-text">
           <ChatMarkdown
-            className="text-foreground"
+            className="text-secondary-label"
             text={message.text}
             cwd={ctx.markdownCwd}
             threadRef={ctx.threadRef ?? undefined}
@@ -3717,14 +3717,14 @@ function LiveActivityContent({
       className={cn(
         "flex min-h-6 min-w-0 items-center gap-1.5 py-0.5",
         iconName ? "px-0.5" : "px-1",
-        highlighted ? "text-foreground" : "text-secondary-label",
+        highlighted ? "text-foreground" : "text-trace-label",
       )}
     >
       {iconName ? (
         <span
           className={cn(
             "flex size-6 shrink-0 items-center justify-center",
-            failed ? failedToolIconClassName : highlighted ? "text-foreground" : "text-icon-muted",
+            failed ? failedToolIconClassName : highlighted ? "text-foreground" : "text-trace-icon",
           )}
           role={announceFailure ? "img" : undefined}
           aria-label={announceFailure ? "Tool call failed" : undefined}
@@ -3848,7 +3848,7 @@ function WorkGroupToggleTimelineRow({
       aria-expanded={row.expanded}
       onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
     >
-      <span className="flex size-6 shrink-0 items-center justify-center text-icon-muted">
+      <span className="flex size-6 shrink-0 items-center justify-center text-trace-icon">
         <ToolActivityIconView
           icon={row.toolIcon}
           fallbackName={
@@ -3858,7 +3858,7 @@ function WorkGroupToggleTimelineRow({
           muted
         />
       </span>
-      <span className="min-w-0 flex-1 truncate text-secondary-label">{row.summary}</span>
+      <span className="min-w-0 flex-1 truncate text-trace-label">{row.summary}</span>
       <TimelineRowTimestamp createdAt={row.createdAt} timestampFormat={ctx.timestampFormat} />
     </button>
   );
@@ -4865,13 +4865,13 @@ function workToneIcon(tone: TimelineWorkEntry["tone"]): {
   if (tone === "thinking") {
     return {
       iconName: "brain",
-      className: "text-icon-muted",
+      className: "text-trace-icon",
     };
   }
   if (tone === "info") {
     return {
       iconName: "check",
-      className: "text-icon-muted",
+      className: "text-trace-icon",
     };
   }
   return {
@@ -5313,7 +5313,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
         : showFailedIndicator
           ? failedToolIconClassName
           : workEntry.tone === "tool"
-            ? "text-icon-muted"
+            ? "text-trace-icon"
             : iconConfig.className,
   );
   const headingClass = showWarningIndicator
@@ -5321,8 +5321,8 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
     : showDestructiveRowStyle
       ? "font-medium text-destructive"
       : workLogEntryIsToolLike(workEntry)
-        ? "text-secondary-label"
-        : "text-foreground/80";
+        ? "text-trace-label"
+        : "text-secondary-label";
   const accessiblePreview = [previewText, answerPreview].filter(Boolean).join(": ");
   const failureLabel = activityIssuePolicy(workEntry.sourceActivityKind)
     ? "Operation failed"

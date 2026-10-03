@@ -1988,7 +1988,7 @@ describe("MessagesTimeline", () => {
         });
         await act(() => renderer!.root.findByProps({ "aria-expanded": false }).props.onClick());
         const text = renderer!.root.findByProps({
-          className: "relative min-w-0 flex-1 truncate text-secondary-label",
+          className: "relative min-w-0 flex-1 truncate text-trace-label",
         });
         const preview = text.parent!;
         expect(
