@@ -173,7 +173,7 @@ by a citation or grant new workspace permissions.
 
 | Node                          | Rendered-editor behavior                                                     | Markdown authority                                                      |
 | ----------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| Paragraph and heading         | Direct rich editing with stable typography                                   | Preserve original marks and delimiters until edited                     |
+| Paragraph and heading         | Direct rich editing with stable typography; headings hold math and citations | Preserve original marks and delimiters until edited                     |
 | Bulleted, numbered, task list | Rich list editing; Enter/Tab/Shift-Tab change structure                      | Preserve bullet/delimiter style for untouched items                     |
 | Table                         | Editable cells; contextual row, column, and alignment actions                | GFM table with one header row; preserve cell content on save and reopen |
 | Link and `[[wiki link]]`      | Underlined label; click follows, while drag/double-click selects for editing | Keep explicit, reference, GFM-autolink, relative, and wiki syntax       |
@@ -737,6 +737,12 @@ Preservation is range-based, not a claim that a semantic editor never serializes
   This provenance is owned by the Scient parser/schema adapter, not the generic T3 renderer.
 - Save acknowledgement updates only the persistence baseline. The source ledger stays paired
   with its parsed document and stable identities, including through repeated structural saves.
+- A block is projected as rich content only when its parsed form keeps every source construct.
+  Headings may hold inline math, citations, wiki links, and footnote references. A block the
+  parser would drop or partly empty opens as an exact-source raw island instead, as does a quote
+  or list holding nested source-only syntax (reference definitions, HTML comments, display math,
+  footnote definitions), a heading whose inline atom spans lines, and a malformed or nested
+  text-direction wrapper.
 - A structurally changed block is serialized from the edited ProseMirror node; normalization is
   confined to that changed block.
 - Unsupported syntax is retained as an owned raw node and reuses its original source while
