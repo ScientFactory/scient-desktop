@@ -1092,69 +1092,74 @@ export const make = Effect.gen(function* () {
                     cause,
                   }),
           });
+          // The identity (device and inode, as bigints: 64-bit ids exceed a
+          // double) of the file just linked. Cleanup removes the new name only
+          // while it still holds this file, never a file another program put
+          // there since; the old name is removed only while it still is it.
+          const destinationPath = destination.realTargetPath;
+          const sourcePath = source.realTargetPath;
+          const linkedIdentity = yield* Effect.promise(() =>
+            NodeFSP.lstat(destinationPath, { bigint: true }).then(
+              (stat) => ({ dev: stat.dev, ino: stat.ino }),
+              () => null,
+            ),
+          );
+          const holdsLinkedFile = async (filePath: string) => {
+            if (linkedIdentity === null) return false;
+            try {
+              const stat = await NodeFSP.lstat(filePath, { bigint: true });
+              return stat.dev === linkedIdentity.dev && stat.ino === linkedIdentity.ino;
+            } catch {
+              return false;
+            }
+          };
+          const removeOwnLink = async () => {
+            if (await holdsLinkedFile(destinationPath)) {
+              await NodeFSP.unlink(destinationPath).catch(() => undefined);
+            }
+          };
+          const conflict = (currentRevision: string) =>
+            new WorkspaceFileRevisionConflictError({
+              workspaceRoot: input.cwd,
+              relativePath: input.relativePath,
+              resolvedPath: sourceTarget.absolutePath,
+              currentRevision,
+            });
           let revision: string;
           if (input.expectedRevision !== undefined) {
             const linked = yield* readFile({
               cwd: input.cwd,
               relativePath: input.destinationRelativePath,
-            });
+            }).pipe(Effect.tapError(() => Effect.promise(removeOwnLink)));
             if (linked.truncated || linked.revision !== input.expectedRevision) {
-              yield* Effect.tryPromise(() => NodeFSP.unlink(destination.realTargetPath)).pipe(
-                Effect.ignore,
-              );
-              return yield* new WorkspaceFileRevisionConflictError({
-                workspaceRoot: input.cwd,
-                relativePath: input.relativePath,
-                resolvedPath: sourceTarget.absolutePath,
-                currentRevision: linked.revision,
-              });
+              yield* Effect.promise(removeOwnLink);
+              return yield* conflict(linked.revision);
             }
             revision = linked.revision;
           } else {
             // A failed read must not leave the new name behind: a retry would
             // then find it taken.
-            revision = yield* leadingBytesRevision(input, destination.realTargetPath).pipe(
-              Effect.tapError(() =>
-                Effect.tryPromise(() => NodeFSP.unlink(destination.realTargetPath)).pipe(
-                  Effect.ignore,
-                ),
-              ),
+            revision = yield* leadingBytesRevision(input, destinationPath).pipe(
+              Effect.tapError(() => Effect.promise(removeOwnLink)),
             );
           }
           // The locks order this service's own writes, not another program's.
           // One that replaced the source after it was linked (an editor or a
-          // compiler writing atomically) would lose its file to the unlink
-          // below, so the source must still be the file the new name holds.
-          const stillLinked = yield* Effect.promise(async () => {
-            try {
-              const [from, to] = await Promise.all([
-                NodeFSP.lstat(source.realTargetPath),
-                NodeFSP.lstat(destination.realTargetPath),
-              ]);
-              return from.dev === to.dev && from.ino === to.ino;
-            } catch {
-              return false;
-            }
-          });
-          if (!stillLinked) {
-            yield* Effect.tryPromise(() => NodeFSP.unlink(destination.realTargetPath)).pipe(
-              Effect.ignore,
-            );
-            return yield* new WorkspaceFileRevisionConflictError({
-              workspaceRoot: input.cwd,
-              relativePath: input.relativePath,
-              resolvedPath: sourceTarget.absolutePath,
-              currentRevision: revision,
-            });
-          }
-          yield* Effect.tryPromise({
+          // compiler writing atomically) keeps its file: the check and the
+          // unlink run back to back, and a replaced source is left alone.
+          const moved = yield* Effect.tryPromise({
             try: async () => {
+              if (!(await holdsLinkedFile(sourcePath))) {
+                await removeOwnLink();
+                return false;
+              }
               try {
-                await NodeFSP.unlink(source.realTargetPath);
+                await NodeFSP.unlink(sourcePath);
               } catch (cause) {
-                await NodeFSP.unlink(destination.realTargetPath).catch(() => undefined);
+                await removeOwnLink();
                 throw cause;
               }
+              return true;
             },
             catch: (cause) =>
               new WorkspaceFileSystemOperationError({
@@ -1166,6 +1171,7 @@ export const make = Effect.gen(function* () {
                 cause,
               }),
           });
+          if (!moved) return yield* conflict(revision);
           yield* workspaceEntries.refresh(input.cwd);
           return {
             relativePath: sourceTarget.relativePath,
