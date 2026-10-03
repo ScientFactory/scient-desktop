@@ -30,6 +30,7 @@ const workspaceFiles = [
   "packages/contracts/package.json",
   "packages/scient-analysis/package.json",
   "packages/scient-analytics/package.json",
+  "packages/scient-document/package.json",
   "packages/scient-document-artifacts/package.json",
   "packages/scient-execution/package.json",
   "packages/scient-markdown/package.json",
