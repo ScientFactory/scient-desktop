@@ -8,26 +8,24 @@ The three Icon Composer projects are the source of truth for full application ic
 
 Each project uses `symbol.svg` for the Scient mark and `background.svg` when the background is a vector layer. Additional layers use semantic names that describe their role and placement.
 
-The active Scient icon keeps one stable appearance across development,
-preview, and production: the canonical burgundy `#471A1A` and slate
-`#46587E` symbol on the website's warm off-white `#FAF9F6` surface. Runtime
-labels such as `Scient (Dev)` distinguish channels without fragmenting the
-product mark or changing it with system appearance.
+The symbol is the Möbius strip from the brand kit in ScientFactory-website
+(`assets/brand/symbol`, where `build.py` regenerates it). Each channel has its
+own appearance so the Dock tells them apart:
+
+- `prod`: the colour symbol (blue `#5BA2C2` blending into warm peach `#F8AC8B`)
+  on the warm off-white `#FAF9F6` tile.
+- `dev`: the black symbol (`#252B32`) on a white tile.
+- `nightly`: the white symbol on a near-black `#16181C` tile.
 
 The symbol layer uses Icon Composer scale `8.0` with zero translation in every
-channel project. This is a 5.88% linear reduction from the initial `8.5`
-placement: the mark remains mathematically centered while gaining a little more
-breathing room inside the icon body.
+channel project. Inside its 128-unit canvas the 512-unit kit drawing is scaled
+to 72 units and centred, which leaves the solid ring the same visual weight as
+the previous line mark.
 
-The canonical symbol uses the approved 16-unit geometry inside its unchanged
-`376 x 400` design footprint. Its outer bounds and center `(188, 200)` are the
-same as the preceding 10-unit mark, so the heavier lines do not enlarge or
-reposition the symbol inside the icon.
-
-The in-app masthead, splash screen, and authentication surfaces use the same
-canonical mark from `apps/web/src/assets/scient-symbol.svg`. Keep that compact
-web asset geometrically and chromatically aligned with the Icon Composer
-sources; it is intentionally a separate SVG file so the app does not depend on
+The in-app masthead, splash screen, and authentication surfaces use the colour
+symbol from `apps/web/src/assets/scient-symbol.svg`; `scient-symbol-strong.svg`
+is the kit's pixel-fitted 16 px colour drawing for 12-16 px uses. Keep both
+aligned with the kit; they are separate SVG files so the app does not depend on
 an icon-project implementation detail at runtime.
 
 Run `vp run icons:export` from the repository root to regenerate the tracked iOS, Linux, Windows, and web assets. The development web exports are also copied to `apps/web/public` for the browser favicon and splash screen. Run `vp run icons:check` to verify that the generated assets and public copies match their sources without changing files.
@@ -70,6 +68,12 @@ Verify every result is 1024×1024 and has the classic macOS safe area: an 824×8
 ```
 
 Do not edit the generated PNG or ICO files directly.
+
+The macOS PNGs committed with the Möbius symbol were not exported this way: each
+is the `ictool` iOS render at 824 px placed inside the previous native export's
+body and shadow (same 824 px body, 100 px inset, native shadow alpha). Replace
+them with native `macOS pre-Tahoe` exports whenever Icon Composer's GUI is
+available; no code change is needed.
 
 ## Android launcher and splash artwork
 
