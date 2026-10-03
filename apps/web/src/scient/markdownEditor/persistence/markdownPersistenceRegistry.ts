@@ -61,6 +61,8 @@ export function documentReconcileStrategy(
  * A LaTeX document's files are not: their recovery belongs to the Visual
  * editor, which offers recovered work for comparison and never applies it
  * unasked. Two recovery copies of one file would answer that question twice.
+ * Bibliographies have no startup recovery UI, so .bib sessions keep unsaved
+ * source in memory only; References retains its form until a save is confirmed.
  */
 export function documentKeepsCheckpoint(target: MarkdownPersistenceTarget): boolean {
   return isScientMarkdownDocumentPath(target.relativePath);

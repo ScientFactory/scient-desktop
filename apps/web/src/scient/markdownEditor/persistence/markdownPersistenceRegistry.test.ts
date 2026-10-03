@@ -716,7 +716,7 @@ describe("Markdown checkpoint admission", () => {
   });
 });
 
-it("keeps no checkpoint for a file whose recovery belongs elsewhere", async () => {
+it.each(["paper.tex", "refs.bib"])("keeps no session checkpoint for %s", async (relativePath) => {
   const store = { read: vi.fn(async () => undefined), replace: vi.fn(async () => true) };
   const registry = new MarkdownPersistenceRegistry({
     checkpointStore: store,
@@ -731,7 +731,7 @@ it("keeps no checkpoint for a file whose recovery belongs elsewhere", async () =
   });
   vi.useFakeTimers();
   try {
-    const latex = await registry.open({ ...target, relativePath: "paper.tex" });
+    const latex = await registry.open({ ...target, relativePath });
     latex.change("B", 0);
     await vi.advanceTimersByTimeAsync(5_000);
     expect(store.read).not.toHaveBeenCalled();

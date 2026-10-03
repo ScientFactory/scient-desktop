@@ -48,6 +48,7 @@ import {
 import { createPortal } from "react-dom";
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
 import { refreshProjectEntriesQuery } from "~/components/files/projectFilesQueryState";
+import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 
 import { EditorState, Plugin, NodeSelection, Selection, TextSelection } from "@tiptap/pm/state";
 import { Slice, type Node as ProseMirrorNode } from "@tiptap/pm/model";
@@ -3980,6 +3981,9 @@ const MATH_INSERTIONS = {
 } as const;
 
 export interface LatexVisualEditorProps {
+  /** Confirms accepted reference edits through their owning file sessions. */
+  readonly flushReferenceEdits?: (() => Promise<boolean>) | undefined;
+  readonly documentPersistence?: readonly MarkdownPersistenceLease[] | undefined;
   readonly onLocalDraftChange?: (pending: boolean) => void;
   readonly draftKey: string;
   readonly fileRevision: string;
@@ -5863,7 +5867,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     setReferencesOpen(true);
   }, []);
   const applyBibliographyDocument = useCallback(
-    (id: string, expected: string, next: string) => {
+    async (id: string, expected: string, next: string) => {
       if (readOnly || !flushTypingRef.current() || !flushSourceEditRef.current()) return false;
       if ([...pendingFields.current].some((field) => field !== "references")) {
         setNotice("Finish the current document field before saving a reference.");
@@ -5873,20 +5877,20 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       if (id === "root") {
         const root = props.rootSource;
         const merged = root && mergeBibliographyChange(expected, next, root, "bibitem");
-        return (
+        const accepted =
           !!props.canEditRoot &&
           !!root &&
           merged != null &&
-          onEdit.current(current, current, { expected: root, next: merged })
-        );
+          onEdit.current(current, current, { expected: root, next: merged });
+        return accepted && (await props.flushReferenceEdits?.()) === true;
       }
       const merged = mergeBibliographyChange(expected, next, current, "bibitem");
       if (merged === null || !onEdit.current(current, merged)) return false;
       currentSource.current = merged;
       installProjection(projectLatexVisualDocument(merged, 0, props.rootSource ?? merged), true);
-      return true;
+      return (await props.flushReferenceEdits?.()) === true;
     },
-    [readOnly, props.canEditRoot, props.rootSource, installProjection],
+    [readOnly, props.canEditRoot, props.rootSource, props.flushReferenceEdits, installProjection],
   );
   const bibliographyDocuments = useMemo<BibliographyDocument[]>(() => {
     const documents: BibliographyDocument[] = [
@@ -7265,6 +7269,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                       request={referencesRequest}
                       onClose={() => setReferencesOpen(false)}
                       documents={bibliographyDocuments}
+                      documentPersistence={props.documentPersistence}
                       setupSource={props.rootSource ?? props.source}
                       rootRelativePath={props.rootRelativePath ?? props.relativePath ?? ""}
                       environmentId={props.environmentId}

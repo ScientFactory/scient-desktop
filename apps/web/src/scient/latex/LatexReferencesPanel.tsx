@@ -12,7 +12,6 @@ import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persisten
 import { ScientMarkdownPersistenceNotice } from "~/scient/markdownEditor/ui/ScientMarkdownPersistenceNotice";
 import { useMarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/useMarkdownPersistenceLease";
 import { projectEnvironment } from "~/state/projects";
-import { checkpointVisualDraft, confirmVisualDraft, flushVisualDraft } from "./visualDrafts";
 import { bibliographyPaths } from "./latexAuthoringModel";
 import { LatexSelect } from "./LatexSelect";
 import {
@@ -80,27 +79,16 @@ function BibliographyFile(props: {
     refresh();
     retryAdmission();
   }, [change, sessionOpen, refresh, retryAdmission]);
-  const draftKey = `${environmentId}\0${cwd}\0${path}`;
   const pending = snapshot?.pending ?? false;
   const needsAttention =
     snapshot !== null && (snapshot.conflict !== null || snapshot.error !== null);
   const saveError = needsAttention
     ? `Could not save ${path}. Resolve the save in References.`
     : null;
-  const saved = useEffectEvent((source: string) => {
-    confirmVisualDraft(draftKey, source);
+  const saved = useEffectEvent(() => {
     props.callbacks?.onSaved();
   });
-  useEffect(
-    () => (lease === null ? undefined : onDocumentSaved(lease, ({ source }) => saved(source))),
-    [lease],
-  );
-  useEffect(
-    () => () => {
-      flushVisualDraft(draftKey);
-    },
-    [draftKey],
-  );
+  useEffect(() => (lease === null ? undefined : onDocumentSaved(lease, () => saved())), [lease]);
   const apply = useCallback(
     async (expected: string, next: string) => {
       if (lease === null) return false;
@@ -108,19 +96,11 @@ function BibliographyFile(props: {
       if (current.editingBlocked) return false;
       const merged = mergeBibliographyChange(expected, next, current.draftSource, "bibtex");
       if (merged === null) return false;
-      if (current.draftSource !== merged) {
-        if (!lease.change(merged, current.editVersion)) return false;
-        checkpointVisualDraft(
-          draftKey,
-          merged,
-          current.draftSource,
-          merged,
-          current.baselineRevision,
-        );
-      }
+      if (current.draftSource !== merged && !lease.change(merged, current.editVersion))
+        return false;
       return lease.flushNow();
     },
-    [lease, draftKey],
+    [lease],
   );
   const disk = query.authoritativeData;
   const error =
@@ -235,6 +215,7 @@ export function LatexReferencesPanel(props: {
   request: { key?: string; sequence: number };
   onClose: () => void;
   documents: readonly BibliographyDocument[];
+  documentPersistence?: readonly MarkdownPersistenceLease[] | undefined;
   setupSource: string;
   rootRelativePath: string;
   environmentId?: EnvironmentId | undefined;
@@ -328,6 +309,7 @@ export function LatexReferencesPanel(props: {
   useEffect(() => {
     if (!props.open || requestSeen.current === props.request.sequence) return;
     if (dirty) {
+      requestSeen.current = props.request.sequence;
       setNotice("Save or cancel the current entry before opening another reference.");
       return;
     }
@@ -418,18 +400,22 @@ export function LatexReferencesPanel(props: {
   };
   const apply = async (remove = false) => {
     if (!draft || !target || saving || props.disabled || target.readOnly) return;
+    const source = raw;
     const parsed =
       target.kind === "bibtex" ? bibtexEntries(draft.original) : manualBibliography(draft.original);
     const key = draft.isNew ? draft.key : draft.entry.key;
     if (
       parsed.error ||
       !validBibliographyKey(key) ||
-      (draft.isNew && candidates.some(({ entry }) => entry.key === key))
+      (draft.isNew &&
+        candidates.some(
+          ({ document, entry }) =>
+            entry.key === key && (document.id !== target.id || entry.raw !== source),
+        ))
     ) {
       setNotice(parsed.error ?? "Use a unique citation key without spaces or LaTeX commands.");
       return;
     }
-    const source = raw;
     const next = remove
       ? draft.original.slice(0, draft.entry.from) + draft.original.slice(draft.entry.to)
       : source === null
@@ -569,6 +555,12 @@ export function LatexReferencesPanel(props: {
         {paths.length && (!props.environmentId || !props.cwd) ? (
           <p role="status">Connect to the project to read its .bib files.</p>
         ) : null}
+        {props.documentPersistence?.map((persistence) => (
+          <ScientMarkdownPersistenceNotice
+            key={persistence.target.relativePath}
+            persistence={persistence}
+          />
+        ))}
         {indexed.map(({ document, parsed }) =>
           document.error || parsed.error ? (
             <div role="alert" key={document.id}>

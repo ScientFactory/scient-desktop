@@ -33,7 +33,17 @@ that every operation preserves every supported LaTeX construct.
 | Reading controls                         | `writing/DocumentReaderControls.tsx`, `writing/readerBarHost.ts`                                             | Shared PDF/Visual sidebar, page, zoom and search controls. Format adapters supply navigation and search operations. With a `ReaderBarHost` they are drawn in the host's header row instead of a bar of their own.                                            |
 | Contextual footer                        | `writing/DocumentFooter.tsx`, `LatexContextTools.tsx`, heading/table/object toolbars                         | Shared one-line strip under the document. The selected object's options sit on the left in a stable portal destination that keeps fields mounted while switching between inline controls and a compact menu. Caret position and word count sit on the right. |
 | Shared writing pieces                    | `writing/commandNames.ts`, `writing/commandIcons.tsx`, `writing/InsertMenu.tsx`, `writing/ScientFindBar.tsx` | One name and icon per command that both editors offer, one Insert menu, and one find and replace bar. Each editor supplies its own items and carries out its own commands.                                                                                   |
-| Persistence                              | Shared document sessions and LaTeX recovery journal                                                          | One saver per physical file across Source and Visual. Pending fields are settled before document save/build/export; recovery remains comparison-first.                                                                                                       |
+| Persistence                              | Shared document sessions and LaTeX recovery journal                                                          | One saver per physical LaTeX or `.bib` file across its session-backed views. Pending fields are settled before document save/build/export; LaTeX recovery remains comparison-first.                                                                          |
+
+References and a standalone `.bib` Source tab acquire leases on the same registry
+session. Both use its current source, revision checks, pending/departure guards
+and conflict notices. Non-Markdown sessions do not use the registry checkpoint
+store. LaTeX source and Visual input have their own comparison-first journal;
+`.bib` files and reference entry forms have no startup recovery offer and write
+no bibliography checkpoint. Form drafts remain available during the app session.
+Reference saves, including manual `\bibitem` edits, clear the form and announce
+success only when the owning sessions confirm publication. A refused or failed
+save retains the form and exposes the session's persistence notice.
 
 A supported edit passes from the canvas transaction to the source adapter, then
 to the project/file save path. Accepted source is projected back into the editor;
