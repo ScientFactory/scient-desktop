@@ -507,12 +507,20 @@ export const ProviderRegistryLive = Layer.effect(
       if (!providerWithUpdateState.connection) {
         return providerWithUpdateState;
       }
+      // A sign-in to one of a provider's accounts has its own field, which an
+      // older client ignores. See `ProviderConnectionSummary.accountOperation`.
+      const { accountOperation: _accountOperation, ...connectionWithoutAccountOperation } =
+        providerWithUpdateState.connection;
       const providerWithConnection = {
         ...providerWithUpdateState,
-        connection: {
-          ...providerWithUpdateState.connection,
-          operation: connectionOperation ?? null,
-        },
+        connection:
+          connectionOperation?.account === undefined
+            ? { ...connectionWithoutAccountOperation, operation: connectionOperation ?? null }
+            : {
+                ...connectionWithoutAccountOperation,
+                operation: null,
+                accountOperation: connectionOperation,
+              },
       };
       const providerWithRuntime: ServerProvider & {
         readonly connection: NonNullable<ServerProvider["connection"]>;

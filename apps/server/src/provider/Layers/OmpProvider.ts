@@ -13,7 +13,7 @@ import {
 } from "effect-omp-rpc/errors";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import type { ServerProviderSlashCommand } from "@t3tools/contracts";
+import type { ProviderConnectionAccount, ServerProviderSlashCommand } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 
@@ -111,14 +111,28 @@ export const makePendingOmpProvider = (
     ),
   );
 
+/** What a status check found, beyond the provider snapshot itself. */
+export type OmpProviderStatus = ServerProviderDraft & {
+  readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  /** The product's own sign-in list, when the check was asked to read it. */
+  readonly accounts?: ReadonlyArray<ProviderConnectionAccount>;
+};
+
 export const checkOmpProviderStatus = Effect.fn("checkOmpProviderStatus")(function* (
   target: OmpTarget,
   settings: OmpLaunchSettings,
   environment: NodeJS.ProcessEnv = process.env,
   makeProcess: OmpProcessFactory,
   cwd?: string,
+  /**
+   * Reads the product's sign-in list from the process the check already
+   * started. Only a product that signs in through Scient passes it.
+   */
+  readAccounts?: (
+    client: OmpRpcProcess,
+  ) => Effect.Effect<ReadonlyArray<ProviderConnectionAccount> | undefined>,
 ): Effect.fn.Return<
-  ServerProviderDraft & { readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand> },
+  OmpProviderStatus,
   never,
   ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
 > {
@@ -142,13 +156,15 @@ export const checkOmpProviderStatus = Effect.fn("checkOmpProviderStatus")(functi
           }),
         ),
       );
-      return yield* Effect.all([modelList, client.getCommands()], {
+      const accountList = readAccounts ? readAccounts(client) : Effect.succeed(undefined);
+      return yield* Effect.all([modelList, client.getCommands(), accountList], {
         concurrency: "unbounded",
       }).pipe(
-        Effect.map(([models, commands]) => ({
+        Effect.map(([models, commands, accounts]) => ({
           version: client.version,
           models: models.models,
           commands: commands.commands,
+          accounts,
           modelConnections: client.assessModelConnections?.(models.models),
           providerLabel: client.modelProviderLabel,
           exitedWithoutModels: false,
@@ -163,6 +179,7 @@ export const checkOmpProviderStatus = Effect.fn("checkOmpProviderStatus")(functi
                     version: client.version,
                     models: [],
                     commands: [],
+                    accounts: undefined,
                     modelConnections: undefined,
                     providerLabel: undefined,
                     exitedWithoutModels: true,
@@ -201,7 +218,7 @@ export const checkOmpProviderStatus = Effect.fn("checkOmpProviderStatus")(functi
     );
     return mapped ? [mapped] : [];
   });
-  return buildServerProvider({
+  const provider = buildServerProvider({
     presentation: presentation(target),
     enabled: true,
     checkedAt: at,
@@ -215,13 +232,12 @@ export const checkOmpProviderStatus = Effect.fn("checkOmpProviderStatus")(functi
       version: discovery.value.version,
       status: models.length > 0 ? "ready" : "warning",
       auth: { status: "unknown", required: false },
+      // Whether the product exited or answered with an empty list, the next
+      // step is the same.
       ...(models.length > 0
         ? {}
-        : {
-            message: discovery.value.exitedWithoutModels
-              ? `${target.name} has no models yet. ${target.noModelsHint}`
-              : `${target.name} started, but it did not report any models.`,
-          }),
+        : { message: `${target.name} has no models yet. ${target.noModelsHint}` }),
     },
   });
+  return discovery.value.accounts ? { ...provider, accounts: discovery.value.accounts } : provider;
 });

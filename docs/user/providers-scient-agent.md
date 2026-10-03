@@ -37,6 +37,10 @@ shell and code can reach whatever your user account can.
 
 Scient Agent starts with no sign-ins. Give it a model in one of these ways:
 
+- **Sign in to a model account.** In **Settings > Providers**, open **Manage** on Scient Agent.
+  **Model accounts** lists every sign-in the agent supports: accounts you sign in to in your
+  browser, and services you add an API key for. Choose one, finish in the browser, and paste a
+  code or key if the agent asks for one. **Sign out** removes a sign-in the agent stored.
 - **Custom models.** Attach an OpenAI-compatible, OpenAI Responses, or Anthropic Messages
   connection in Scient's **Custom models** settings. Scient passes the key to the agent privately
   for each process; it is never in the agent's environment or arguments.
@@ -44,11 +48,15 @@ Scient Agent starts with no sign-ins. Give it a model in one of these ways:
 - **Keys in your environment.** A provider key the server's environment already has, such as
   `ANTHROPIC_API_KEY`, is used.
 
-Signing in to a model subscription from inside Scient is not available yet. Until it is, the
-agent's own terminal command works: run `scient-agent login` with `SCIENT_AGENT_ROOT` set to the
-agent's folder in Scient's data directory (`scient-agent/instances/<instance id>`), so the
-sign-in is stored where Scient runs the agent. Then refresh the provider in **Settings >
-Providers** so its models appear.
+The agent runs each sign-in itself and stores it in its own folder. For most accounts it signs
+in the way that vendor's own tool does, so the vendor's terms for your account apply. A sign-in
+that asks more than one question cannot be shown yet; for those, run `scient-agent login` in a
+terminal with `SCIENT_AGENT_ROOT` set to the agent's folder in Scient's data directory
+(`scient-agent/instances/<instance id>`), then refresh the provider.
+
+Signing out removes the sign-in and then stops Scient Agent's running conversations, so none
+keeps using it. They resume when you next use them. A stored sign-in that no longer works can be
+renewed or signed out of from the same list.
 
 When Scient Agent has no model at all, its provider card says so and how to add one.
 

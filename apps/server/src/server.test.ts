@@ -8043,6 +8043,20 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               authorizationUrlKind: "manual_fallback" as const,
               acceptsAuthorizationCode: true,
               userCode: "GROK-1234",
+              instructions: "Enter code: GROK-1234",
+            },
+            accountOperation: {
+              operationId: "account-operation",
+              method: "scient_agent_account" as const,
+              status: "waiting_for_device_code" as const,
+              startedAt: "2026-08-23T00:00:00.000Z",
+              finishedAt: null,
+              message: "Finish signing in.",
+              account: "openai-codex",
+              authorizationUrl: "https://auth.example.com/device",
+              authorizationUrlKind: "primary" as const,
+              userCode: "ACCT-1234",
+              instructions: "Enter code: ACCT-1234",
             },
           },
         },
@@ -8102,6 +8116,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.isUndefined(provider?.connection?.operation?.authorizationUrl);
         assert.isUndefined(provider?.connection?.operation?.authorizationUrlKind);
         assert.isUndefined(provider?.connection?.operation?.userCode);
+        assert.isUndefined(provider?.connection?.operation?.instructions);
+        const accountOperation = provider?.connection?.accountOperation;
+        assert.equal(accountOperation?.account, "openai-codex");
+        assert.isUndefined(accountOperation?.authorizationUrl);
+        assert.isUndefined(accountOperation?.authorizationUrlKind);
+        assert.isUndefined(accountOperation?.userCode);
+        assert.isUndefined(accountOperation?.instructions);
       };
 
       assertAuthorizationMaterialRedacted(readOnlyResult.config.providers[0]);

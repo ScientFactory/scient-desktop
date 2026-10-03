@@ -3,9 +3,10 @@ import type { EnvironmentId, ServerProvider } from "@t3tools/contracts";
 import { ScientAgentIcon } from "../../components/Icons";
 import { ManagedRuntimeComposerSetup } from "./ManagedRuntimeComposerSetup";
 import { ProviderRuntimeSection } from "./ProviderRuntimeSection";
+import { ScientAgentAccounts } from "./ScientAgentAccounts";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
-/** Scient Agent can be installed by Scient. Model connections are configured separately. */
+/** Scient Agent can be installed by Scient, and signs in to model accounts from here. */
 export function ScientAgentInlineSetup(props: {
   readonly environmentId: EnvironmentId;
   readonly provider: ServerProvider;
@@ -22,21 +23,29 @@ export function ScientAgentInlineSetup(props: {
         displayName={props.displayName}
         environmentId={props.environmentId}
         icon={ScientAgentIcon}
-        modelSetupHint="Add a custom model, or sign in with the Scient Agent CLI, then refresh providers."
+        modelSetupHint="Sign in to a model account or add a custom model in Settings > Providers."
         provider={props.provider}
       />
     );
   }
-  if (props.managedRuntimePresentedExternally) return null;
   return (
-    <ProviderRuntimeSection
-      compact
-      environmentId={props.environmentId}
-      provider={props.provider}
-      displayName={props.displayName}
-      onActionSucceeded={(action) => {
-        if (action === "repair") props.onRepairSucceeded?.();
-      }}
-    />
+    <>
+      {props.managedRuntimePresentedExternally ? null : (
+        <ProviderRuntimeSection
+          compact
+          environmentId={props.environmentId}
+          provider={props.provider}
+          displayName={props.displayName}
+          onActionSucceeded={(action) => {
+            if (action === "repair") props.onRepairSucceeded?.();
+          }}
+        />
+      )}
+      <ScientAgentAccounts
+        key={props.provider.instanceId}
+        environmentId={props.environmentId}
+        provider={props.provider}
+      />
+    </>
   );
 }
