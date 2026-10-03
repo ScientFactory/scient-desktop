@@ -2,7 +2,6 @@ import { useState, type ReactNode } from "react";
 import { XIcon } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
-import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { LatexSelect } from "./LatexSelect";
 import { latexVisualLayoutProfile, type LatexVisualLayoutUpdate } from "./latexVisualDocument";
 import { LATEX_PAPER_SIZES } from "./latexVisualLayout";
@@ -60,7 +59,10 @@ function Field(props: { readonly label: string; readonly children: ReactNode }) 
   );
 }
 
-/** Two or three choices side by side, like the view switch. */
+/**
+ * Two or three choices side by side, drawn like the header's view switch:
+ * white, with a grey pill under the chosen one that slides when it changes.
+ */
 function Choice<T extends string>(props: {
   readonly label: string;
   readonly value: T;
@@ -68,23 +70,59 @@ function Choice<T extends string>(props: {
   readonly disabled: boolean;
   readonly onChange: (value: T) => void;
 }) {
+  const index = Math.max(
+    0,
+    props.options.findIndex((option) => option.value === props.value),
+  );
+  const count = props.options.length;
   return (
-    <ToggleGroup
+    <div
+      role="radiogroup"
       aria-label={props.label}
-      className="w-full *:flex-1"
-      value={[props.value]}
-      disabled={props.disabled}
-      onValueChange={(next) => {
-        const value = props.options.find((option) => option.value === next[0]);
-        if (value) props.onChange(value.value);
-      }}
+      aria-disabled={props.disabled || undefined}
+      className="relative grid h-7 rounded-md border border-border bg-background p-0.5 aria-disabled:opacity-64"
+      style={{ gridTemplateColumns: `repeat(${count}, minmax(0, 1fr))` }}
     >
-      {props.options.map((option) => (
-        <Toggle key={option.value} value={option.value}>
-          {option.label}
-        </Toggle>
-      ))}
-    </ToggleGroup>
+      <span
+        aria-hidden="true"
+        className="absolute inset-y-0.5 rounded-[5px] bg-accent transition-[left] duration-200 ease-out motion-reduce:transition-none"
+        style={{
+          width: `calc((100% - 4px) / ${count})`,
+          left: `calc(2px + (100% - 4px) * ${index} / ${count})`,
+        }}
+      />
+      {props.options.map((option) => {
+        const chosen = option.value === props.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="radio"
+            aria-checked={chosen}
+            tabIndex={chosen ? 0 : -1}
+            disabled={props.disabled}
+            className={
+              "relative min-w-0 truncate rounded-[5px] px-2 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring " +
+              (chosen ? "text-accent-foreground" : "text-muted-foreground hover:text-foreground")
+            }
+            onClick={() => props.onChange(option.value)}
+            onKeyDown={(event) => {
+              const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+              if (step === 0) return;
+              event.preventDefault();
+              const next = props.options[(index + step + count) % count]!;
+              props.onChange(next.value);
+              const group = event.currentTarget.parentElement;
+              requestAnimationFrame(() =>
+                group?.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus(),
+              );
+            }}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -172,7 +210,6 @@ export function LatexDocumentSettings(props: {
             );
         }}
       >
-        <h3 className="text-sm font-semibold">Document settings</h3>
         <fieldset className="grid grid-cols-2 gap-x-3 gap-y-2.5" disabled={locked}>
           <Field label="Type">
             <LatexSelect
