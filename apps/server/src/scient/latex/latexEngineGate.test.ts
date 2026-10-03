@@ -328,7 +328,9 @@ describe("evaluateLatexEngineGate", () => {
     const verdict = evaluateLatexEngineGate({ rootText: source });
     expect(verdict.supported).toBe(false);
     if (!verdict.supported) {
-      expect(verdict.message).toContain("pdfLaTeX only");
+      // pdfLaTeX cannot load it, and the message says how to pick a compiler that can.
+      expect(verdict.message).toContain("pdfLaTeX cannot process it");
+      expect(verdict.message).toContain("% !TEX program = lualatex");
       expect(verdict.message).toContain("fontspec");
       expect(verdict.message).toContain(source);
     }
@@ -339,7 +341,7 @@ describe("evaluateLatexEngineGate", () => {
     const verdict = evaluateLatexEngineGate({ rootText: source });
     expect(verdict.supported).toBe(false);
     if (!verdict.supported) {
-      expect(verdict.message).toContain("pdfLaTeX only");
+      expect(verdict.message).toContain("cannot be compiled by pdfLaTeX");
       expect(verdict.message).toContain("XeLaTeX");
       expect(verdict.message).toContain(source);
     }

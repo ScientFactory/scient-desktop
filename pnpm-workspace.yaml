@@ -268,6 +268,7 @@ patchedDependencies:
   app-builder-lib@26.15.6: patches/app-builder-lib@26.15.6.patch
   dbus-next@0.10.2: patches/dbus-next@0.10.2.patch
   effect@4.0.0-rc.115: patches/effect@4.0.0-rc.115.patch
+  mathlive@0.108.2: patches/mathlive@0.108.2.patch
   # SCIENT-FORK:START — node-pty stays on ^1.1.0 until the owner decides
   # between it and ^1.2.0-beta.15, so upstream's node-pty patch entry is
   # deliberately not mapped. The patch file itself stays in the repository so

@@ -496,7 +496,11 @@ export const ProjectRenameFileInput = Schema.Struct({
   destinationRelativePath: FilePathString.check(
     Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH),
   ),
-  expectedRevision: TrimmedNonEmptyString,
+  /**
+   * The revision the client last read. Omitted only for a file it cannot read
+   * whole (binary or truncated), which is then renamed without a content check.
+   */
+  expectedRevision: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProjectRenameFileInput = typeof ProjectRenameFileInput.Type;
 

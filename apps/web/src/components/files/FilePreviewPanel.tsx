@@ -39,6 +39,11 @@ import {
   Table2,
   WrapTextIcon,
 } from "lucide-react";
+import { MarkdownDownloadMenu } from "~/scient/documentExport/MarkdownDownloadMenu";
+import {
+  DocumentDownloadMenu,
+  type DocumentDownloadActions,
+} from "~/scient/documentExport/DocumentDownloadMenu";
 import * as Schema from "effect/Schema";
 import {
   lazy,
@@ -94,7 +99,9 @@ import {
 import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
 import { computeSourceLanguageForPath } from "~/scient/compute/computeSourceLanguage";
 import { computeFileContextId } from "~/scient/compute/computeContextStore";
-import { ScientMarkdownRenameButton } from "~/scient/markdownEditor/ui/ScientMarkdownRenameButton";
+import { FileRenameButton } from "./FileRenameButton";
+import { normalizeMarkdownCreatePath } from "~/scient/markdownEditor/ui/ScientMarkdownCreateButton";
+import type { LatexRenameContext } from "~/scient/latex/ScientLatexSurface";
 import {
   isScientMarkdownDocumentPath,
   shouldUseScientMarkdownEditor,
@@ -111,6 +118,7 @@ import {
 import { workspacePdfSourceForPreview } from "~/scient/pdf/pdfSource";
 import {
   ScientFileFreshnessNotices,
+  ScientFileFreshnessStatus,
   ScientFileReloadButton,
 } from "~/scient/fileSurfaces/ScientFileFreshnessControls";
 import {
@@ -198,6 +206,8 @@ interface FilePreviewPanelProps {
   latexPresentationRequest: LatexFilePresentationRequest | null;
   latexRootRelativePath: string | null;
   onOpenFile: (relativePath: string) => void;
+  /** The open file was renamed: its tab follows it to the new path. */
+  onFileRenamed: (fromPath: string, toPath: string) => void;
   onOpenFileSource: (relativePath: string, line?: number, options?: OpenFileOptions) => void;
   onHtmlPresentationRequestHandled: (
     relativePath: string,
@@ -855,7 +865,7 @@ export function MarkdownSourceSurface({
   return <EditableFileEditor {...props} {...bindings} />;
 }
 
-function EditableFileEditor({
+export function EditableFileEditor({
   environmentId,
   cwd,
   relativePath,
@@ -1415,6 +1425,7 @@ export default function FilePreviewPanel({
   latexPresentationRequest,
   latexRootRelativePath,
   onOpenFile,
+  onFileRenamed,
   onOpenFileSource,
   onHtmlPresentationRequestHandled,
   onLatexPresentationRequestHandled,
@@ -1475,7 +1486,9 @@ export default function FilePreviewPanel({
   const usesDocumentSession =
     !isHostFile &&
     relativePath !== null &&
-    (isRichMarkdown || (documentSessionIsCurrent && isLatexPreviewFile(relativePath)));
+    (isRichMarkdown ||
+      (documentSessionIsCurrent &&
+        (isLatexPreviewFile(relativePath) || /\.bib$/i.test(relativePath))));
   const {
     automaticRefreshUnavailable,
     cancelReloadNotice,
@@ -1758,6 +1771,37 @@ export default function FilePreviewPanel({
         savingCopyRef.current = false;
       });
   }, [absolutePath, createCopyUrl, environmentHttpBaseUrl, environmentId]);
+  // Any workspace file can be renamed from its name in the header. A file the
+  // editor holds is renamed only at the revision it last read; a file the app
+  // cannot read whole (media, PDF, other binary, or truncated) has no such
+  // revision and is renamed as it is.
+  const [latexRename, setLatexRename] = useState<LatexRenameContext | null>(null);
+  const canRenameFile =
+    relativePath !== null &&
+    !isHostFile &&
+    !isDirectory &&
+    file.data?.readOnly !== true &&
+    file.data?.outsideWorkspace !== true;
+  const renameRevision =
+    file.data && !file.data.truncated
+      ? (markdownSnapshot?.baselineRevision ?? file.data.revision)
+      : null;
+  const [renamingInPlace, setRenamingInPlace] = useState(false);
+  const renamePendingRef = useRef(effectiveSourcePending);
+  renamePendingRef.current = effectiveSourcePending;
+  // A document session holds its own barrier; a file saved by this panel is
+  // held here: nothing pending when the rename starts, no edits until it ends.
+  const holdPanelFileForRename = () => {
+    if (renamePendingRef.current) return null;
+    setRenamingInPlace(true);
+    return () => setRenamingInPlace(false);
+  };
+  const renameDisabled =
+    effectiveSourcePending ||
+    (latexRename?.blocked ?? false) ||
+    (file.data === null && file.failure !== "binary_file");
+  // A LaTeX document's own exports, published by its surface.
+  const [latexDownloads, setLatexDownloads] = useState<DocumentDownloadActions | null>(null);
   const canSaveCopy =
     attachment === undefined && absolutePath !== null && !isDirectory && !!environmentHttpBaseUrl;
 
@@ -1858,6 +1902,24 @@ export default function FilePreviewPanel({
     threadRef,
   ]);
 
+  const freshnessNoticeProps = {
+    relativePath,
+    notice: reloadNotice,
+    readError: isDirectory ? null : file.error,
+    readFailureReason: file.failureReason,
+    missingFileChoices: missingFile.paths,
+    onOpenFile,
+    saveError,
+    saveRetryReady,
+    hasFallbackData: file.data !== null,
+    reloading: file.isPending,
+    onCancel: cancelReloadNotice,
+    onReload: requestManualReload,
+    onRequestOverwrite: requestOverwrite,
+    onRetrySave: requestRetrySave,
+    onResolve: resolveReloadNotice,
+  };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       {relativePath && attachment === undefined ? (
@@ -1895,41 +1957,46 @@ export default function FilePreviewPanel({
                 relativePath={relativePath}
                 onOpenFile={onOpenFile}
                 currentFileControl={
-                  isRichMarkdown && !file.data?.readOnly ? (
-                    <ScientMarkdownRenameButton
-                      {...(markdownLease
-                        ? { beforeRename: () => markdownLease.holdForRename() }
+                  canRenameFile ? (
+                    <FileRenameButton
+                      beforeRename={
+                        markdownLease ? () => markdownLease.holdForRename() : holdPanelFileForRename
+                      }
+                      {...(isRichMarkdown
+                        ? {
+                            normalize: normalizeMarkdownCreatePath,
+                            invalidMessage: "Enter a relative Markdown path inside this workspace.",
+                          }
+                        : {})}
+                      {...(latexRename?.includedBy
+                        ? {
+                            notice: (
+                              <>
+                                {latexRename.includedBy} includes this file. After renaming, update
+                                the line that includes it.
+                              </>
+                            ),
+                          }
                         : {})}
                       environmentId={environmentId}
                       cwd={cwd}
                       relativePath={relativePath}
-                      revision={
-                        markdownSnapshot?.baselineRevision ?? file.data?.revision ?? "unavailable"
-                      }
-                      disabled={
-                        effectiveSourcePending ||
-                        file.data === null ||
-                        (file.data?.truncated ?? false)
-                      }
+                      revision={renameRevision}
+                      disabled={renameDisabled}
                       label={relativePath.slice(relativePath.lastIndexOf("/") + 1)}
-                      onRenamed={(destinationRelativePath, revision) => {
-                        markdownPersistenceRegistry.forgetClean({
-                          environmentId,
-                          cwd,
-                          relativePath,
-                        });
-                        if (file.data) {
-                          setProjectFileQueryData(
+                      onRenamed={(destinationRelativePath) => {
+                        if (usesDocumentSession) {
+                          markdownPersistenceRegistry.forgetClean({
                             environmentId,
                             cwd,
-                            destinationRelativePath,
-                            file.data.contents,
-                            revision,
-                          );
+                            relativePath,
+                          });
                         }
+                        // The new path is read from disk: seeding it with
+                        // this copy would mask later changes to it.
                         clearProjectFileQueryData(environmentId, cwd, relativePath);
                         refreshProjectEntriesQuery(environmentId, cwd);
-                        onOpenFile(destinationRelativePath);
+                        onFileRenamed(relativePath, destinationRelativePath);
                       }}
                     />
                   ) : undefined
@@ -1948,6 +2015,21 @@ export default function FilePreviewPanel({
               enableShortcut={false}
             />
           ) : null}
+          {/* Word wrap comes before the view toggle, so the toggle keeps its place
+              when it switches to the source and back. */}
+          {showsRawText ? (
+            <FileSurfaceAction
+              label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
+              pressed={wordWrap}
+              onPress={() => updateClientSettings({ wordWrap: !wordWrap })}
+            >
+              <WrapTextIcon className="size-3.5" />
+            </FileSurfaceAction>
+          ) : canToggleRenderedForSurface ? (
+            // The rich view has no word wrap; its place stays, so Open in and
+            // the buttons after it do not move when the view changes.
+            <span aria-hidden="true" className="h-8 w-8 shrink-0 sm:h-7 sm:w-7" />
+          ) : null}
           {canToggleRenderedForSurface ? (
             <FileSurfaceAction
               label={renderedToggleLabel(renderedMode!, surfaceRendered)}
@@ -1963,21 +2045,44 @@ export default function FilePreviewPanel({
               )}
             </FileSurfaceAction>
           ) : null}
-          {showsRawText ? (
-            <FileSurfaceAction
-              label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
-              pressed={wordWrap}
-              onPress={() => updateClientSettings({ wordWrap: !wordWrap })}
-            >
-              <WrapTextIcon className="size-3.5" />
-            </FileSurfaceAction>
-          ) : null}
           {canOpenInBrowser ? (
             <FileSurfaceAction label="Open file in preview browser" onPress={handleOpenInBrowser}>
               <Globe className="size-3.5" />
             </FileSurfaceAction>
           ) : null}
-          {canSaveCopy ? (
+          {relativePath && isLatexPreviewFile(relativePath) ? (
+            <ScientFileFreshnessStatus
+              {...freshnessNoticeProps}
+              pending={effectiveSourcePending}
+              sessionAttention={
+                // The same three cases the session's own notice tells apart.
+                markdownSnapshot?.conflict
+                  ? "conflict"
+                  : markdownSnapshot?.error
+                    ? markdownSnapshot.pending
+                      ? "failure"
+                      : "refresh"
+                    : null
+              }
+            />
+          ) : null}
+          {canSaveCopy && isRichMarkdown && markdownLease && relativePath ? (
+            // A Markdown file downloads as itself, or as a PDF or Word document.
+            <MarkdownDownloadMenu
+              environmentId={environmentId}
+              cwd={cwd}
+              relativePath={relativePath}
+              threadRef={threadRef}
+              persistence={markdownLease}
+              onSaveCopy={handleSaveCopy}
+            />
+          ) : canSaveCopy && latexDownloads ? (
+            <DocumentDownloadMenu
+              {...latexDownloads}
+              sourceLabel="LaTeX source (.tex)"
+              onSaveCopy={handleSaveCopy}
+            />
+          ) : canSaveCopy ? (
             <FileSurfaceAction label="Save a copy to this device" onPress={handleSaveCopy}>
               <Download className="size-3.5" />
             </FileSurfaceAction>
@@ -2018,24 +2123,8 @@ export default function FilePreviewPanel({
             ? { missingFileChoices: missingFile.paths, onOpenFile }
             : {})}
         />
-      ) : (
-        <ScientFileFreshnessNotices
-          relativePath={relativePath}
-          notice={reloadNotice}
-          readError={isDirectory ? null : file.error}
-          readFailureReason={file.failureReason}
-          missingFileChoices={missingFile.paths}
-          onOpenFile={onOpenFile}
-          saveError={saveError}
-          saveRetryReady={saveRetryReady}
-          hasFallbackData={file.data !== null}
-          reloading={file.isPending}
-          onCancel={cancelReloadNotice}
-          onReload={requestManualReload}
-          onRequestOverwrite={requestOverwrite}
-          onRetrySave={requestRetrySave}
-          onResolve={resolveReloadNotice}
-        />
+      ) : attachment === undefined && relativePath && isLatexPreviewFile(relativePath) ? null : (
+        <ScientFileFreshnessNotices {...freshnessNoticeProps} />
       )}
       {relativePath && !markdownLease && !isPdf && file.data?.readOnly ? (
         <div className="shrink-0 border-b border-border/50 bg-muted/35 px-3 py-1.5 scient-reading-micro text-muted-foreground">
@@ -2056,6 +2145,9 @@ export default function FilePreviewPanel({
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div
           className={cn("min-w-0 flex-1 flex-col overflow-hidden", previewPath ? "flex" : "hidden")}
+          // While a file this panel saves is being renamed, it takes no edits:
+          // a save started now would go to the name that is going away.
+          inert={renamingInPlace || undefined}
         >
           {isDirectory ? null : relativePath && attachment ? (
             <AttachmentFilePreview
@@ -2229,6 +2321,8 @@ export default function FilePreviewPanel({
               >
                 <ScientLatexSurface
                   key={`${relativePath}:${resolvedTheme}`}
+                  onDownloadActions={setLatexDownloads}
+                  onRenameContext={setLatexRename}
                   environmentId={environmentId}
                   cwd={cwd}
                   relativePath={relativePath}
@@ -2236,7 +2330,8 @@ export default function FilePreviewPanel({
                   composerDraftTarget={composerDraftTarget}
                   contents={file.data.contents}
                   revision={file.data.revision}
-                  // Without a session the file is too large to edit completely.
+                  truncated={file.data.truncated}
+                  // Without a session the file is read-only or too large to edit completely.
                   persistence={markdownLease}
                   resolvedTheme={resolvedTheme}
                   revealLine={revealLine}

@@ -307,6 +307,7 @@ import {
   scientComputeSurface,
   scientSourcePdfSurface,
   scientSourcesSurface,
+  scientDocumentsSurface,
 } from "~/scient/rightPanel/surfaces";
 // SCIENT-FORK:START — thread queue seam. To retire, delete this block, the
 // marked blocks below, and `~/scient/threadQueue`.
@@ -728,6 +729,11 @@ const DevicePanel = lazy(() =>
   import("./device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
 const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
+const ScientDocumentsPanel = lazy(() =>
+  import("../scient/documents/ScientDocumentsPanel").then((module) => ({
+    default: module.ScientDocumentsPanel,
+  })),
+);
 const ScientSourcesPanel = lazy(() =>
   import("../scient/sources/ScientSourcesPanel").then((module) => ({
     default: module.ScientSourcesPanel,
@@ -5151,6 +5157,13 @@ function ChatViewContent(props: ChatViewProps) {
       useRightPanelStore.getState().open(activeThreadRef, "agents");
     });
   }, [activeThreadRef, runAfterPendingFileSave]);
+  const addDocumentsSurface = useCallback(() => {
+    if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
+    const surface = scientDocumentsSurface();
+    runAfterPendingFileSave(surface.id, () => {
+      useRightPanelStore.getState().openScient(activeThreadRef, surface);
+    });
+  }, [activeThreadRef, activeWorkspaceRoot, runAfterPendingFileSave]);
   const addSourcesSurface = useCallback(() => {
     if (!activeThreadRef || !activeProject || activeWorkspaceRoot === undefined) return;
     const surface = scientSourcesSurface();
@@ -10664,6 +10677,22 @@ function ChatViewContent(props: ChatViewProps) {
         />
       </Suspense>
     ) : renderedRightPanelSurface?.kind === "scient" &&
+      renderedRightPanelSurface.module === "documents" &&
+      activeThreadRef &&
+      activeWorkspaceRoot ? (
+      <Suspense fallback={null}>
+        <ScientDocumentsPanel
+          key={`${activeThreadRef.environmentId}:${activeWorkspaceRoot}`}
+          environmentId={activeThreadRef.environmentId}
+          cwd={activeWorkspaceRoot}
+          projectTitle={activeProject?.title ?? "Project"}
+          onOpenDocument={(path) =>
+            openFileSourceSurface(path, undefined, { latexPreviewMode: "visual" })
+          }
+          onOpenFiles={addFilesSurface}
+        />
+      </Suspense>
+    ) : renderedRightPanelSurface?.kind === "scient" &&
       renderedRightPanelSurface.module === "sources" &&
       activeThread &&
       activeThreadRef &&
@@ -10757,6 +10786,11 @@ function ChatViewContent(props: ChatViewProps) {
               : null
           }
           onOpenFile={openFileSurface}
+          onFileRenamed={(fromPath, toPath) => {
+            if (activeThreadRef) {
+              useRightPanelStore.getState().renameFileSurface(activeThreadRef, fromPath, toPath);
+            }
+          }}
           onOpenFileSource={openFileSourceSurface}
           onHtmlPresentationRequestHandled={handleHtmlPresentationRequestHandled}
           onLatexPresentationRequestHandled={handleLatexPresentationRequestHandled}
@@ -11458,6 +11492,8 @@ function ChatViewContent(props: ChatViewProps) {
           onAddPullRequests={addPullRequestsSurface}
           onAddAgents={addAgentsSurface}
           onAddSources={addSourcesSurface}
+          onAddDocuments={addDocumentsSurface}
+          documentsAvailable={activeWorkspaceRoot !== undefined}
           onAddCompute={addComputeSurface}
           onAddDevice={addDeviceSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
@@ -11521,6 +11557,8 @@ function ChatViewContent(props: ChatViewProps) {
             onAddPullRequests={addPullRequestsSurface}
             onAddAgents={addAgentsSurface}
             onAddSources={addSourcesSurface}
+            onAddDocuments={addDocumentsSurface}
+            documentsAvailable={activeWorkspaceRoot !== undefined}
             onAddCompute={addComputeSurface}
             onAddDevice={addDeviceSurface}
             browserAvailable={isPreviewSupportedInRuntime()}

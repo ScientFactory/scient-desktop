@@ -46,8 +46,13 @@ export function validateKeys(keys: string): void {
   if (!keys || keys.length > 100 || keys.trim().split(/\s+/u).length > 4)
     throw new Error("Use one to four shortcut strokes.");
   const strokes = keys.trim().toLowerCase().split(/\s+/u);
-  if (!/^(?:mod|ctrl|meta|alt)\+/u.test(strokes[0]!))
-    throw new Error("Start a shortcut with a modifier; ordinary typing is reserved.");
+  if (
+    !/^(?:mod|ctrl|meta|alt)\+/u.test(strokes[0]!) &&
+    !/^f(?:[1-9]|1[0-9]|2[0-4])$/u.test(strokes[0]!)
+  )
+    throw new Error(
+      "Start with Ctrl, Alt, Command, or a function key; ordinary typing is reserved.",
+    );
   for (const stroke of strokes) {
     if (stroke === "+") continue;
     const parts = stroke.split("+");

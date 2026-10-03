@@ -33,6 +33,7 @@ export interface WorkspaceFileSessionLeaseOptions<A, E> extends WorkspaceFileSes
 
 export interface WorkspaceFileSessionLease {
   readonly change: (contents: string) => void;
+  readonly flush: () => Promise<boolean>;
   readonly setSuspended: (suspended: boolean) => void;
   readonly syncConfirmedFileRevision: (revision: string) => void;
   readonly discardPending: (revision: string) => void;
@@ -132,6 +133,7 @@ export class WorkspaceFileSessionRegistry<A = unknown, E = unknown> {
       if (record.active) action();
     };
     return {
+      flush: () => (record.active ? currentEntry.coordinator.flush() : Promise.resolve(false)),
       change: (contents) =>
         ifActive(() => {
           currentEntry.lastFailure = null;

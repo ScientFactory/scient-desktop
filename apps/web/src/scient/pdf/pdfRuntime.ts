@@ -113,7 +113,11 @@ export function createPdfRuntime(input: {
     delay: 100,
     updateMatchesCountOnProgress: true,
   });
+  const viewerLifetime = new AbortController();
   const viewer = new PDFViewer({
+    // Supported by the pinned PDF.js runtime (its generated declaration omits
+    // this option). Releases its internal scroll and resize observers on swap.
+    ...{ abortSignal: viewerLifetime.signal },
     container: input.container,
     viewer: input.viewerElement,
     eventBus,
@@ -177,9 +181,13 @@ export function createPdfRuntime(input: {
     destroy: async () => {
       if (destroyed) return;
       destroyed = true;
+      viewerLifetime.abort();
       resizeObserver.disconnect();
       resizeSettlement.cancel();
       viewer.cleanup();
+      // PDF.js supports null to reset/cancel its page views; its declaration
+      // currently omits that runtime-supported branch.
+      (viewer.setDocument as (document: PDFDocumentProxy | null) => void)(null);
       input.viewerElement.replaceChildren();
       await input.loadingTask.destroy();
     },

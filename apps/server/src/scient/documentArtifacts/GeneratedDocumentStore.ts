@@ -57,6 +57,8 @@ const StoredGeneratedDocumentRevision = Schema.Struct({
     Schema.isPattern(/^[^/\\\0]+\.pdf$/iu),
   ),
   pageCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  /** Bounded auxiliary bytes retained and evicted with this revision. */
+  attachmentByteLength: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
 });
 type StoredGeneratedDocumentRevision = typeof StoredGeneratedDocumentRevision.Type;
 
@@ -298,6 +300,9 @@ const optionalOnNotFound = <A>(effect: Effect.Effect<A, PlatformError.PlatformEr
 const revisionKey = (artifactId: ArtifactId, revisionId: ArtifactRevisionId) =>
   `${artifactId}/${revisionId}`;
 
+const retainedRevisionByteLength = (stored: StoredGeneratedDocumentRevision) =>
+  stored.artifact.byteLength + (stored.attachmentByteLength ?? 0);
+
 const adjustPinCount = (
   current: ReadonlyMap<string, number>,
   key: string,
@@ -507,14 +512,14 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
         // Windows rejects fsync on a read-only descriptor with EPERM, so the
         // durability flush opens these freshly written files for writing.
         yield* Effect.scoped(
-          Effect.all([
-            fileSystem
-              .open(path.join(temporaryDirectory, "document.pdf"), { flag: "r+" })
-              .pipe(Effect.flatMap((file) => file.sync)),
-            fileSystem
-              .open(path.join(temporaryDirectory, "metadata.json"), { flag: "r+" })
-              .pipe(Effect.flatMap((file) => file.sync)),
-          ]),
+          Effect.forEach(
+            ["document.pdf", "metadata.json"],
+            (name) =>
+              fileSystem
+                .open(path.join(temporaryDirectory, name), { flag: "r+" })
+                .pipe(Effect.flatMap((file) => file.sync)),
+            { discard: true },
+          ),
         );
         yield* fileSystem.rename(temporaryDirectory, finalDirectory);
       }).pipe(
@@ -939,7 +944,7 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
             artifactId: current.artifactId,
             revisionId,
             logicalDocumentKey: input.logicalDocumentKey,
-            byteLength: ownedBytes.byteLength,
+            byteLength: retainedRevisionByteLength(stored),
             createdAtEpochMs: nowEpochMs,
           });
           yield* enforceRetentionBudget();
@@ -1072,6 +1077,7 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
         // lease write without holding the global store lock while hashing a PDF.
         yield* retainRevision(input);
         const document = yield* resolveRevisionUnlocked(input);
+        const storedRevision = yield* readRevision(input.artifactId, input.revisionId);
         return yield* lock.withPermit(
           Effect.gen(function* () {
             const nowEpochMs = yield* Clock.currentTimeMillis;
@@ -1098,7 +1104,7 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
                   artifactId: document.artifact.artifactId,
                   revisionId: document.artifact.revisionId,
                   logicalDocumentKey: document.artifact.logicalDocumentKey,
-                  byteLength: document.artifact.byteLength,
+                  byteLength: retainedRevisionByteLength(storedRevision),
                   createdAtEpochMs: document.artifact.createdAtEpochMs,
                   lastAccessEpochMs: nowEpochMs,
                   assetLeaseExpiresAtEpochMs: expiresAtEpochMs,
@@ -1278,7 +1284,7 @@ export const make = Effect.fn("GeneratedDocumentStore.make")(function* (
         artifactId: entry.artifactId,
         revisionId: entry.revisionId,
         logicalDocumentKey: stored.artifact.logicalDocumentKey,
-        byteLength: stored.artifact.byteLength,
+        byteLength: retainedRevisionByteLength(stored),
         createdAtEpochMs: stored.artifact.createdAtEpochMs,
         lastAccessEpochMs: stored.artifact.createdAtEpochMs,
       });

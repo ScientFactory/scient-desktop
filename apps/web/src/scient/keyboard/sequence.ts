@@ -13,15 +13,21 @@ export class ShortcutSequence {
     const snapshot = getKeyboardPreferences();
     if (snapshot !== this.bindingsSnapshot) {
       this.bindingsSnapshot = snapshot;
-      this.normalized = surfaceBindings(this.scope, this.mac).map((binding) => ({
-        keys: normalizeKeys(binding.keys, this.mac),
-        command: binding.command,
-      }));
+      this.normalized = surfaceBindings(undefined, this.mac)
+        .filter((binding) =>
+          typeof this.scope === "string"
+            ? binding.scope === this.scope
+            : this.scope.includes(binding.scope),
+        )
+        .map((binding) => ({
+          keys: normalizeKeys(binding.keys, this.mac),
+          command: binding.command,
+        }));
     }
     return this.normalized;
   }
   constructor(
-    private readonly scope: KeyboardScope,
+    private readonly scope: KeyboardScope | readonly KeyboardScope[],
     private readonly feedback: (text: string) => void = () => {},
     private readonly mac = isMacKeyboard(),
   ) {}

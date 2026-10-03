@@ -73,6 +73,34 @@ describe("WorkspaceFileSessionRegistry", () => {
     vi.useRealTimers();
   });
 
+  it("flushes the latest shared edit before the debounce expires", async () => {
+    const persistResult = deferred<AtomCommandResult<WriteResult, Error>>();
+    const persist = vi.fn().mockReturnValue(persistResult.promise);
+    const first = registry.acquire(options({ persist }));
+    const second = registry.acquire(options({ persist }));
+    first.change("pending Visual edit");
+    const flushed = second.flush();
+    expect(persist).toHaveBeenCalledExactlyOnceWith("pending Visual edit", "revision-1");
+    persistResult.resolve(success("revision-2"));
+    await expect(flushed).resolves.toBe(true);
+    first.release();
+    second.release();
+  });
+
+  it("reports a failed save to the caller waiting to build", async () => {
+    const persist = vi.fn().mockResolvedValue(failure("revision conflict"));
+    const lease = registry.acquire(options({ persist }));
+    lease.change("pending Visual edit");
+    await expect(lease.flush()).resolves.toBe(false);
+    lease.release();
+  });
+
+  it("does not report a released save lease as ready to build", async () => {
+    const lease = registry.acquire(options({ persist: vi.fn() }));
+    lease.release();
+    await expect(lease.flush()).resolves.toBe(false);
+  });
+
   it("serializes multiple views of one file through one debounced writer", async () => {
     const persist = vi.fn().mockResolvedValue(success("revision-2"));
     const firstPending = vi.fn();

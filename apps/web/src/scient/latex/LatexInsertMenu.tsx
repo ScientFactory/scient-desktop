@@ -1,0 +1,150 @@
+import { BookOpen, Image as ImageIcon, NotebookText, Shapes, Tag } from "lucide-react";
+import type { ReactNode } from "react";
+
+import { MenuSeparator, MenuSub, MenuSubPopup, MenuSubTrigger } from "~/components/ui/menu";
+import { WritingCommandIcon } from "../writing/commandIcons";
+import {
+  InsertMenu,
+  InsertMenuContent,
+  type InsertMenuAction,
+  type InsertMenuLayout,
+} from "../writing/InsertMenu";
+
+export interface LatexInsertAction extends InsertMenuAction {
+  description: string;
+  group: string;
+}
+
+const STATEMENTS = [
+  "theorem",
+  "lemma",
+  "proposition",
+  "corollary",
+  "claim",
+  "definition",
+  "example",
+  "remark",
+  "proof",
+];
+const SUBMENU = { "data-latex-insert-menu": "", "data-dock-command-scope": "latex" } as const;
+/** The first level reads like Markdown's Insert menu: one quiet icon per row. */
+const ICON = "size-4 text-muted-foreground";
+const ICONS: Readonly<Record<string, ReactNode>> = {
+  figure: <ImageIcon className={ICON} />,
+  citation: <BookOpen className={ICON} />,
+  reference: <Tag className={ICON} />,
+  footnote: <NotebookText className={ICON} />,
+  link: <WritingCommandIcon command="link" className={ICON} />,
+};
+const withIcons = (actions: readonly LatexInsertAction[]): readonly LatexInsertAction[] =>
+  actions.map((action) => (action.icon ? action : { ...action, icon: ICONS[action.id] }));
+
+/** LaTeX's arrangement of the shared Insert menu. */
+function latexInsertLayout(actions: readonly LatexInsertAction[]): InsertMenuLayout {
+  return (renderItem, table) => {
+    const placed = new Set<string>();
+    const item = (id: string) => {
+      placed.add(id);
+      return renderItem(id);
+    };
+    const layout = (
+      <>
+        {item("figure")}
+        {table}
+        {item("code")}
+        {item("verbatim")}
+        <MenuSeparator />
+        <MenuSub>
+          <MenuSubTrigger>
+            <BookOpen className={ICON} />
+            <span>References</span>
+          </MenuSubTrigger>
+          <MenuSubPopup {...SUBMENU}>
+            {["citation", "reference", "link"].map(item)}
+            <MenuSeparator />
+            {item("footnote")}
+          </MenuSubPopup>
+        </MenuSub>
+        <MenuSub>
+          <MenuSubTrigger>
+            <Shapes className={ICON} />
+            <span>Theorems &amp; proofs</span>
+          </MenuSubTrigger>
+          <MenuSubPopup {...SUBMENU}>
+            {STATEMENTS.slice(0, 5).map(item)}
+            <MenuSeparator />
+            {STATEMENTS.slice(5, 8).map(item)}
+            <MenuSeparator />
+            {item("proof")}
+            <MenuSeparator />
+            {["question", "subquestions"].map(item)}
+          </MenuSubPopup>
+        </MenuSub>
+        <MenuSub>
+          <MenuSubTrigger>Document blocks</MenuSubTrigger>
+          <MenuSubPopup {...SUBMENU}>
+            {["abstract", "contents", "bibliography"].map(item)}
+            <MenuSeparator />
+            {item("verse")}
+          </MenuSubPopup>
+        </MenuSub>
+        <MenuSeparator />
+        {item("pagebreak")}
+      </>
+    );
+    const extras = actions.filter((action) => !placed.has(action.id));
+    return (
+      <>
+        {layout}
+        {extras.length > 0 && (
+          <>
+            <MenuSeparator />
+            {extras.map((action) => renderItem(action.id))}
+          </>
+        )}
+      </>
+    );
+  };
+}
+
+/** The regular and overflow menus share the same categories and command availability. */
+export function LatexInsertMenuContent(props: {
+  actions: readonly LatexInsertAction[];
+  onInsertTable: (rows: number, columns: number) => void;
+  unavailableReason?: string | undefined;
+  onRun?: (command: () => void) => void;
+}) {
+  return (
+    <InsertMenuContent
+      actions={withIcons(props.actions)}
+      layout={latexInsertLayout(props.actions)}
+      onInsertTable={props.onInsertTable}
+      unavailableReason={props.unavailableReason}
+      onRun={props.onRun}
+    />
+  );
+}
+
+export function LatexInsertMenu(props: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  actions: readonly LatexInsertAction[];
+  disabled: boolean;
+  unavailableReason?: string | undefined;
+  onInsertTable: (rows: number, columns: number) => void;
+  onReturnFocus: () => void;
+}) {
+  return (
+    <InsertMenu
+      open={props.open}
+      onOpenChange={props.onOpenChange}
+      actions={withIcons(props.actions)}
+      layout={latexInsertLayout(props.actions)}
+      disabled={props.disabled}
+      unavailableReason={props.unavailableReason}
+      onInsertTable={props.onInsertTable}
+      onReturnFocus={props.onReturnFocus}
+      popupAttributes={{ "data-latex-insert-menu": "" }}
+    />
+  );
+}

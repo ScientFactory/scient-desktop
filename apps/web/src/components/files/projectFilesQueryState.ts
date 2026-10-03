@@ -25,6 +25,12 @@ const EMPTY_PROJECT_FILE_QUERY_ATOM = Atom.make(
 const projectFilesRefreshSignal = Atom.family((key: string) =>
   Atom.make(0).pipe(Atom.withLabel(`project-files-refresh:${key}`)),
 );
+// Only identities are indexed; the atoms remain authoritative for pending state and contents.
+const optimisticFileTargets: Map<
+  string,
+  { readonly environmentId: EnvironmentId; readonly cwd: string; readonly relativePath: string }
+> = import.meta.hot?.data?.optimisticFileTargets ?? new Map();
+if (import.meta.hot?.data) import.meta.hot.data.optimisticFileTargets = optimisticFileTargets;
 
 /** Refresh both query-backed pickers and mounted lazy trees after known workspace writes. */
 export function refreshProjectFiles(environmentId: EnvironmentId, cwd: string): void {
@@ -118,6 +124,11 @@ export function setProjectFileQueryData(
       ),
     )?.revision;
   if (!currentRevision) return;
+  optimisticFileTargets.set(JSON.stringify([environmentId, cwd, relativePath]), {
+    environmentId,
+    cwd,
+    relativePath,
+  });
   appAtomRegistry.set(optimisticAtom, {
     confirmedAgainst: undefined,
     data: {
@@ -136,6 +147,26 @@ export function getOptimisticProjectFileQueryData(
   relativePath: string,
 ): ProjectReadFileResult | null {
   return appAtomRegistry.get(optimisticFileAtom(environmentId, cwd, relativePath))?.data ?? null;
+}
+
+/** Unconfirmed writes in this exact workspace, including files without a document session. */
+export function getPendingOptimisticProjectFilePaths(
+  environmentId: EnvironmentId,
+  cwd: string,
+): readonly string[] {
+  const paths: string[] = [];
+  for (const [key, target] of optimisticFileTargets) {
+    if (target.environmentId !== environmentId || target.cwd !== cwd) continue;
+    const optimistic = appAtomRegistry.get(
+      optimisticFileAtom(target.environmentId, target.cwd, target.relativePath),
+    );
+    if (optimistic === null || optimistic.confirmedAgainst !== undefined) {
+      optimisticFileTargets.delete(key);
+    } else {
+      paths.push(target.relativePath);
+    }
+  }
+  return paths;
 }
 
 export function confirmProjectFileQueryData(
@@ -183,6 +214,7 @@ export function clearProjectFileQueryData(
   cwd: string,
   relativePath: string,
 ): void {
+  optimisticFileTargets.delete(JSON.stringify([environmentId, cwd, relativePath]));
   appAtomRegistry.set(optimisticFileAtom(environmentId, cwd, relativePath), null);
 }
 

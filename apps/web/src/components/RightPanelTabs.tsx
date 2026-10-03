@@ -20,6 +20,7 @@ import {
   ChevronLeft,
   ChevronRight,
   FileDiff,
+  FileText,
   Files,
   Globe,
   Library,
@@ -140,6 +141,7 @@ interface RightPanelTabsProps {
   onAddPullRequests: () => void;
   onAddAgents: () => void;
   onAddSources: () => void;
+  onAddDocuments?: (() => void) | undefined;
   onAddCompute: () => void;
   onAddDevice: () => void;
   browserAvailable: boolean;
@@ -150,6 +152,7 @@ interface RightPanelTabsProps {
   pullRequestsAvailable: boolean;
   agentsAvailable: boolean;
   sourcesAvailable: boolean;
+  documentsAvailable?: boolean | undefined;
   computeAvailable: boolean;
   deviceAvailable: boolean;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
@@ -183,6 +186,7 @@ const SURFACE_DISABLED_REASONS = {
   pullRequests: "No linked pull requests are available for this thread.",
   agents: "Agents are only available from a thread.",
   sources: "Sources are only available inside a project workspace.",
+  documents: "Open a project to create and edit documents.",
   compute: "Compute is only available inside a project workspace.",
   device: "Devices are only available from a thread.",
 } as const;
@@ -388,6 +392,7 @@ function RightPanelEmptyState(props: {
   onAddPullRequests: () => void;
   onAddAgents: () => void;
   onAddSources: () => void;
+  onAddDocuments?: (() => void) | undefined;
   onAddCompute: () => void;
   onAddDevice: () => void;
   browserAvailable: boolean;
@@ -398,6 +403,7 @@ function RightPanelEmptyState(props: {
   pullRequestsAvailable: boolean;
   agentsAvailable: boolean;
   sourcesAvailable: boolean;
+  documentsAvailable?: boolean | undefined;
   computeAvailable: boolean;
   deviceAvailable: boolean;
   liveAgentCount: number;
@@ -487,6 +493,15 @@ function RightPanelEmptyState(props: {
       available: props.deviceAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.device,
       onClick: props.onAddDevice,
+      badgeCount: 0,
+    },
+    {
+      label: "Documents",
+      icon: FileText,
+      shortcut: "W",
+      available: props.documentsAvailable === true && props.onAddDocuments !== undefined,
+      disabledReason: SURFACE_DISABLED_REASONS.documents,
+      onClick: () => props.onAddDocuments?.(),
       badgeCount: 0,
     },
   ] as const;
@@ -678,13 +693,20 @@ function RightPanelEmptyState(props: {
         </div>
         {props.computeAvailable ? (
           <div className="mt-3 text-center">
-            <button
-              type="button"
-              className="cursor-pointer text-xs text-muted-foreground hover:text-foreground"
-              onClick={props.onAddCompute}
-            >
-              New compute session
-            </button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    className="cursor-pointer text-xs text-muted-foreground hover:text-foreground"
+                    onClick={props.onAddCompute}
+                  />
+                }
+              >
+                Scientific computing
+              </TooltipTrigger>
+              <TooltipPopup>Run scientific code and inspect results and variables</TooltipPopup>
+            </Tooltip>
           </div>
         ) : null}
       </div>
@@ -1061,10 +1083,19 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       disabledReason: SURFACE_DISABLED_REASONS.device,
       onClick: props.onAddDevice,
     },
+    {
+      label: "Documents",
+      icon: FileText,
+      shortcut: "W",
+      available: props.documentsAvailable === true && props.onAddDocuments !== undefined,
+      disabledReason: SURFACE_DISABLED_REASONS.documents,
+      onClick: () => props.onAddDocuments?.(),
+      badgeCount: 0,
+    },
   ] as const;
 
   const extraSessionAction = {
-    label: "New compute session",
+    label: "Scientific computing",
     icon: Sigma,
     shortcut: "C",
     available: props.computeAvailable,
@@ -1492,7 +1523,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     onClick={extraSessionAction.onClick}
                   >
                     <Sigma />
-                    New compute session
+                    Scientific computing
                   </SurfaceMenuItem>
                 </MenuPopup>
               </Menu>
@@ -1564,6 +1595,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddPullRequests={props.onAddPullRequests}
             onAddAgents={props.onAddAgents}
             onAddSources={props.onAddSources}
+            onAddDocuments={props.onAddDocuments}
             onAddCompute={props.onAddCompute}
             onAddDevice={props.onAddDevice}
             browserAvailable={props.browserAvailable}
@@ -1574,6 +1606,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             pullRequestsAvailable={props.pullRequestsAvailable}
             agentsAvailable={props.agentsAvailable}
             sourcesAvailable={props.sourcesAvailable}
+            documentsAvailable={props.documentsAvailable}
             computeAvailable={props.computeAvailable}
             deviceAvailable={props.deviceAvailable}
             liveAgentCount={props.liveAgentCount}

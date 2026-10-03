@@ -1,8 +1,10 @@
 import type { ProjectFileErrorReason } from "@t3tools/contracts";
-import { AlertTriangle, RefreshCw } from "lucide-react";
+import { AlertTriangle, Check, RefreshCw } from "lucide-react";
+import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { Popover, PopoverTrigger, PopoverPopup, PopoverTitle } from "~/components/ui/popover";
 import { cn } from "~/lib/utils";
 
 import { staleCopyNotice } from "./fileFailureCopy";
@@ -19,6 +21,8 @@ export function ScientFileReloadButton(props: {
   readonly size?: "icon-sm" | "icon-xs";
 }) {
   const label = props.label ?? "Reload file from disk";
+  // A reload usually takes a few milliseconds; one short turn shows it happened.
+  const [turns, setTurns] = useState(0);
   const actionLabel = props.isPending
     ? "Reloading file…"
     : props.automaticRefreshUnavailable
@@ -30,14 +34,25 @@ export function ScientFileReloadButton(props: {
         render={
           <Button
             className="shrink-0"
-            onClick={props.onReload}
+            onClick={() => {
+              setTurns((count) => count + 1);
+              props.onReload();
+            }}
             aria-label={actionLabel}
             aria-busy={props.isPending}
             disabled={props.isPending}
             variant={props.automaticRefreshUnavailable ? "ghost-warning" : "ghost"}
             size={props.size ?? "icon-sm"}
           >
-            <RefreshCw className={cn("size-3.5", props.isPending && "animate-spin")} />
+            <RefreshCw
+              key={turns}
+              className={cn(
+                "size-3.5",
+                props.isPending
+                  ? "animate-spin"
+                  : turns > 0 && "animate-[spin_0.6s_ease-in-out_1] motion-reduce:animate-none",
+              )}
+            />
           </Button>
         }
       />
@@ -171,5 +186,82 @@ export function ScientFileFreshnessNotices(props: {
         </div>
       ) : null}
     </>
+  );
+}
+
+/** A fixed toolbar slot keeps asynchronous save notices outside the document flow. */
+export function ScientFileFreshnessStatus(
+  props: Parameters<typeof ScientFileFreshnessNotices>[0] & {
+    readonly pending: boolean;
+    /**
+     * What a file's document session is asking about. Its own notice, above
+     * the document, carries the choices; this only keeps the status truthful.
+     */
+    readonly sessionAttention?: "conflict" | "failure" | "refresh" | null;
+  },
+) {
+  const conflict =
+    props.sessionAttention === "conflict" ||
+    (props.notice?.relativePath === props.relativePath && props.notice !== null);
+  const failed =
+    props.sessionAttention === "failure" ||
+    (props.saveError?.relativePath === props.relativePath && props.saveError !== null);
+  const readFailed =
+    props.sessionAttention === "refresh" ||
+    Boolean(props.relativePath && props.readError && props.hasFallbackData);
+  const needsAttention = conflict || failed || readFailed;
+  const status = conflict
+    ? "File changed: review your save options"
+    : failed
+      ? "Changes have not been saved"
+      : readFailed
+        ? "The latest file could not be loaded"
+        : props.pending
+          ? "Saving changes"
+          : "No file warnings";
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <Button
+            size="xs"
+            variant={needsAttention ? "ghost-warning" : "ghost"}
+            className="w-24 shrink-0"
+            aria-label={`File status: ${status}`}
+            title={status}
+          />
+        }
+      >
+        {needsAttention ? (
+          <AlertTriangle className="size-3.5" aria-hidden="true" />
+        ) : props.pending ? (
+          <RefreshCw className="size-3.5" aria-hidden="true" />
+        ) : (
+          <Check className="size-3.5" aria-hidden="true" />
+        )}
+        File status
+      </PopoverTrigger>
+      <span className="sr-only" role="status">
+        {status}
+      </span>
+      <PopoverPopup align="end" width="lg" padding="comfortable">
+        <PopoverTitle>File status</PopoverTitle>
+        {props.sessionAttention ? (
+          <p className="mt-2 text-xs text-muted-foreground">
+            {status}. The notice above the document has the options.
+          </p>
+        ) : needsAttention ? (
+          <div className="mt-2 [&>div]:flex-wrap [&>div]:rounded-md [&>div]:border-0 [&>div>span]:whitespace-normal [&>div>span]:overflow-visible">
+            <ScientFileFreshnessNotices {...props} />
+          </div>
+        ) : (
+          <p className="mt-2 text-xs text-muted-foreground">
+            {props.pending
+              ? "Your changes are being saved to the project file."
+              : "There are no pending file warnings."}
+          </p>
+        )}
+      </PopoverPopup>
+    </Popover>
   );
 }

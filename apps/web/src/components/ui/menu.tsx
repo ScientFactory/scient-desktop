@@ -149,8 +149,51 @@ function MenuCheckboxItem({
   variant = "default",
   ...props
 }: MenuPrimitive.CheckboxItem.Props & {
-  variant?: "default" | "switch";
+  variant?: "default" | "switch" | "button" | "icon";
 }) {
+  // Icon rows reuse the leading icon slot for the check, without an extra gutter.
+  if (variant === "icon") {
+    return (
+      <MenuPrimitive.CheckboxItem
+        checked={checked}
+        className={cn(
+          "relative flex min-h-8 cursor-pointer items-center rounded-sm px-2 py-1 text-base text-foreground outline-none data-disabled:pointer-events-none data-disabled:opacity-64 data-highlighted:bg-accent data-highlighted:text-accent-foreground sm:min-h-7 sm:text-sm data-checked:[&>span>span>svg:first-child]:invisible [&_svg]:pointer-events-none [&_svg]:shrink-0",
+          className,
+        )}
+        data-slot="menu-checkbox-item"
+        {...props}
+      >
+        <span className="min-w-0 flex-1">{children}</span>
+        <MenuPrimitive.CheckboxItemIndicator
+          className="pointer-events-none absolute start-1.5 top-1/2 -translate-y-1/2"
+          aria-hidden
+        >
+          <CheckIcon className="size-4" />
+        </MenuPrimitive.CheckboxItemIndicator>
+      </MenuPrimitive.CheckboxItem>
+    );
+  }
+  if (variant === "button") {
+    return (
+      <MenuPrimitive.CheckboxItem
+        checked={checked}
+        className={cn(
+          buttonVariants({ size: "micro", variant: checked ? "selected-strong" : "outline" }),
+          "data-disabled:pointer-events-none data-disabled:opacity-64 data-highlighted:outline-1 data-highlighted:outline-ring",
+          className,
+        )}
+        data-slot="menu-checkbox-item"
+        {...props}
+      >
+        {children}
+        <span aria-hidden="true" className="flex size-3 shrink-0 items-center justify-center">
+          <MenuPrimitive.CheckboxItemIndicator>
+            <CheckIcon />
+          </MenuPrimitive.CheckboxItemIndicator>
+        </span>
+      </MenuPrimitive.CheckboxItem>
+    );
+  }
   return (
     <MenuPrimitive.CheckboxItem
       checked={checked}

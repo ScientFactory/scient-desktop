@@ -243,6 +243,7 @@ const failFromSnapshot = (
 
 const presentLatexDocument = Effect.fn("ScientLatexBuild.present")(function* (
   invocation: AgentInvocationScope,
+  sourcePath: string,
   rootSourcePath: string,
 ) {
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
@@ -250,7 +251,7 @@ const presentLatexDocument = Effect.fn("ScientLatexBuild.present")(function* (
     .invoke({
       scope: invocation,
       operation: "documentLatexPresent",
-      input: { rootSourcePath },
+      input: { sourcePath, rootSourcePath },
       timeoutMs: 10_000,
     })
     .pipe(
@@ -520,7 +521,11 @@ export const buildScientLatexForInvocation = Effect.fn("ScientLatexBuild.build")
         ),
       ),
     );
-    const presented = yield* presentLatexDocument(invocation, successfulSnapshot.rootRelativePath);
+    const presented = yield* presentLatexDocument(
+      invocation,
+      latexSource.sourcePath,
+      successfulSnapshot.rootRelativePath,
+    );
     return {
       status: "completed",
       sourcePath: latexSource.sourcePath,

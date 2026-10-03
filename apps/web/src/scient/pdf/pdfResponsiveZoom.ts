@@ -20,7 +20,9 @@ export interface PdfResponsiveZoomTarget {
 export interface PdfResponsiveZoomController {
   readonly isConstrained: () => boolean;
   readonly persistedScaleValue: () => string;
-  readonly capturePreference: (target: PdfResponsiveZoomTarget) => void;
+  readonly capturePreference: (
+    target: Pick<PdfResponsiveZoomTarget, "currentScaleValue" | "currentScale">,
+  ) => void;
   readonly observeScaleChange: (
     target: PdfResponsiveZoomTarget,
     scale: number,

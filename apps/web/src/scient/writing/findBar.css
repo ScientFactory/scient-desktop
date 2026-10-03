@@ -1,0 +1,19 @@
+/* The find and replace strip shared by the document editors. */
+.scient-markdown-find-bar {
+  position: relative;
+  z-index: 20;
+  display: flex;
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: var(--background);
+  scrollbar-width: none;
+}
+
+.scient-markdown-find-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.scient-markdown-find-bar > div {
+  min-width: max-content;
+}

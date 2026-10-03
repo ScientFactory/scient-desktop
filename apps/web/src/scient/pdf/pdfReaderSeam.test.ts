@@ -6,7 +6,9 @@ import { describe, expect, it } from "@effect/vitest";
 describe("Scient PDF reader source seam", () => {
   it("does not grow producer or raw-path branches", () => {
     const source = NodeFS.readFileSync(new URL("./ScientPdfReader.tsx", import.meta.url), "utf8");
-    expect(source).not.toMatch(/browser-export|latex|typst|quarto/iu);
+    expect(source.replace(/\/\*[\s\S]*?\*\//gu, "")).not.toMatch(
+      /browser-export|latex|typst|quarto/iu,
+    );
     expect(source).not.toContain("absolutePath");
     expect(source).toContain("PdfSourceDescriptor");
     expect(source).toContain("PdfSourceResolver");
@@ -36,17 +38,39 @@ describe("Scient PDF reader source seam", () => {
     expect(source).toContain("viewportSession.flush()");
   });
 
+  it("binds source actions and navigation to the actually presented revision during staged updates", () => {
+    const readerSource = NodeFS.readFileSync(
+      new URL("./ScientPdfReader.tsx", import.meta.url),
+      "utf8",
+    );
+
+    const bundleSource = NodeFS.readFileSync(
+      new URL("./usePresentedPdfSourceBundle.ts", import.meta.url),
+      "utf8",
+    );
+    expect(readerSource).toContain("const presentedSource = usePresentedPdfSourceBundle({");
+    expect(readerSource).toContain("presentation: reader.presentation,");
+    expect(readerSource).toContain("reader.presentation?.revisionId === requestedRevisionId");
+    expect(readerSource).toContain("reader.presentation.sourceUrl === props.sourceAsset.url");
+    expect(readerSource).toContain("if (!currentPresentation) return;");
+    expect(bundleSource).toContain("bundle.documentKey === presentation.documentKey");
+    expect(bundleSource).toContain("bundle.revisionId === presentation.revisionId");
+    expect(bundleSource).toContain("bundle.resolved.url === presentation.sourceUrl");
+  });
+
   it("reconciles page and rotation geometry against the current pane width", () => {
     const source = NodeFS.readFileSync(new URL("./useScientPdfReader.ts", import.meta.url), "utf8");
 
     expect(source).toContain(
       `const onPageChanging = ({ pageNumber }: { pageNumber: number }) => {
+          if (!displayed()) return;
           setState((previous) => ({ ...previous, page: pageNumber }));
           runtime.refreshForContainerSize();
         };`,
     );
     expect(source).toContain(
       `const onRotationChanging = ({ pagesRotation }: { pagesRotation: number }) => {
+          if (!displayed()) return;
           setState((previous) => ({ ...previous, rotation: pagesRotation }));
           runtime.refreshForContainerSize();
         };`,
@@ -64,7 +88,10 @@ describe("Scient PDF reader source seam", () => {
   });
 
   it("keeps the page number and page count together at narrow widths", () => {
-    const styles = NodeFS.readFileSync(new URL("./scientPdfReader.css", import.meta.url), "utf8");
+    const styles = NodeFS.readFileSync(
+      new URL("../writing/documentReaderControls.css", import.meta.url),
+      "utf8",
+    );
 
     expect(styles).toMatch(
       /\.scient-pdf-page-control \{[^}]*flex: none;[^}]*white-space: nowrap;/su,
@@ -91,7 +118,7 @@ describe("Scient PDF reader source seam", () => {
     expect(source).toContain("let pdfSourceSyncHintLearnedThisSession = false;");
     expect(source).not.toContain("pdfSourceSyncHintShownThisSession");
     expect(source).toContain("onClick={scheduleSourceSyncHint}");
-    expect(source).toContain("onScroll={dismissSourceSyncHint}");
+    expect(source).toContain("onScrollCapture={dismissSourceSyncHint}");
     expect(source).toContain("showSourceSyncHint();");
     expect(source).toContain("Double-click a PDF word to show its matching source line");
     expect(source).toContain("const onInverseSearch = props.syncNavigation?.onInverseSearch;");
@@ -124,24 +151,38 @@ describe("Scient PDF reader source seam", () => {
   });
 
   it("adapts to the reader width while preserving compact actions in the More menu", () => {
-    const source = NodeFS.readFileSync(new URL("./ScientPdfReader.tsx", import.meta.url), "utf8");
-    const styles = NodeFS.readFileSync(new URL("./scientPdfReader.css", import.meta.url), "utf8");
+    const readerSource = NodeFS.readFileSync(
+      new URL("./ScientPdfReader.tsx", import.meta.url),
+      "utf8",
+    );
+    const controlsSource = NodeFS.readFileSync(
+      new URL("../writing/DocumentReaderControls.tsx", import.meta.url),
+      "utf8",
+    );
+    const source = `${readerSource}\n${controlsSource}`;
+    const styles = NodeFS.readFileSync(
+      new URL("../writing/documentReaderControls.css", import.meta.url),
+      "utf8",
+    );
 
-    expect(styles).toContain("container-name: scient-pdf-reader;");
-    expect(styles).toContain("@container scient-pdf-reader (max-width: 439px)");
-    expect(styles).toContain("@container scient-pdf-reader (max-width: 359px)");
-    expect(styles).toContain("@container scient-pdf-reader (max-width: 239px)");
+    expect(readerSource).toContain("<DocumentReaderControls");
+    expect(readerSource).toContain('label="PDF"');
+    expect(styles).toContain("container-name: scient-document-controls;");
+    expect(styles).toContain("@container scient-document-controls (max-width: 439px)");
+    expect(styles).toContain("@container scient-document-controls (max-width: 359px)");
+    expect(styles).toContain("@container scient-document-controls (max-width: 239px)");
     expect(styles).not.toContain("@media (max-width: 520px)");
     expect(source).toContain('className="scient-pdf-action-sidebar"');
     expect(source).toContain('className="scient-pdf-action-zoom-step"');
-    expect(source).toContain('className="scient-pdf-action-fit"');
+    expect(source).not.toContain('className="scient-pdf-action-fit"');
     expect(source).not.toContain('className="scient-pdf-action-rotate"');
-    expect(source).toContain('className="scient-pdf-action-search"');
+    expect(controlsSource).toContain('className="scient-reader-search"');
     expect(source).toContain("<ZoomOut /> Zoom out");
-    expect(source).toContain("<Scan /> Actual size");
+    // Actual size is not offered in More; clicking the percentage fits the width.
+    expect(source).not.toContain("Actual size");
     expect(source).toContain("<ZoomIn /> Zoom in");
     expect(source).toContain("<Maximize2 /> Fit width");
     expect(source).toContain("<RotateCw /> Rotate clockwise");
-    expect(source).toContain("<Search /> Search PDF");
+    expect(controlsSource).toContain("<Search /> Search {props.label}");
   });
 });

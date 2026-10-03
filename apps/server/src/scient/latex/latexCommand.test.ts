@@ -21,7 +21,10 @@ describe("buildLatexInvocation", () => {
     expect(invocation.pdfPath).toBe("C:/state/scient-latex/abc/main.pdf");
     // `latexmk` passes `-recorder` on its own; the caller only has to know
     // where the resulting input list lands.
-    expect(invocation.recorderManifestPath).toBe("C:/state/scient-latex/abc/main.fls");
+    expect(invocation.dependencyManifest).toEqual({
+      path: "C:/state/scient-latex/abc/main.fls",
+      format: "fls",
+    });
   });
 
   it("runs to the end of the document instead of halting on the first error", () => {
@@ -92,12 +95,16 @@ describe("buildLatexInvocation", () => {
       "/state/scient-latex/xyz",
       "--untrusted",
       "--synctex",
+      "--keep-intermediates",
+      "--makefile-rules",
+      "/state/scient-latex/xyz/thesis.dependencies.mk",
       "thesis.tex",
     ]);
     expect(invocation.pdfPath).toBe("/state/scient-latex/xyz/thesis.pdf");
-    // No recorder output: the caller falls back to reading the document itself
-    // for what a rebuild should watch.
-    expect(invocation.recorderManifestPath).toBeNull();
+    expect(invocation.dependencyManifest).toEqual({
+      path: "/state/scient-latex/xyz/thesis.dependencies.mk",
+      format: "makefile",
+    });
 
     // tectonic keeps no cross-run decision state, so there is nothing to force.
     expect(

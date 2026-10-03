@@ -5,13 +5,14 @@ import { requestLatexResolution } from "./client";
 
 interface StoredLatexDocumentResolution {
   readonly requestKey: string;
+  readonly documentKey: string;
   readonly result: ScientLatexResolveResult | null;
   readonly error: string | null;
 }
 
 export interface LatexDocumentResolutionState extends Omit<
   StoredLatexDocumentResolution,
-  "requestKey"
+  "requestKey" | "documentKey"
 > {
   readonly pending: boolean;
 }
@@ -28,6 +29,12 @@ export function useLatexDocumentResolution(input: {
   const request = useMemo(
     () => ({
       environmentId: input.environmentId,
+      documentKey: JSON.stringify([
+        input.environmentId,
+        input.workspaceRoot,
+        input.sourceRelativePath,
+        input.contextRootRelativePath ?? null,
+      ]),
       key: JSON.stringify([
         input.environmentId,
         input.workspaceRoot,
@@ -58,12 +65,18 @@ export function useLatexDocumentResolution(input: {
     void requestLatexResolution(request.environmentId, request.payload)
       .then((result) => {
         if (requestRef.current !== requestId) return;
-        setState({ requestKey: request.key, result, error: null });
+        setState({
+          requestKey: request.key,
+          documentKey: request.documentKey,
+          result,
+          error: null,
+        });
       })
       .catch((error: unknown) => {
         if (requestRef.current !== requestId) return;
         setState({
           requestKey: request.key,
+          documentKey: request.documentKey,
           result: null,
           error: error instanceof Error ? error.message : "LaTeX document resolution failed.",
         });
@@ -73,9 +86,11 @@ export function useLatexDocumentResolution(input: {
     };
   }, [request]);
 
-  const current = state?.requestKey === request.key ? state : null;
+  // Saving a chapter changes its revision, not its document identity. Keep the
+  // established root visible while refreshing that resolution.
+  const current = state?.documentKey === request.documentKey ? state : null;
   return {
-    pending: current === null,
+    pending: current?.requestKey !== request.key,
     result: current?.result ?? null,
     error: current?.error ?? null,
   };

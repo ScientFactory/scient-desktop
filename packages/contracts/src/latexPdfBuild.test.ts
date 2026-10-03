@@ -38,11 +38,16 @@ describe("Scient LaTeX PDF build contract", () => {
   });
 
   it("hands the desktop only the resolved project-relative LaTeX root", () => {
-    expect(decodePresentation({ rootSourcePath: "paper/main.tex" })).toEqual({
+    expect(
+      decodePresentation({ sourcePath: "paper/chapter.tex", rootSourcePath: "paper/main.tex" }),
+    ).toEqual({
+      sourcePath: "paper/chapter.tex",
       rootSourcePath: "paper/main.tex",
     });
-    expect(() => decodePresentation({ rootSourcePath: "" })).toThrow();
-    expect(() => decodePresentation({ rootSourcePath: "paper.tex\0ignored" })).toThrow();
+    expect(() => decodePresentation({ sourcePath: "paper.tex", rootSourcePath: "" })).toThrow();
+    expect(() =>
+      decodePresentation({ sourcePath: "paper.tex", rootSourcePath: "paper.tex\0ignored" }),
+    ).toThrow();
   });
 
   it("exposes a paced in-progress result instead of holding an agent turn indefinitely", () => {

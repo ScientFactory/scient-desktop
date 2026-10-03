@@ -85,7 +85,9 @@ const structure = (
   template,
   completion,
   ...(lyx ? { lyx: [lyx] } : {}),
-  ...(["text", "norm"].includes(id) ? { requires: "amsmath" as const } : {}),
+  ...(["text", "norm", "binomial", "pmatrix", "bmatrix", "vmatrix", "cases", "aligned"].includes(id)
+    ? { requires: "amsmath" as const }
+    : {}),
 });
 
 export const MATH_COMMANDS: readonly MathCommand[] = [
@@ -122,6 +124,40 @@ export const MATH_COMMANDS: readonly MathCommand[] = [
   ...symbols(
     "Arrows",
     "to leftarrow rightarrow leftrightarrow Leftarrow Rightarrow Leftrightarrow longrightarrow longleftarrow longleftrightarrow Longrightarrow Longleftarrow Longleftrightarrow mapsto hookrightarrow hookleftarrow uparrow downarrow updownarrow",
+  ),
+  structure("sumLimits", "Sum with limits", "\\sum_{|}^{@}", "l u"),
+  structure("productLimits", "Product with limits", "\\prod_{|}^{@}", "l p"),
+  structure("integralLimits", "Integral with limits", "\\int_{|}^{@}", "l i"),
+  structure("limit", "Limit", "\\lim_{|} @", "l l"),
+  structure("binomial", "Binomial coefficient", "\\binom{@}{|}", "t b"),
+  structure(
+    "pmatrix",
+    "Parentheses matrix (2 by 2)",
+    "\\begin{pmatrix}| & \\\\ & \\end{pmatrix}",
+    "t p",
+    "Matrices",
+  ),
+  structure(
+    "bmatrix",
+    "Bracket matrix (2 by 2)",
+    "\\begin{bmatrix}| & \\\\ & \\end{bmatrix}",
+    "t m",
+    "Matrices",
+  ),
+  structure(
+    "vmatrix",
+    "Determinant (2 by 2)",
+    "\\begin{vmatrix}| & \\\\ & \\end{vmatrix}",
+    "t d",
+    "Matrices",
+  ),
+  structure("cases", "Cases", "\\begin{cases}| & \\\\ & \\end{cases}", "t c", "Matrices"),
+  structure(
+    "aligned",
+    "Aligned calculation",
+    "\\begin{aligned}| & \\\\ & \\end{aligned}",
+    "t a",
+    "Matrices",
   ),
   structure("fraction", "Fraction", "\\frac{@}{|}", "f", "Structures", "frac"),
   structure("sqrt", "Square root", "\\sqrt{@}", "s"),

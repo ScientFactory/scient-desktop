@@ -1,3 +1,4 @@
+import { LatexSelect } from "./LatexSelect";
 import { File, type FileOptions, Virtualizer } from "@pierre/diffs/react";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -13,7 +14,7 @@ import {
   type ScientLatexSyncUnavailableReason,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { ChevronRight, CircleAlert, LoaderCircle, RotateCw, TriangleAlert, X } from "lucide-react";
+import { CircleAlert, Ellipsis, LoaderCircle, RotateCw, TriangleAlert, X } from "lucide-react";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -23,13 +24,16 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
+  type MouseEvent,
 } from "react";
 
 import { MarkdownSourceSurface } from "~/components/files/FilePreviewPanel";
+import { isLatexPreviewFile } from "~/components/files/filePreviewMode";
 import { projectFileCacheKey } from "~/components/files/fileContentRevision";
 import { type DraftId } from "~/composerDraftStore";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
@@ -37,9 +41,9 @@ import { DIFF_SURFACE_THEME_UNSAFE_CSS, resolveDiffThemeName } from "~/lib/diffR
 import { cn } from "~/lib/utils";
 import type { LatexFilePresentationRequest, OpenFileOptions } from "~/rightPanelStore";
 import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
-import { savedMarkdownRevision } from "~/scient/documentExport/markdownSavedRevision";
+import { registerShortcutClaim } from "~/scient/keyboard/ownership";
 import { useScientSplit } from "~/scient/layout/useScientSplit";
-import { onDocumentSaved } from "~/scient/markdownEditor/persistence/documentPublication";
+import { documentWasSaved } from "~/scient/markdownEditor/persistence/documentPublication";
 import {
   markdownPersistenceRegistry,
   type MarkdownPersistenceLease,
@@ -50,12 +54,24 @@ import type {
   PdfInverseSyncPoint,
   PdfSyncNavigation,
 } from "~/scient/pdf/ScientPdfReader";
+import { usePdfSaveCopy } from "~/scient/pdf/usePdfSaveCopy";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import { WordFileExportDialog } from "~/scient/wordExport/WordFileExportDialog";
 
 import { documentBindingChanges } from "./bindingChanges";
+import { DockCommandItem } from "../writing/dockChrome";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "~/components/ui/menu";
+import { ReaderButton, IfRowHidden, ReaderRowContext } from "../writing/DocumentReaderControls";
+import { DocumentExportMenuItems } from "../documentExport/DocumentExportMenuItems";
+import type { DocumentDownloadActions } from "../documentExport/DocumentDownloadMenu";
+import { ReaderBarHostContext, type ReaderBarHost } from "../writing/readerBarHost";
+const LatexProjectVisualEditor = lazy(() =>
+  import("./LatexProjectVisualEditor").then((module) => ({
+    default: module.LatexProjectVisualEditor,
+  })),
+);
 import { LatexToolchainSetupCard } from "./LatexToolchainSetupCard";
-import { requestLatexForwardSync, requestLatexInverseSync } from "./client";
+import { readLatexBuildStatus, requestLatexForwardSync, requestLatexInverseSync } from "./client";
 import { useLatexDocumentResolution } from "./useLatexDocumentResolution";
 import {
   cancelLatexBuild,
@@ -71,6 +87,8 @@ import {
   LATEX_PREVIEW_MODE_LABELS,
   LATEX_PREVIEW_MODE_STORAGE_KEY,
   LATEX_PREVIEW_MODES,
+  LATEX_SPLIT_PREVIEW_STORAGE_KEY,
+  LATEX_SPLIT_PREVIEWS,
   LATEX_SPLIT_KEYBOARD_STEP,
   LATEX_SPLIT_RATIO_STORAGE_KEY,
   LATEX_TOOLCHAIN_MISSING_HINT,
@@ -80,17 +98,40 @@ import {
   latexDiagnosticRows,
   latexStatusStripModel,
   normalizeLatexPreviewMode,
+  normalizeLatexSplitPreview,
   normalizeLatexSplitFraction,
   type LatexViewerState,
   type ScientLatexPreviewMode,
+  type ScientLatexSplitPreview,
 } from "./scientLatexSurfaceModel";
+import { useLatexSourceRecovery } from "./useLatexSourceRecovery";
+import { LatexVisualRecoveryBar } from "./LatexVisualRecovery";
+import { useLatexSourceIdentity } from "./visualPdfPublication";
+import { prepareLatexDocument } from "./prepareLatexDocument";
+import { latexDocumentInputs } from "./latexDocumentInputs";
+import { useLatexAutoBuild } from "./useLatexAutoBuild";
 
 import "./scient-latex.css";
 
 type FilePostRender = NonNullable<FileOptions<unknown>["onPostRender"]>;
 type LatexPdfDescriptor = ScientLatexBuildSnapshot["descriptor"];
 
+/** What the file header's rename needs to know about a LaTeX file. */
+export interface LatexRenameContext {
+  /** The main document that includes this file, when it is not the main one. */
+  readonly includedBy: string | null;
+  /** Unsaved Visual work would be lost by renaming now. */
+  readonly blocked: boolean;
+}
+
 interface ScientLatexSurfaceProps {
+  /** Receives the exports the file header's download button offers. */
+  readonly onDownloadActions: (actions: DocumentDownloadActions | null) => void;
+  /**
+   * Receives what renaming this file affects: the document that includes it,
+   * and whether unsaved Visual work makes renaming wait.
+   */
+  readonly onRenameContext: (context: LatexRenameContext | null) => void;
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly relativePath: string;
@@ -101,6 +142,8 @@ interface ScientLatexSurfaceProps {
   readonly contents: string;
   /** The revision last confirmed on disk. The draft may be ahead of it. */
   readonly revision: string;
+  /** Only part of the file was read: it is shown, never edited or assembled. */
+  readonly truncated: boolean;
   /**
    * The file's document session, which owns saving for every view of it. Null
    * when the file cannot be edited completely; the source is then read-only.
@@ -124,6 +167,7 @@ interface ScientLatexSurfaceProps {
 }
 
 const noSubscription = () => () => {};
+const ignoreVisualEditing = () => {};
 const notPending = () => false;
 
 const NO_DIAGNOSTICS: ReadonlyArray<ScientLatexDiagnostic> = [];
@@ -243,6 +287,18 @@ function initialPreviewMode(): ScientLatexPreviewMode {
   }
 }
 
+function initialSplitPreview(): ScientLatexSplitPreview {
+  try {
+    const stored = getLocalStorageItem(LATEX_SPLIT_PREVIEW_STORAGE_KEY, Schema.String);
+    if (stored !== null) return normalizeLatexSplitPreview(stored);
+    const previousView = getLocalStorageItem(LATEX_PREVIEW_MODE_STORAGE_KEY, Schema.String);
+    return previousView === "visual" ? "visual" : "pdf";
+  } catch (error) {
+    console.error(error);
+    return "pdf";
+  }
+}
+
 function initialSplitFraction(): number {
   try {
     return normalizeLatexSplitFraction(
@@ -270,6 +326,22 @@ function LatexPendingViewer(props: { readonly label: string }) {
     </div>
   );
 }
+
+const VIEW_SWITCH = ".scient-latex-modes:not(.scient-latex-split-modes)";
+/** What the header row gives up, in order, when it runs out of room. */
+const HEADER_FIT_STEPS = [
+  "zoom",
+  "page",
+  "sidebar",
+  "status",
+  "search-short",
+  "split",
+  "search-icon",
+  "separators",
+  "percent",
+  "page-number",
+] as const;
+const SPLIT_SWITCH = ".scient-latex-split-modes";
 
 function LatexDiagnosticsRow(props: {
   readonly diagnostic: ScientLatexDiagnostic;
@@ -383,6 +455,7 @@ const LatexViewerPane = memo(function LatexViewerPane({
       {descriptor !== null && readerKey !== null ? (
         <Suspense fallback={<LatexPendingViewer label="Opening PDF…" />}>
           <ScientPdfReader
+            showStaleNotice={false}
             key={readerKey}
             source={descriptor}
             readerScope={readerScope}
@@ -407,7 +480,7 @@ const LatexViewerPane = memo(function LatexViewerPane({
         <LatexPendingViewer label="Building…" />
       ) : (
         <div className="scient-latex-placeholder">
-          <p>Save this document or select Rebuild to compile a PDF.</p>
+          <p>Choose Rebuild PDF to create the typeset document with your local TeX installation.</p>
         </div>
       )}
     </div>
@@ -419,27 +492,22 @@ interface SourceSyncPosition {
   readonly column: number;
 }
 
-function sourcePositionFromPointerEvent(
-  event: React.MouseEvent<HTMLElement>,
-): SourceSyncPosition | null {
+function sourcePositionFromPointerEvent(event: MouseEvent<HTMLElement>): SourceSyncPosition | null {
   for (const candidate of event.nativeEvent.composedPath()) {
     if (!(candidate instanceof HTMLElement)) continue;
     const raw = candidate.dataset.line;
     if (raw === undefined) continue;
     const line = Number(raw);
     if (!Number.isSafeInteger(line) || line < 1) return null;
-    return {
-      line,
-      // The inherited editor surface does not expose its internal cursor on
-      // main. Zero is SyncTeX's explicit "unknown column" value; guessing a
-      // visual DOM offset would be wrong for wrapped and bidirectional text.
-      column: 0,
-    };
+    return { line, column: 0 };
   }
   return null;
 }
 
 export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
+  const savePdfCopy = usePdfSaveCopy(props.environmentId);
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const visualDraftKey = `${props.environmentId}\0${props.cwd}\0${props.relativePath}`;
   const [manualRootSelection, setManualRootSelection] = useState<{
     readonly environmentId: EnvironmentId;
     readonly workspaceRoot: string;
@@ -483,18 +551,78 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const [preferredMode, setPreferredMode] = useState(
     () => props.latexPresentationRequest?.mode ?? initialPreviewMode(),
   );
+  const [splitPreview, setSplitPreview] = useState(initialSplitPreview);
   const [splitFraction, setSplitFraction] = useState(initialSplitFraction);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [hasLocalVisualDraft, setHasLocalVisualDraft] = useState(false);
+  const finishVisualEditingRef = useRef<(() => boolean) | null>(null);
+  const localVisualDraftRef = useRef(false);
+  const [lastEditAt, setLastEditAt] = useState(0);
+  const [visualProjectState, setVisualProjectState] = useState<{
+    pending: boolean;
+    error: string | null;
+  }>({ pending: false, error: null });
   const [syncNotice, setSyncNotice] = useState<LatexSyncNotice | null>(null);
   const [wordExportOpen, setWordExportOpen] = useState(false);
+  // The build messages card is temporary: a click anywhere else closes it.
+  const diagnosticsCard = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!diagnosticsOpen) return;
+    const closeOnOutsidePress = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (diagnosticsCard.current?.contains(target)) return;
+      if (target.closest("[data-diagnostics-toggle]")) return;
+      setDiagnosticsOpen(false);
+    };
+    // Opening the card leaves focus on the control that opened it, in the
+    // header row; Escape from there closes it, as it does from inside the card.
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      const target = event.target;
+      if (!(target instanceof Element) || !surfaceRef.current?.contains(target)) return;
+      if (!target.closest(".scient-latex-toolbar")) return;
+      event.preventDefault();
+      setDiagnosticsOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePress, true);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePress, true);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [diagnosticsOpen]);
+  // The reader controls (sidebar, page, zoom, search) join this header row in PDF and Visual.
+  const [readerSlot, setReaderSlot] = useState<HTMLElement | null>(null);
+  const [hostedReaders, setHostedReaders] = useState(0);
+  const switchKeepsFocus = useRef<string | null>(null);
+  const headerRow = useRef<HTMLDivElement>(null);
+  const onReaderHosted = useCallback(
+    (hosted: boolean) => setHostedReaders((count) => count + (hosted ? 1 : -1)),
+    [],
+  );
   const { persistence } = props;
+  const sourceRecovery = useLatexSourceRecovery(persistence, visualDraftKey, preferredMode);
   // Unsaved, saving, or waiting on a conflict or a failed save.
   const sourcePending = useSyncExternalStore(
     persistence?.subscribe ?? noSubscription,
     persistence ? () => persistence.getSnapshot().pending : notPending,
   );
+  // A conflict or a failed save: the session's notice is asking for a decision.
+  const sourceNeedsAttention = useSyncExternalStore(
+    persistence?.subscribe ?? noSubscription,
+    persistence
+      ? () => {
+          const snapshot = persistence.getSnapshot();
+          return snapshot.conflict !== null || snapshot.error !== null;
+        }
+      : notPending,
+  );
   const [forwardSyncTarget, setForwardSyncTarget] = useState<PdfForwardSyncTarget | null>(null);
   const [handledRevealRequestId, setHandledRevealRequestId] = useState<number | null>(null);
+  const [finishedVisualRevealRequestId, setFinishedVisualRevealRequestId] = useState<number | null>(
+    null,
+  );
   const lastBindingChangeRef = useRef<DocumentBindingChange | null>(null);
   const syncRequestRef = useRef(0);
   const pdfPageRef = useRef<number | null>(null);
@@ -502,7 +630,12 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   useEffect(() => {
     const request = props.latexPresentationRequest;
     if (request === null) return;
+    finishVisualEditingRef.current?.();
     setPreferredMode(request.mode);
+    if (request.mode === "visual") {
+      setSplitPreview("visual");
+      persist(LATEX_SPLIT_PREVIEW_STORAGE_KEY, "visual", Schema.String);
+    }
     setHandledRevealRequestId(props.revealRequestId);
     props.onLatexPresentationRequestHandled(props.relativePath, request);
   }, [
@@ -523,30 +656,84 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   }, [bindingChange, target]);
 
   const { onOpenFileSource, revealLine, revealRequestId } = props;
-  // The PDF follows the file on disk, so it is rebuilt when a save lands while
-  // this view is open. A save that lands with no view open is picked up by the
-  // build store's own status checks.
   useEffect(() => {
-    if (persistence === null || target === null) return;
-    return onDocumentSaved(persistence, () => requestLatexRebuild(target));
+    if (persistence === null) return;
+    let previous = persistence.getSnapshot();
+    return persistence.subscribe(() => {
+      const next = persistence.getSnapshot();
+      const before = previous;
+      previous = next;
+      if (next.editVersion !== before.editVersion) setLastEditAt(Date.now());
+      if (documentWasSaved(before, next) && target !== null) notifyLatexBindingChange(target);
+    });
   }, [persistence, target]);
   const handleInstallToolchain = useCallback(() => {
     if (target !== null) requestManagedLatexInstall(target);
   }, [target]);
+  // Visual and Source edit one working source, the session's. An edit made on
+  // any other text is refused.
+  const handleVisualEdit = useCallback(
+    (expected: string, next: string) => {
+      if (persistence === null) return false;
+      const snapshot = persistence.getSnapshot();
+      if (snapshot.draftSource !== expected) return false;
+      if (expected === next) return true;
+      if (sourceRecovery.blocked) return false;
+      return persistence.change(next, snapshot.editVersion);
+    },
+    [persistence, sourceRecovery.blocked],
+  );
 
   // A reveal asks for a line of source, so a document parked on the PDF shows
   // its source until the reader picks a layout again. The file panel's
   // rendered-markdown branch resolves the same conflict the same way.
-  const revealPending = revealLine !== null && handledRevealRequestId !== revealRequestId;
-  const mode = revealPending && preferredMode === "pdf" ? "split" : preferredMode;
+  const revealRequested = revealLine !== null && handledRevealRequestId !== revealRequestId;
+  const visualRevealNeedsFinish =
+    revealRequested &&
+    preferredMode === "visual" &&
+    finishedVisualRevealRequestId !== revealRequestId;
+  // A reveal changes the rendered layout to Split. Keep Visual mounted for one
+  // transaction boundary so its layout effect can checkpoint the live
+  // textarea before React removes the interaction layer. This runs before
+  // paint, so the intermediate render is not visible to the user.
+  useLayoutEffect(() => {
+    if (!visualRevealNeedsFinish) return;
+    finishVisualEditingRef.current?.();
+    setFinishedVisualRevealRequestId(revealRequestId);
+  }, [revealRequestId, visualRevealNeedsFinish]);
+  const revealPending = revealRequested && !visualRevealNeedsFinish;
+  const mode =
+    revealPending && (preferredMode === "pdf" || preferredMode === "visual")
+      ? "split"
+      : preferredMode;
+  const sourceIdentity = useLatexSourceIdentity(
+    props.contents,
+    !sourcePending && build.snapshot?.state === "succeeded",
+  );
+  const compiledRevision = build.snapshot?.visualSourceRevisions?.[props.relativePath];
+  const pdfMatchesBuffer =
+    sourceIdentity !== null &&
+    sourceIdentity.revision === compiledRevision &&
+    build.snapshot?.state === "succeeded";
   const selectMode = useCallback(
     (next: ScientLatexPreviewMode) => {
+      finishVisualEditingRef.current?.();
       setPreferredMode(next);
       setHandledRevealRequestId(revealRequestId);
       persist(LATEX_PREVIEW_MODE_STORAGE_KEY, next, Schema.String);
+      if (next === "pdf" || next === "visual") {
+        setSplitPreview(next);
+        persist(LATEX_SPLIT_PREVIEW_STORAGE_KEY, next, Schema.String);
+      }
     },
     [revealRequestId],
   );
+
+  const selectSplitPreview = useCallback((next: ScientLatexSplitPreview) => {
+    finishVisualEditingRef.current?.();
+    setSplitPreview(next);
+    persist(LATEX_SPLIT_PREVIEW_STORAGE_KEY, next, Schema.String);
+  }, []);
 
   const commitSplitFraction = useCallback((fraction: number) => {
     setSplitFraction(fraction);
@@ -714,11 +901,20 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
       descriptor?._tag === "generated-pdf"
         ? {
             forwardTarget: forwardSyncTarget,
-            ...(mode === "split" ? { onInverseSearch: handleInverseSync } : {}),
+            ...(mode === "pdf" || (mode === "split" && splitPreview === "pdf")
+              ? { onInverseSearch: handleInverseSync }
+              : {}),
             onPageChange: handlePdfPageChange,
           }
         : undefined,
-    [descriptor?._tag, forwardSyncTarget, handleInverseSync, handlePdfPageChange, mode],
+    [
+      descriptor?._tag,
+      forwardSyncTarget,
+      handleInverseSync,
+      handlePdfPageChange,
+      mode,
+      splitPreview,
+    ],
   );
   // Keyed by artifact, never by revision: a rebuild of the same document swaps
   // the reader's asset URL, and the reader keeps page and zoom across that.
@@ -729,211 +925,604 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
         ? descriptor.artifactId
         : descriptor.logicalDocumentKey;
   const compiledFrom = latexCompiledFromPath(build.snapshot?.rootRelativePath, props.relativePath);
-  const showEditor = mode !== "pdf";
-  const showViewer = mode !== "source";
+  const showEditor = mode === "source" || mode === "split";
+  const activePreview = mode === "split" ? splitPreview : mode === "source" ? null : mode;
+  const showVisual = activePreview === "visual";
+  const showRightPane = activePreview !== null;
+  // Keep Visual's save sessions alive when hidden; only the chosen preview is visible.
+  const [visualOpened, setVisualOpened] = useState(showVisual);
+  if (showVisual && !visualOpened) setVisualOpened(true);
 
-  return (
-    <div className="scient-latex-surface" dir="ltr">
-      <div className="scient-latex-toolbar">
-        <div className="scient-latex-modes" role="group" aria-label="LaTeX preview layout">
-          {LATEX_PREVIEW_MODES.map((candidate) => (
-            <button
-              key={candidate}
-              type="button"
-              className="scient-latex-mode-button"
-              aria-pressed={mode === candidate}
-              onClick={() => selectMode(candidate)}
-            >
-              {LATEX_PREVIEW_MODE_LABELS[candidate]}
-            </button>
-          ))}
-        </div>
-        <div className="scient-latex-status">
-          {resolution.pending || status.busy ? (
-            <LoaderCircle
-              className="size-3.5 animate-spin text-muted-foreground"
-              aria-hidden="true"
-            />
-          ) : null}
-          {target === null ? (
-            <span className="scient-latex-status-label">
-              {resolution.pending
-                ? "Finding document"
-                : resolution.result?._tag === "ambiguous" ||
-                    (resolution.result?._tag === "unresolved" &&
-                      resolution.result.candidates.length > 0)
-                  ? "Choose the document to compile"
-                  : (resolution.error ?? "No compiling document found")}
-            </span>
-          ) : status.toolchainMissing ? (
-            <ScientTooltip content={LATEX_TOOLCHAIN_MISSING_HINT}>
-              <span
-                className={cn(
-                  "scient-latex-status-label",
-                  status.state === "failed" ? "text-destructive" : undefined,
-                )}
-              >
-                {status.label}
-              </span>
-            </ScientTooltip>
-          ) : (
-            <span
-              className={cn(
-                "scient-latex-status-label",
-                status.state === "failed" ? "text-destructive" : undefined,
-              )}
-            >
-              {status.label}
-            </span>
-          )}
-          {target === null &&
-          (resolution.result?._tag === "ambiguous" || resolution.result?._tag === "unresolved") &&
-          resolution.result.candidates.length > 0 ? (
-            <select
-              className="scient-latex-root-choice"
-              aria-label="Choose LaTeX document to compile"
-              value=""
-              onChange={(event) => {
-                if (event.target.value !== "") {
-                  setManualRootSelection({
-                    environmentId: props.environmentId,
-                    workspaceRoot: props.cwd,
-                    sourceRelativePath: props.relativePath,
-                    carriedRootRelativePath: props.latexRootRelativePath,
-                    selectedRootRelativePath: event.target.value,
-                  });
-                }
-              }}
-            >
-              <option value="" disabled>
-                Choose document…
-              </option>
-              {resolution.result.candidates.map((candidate) => (
-                <option key={candidate.rootRelativePath} value={candidate.rootRelativePath}>
-                  {candidate.rootRelativePath}
-                </option>
-              ))}
-            </select>
-          ) : null}
-          {compiledFrom === null ? null : (
-            <ScientTooltip
-              content={`This file is part of ${compiledFrom}, which is what Scient compiles.`}
-            >
-              <span className="scient-latex-chip">Compiled from {compiledFrom}</span>
-            </ScientTooltip>
-          )}
-          {status.errorCount > 0 ? (
-            <span className="scient-latex-chip scient-latex-chip-error">
-              {status.errorCount} {status.errorCount === 1 ? "error" : "errors"}
-            </span>
-          ) : null}
-          {status.warningCount > 0 ? (
-            <span className="scient-latex-chip scient-latex-chip-warning">
-              {status.warningCount} {status.warningCount === 1 ? "warning" : "warnings"}
-            </span>
-          ) : null}
-          {status.stale ? (
-            status.staleReason ? (
-              <ScientTooltip content={status.staleReason}>
-                <span className="scient-latex-chip">Stale</span>
-              </ScientTooltip>
-            ) : (
-              <span className="scient-latex-chip">Stale</span>
-            )
-          ) : null}
-          {syncNotice === null ? null : (
-            <ScientTooltip content={syncNotice.message}>
-              <span
-                className="scient-latex-chip scient-latex-chip-error"
-                role="status"
-                aria-live="polite"
-                aria-label={`${syncNotice.label}: ${syncNotice.message}`}
-              >
-                {syncNotice.label}
-              </span>
-            </ScientTooltip>
-          )}
-        </div>
-        <div className="scient-latex-actions">
+  const registerFinishVisualEditing = useCallback((finish: (() => boolean) | null) => {
+    finishVisualEditingRef.current = finish;
+  }, []);
+  const reportLocalVisualDraft = useCallback((pending: boolean) => {
+    localVisualDraftRef.current = pending;
+    setHasLocalVisualDraft(pending);
+  }, []);
+  useLayoutEffect(
+    () =>
+      latexDocumentInputs.register({
+        target: {
+          environmentId: props.environmentId,
+          cwd: props.cwd,
+          relativePath: props.relativePath,
+        },
+        root: target?.relativePath ?? props.relativePath,
+        finish: () => finishVisualEditingRef.current?.() ?? !localVisualDraftRef.current,
+        pending: () => localVisualDraftRef.current,
+      }),
+    [props.environmentId, props.cwd, props.relativePath, target?.relativePath],
+  );
+  const prepareDocument = useCallback(async () => {
+    if (!target || props.truncated) return null;
+    const result = await prepareLatexDocument(target, {
+      ...(persistence ? { selected: persistence } : {}),
+    });
+    if (!result.ok) {
+      setSyncNotice({ label: "Document not ready", message: result.message });
+      return null;
+    }
+    setSyncNotice(null);
+    return result;
+  }, [target, props.truncated, persistence]);
+  const pdfVisible = activePreview === "pdf";
+  const buildBlocked = props.truncated || sourceNeedsAttention || visualProjectState.error !== null;
+  const buildRequestInFlight = useRef(false);
+  const saveAndBuild = useCallback(
+    async (reprobe = false, compile = true) => {
+      if (buildRequestInFlight.current || buildBlocked) return;
+      buildRequestInFlight.current = true;
+      try {
+        const prepared = await prepareDocument();
+        if (prepared?.isCurrent() && compile && target !== null)
+          requestLatexRebuild(target, { reprobeToolchain: reprobe });
+      } finally {
+        buildRequestInFlight.current = false;
+      }
+    },
+    [buildBlocked, prepareDocument, target],
+  );
+  const requestAutoBuild = useCallback(() => {
+    void saveAndBuild();
+  }, [saveAndBuild]);
+  useLatexAutoBuild({
+    visible: pdfVisible,
+    needsBuild:
+      status.stale || descriptor === null || (sourceIdentity !== null && !pdfMatchesBuffer),
+    blocked:
+      !target ||
+      !status.canRebuild ||
+      buildBlocked ||
+      sourcePending ||
+      visualProjectState.pending ||
+      hasLocalVisualDraft,
+    busy: status.busy,
+    toolchainReady: !!build.toolchain?.kind,
+    sourceKey: (target?.relativePath ?? "") + "\0" + props.revision + "\0" + lastEditAt,
+    requestBuild: requestAutoBuild,
+  });
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const host = surfaceRef.current;
+    if (!host) return;
+    const ownsSave = (event: KeyboardEvent) =>
+      (event.ctrlKey || event.metaKey) &&
+      !event.altKey &&
+      !event.shiftKey &&
+      event.key.toLowerCase() === "s" &&
+      host.contains(document.activeElement);
+    const releaseClaim = registerShortcutClaim(host, ownsSave);
+    const save = (event: KeyboardEvent) => {
+      if (!ownsSave(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void saveAndBuild(false, pdfVisible && !!build.toolchain?.kind);
+    };
+    window.addEventListener("keydown", save, true);
+    return () => {
+      releaseClaim();
+      window.removeEventListener("keydown", save, true);
+    };
+  }, [saveAndBuild, pdfVisible, build.toolchain?.kind]);
+
+  // Every mode with a right-hand pane: PDF, Visual, and Split's PDF or Visual.
+  const mergesReaderBar = showRightPane;
+  const splitPreviewSwitch =
+    mode === "split" ? (
+      <div
+        className="scient-latex-modes scient-latex-split-modes"
+        role="group"
+        aria-label="Split right pane view"
+      >
+        {LATEX_SPLIT_PREVIEWS.map((candidate) => (
           <button
+            key={candidate}
             type="button"
-            className="scient-latex-action"
-            disabled={target === null || sourcePending}
-            onClick={() => setWordExportOpen(true)}
-          >
-            Export ▸ Word
-          </button>
-          {status.canCancel && target !== null ? (
-            <button
-              type="button"
-              className="scient-latex-action"
-              onClick={() => cancelLatexBuild(target)}
-            >
-              <X className="size-3.5" aria-hidden="true" />
-              Cancel
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className="scient-latex-action"
-            disabled={target === null || !status.canRebuild}
-            // By hand is the one rebuild that re-probes: a TeX installed while
-            // this document sat here has no other way to be noticed.
-            onClick={() => {
-              if (target !== null) requestLatexRebuild(target, { reprobeToolchain: true });
+            className="scient-latex-mode-button"
+            aria-pressed={splitPreview === candidate}
+            onClick={(event) => {
+              // The switch is drawn with the pane it replaces; keep the place.
+              switchKeepsFocus.current =
+                event.currentTarget === document.activeElement ? SPLIT_SWITCH : null;
+              selectSplitPreview(candidate);
             }}
           >
-            <RotateCw className="size-3.5" aria-hidden="true" />
-            Rebuild
+            {LATEX_PREVIEW_MODE_LABELS[candidate]}
           </button>
+        ))}
+      </div>
+    ) : null;
+  const readerHosted = mergesReaderBar && hostedReaders > 0;
+  // The header row hides controls only when it runs out of room, one at a
+  // time in this order, and shows them again as soon as they fit.
+  useLayoutEffect(() => {
+    const row = headerRow.current;
+    if (!row) return;
+    const fit = () => {
+      const hidden: string[] = [];
+      row.dataset.fit = "";
+      for (const step of HEADER_FIT_STEPS) {
+        if (row.scrollWidth <= row.clientWidth + 1) break;
+        hidden.push(step);
+        row.dataset.fit = hidden.join(" ");
+      }
+    };
+    fit();
+    const resize = new ResizeObserver(fit);
+    resize.observe(row);
+    // Content changes too: page count, zoom, build messages, a pane's controls.
+    const content = new MutationObserver(fit);
+    content.observe(row, { childList: true, subtree: true, characterData: true });
+    return () => {
+      resize.disconnect();
+      content.disconnect();
+    };
+  }, []);
+  // Changing the view, or Split's right pane, redraws the switch that had
+  // focus. Give focus to the same switch once it is back in the row.
+  useEffect(() => {
+    const kept = switchKeepsFocus.current;
+    if (kept === null) return;
+    const current = surfaceRef.current?.querySelector<HTMLElement>(`${kept} [aria-pressed="true"]`);
+    if (!current) return;
+    switchKeepsFocus.current = null;
+    const active = document.activeElement;
+    if (active === null || active === document.body || !active.isConnected) current.focus();
+  }, [mode, splitPreview, readerHosted, hostedReaders, readerSlot]);
+  const buildButton = (
+    <ScientTooltip
+      content={
+        status.canCancel
+          ? "Cancel PDF build"
+          : status.busy
+            ? status.label
+            : status.state === "failed"
+              ? "Build failed. Rebuild PDF or open the log."
+              : "Save and rebuild the PDF"
+      }
+    >
+      <button
+        type="button"
+        className="scient-latex-action scient-latex-build-action"
+        aria-label={status.canCancel ? "Cancel PDF build" : "Rebuild PDF"}
+        disabled={target === null || (!status.canCancel && (!status.canRebuild || buildBlocked))}
+        onClick={() => {
+          if (status.canCancel && target) cancelLatexBuild(target);
+          else void saveAndBuild(true);
+        }}
+      >
+        {status.canCancel ? (
+          <X className="size-3.5" aria-hidden="true" />
+        ) : status.busy ? (
+          <LoaderCircle className="size-3.5" aria-hidden="true" />
+        ) : status.state === "failed" ? (
+          <CircleAlert className="size-3.5" aria-hidden="true" />
+        ) : (
+          <RotateCw className="size-3.5" aria-hidden="true" />
+        )}
+        <span>{status.canCancel ? "Cancel" : status.busy ? "Building…" : "Rebuild"}</span>
+      </button>
+    </ScientTooltip>
+  );
+  // Export: in the header's More, or in the Visual editor's Document menu.
+  const wordExportDisabled =
+    target === null ||
+    sourcePending ||
+    visualProjectState.pending ||
+    hasLocalVisualDraft ||
+    buildBlocked;
+  const pdfExportDisabled =
+    descriptor === null ||
+    !pdfMatchesBuffer ||
+    status.stale ||
+    status.busy ||
+    sourcePending ||
+    visualProjectState.pending ||
+    hasLocalVisualDraft ||
+    buildBlocked ||
+    exportingPdf;
+  const exportPdf = () => {
+    if (!descriptor || !pdfMatchesBuffer || status.stale || exportingPdf) return;
+    setExportingPdf(true);
+    setSyncNotice(null);
+    void (async () => {
+      const prepared = await prepareDocument();
+      if (!prepared?.isCurrent() || !target) return;
+      const snapshot = await readLatexBuildStatus(target.environmentId, {
+        workspaceRoot: target.cwd,
+        relativePath: target.relativePath,
+      });
+      if (!prepared.isCurrent()) return;
+      const current = { ...build, snapshot };
+      if (
+        !snapshot?.descriptor ||
+        latexStatusStripModel(current, props.cwd).stale ||
+        latexStatusStripModel(current, props.cwd).busy ||
+        [...prepared.revisions].some(
+          ([path, revision]) =>
+            isLatexPreviewFile(path) && snapshot.visualSourceRevisions?.[path] !== revision,
+        )
+      ) {
+        setSyncNotice({
+          label: "Rebuild needed",
+          message: "Rebuild the PDF before exporting the current document.",
+        });
+        return;
+      }
+      await savePdfCopy(snapshot.descriptor);
+    })()
+      .catch((error: unknown) =>
+        setSyncNotice({
+          label: "Export failed",
+          message: error instanceof Error ? error.message : "Could not save the PDF copy.",
+        }),
+      )
+      .finally(() => setExportingPdf(false));
+  };
+  const exportWord = () => setWordExportOpen(true);
+  // The file header's download button offers the same exports.
+  const downloadActions = useRef({ pdf: exportPdf, word: exportWord });
+  downloadActions.current = { pdf: exportPdf, word: exportWord };
+  const onDownloadActions = props.onDownloadActions;
+  useEffect(() => {
+    onDownloadActions({
+      pdf: () => downloadActions.current.pdf(),
+      pdfDisabled: pdfExportDisabled,
+      pdfUnavailableReason: "Rebuild PDF to export the current document.",
+      word: () => downloadActions.current.word(),
+      wordDisabled: wordExportDisabled,
+    });
+  }, [onDownloadActions, pdfExportDisabled, wordExportDisabled]);
+  useEffect(() => () => onDownloadActions(null), [onDownloadActions]);
+  const onRenameContext = props.onRenameContext;
+  const renameIncludedBy =
+    resolvedRootRelativePath !== null && resolvedRootRelativePath !== props.relativePath
+      ? resolvedRootRelativePath
+      : null;
+  // Recovered work is kept under this file's name: decide on it first.
+  const renameBlocked =
+    hasLocalVisualDraft || visualProjectState.pending || sourceRecovery.recovery !== null;
+  useEffect(() => {
+    onRenameContext({ includedBy: renameIncludedBy, blocked: renameBlocked });
+  }, [onRenameContext, renameIncludedBy, renameBlocked]);
+  useEffect(() => () => onRenameContext(null), [onRenameContext]);
+  const exportMenu = (plain: boolean) => (
+    <DocumentExportMenuItems
+      plain={plain}
+      onWordExport={exportWord}
+      wordDisabled={wordExportDisabled}
+      pdfLabel={exportingPdf ? "Exporting\u2026" : "PDF"}
+      pdfDisabled={pdfExportDisabled}
+      pdfUnavailableReason="Rebuild PDF to export the current document."
+      onPdfExport={exportPdf}
+    />
+  );
+  const exportItems = exportMenu(false);
+  const documentMenuItems = (withExport = true) => (
+    <>
+      {mode === "split" ? (
+        // Here only while the row has no room for its PDF/Visual switch.
+        <IfRowHidden selector=".scient-latex-split-modes">
+          {LATEX_SPLIT_PREVIEWS.map((candidate) => (
+            <DockCommandItem key={candidate} onClick={() => selectSplitPreview(candidate)}>
+              Split preview: {LATEX_PREVIEW_MODE_LABELS[candidate]}
+            </DockCommandItem>
+          ))}
+        </IfRowHidden>
+      ) : null}
+      {diagnostics.length > 0 || status.state === "failed" ? (
+        // The counts in the row open the same card.
+        <IfRowHidden selector="[data-diagnostics-toggle]">
+          <DockCommandItem onClick={() => setDiagnosticsOpen(true)}>
+            <CircleAlert /> Build messages
+          </DockCommandItem>
+        </IfRowHidden>
+      ) : null}
+      {withExport ? exportItems : null}
+    </>
+  );
+  // The view switch and the build status. With reader controls in the row they
+  // follow the zoom, so the sidebar, page and zoom controls start the row.
+  const viewSwitch = (
+    <div className="scient-latex-modes" role="group" aria-label="Document view">
+      {LATEX_PREVIEW_MODES.map((candidate) => (
+        <button
+          key={candidate}
+          type="button"
+          className="scient-latex-mode-button"
+          aria-pressed={mode === candidate}
+          onClick={(event) => {
+            // The switch is drawn with the pane it replaces; keep the place.
+            switchKeepsFocus.current =
+              event.currentTarget === document.activeElement ? VIEW_SWITCH : null;
+            selectMode(candidate);
+          }}
+        >
+          {LATEX_PREVIEW_MODE_LABELS[candidate]}
+        </button>
+      ))}
+    </div>
+  );
+  const statusStrip = (
+    <div className="scient-latex-status">
+      {target === null ? (
+        <span className="scient-latex-status-label">
+          {resolution.pending
+            ? "Finding document"
+            : resolution.result?._tag === "ambiguous" ||
+                (resolution.result?._tag === "unresolved" &&
+                  resolution.result.candidates.length > 0)
+              ? "Choose the document to compile"
+              : (resolution.error ?? "No compiling document found")}
+        </span>
+      ) : status.toolchainMissing ? (
+        <ScientTooltip content={LATEX_TOOLCHAIN_MISSING_HINT}>
+          <span
+            className={cn(
+              "scient-latex-status-label",
+              status.state === "failed" ? "text-destructive" : undefined,
+            )}
+          >
+            {status.label}
+          </span>
+        </ScientTooltip>
+      ) : status.offline ? (
+        <span className="scient-latex-status-label">Build status unavailable</span>
+      ) : status.state === "failed" ? (
+        <ScientTooltip
+          content={
+            status.firstDiagnosticLine ?? build.snapshot?.failureSummary ?? "Open the build log"
+          }
+        >
+          <button
+            type="button"
+            className="scient-latex-action"
+            data-diagnostics-toggle=""
+            aria-label="Build failed · View details"
+            onClick={() => setDiagnosticsOpen((open) => !open)}
+          >
+            <CircleAlert className="scient-latex-chip-icon" aria-hidden="true" />
+            <span className="scient-latex-chip-text">Build failed · View details</span>
+          </button>
+        </ScientTooltip>
+      ) : null}
+      {target === null &&
+      (resolution.result?._tag === "ambiguous" || resolution.result?._tag === "unresolved") &&
+      resolution.result.candidates.length > 0 ? (
+        <LatexSelect
+          aria-label="Choose LaTeX document to compile"
+          value=""
+          onValueChange={(value) => {
+            if (value !== "") {
+              setManualRootSelection({
+                environmentId: props.environmentId,
+                workspaceRoot: props.cwd,
+                sourceRelativePath: props.relativePath,
+                carriedRootRelativePath: props.latexRootRelativePath,
+                selectedRootRelativePath: value,
+              });
+            }
+          }}
+          size="compact"
+          options={[
+            { value: "", label: "Choose document\u2026", disabled: true },
+            ...resolution.result.candidates.map((candidate) => ({
+              value: candidate.rootRelativePath,
+              label: candidate.rootRelativePath,
+            })),
+          ]}
+        />
+      ) : null}
+      {compiledFrom === null ? null : (
+        <ScientTooltip
+          content={`This file is part of ${compiledFrom}, which is what Scient compiles.`}
+        >
+          <span className="scient-latex-chip">Compiled from {compiledFrom}</span>
+        </ScientTooltip>
+      )}
+      {status.errorCount > 0 ? (
+        <button
+          type="button"
+          className="scient-latex-chip scient-latex-chip-error"
+          aria-label={`${status.errorCount} ${status.errorCount === 1 ? "error" : "errors"}`}
+          aria-expanded={diagnosticsOpen}
+          data-diagnostics-toggle=""
+          onClick={() => setDiagnosticsOpen((open) => !open)}
+        >
+          <CircleAlert className="scient-latex-chip-icon" aria-hidden="true" />
+          <span className="scient-latex-chip-text">
+            {status.errorCount} {status.errorCount === 1 ? "error" : "errors"}
+          </span>
+        </button>
+      ) : null}
+      {status.warningCount > 0 ? (
+        <button
+          type="button"
+          className="scient-latex-chip scient-latex-chip-warning"
+          aria-label={`${status.warningCount} ${status.warningCount === 1 ? "warning" : "warnings"}`}
+          aria-expanded={diagnosticsOpen}
+          data-diagnostics-toggle=""
+          onClick={() => setDiagnosticsOpen((open) => !open)}
+        >
+          <TriangleAlert className="scient-latex-chip-icon" aria-hidden="true" />
+          <span className="scient-latex-chip-text">
+            {status.warningCount} {status.warningCount === 1 ? "warning" : "warnings"}
+          </span>
+        </button>
+      ) : null}
+      {visualProjectState.error === null ? null : (
+        <ScientTooltip content={visualProjectState.error}>
+          <span className="scient-latex-chip scient-latex-chip-error">Save failed</span>
+        </ScientTooltip>
+      )}
+      {syncNotice === null ? null : (
+        <ScientTooltip content={syncNotice.message}>
+          <span
+            className="scient-latex-chip scient-latex-chip-error"
+            role="status"
+            aria-live="polite"
+            aria-label={`${syncNotice.label}: ${syncNotice.message}`}
+          >
+            {syncNotice.label}
+          </span>
+        </ScientTooltip>
+      )}
+    </div>
+  );
+  // The Visual editor has a Document menu of its own; Export goes there.
+  const readerBarHost = (slot: HTMLElement | null, editor = false): ReaderBarHost => ({
+    slot,
+    // Status, search and the view switch first; page controls at the end.
+    leading: statusStrip,
+    afterSearch: viewSwitch,
+    afterPage: splitPreviewSwitch,
+    // Room between the zoom and Rebuild, which keeps its place at the end.
+    afterZoom: <div className="scient-latex-before-build" aria-hidden="true" />,
+    trailing: buildButton,
+    moreActions: documentMenuItems(!editor),
+    ...(editor ? { documentActions: exportMenu(true) } : {}),
+    onHosted: onReaderHosted,
+  });
+  return (
+    <div
+      ref={surfaceRef}
+      className="scient-latex-surface"
+      data-latex-layout={mode}
+      dir="ltr"
+      onInputCapture={(event) => {
+        // A one-line field in the chrome (search, page number) is not an edit
+        // of the document. Re-rendering here, between the key going in and the
+        // field reading it, also resets that field and swallows the key.
+        if (event.target instanceof HTMLInputElement) return;
+        setLastEditAt(Date.now());
+      }}
+    >
+      <div
+        ref={headerRow}
+        className="scient-latex-toolbar"
+        data-reader-hosted={readerHosted ? "" : undefined}
+        // Visual's More holds only what the row has no room for.
+        data-more-when-full={readerHosted && showVisual ? "" : undefined}
+      >
+        {readerHosted ? null : statusStrip}
+        {readerHosted ? null : (
+          // Source has no search field; its room is kept so the view switch
+          // stays where it is in every view.
+          <div className="scient-reader-search scient-latex-search-room" aria-hidden="true" />
+        )}
+        {readerHosted ? null : viewSwitch}
+        <div ref={setReaderSlot} className="scient-latex-reader-slot" hidden={!mergesReaderBar} />
+        <div className="scient-latex-actions">
+          {readerHosted ? null : splitPreviewSwitch}
+          {readerHosted ? null : buildButton}
+          {readerHosted ? null : (
+            // The same button and menu the reader controls use, so Rebuild and
+            // More do not shift when the mode changes.
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<ReaderButton label="More actions" />}>
+                <Ellipsis />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <ReaderRowContext value={headerRow.current}>{documentMenuItems()}</ReaderRowContext>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
       </div>
 
-      {diagnostics.length > 0 ? (
-        <div className="scient-latex-diagnostics">
-          <button
-            type="button"
-            className="scient-latex-diagnostics-toggle"
-            aria-expanded={diagnosticsOpen}
-            onClick={() => setDiagnosticsOpen((current) => !current)}
+      {(diagnostics.length > 0 || status.state === "failed") && diagnosticsOpen ? (
+        // Floats over the document: opening it moves nothing underneath.
+        <div className="scient-latex-diagnostics-anchor">
+          <div
+            ref={diagnosticsCard}
+            className="scient-latex-diagnostics"
+            role="region"
+            aria-label="Build messages"
+            onKeyDown={(event) => {
+              if (event.key !== "Escape" || event.defaultPrevented) return;
+              event.preventDefault();
+              event.stopPropagation();
+              setDiagnosticsOpen(false);
+            }}
           >
-            <ChevronRight
-              className={cn("size-3.5 shrink-0", diagnosticsOpen ? "rotate-90" : undefined)}
-              aria-hidden="true"
-            />
-            <span className="scient-latex-diagnostics-summary">
-              {status.firstDiagnosticLine ?? `${diagnostics.length} build messages`}
-            </span>
-            {diagnostics.length > 1 ? (
-              <span className="scient-latex-diagnostics-count">{diagnostics.length}</span>
+            {diagnosticsOpen ? (
+              diagnostics.length === 0 ? (
+                <p className="scient-latex-diagnostic-message">
+                  {build.snapshot?.failureSummary ??
+                    "The build failed without compiler diagnostics. Check the LaTeX toolchain and rebuild."}
+                </p>
+              ) : (
+                <ul className="scient-latex-diagnostics-list">
+                  {diagnosticRows.map((row) => (
+                    <LatexDiagnosticsRow
+                      key={row.key}
+                      diagnostic={row.diagnostic}
+                      workspaceRoot={props.cwd}
+                      onNavigate={(relativePath, line) =>
+                        onOpenFileSource(
+                          relativePath,
+                          line,
+                          build.snapshot === null
+                            ? undefined
+                            : { latexRootRelativePath: build.snapshot.rootRelativePath },
+                        )
+                      }
+                    />
+                  ))}
+                </ul>
+              )
             ) : null}
-          </button>
-          {diagnosticsOpen ? (
-            <ul className="scient-latex-diagnostics-list">
-              {diagnosticRows.map((row) => (
-                <LatexDiagnosticsRow
-                  key={row.key}
-                  diagnostic={row.diagnostic}
-                  workspaceRoot={props.cwd}
-                  onNavigate={(relativePath, line) =>
-                    onOpenFileSource(
-                      relativePath,
-                      line,
-                      build.snapshot === null
-                        ? undefined
-                        : { latexRootRelativePath: build.snapshot.rootRelativePath },
-                    )
-                  }
-                />
-              ))}
-            </ul>
-          ) : null}
+          </div>
         </div>
       ) : null}
 
+      {(showEditor || sourceRecovery.blocked) && sourceRecovery.recovery ? (
+        <LatexVisualRecoveryBar
+          key={sourceRecovery.recovery.identity}
+          recovery={sourceRecovery.recovery}
+          currentSource={props.contents}
+          applicable={true}
+          disabled={persistence === null}
+          onApply={sourceRecovery.apply}
+          onDiscard={sourceRecovery.discard}
+        />
+      ) : null}
+      {sourceRecovery.storageFailed ? (
+        <p role="status">
+          The local recovery copy could not be stored. Keep this document open until its workspace
+          save succeeds.
+        </p>
+      ) : null}
       <div className="scient-latex-content" ref={containerRef}>
         {showEditor ? (
-          <ScientTooltip content="In Split, double-click a source line to find it in the PDF">
+          <ScientTooltip
+            content={
+              mode === "split" && splitPreview === "pdf"
+                ? "In Split, double-click a source line to find it in the PDF"
+                : "LaTeX source"
+            }
+          >
             <div
               ref={primaryPaneRef}
               className={cn(
@@ -941,12 +1530,12 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                 mode === "split" ? "scient-latex-pane-sized" : null,
               )}
               onDoubleClickCapture={(event) => {
-                if (mode !== "split") return;
+                if (mode !== "split" || splitPreview !== "pdf") return;
                 const position = sourcePositionFromPointerEvent(event);
                 if (position !== null) handleForwardSync(position);
               }}
             >
-              {persistence === null ? (
+              {persistence === null || sourceRecovery.blocked ? (
                 <LatexReadOnlyHalf
                   cwd={props.cwd}
                   relativePath={props.relativePath}
@@ -963,8 +1552,8 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                   relativePath={props.relativePath}
                   composerDraftTarget={props.composerDraftTarget}
                   resolvedTheme={props.resolvedTheme}
-                  revealRequestId={props.revealRequestId}
                   wordWrap={props.wordWrap}
+                  revealRequestId={props.revealRequestId}
                   onPostRender={props.onPostRender}
                 />
               )}
@@ -972,8 +1561,14 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           </ScientTooltip>
         ) : null}
 
-        {showViewer ? (
-          <div className="scient-latex-viewer-shell">
+        {showRightPane || visualOpened ? (
+          <div
+            style={showRightPane ? undefined : { display: "none" }}
+            className={cn(
+              "scient-latex-viewer-shell",
+              mode !== "split" && "scient-latex-viewer-shell-solo",
+            )}
+          >
             {showEditor ? (
               <ResizeSeparator
                 className="absolute inset-y-0 -start-1"
@@ -985,23 +1580,83 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                 {...separatorHandlers}
               />
             ) : null}
-            <LatexViewerPane
-              descriptor={descriptor}
-              readerScope={
-                typeof props.composerDraftTarget === "string"
-                  ? props.composerDraftTarget
-                  : props.composerDraftTarget.threadId
-              }
-              readerKey={readerKey}
-              viewer={status.viewer}
-              toolchainMissing={status.toolchainMissing}
-              failureLine={status.firstDiagnosticLine ?? build.snapshot?.failureSummary ?? null}
-              canInstallManaged={build.canInstallManaged}
-              managedInstall={build.managedInstall}
-              installRequesting={build.installRequesting}
-              onInstall={handleInstallToolchain}
-              {...(syncNavigation === undefined ? {} : { syncNavigation })}
-            />
+            {showVisual || visualOpened ? (
+              <div style={{ display: showVisual ? "contents" : "none" }}>
+                <ReaderBarHostContext value={readerBarHost(showVisual ? readerSlot : null, true)}>
+                  <Suspense fallback={<LatexPendingViewer label="Opening Visual view…" />}>
+                    <LatexProjectVisualEditor
+                      // The project's recovery copy is retired only when nothing is
+                      // unsaved, so a failed or queued save of this file counts too.
+                      selectedPending={sourcePending}
+                      fileTruncated={props.truncated}
+                      onSaved={() => {
+                        if (target) notifyLatexBindingChange(target);
+                      }}
+                      onProjectStateChange={setVisualProjectState}
+                      onOpenFileSource={(path, line) =>
+                        props.onOpenFileSource(
+                          path,
+                          line,
+                          resolvedRootRelativePath
+                            ? { latexRootRelativePath: resolvedRootRelativePath }
+                            : undefined,
+                        )
+                      }
+                      rootRelativePath={resolvedRootRelativePath}
+                      key={visualDraftKey}
+                      source={props.contents}
+                      onLocalDraftChange={reportLocalVisualDraft}
+                      draftKey={visualDraftKey}
+                      fileRevision={props.revision}
+                      environmentId={props.environmentId}
+                      cwd={props.cwd}
+                      relativePath={props.relativePath}
+                      disabled={props.truncated || persistence === null || sourceRecovery.blocked}
+                      onEdit={handleVisualEdit}
+                      flushReferenceEdits={persistence?.flushNow}
+                      documentPersistence={persistence ? [persistence] : []}
+                      onEditingChange={ignoreVisualEditing}
+                      onOpenSource={() => selectMode("source")}
+                      onOpenRoot={(mode = "source") => {
+                        if (
+                          !resolvedRootRelativePath ||
+                          resolvedRootRelativePath === props.relativePath
+                        )
+                          selectMode(mode);
+                        else
+                          props.onOpenFileSource(
+                            resolvedRootRelativePath,
+                            mode === "source" ? 1 : undefined,
+                            mode === "visual" ? { latexPreviewMode: "visual" } : undefined,
+                          );
+                      }}
+                      registerFinishEditing={registerFinishVisualEditing}
+                    />
+                  </Suspense>
+                </ReaderBarHostContext>
+              </div>
+            ) : null}
+            {activePreview === "pdf" ? (
+              <ReaderBarHostContext value={readerBarHost(readerSlot)}>
+                <LatexViewerPane
+                  descriptor={descriptor}
+                  readerScope={
+                    typeof props.composerDraftTarget === "string"
+                      ? props.composerDraftTarget
+                      : props.composerDraftTarget.threadId
+                  }
+                  readerKey={readerKey}
+                  viewer={status.viewer}
+                  toolchainMissing={status.toolchainMissing}
+                  failureLine={status.firstDiagnosticLine ?? build.snapshot?.failureSummary ?? null}
+                  canInstallManaged={build.canInstallManaged}
+                  managedInstall={build.managedInstall}
+                  installRequesting={build.installRequesting}
+                  onInstall={handleInstallToolchain}
+                  {...(syncNavigation === undefined ? {} : { syncNavigation })}
+                />
+              </ReaderBarHostContext>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -1013,9 +1668,12 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           rootRelativePath={target.relativePath}
           // Export reads the file on disk: flush first, and refuse while a
           // conflict or a failed save keeps the draft ahead of it.
-          savedRevision={async () =>
-            persistence === null ? props.revision : savedMarkdownRevision(persistence)
-          }
+          savedRevision={async () => {
+            const prepared = await prepareDocument();
+            return prepared?.isCurrent()
+              ? (prepared.revisions.get(props.relativePath) ?? null)
+              : null;
+          }}
           onClose={() => setWordExportOpen(false)}
         />
       ) : null}

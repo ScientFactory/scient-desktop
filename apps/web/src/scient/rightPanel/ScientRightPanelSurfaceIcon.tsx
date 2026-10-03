@@ -4,6 +4,8 @@ import type { ScientRightPanelSurface } from "./surfaces";
 
 export function ScientRightPanelSurfaceIcon(props: { readonly surface: ScientRightPanelSurface }) {
   switch (props.surface.module) {
+    case "documents":
+      return <FileText className="size-3 shrink-0" />;
     case "sources":
       return <Library className="size-3 shrink-0" />;
     case "compute":
