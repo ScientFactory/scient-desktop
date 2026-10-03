@@ -19,7 +19,6 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
-  Scan,
   Search,
   ZoomIn,
   ZoomOut,
@@ -349,9 +348,6 @@ export function DocumentReaderControls(props: {
                 <ZoomIn /> Zoom in
               </DropdownMenuItem>
             </IfRowHidden>
-            <DropdownMenuItem disabled={!props.ready} onClick={() => props.onActualSize()}>
-              <Scan /> Actual size
-            </DropdownMenuItem>
             <IfRowHidden selector=".scient-pdf-zoom-label">
               <DropdownMenuItem disabled={!props.ready} onClick={() => props.onFitWidth()}>
                 <Maximize2 /> Fit width

@@ -178,7 +178,8 @@ describe("Scient PDF reader source seam", () => {
     expect(source).not.toContain('className="scient-pdf-action-rotate"');
     expect(controlsSource).toContain('className="scient-reader-search"');
     expect(source).toContain("<ZoomOut /> Zoom out");
-    expect(source).toContain("<Scan /> Actual size");
+    // Actual size is not offered in More; clicking the percentage fits the width.
+    expect(source).not.toContain("Actual size");
     expect(source).toContain("<ZoomIn /> Zoom in");
     expect(source).toContain("<Maximize2 /> Fit width");
     expect(source).toContain("<RotateCw /> Rotate clockwise");

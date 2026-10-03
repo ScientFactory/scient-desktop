@@ -96,8 +96,7 @@ count and two arrows appear at its end, Enter moves to the next result, and
 Escape clears it. Ctrl/Cmd+F puts the caret there. The view switch stays in the same place in
 Source, where the room before it is empty. Minus and plus sit on either side of the zoom percentage and use
 five-percent steps in the 25–500% range. Click the percentage to fit the page
-to the pane width; the fit follows pane resizing automatically. Actual size is
-in More. In Visual, **More > Find and replace** opens the full bar under the writing
+to the pane width; the fit follows pane resizing automatically. In Visual, **More > Find and replace** opens the full bar under the writing
 toolbar, with Replace and Replace all. Replace all works through the document one paragraph
 at a time, so a very long document takes a few seconds, and each paragraph is
 its own undo step. It stops if you type or undo while it is working. Text

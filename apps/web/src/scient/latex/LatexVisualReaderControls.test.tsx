@@ -66,7 +66,7 @@ describe("shared PDF and Visual controls", () => {
     expect(onFitWidth).toHaveBeenCalledOnce();
     expect(onActualSize).not.toHaveBeenCalled();
     expect(host.querySelector('input[aria-label="Document zoom percentage"]')).toBeNull();
-    // Actual size stays reachable in More; there is no separate Fit width button.
+    // There is no separate Fit width button.
     expect(host.querySelector(".scient-pdf-action-fit")).toBeNull();
     await render({ scale: 5, onZoom });
     await click("Zoom in");
