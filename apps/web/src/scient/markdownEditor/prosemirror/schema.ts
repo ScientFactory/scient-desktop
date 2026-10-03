@@ -842,8 +842,13 @@ export const scientMarkdownSerializer = new ScientMarkdownSerializer(
       const params = typeof node.attrs.params === "string" ? node.attrs.params : "";
       // A backtick fence cannot carry an info string that contains a backtick.
       const marker = params.includes("`") ? "~" : "`";
-      const runs = node.textContent.match(marker === "`" ? /`{3,}/gu : /~{3,}/gu) ?? [];
-      const fence = marker.repeat(Math.max(3, ...runs.map((run) => run.length + 1)));
+      // A loop, not Math.max(...runs): a long block can hold more runs than
+      // a call accepts arguments.
+      let length = 3;
+      for (const run of node.textContent.match(marker === "`" ? /`{3,}/gu : /~{3,}/gu) ?? []) {
+        length = Math.max(length, run.length + 1);
+      }
+      const fence = marker.repeat(length);
       state.write(`${fence}${params}\n`);
       state.text(node.textContent, false);
       state.write("\n");

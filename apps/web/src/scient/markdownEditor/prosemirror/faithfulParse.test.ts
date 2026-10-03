@@ -134,6 +134,17 @@ describe("faithful Markdown projection", () => {
     expect(quote?.child(1).textContent).toBe("Keep body.");
   });
 
+  it("writes back a code block holding more fence-like lines than a call takes arguments", () => {
+    const lines = "```\n".repeat(150_000);
+    const source = `\`\`\`\`\n${lines}\`\`\`\`\n`;
+    const session = new ScientProseMirrorSession({ source, revision: "r1", mode: "write" });
+    expect(session.state.doc.firstChild?.type.name).toBe("code_block");
+
+    session.applyTransaction(session.state.tr.insertText("x", 1, 1), "user");
+
+    expect(session.session.draftSource).toBe(`\`\`\`\`\nx${lines}\`\`\`\`\n`);
+  });
+
   it("names a heading with math by its TeX in the outline", () => {
     const projection = createScientMarkdownProjection("## Estimating $\\beta$ here\n");
     const state = EditorState.create({
