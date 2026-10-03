@@ -146,7 +146,6 @@ import { LatexVisualSearch, useLatexVisualSearch } from "./useLatexVisualSearch"
 import { clampPdfPage, stepPdfZoom } from "../pdf/pdfReaderModel";
 import { useLatexPinchZoom } from "./useLatexPinchZoom";
 import {
-  LayoutList,
   Replace,
   Heading1,
   Heading2,
@@ -5688,12 +5687,6 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
               label: WRITING_COMMAND_LABELS.numberedList,
               icon: <WritingCommandIcon command="numberedList" />,
               shortcut: menuShortcut("latex.orderedList"),
-            },
-            {
-              value: "description",
-              label: "Description list",
-              icon: <LayoutList className="size-4" />,
-              shortcut: undefined,
             },
           ] as const
         ).map(({ value, label, icon, shortcut }) => (

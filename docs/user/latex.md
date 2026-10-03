@@ -65,7 +65,7 @@ added silently. Date modes in
 the footer are Automatic (the compilation date), Custom and Hidden.
 Title, author, and date remain editable on paper.
 
-**Lists** offers Bullet list, Numbered list, Description list, and No list. The
+**Lists** offers Bullet list, Numbered list and No list. Description lists already in a document still show and can be edited. The
 current type is highlighted, and each row shows its shortcut: Ctrl/Cmd+Shift+8
 for a bullet list, Ctrl/Cmd+Shift+7 for a numbered list. Where a list cannot
 start, such as on a selected figure, the menu says so. Choose a type on an empty paragraph to start writing, or select paragraphs
