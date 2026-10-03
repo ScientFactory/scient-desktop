@@ -146,7 +146,7 @@ export function LatexDocumentSettings(props: {
                           <label key={side} className="grid gap-1">
                             {side[0]!.toUpperCase() + side.slice(1)}
                             <Input
-                              aria-label={`${side[0]!.toUpperCase() + side.slice(1)}`}
+                              aria-label={`${side[0]!.toUpperCase() + side.slice(1)} margin`}
                               value={changes.margins?.[side] ?? ""}
                               placeholder="Keep"
                               onChange={(event) => {
