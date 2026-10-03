@@ -7,19 +7,20 @@ orchestration layer does not know which one is behind a thread.
 
 ## Built-in drivers
 
-[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with nine entries:
+[`builtInDrivers.ts`][drivers] exports `BUILT_IN_DRIVERS` with ten entries:
 
-| Driver kind   | Driver source                                 |
-| ------------- | --------------------------------------------- |
-| `codex`       | [`Drivers/CodexDriver.ts`][codex]             |
-| `claudeAgent` | [`Drivers/ClaudeDriver.ts`][claude]           |
-| `cursor`      | [`Drivers/CursorDriver.ts`][cursor]           |
-| `grok`        | [`Drivers/GrokDriver.ts`][grok]               |
-| `opencode`    | [`Drivers/OpenCodeDriver.ts`][opencode]       |
-| `droid`       | [`Drivers/DroidDriver.ts`][droid]             |
-| `antigravity` | [`Drivers/AntigravityDriver.ts`][antigravity] |
-| `pi`          | [`Drivers/PiDriver.ts`][pi]                   |
-| `omp`         | [`Drivers/OmpDriver.ts`][omp]                 |
+| Driver kind   | Driver source                                  |
+| ------------- | ---------------------------------------------- |
+| `codex`       | [`Drivers/CodexDriver.ts`][codex]              |
+| `claudeAgent` | [`Drivers/ClaudeDriver.ts`][claude]            |
+| `cursor`      | [`Drivers/CursorDriver.ts`][cursor]            |
+| `grok`        | [`Drivers/GrokDriver.ts`][grok]                |
+| `opencode`    | [`Drivers/OpenCodeDriver.ts`][opencode]        |
+| `droid`       | [`Drivers/DroidDriver.ts`][droid]              |
+| `antigravity` | [`Drivers/AntigravityDriver.ts`][antigravity]  |
+| `pi`          | [`Drivers/PiDriver.ts`][pi]                    |
+| `omp`         | [`Drivers/OmpDriver.ts`][omp]                  |
+| `scient`      | [`Drivers/ScientAgentDriver.ts`][scient-agent] |
 
 Each driver declares its `driverKind`, a `configSchema`, and a `create` function that builds an
 adapter in a child scope. Adapter implementations live beside them in
@@ -679,6 +680,53 @@ orchestration types. The adapter owns the process and the turn mapping.
   with an explicit warning rather than being silently dropped. Full access is the only runtime
   mode. There is no Orchestration V2 adapter.
 
+### Scient Agent driver
+
+Scient Agent is ScientFactory's agent, a fork of Oh My Pi that speaks the same RPC protocol.
+[`ScientAgentDriver.ts`][scient-agent] runs it through the Oh My Pi adapter, RPC client, custom-model
+bridge and Scient tool extension. What makes it a separate product is an
+[`OmpTarget`](../../apps/server/src/provider/omp/OmpTarget.ts): every Oh My Pi module takes one,
+and reads the product's name, driver kind, executable probe, state variables and state folders
+from it. `ompTarget` describes Oh My Pi; `scientAgentTarget`
+([`ScientAgentTarget.ts`](../../apps/server/src/provider/scient/ScientAgentTarget.ts)) describes
+Scient Agent.
+
+- Identity. The RPC protocol carries no product name, so a target probes the executable before
+  starting it. Oh My Pi is probed with `--version`. Scient Agent is probed with `--runtime-info`,
+  which prints one JSON object: `product`, the Scient Agent `version`, the `upstream` Oh My Pi
+  release, and `rpcProtocolVersions`. The product must be `scient-agent`, the version 0.1.0 or
+  newer below 1.0, the upstream release one this server supports for Oh My Pi, and RPC v2 offered.
+  An `omp` executable fails that probe, and a `scient-agent` executable fails Oh My Pi's. The probe
+  runs with stdin closed and is force-killed, so an executable that is neither cannot hold it open.
+- Two versions. A process reports `version` (the product's, shown to the user) and
+  `runtimeVersion` (the Oh My Pi release it runs). Resume cursors and protocol switches follow
+  `runtimeVersion`. For Oh My Pi the two are equal.
+- State. The driver assigns `SCIENT_AGENT_ROOT=<stateDir>/scient-agent/instances/<instanceId>`
+  and passes no other `SCIENT_AGENT_*` variable, inherited or set on the instance. The agent
+  treats that root as authoritative: it ignores `SCIENT_AGENT_DIR` under it and does not take a
+  `SCIENT_AGENT_*` variable from a `.env` in the project or the home directory. It keeps its
+  configuration, credentials, logs, caches and native addon there. One thing stays outside: the
+  agent's native sign-in helper keeps its registration under `~/.scient-agent/oauth`, because a
+  URL-scheme handler is registered once per user. Oh My Pi's own variables pass through
+  untouched: Scient Agent ignores them, and an `omp` started from the agent's shell keeps the
+  user's setup.
+- Scient's folders. Sessions are in `<stateDir>/scient-agent-sessions` and generated extensions in
+  `<stateDir>/scient-agent/extensions`. Each product's crash sweep covers only its own folders.
+- Resume. The two products write the same session format, so a cursor names its product: a
+  Scient Agent cursor carries `driverKind`, and one without it is Oh My Pi's. Each product refuses
+  the other's cursor even when the instance id, session folder, workspace and home all match.
+- Model sources. A model reaches the agent from the user's own sign-ins and keys, or from a Scient
+  model connection (`scient_<connection id>` provider ids, delivered through the bootstrap file).
+  A later Scient subscription is a third source and uses that same private channel: Scient signs
+  the user in, and hands the agent an endpoint and a token. Keep account state in Scient, never in
+  the agent's root, and keep the provider id `scient` free for it.
+- Not yet: managed installation (the executable is the configured path until Scient Agent
+  publishes releases), more than one instance, and signing in to model subscriptions from Scient.
+
+`provider/scient/ScientAgent.live.test.ts` is the opt-in suite against real executables
+(`SCIENT_AGENT_QUALIFY_BINARY`, with `OMP_QUALIFY_BINARY` for the coexistence cases and
+`SCIENT_AGENT_QUALIFY_FULL_TURN=1` for a model turn).
+
 ## Scient-assisted provider lifecycle
 
 Codex, Claude, Cursor, Antigravity, Grok, and Droid optionally expose assisted runtime and account
@@ -866,6 +914,7 @@ when a request opens (approval) or user input is requested, via
 [droid]: ../../apps/server/src/provider/Drivers/DroidDriver.ts
 [pi]: ../../apps/server/src/provider/Drivers/PiDriver.ts
 [omp]: ../../apps/server/src/provider/Drivers/OmpDriver.ts
+[scient-agent]: ../../apps/server/src/provider/Drivers/ScientAgentDriver.ts
 [pi-notice]: ../../apps/server/src/provider/pi/NOTICE.md
 [agy-session]: ../../apps/server/src/provider/antigravity/AgySession.ts
 [adapter]: ../../apps/server/src/provider/Services/ProviderAdapter.ts

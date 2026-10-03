@@ -22,6 +22,7 @@ import {
 } from "../omp/OmpCaptureReplay.testFixtures.ts";
 import type { OmpRpcProcessOptions } from "../omp/OmpRpcProcess.ts";
 import { makeOmpAdapter } from "./OmpAdapter.ts";
+import { ompTarget } from "../omp/OmpTarget.ts";
 
 type Frame = Record<string, unknown>;
 
@@ -38,6 +39,7 @@ const makeAdapter = (
 ) => {
   const written: Array<Frame> = [];
   return makeOmpAdapter({
+    target: ompTarget,
     binaryPath: "omp",
     providerInstanceId: ProviderInstanceId.make("omp"),
     stateDir,
@@ -60,7 +62,7 @@ const makeAdapter = (
           };
         });
         const client = yield* makeOmpRpcClient(wire.io);
-        return { ...client, version };
+        return { ...client, version, runtimeVersion: version };
       }),
   }).pipe(Effect.map((adapter) => ({ adapter, written })));
 };

@@ -24,6 +24,7 @@ import type { OmpRpcResponse } from "effect-omp-rpc/schema";
 import type { OmpProcessExit, OmpRpcProcessOptions } from "../omp/OmpRpcProcess.ts";
 import { makeOmpAdapter } from "./OmpAdapter.ts";
 import type { EventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { ompTarget } from "../omp/OmpTarget.ts";
 
 const toJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -67,9 +68,11 @@ const makeClient = (input: {
   };
   const client: OmpRpcClient & {
     readonly version: string;
+    readonly runtimeVersion: string;
     readonly shutdown?: Effect.Effect<OmpProcessExit, never>;
   } = {
     version: input.version ?? "18.2.8",
+    runtimeVersion: input.version ?? "18.2.8",
     ready: Effect.succeed({
       type: "ready" as const,
       protocolVersion: 1,
@@ -185,6 +188,7 @@ const makeAdapter = (input: {
   readonly makeProcess: (options: OmpRpcProcessOptions) => Effect.Effect<
     OmpRpcClient & {
       readonly version: string;
+      readonly runtimeVersion: string;
       readonly shutdown?: Effect.Effect<OmpProcessExit, never>;
     },
     never,
@@ -196,6 +200,7 @@ const makeAdapter = (input: {
   readonly nativeEventLogger?: EventNdjsonLogger;
 }) =>
   makeOmpAdapter({
+    target: ompTarget,
     binaryPath: "omp",
     providerInstanceId: input.instanceId,
     stateDir: NodePath.join(input.root, "state"),

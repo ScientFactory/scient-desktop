@@ -34,11 +34,17 @@ import { clearMcpProviderSession, setMcpProviderSession } from "../../mcp/McpPro
 import { makeOmpAdapter } from "../Layers/OmpAdapter.ts";
 import { SCIENT_CORE_AWARENESS } from "../ScientAwareness.ts";
 import { makeOmpCustomModelsClientFactory } from "./OmpCustomModels.ts";
-import { ompProcessEnvironment } from "./OmpEnvironment.ts";
 import { writeOmpExtensionFiles } from "./OmpExtensionBootstrap.ts";
 import { ompScientExtensionSource } from "./OmpScientExtension.ts";
 import * as OmpExecutableGate from "./OmpExecutableGate.ts";
-import { ompQualifyBinary } from "./OmpLive.testFixtures.ts";
+import {
+  ompQualifyBinary,
+  ompQualifyEnvironment,
+  ompQualifyStateVariable,
+  ompQualifyTarget,
+  scientInternalAssignment,
+  scientInternalName,
+} from "./OmpLive.testFixtures.ts";
 import { encodeOmpModelSlug } from "./OmpModel.ts";
 import {
   makeOmpRpcProcess,
@@ -262,13 +268,13 @@ const scopedRoot = (label: string) =>
 
 const isolatedEnvironment = (root: string) =>
   Effect.map(HostProcessPlatform, (platform) =>
-    ompProcessEnvironment({
+    ompQualifyEnvironment({
       platform,
+      agent: NodePath.join(root, "agent"),
       baseEnv: {
         PATH: `/usr/bin:/bin:${NodePath.dirname(binary ?? "/usr/bin/omp")}`,
         HOME: NodePath.join(root, "home"),
         TMPDIR: NodePath.join(root, "home"),
-        PI_CODING_AGENT_DIR: NodePath.join(root, "agent"),
         HTTPS_PROXY: "http://127.0.0.1:9",
         HTTP_PROXY: "http://127.0.0.1:9",
         NO_PROXY: "127.0.0.1,localhost",
@@ -306,11 +312,12 @@ const makeStubModelFactory = (
   root: string,
   baseUrl: string,
   instanceId: ProviderInstanceId,
-  makeProcess?: Parameters<typeof makeOmpCustomModelsClientFactory>[3],
+  makeProcess?: Parameters<typeof makeOmpCustomModelsClientFactory>[4],
 ) =>
   Effect.gen(function* () {
     const settingsChanges = yield* Queue.unbounded<ServerSettings>();
     return yield* makeOmpCustomModelsClientFactory(
+      ompQualifyTarget,
       {
         resolveCustomModels: () => Effect.succeed([stubConnection(baseUrl, instanceId)]),
         subscribeChanges: Effect.succeed(Stream.fromQueue(settingsChanges)),
@@ -330,7 +337,7 @@ const launchSecrets = (options: OmpRpcProcessOptions) => {
   const secrets = new Set<string>();
   const bootstraps: Array<string> = [];
   for (const [name, value] of Object.entries(options.env ?? {}))
-    if (name.startsWith("SCIENT_") && value && !value.startsWith("#")) secrets.add(value);
+    if (scientInternalName.test(name) && value && !value.startsWith("#")) secrets.add(value);
   const args = options.extraArgs ?? [];
   const collect = (value: unknown): void => {
     if (typeof value === "string") secrets.add(value);
@@ -381,6 +388,7 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
           let client: OmpRpcProcess | undefined;
           let extensionPath: string | undefined;
           const adapter = yield* makeOmpAdapter({
+            target: ompQualifyTarget,
             binaryPath: binary!,
             providerInstanceId: instanceId,
             stateDir: NodePath.join(root, "state"),
@@ -519,6 +527,7 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
           );
           let client: OmpRpcProcess | undefined;
           const adapter = yield* makeOmpAdapter({
+            target: ompQualifyTarget,
             binaryPath: binary!,
             providerInstanceId: instanceId,
             stateDir: NodePath.join(root, "state"),
@@ -597,13 +606,13 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
             shell!.split("SCIENT_PROBE_SPLIT");
           // The probe really printed both environments.
           expect(shellEnvironment).toMatch(/^PATH=/mu);
-          expect(parentEnvironment).toContain("PI_CODING_AGENT_DIR=");
+          expect(parentEnvironment).toContain(`${ompQualifyStateVariable}=`);
           const names = shellEnvironment
             .split("\n")
             .map((line) => line.split("=", 1)[0] ?? "")
-            .filter((name) => /^(?:SCIENT_|T3CODE_)/u.test(name));
+            .filter((name) => scientInternalName.test(name));
           expect(names).toEqual([]);
-          expect(parentEnvironment).not.toMatch(/\b(?:SCIENT_|T3CODE_)[A-Z_]*=/u);
+          expect(parentEnvironment).not.toMatch(scientInternalAssignment);
           const leaked = [...(launch?.secrets ?? [])].filter((secret) => shell!.includes(secret));
           expect(leaked).toEqual([]);
 
@@ -690,6 +699,7 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
             instanceId,
           );
           const adapter = yield* makeOmpAdapter({
+            target: ompQualifyTarget,
             binaryPath: binary!,
             providerInstanceId: instanceId,
             stateDir: NodePath.join(root, "state"),
@@ -776,10 +786,11 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
           const mcpPort = yield* listen(mcp.server);
           const essential = 'loadMode: "essential",';
           const extension = yield* writeOmpExtensionFiles({
+            target: ompQualifyTarget,
             directory: root,
             name: "discoverable-extension",
             source: (bootstrapPath) => {
-              const source = ompScientExtensionSource(bootstrapPath);
+              const source = ompScientExtensionSource(ompQualifyTarget, bootstrapPath);
               expect(source.split(essential)).toHaveLength(2);
               return source.replace(essential, "");
             },
@@ -796,6 +807,7 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
             ProviderInstanceId.make("omp-scient-live-control"),
           );
           const process = yield* customModels({
+            target: ompQualifyTarget,
             command: binary!,
             cwd: NodePath.join(root, "cwd"),
             env: yield* isolatedEnvironment(root),
@@ -848,6 +860,7 @@ describe.runIf(binary)("native OMP ordinary tool activity", () => {
             );
             let client: OmpRpcProcess | undefined;
             const adapter = yield* makeOmpAdapter({
+              target: ompQualifyTarget,
               binaryPath: binary!,
               providerInstanceId: instanceId,
               stateDir: NodePath.join(root, "state"),

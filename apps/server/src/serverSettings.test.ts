@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
+  ANTIGRAVITY_DEFAULT_MODEL,
   DROID_DEFAULT_MODEL,
   type CustomModel,
   ModelSelection,
@@ -1029,6 +1030,29 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             },
           }),
           { instanceId: ProviderInstanceId.make("claude_a"), model: "claude-haiku-4-5" },
+        );
+      }),
+    );
+
+    it.effect("leaves Scient Agent, on by default, as the last resort", () =>
+      Effect.gen(function* () {
+        // Another enabled built-in comes first, even one that sorts after it.
+        assert.deepEqual(
+          yield* selectionWith({
+            providers: { ...builtInsDisabled, antigravity: { enabled: true } },
+          }),
+          { instanceId: ProviderInstanceId.make("antigravity"), model: ANTIGRAVITY_DEFAULT_MODEL },
+        );
+        // With every other provider off, it is what is left.
+        assert.equal(
+          (yield* selectionWith({ providers: builtInsDisabled }))?.instanceId,
+          ProviderInstanceId.make("scient"),
+        );
+        // Turned off, nothing is chosen for it.
+        assert.equal(
+          (yield* selectionWith({ providers: { ...builtInsDisabled, scient: disabled } }))
+            ?.instanceId,
+          ProviderInstanceId.make("codex"),
         );
       }),
     );

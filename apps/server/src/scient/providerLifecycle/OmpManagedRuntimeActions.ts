@@ -38,6 +38,7 @@ import {
   type OmpExecutableGateShape,
 } from "../../provider/omp/OmpExecutableGate.ts";
 import { OMP_ISOLATED_ARGS, makeOmpRpcProcess } from "../../provider/omp/OmpRpcProcess.ts";
+import { ompTarget } from "../../provider/omp/OmpTarget.ts";
 
 const DEFAULT_OMP_BINARY = "omp";
 
@@ -93,7 +94,7 @@ class QualifiedManagedOmpRuntime extends ManagedOmpRuntime {
         Effect.forEach(executables, canonicalOmpExecutablePath).pipe(
           Effect.flatMap((identities) =>
             Effect.forEach([...new Set(identities)], (identity) =>
-              this.gate.acquireActivation(identity),
+              this.gate.acquireActivation(identity, { target: ompTarget }),
             ),
           ),
           Effect.provideService(Scope.Scope, scope),
@@ -223,6 +224,7 @@ export const qualifyManagedOmpRuntime = Effect.fn("OmpManagedRuntime.qualify")(f
         });
       });
       const client = yield* makeOmpRpcProcess({
+        target: ompTarget,
         command: input.executablePath,
         cwd: input.cwd,
         env: {
@@ -320,7 +322,7 @@ const probeConfiguredOmpRuntime =
         bypassCache: true,
       }).pipe(Effect.orElseSucceed(() => binary));
       const identity = yield* canonicalOmpExecutablePath(resolvedBinary);
-      yield* gate.acquireProcess(identity, { kind: "one-shot" });
+      yield* gate.acquireProcess(identity, { target: ompTarget, kind: "one-shot" });
       return yield* readConfiguredRuntimeVersion({
         binary: resolvedBinary,
         environment,

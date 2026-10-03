@@ -15,6 +15,7 @@ import {
   tryAcquireOmpSessionLockSync,
   type OmpLockFs,
 } from "./OmpSessionLock.ts";
+import { ompTarget } from "./OmpTarget.ts";
 
 let rootCounter = 0;
 const makeRoot = (label: string) => {
@@ -35,8 +36,8 @@ describe("Oh My Pi session lock", () => {
     Effect.gen(function* () {
       const lockPath = makeRoot("holder");
       const registry = makeOmpSessionLockRegistry();
-      const first = yield* acquireOmpSessionLock(lockPath, registry);
-      expect(yield* acquireOmpSessionLock(lockPath, registry).pipe(Effect.flip)).toBe(
+      const first = yield* acquireOmpSessionLock(ompTarget, lockPath, registry);
+      expect(yield* acquireOmpSessionLock(ompTarget, lockPath, registry).pipe(Effect.flip)).toBe(
         "This Oh My Pi conversation is already open.",
       );
       yield* releaseOmpSessionLock(first, registry);
@@ -45,7 +46,7 @@ describe("Oh My Pi session lock", () => {
       // A record whose owner is gone is reclaimed, and the reclaiming adapter
       // owns the lock afterwards.
       NodeFS.writeFileSync(lockPath, `${deadHolder}\n`);
-      const reclaimed = yield* acquireOmpSessionLock(lockPath, registry);
+      const reclaimed = yield* acquireOmpSessionLock(ompTarget, lockPath, registry);
       expect(NodeFS.readFileSync(lockPath, "utf8").trim()).toBe(reclaimed.token);
       expect(reclaimed.token.startsWith(`${registry.owner}:`)).toBe(true);
       yield* releaseOmpSessionLock(reclaimed, registry);
@@ -62,7 +63,9 @@ describe("Oh My Pi session lock", () => {
       // proves the holder is alive rather than gone.
       NodeFS.writeFileSync(lockPath, "1:foreign-owner:token\n");
       expect(
-        yield* acquireOmpSessionLock(lockPath, makeOmpSessionLockRegistry()).pipe(Effect.flip),
+        yield* acquireOmpSessionLock(ompTarget, lockPath, makeOmpSessionLockRegistry()).pipe(
+          Effect.flip,
+        ),
       ).toBe("This Oh My Pi conversation is already open.");
       expect(NodeFS.readFileSync(lockPath, "utf8")).toBe("1:foreign-owner:token\n");
       cleanup(lockPath);
@@ -73,7 +76,7 @@ describe("Oh My Pi session lock", () => {
     Effect.gen(function* () {
       const lockPath = makeRoot("foreign-release");
       const registry = makeOmpSessionLockRegistry();
-      const handle = yield* acquireOmpSessionLock(lockPath, registry);
+      const handle = yield* acquireOmpSessionLock(ompTarget, lockPath, registry);
       // Another owner now holds the conversation (for example after a stale
       // takeover). Releasing our old handle must not delete its record.
       const foreign = `${process.pid}:another-adapter:live-token`;
@@ -93,19 +96,19 @@ describe("Oh My Pi session lock", () => {
       const lockPath = makeRoot("same-pid");
       const mine = makeOmpSessionLockRegistry();
       const other = makeOmpSessionLockRegistry();
-      const otherHandle = yield* acquireOmpSessionLock(lockPath, other);
+      const otherHandle = yield* acquireOmpSessionLock(ompTarget, lockPath, other);
       // Another adapter in this server process may own a live session here.
-      expect(yield* acquireOmpSessionLock(lockPath, mine).pipe(Effect.flip)).toBe(
+      expect(yield* acquireOmpSessionLock(ompTarget, lockPath, mine).pipe(Effect.flip)).toBe(
         "This Oh My Pi conversation is already open.",
       );
       yield* releaseOmpSessionLock(otherHandle, other);
 
       // A record this adapter wrote but no longer tracks has no live owner.
       NodeFS.writeFileSync(lockPath, `${mine.owner}:leftover\n`);
-      const reclaimed = yield* acquireOmpSessionLock(lockPath, mine);
+      const reclaimed = yield* acquireOmpSessionLock(ompTarget, lockPath, mine);
       expect(NodeFS.readFileSync(lockPath, "utf8").trim()).toBe(reclaimed.token);
       // While the handle is registered, the adapter's own record is live.
-      expect(yield* acquireOmpSessionLock(lockPath, mine).pipe(Effect.flip)).toBe(
+      expect(yield* acquireOmpSessionLock(ompTarget, lockPath, mine).pipe(Effect.flip)).toBe(
         "This Oh My Pi conversation is already open.",
       );
       yield* releaseOmpSessionLock(reclaimed, mine);
@@ -144,7 +147,9 @@ describe("Oh My Pi session lock", () => {
           link: (from, to) => interleave(() => nodeOmpLockFs.link(from, to)),
           remove: (file) => interleave(() => nodeOmpLockFs.remove(file)),
         };
-        const exit = yield* acquireOmpSessionLock(lockPath, first, racingFs).pipe(Effect.exit);
+        const exit = yield* acquireOmpSessionLock(ompTarget, lockPath, first, racingFs).pipe(
+          Effect.exit,
+        );
         const firstToken = exit._tag === "Success" ? exit.value.token : undefined;
         const winners = [firstToken, secondToken].filter((token) => token !== undefined);
         if (secondResult !== undefined) {

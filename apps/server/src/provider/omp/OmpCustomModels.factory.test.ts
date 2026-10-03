@@ -22,6 +22,7 @@ import {
   makeFakeOmpModelsExtension,
 } from "./OmpCustomModelsTestHelpers.ts";
 import type { OmpRpcProcess, OmpRpcProcessOptions } from "./OmpRpcProcess.ts";
+import { ompTarget } from "./OmpTarget.ts";
 
 const instanceId = ProviderInstanceId.make("omp-factory-test");
 const model = {
@@ -124,6 +125,7 @@ it.effect(
         const extensions: Array<ReturnType<typeof makeFakeOmpModelsExtension>> = [];
         let captured: OmpRpcProcessOptions | undefined;
         const factory = yield* makeOmpCustomModelsClientFactory(
+          ompTarget,
           {
             resolveCustomModels: () =>
               Effect.gen(function* () {
@@ -140,7 +142,11 @@ it.effect(
               return fakeProcess(options, prompts, shutdowns, extensions);
             }),
         );
-        const client = yield* factory({ command: "fake-omp", env: { PATH: "" } });
+        const client = yield* factory({
+          target: ompTarget,
+          command: "fake-omp",
+          env: { PATH: "" },
+        });
         const extension = extensions[0];
         if (!extension) throw new Error("fake extension was not started");
         yield* Effect.promise(() => extension.start());
@@ -222,6 +228,7 @@ it.effect(
         const settingsChanges = yield* Queue.unbounded<ServerSettings>();
         let bootstrap: ReturnType<typeof consumeOmpModelsBootstrap> | undefined;
         const factory = yield* makeOmpCustomModelsClientFactory(
+          ompTarget,
           {
             resolveCustomModels: () => Effect.succeed([commandKey]),
             subscribeChanges: Effect.succeed(Stream.fromQueue(settingsChanges)),
@@ -238,7 +245,11 @@ it.effect(
               } as unknown as OmpRpcProcess;
             }),
         );
-        const client = yield* factory({ command: "fake-omp", env: { PATH: "" } });
+        const client = yield* factory({
+          target: ompTarget,
+          command: "fake-omp",
+          env: { PATH: "" },
+        });
 
         expect(bootstrap?.keys).toEqual({});
         expect(client.modelProviderLabel?.("scient_local")).toBe("Local");

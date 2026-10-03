@@ -27,7 +27,12 @@ import { makeOmpAdapter } from "../Layers/OmpAdapter.ts";
 import { OMP_ISOLATED_ARGS } from "./OmpRpcProcess.ts";
 import * as OmpExecutableGate from "./OmpExecutableGate.ts";
 import { makeOmpCustomModelsClientFactory } from "./OmpCustomModels.ts";
-import { ompLiveInstance, ompQualifyBinary } from "./OmpLive.testFixtures.ts";
+import {
+  ompLiveInstance,
+  ompQualifyBinary,
+  ompQualifyLogsDir,
+  ompQualifyTarget,
+} from "./OmpLive.testFixtures.ts";
 
 const binary = ompQualifyBinary ?? "";
 
@@ -100,6 +105,7 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
           });
           const instanceId = ProviderInstanceId.make("omp-custom-model-live");
           const factory = yield* makeOmpCustomModelsClientFactory(
+            ompQualifyTarget,
             {
               resolveCustomModels: () =>
                 Effect.gen(function* () {
@@ -112,6 +118,7 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
             NodePath.join(root, "state"),
           );
           let client = yield* factory({
+            target: ompQualifyTarget,
             command: binary,
             cwd: root,
             env: liveInstance(root).environment,
@@ -154,6 +161,7 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
           expect(yield* client.getModels().pipe(Effect.result)).toMatchObject({ _tag: "Failure" });
           yield* client.close();
           client = yield* factory({
+            target: ompQualifyTarget,
             command: binary,
             cwd: root,
             env: liveInstance(root).environment,
@@ -227,6 +235,7 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
             }),
           );
           const factory = yield* makeOmpCustomModelsClientFactory(
+            ompQualifyTarget,
             {
               resolveCustomModels: () => Effect.succeed(connections),
               subscribeChanges: Effect.succeed(Stream.never),
@@ -235,6 +244,7 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
             NodePath.join(root, "state"),
           );
           const client = yield* factory({
+            target: ompQualifyTarget,
             command: binary,
             cwd: root,
             env: liveInstance(root).environment,
@@ -318,6 +328,7 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
           };
           const stateDir = NodePath.join(root, "state");
           const factory = yield* makeOmpCustomModelsClientFactory(
+            ompQualifyTarget,
             {
               resolveCustomModels: () => Effect.succeed([connection]),
               subscribeChanges: Effect.succeed(Stream.never),
@@ -328,6 +339,7 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
           const logged: Array<unknown> = [];
           const { environment, homePath } = liveInstance(root);
           const adapter = yield* makeOmpAdapter({
+            target: ompQualifyTarget,
             binaryPath: binary,
             providerInstanceId: instanceId,
             stateDir,
@@ -383,9 +395,11 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
           expect(
             filesContaining(root, key).filter(
               (file) =>
-                !file.startsWith(NodePath.join("home", ".omp", "logs")) &&
+                !file.startsWith(ompQualifyLogsDir) &&
                 !(
-                  file.startsWith(NodePath.join("state", "omp-sessions")) && file.endsWith(".jsonl")
+                  file.startsWith(
+                    NodePath.join("state", `${ompQualifyTarget.stateNamespace}-sessions`),
+                  ) && file.endsWith(".jsonl")
                 ),
             ),
           ).toEqual([]);
@@ -429,6 +443,7 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
             ],
           };
           const factory = yield* makeOmpCustomModelsClientFactory(
+            ompQualifyTarget,
             {
               resolveCustomModels: () => Effect.succeed([connection]),
               subscribeChanges: Effect.succeed(Stream.never),
@@ -438,6 +453,7 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
           );
           const { environment, homePath } = liveInstance(root);
           const adapter = yield* makeOmpAdapter({
+            target: ompQualifyTarget,
             binaryPath: binary,
             providerInstanceId: instanceId,
             stateDir: NodePath.join(root, "state"),

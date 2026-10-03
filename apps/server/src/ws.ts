@@ -3398,7 +3398,8 @@ const makeWsRpcLayer = (
               !supportsModelConnections(instance.driverKind, connection.protocol)
             )
               return yield* new CustomModelError({
-                message: "Connect this model to an enabled Pi, Droid, or Oh My Pi agent first.",
+                message:
+                  "Connect this model to an enabled Pi, Droid, Oh My Pi, or Scient agent first.",
               });
             const resolved = yield* serverSettings.resolveCustomModels(input.instanceId);
             const credentialError = resolved.find((c) => c.id === connection.id)?.credentialError;
@@ -3407,7 +3408,7 @@ const makeWsRpcLayer = (
             const slug =
               instance.driverKind === "droid"
                 ? droidCustomModelId(connection.id, model.id)
-                : instance.driverKind === "omp"
+                : instance.driverKind === "omp" || instance.driverKind === "scient"
                   ? encodeOmpModelSlug(customModelProviderId(connection.id), model.modelId)
                   : encodePiModelSlug(customModelProviderId(connection.id), model.modelId);
             if (!slug) return yield* new CustomModelError({ message: "Invalid model ID." });

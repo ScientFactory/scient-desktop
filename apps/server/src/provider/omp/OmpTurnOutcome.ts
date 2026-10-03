@@ -6,12 +6,13 @@
  * prompt with `prompt_result{status}`. This module turns what the runtime saw
  * into the single terminal outcome Scient reports for the turn.
  */
+import type { OmpTarget } from "./OmpTarget.ts";
 
 /** Longest `errorMessage` reported on a failed turn. */
 export const OMP_ERROR_MESSAGE_MAX_CHARS = 512;
 
-const FAILED_FALLBACK = "Oh My Pi failed this turn.";
-const ABORTED_FALLBACK = "Oh My Pi aborted this turn.";
+const failedFallback = (target: OmpTarget) => `${target.name} failed this turn.`;
+const abortedFallback = (target: OmpTarget) => `${target.name} aborted this turn.`;
 
 /** What the runtime observed about one turn when it settled. */
 export interface OmpTurnEvidence {
@@ -42,7 +43,11 @@ export type OmpTurnVerdict =
   | { readonly outcome: "unknown" };
 
 /** A non-empty error message of at most 512 characters. */
-export const clipOmpErrorMessage = (value: string | undefined, fallback = FAILED_FALLBACK) => {
+export const clipOmpErrorMessage = (
+  target: OmpTarget,
+  value: string | undefined,
+  fallback = failedFallback(target),
+) => {
   const trimmed = value?.trim();
   if (!trimmed) return fallback;
   return trimmed.length > OMP_ERROR_MESSAGE_MAX_CHARS
@@ -72,7 +77,10 @@ const firstText = (...values: ReadonlyArray<string | undefined>) =>
  * assistant message and retry frames supply the detail, and decide alone on
  * OMP releases without a prompt status.
  */
-export const classifyOmpTurnOutcome = (evidence: OmpTurnEvidence): OmpTurnVerdict => {
+export const classifyOmpTurnOutcome = (
+  target: OmpTarget,
+  evidence: OmpTurnEvidence,
+): OmpTurnVerdict => {
   if (evidence.settlement === "unconfirmed") return { outcome: "unknown" };
   const category =
     promptCategory(evidence.promptStatus) ??
@@ -86,8 +94,9 @@ export const classifyOmpTurnOutcome = (evidence: OmpTurnEvidence): OmpTurnVerdic
       outcome: "failed",
       stopReason: "abort",
       errorMessage: clipOmpErrorMessage(
+        target,
         firstText(evidence.errorMessage, evidence.promptError),
-        ABORTED_FALLBACK,
+        abortedFallback(target),
       ),
     };
   }
@@ -96,6 +105,7 @@ export const classifyOmpTurnOutcome = (evidence: OmpTurnEvidence): OmpTurnVerdic
       outcome: "failed",
       stopReason: "error",
       errorMessage: clipOmpErrorMessage(
+        target,
         firstText(evidence.retryFinalError, evidence.errorMessage, evidence.promptError),
       ),
     };

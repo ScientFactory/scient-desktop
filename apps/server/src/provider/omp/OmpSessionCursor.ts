@@ -5,6 +5,8 @@ import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+import { ompTarget, type OmpTarget } from "./OmpTarget.ts";
+
 const OMP_SESSION_CURSOR_VERSION = 4;
 const OMP_V3_SESSION_CURSOR_VERSION = 3;
 const OMP_V2_SESSION_CURSOR_VERSION = 2;
@@ -14,6 +16,11 @@ const cursorFields = {
   providerInstanceId: Schema.String,
   sessionId: Schema.optional(Schema.String),
   relativeSessionFile: Schema.String,
+  /**
+   * The product that wrote the cursor. Absent on an Oh My Pi cursor: those
+   * predate a second product and keep their recorded shape.
+   */
+  driverKind: Schema.optional(Schema.String),
   ompVersion: Schema.String,
   rpcProtocolVersion: Schema.Finite,
   stateScopeFingerprint: Schema.String,
@@ -57,8 +64,8 @@ const decodeCursor = Schema.decodeUnknownEffect(
   Schema.Union([OmpSessionCursor, LegacyOmpSessionCursor]),
 );
 
-const LEGACY_CURSOR_MESSAGE =
-  "This Oh My Pi session cursor uses an older identity format and cannot be safely migrated. Start a new session.";
+const legacyCursorMessage = (target: OmpTarget) =>
+  `This ${target.name} session cursor uses an older identity format and cannot be safely migrated. Start a new session.`;
 
 const fingerprint = (parts: ReadonlyArray<string>): string =>
   NodeCrypto.createHash("sha256").update(parts.join("\0")).digest("hex");
@@ -140,37 +147,53 @@ export const sessionFileInsideRoot = (
 export const parseOmpSessionCursor = (
   value: unknown,
   input: {
+    readonly target: OmpTarget;
     readonly identity: OmpResumeIdentity;
     readonly ompVersion?: string;
     readonly rpcProtocolVersion: number;
   },
 ): Effect.Effect<OmpSessionCursor, string> =>
   decodeCursor(value).pipe(
-    Effect.mapError(() => "Oh My Pi resume cursor is not a recognized session record."),
+    Effect.mapError(() => `${input.target.name} resume cursor is not a recognized session record.`),
     Effect.flatMap((cursor): Effect.Effect<OmpSessionCursor, string> => {
       if (cursor.providerInstanceId !== input.identity.providerInstanceId) {
-        return Effect.fail("Oh My Pi resume cursor belongs to a different provider instance.");
+        return Effect.fail(
+          `${input.target.name} resume cursor belongs to a different provider instance.`,
+        );
+      }
+      // The products share a session format, so nothing else in a cursor
+      // tells one's transcript from the other's.
+      if ((cursor.driverKind ?? ompTarget.driverKind) !== input.target.driverKind) {
+        return Effect.fail(`${input.target.name} resume cursor was written by a different agent.`);
       }
       if (cursor.workspaceFingerprint !== ompWorkspaceFingerprint(input.identity.workspace)) {
-        return Effect.fail("Oh My Pi resume cursor belongs to a different workspace.");
+        return Effect.fail(`${input.target.name} resume cursor belongs to a different workspace.`);
       }
       if (
         cursor.homeProfileFingerprint !==
         ompHomeProfileFingerprint(input.identity.homeIdentity, input.identity.profileIdentity)
       ) {
-        return Effect.fail("Oh My Pi resume cursor belongs to a different home or profile.");
+        return Effect.fail(
+          `${input.target.name} resume cursor belongs to a different home or profile.`,
+        );
       }
       if (cursor.launchPolicyFingerprint !== ompLaunchPolicyFingerprint()) {
-        return Effect.fail("Oh My Pi resume cursor was written with a different launch policy.");
+        return Effect.fail(
+          `${input.target.name} resume cursor was written with a different launch policy.`,
+        );
       }
       if (cursor.rpcProtocolVersion !== input.rpcProtocolVersion) {
-        return Effect.fail("Oh My Pi resume cursor uses an incompatible RPC protocol.");
+        return Effect.fail(`${input.target.name} resume cursor uses an incompatible RPC protocol.`);
       }
       if (input.ompVersion && !ompMajorCompatible(cursor.ompVersion, input.ompVersion)) {
-        return Effect.fail("Oh My Pi resume cursor was written by a different major version.");
+        return Effect.fail(
+          `${input.target.name} resume cursor was written by a different major version.`,
+        );
       }
       if (!sessionFileInsideRoot(input.identity.sessionRoot, cursor.relativeSessionFile)) {
-        return Effect.fail("Oh My Pi resume cursor points outside its session directory.");
+        return Effect.fail(
+          `${input.target.name} resume cursor points outside its session directory.`,
+        );
       }
       if (cursor.schemaVersion !== OMP_SESSION_CURSOR_VERSION) {
         if (
@@ -178,7 +201,7 @@ export const parseOmpSessionCursor = (
           cursor.stateScopeFingerprint !==
             ompV3StateScopeFingerprint(input.identity, cursor.binaryPathFingerprint)
         ) {
-          return Effect.fail(LEGACY_CURSOR_MESSAGE);
+          return Effect.fail(legacyCursorMessage(input.target));
         }
         const { binaryPathFingerprint: _executable, ...fields } = cursor;
         return Effect.succeed({
@@ -188,13 +211,14 @@ export const parseOmpSessionCursor = (
         });
       }
       if (cursor.stateScopeFingerprint !== ompStateScopeFingerprint(input.identity)) {
-        return Effect.fail("Oh My Pi resume cursor does not match this session scope.");
+        return Effect.fail(`${input.target.name} resume cursor does not match this session scope.`);
       }
       return Effect.succeed(cursor);
     }),
   );
 
 export const makeOmpSessionCursor = (input: {
+  readonly target: OmpTarget;
   readonly identity: OmpResumeIdentity;
   readonly sessionFile: string;
   readonly sessionId?: string;
@@ -208,6 +232,9 @@ export const makeOmpSessionCursor = (input: {
     schemaVersion: OMP_SESSION_CURSOR_VERSION,
     providerInstanceId: input.identity.providerInstanceId,
     relativeSessionFile,
+    ...(input.target.driverKind === ompTarget.driverKind
+      ? {}
+      : { driverKind: input.target.driverKind }),
     ompVersion: input.ompVersion,
     rpcProtocolVersion: input.rpcProtocolVersion,
     stateScopeFingerprint: ompStateScopeFingerprint(input.identity),

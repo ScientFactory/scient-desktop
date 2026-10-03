@@ -19,7 +19,7 @@ import type { ResolvedModelConnection } from "../../customModels.ts";
 import { makeOmpAdapter } from "../Layers/OmpAdapter.ts";
 import * as OmpExecutableGate from "./OmpExecutableGate.ts";
 import { makeOmpCustomModelsClientFactory } from "./OmpCustomModels.ts";
-import { ompLiveInstance, ompQualifyBinary } from "./OmpLive.testFixtures.ts";
+import { ompLiveInstance, ompQualifyBinary, ompQualifyTarget } from "./OmpLive.testFixtures.ts";
 
 /**
  * Live proof of decision 6 against a real `omp` (opt in with
@@ -210,6 +210,7 @@ describe.runIf(binary)("real Oh My Pi image attachments", () => {
             ],
           };
           const factory = yield* makeOmpCustomModelsClientFactory(
+            ompQualifyTarget,
             {
               resolveCustomModels: () => Effect.succeed([connection]),
               subscribeChanges: Effect.succeed(Stream.never),
@@ -218,6 +219,7 @@ describe.runIf(binary)("real Oh My Pi image attachments", () => {
             NodePath.join(root, "state"),
           );
           const adapter = yield* makeOmpAdapter({
+            target: ompQualifyTarget,
             binaryPath: binary!,
             providerInstanceId: instanceId,
             stateDir: NodePath.join(root, "state"),

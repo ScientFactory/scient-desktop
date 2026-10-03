@@ -11,9 +11,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { OMP_MINIMUM_VERSION, OMP_SUPPORTED_MAJOR } from "@scientfactory/provider-runtime";
 import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
-import { compareSemverVersions } from "@t3tools/shared/semver";
 import type { ModelConnectionReadiness } from "@t3tools/contracts";
 import type { OmpRpcModel } from "effect-omp-rpc/schema";
 
@@ -21,21 +19,19 @@ import { makeOmpRpcClient, type OmpRpcClient, type OmpRpcFrameTrace } from "effe
 import { OmpRpcProtocolError, type OmpRpcError } from "effect-omp-rpc/errors";
 
 import { spawnAndCollect } from "../providerSnapshot.ts";
-import { OMP_SESSION_DIR_ENV } from "./OmpEnvironment.ts";
 import type { OmpModelRefreshError } from "./OmpModel.ts";
 import {
   canonicalOmpExecutablePath,
   OmpExecutableGate,
   type OmpExecutableActivation,
 } from "./OmpExecutableGate.ts";
+import type { OmpTarget } from "./OmpTarget.ts";
 
 const isProtocolError = Schema.is(OmpRpcProtocolError);
 
-export { OMP_MINIMUM_VERSION };
-
-/** RPC package errors stay product-neutral. User-facing text names Oh My Pi once. */
-export const ompUserDetail = (detail: string): string =>
-  detail.includes("Oh My Pi") ? detail : `Oh My Pi: ${detail}`;
+/** RPC package errors stay product-neutral. User-facing text names the product once. */
+export const ompUserDetail = (target: OmpTarget, detail: string): string =>
+  detail.includes(target.name) ? detail : `${target.name}: ${detail}`;
 export const OMP_RPC_ARGS = ["--mode", "rpc", "--approval-mode", "yolo"] as const;
 
 export const ompRpcArgs = (
@@ -69,22 +65,26 @@ const OMP_EXITED_STDOUT_GRACE = "1 second";
 /** A follower never waits longer than the leader's grace, kill, and reap steps. */
 const OMP_SHUTDOWN_FOLLOWER_DEADLINE = "8 seconds";
 const versionCacheKey = (
+  target: OmpTarget,
   identity: string,
   env: Readonly<Record<string, string | undefined>>,
   binaryMetadata: string,
 ): string =>
   JSON.stringify([
+    target.driverKind,
     identity,
     binaryMetadata,
     env.PATH ?? "",
     env.HOME ?? "",
     env.USERPROFILE ?? "",
-    env.PI_CODING_AGENT_DIR ?? "",
-    env.OMP_PROFILE ?? "",
-    env.PI_PROFILE ?? "",
+    env[target.environment.agentDir] ?? "",
+    env[target.environment.profile] ?? "",
+    env[target.environment.profileFallback] ?? "",
   ]);
 
 export interface OmpRpcProcessOptions {
+  /** The product `command` is expected to be. */
+  readonly target: OmpTarget;
   readonly command: string;
   readonly cwd?: string;
   readonly env?: Readonly<Record<string, string | undefined>>;
@@ -116,7 +116,10 @@ export interface OmpProcessExit {
 }
 
 export interface OmpRpcProcess extends OmpRpcClient {
+  /** The product's own version, shown to the user. */
   readonly version: string;
+  /** The Oh My Pi release the executable runs; compatibility checks follow it. */
+  readonly runtimeVersion: string;
   readonly shutdown: Effect.Effect<OmpProcessExit, OmpRpcError>;
   /**
    * This process's redaction, for every string a caller derives from its
@@ -139,10 +142,8 @@ export interface OmpRpcProcess extends OmpRpcClient {
   readonly refreshModels?: () => Effect.Effect<void, OmpRpcError | OmpModelRefreshError>;
 }
 
-const parseOmpVersion = (output: string): string | undefined =>
-  output.match(/\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/u)?.[0];
-
 const childEnv = (
+  target: OmpTarget,
   env: Readonly<Record<string, string | undefined>> | undefined,
   sessionDir: string | undefined,
 ): Record<string, string> => {
@@ -150,8 +151,8 @@ const childEnv = (
   for (const [key, value] of Object.entries(env ?? {})) {
     if (value !== undefined) next[key] = value;
   }
-  if (sessionDir) next[OMP_SESSION_DIR_ENV] = sessionDir;
-  else delete next[OMP_SESSION_DIR_ENV];
+  if (sessionDir) next[target.environment.sessionDir] = sessionDir;
+  else delete next[target.environment.sessionDir];
   return next;
 };
 
@@ -412,7 +413,8 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const scope = yield* Scope.Scope;
   const fs = yield* FileSystem.FileSystem;
-  const env = childEnv(options.env, options.sessionDir);
+  const target = options.target;
+  const env = childEnv(target, options.env, options.sessionDir);
   // Redaction also covers secrets that never enter the child environment.
   const redactionEnv = ompRedactionEnvironment(env, options.secrets);
   const redaction = makeOmpRedaction(env, options.secrets);
@@ -432,13 +434,14 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
   // activation of this executable makes it wait, then fail.
   yield* gate
     .acquireProcess(executableIdentity, {
+      target,
       kind: options.sessionDir === undefined ? "one-shot" : "session",
       activation: options.executableActivation,
     })
     .pipe(
       Effect.provideService(Scope.Scope, scope),
       Effect.mapError(
-        (cause) => new OmpRpcProtocolError({ detail: ompUserDetail(cause.detail), cause }),
+        (cause) => new OmpRpcProtocolError({ detail: ompUserDetail(target, cause.detail), cause }),
       ),
     );
   const binaryMetadata = yield* fs.stat(executableIdentity).pipe(
@@ -455,34 +458,31 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
       }),
     ),
   );
-  const version = yield* gate
+  const { version, runtimeVersion } = yield* gate
     .verifiedVersion(
-      versionCacheKey(executableIdentity, env, binaryMetadata),
+      versionCacheKey(target, executableIdentity, env, binaryMetadata),
       Effect.gen(function* () {
-        const command = yield* resolveSpawnCommand(resolvedBinary, ["--version"], {
+        const command = yield* resolveSpawnCommand(resolvedBinary, target.identityArgs, {
           env,
           extendEnv: false,
         });
+        // The executable may not be the product it is configured as. One that
+        // reads its input, or ignores SIGTERM, must not hold this probe open.
         const result = yield* spawnAndCollect(
           resolvedBinary,
           ChildProcess.make(command.command, command.args, {
             shell: command.shell,
             env,
             extendEnv: false,
+            stdin: "ignore",
+            forceKillAfter: "1 second",
           }),
         );
-        const parsed = parseOmpVersion(result.stdout);
-        if (
-          result.code !== 0 ||
-          parsed === undefined ||
-          compareSemverVersions(parsed, OMP_MINIMUM_VERSION) < 0 ||
-          Number(parsed.split(".")[0] ?? "0") !== OMP_SUPPORTED_MAJOR
-        ) {
-          return yield* new OmpRpcProtocolError({
-            detail: `Scient supports Oh My Pi ${OMP_MINIMUM_VERSION} and later ${OMP_SUPPORTED_MAJOR}.x releases. Check the configured executable.`,
-          });
+        const identified = result.code === 0 ? target.identify(result.stdout) : undefined;
+        if (identified === undefined) {
+          return yield* new OmpRpcProtocolError({ detail: target.unsupportedDetail });
         }
-        return parsed;
+        return identified;
       }),
     )
     .pipe(
@@ -490,7 +490,10 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
       Effect.mapError((cause) =>
         isProtocolError(cause)
           ? cause
-          : new OmpRpcProtocolError({ detail: "Oh My Pi version verification failed.", cause }),
+          : new OmpRpcProtocolError({
+              detail: `${target.name} version verification failed.`,
+              cause,
+            }),
       ),
     );
   const command = yield* resolveSpawnCommand(
@@ -499,7 +502,8 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
     { env, extendEnv: false },
   ).pipe(
     Effect.mapError(
-      (cause) => new OmpRpcProtocolError({ detail: "Oh My Pi command resolution failed.", cause }),
+      (cause) =>
+        new OmpRpcProtocolError({ detail: `${target.name} command resolution failed.`, cause }),
     ),
   );
   const stdinBytes = yield* Queue.unbounded<Uint8Array, Cause.Done>();
@@ -518,7 +522,7 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
     .pipe(
       Effect.provideService(Scope.Scope, scope),
       Effect.mapError(
-        (cause) => new OmpRpcProtocolError({ detail: "Failed to start Oh My Pi.", cause }),
+        (cause) => new OmpRpcProtocolError({ detail: `Failed to start ${target.name}.`, cause }),
       ),
     );
   const stderrTail = yield* Ref.make(emptyOmpStderrTail);
@@ -538,7 +542,7 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
     Effect.forkIn(scope),
   );
   const mapError = (cause: unknown) =>
-    new OmpRpcProtocolError({ detail: "Oh My Pi process transport failed.", cause });
+    new OmpRpcProtocolError({ detail: `${target.name} process transport failed.`, cause });
   const exitInfo = yield* Deferred.make<OmpProcessExit, OmpRpcError>();
   const shutdownStarted = yield* Ref.make(false);
   const stopChild = Effect.gen(function* () {
@@ -605,7 +609,8 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
         Queue.offer(stdinBytes, bytes).pipe(
           Effect.asVoid,
           Effect.mapError(
-            (cause) => new OmpRpcProtocolError({ detail: "Oh My Pi stdin is closed.", cause }),
+            (cause) =>
+              new OmpRpcProtocolError({ detail: `${target.name} stdin is closed.`, cause }),
           ),
         ),
       // The client closes its transport from whichever fiber noticed a fatal
@@ -629,5 +634,5 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
         }
       : {},
   );
-  return { ...client, version, shutdown, redaction };
+  return { ...client, version, runtimeVersion, shutdown, redaction };
 });

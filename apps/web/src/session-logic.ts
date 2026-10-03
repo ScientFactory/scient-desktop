@@ -73,6 +73,12 @@ const PROVIDER_OPTIONS_UNORDERED: Array<{
     pickerSidebarBadge: "new",
   },
   {
+    value: ProviderDriverKind.make("scient"),
+    label: "Scient",
+    available: true,
+    pickerSidebarBadge: "new",
+  },
+  {
     value: ProviderDriverKind.make("opencode"),
     label: "OpenCode",
     available: true,
