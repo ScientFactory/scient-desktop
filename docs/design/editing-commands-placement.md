@@ -68,9 +68,10 @@ only what its file format can save.
 | 4 | Text direction? | **Moves into the Text (Style) menu** (Markdown only), freeing a bar button. |
 | 5 | Subscript and superscript? | **Not now.** |
 | 6 | Markdown's "hide formatting tools" handle? | **Keep it.** |
+| 7 | How does the Math button look? | **The word "Math"** alone, no Σ icon, in both editors. |
 | 7 | Screen-blocking editing dialogs? | **None wanted.** Link becomes a compact popover; remaining modal controls are inventoried below for conversion. |
 
-Decisions 1–4 are built in the owner's local test app for review; that code is
+Decisions 1–4 and 7 are built in the owner's local test app for review; that code is
 not pushed yet.
 
 ## Still open
