@@ -35,6 +35,16 @@ const ARTIFACTS = {
   Record<string, { readonly artifactName: string; readonly executablePath: string }>
 >;
 
+/** Every target a Scient Agent release carries a binary for. A release covers all of them. */
+export const SCIENT_AGENT_TARGETS: ReadonlyArray<ManagedRuntimeTarget> = [
+  { platform: "darwin", arch: "arm64" },
+  { platform: "darwin", arch: "x64" },
+  { platform: "linux", arch: "arm64", libc: "glibc" },
+  { platform: "linux", arch: "x64", libc: "glibc" },
+  { platform: "win32", arch: "arm64" },
+  { platform: "win32", arch: "x64" },
+];
+
 function artifactKey(target: ManagedRuntimeTarget): keyof typeof ARTIFACTS | undefined {
   if (target.platform === "linux" && target.libc === "musl") return undefined;
   const key = `${target.platform}-${target.arch}`;

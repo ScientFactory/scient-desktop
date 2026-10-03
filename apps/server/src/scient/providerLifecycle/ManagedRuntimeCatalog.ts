@@ -12,6 +12,7 @@ import {
   hydrateManagedRuntimeArtifact,
   managedRuntimeTargetKey,
   resolveScientAgentArtifactPolicy,
+  SCIENT_AGENT_TARGETS,
   type ManagedRuntimeArtifact,
   type ManagedRuntimeArtifactPolicy,
   type ManagedRuntimeArtifactReceipt,
@@ -122,24 +123,33 @@ export const BUNDLED_MANAGED_RUNTIME_CATALOG: ManagedRuntimeCatalogData = Schema
   ManagedRuntimeCatalogDataSchema,
 )(bundledCatalogJson);
 
-/** A newly supported family can ship policy before its first qualified release. */
+/**
+ * A newly supported family can ship policy before its first qualified release.
+ * Its release must carry exactly the targets the policy names, each one valid
+ * under that target's policy: the same complete set discovery requires.
+ */
 function isApprovedUnbundledRelease(
   provider: ManagedRuntimeCatalogProvider,
   release: ManagedRuntimeCatalogData["providers"][string],
 ): boolean {
   if (provider !== "scient") return false;
-  const policy = resolveScientAgentArtifactPolicy({ platform: "darwin", arch: "arm64" });
-  if (!policy) return false;
-  const targets = Object.keys(release.artifacts);
-  return (
-    targets.length === 1 &&
-    targets[0] === managedRuntimeTargetKey(policy.target) &&
-    resolveManagedRuntimeCatalogArtifact({
-      catalog: { schemaVersion: 1, providers: { [provider]: release } },
-      policy,
-      contractRevision: MANAGED_RUNTIME_POLICY.scient.revision,
-    }) !== undefined
-  );
+  const expected = SCIENT_AGENT_TARGETS.map(managedRuntimeTargetKey).toSorted();
+  const targets = Object.keys(release.artifacts).toSorted();
+  if (targets.length !== expected.length || targets.some((key, index) => key !== expected[index])) {
+    return false;
+  }
+  const catalog = { schemaVersion: 1 as const, providers: { [provider]: release } };
+  return SCIENT_AGENT_TARGETS.every((target) => {
+    const policy = resolveScientAgentArtifactPolicy(target);
+    return (
+      policy !== undefined &&
+      resolveManagedRuntimeCatalogArtifact({
+        catalog,
+        policy,
+        contractRevision: MANAGED_RUNTIME_POLICY.scient.revision,
+      }) !== undefined
+    );
+  });
 }
 
 /**

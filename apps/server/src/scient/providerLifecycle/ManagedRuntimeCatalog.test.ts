@@ -10,7 +10,9 @@ import {
   resolveReviewedGrokArtifact,
   resolveReviewedOmpArtifact,
   resolveReviewedPiArtifact,
+  managedRuntimeTargetKey,
   resolveScientAgentArtifactPolicy,
+  SCIENT_AGENT_TARGETS,
   type ManagedRuntimeArtifact,
   type ManagedRuntimeProvider,
   type ManagedRuntimeTarget,
@@ -94,6 +96,7 @@ const remoteCatalog = (version = newerCodexVersion): ManagedRuntimeCatalogData =
   },
 });
 
+/** A Scient Agent release as discovery records it: one binary for every target. */
 const scientCatalog = (version: string, digest = "a".repeat(64)): ManagedRuntimeCatalogData => ({
   schemaVersion: 1,
   providers: {
@@ -101,14 +104,20 @@ const scientCatalog = (version: string, digest = "a".repeat(64)): ManagedRuntime
       contractRevision: MANAGED_RUNTIME_POLICY.scient.revision,
       channel: "stable",
       version,
-      artifacts: {
-        "darwin-arm64": {
-          artifactName: "scient-agent-darwin-arm64",
-          url: `https://github.com/ScientFactory/scient-agent/releases/download/v${version}/scient-agent-darwin-arm64`,
-          checksum: { algorithm: "sha256", digest },
-          size: 123_456,
-        },
-      },
+      artifacts: Object.fromEntries(
+        SCIENT_AGENT_TARGETS.map((target) => {
+          const { artifactName } = resolveScientAgentArtifactPolicy(target)!;
+          return [
+            managedRuntimeTargetKey(target),
+            {
+              artifactName,
+              url: `https://github.com/ScientFactory/scient-agent/releases/download/v${version}/${artifactName}`,
+              checksum: { algorithm: "sha256" as const, digest },
+              size: 123_456,
+            },
+          ];
+        }),
+      ),
     },
   },
 });
@@ -186,7 +195,9 @@ describe("managed runtime catalog resolution", () => {
       scientCatalog("0.0.9").providers.scient!,
       scientCatalog("0.1.0-beta.1").providers.scient!,
       { ...valid, artifacts: { "darwin-x64": artifact } },
-      { ...valid, artifacts: { "darwin-arm64": artifact, "linux-x64": artifact } },
+      // A release that misses a target, or carries one the policy does not name.
+      { ...valid, artifacts: { "darwin-arm64": artifact } },
+      { ...valid, artifacts: { ...valid.artifacts, "linux-x64-musl": artifact } },
       ...[
         { ...artifact, artifactName: "omp-darwin-arm64" },
         { ...artifact, checksum: { algorithm: "sha256" as const, digest: "a" } },
@@ -195,7 +206,7 @@ describe("managed runtime catalog resolution", () => {
           ...artifact,
           url: artifact.url.replace("ScientFactory/scient-agent", "can1357/oh-my-pi"),
         },
-      ].map((entry) => ({ ...valid, artifacts: { "darwin-arm64": entry } })),
+      ].map((entry) => ({ ...valid, artifacts: { ...valid.artifacts, "darwin-arm64": entry } })),
     ];
     for (const release of invalid) {
       const catalog = { schemaVersion: 1 as const, providers: { scient: release } };

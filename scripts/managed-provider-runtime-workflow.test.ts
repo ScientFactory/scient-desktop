@@ -255,10 +255,14 @@ describe("managed provider runtime update workflow", () => {
     expect(exercise.run).toContain("attempt <= QUALIFICATION_RUNS");
   });
 
-  it("qualifies Scient only on its supported platform with the isolated app activation code", () => {
+  it("qualifies Scient on every platform its release carries, with the isolated app activation code", () => {
     const reusable = workflow("managed-provider-runtime-update-provider.yml");
+    // Scient takes the full six-runner matrix: one runner per release binary.
+    expect(reusable.jobs.qualify.strategy.matrix.runner).not.toContain(
+      "inputs.provider == 'scient'",
+    );
     expect(reusable.jobs.qualify.strategy.matrix.runner).toContain(
-      "inputs.provider == 'scient' && '[\"macos-26\"]'",
+      '\'["macos-26","macos-15-intel","ubuntu-24.04","ubuntu-24.04-arm","windows-2025","windows-11-arm"]\'',
     );
     const dependencies = reusable.jobs.qualify.steps.find(
       (step: { name: string }) => step.name === "Install RPC qualification dependencies",
