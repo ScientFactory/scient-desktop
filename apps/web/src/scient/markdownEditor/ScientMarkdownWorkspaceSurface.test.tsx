@@ -639,6 +639,10 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     );
     // Link is in Insert.
     await act(() => host.querySelector<HTMLButtonElement>("button[aria-label='Insert']")!.click());
+    const references = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (node) => node.textContent?.trim() === "References",
+    )!;
+    await act(() => references.click());
     const linkItem = Array.from(
       document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'),
     ).find((node) => node.textContent?.trim().startsWith("Link"))!;

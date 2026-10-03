@@ -5543,6 +5543,21 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   const activeStyle = textStyle?.value ?? "paragraph";
   // Inside a list item the LaTeX source cannot hold a quote.
   const quoteUnavailable = !textReadOnly && Boolean(listState?.type);
+  const textBlockItems = (ids: readonly string[]) =>
+    ids.map((id) => {
+      const action = insertActions.find((item) => item.id === id);
+      if (!action) return null;
+      return (
+        <DockCommandItem
+          key={id}
+          disabled={textReadOnly || action.disabled || Boolean(action.disabledReason)}
+          title={action.disabledReason}
+          onClick={action.run}
+        >
+          <MenuRow label={action.label} />
+        </DockCommandItem>
+      );
+    });
   const writingStyleItems = (
     <>
       <MenuRadioGroup value={activeStyle}>
@@ -5576,6 +5591,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
           </DockCommandRadioItem>
         ))}
       </MenuRadioGroup>
+      {textBlockItems(["part"])}
       {/* Whether headings are numbered: the last line of the headings, a small switch. */}
       <MenuCheckboxItem
         variant="switch"
@@ -5606,6 +5622,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         </DockCommandRadioItem>
       </MenuRadioGroup>
       {quoteUnavailable ? <p className="scient-menu-note">A list item can't be a quote.</p> : null}
+      {textBlockItems(["quotation"])}
     </>
   );
   const writingFormattingItems = (
@@ -5632,6 +5649,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   const writingTextContents = {
     paragraphStyle: writingStyleItems,
     formatting: writingFormattingItems,
+    alignment: textBlockItems(["left-text", "right-text"]),
     commandScope: "latex",
   };
   const writingTextTools = <TextMenu {...writingTextContents} disabled={textReadOnly} />;

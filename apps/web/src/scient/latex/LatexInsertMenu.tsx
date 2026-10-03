@@ -1,4 +1,4 @@
-import { BookOpen, Ellipsis, Image as ImageIcon, NotebookText, Shapes, Tag } from "lucide-react";
+import { BookOpen, Image as ImageIcon, NotebookText, Shapes, Tag } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { MenuSeparator, MenuSub, MenuSubPopup, MenuSubTrigger } from "~/components/ui/menu";
@@ -26,8 +26,6 @@ const STATEMENTS = [
   "remark",
   "proof",
 ];
-const MORE = ["code", "pagebreak", "abstract", "contents", "bibliography"];
-const PRIMARY = ["figure", "citation", "reference", "footnote", "link"];
 const SUBMENU = { "data-latex-insert-menu": "", "data-dock-command-scope": "latex" } as const;
 /** The first level reads like Markdown's Insert menu: one quiet icon per row. */
 const ICON = "size-4 text-muted-foreground";
@@ -42,17 +40,25 @@ const withIcons = (actions: readonly LatexInsertAction[]): readonly LatexInsertA
   actions.map((action) => (action.icon ? action : { ...action, icon: ICONS[action.id] }));
 
 /** LaTeX's arrangement of the shared Insert menu. */
-function latexInsertLayout(actions: readonly LatexInsertAction[]): InsertMenuLayout {
-  const extra = actions.filter(
-    (action) => ![...PRIMARY, ...STATEMENTS, ...MORE].includes(action.id),
-  );
+function latexInsertLayout(): InsertMenuLayout {
   return (item, table) => (
     <>
       {item("figure")}
       {table}
+      {item("code")}
+      {item("verbatim")}
       <MenuSeparator />
-      {["citation", "reference", "footnote", "link"].map(item)}
-      <MenuSeparator />
+      <MenuSub>
+        <MenuSubTrigger>
+          <BookOpen className={ICON} />
+          <span>References</span>
+        </MenuSubTrigger>
+        <MenuSubPopup {...SUBMENU}>
+          {["citation", "reference", "link"].map(item)}
+          <MenuSeparator />
+          {item("footnote")}
+        </MenuSubPopup>
+      </MenuSub>
       <MenuSub>
         <MenuSubTrigger>
           <Shapes className={ICON} />
@@ -67,19 +73,13 @@ function latexInsertLayout(actions: readonly LatexInsertAction[]): InsertMenuLay
         </MenuSubPopup>
       </MenuSub>
       <MenuSub>
-        <MenuSubTrigger>
-          <Ellipsis className={ICON} />
-          <span>More</span>
-        </MenuSubTrigger>
+        <MenuSubTrigger>Document blocks</MenuSubTrigger>
         <MenuSubPopup {...SUBMENU}>
-          {MORE.map(item)}
-          <MenuSeparator />
-          <MenuSub>
-            <MenuSubTrigger>Other blocks</MenuSubTrigger>
-            <MenuSubPopup {...SUBMENU}>{extra.map((action) => item(action.id))}</MenuSubPopup>
-          </MenuSub>
+          {["abstract", "contents", "bibliography"].map(item)}
         </MenuSubPopup>
       </MenuSub>
+      <MenuSeparator />
+      {item("pagebreak")}
     </>
   );
 }
@@ -94,7 +94,7 @@ export function LatexInsertMenuContent(props: {
   return (
     <InsertMenuContent
       actions={withIcons(props.actions)}
-      layout={latexInsertLayout(props.actions)}
+      layout={latexInsertLayout()}
       onInsertTable={props.onInsertTable}
       unavailableReason={props.unavailableReason}
       onRun={props.onRun}
@@ -116,7 +116,7 @@ export function LatexInsertMenu(props: {
       open={props.open}
       onOpenChange={props.onOpenChange}
       actions={withIcons(props.actions)}
-      layout={latexInsertLayout(props.actions)}
+      layout={latexInsertLayout()}
       disabled={props.disabled}
       unavailableReason={props.unavailableReason}
       onInsertTable={props.onInsertTable}

@@ -101,7 +101,7 @@ describe("writing editor source transactions", () => {
         (element) => element.textContent?.trim() === name,
       );
     // Items in submenus (Theorems & proofs, More) are reached by opening them.
-    for (const submenu of ["Theorems & proofs", "More", "Other blocks"]) {
+    for (const submenu of ["References", "Theorems & proofs", "Document blocks"]) {
       if (find()) break;
       const trigger = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
         (element) => element.textContent?.trim() === submenu,
@@ -373,6 +373,50 @@ describe("writing editor source transactions", () => {
     }
   });
 
+  it("groups insertions and runs relocated text blocks from Text", async () => {
+    await mount();
+    await act(() =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Insert"]')!.click(),
+    );
+    const rows = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+    expect(rows.map((row) => row.textContent?.trim())).toEqual([
+      "Figure",
+      "Table",
+      "Code block",
+      "Literal text",
+      "References",
+      "Theorems & proofs",
+      "Document blocks",
+      "Page break",
+    ]);
+    await act(() => rows.find((row) => row.textContent?.trim() === "References")!.click());
+    expect(
+      [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+        .filter((row) => row.closest('[data-slot="menu-sub-content"]'))
+        .map((row) => row.textContent?.trim()),
+    ).toEqual(["Citation", "Cross-reference", "Link", "Footnote"]);
+    await act(() =>
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+    );
+    await act(() =>
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+    );
+    // Dismiss the Insert menu before exercising the Text categories.
+    await act(() =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Text"]')!.click(),
+    );
+    const alignment = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (row) => row.textContent?.trim() === "Alignment",
+    )!;
+    await act(() => alignment.click());
+    const right = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (row) => row.textContent?.trim() === "Right-aligned text",
+    )!;
+    await act(() => right.click());
+    expect(current).toContain("\\begin{flushright}");
+    expect(editor().isFocused).toBe(true);
+  });
+
   it("starts a titled document with formatting ready on body text", async () => {
     await mount("\\maketitle\nHello world.", "\\title{Title}\n");
     expect(editor().state.selection.$from.parent.type.name).toBe("paragraph");
@@ -433,6 +477,10 @@ describe("writing editor source transactions", () => {
     await act(() =>
       toolbar.querySelector<HTMLButtonElement>('button[aria-label="Insert"]')!.click(),
     );
+    const references = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (item) => item.textContent?.trim() === "References",
+    )!;
+    await act(() => references.click());
     const link = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
       (item) => item.textContent?.trim().startsWith("Link"),
     )!;

@@ -499,13 +499,24 @@ function markdownInsertActions(
   ];
 }
 
-/** Markdown's arrangement: the table picker first, a line break last. */
+/** Shared content, reference and break groups, without an overflow submenu. */
 const markdownInsertLayout: InsertMenuLayout = (item, table) => (
   <>
+    {item("image")}
     {table}
-    {INSERT_ITEMS.map(({ command }) => item(command))}
-    {item("link")}
+    {item("code-block")}
     <MenuSeparator />
+    <MenuSub>
+      <MenuSubTrigger>References</MenuSubTrigger>
+      <MenuSubPopup className="w-max min-w-40">
+        {item("link")}
+        {item("wiki-link")}
+        <MenuSeparator />
+        {item("footnote")}
+      </MenuSubPopup>
+    </MenuSub>
+    <MenuSeparator />
+    {item("horizontal-rule")}
     {item("hard-break")}
   </>
 );

@@ -59,6 +59,10 @@ describe("formatting menu focus", () => {
     await act(() =>
       controlsHost.querySelector<HTMLButtonElement>('button[aria-label="Insert"]')!.click(),
     );
+    const references = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (node) => node.textContent?.trim() === "References",
+    )!;
+    await act(() => references.click());
     const item = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
       (node) => node.textContent?.trim().startsWith("Link"),
     )!;
@@ -360,6 +364,10 @@ describe("formatting menu focus", () => {
     const { controller, controlsHost } = await fixture("A paragraph\n");
     const trigger = controlsHost.querySelector<HTMLButtonElement>('button[aria-label="Insert"]')!;
     await act(() => trigger.click());
+    const references = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (node) => node.textContent?.trim() === "References",
+    )!;
+    await act(() => references.click());
     const footnote = Array.from(
       document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'),
     ).find((item) => item.textContent?.trim() === "Footnote")!;
