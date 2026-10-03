@@ -198,7 +198,7 @@ describe("writing editor source transactions", () => {
       [...toolbar.querySelectorAll("[data-dock-group]")].map((group) =>
         group.getAttribute("data-dock-group"),
       ),
-    ).toEqual(["history", "text", "lists", "insert", "math", "document"]);
+    ).toEqual(["history", "text", "insert", "math", "lists", "document"]);
     expect(toolbar.querySelector('button[aria-label="Text"]')).not.toBeNull();
     expect(toolbar.querySelector('[aria-label="Hide formatting tools"]')).toBeNull();
     expect(toolbar.querySelector('input[aria-label="Page number"]')).toBeNull();

@@ -1019,7 +1019,7 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     expect(toolbar?.querySelector("[aria-label='More table actions']")).toBeNull();
     // Entering a table no longer opens the bar: it stays as the writer left it.
     expect(host.querySelector("[aria-label='Show formatting tools']")).not.toBeNull();
-    expect(host.querySelectorAll("[aria-label='More actions']")).toHaveLength(0);
+    expect(host.querySelectorAll("[aria-label='Document']")).toHaveLength(0);
     const moreActions = host.querySelector<HTMLButtonElement>(
       ".scient-document-footer [aria-label='More table actions']",
     );

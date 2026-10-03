@@ -152,6 +152,7 @@ export function DockCommandCheckboxItem({
   const queue = useContext(DockCommandContext);
   return (
     <MenuCheckboxItem
+      variant="icon"
       {...props}
       closeOnClick
       onClick={() => {
@@ -350,6 +351,8 @@ export function DockOverflowRow(props: {
   readonly groups: readonly DockGroup[];
   /** Items that live in the overflow menu even when nothing is hidden. */
   readonly overflowItems?: ReactNode;
+  readonly overflowButtonLabel?: string;
+  readonly overflowButtonIcon?: ReactNode;
 }) {
   const dockRef = useRef<HTMLDivElement>(null);
   const widthsRef = useRef(new Map<string, number>());
@@ -486,9 +489,9 @@ export function DockOverflowRow(props: {
           <div className="ms-auto flex items-center gap-0.5" data-dock-reserved>
             {showOverflowMenu ? (
               <DockMenu
-                label="More actions"
+                label={props.overflowButtonLabel ?? "More actions"}
                 commandScope={props.commandScope}
-                icon={<Ellipsis className="size-4" />}
+                icon={props.overflowButtonIcon ?? <Ellipsis className="size-4" />}
                 chevron={false}
                 align="end"
                 popupClassName="w-56"

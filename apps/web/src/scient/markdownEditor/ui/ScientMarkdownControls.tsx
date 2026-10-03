@@ -1268,19 +1268,6 @@ export function ScientMarkdownControls({
           overflow: <TextMenuItems {...markdownTextContents(controller, snapshot)} />,
         },
         {
-          id: "lists",
-          priority: 40,
-          estimatedWidth: 48,
-          bar: (
-            <>
-              <ListsMenu controller={controller} snapshot={snapshot} />
-              <DockDivider />
-            </>
-          ),
-          overflowLabel: "Lists",
-          overflow: <ListsMenuItems controller={controller} snapshot={snapshot} />,
-        },
-        {
           id: "insert",
           priority: 20,
           estimatedWidth: 48,
@@ -1330,12 +1317,27 @@ export function ScientMarkdownControls({
           overflowLabel: "Math",
           overflow: <MathMenuItems controller={controller} />,
         },
+        {
+          id: "lists",
+          priority: 40,
+          estimatedWidth: 48,
+          bar: (
+            <>
+              <ListsMenu controller={controller} snapshot={snapshot} />
+              <DockDivider />
+            </>
+          ),
+          overflowLabel: "Lists",
+          overflow: <ListsMenuItems controller={controller} snapshot={snapshot} />,
+        },
       ];
 
   return (
     <>
       <DockOverflowRow
         label="Document actions"
+        overflowButtonLabel="Document"
+        overflowButtonIcon={<FileText className="size-4" />}
         expanded={expanded}
         onExpandedChange={onExpandedChange}
         groups={dockGroups}

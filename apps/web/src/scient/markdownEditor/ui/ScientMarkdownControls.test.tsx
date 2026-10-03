@@ -276,7 +276,7 @@ describe("formatting menu focus", () => {
     const { view, controller, controlsHost } = await fixture(
       "| A | B |\n| --- | --- |\n| One | Two |\n",
     );
-    // A table's commands are in the footer's menu, not in the bar's More actions.
+    // A table's commands are in the footer's menu, not in the bar's Document.
     const footerHost = document.createElement("div");
     document.body.append(footerHost);
     const footerRoot = createRoot(footerHost);
@@ -459,7 +459,7 @@ describe("formatting menu focus", () => {
     );
     const navigate = vi.spyOn(controller, "navigateToOutline");
     await act(() =>
-      controlsHost.querySelector<HTMLButtonElement>("[aria-label='More actions']")!.click(),
+      controlsHost.querySelector<HTMLButtonElement>("[aria-label='Document']")!.click(),
     );
     const outline = Array.from(
       document.body.querySelectorAll<HTMLElement>("[role='menuitem']"),

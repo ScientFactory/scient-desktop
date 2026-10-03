@@ -6092,14 +6092,6 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                         overflow: <TextMenuItems {...writingTextContents} />,
                       },
                       {
-                        id: "lists",
-                        priority: 40,
-                        estimatedWidth: 48,
-                        bar: writingListTools,
-                        overflowLabel: "Lists",
-                        overflow: writingListItems,
-                      },
-                      {
                         id: "insert",
                         priority: 20,
                         estimatedWidth: 48,
@@ -6126,6 +6118,14 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                         bar: writingMathBar,
                         overflowLabel: "Math",
                         overflow: writingMathItems,
+                      },
+                      {
+                        id: "lists",
+                        priority: 40,
+                        estimatedWidth: 48,
+                        bar: writingListTools,
+                        overflowLabel: "Lists",
+                        overflow: writingListItems,
                       },
                       {
                         id: "document",
