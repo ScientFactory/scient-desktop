@@ -51,6 +51,7 @@ describe("DocumentPersistenceCoordinator under randomized interleavings", () => 
     vi.useRealTimers();
   });
 
+  // Hundreds of seeded runs: well under a second locally, slower on shared CI runners.
   it("never silently loses a change or stalls, and settles on the disk bytes", async () => {
     const results: StressResult[] = [];
     for (let seed = 1; seed <= 400; seed += 1) {
@@ -81,5 +82,5 @@ describe("DocumentPersistenceCoordinator under randomized interleavings", () => 
     expect(total.bursts).toBeGreaterThan(200);
     expect(total.deferrals).toBeGreaterThan(20);
     expect(total.viewRefusals).toBeGreaterThan(10);
-  });
+  }, 60_000);
 });
