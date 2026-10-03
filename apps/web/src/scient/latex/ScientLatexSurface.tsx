@@ -1200,7 +1200,9 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     resolvedRootRelativePath !== null && resolvedRootRelativePath !== props.relativePath
       ? resolvedRootRelativePath
       : null;
-  const renameBlocked = hasLocalVisualDraft || visualProjectState.pending;
+  // Recovered work is kept under this file's name: decide on it first.
+  const renameBlocked =
+    hasLocalVisualDraft || visualProjectState.pending || sourceRecovery.recovery !== null;
   useEffect(() => {
     onRenameContext({ includedBy: renameIncludedBy, blocked: renameBlocked });
   }, [onRenameContext, renameIncludedBy, renameBlocked]);

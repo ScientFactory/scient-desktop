@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - FileSystem cannot create a FIFO.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -1406,6 +1407,31 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
             Effect.orElseSucceed(() => false),
           ),
         ).toBe(false);
+      }),
+    );
+
+    it.effect("renames a truncated text file without a revision, reporting its leading bytes", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const contents = "x".repeat(1024 * 1024 + 4096);
+        yield* writeTextFile(cwd, "big.log", contents);
+        const opened = yield* workspaceFileSystem.readFile({ cwd, relativePath: "big.log" });
+        expect(opened.truncated).toBe(true);
+
+        const renamed = yield* workspaceFileSystem.renameFile({
+          cwd,
+          relativePath: "big.log",
+          destinationRelativePath: "big-renamed.log",
+        });
+        const leading = new TextEncoder().encode(contents).subarray(0, 1024 * 1024);
+        expect(renamed.revision).toBe(
+          `sha256:${NodeCrypto.createHash("sha256").update(leading).digest("hex")}`,
+        );
+        expect(renamed.revision).toBe(opened.revision);
+        expect(yield* fileSystem.readFileString(path.join(cwd, "big-renamed.log"))).toBe(contents);
       }),
     );
 

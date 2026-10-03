@@ -249,6 +249,8 @@ describe("normalizeRenamePath", () => {
     expect(normalizeRenamePath(" sections/one ", "sections/intro.tex")).toBe("sections/one.tex");
     expect(normalizeRenamePath("intro.md", "sections/intro.tex")).toBe("intro.md");
     expect(normalizeRenamePath("Makefile2", "Makefile")).toBe("Makefile2");
+    expect(normalizeRenamePath(".env", "main.ts")).toBe(".env");
+    expect(normalizeRenamePath("new.", "main.ts")).toBeNull();
   });
   it("refuses paths outside the workspace or with empty parts", () => {
     for (const path of ["", "/etc/x", "../x.tex", "a//b.tex", "C:/x.tex", "a/./b"]) {

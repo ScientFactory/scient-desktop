@@ -1111,7 +1111,41 @@ export const make = Effect.gen(function* () {
             }
             revision = linked.revision;
           } else {
-            revision = yield* leadingBytesRevision(input, destination.realTargetPath);
+            // A failed read must not leave the new name behind: a retry would
+            // then find it taken.
+            revision = yield* leadingBytesRevision(input, destination.realTargetPath).pipe(
+              Effect.tapError(() =>
+                Effect.tryPromise(() => NodeFSP.unlink(destination.realTargetPath)).pipe(
+                  Effect.ignore,
+                ),
+              ),
+            );
+          }
+          // The locks order this service's own writes, not another program's.
+          // One that replaced the source after it was linked (an editor or a
+          // compiler writing atomically) would lose its file to the unlink
+          // below, so the source must still be the file the new name holds.
+          const stillLinked = yield* Effect.promise(async () => {
+            try {
+              const [from, to] = await Promise.all([
+                NodeFSP.lstat(source.realTargetPath),
+                NodeFSP.lstat(destination.realTargetPath),
+              ]);
+              return from.dev === to.dev && from.ino === to.ino;
+            } catch {
+              return false;
+            }
+          });
+          if (!stillLinked) {
+            yield* Effect.tryPromise(() => NodeFSP.unlink(destination.realTargetPath)).pipe(
+              Effect.ignore,
+            );
+            return yield* new WorkspaceFileRevisionConflictError({
+              workspaceRoot: input.cwd,
+              relativePath: input.relativePath,
+              resolvedPath: sourceTarget.absolutePath,
+              currentRevision: revision,
+            });
           }
           yield* Effect.tryPromise({
             try: async () => {

@@ -22,7 +22,9 @@ function extension(path: string): string {
 
 /**
  * A typed destination as a workspace-relative path, or null when it is not
- * one. A name typed without an extension keeps the file's own.
+ * one. A name typed without an extension keeps the file's own. Spaces around
+ * the typed text are dropped, as in every path field here: a name that truly
+ * begins or ends with a space is rare, a stray one common.
  */
 export function normalizeRenamePath(input: string, original: string): string | null {
   let path = input.trim().replaceAll("\\", "/").replace(/^\.\//u, "");
@@ -31,7 +33,11 @@ export function normalizeRenamePath(input: string, original: string): string | n
   if (segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")) {
     return null;
   }
-  if (extension(path) === "") path += extension(original);
+  const name = segments[segments.length - 1]!;
+  // Windows cannot store a name that ends in a dot.
+  if (name.endsWith(".")) return null;
+  // A dotfile such as `.env` is a whole name, not an extension to add to.
+  if (extension(path) === "" && !name.startsWith(".")) path += extension(original);
   return path.length <= 512 ? path : null;
 }
 

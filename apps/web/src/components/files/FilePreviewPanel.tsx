@@ -206,6 +206,8 @@ interface FilePreviewPanelProps {
   latexPresentationRequest: LatexFilePresentationRequest | null;
   latexRootRelativePath: string | null;
   onOpenFile: (relativePath: string) => void;
+  /** The open file was renamed: its tab follows it to the new path. */
+  onFileRenamed: (fromPath: string, toPath: string) => void;
   onOpenFileSource: (relativePath: string, line?: number, options?: OpenFileOptions) => void;
   onHtmlPresentationRequestHandled: (
     relativePath: string,
@@ -1423,6 +1425,7 @@ export default function FilePreviewPanel({
   latexPresentationRequest,
   latexRootRelativePath,
   onOpenFile,
+  onFileRenamed,
   onOpenFileSource,
   onHtmlPresentationRequestHandled,
   onLatexPresentationRequestHandled,
@@ -1781,6 +1784,16 @@ export default function FilePreviewPanel({
     file.data && !file.data.truncated
       ? (markdownSnapshot?.baselineRevision ?? file.data.revision)
       : null;
+  const [renamingInPlace, setRenamingInPlace] = useState(false);
+  const renamePendingRef = useRef(effectiveSourcePending);
+  renamePendingRef.current = effectiveSourcePending;
+  // A document session holds its own barrier; a file saved by this panel is
+  // held here: nothing pending when the rename starts, no edits until it ends.
+  const holdPanelFileForRename = () => {
+    if (renamePendingRef.current) return null;
+    setRenamingInPlace(true);
+    return () => setRenamingInPlace(false);
+  };
   const renameDisabled =
     effectiveSourcePending ||
     (latexRename?.blocked ?? false) ||
@@ -1944,9 +1957,9 @@ export default function FilePreviewPanel({
                 currentFileControl={
                   canRenameFile ? (
                     <FileRenameButton
-                      {...(markdownLease
-                        ? { beforeRename: () => markdownLease.holdForRename() }
-                        : {})}
+                      beforeRename={
+                        markdownLease ? () => markdownLease.holdForRename() : holdPanelFileForRename
+                      }
                       {...(isRichMarkdown
                         ? {
                             normalize: normalizeMarkdownCreatePath,
@@ -1969,7 +1982,7 @@ export default function FilePreviewPanel({
                       revision={renameRevision}
                       disabled={renameDisabled}
                       label={relativePath.slice(relativePath.lastIndexOf("/") + 1)}
-                      onRenamed={(destinationRelativePath, revision) => {
+                      onRenamed={(destinationRelativePath) => {
                         if (usesDocumentSession) {
                           markdownPersistenceRegistry.forgetClean({
                             environmentId,
@@ -1977,18 +1990,11 @@ export default function FilePreviewPanel({
                             relativePath,
                           });
                         }
-                        if (file.data && !file.data.truncated) {
-                          setProjectFileQueryData(
-                            environmentId,
-                            cwd,
-                            destinationRelativePath,
-                            file.data.contents,
-                            revision,
-                          );
-                        }
+                        // The new path is read from disk: seeding it with
+                        // this copy would mask later changes to it.
                         clearProjectFileQueryData(environmentId, cwd, relativePath);
                         refreshProjectEntriesQuery(environmentId, cwd);
-                        onOpenFile(destinationRelativePath);
+                        onFileRenamed(relativePath, destinationRelativePath);
                       }}
                     />
                   ) : undefined
@@ -2137,6 +2143,9 @@ export default function FilePreviewPanel({
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div
           className={cn("min-w-0 flex-1 flex-col overflow-hidden", previewPath ? "flex" : "hidden")}
+          // While a file this panel saves is being renamed, it takes no edits:
+          // a save started now would go to the name that is going away.
+          inert={renamingInPlace || undefined}
         >
           {isDirectory ? null : relativePath && attachment ? (
             <AttachmentFilePreview

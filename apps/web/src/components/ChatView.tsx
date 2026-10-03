@@ -10752,6 +10752,11 @@ function ChatViewContent(props: ChatViewProps) {
               : null
           }
           onOpenFile={openFileSurface}
+          onFileRenamed={(fromPath, toPath) => {
+            if (activeThreadRef) {
+              useRightPanelStore.getState().renameFileSurface(activeThreadRef, fromPath, toPath);
+            }
+          }}
           onOpenFileSource={openFileSourceSurface}
           onHtmlPresentationRequestHandled={handleHtmlPresentationRequestHandled}
           onLatexPresentationRequestHandled={handleLatexPresentationRequestHandled}
