@@ -353,6 +353,7 @@ export function DockOverflowRow(props: {
   readonly overflowItems?: ReactNode;
   readonly overflowButtonLabel?: string;
   readonly overflowButtonIcon?: ReactNode;
+  readonly overflowPosition?: "end" | "after-groups";
 }) {
   const dockRef = useRef<HTMLDivElement>(null);
   const widthsRef = useRef(new Map<string, number>());
@@ -486,7 +487,13 @@ export function DockOverflowRow(props: {
               {group.bar}
             </span>
           ))}
-          <div className="ms-auto flex items-center gap-0.5" data-dock-reserved>
+          <div
+            className={cn(
+              "flex items-center gap-0.5",
+              props.overflowPosition !== "after-groups" && "ms-auto",
+            )}
+            data-dock-reserved
+          >
             {showOverflowMenu ? (
               <DockMenu
                 label={props.overflowButtonLabel ?? "More actions"}
