@@ -1,13 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeFSP from "node:fs/promises";
-import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
   MANAGED_RUNTIME_POLICY,
-  ManagedOmpRuntime,
-  ManagedProviderRuntimeError,
+  type ManagedOmpRuntime,
   detectManagedRuntimeTarget,
   managedRuntimeSmokeEnvironment,
   managedRuntimeTargetKey,
@@ -17,9 +15,7 @@ import type { OmpSettings } from "@t3tools/contracts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
-import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { OMP_RPC_PROTOCOL_V2 } from "effect-omp-rpc/schema";
 
@@ -32,6 +28,10 @@ import {
 } from "./ManagedProviderRuntimeActions.ts";
 import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 import {
+  QualifiedRpcManagedRuntime,
+  type ManagedRpcQualification,
+} from "./QualifiedRpcManagedRuntime.ts";
+import {
   canonicalOmpExecutablePath,
   OmpExecutableGate,
   type OmpExecutableActivation,
@@ -43,132 +43,7 @@ import { ompTarget } from "../../provider/omp/OmpTarget.ts";
 const DEFAULT_OMP_BINARY = "omp";
 
 type ManagedOmpRuntimeDependencies = ConstructorParameters<typeof ManagedOmpRuntime>[1];
-type ManagedOmpInstallInput = Parameters<ManagedOmpRuntime["install"]>[0];
-type ManagedOmpQualification = (input: {
-  readonly executablePath: string;
-  readonly expectedVersion: string;
-  readonly cwd: string;
-  /** Lets the qualification process lease its executable during this activation. */
-  readonly activations: ReadonlyArray<OmpExecutableActivation>;
-}) => Effect.Effect<void, ProviderConnectionActionError>;
-
-const toRuntimeError = (fallback: string) => (cause: unknown) => {
-  if (cause instanceof DOMException && cause.name === "AbortError") return cause;
-  return new ManagedProviderRuntimeError(cause instanceof Error ? cause.message : fallback, {
-    cause,
-  });
-};
-
-/**
- * The managed runtime with Scient's two OMP-specific guarantees: activation
- * holds the executable gate from after the idle window until the new state is
- * committed, so no OMP process starts against a runtime that is changing; and
- * a staged binary is activated only after it completes the RPC v2 handshake.
- */
-class QualifiedManagedOmpRuntime extends ManagedOmpRuntime {
-  private readonly root: string;
-  private readonly gate: OmpExecutableGateShape;
-  private readonly qualification: ManagedOmpQualification;
-
-  constructor(input: {
-    readonly baseDir: string;
-    readonly gate: OmpExecutableGateShape;
-    readonly qualification: ManagedOmpQualification;
-    readonly dependencies?: ManagedOmpRuntimeDependencies;
-  }) {
-    super(input.baseDir, input.dependencies);
-    this.root = NodePath.join(input.baseDir, "provider-runtimes", "omp");
-    this.gate = input.gate;
-    this.qualification = input.qualification;
-  }
-
-  /**
-   * Hold every listed executable exclusively until `release` runs. New OMP
-   * processes wait behind the hold; live conversations fail it.
-   */
-  private async holdExecutables(executables: ReadonlyArray<string>, signal: AbortSignal) {
-    const scope = await Effect.runPromise(Scope.make());
-    const release = () => Effect.runPromise(Scope.close(scope, Exit.void));
-    try {
-      const activations = await Effect.runPromise(
-        Effect.forEach(executables, canonicalOmpExecutablePath).pipe(
-          Effect.flatMap((identities) =>
-            Effect.forEach([...new Set(identities)], (identity) =>
-              this.gate.acquireActivation(identity, { target: ompTarget }),
-            ),
-          ),
-          Effect.provideService(Scope.Scope, scope),
-          Effect.provide(NodeServices.layer),
-        ),
-        { signal },
-      );
-      return { activations, release };
-    } catch (cause) {
-      await release();
-      throw toRuntimeError("Scient could not reserve the Oh My Pi runtime.")(cause);
-    }
-  }
-
-  override async install(input: ManagedOmpInstallInput) {
-    let held: Awaited<ReturnType<QualifiedManagedOmpRuntime["holdExecutables"]>> | undefined;
-    try {
-      return await super.install({
-        ...input,
-        beforeActivate: async (signal) => {
-          // #374's activation window first: it waits for idle turns and stops
-          // idle conversations. Then the active copy and the copy being
-          // written are held through qualification and the state commit.
-          await input.beforeActivate?.(signal);
-          const active = await this.status(input.artifact);
-          held = await this.holdExecutables(
-            [active.launchPath, this.launchPath(input.artifact)],
-            signal,
-          );
-        },
-        qualify: async ({ artifact, executablePath, signal }) => {
-          signal.throwIfAborted();
-          const directory = await NodeFSP.mkdtemp(
-            NodePath.join(NodeOS.tmpdir(), "scient-omp-qualification-"),
-          );
-          try {
-            await Effect.runPromise(
-              this.qualification({
-                executablePath,
-                expectedVersion: artifact.version,
-                cwd: directory,
-                activations: held?.activations ?? [],
-              }),
-              { signal },
-            );
-          } catch (cause) {
-            throw toRuntimeError("The staged Oh My Pi runtime failed its RPC qualification check.")(
-              cause,
-            );
-          } finally {
-            await NodeFSP.rm(directory, { recursive: true, force: true });
-          }
-        },
-      });
-    } finally {
-      await held?.release();
-    }
-  }
-
-  override async remove() {
-    const state = await this.readState();
-    const held = state
-      ? await this.holdExecutables(
-          [NodePath.resolve(this.root, state.executableRelativePath)],
-          new AbortController().signal,
-        )
-      : undefined;
-    try {
-      await super.remove();
-    } finally {
-      await held?.release();
-    }
-  }
-}
+type ManagedOmpQualification = ManagedRpcQualification;
 
 /**
  * Oh My Pi's RPC mode exits at startup when it has no model at all, and the
@@ -296,8 +171,10 @@ export const makeQualifiedManagedOmpRuntime = Effect.fn("OmpManagedRuntime.makeR
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(OmpExecutableGate, gate),
         ));
-    return new QualifiedManagedOmpRuntime({
+    return new QualifiedRpcManagedRuntime({
       baseDir: input.baseDir,
+      identity: { providerDirectory: "omp", displayName: ompTarget.name },
+      target: ompTarget,
       gate,
       qualification,
       ...(input.dependencies ? { dependencies: input.dependencies } : {}),

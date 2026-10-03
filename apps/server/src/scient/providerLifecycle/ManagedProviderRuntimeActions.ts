@@ -1,9 +1,11 @@
 import {
   ManagedProviderRuntimeError,
+  hydrateManagedRuntimeArtifact,
   type ManagedProviderRuntime,
   type ManagedProviderRuntimeProgress,
   ManagedRuntimeFileError,
   type ManagedRuntimeArtifact,
+  type ManagedRuntimeArtifactPolicy,
   type ManagedRuntimeCatalogProvider,
 } from "@scientfactory/provider-runtime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -270,6 +272,8 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
   readonly providerSlug: string;
   readonly runtime: ManagedProviderRuntime;
   readonly bundledArtifact: ManagedRuntimeArtifact | undefined;
+  /** Compiled packaging rules may precede the first published release. */
+  readonly artifactPolicy?: ManagedRuntimeArtifactPolicy | undefined;
   readonly contractRevision: number;
   readonly targetLabel: string;
   readonly environment: NodeJS.ProcessEnv;
@@ -295,6 +299,7 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
     spawner,
     targetLabel,
   } = input;
+  const artifactPolicy = input.artifactPolicy ?? bundledArtifact;
   const catalogService = yield* ManagedRuntimeCatalog;
   const resolveCandidate = (refresh: boolean) =>
     (refresh ? catalogService.refresh : catalogService.current).pipe(
@@ -302,6 +307,7 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
         resolveManagedRuntimeCatalogCandidate({
           catalog,
           bundledArtifact,
+          artifactPolicy,
           contractRevision: input.contractRevision,
         }),
       ),
@@ -312,6 +318,27 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
     catch: (cause) =>
       runtimeError(`Scient could not reconcile managed ${providerName} staging.`, cause),
   }).pipe(Effect.ignore);
+
+  // An installed receipt remains usable offline, even when this app shipped
+  // before the family's first release. Reapply current packaging policy to it.
+  const inspectManaged = (candidate: ManagedRuntimeArtifact | undefined) =>
+    Effect.tryPromise({
+      try: async () => {
+        if (!artifactPolicy) return undefined;
+        let inspectionArtifact = candidate ?? bundledArtifact;
+        if (!inspectionArtifact) {
+          const state = await runtime.readState();
+          inspectionArtifact =
+            state?.schemaVersion === 3
+              ? hydrateManagedRuntimeArtifact(artifactPolicy, state.activeArtifact)
+              : undefined;
+        }
+        if (!inspectionArtifact) return undefined;
+        return { artifact: inspectionArtifact, status: await runtime.status(inspectionArtifact) };
+      },
+      catch: (cause) =>
+        runtimeError(`Scient could not inspect managed ${providerName} state.`, cause),
+    });
 
   const hasCustomRuntime = input.configuredBinaryPath !== defaultBinary;
   const probeConfiguredRuntime = (input.probeConfiguredRuntime ?? readHealthyConfiguredRuntime)(
@@ -325,8 +352,8 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
       : yield* probeConfiguredRuntime;
   const configuredRuntimeHealthy = Option.isSome(configuredRuntimeVersionOutput);
   const systemVersionOf = (versionOutput: Option.Option<string>) =>
-    bundledArtifact && Option.isSome(versionOutput)
-      ? parseConfiguredRuntimeVersion(bundledArtifact.provider, versionOutput.value)
+    artifactPolicy && Option.isSome(versionOutput)
+      ? parseConfiguredRuntimeVersion(artifactPolicy.provider, versionOutput.value)
       : null;
   /**
    * The latest look at the configured runtime. The first one, above, decided
@@ -344,13 +371,8 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
         Effect.orElseSucceed(() => input.configuredBinaryPath),
       )
     : input.configuredBinaryPath;
-  const managedStatus = bundledArtifact
-    ? yield* Effect.tryPromise({
-        try: () => runtime.status(bundledArtifact),
-        catch: (cause) =>
-          runtimeError(`Scient could not inspect managed ${providerName} state.`, cause),
-      }).pipe(Effect.option)
-    : Option.none();
+  const inspection = yield* inspectManaged(artifact).pipe(Effect.orElseSucceed(() => undefined));
+  const managedStatus = Option.fromUndefinedOr(inspection?.status);
   const managedInstalled = Option.isSome(managedStatus) && managedStatus.value.installed;
   const managedSelected = Option.isSome(managedStatus) && managedStatus.value.selected;
   const source = resolveManagedRuntimeSource({
@@ -361,7 +383,7 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
   });
   const initialPolicy = resolveManagedRuntimePolicy({
     source,
-    artifact,
+    artifact: artifact ?? inspection?.artifact,
     installed: managedInstalled,
     installedVersion: Option.isSome(managedStatus) ? managedStatus.value.activeVersion : null,
     managedInstallationAllowed,
@@ -370,20 +392,16 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
   const effectiveBinaryPath = initialPolicy.useManagedPath
     ? managedInstalled && Option.isSome(managedStatus)
       ? managedStatus.value.launchPath
-      : runtime.launchPath(artifact!)
+      : runtime.launchPath((artifact ?? inspection?.artifact)!)
     : input.configuredBinaryPath;
 
   /** The runtime's state with `currentArtifact` as the release on offer. */
   const summarize = Effect.fnUntraced(function* (
     currentArtifact: ManagedRuntimeArtifact | undefined,
   ) {
-    const latest = bundledArtifact
-      ? yield* Effect.tryPromise({
-          try: () => runtime.status(bundledArtifact),
-          catch: (cause) =>
-            runtimeError(`Scient could not inspect its private ${providerName} runtime.`, cause),
-        })
-      : undefined;
+    const latestInspection = yield* inspectManaged(currentArtifact);
+    const latest = latestInspection?.status;
+    const availableArtifact = currentArtifact ?? latestInspection?.artifact;
     const latestManagedInstalled = latest?.installed ?? false;
     const latestManagedSelected = latest?.selected ?? false;
     const latestVersionOutput = yield* Ref.get(latestConfiguredRuntime);
@@ -395,7 +413,7 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
     });
     const policy = resolveManagedRuntimePolicy({
       source: latestSource,
-      artifact: currentArtifact,
+      artifact: availableArtifact,
       installed: latestManagedInstalled,
       installedVersion: latest?.activeVersion ?? null,
       managedInstallationAllowed,
@@ -416,12 +434,14 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
                 ? managedInstallationAllowed
                   ? currentArtifact.supportMessage
                   : input.managedInstallationLimitation
-                : `Scient does not have a qualified managed ${providerName} artifact for this computer.`;
+                : input.artifactPolicy
+                  ? `No qualified ${providerName} release is available yet. You can use a configured executable.`
+                  : `Scient does not have a qualified managed ${providerName} artifact for this computer.`;
     const executable = policy.useManagedPath
       ? latestManagedInstalled && latest
         ? latest.launchPath
-        : currentArtifact
-          ? runtime.launchPath(currentArtifact)
+        : availableArtifact
+          ? runtime.launchPath(availableArtifact)
           : configuredExecutable
       : configuredExecutable;
     return {
@@ -431,7 +451,7 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
       actions: [...policy.actions],
       managedVersion: latestManagedVersion,
       availableManagedVersion: policy.actions.includes("update")
-        ? (currentArtifact?.version ?? null)
+        ? (availableArtifact?.version ?? null)
         : null,
       previousManagedVersion: latest?.previousVersion ?? null,
       operation: null,
@@ -454,18 +474,14 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
     // Routine checks and removal remain local and non-blocking.
     const candidateArtifact = yield* resolveCandidate(action !== "remove");
     const isDownload = action === "install" || action === "update" || action === "repair";
-    const managed =
-      isDownload && bundledArtifact
-        ? yield* Effect.tryPromise({
-            try: () => runtime.status(bundledArtifact),
-            catch: (cause) => runtimeError("Scient could not inspect its private runtime.", cause),
-          })
-        : undefined;
+    const managedInspection = isDownload ? yield* inspectManaged(candidateArtifact) : undefined;
+    const managed = managedInspection?.status;
     // The release this action installs, as planned here and as `run` installs it.
     const actionArtifact =
       action === "repair"
         ? resolveManagedRuntimeRepairArtifact({
             bundledArtifact,
+            artifactPolicy,
             candidateArtifact,
             activeArtifact: managed?.activeArtifact,
           })
@@ -491,7 +507,7 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
       managed?.installed === true && managed.selected !== true && !hasCustomRuntime
         ? resolveManagedRuntimePolicy({
             source: "scient_managed",
-            artifact: candidateArtifact,
+            artifact: candidateArtifact ?? managedInspection?.artifact,
             installed: true,
             installedVersion: managed.activeVersion,
             managedInstallationAllowed,

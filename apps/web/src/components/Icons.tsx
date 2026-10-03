@@ -812,18 +812,13 @@ export const OhMyPiIcon: Icon = ({ className, ...props }) => {
   );
 };
 
-// Scient's own symbol (apps/web/src/assets/scient-symbol-strong.svg), for Scient Agent.
+// Scient Agent's symbol, with twice the original line weight for small icons.
 export const ScientAgentIcon: Icon = (props) => (
   <svg viewBox="-78.67 -66.67 533.33 533.33" fill="none" {...props}>
-    <g fill="#46587E">
-      <rect x="92" y="92" width="200" height="16" />
-      <rect x="92" y="92" width="16" height="200" />
-    </g>
-    <g fill="#471A1A">
-      <rect x="201" y="200" width="175" height="16" />
-      <rect x="184" y="0" width="16" height="200" />
-      <rect x="0" y="184" width="200" height="16" />
-      <rect x="200" y="200" width="16" height="200" />
+    <g strokeWidth="32" strokeLinecap="butt" strokeLinejoin="miter">
+      <path d="M292 100H100V292" stroke="#46587E" />
+      <path d="M192 0V192H0" stroke="#471A1A" />
+      <path d="M376 208H208V400" stroke="#471A1A" />
     </g>
   </svg>
 );

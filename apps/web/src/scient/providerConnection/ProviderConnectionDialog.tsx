@@ -267,7 +267,9 @@ function AssistedProviderConnectionDialog(props: ProviderConnectionDialogContent
                       ? "Install Droid and connect your Factory account."
                       : isCursor
                         ? "Connect and manage your Cursor account."
-                        : "Connect and manage your existing ChatGPT subscription."}
+                        : props.provider.driver === "codex"
+                          ? "Connect and manage your existing ChatGPT subscription."
+                          : `Manage ${assistedDisplayName}'s runtime and model connections.`}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel spacing="compact">

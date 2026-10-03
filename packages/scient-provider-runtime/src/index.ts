@@ -5,6 +5,8 @@ export * from "./antigravityAcpCatalog.ts";
 export * from "./grokManifest.ts";
 export * from "./piManifest.ts";
 export * from "./ompManifest.ts";
+export * from "./scientAgentManifest.ts";
+export * from "./managedScientAgentRuntime.ts";
 export * from "./managedPiRuntime.ts";
 export * from "./managedOmpRuntime.ts";
 export * from "./droidManifest.ts";
