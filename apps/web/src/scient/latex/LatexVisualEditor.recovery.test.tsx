@@ -346,9 +346,7 @@ describe("recovering unsaved work", () => {
     await mount(tex("Monday base"), 1);
     const footer = container.querySelector("footer.scient-latex-reader-footer");
     expect(footer).not.toBeNull();
-    expect(bar()?.closest("footer")).toBe(footer);
-    // Among the footer's own controls, not in a strip of its own.
-    expect(bar()?.parentElement?.classList.contains("scient-pdf-toolbar")).toBe(true);
+    expect(bar()?.parentElement).toBe(footer);
     expect(message()).toBe("Unsaved changes");
     expect([...bar()!.querySelectorAll(":scope > button")].map((b) => b.textContent)).toEqual([
       "Compare",

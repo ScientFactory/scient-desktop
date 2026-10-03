@@ -31,7 +31,7 @@ vi.mock("~/components/ui/popover", async () => {
   };
 });
 
-import { ScientMarkdownRenameButton } from "./ScientMarkdownRenameButton";
+import { FileRenameButton, normalizeRenamePath } from "./FileRenameButton";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -41,7 +41,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-describe("Markdown rename publication barrier", () => {
+describe("File rename publication barrier", () => {
   let container: HTMLDivElement;
   let root: ReturnType<typeof createRoot>;
   const common = {
@@ -99,9 +99,7 @@ describe("Markdown rename publication barrier", () => {
       expect(release).not.toHaveBeenCalled();
     });
     await act(async () =>
-      root.render(
-        <ScientMarkdownRenameButton {...common} beforeRename={beforeRename} onRenamed={renamed} />,
-      ),
+      root.render(<FileRenameButton {...common} beforeRename={beforeRename} onRenamed={renamed} />),
     );
     await enterDestination();
     await submit();
@@ -132,7 +130,7 @@ describe("Markdown rename publication barrier", () => {
     const renamed = vi.fn();
     await act(async () =>
       root.render(
-        <ScientMarkdownRenameButton {...common} beforeRename={() => release} onRenamed={renamed} />,
+        <FileRenameButton {...common} beforeRename={() => release} onRenamed={renamed} />,
       ),
     );
     await enterDestination();
@@ -151,7 +149,7 @@ describe("Markdown rename publication barrier", () => {
     const beforeRename = vi.fn(() => vi.fn());
     await act(async () =>
       root.render(
-        <ScientMarkdownRenameButton
+        <FileRenameButton
           {...common}
           relativePath="drafts/notes.md "
           label="notes.md "
@@ -173,9 +171,7 @@ describe("Markdown rename publication barrier", () => {
   it("does not dispatch when the clean-state barrier cannot be acquired", async () => {
     const beforeRename = vi.fn(() => null);
     await act(async () =>
-      root.render(
-        <ScientMarkdownRenameButton {...common} beforeRename={beforeRename} onRenamed={vi.fn()} />,
-      ),
+      root.render(<FileRenameButton {...common} beforeRename={beforeRename} onRenamed={vi.fn()} />),
     );
     await enterDestination();
     await submit();
@@ -190,24 +186,75 @@ describe("Markdown rename publication barrier", () => {
     const beforeRename = vi.fn(() => vi.fn());
     const renamed = vi.fn();
     await act(async () =>
-      root.render(
-        <ScientMarkdownRenameButton {...common} beforeRename={beforeRename} onRenamed={renamed} />,
-      ),
+      root.render(<FileRenameButton {...common} beforeRename={beforeRename} onRenamed={renamed} />),
     );
     await enterDestination();
     await act(async () =>
       root.render(
-        <ScientMarkdownRenameButton
-          {...common}
-          disabled
-          beforeRename={beforeRename}
-          onRenamed={renamed}
-        />,
+        <FileRenameButton {...common} disabled beforeRename={beforeRename} onRenamed={renamed} />,
       ),
     );
     expect(container.querySelector<HTMLButtonElement>("button[type=submit]")?.disabled).toBe(true);
     await submit();
     expect(beforeRename).not.toHaveBeenCalled();
     expect(mocks.rename).not.toHaveBeenCalled();
+  });
+  it("renames a file it cannot read whole without a revision", async () => {
+    mocks.rename.mockResolvedValue(
+      AsyncResult.success({
+        relativePath: "figure.pdf",
+        destinationRelativePath: "renamed.md",
+        revision: "rB",
+      }),
+    );
+    const onRenamed = vi.fn();
+    await act(async () =>
+      root.render(
+        <FileRenameButton
+          {...common}
+          relativePath="figure.pdf"
+          label="figure.pdf"
+          revision={null}
+          onRenamed={onRenamed}
+        />,
+      ),
+    );
+    await enterDestination();
+    await submit();
+    expect(mocks.rename).toHaveBeenCalledOnce();
+    expect(mocks.rename.mock.calls[0]![0].input).not.toHaveProperty("expectedRevision");
+    expect(onRenamed).toHaveBeenCalledWith("renamed.md", "rB");
+  });
+
+  it("shows what else refers to the file under the field", async () => {
+    await act(async () =>
+      root.render(
+        <FileRenameButton
+          {...common}
+          relativePath="sections/intro.tex"
+          label="intro.tex"
+          notice="paper.tex includes this file."
+          onRenamed={() => {}}
+        />,
+      ),
+    );
+    await act(async () => container.querySelector<HTMLButtonElement>("button")!.click());
+    expect(container.textContent).toContain("paper.tex includes this file.");
+  });
+});
+
+describe("normalizeRenamePath", () => {
+  it("keeps the file's extension when the new name has none", () => {
+    expect(normalizeRenamePath("chapter", "sections/intro.tex")).toBe("chapter.tex");
+    expect(normalizeRenamePath(" sections/one ", "sections/intro.tex")).toBe("sections/one.tex");
+    expect(normalizeRenamePath("intro.md", "sections/intro.tex")).toBe("intro.md");
+    expect(normalizeRenamePath("Makefile2", "Makefile")).toBe("Makefile2");
+    expect(normalizeRenamePath(".env", "main.ts")).toBe(".env");
+    expect(normalizeRenamePath("new.", "main.ts")).toBeNull();
+  });
+  it("refuses paths outside the workspace or with empty parts", () => {
+    for (const path of ["", "/etc/x", "../x.tex", "a//b.tex", "C:/x.tex", "a/./b"]) {
+      expect(normalizeRenamePath(path, "x.tex")).toBeNull();
+    }
   });
 });

@@ -5,10 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { collapseDockGroups, dockButtonClass } from "./dockChrome";
 
-const cssSource = NodeFS.readFileSync(
-  new URL("../scient-markdown-editor.css", import.meta.url),
-  "utf8",
-);
+const cssSource = NodeFS.readFileSync(new URL("./dockChrome.css", import.meta.url), "utf8");
 
 describe("dock chrome overflow contract", () => {
   it("never flex-shrinks dock controls: narrow docks scroll sideways at full icon size", () => {
@@ -17,9 +14,7 @@ describe("dock chrome overflow contract", () => {
     expect(dockButtonClass()).toContain("shrink-0");
     expect(dockButtonClass(true)).toContain("shrink-0");
     expect(dockButtonClass()).toContain("whitespace-nowrap");
-    expect(cssSource).toMatch(
-      /\.scient-markdown-command-button,\s*\.scient-markdown-slash-menu button \{[^}]*flex-shrink: 0/su,
-    );
+    expect(cssSource).toMatch(/\.scient-markdown-command-button \{[^}]*flex-shrink: 0/su);
   });
 
   it("keeps the dock single-line with hidden horizontal overflow", () => {
@@ -39,7 +34,7 @@ describe("dock chrome overflow contract", () => {
     // Labels retain the normal app-control contrast. The direct SVG glyph gets
     // a small idle-only reduction without changing hover or active states.
     expect(cssSource).toMatch(
-      /\.scient-markdown-command-button,\s*\.scient-markdown-slash-menu button \{[^}]*color: var\(--contrast-muted-foreground\)/su,
+      /\.scient-markdown-command-button \{[^}]*color: var\(--contrast-muted-foreground\)/su,
     );
     expect(cssSource).toMatch(
       /\.scient-markdown-command-button:not\(:hover\):not\(:focus-visible\):not\(\[aria-pressed="true"\]\) > svg \{[^}]*color: color-mix\(in oklab, var\(--contrast-muted-foreground\) 80%, transparent\)/su,
@@ -51,7 +46,7 @@ describe("dock chrome overflow contract", () => {
 
   it("slightly reduces primary glyphs without shrinking their button targets or menu chevrons", () => {
     expect(cssSource).toMatch(
-      /\.scient-markdown-command-button,\s*\.scient-markdown-slash-menu button \{[^}]*min-width: 1\.65rem[^}]*min-height: 1\.65rem/su,
+      /\.scient-markdown-command-button \{[^}]*min-width: 1\.65rem[^}]*min-height: 1\.65rem/su,
     );
     expect(cssSource).toMatch(
       /\.scient-markdown-command-button > svg:first-child \{\s*width: 0\.9375rem;\s*height: 0\.9375rem;/su,

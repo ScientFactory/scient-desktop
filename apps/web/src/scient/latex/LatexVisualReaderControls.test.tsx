@@ -2,7 +2,7 @@
 import { act, type ComponentProps } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { DocumentReaderControls, DocumentSearchBar } from "../writing/DocumentReaderControls";
+import { DocumentReaderControls, ReaderSearchField } from "../writing/DocumentReaderControls";
 
 describe("shared PDF and Visual controls", () => {
   let host: HTMLDivElement;
@@ -53,7 +53,7 @@ describe("shared PDF and Visual controls", () => {
       field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
     );
   };
-  it("shares PDF zoom stepping, limits, percentage reset and fit width", async () => {
+  it("shares PDF zoom stepping, limits, and a percentage that fits the width", async () => {
     const onZoom = vi.fn(),
       onActualSize = vi.fn(),
       onFitWidth = vi.fn();
@@ -63,10 +63,11 @@ describe("shared PDF and Visual controls", () => {
     await click("Zoom out");
     expect(onZoom).toHaveBeenLastCalledWith(0.95);
     await act(() => host.querySelector<HTMLButtonElement>(".scient-pdf-zoom-label")!.click());
-    expect(onActualSize).toHaveBeenCalledOnce();
-    expect(host.querySelector('input[aria-label="Document zoom percentage"]')).toBeNull();
-    await click("Fit width");
     expect(onFitWidth).toHaveBeenCalledOnce();
+    expect(onActualSize).not.toHaveBeenCalled();
+    expect(host.querySelector('input[aria-label="Document zoom percentage"]')).toBeNull();
+    // There is no separate Fit width button.
+    expect(host.querySelector(".scient-pdf-action-fit")).toBeNull();
     await render({ scale: 5, onZoom });
     await click("Zoom in");
     expect(onZoom).toHaveBeenLastCalledWith(5);
@@ -95,26 +96,42 @@ describe("shared PDF and Visual controls", () => {
       true,
     );
   });
-  it("shares search focus, counts, keyboard navigation and Escape", async () => {
+  it("searches in a quiet field: focus on request, count, arrows, keys and Escape", async () => {
     const onNavigate = vi.fn(),
-      onClose = vi.fn();
-    await act(() =>
-      root.render(
-        <DocumentSearchBar
-          label="Search this document"
-          query="heat"
-          current={1}
-          total={2}
-          notFound={false}
-          onQuery={vi.fn()}
-          onNavigate={onNavigate}
-          onClose={onClose}
-        />,
-      ),
+      onClear = vi.fn(),
+      onQuery = vi.fn();
+    const field = (query: string, focusRequest: number) => (
+      <ReaderSearchField
+        label="Document"
+        query={query}
+        current={query ? 1 : 0}
+        total={query ? 2 : 0}
+        notFound={false}
+        focusRequest={focusRequest}
+        onQuery={onQuery}
+        onNavigate={onNavigate}
+        onClear={onClear}
+      />
     );
-    const input = host.querySelector("input")!;
+    await act(() => root.render(field("", 0)));
+    const input = host.querySelector<HTMLInputElement>('input[aria-label="Search Document"]')!;
+    expect(input.placeholder).toBe("Search");
+    // At rest: no count and no arrows, and focus stays where it was.
+    expect(host.querySelector('button[aria-label="Next result"]')).toBeNull();
+    expect(document.activeElement).not.toBe(input);
+    await act(() => root.render(field("", 1)));
     expect(document.activeElement).toBe(input);
-    expect(host.textContent).toContain("1 of 2");
+    await act(() => root.render(field("heat", 1)));
+    expect(host.textContent).toContain("1/2");
+    expect(host.querySelector('button[aria-label="Next result"]')).not.toBeNull();
+    await act(() =>
+      host.querySelector<HTMLButtonElement>('button[aria-label="Previous result"]')!.click(),
+    );
+    expect(onNavigate).toHaveBeenLastCalledWith(true);
+    await act(() =>
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
+    );
+    expect(onNavigate).toHaveBeenLastCalledWith(false);
     await act(() =>
       input.dispatchEvent(
         new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true }),
@@ -122,12 +139,8 @@ describe("shared PDF and Visual controls", () => {
     );
     expect(onNavigate).toHaveBeenLastCalledWith(true);
     await act(() =>
-      input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })),
-    );
-    expect(onNavigate).toHaveBeenLastCalledWith(false);
-    await act(() =>
       input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
     );
-    expect(onClose).toHaveBeenCalledOnce();
+    expect(onClear).toHaveBeenCalledOnce();
   });
 });

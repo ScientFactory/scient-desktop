@@ -23,6 +23,7 @@ vi.mock("~/assets/assetUrls", () => ({
   useAssetUrlState: () => ({ _tag: "Failure", refresh: vi.fn() }),
 }));
 import { LatexVisualEditor } from "./LatexVisualEditor";
+import { ReaderBarHostContext } from "../writing/readerBarHost";
 import { mathSourceCompletions } from "./latexMathCompletion";
 import { clearVisualDraft } from "./visualDrafts";
 import { clearTypingDraft } from "./visualTyping";
@@ -36,6 +37,8 @@ const act = async (callback: () => unknown) =>
     await callback();
     await new Promise((resolve) => setTimeout(resolve, 320));
   });
+
+const readerHosted = vi.fn();
 
 describe("writing editor source transactions", () => {
   let container: HTMLDivElement;
@@ -70,6 +73,22 @@ describe("writing editor source transactions", () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
+  // The full find and replace bar opens from the reader controls' More menu.
+  // Find and replace is in the writing row's Document menu.
+  async function openFindAndReplace(_headerSlot: HTMLElement) {
+    await act(() =>
+      container
+        .querySelector<HTMLButtonElement>(
+          '[role="toolbar"][aria-label="Writing tools"] button[aria-label="Document"]',
+        )!
+        .click(),
+    );
+    const item = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (element) => element.textContent?.trim() === "Find and replace",
+    )!;
+    expect(item).toBeDefined();
+    await act(() => item.click());
+  }
   function editor(): Editor {
     return (container.querySelector(".ProseMirror") as HTMLElement & { editor: Editor }).editor;
   }
@@ -81,17 +100,13 @@ describe("writing editor source transactions", () => {
       [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
         (element) => element.textContent?.trim() === name,
       );
-    if (!find()) {
-      const search = document.body.querySelector<HTMLInputElement>(
-        'input[aria-label="Search insert options"]',
-      )!;
-      await act(() => {
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
-          search,
-          name,
-        );
-        search.dispatchEvent(new Event("input", { bubbles: true }));
-      });
+    // Items in submenus (Theorems & proofs, More) are reached by opening them.
+    for (const submenu of ["References", "Theorems & proofs", "Document blocks"]) {
+      if (find()) break;
+      const trigger = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+        (element) => element.textContent?.trim() === submenu,
+      );
+      if (trigger) await act(() => trigger.click());
     }
     const item = find();
     expect(item).toBeDefined();
@@ -138,11 +153,12 @@ describe("writing editor source transactions", () => {
     await act(() => editor().commands.setNodeSelection(position));
     return position;
   }
-  async function mount(body = "Hello", preamble = "") {
+  /** `headerSlot` hosts the reader controls the way the LaTeX surface's header does. */
+  async function mount(body = "Hello", preamble = "", headerSlot: HTMLElement | null = null) {
     current = tex(body).replace("\\begin{document}", preamble + "\\begin{document}");
     function Harness() {
       const [source, setSource] = useState(current);
-      return (
+      const editorElement = (
         <LatexVisualEditor
           draftKey="synthetic-editor-test"
           fileRevision="r1"
@@ -158,6 +174,13 @@ describe("writing editor source transactions", () => {
             return true;
           }}
         />
+      );
+      return headerSlot ? (
+        <ReaderBarHostContext value={{ slot: headerSlot, onHosted: readerHosted }}>
+          {editorElement}
+        </ReaderBarHostContext>
+      ) : (
+        editorElement
       );
     }
     await act(async () => {
@@ -175,8 +198,8 @@ describe("writing editor source transactions", () => {
       [...toolbar.querySelectorAll("[data-dock-group]")].map((group) =>
         group.getAttribute("data-dock-group"),
       ),
-    ).toEqual(["history", "style", "format", "lists", "math", "insert", "document"]);
-    expect(toolbar.querySelector('button[aria-label="Style: Text"]')).not.toBeNull();
+    ).toEqual(["history", "text", "insert", "math", "lists", "document"]);
+    expect(toolbar.querySelector('button[aria-label="Text"]')).not.toBeNull();
     expect(toolbar.querySelector('[aria-label="Hide formatting tools"]')).toBeNull();
     expect(toolbar.querySelector('input[aria-label="Page number"]')).toBeNull();
     expect(
@@ -184,10 +207,302 @@ describe("writing editor source transactions", () => {
     ).not.toBeNull();
     expect(container.querySelector(".scient-latex-document-tools")).toBeNull();
     const context = container.querySelector(".scient-latex-context-tools")!;
-    expect(context.previousElementSibling?.getAttribute("aria-label")).toBe("Fit width");
-    expect(context.nextElementSibling?.getAttribute("aria-label")).toMatch(/^Search Document/);
+    // The percentage fits the width; there is no separate Fit width button.
+    expect(
+      context.previousElementSibling?.previousElementSibling?.getAttribute("aria-label"),
+    ).toMatch(/^Zoom in/);
+    // Search is a field right after the zoom; the object options follow it.
+    expect(context.previousElementSibling?.className).toBe("scient-reader-search");
     expect(context.querySelector(".scient-latex-context-tools-slot")).not.toBeNull();
     expect(container.querySelector('[aria-label="Selected object properties"]')).toBeNull();
+  });
+
+  it("draws the reader controls in the host's header and leaves a compact footer", async () => {
+    const headerSlot = document.createElement("div");
+    document.body.append(headerSlot);
+    try {
+      await mount("Hello brave new world", "", headerSlot);
+      // Page, zoom and search are in the header slot, once.
+      expect(headerSlot.querySelector('input[aria-label="Page number"]')).not.toBeNull();
+      expect(headerSlot.querySelector(".scient-pdf-toolbar-hosted")).not.toBeNull();
+      expect(container.querySelector('input[aria-label="Page number"]')).toBeNull();
+      expect(document.body.querySelectorAll('input[aria-label="Page number"]')).toHaveLength(1);
+      expect(readerHosted).toHaveBeenLastCalledWith(true);
+      // The footer holds the object options slot and what follows the caret.
+      const footer = container.querySelector(".scient-document-footer")!;
+      expect(footer).not.toBeNull();
+      expect(footer.classList.contains("scient-latex-reader-footer")).toBe(true);
+      expect(footer.querySelector(".scient-latex-context-tools-slot")).not.toBeNull();
+      expect(footer.querySelector(".scient-document-footer-position")?.textContent).toBe("Text");
+      expect(footer.querySelector(".scient-document-footer-count")?.textContent).toBe("4 words");
+      await act(() => {
+        editor().commands.setTextSelection({ from: 1, to: 12 });
+      });
+      expect(footer.querySelector(".scient-document-footer-count")?.textContent).toBe(
+        "2 of 4 words",
+      );
+      // Search opens under the writing row, next to the controls that opened it.
+      await openFindAndReplace(headerSlot);
+      // The same find and replace bar as the Markdown editor.
+      const search = container.querySelector(".scient-markdown-find-bar")!;
+      expect(search).not.toBeNull();
+      const toolbar = container.querySelector(".scient-latex-writing-toolbar")!;
+      expect(
+        toolbar.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(
+        search.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(
+        search.compareDocumentPosition(container.querySelector(".scient-latex-visual-body")!) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    } finally {
+      headerSlot.remove();
+    }
+  });
+
+  it("finds and replaces text, writing the replacement to the source", async () => {
+    const headerSlot = document.createElement("div");
+    document.body.append(headerSlot);
+    try {
+      await mount("One cat, two cats, three Cats.", "", headerSlot);
+      await openFindAndReplace(headerSlot);
+      const bar = container.querySelector(".scient-markdown-find-bar")!;
+      await setField(bar.querySelector<HTMLInputElement>("input[aria-label='Find text']")!, "cat");
+      expect(bar.textContent).toContain("1 of 3");
+      await act(() => bar.querySelector<HTMLButtonElement>("[aria-label='Show replace']")!.click());
+      const replace = bar.querySelector<HTMLInputElement>("input[aria-label='Replacement text']")!;
+      await setField(replace, "dog_100%");
+      await act(() =>
+        bar.querySelector<HTMLButtonElement>("[aria-label='Replace current match']")!.click(),
+      );
+      // Special characters are written the way typing them would write them.
+      expect(current).toContain("One dog\\_100\\%, two cats, three Cats.");
+      await act(() =>
+        bar.querySelector<HTMLButtonElement>("[aria-label='Replace all matches']")!.click(),
+      );
+      expect(current).toContain("One dog\\_100\\%, two dog\\_100\\%s, three dog\\_100\\%s.");
+      expect(current).toContain("\\begin{document}");
+    } finally {
+      headerSlot.remove();
+    }
+  });
+
+  it("replaces across paragraphs, a heading and a list, one block at a time", async () => {
+    const headerSlot = document.createElement("div");
+    document.body.append(headerSlot);
+    try {
+      await mount(
+        [
+          "\\section{A cat}",
+          "First cat here, and a second cat.",
+          "",
+          "No match in this one.",
+          "",
+          "\\begin{itemize}",
+          "\\item a cat in a list",
+          "\\end{itemize}",
+          "",
+          "Last cat.",
+        ].join("\n"),
+        "",
+        headerSlot,
+      );
+      await openFindAndReplace(headerSlot);
+      const bar = container.querySelector(".scient-markdown-find-bar")!;
+      await setField(bar.querySelector<HTMLInputElement>("input[aria-label='Find text']")!, "cat");
+      expect(bar.textContent).toContain("1 of 5");
+      await act(() => bar.querySelector<HTMLButtonElement>("[aria-label='Show replace']")!.click());
+      await setField(
+        bar.querySelector<HTMLInputElement>("input[aria-label='Replacement text']")!,
+        "dog",
+      );
+      await act(() =>
+        bar.querySelector<HTMLButtonElement>("[aria-label='Replace all matches']")!.click(),
+      );
+      // Each block is written to the source before the next is edited.
+      await vi.waitFor(async () => {
+        await act(() => {});
+        expect(current).not.toContain("cat");
+      });
+      expect(current).toContain("\\section{A dog}");
+      expect(current).toContain("First dog here, and a second dog.");
+      expect(current).toContain("No match in this one.");
+      expect(current).toMatch(/\\item a dog in a list/u);
+      expect(current).toContain("Last dog.");
+      expect(container.textContent).not.toContain("could not");
+      // One block per undo step, so each step is an edit the source can hold.
+      await act(() => editor().commands.undo());
+      expect(current.match(/cat/gu)?.length).toBe(1);
+      expect(container.textContent).not.toContain("could not");
+    } finally {
+      headerSlot.remove();
+    }
+  });
+
+  it("stops replacing when the document changes under it, and never touches the new text", async () => {
+    const headerSlot = document.createElement("div");
+    document.body.append(headerSlot);
+    try {
+      await mount(["cat cat.", "", "Last cat."].join("\n"), "", headerSlot);
+      await openFindAndReplace(headerSlot);
+      const bar = container.querySelector(".scient-markdown-find-bar")!;
+      await setField(bar.querySelector<HTMLInputElement>("input[aria-label='Find text']")!, "cat");
+      expect(bar.textContent).toContain("1 of 3");
+      await act(() => bar.querySelector<HTMLButtonElement>("[aria-label='Show replace']")!.click());
+      await setField(
+        bar.querySelector<HTMLInputElement>("input[aria-label='Replacement text']")!,
+        "dog",
+      );
+      await act(() => {
+        bar.querySelector<HTMLButtonElement>("[aria-label='Replace all matches']")!.click();
+        // The last paragraph is done; the others wait for a paint. The writer
+        // types the searched word at the very start before that paint.
+        editor().commands.insertContentAt(1, "cat ");
+      });
+      await act(() => {});
+      expect(current).toContain("Last dog.");
+      // The positions found earlier still hold the word "cat", but they are no
+      // longer the words that were matched: nothing in this paragraph changes.
+      expect(current).toContain("cat cat cat.");
+      expect(current).not.toContain("dog dog");
+      expect(container.textContent).not.toContain("could not");
+    } finally {
+      headerSlot.remove();
+    }
+  });
+
+  it("groups insertions and runs relocated text blocks from Text", async () => {
+    await mount();
+    await act(() =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Insert"]')!.click(),
+    );
+    const rows = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+    expect(rows.map((row) => row.textContent?.trim())).toEqual([
+      "Figure",
+      "Table",
+      "Code block",
+      "Literal text",
+      "References",
+      "Theorems & proofs",
+      "Document blocks",
+      "Page break",
+    ]);
+    await act(() => rows.find((row) => row.textContent?.trim() === "References")!.click());
+    expect(
+      [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+        .filter((row) => row.closest('[data-slot="menu-sub-content"]'))
+        .map((row) => row.textContent?.trim()),
+    ).toEqual(["Citation", "Cross-reference", "Link", "Footnote"]);
+    await act(() =>
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+    );
+    await act(() =>
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+    );
+    // Dismiss the Insert menu before exercising the Text categories.
+    await act(() =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Text"]')!.click(),
+    );
+    const alignment = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (row) => row.textContent?.trim() === "Alignment",
+    )!;
+    await act(() => alignment.click());
+    const right = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (row) => row.textContent?.trim() === "Right-aligned text",
+    )!;
+    await act(() => right.click());
+    expect(current).toContain("\\begin{flushright}");
+    expect(editor().isFocused).toBe(true);
+  });
+
+  it("starts a titled document with formatting ready on body text", async () => {
+    await mount("\\maketitle\nHello world.", "\\title{Title}\n");
+    expect(editor().state.selection.$from.parent.type.name).toBe("paragraph");
+    const text = container.querySelector<HTMLButtonElement>('button[aria-label="Text"]')!;
+    await act(() => text.click());
+    const formatting = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (item) => item.textContent === "Formatting",
+    )!;
+    await act(() => formatting.click());
+    const bold = await vi.waitFor(() => {
+      const item = document.body.querySelector<HTMLElement>('[role="menuitemcheckbox"]');
+      expect(item).not.toBeNull();
+      expect(item!.getAttribute("aria-disabled")).not.toBe("true");
+      return item!;
+    });
+    await act(() => bold.click());
+    expect(editor().isActive("bold")).toBe(true);
+  });
+
+  it("offers the Markdown bar's inline formatting in the same order, without strikethrough", async () => {
+    await mount();
+    const toolbar = container.querySelector('[role="toolbar"][aria-label="Writing tools"]')!;
+    expect(toolbar.querySelector('button[aria-label="Bold"]')).toBeNull();
+    const openFormatting = async () => {
+      await act(() =>
+        toolbar.querySelector<HTMLButtonElement>('button[aria-label="Text"]')!.click(),
+      );
+      const trigger = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+        (item) => item.textContent === "Formatting",
+      )!;
+      await act(() => {
+        trigger.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false }));
+        trigger.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+      });
+      return await vi.waitFor(() => {
+        const items = [...document.body.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')];
+        expect(
+          items.map((item) =>
+            item.textContent
+              ?.trim()
+              .split(/Ctrl|⌘|⌥/)[0]
+              ?.trim(),
+          ),
+        ).toEqual(["Bold", "Italic", "Inline code"]);
+        return items;
+      });
+    };
+    await act(() => editor().commands.setTextSelection({ from: 1, to: 6 }));
+    let items = await openFormatting();
+    await act(() => items[2]!.click());
+    expect(current).toContain("\\texttt{Hello}");
+    expect(editor().isFocused).toBe(true);
+    items = await openFormatting();
+    expect(items[2]!.getAttribute("aria-checked")).toBe("true");
+    await act(() => items[2]!.click());
+    expect(current).not.toContain("\\texttt");
+    // Link lives in Insert, not in the bar.
+    await act(() =>
+      toolbar.querySelector<HTMLButtonElement>('button[aria-label="Insert"]')!.click(),
+    );
+    const references = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (item) => item.textContent?.trim() === "References",
+    )!;
+    await act(() => references.click());
+    const link = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (item) => item.textContent?.trim().startsWith("Link"),
+    )!;
+    expect(link).toBeDefined();
+    await act(() => link.click());
+    await act(() => {});
+    const popup = document.body.querySelector('[data-slot="popover-popup"]')!;
+    expect(popup).not.toBeNull();
+    expect(popup.classList.contains("w-64")).toBe(true);
+    expect(document.body.querySelector('[data-slot="dialog-backdrop"]')).toBeNull();
+    expect(document.body.querySelector('[data-slot="dialog-popup"]')).toBeNull();
+    await setField(
+      popup.querySelector<HTMLInputElement>('input[aria-label="Link destination"]')!,
+      "https://example.com",
+    );
+    await act(() =>
+      popup
+        .querySelector("form")!
+        .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
+    );
+    await vi.waitFor(() => expect(current).toContain("\\href{https://example.com}{Hello}"));
+    expect(editor().isFocused).toBe(true);
   });
 
   it("puts plain-text shortcut help under Document without extra More actions", async () => {
@@ -211,6 +526,67 @@ describe("writing editor source transactions", () => {
       "Writing shortcuts",
     );
   });
+  it("applies settings from a one-card submenu that shows the current values", async () => {
+    await mount("Hello");
+    const toolbar = container.querySelector('[role="toolbar"][aria-label="Writing tools"]')!;
+    await act(() =>
+      toolbar.querySelector<HTMLButtonElement>('button[aria-label="Document"]')!.click(),
+    );
+    const settings = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (item) => item.textContent?.trim() === "Document settings",
+    )!;
+    await act(() => {
+      settings.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false }));
+      settings.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+    });
+    await vi.waitFor(() => expect(settings.getAttribute("aria-expanded")).toBe("true"));
+    const popup = document.body.querySelector(
+      '[data-slot="menu-sub-content"][aria-label="Document settings"]',
+    )!;
+    expect(popup).not.toBeNull();
+    expect(document.body.querySelector('[data-slot="dialog-backdrop"]')).toBeNull();
+    expect(document.body.querySelector('[data-slot="dialog-popup"]')).toBeNull();
+    const button = (label: string) =>
+      [...popup.querySelectorAll<HTMLButtonElement>("button")].find(
+        (item) => item.textContent?.trim() === label,
+      )!;
+    // No tabs: every setting is on one card, showing what the document uses now.
+    expect(button("Page layout")).toBeUndefined();
+    expect(popup.textContent).toContain("Article");
+    expect(popup.textContent).toContain("10 pt");
+    expect(popup.textContent).toContain("Letter");
+    expect(popup.textContent).toContain("LaTeX default");
+    expect(button("Apply").disabled).toBe(true);
+    // Margins: the four boxes appear under Custom.
+    expect(popup.querySelector('input[aria-label="Top margin"]')).toBeNull();
+    await act(() => popup.querySelector<HTMLButtonElement>('[aria-label="Margins"]')!.click());
+    const custom = await vi.waitFor(() => {
+      const option = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find(
+        (item) => item.textContent?.trim() === "Custom",
+      );
+      expect(option).toBeDefined();
+      return option!;
+    });
+    await act(() => custom.click());
+    const top = await vi.waitFor(() => {
+      const input = popup.querySelector<HTMLInputElement>('input[aria-label="Top margin"]');
+      expect(input).not.toBeNull();
+      return input!;
+    });
+    await setField(top, "2cm");
+    await act(() => button("Apply").click());
+    await vi.waitFor(() => expect(current).toContain("top=2cm"));
+    expect(current).toContain("Hello");
+    expect(current).toContain("\\documentclass{article}");
+    await vi.waitFor(() =>
+      expect(
+        document.body.querySelector(
+          '[data-slot="menu-sub-content"][aria-label="Document settings"]',
+        ),
+      ).toBeNull(),
+    );
+  });
+
   it("moves lower-priority writing groups into More on narrow panes", async () => {
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (
       this: HTMLElement,
@@ -224,7 +600,8 @@ describe("writing editor source transactions", () => {
     });
     await mount();
     const toolbar = container.querySelector('[role="toolbar"][aria-label="Writing tools"]')!;
-    expect(toolbar.querySelector('[data-dock-group="style"]')).not.toBeNull();
+    // Bold and italic leave last, as in the Markdown bar.
+    expect(toolbar.querySelector('[data-dock-group="text"]')).not.toBeNull();
     expect(toolbar.querySelector('[data-dock-group="history"]')).toBeNull();
     await act(() =>
       toolbar.querySelector<HTMLButtonElement>('button[aria-label="More actions"]')!.click(),
@@ -235,15 +612,37 @@ describe("writing editor source transactions", () => {
     for (const label of [
       "Undo",
       "Redo",
-      "Bulleted list",
+      "Bullet list",
       "Theorems & proofs",
-      "Page layout\u2026",
+      "Document settings",
       "Keyboard shortcuts",
     ])
+      // A row may end with its shortcut.
       expect(
-        menuItems.some((item) => item.textContent?.trim() === label),
+        menuItems.some((item) => item.textContent?.trim().startsWith(label)),
         label,
       ).toBe(true);
+  });
+
+  it("shows the list menu in the Markdown menu's shape, with its shortcuts", async () => {
+    await mount("A paragraph.");
+    const toolbar = container.querySelector('[role="toolbar"][aria-label="Writing tools"]')!;
+    await act(() =>
+      toolbar.querySelector<HTMLButtonElement>('button[aria-label="List: None"]')!.click(),
+    );
+    const rows = [...document.body.querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
+    expect(rows.map((row) => row.textContent?.trim().replace(/\s+/gu, " "))).toEqual([
+      expect.stringMatching(/^Bullet list.+/u),
+      expect.stringMatching(/^Numbered list.+/u),
+      "No list",
+    ]);
+    // Outside a list, "No list" is the current state, as in Markdown.
+    expect(rows[2]!.getAttribute("aria-checked")).toBe("true");
+    expect(rows[0]!.getAttribute("aria-keyshortcuts")).toBeTruthy();
+    // The current kind is shown by the row itself, not by a separate mark.
+    expect(document.body.querySelector('[data-slot="menu-radio-item-indicator"]')).toBeNull();
+    await act(() => rows[0]!.click());
+    expect(current).toContain("\\begin{itemize}");
   });
 
   it.each([false, true])(
@@ -649,7 +1048,7 @@ Theory & Proofs \\\\
 
   it("inserts a source-backed reference from the writing toolbar", async () => {
     await mount("Target \\label{sec:target}");
-    await insertMenuItem("Cross-reference\u2026");
+    await insertMenuItem("Cross-reference");
     const key = document.body.querySelector<HTMLInputElement>(
       ".scient-writing-reference-key input",
     )!;
@@ -679,27 +1078,7 @@ Theory & Proofs \\\\
     );
   });
 
-  it("moves a paragraph into the title and undoes the complete source change", async () => {
-    await mount("Energy estimate\n\nBody stays here");
-    const original = current;
-    await act(() => editor().commands.setTextSelection(1));
-    await act(() =>
-      container.querySelector<HTMLButtonElement>('button[aria-label="Document"]')!.click(),
-    );
-    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
-      (item) => item.textContent?.trim() === "Use paragraph as title…",
-    )!;
-    await act(() => item.click());
-    expect(current).toContain("\\title{Energy estimate}");
-    expect(current).toContain("\\maketitle");
-    expect(current.match(/Energy estimate/gu)).toHaveLength(1);
-    const titled = current;
-    await act(() => editor().commands.undo());
-    expect(current).toBe(original);
-    await act(() => editor().commands.redo());
-    expect(current).toBe(titled);
-  });
-  it("editing a title never silently inserts a printed title block", async () => {
+  it("never inserts a printed title block unless the writer asks for one", async () => {
     await mount("Body", "\\title{Existing metadata}\n");
     const original = current;
     await act(() =>
@@ -709,10 +1088,12 @@ Theory & Proofs \\\\
       (item) => item.textContent?.trim() === "Title & authors",
     )!;
     await act(() => titleGroup.click());
-    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
-      (item) => item.textContent?.trim() === "Edit title",
-    )!;
-    await act(() => item.click());
+    const names = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].map((item) =>
+      item.textContent?.trim(),
+    );
+    // No title block is shown yet: the only choice is to add one.
+    expect(names).toContain("Add a title");
+    expect(names).not.toContain("Edit title");
     expect(current).toBe(original);
     expect(current).not.toContain("\\maketitle");
   });

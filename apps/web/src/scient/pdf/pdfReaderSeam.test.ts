@@ -174,11 +174,12 @@ describe("Scient PDF reader source seam", () => {
     expect(styles).not.toContain("@media (max-width: 520px)");
     expect(source).toContain('className="scient-pdf-action-sidebar"');
     expect(source).toContain('className="scient-pdf-action-zoom-step"');
-    expect(source).toContain('className="scient-pdf-action-fit"');
+    expect(source).not.toContain('className="scient-pdf-action-fit"');
     expect(source).not.toContain('className="scient-pdf-action-rotate"');
-    expect(source).toContain('className="scient-pdf-action-search"');
+    expect(controlsSource).toContain('className="scient-reader-search"');
     expect(source).toContain("<ZoomOut /> Zoom out");
-    expect(source).toContain("<Scan /> Actual size");
+    // Actual size is not offered in More; clicking the percentage fits the width.
+    expect(source).not.toContain("Actual size");
     expect(source).toContain("<ZoomIn /> Zoom in");
     expect(source).toContain("<Maximize2 /> Fit width");
     expect(source).toContain("<RotateCw /> Rotate clockwise");

@@ -3300,13 +3300,14 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 }
 /*
  * The footer's own controls leave room for the whole line only when it is
- * wide. Below that the line is a single action that opens the comparison, and
+ * wide. The nearest inline-size container is the shared footer or standalone
+ * reader controls. Below that the line is a single action that opens the comparison, and
  * it gives way (shortens) before any footer control is pushed or covered.
  */
 .scient-latex-visual-recovery [data-compact] {
   display: none;
 }
-@container scient-document-controls (max-width: 699px) {
+@container (max-width: 699px) {
   .scient-latex-visual-recovery > .scient-latex-visual-recovery-message,
   .scient-latex-visual-recovery > button[data-wide] {
     display: none;
@@ -3338,7 +3339,7 @@ body:has(.scient-latex-mathfield math-field:focus-within)
  * Narrower than one word needs (a small Split pane): the line is the dot that
  * marks unsaved work elsewhere, still the same button with the same name.
  */
-@container scient-document-controls (max-width: 287px) {
+@container (max-width: 287px) {
   .scient-latex-visual-recovery {
     flex: none;
     padding-inline-start: 0;
@@ -3367,14 +3368,18 @@ body:has(.scient-latex-mathfield math-field:focus-within)
  * At the narrowest split the footer's own controls already run past its edge.
  * The dot goes first there, so recovered work stays within reach.
  */
-@container scient-document-controls (max-width: 139px) {
+@container (max-width: 139px) {
   .scient-latex-visual-recovery {
     order: -1;
   }
 }
 /* Selection tools keep the room their own button needs beside the line. */
 .scient-latex-visual-recovery
-  ~ .scient-latex-context-tools[data-compact]:has(.scient-latex-context-toolbar) {
+  ~ .scient-latex-context-tools[data-compact]:has(.scient-latex-context-toolbar),
+.scient-document-footer[data-recovery]
+  .scient-document-footer-options:has(
+    .scient-latex-context-tools[data-compact] .scient-latex-context-toolbar
+  ) {
   flex: 1 0 auto;
 }
 /* An open search bar sits just above the footer: the comparison opens above it. */
@@ -3573,32 +3578,6 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   border: 0;
   box-shadow: none;
 }
-.scient-latex-insert-search {
-  padding: 5px;
-}
-.scient-latex-insert-search input {
-  width: 100%;
-  min-width: 0;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  padding: 5px 7px;
-  background: var(--background);
-  color: var(--foreground);
-  font: 12px/1.5 var(--font-sans);
-}
-.scient-latex-insert-search input:focus-visible {
-  outline: 1px solid var(--ring);
-}
-.scient-latex-insert-items {
-  max-height: min(380px, calc(100dvh - 180px));
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-.scient-latex-empty-menu {
-  padding: 8px;
-  color: var(--muted-foreground);
-  font-size: 12px;
-}
 .scient-latex-document-settings {
   font: 12px/1.5 var(--font-sans);
   margin-top: 12px;
@@ -3778,7 +3757,6 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-writing-toolbar > .scient-markdown-editor-dock[data-fixed] {
   overflow: hidden;
   flex-wrap: nowrap;
-  min-height: 38px;
 }
 .scient-latex-reader-footer {
   position: relative;
@@ -3797,7 +3775,8 @@ body:has(.scient-latex-mathfield math-field:focus-within)
 .scient-latex-reader-footer .scient-pdf-toolbar {
   border-bottom: 0;
 }
-/* Contextual editing lives between Fit width and Search. */
+/* Standalone readers place contextual editing between zoom and Search;
+   hosted readers use the shared footer below. */
 .scient-latex-context-tools {
   flex: 1;
   min-width: 0;
@@ -3909,28 +3888,9 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   display: inline;
 }
 
-/* Match the document header across modes without a scrolling action row. */
-@container scient-latex-surface (max-width: 650px) {
-  .scient-latex-toolbar .scient-latex-split-modes {
-    display: none;
-  }
-}
 @container scient-latex-surface (max-width: 520px) {
   .scient-latex-toolbar {
     gap: 4px;
-  }
-  .scient-latex-word-export > span,
-  .scient-latex-build-action > span {
-    display: none;
-  }
-  .scient-latex-word-export > svg {
-    display: block;
-  }
-  .scient-latex-word-export,
-  .scient-latex-build-action {
-    width: 28px;
-    padding: 0;
-    justify-content: center;
   }
 }
 @container scient-latex-surface (max-width: 360px) {
@@ -3941,6 +3901,90 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   .scient-latex-toolbar .scient-latex-mode-button {
     padding-inline: 4px;
   }
+}
+
+.scient-latex-reader-footer:not(.scient-document-footer)[data-recovery] {
+  flex-wrap: wrap;
+  height: auto;
+  min-height: 38px;
+}
+.scient-latex-reader-footer:not(.scient-document-footer) > .scient-latex-visual-recovery {
+  flex-basis: 100%;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Pilot: one height in every mode, and Rebuild and More at the same place. */
+.scient-latex-toolbar {
+  height: 36px;
+}
+.scient-latex-actions {
+  gap: 2px;
+}
+.scient-latex-toolbar .scient-latex-split-modes {
+  margin-inline-end: 4px;
+}
+
+/* Pilot: in PDF and Visual the reader controls join the document header row. */
+.scient-latex-reader-slot {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+}
+.scient-latex-reader-slot[hidden] {
+  display: none;
+}
+.scient-latex-toolbar[data-reader-hosted] > .scient-latex-status {
+  flex: 0 1 auto;
+}
+.scient-latex-toolbar[data-reader-hosted] > .scient-latex-actions {
+  display: none;
+}
+.scient-pdf-toolbar.scient-pdf-toolbar-hosted {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  border-bottom: 0;
+  padding: 0;
+  background: none;
+}
+/* The footer now holds only the selected object's options. */
+.scient-document-footer .scient-latex-context-tools > .scient-latex-context-tools-slot {
+  border-inline-start: 0;
+  padding-inline-start: 0;
+}
+
+/*
+ * Pilot: what the merged row gives up as the pane narrows, first to last.
+ * Everything that leaves the row stays in More.
+ */
+
+/* Pilot: build messages float over the document instead of pushing it down. */
+.scient-latex-diagnostics-anchor {
+  position: relative;
+  /* Above the source editor's floating symbol button (30). */
+  z-index: 40;
+  height: 0;
+  flex: none;
+}
+.scient-latex-diagnostics-anchor > .scient-latex-diagnostics {
+  position: absolute;
+  inset-block-start: 4px;
+  inset-inline-start: 8px;
+  /* As wide as its longest message, up to the same limit as before. */
+  width: max-content;
+  max-width: min(680px, calc(100% - 16px));
+  max-height: min(300px, 50vh);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--popover);
+  box-shadow:
+    0 10px 30px -12px color-mix(in srgb, var(--foreground) 28%, transparent),
+    0 2px 6px -2px color-mix(in srgb, var(--foreground) 12%, transparent);
+}
+.scient-latex-diagnostics-anchor .scient-latex-diagnostics-list {
+  padding: 8px 12px;
 }
 
 /* Empty-position guides are small decorations inside the active environment.
@@ -3994,4 +4038,262 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   .scient-latex-mathfield math-field {
     --placeholder-opacity: 0 !important;
   }
+}
+
+/* The Visual footer follows the shared footer's rules when the reader controls
+   live in the header: one compact line for the selected object's options. */
+.scient-latex-reader-footer.scient-document-footer {
+  height: 28px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 64%, transparent);
+}
+.scient-latex-reader-footer.scient-document-footer > .scient-latex-visual-recovery {
+  padding-inline: 0;
+  font-size: inherit;
+}
+.scient-document-footer .scient-latex-context-tools {
+  padding-inline: 0;
+}
+.scient-document-footer .scient-latex-context-tools > button {
+  height: 22px;
+}
+/* Object options in the compact footer: one quiet line, nothing boxed at rest.
+   These rules reach the strip's own controls only, never the panels a control
+   opens (figure options, the equation's source, the symbol palette). */
+.scient-document-footer .scient-latex-context-toolbar {
+  height: 24px;
+  color: var(--muted-foreground);
+}
+/* A caption above a control would not fit the line; the control names itself. */
+.scient-document-footer .scient-latex-context-toolbar > label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  font-size: 0;
+}
+.scient-document-footer .scient-latex-context-toolbar > label > * {
+  font-size: 11px;
+}
+.scient-document-footer .scient-latex-context-toolbar > .scient-latex-select,
+.scient-document-footer .scient-latex-context-toolbar > label > .scient-latex-select {
+  width: auto;
+}
+.scient-document-footer
+  .scient-latex-context-toolbar
+  > :is(.scient-latex-select, label, div)
+  [data-slot="select-trigger"]:not(
+    :is(
+        .scient-latex-context-menu-panel,
+        .scient-latex-math-source-popover,
+        .scient-latex-symbol-palette-panel
+      )
+      *
+  ),
+.scient-document-footer .scient-latex-context-toolbar [data-latex-number-toggle] {
+  height: 22px;
+  min-height: 0;
+  border-color: transparent;
+  border-radius: 4px;
+  background: transparent;
+  box-shadow: none;
+  padding-inline: 6px;
+  color: inherit;
+  font-size: 11px;
+}
+.scient-document-footer
+  .scient-latex-context-toolbar
+  > :is(.scient-latex-select, label, div)
+  [data-slot="select-trigger"]:not(
+    :is(
+        .scient-latex-context-menu-panel,
+        .scient-latex-math-source-popover,
+        .scient-latex-symbol-palette-panel
+      )
+      *
+  )::before,
+.scient-document-footer .scient-latex-context-toolbar [data-latex-number-toggle]::before {
+  display: none;
+}
+.scient-document-footer
+  .scient-latex-context-toolbar
+  > :is(.scient-latex-select, label, div)
+  [data-slot="select-trigger"]:not(
+    :is(
+        .scient-latex-context-menu-panel,
+        .scient-latex-math-source-popover,
+        .scient-latex-symbol-palette-panel
+      )
+      *
+  ):hover,
+.scient-document-footer .scient-latex-context-toolbar [data-latex-number-toggle]:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+.scient-document-footer .scient-latex-context-toolbar > label > :is(input, textarea) {
+  height: 22px;
+  min-height: 0;
+}
+
+/* Build messages: the mark sits on the first line of its message. */
+.scient-latex-diagnostic > svg {
+  align-self: flex-start;
+  margin-top: 1px;
+}
+
+/* With reader controls in the row, the build status, search and view switch
+   lead the same toolbar. */
+.scient-pdf-toolbar-hosted > .scient-latex-status {
+  /* A count such as "1 warning" is read whole or not at all. */
+  flex: none;
+}
+
+/* Sidebar, page and zoom stand a little apart from Rebuild. */
+.scient-latex-before-build {
+  flex: 0 0 16px;
+}
+.scient-latex-toolbar[data-fit~="separators"] .scient-latex-before-build {
+  flex-basis: 4px;
+}
+
+/* The search field's room, kept empty in Source. */
+.scient-latex-search-room {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* Recovered work offered by the surface itself (Source and Split): one quiet
+   line under the header, never a share of the document's height. Its details
+   open downward, over the document. */
+.scient-latex-surface > .scient-latex-visual-recovery {
+  position: relative;
+  flex: none;
+  min-height: 28px;
+  border-bottom: 1px solid var(--border);
+  padding: 2px 8px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 16px;
+}
+.scient-latex-surface > .scient-latex-visual-recovery > .scient-latex-visual-recovery-panel {
+  top: 100%;
+  bottom: auto;
+  border-top: 0;
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 8px 20px -12px rgb(0 0 0 / 0.35);
+}
+.scient-latex-surface > p[role="status"] {
+  flex: none;
+  border-bottom: 1px solid var(--border);
+  padding: 4px 8px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+/* Status icons, shown only when the row is short of room. */
+.scient-latex-chip {
+  display: inline-flex;
+  align-items: center;
+}
+.scient-latex-chip-icon {
+  display: none;
+  width: 13px;
+  height: 13px;
+}
+
+/* When the header row runs short of room, the surface measures it and hides
+   the next item in this order until everything fits (data-fit, in
+   ScientLatexSurface): the zoom steps (the percentage stays), the page
+   arrows, the sidebar button; build messages and Rebuild keep their icons;
+   search gets shorter; Split's PDF/Visual switch moves into More; search keeps
+   its icon; the separators; the percentage; the page number. Nothing is hidden
+   while there is room for it. */
+.scient-latex-toolbar[data-fit~="zoom"] .scient-pdf-action-zoom-step,
+.scient-latex-toolbar[data-fit~="page"] .scient-pdf-action-page-step,
+.scient-latex-toolbar[data-fit~="sidebar"] .scient-pdf-action-sidebar,
+.scient-latex-toolbar[data-fit~="sidebar"]
+  .scient-pdf-action-sidebar
+  + .scient-pdf-toolbar-separator,
+.scient-latex-toolbar[data-fit~="status"] .scient-latex-chip-text,
+.scient-latex-toolbar[data-fit~="status"] .scient-latex-build-action > span,
+.scient-latex-toolbar[data-fit~="split"] .scient-latex-split-modes,
+.scient-latex-toolbar[data-fit~="separators"] .scient-pdf-toolbar-separator,
+.scient-latex-toolbar[data-fit~="percent"] .scient-pdf-zoom-label,
+.scient-latex-toolbar[data-fit~="page-number"] .scient-pdf-page-control {
+  display: none;
+}
+.scient-latex-toolbar[data-fit~="status"] .scient-latex-chip-icon {
+  display: block;
+}
+.scient-latex-toolbar[data-fit~="status"] .scient-latex-chip {
+  padding: 4px;
+}
+.scient-latex-toolbar[data-fit~="status"] .scient-latex-build-action {
+  width: 28px;
+  padding: 0;
+  justify-content: center;
+}
+.scient-latex-toolbar[data-fit~="search-short"] .scient-reader-search {
+  min-width: 84px;
+}
+.scient-latex-toolbar[data-fit~="search-short"] .scient-reader-search-count,
+.scient-latex-toolbar[data-fit~="search-short"] .scient-reader-search button {
+  display: none;
+}
+/* Search as an icon. Clicking it opens the field in place, in its usual quiet
+   look; the field collapses rather than disappearing so it can take the caret. */
+.scient-latex-toolbar[data-fit~="search-icon"] .scient-reader-search {
+  min-width: 28px;
+  flex: 0 0 28px;
+}
+.scient-latex-toolbar[data-fit~="search-icon"] .scient-reader-search .scient-reader-search-box {
+  position: absolute;
+  z-index: 30;
+  top: 0;
+  left: 0;
+  width: 28px;
+  height: 26px;
+}
+.scient-latex-toolbar[data-fit~="search-icon"]
+  .scient-reader-search
+  .scient-reader-search-box
+  > input {
+  width: 0;
+  flex: 0 0 0;
+  opacity: 0;
+}
+.scient-latex-toolbar[data-fit~="search-icon"]
+  .scient-reader-search[data-searching]
+  .scient-reader-search-box,
+.scient-latex-toolbar[data-fit~="search-icon"]
+  .scient-reader-search:focus-within
+  .scient-reader-search-box {
+  background: color-mix(in srgb, var(--accent) 80%, var(--background));
+}
+.scient-latex-toolbar[data-fit~="search-icon"]
+  .scient-reader-search:focus-within
+  .scient-reader-search-box {
+  width: 150px;
+}
+.scient-latex-toolbar[data-fit~="search-icon"]
+  .scient-reader-search:focus-within
+  .scient-reader-search-box
+  > input {
+  width: auto;
+  flex: 1;
+  opacity: 1;
+}
+
+/* The matrix bracket choice sits flush with the grid below it, with a small
+   hover area around its own text. */
+.scient-latex-matrix-options [data-slot="select-trigger"] {
+  height: 26px;
+  min-height: 0;
+  gap: 2px;
+  margin-inline-start: -3px;
+  padding-inline: 2px 7px;
+}
+
+/* Visual's More lists only what the row has no room for: with everything in
+   the row there is nothing to list, so the button is not shown. */
+.scient-latex-toolbar[data-more-when-full][data-fit=""] .scient-pdf-action-more {
+  display: none;
 }

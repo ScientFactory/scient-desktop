@@ -33,7 +33,7 @@ export interface MarkdownPdfExportTarget {
  * Exports the saved file and saves the PDF through the same Save dialog as
  * every other export; the notice's Open shows it in Scient's reader.
  */
-function useMarkdownPdfExport(target: MarkdownPdfExportTarget) {
+export function useMarkdownPdfExport(target: MarkdownPdfExportTarget) {
   const httpBaseUrl = useEnvironmentHttpBaseUrl(target.environmentId);
   const prepare = useAtomCommand(scientDocumentPdfEnvironment.prepareMarkdown, {
     reportFailure: false,

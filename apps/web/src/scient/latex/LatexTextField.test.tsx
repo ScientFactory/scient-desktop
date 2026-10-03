@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { LatexDraftContext, LatexTextField } from "./LatexTextField";
+import { LatexDraftContext, LatexTextField, replaceLatexFieldDraft } from "./LatexTextField";
 
 describe("pending LaTeX field ownership", () => {
   let host: HTMLDivElement;
@@ -121,6 +121,27 @@ describe("pending LaTeX field ownership", () => {
     await tick();
     expect(publish).not.toHaveBeenCalled();
     expect(localStorage.getItem("scient.latex.field:field-a")).toBeNull();
+  });
+
+  it("stops reporting unfinished input once a grouped edit replaces the field's text", async () => {
+    await render();
+    await type("Unfinished");
+    // A row cleared from another cell replaces this cell's text.
+    await act(() => replaceLatexFieldDraft(field(), ""));
+    expect(field().value).toBe("");
+    expect(pending.size).toBe(0);
+    await tick();
+    expect(publish).not.toHaveBeenCalled();
+    expect(localStorage.getItem("scient.latex.field:field-a")).toBeNull();
+  });
+
+  it("stops reporting a restored draft once a grouped edit replaces it", async () => {
+    localStorage.setItem("scient.latex.field:field-a", '{"base":"Original","text":"Restored"}');
+    await render();
+    expect(field().value).toBe("Restored");
+    expect(pending.size).toBe(1);
+    await act(() => replaceLatexFieldDraft(field(), ""));
+    expect(pending.size).toBe(0);
   });
 
   it("edits fields that do not have a recovery key", async () => {

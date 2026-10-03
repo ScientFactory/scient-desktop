@@ -8,7 +8,7 @@ import {
 } from "react";
 import { Table as TableIcon } from "lucide-react";
 import { MenuSub, MenuSubPopup, MenuSubTrigger } from "~/components/ui/menu";
-import { DockCommandItem as MenuItem } from "../markdownEditor/ui/dockChrome";
+import { DockCommandItem as MenuItem } from "./dockChrome";
 import {
   DEFAULT_SCIENT_MARKDOWN_TABLE_DIMENSIONS,
   MAX_SCIENT_MARKDOWN_TABLE_INSERT_DIMENSION,
@@ -434,7 +434,7 @@ export function DocumentGridSizeMenu({
         {options}
         <div
           ref={setPickerElement}
-          className="px-1.5 py-1"
+          className="px-1.5 pt-1 pb-0"
           data-scient-table-size-picker
           data-scient-table-size-side={placement.side ?? "pending"}
           data-scient-table-size-side-locked={placement.locked ? "true" : "false"}
@@ -509,14 +509,14 @@ export function DocumentGridSizeMenu({
           </div>
           <div
             data-scient-table-size-label
-            className="pt-2 text-center text-muted-foreground text-xs tabular-nums"
+            className="pt-1.5 pb-0.5 text-center text-muted-foreground text-xs leading-4 tabular-nums"
             aria-atomic="true"
             aria-live="polite"
           >
             {activeSize.columns} × {activeSize.rows}
           </div>
         </div>
-        {onCustomSize && <MenuItem onClick={onCustomSize}>Choose size…</MenuItem>}
+        {onCustomSize && <MenuItem onClick={onCustomSize}>Choose size</MenuItem>}
       </MenuSubPopup>
     </MenuSub>
   );

@@ -1,6 +1,6 @@
-import { LatexSelect } from "./LatexSelect";
+import { TextMenu, TextMenuItems } from "../writing/TextMenu";
 import { randomUUID } from "~/lib/utils";
-
+import { LatexSelect } from "./LatexSelect";
 import { isLatexContextEvent } from "./latexContextEvents";
 import type { JSONContent } from "@tiptap/core";
 import { matrixEdit, type MatrixAction, type MatrixEnvironment } from "../math/input/matrix";
@@ -59,7 +59,16 @@ import type { EditorView } from "@tiptap/pm/view";
 import { LatexInsertMenu, LatexInsertMenuContent, type LatexInsertAction } from "./LatexInsertMenu";
 import { LatexDocumentSettings, type LatexDocumentSettingsSection } from "./LatexDocumentSettings";
 import { LatexContextTools } from "./LatexContextTools";
-import { DocumentReaderControls, DocumentSearchBar } from "../writing/DocumentReaderControls";
+import { DocumentReaderControls, type ReaderSearch } from "../writing/DocumentReaderControls";
+import { ScientFindBar } from "../writing/ScientFindBar";
+import { ReaderBarHostContext, useHostedReaderShortcuts } from "../writing/readerBarHost";
+import { DocumentFooter } from "../writing/DocumentFooter";
+import { countSelectedWords } from "../writing/caretStatus";
+import { countLatexWords } from "./latexWordCount";
+import { commandShortcut, menuShortcut } from "../keyboard/presentation";
+import { WritingCommandIcon } from "../writing/commandIcons";
+import { WRITING_COMMAND_LABELS } from "../writing/commandNames";
+import { scientMarkdownShortcut } from "../markdownEditor/shortcuts";
 import {
   DockButton,
   DockOverflowRow,
@@ -68,16 +77,14 @@ import {
   DockMenu,
   DockCommandItem,
   DockCommandRadioItem,
-} from "../markdownEditor/ui/dockChrome";
+  DockCommandCheckboxItem,
+} from "../writing/dockChrome";
 import {
   MenuSub,
   MenuSubTrigger,
   MenuSubPopup,
   MenuRadioGroup,
   MenuCheckboxItem,
-  MenuGroup,
-  MenuGroupLabel,
-  MenuRadioItemIndicator,
   MenuSeparator,
 } from "~/components/ui/menu";
 import "../markdownEditor/scient-markdown-editor.css";
@@ -160,19 +167,7 @@ import { withoutComments } from "./latexAuthoringModel";
 import { LatexVisualSearch, useLatexVisualSearch } from "./useLatexVisualSearch";
 import { clampPdfPage, stepPdfZoom } from "../pdf/pdfReaderModel";
 import { useLatexPinchZoom } from "./useLatexPinchZoom";
-import {
-  Bold,
-  Italic,
-  List,
-  ListOrdered,
-  ListX,
-  IndentIncrease,
-  IndentDecrease,
-  Undo2,
-  Redo2,
-  Sigma,
-  FileText,
-} from "lucide-react";
+import { Heading1, Heading2, Heading3, Heading4, Heading5, Heading6, FileText } from "lucide-react";
 import { mathSourceCompletions, type MathSourceCompletion } from "./latexMathCompletion";
 import {
   LatexVisualPagination,
@@ -297,6 +292,11 @@ interface ActiveMathEditor {
   symbols: () => void;
   undo: (redo: boolean) => void;
 }
+/**
+ * An object that knows where the caret is inside it (a table knows its cell)
+ * tells the footer, which otherwise sees only that the object is selected.
+ */
+const LatexFooterPositionContext = createContext<(position: string | null) => void>(() => {});
 const LatexMathEditingContext = createContext<{
   draftKey: string;
   get: () => ActiveMathEditor | null;
@@ -1674,7 +1674,7 @@ function LatexInlineCommandView({
                     onClick={() => referenceManager?.open(key)}
                     disabled={!referenceManager}
                   >
-                    {detail ? "Edit reference…" : "Find reference…"}
+                    {detail ? "Edit reference" : "Find reference"}
                   </button>
                 </Fragment>
               );
@@ -2005,6 +2005,16 @@ function LatexRichPreviewView({
   const [selectedCell, setSelectedCell] = useState({ row: 0, column: 0 });
   const [objectActive, setObjectActive] = useState(false);
   const kind = String(node.attrs.kind ?? "description");
+  const setFooterPosition = useContext(LatexFooterPositionContext);
+  const cellPosition =
+    kind === "table" && objectActive
+      ? `Table · row ${selectedCell.row + 1}, column ${selectedCell.column + 1}`
+      : null;
+  useEffect(() => {
+    if (cellPosition === null) return;
+    setFooterPosition(cellPosition);
+    return () => setFooterPosition(null);
+  }, [cellPosition, setFooterPosition]);
   useEffect(() => {
     if (!selected || !editor.isEditable || kind !== "figure") return;
     const frame = requestAnimationFrame(() => {
@@ -2627,7 +2637,7 @@ function LatexRichPreviewView({
             onClick={() => referenceManager?.open(String(items[descriptionItem]?.label ?? ""))}
             disabled={!referenceManager}
           >
-            Manage references…
+            Manage references
           </button>
         </LatexObjectToolbar>
         <h2>{bibliographyPresentation?.title ?? "References"}</h2>
@@ -3901,11 +3911,16 @@ const LatexScientific = Node.create({
   },
 });
 
-function toggleLatexProseMark(editor: Editor | null, mark: "bold" | "italic"): boolean {
+function toggleLatexProseMark(editor: Editor | null, mark: "bold" | "italic" | "code"): boolean {
   if (!editor) return false;
   let chain = editor.chain().focus();
+  // A mark replaces the others of its kind: weight, shape, or family.
   const conflicts =
-    mark === "bold" ? ["latexMedium"] : ["latexSmallCaps", "latexSlanted", "latexUpright"];
+    mark === "bold"
+      ? ["latexMedium"]
+      : mark === "code"
+        ? ["latexRoman", "latexSans"]
+        : ["latexSmallCaps", "latexSlanted", "latexUpright"];
   for (const conflict of conflicts) chain = chain.unsetMark(conflict);
   return chain.toggleMark(mark).run();
 }
@@ -3938,7 +3953,7 @@ const baseExtensions = [
     name: "sharedWritingKeys",
     priority: 1000,
     addKeyboardShortcuts() {
-      return { "Mod-b": () => true, "Mod-i": () => true };
+      return { "Mod-b": () => true, "Mod-i": () => true, "Mod-e": () => true };
     },
   }),
   StarterKit.configure({
@@ -4214,13 +4229,6 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   const [settingsSection, setSettingsSection] = useState<LatexDocumentSettingsSection | null>(null);
   const [titleHelp, setTitleHelp] = useState<string | null>(null);
   const titleHelpAction = useRef<(() => void) | null>(null);
-  const [titleConversion, setTitleConversion] = useState<{
-    expected: string;
-    source: string;
-    previousTitle: string;
-    title: string;
-  } | null>(null);
-  const titleFocusAfterDialog = useRef(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [shortcutHint, setShortcutHint] = useState("");
   useSyncExternalStore(
@@ -4250,6 +4258,8 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     text: string;
     source: string;
   } | null>(null);
+  const linkAnchor = useRef<HTMLDivElement>(null);
+  const settingsSourceAfterClose = useRef(false);
   const pendingLink = useRef<{ text: string; url: string } | null>(null);
   const insertionTarget = useRef<{ doc: ProseMirrorNode; selection: Selection } | null>(null);
   const [figureOpen, setFigureOpen] = useState(false);
@@ -4271,6 +4281,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         })
       : undefined;
   }, []);
+  useHostedReaderShortcuts(readerAction);
   const [pageCount, setPageCount] = useState(1);
   const [currentPage, setCurrentPage] = useState(1);
   const [zoomMode, setZoomMode] = useState<"fit" | number>("fit");
@@ -4751,6 +4762,25 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         "aria-label": "Visual LaTeX document editor",
       },
     },
+    onCreate: ({ editor: created }) => {
+      // Tiptap finishes mounting before selecting the first editable paragraph.
+      // Doing this in a React effect is too early: mount can reset it to the title.
+      const editor = created;
+      const { selection, doc } = editor.state;
+      if (!(selection instanceof NodeSelection) && selection.$from.parent.isTextblock) return;
+      let target: number | null = null;
+      doc.descendants((node, position) => {
+        if (target !== null) return false;
+        if (node.isTextblock && node.type.name === "paragraph") target = position + 1;
+        return target === null;
+      });
+      if (target === null) return;
+      editor.view.dispatch(
+        editor.state.tr
+          .setSelection(TextSelection.create(editor.state.doc, target))
+          .setMeta("addToHistory", false),
+      );
+    },
     onUpdate: ({ editor: updated }) => {
       const doc = updated.state.doc;
       if (ordinaryDocuments.current.has(doc)) queueTyping(doc);
@@ -4799,7 +4829,35 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     }
     editor.view.dispatch(editor.state.tr.setMeta(latexEquationReferencesKey, true));
   }, [editor, props.rootSource, props.source, latexEquationReferences]);
-  const find = useLatexVisualSearch(editor);
+  // Replace all writes each text block to the source before it edits the next.
+  const commitTyping = useCallback(
+    () => flushTypingRef.current() && flushSourceEditRef.current(),
+    [],
+  );
+  const find = useLatexVisualSearch(editor, !readOnly, commitTyping);
+  // Search is a field in the reader controls; the full find and replace bar
+  // opens from their More menu.
+  const [searchFocus, setSearchFocus] = useState(0);
+  const findSnapshot = find.snapshot;
+  const findController = find.controller;
+  const headerSearch: ReaderSearch = {
+    query: findSnapshot.findQuery,
+    current: findSnapshot.findMatchCount > 0 ? findSnapshot.findActiveIndex + 1 : 0,
+    total: findSnapshot.findMatchCount,
+    notFound: findSnapshot.findQuery !== "" && findSnapshot.findMatchCount === 0,
+    focusRequest: searchFocus,
+    onQuery: (query) =>
+      findController.configureFind({
+        query,
+        caseSensitive: findSnapshot.findCaseSensitive,
+        wholeWord: findSnapshot.findWholeWord,
+      }),
+    onNavigate: (backwards) => findController.navigateFind(backwards ? -1 : 1),
+    onClear: () =>
+      find.open
+        ? find.close()
+        : findController.configureFind({ query: "", caseSensitive: false, wholeWord: false }),
+  };
   const textStyle = useEditorState({
     editor,
     selector: ({ editor: current }) => ({
@@ -5409,6 +5467,13 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       editor.state.selection instanceof NodeSelection)
       ? "Place the cursor in ordinary text to insert this item."
       : undefined;
+  // A link wraps text inside one paragraph; the button, the menu entry and the
+  // shortcut all refuse the same selections the action itself would refuse.
+  const linkUnavailableReason =
+    inlineInsertReason ??
+    (editor && !editor.state.selection.$from.sameParent(editor.state.selection.$to)
+      ? "Select text within one paragraph to link it."
+      : undefined);
   const insertActions: LatexInsertAction[] = [
     ...LATEX_HEADING_STYLES.map(({ level, label }) => ({
       id: `heading-${level}`,
@@ -5421,7 +5486,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     })),
     {
       id: "paragraph",
-      label: "Paragraph",
+      label: WRITING_COMMAND_LABELS.text,
       description: "Continue with ordinary text",
       group: "Text",
       run: () => {
@@ -5451,7 +5516,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     },
     {
       id: "matrix",
-      label: "Matrix…",
+      label: "Matrix",
       description: "Choose rows, columns, and brackets",
       group: "Math",
       run: () => openMathPicker("matrix"),
@@ -5465,14 +5530,14 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     },
     {
       id: "math-symbols",
-      label: "Symbols & structures…",
+      label: "Symbols & structures",
       description: "Find symbols, fractions, roots, and other math structures",
       group: "Math",
       run: () => openMathPicker("symbols"),
     },
     {
       id: "figure",
-      label: "Figure…",
+      label: "Figure",
       description: "Choose an image from your project",
       group: "Objects",
       run: () =>
@@ -5533,7 +5598,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     {
       id: "reference",
       disabledReason: inlineInsertReason,
-      label: "Cross-reference…",
+      label: "Cross-reference",
       description: "Refer to a labelled heading, equation, figure, table, or theorem",
       group: "References",
       run: () => openReferences("reference"),
@@ -5541,15 +5606,15 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     {
       id: "citation",
       disabledReason: inlineInsertReason,
-      label: "Citation…",
+      label: "Citation",
       description: "Cite one or more bibliography sources",
       group: "References",
       run: () => openReferences("citation"),
     },
     {
       id: "link",
-      disabledReason: inlineInsertReason,
-      label: "Link…",
+      disabledReason: linkUnavailableReason,
+      label: WRITING_COMMAND_LABELS.link,
       description: "Link text to a web or email address",
       group: "References",
       run: () => {
@@ -5618,7 +5683,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     })),
     {
       id: "bibliography",
-      label: "Bibliography…",
+      label: "Bibliography",
       description: "Insert a reference list",
       group: "References",
       run: insertBibliography,
@@ -5677,6 +5742,13 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     }
     if (id === "latex.bold") return toggleLatexProseMark(editor, "bold");
     if (id === "latex.italic") return toggleLatexProseMark(editor, "italic");
+    if (id === "latex.inlineCode") return toggleLatexProseMark(editor, "code");
+    if (id === "latex.link") {
+      const link = insertActions.find((action) => action.id === "link");
+      if (!link || link.disabled || link.disabledReason) return false;
+      link.run();
+      return true;
+    }
     if (id === "latex.bulletList") return setListStyle("bulletList");
     if (id === "latex.orderedList") return setListStyle("orderedList");
     if (id === "latex.table") {
@@ -5757,30 +5829,6 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     }
     if (commitTitleSource(expected, prepared.source)) openTitleField("title");
   };
-  const useParagraphAsTitle = () => {
-    if (!editor || !flushTypingRef.current() || !flushSourceEditRef.current()) return;
-    const selection = editor.state.selection;
-    if (
-      selection.$from.depth !== 1 ||
-      !selection.$from.sameParent(selection.$to) ||
-      selection.$from.parent.type.name !== "paragraph"
-    ) {
-      setNotice(
-        "Place the cursor in one standalone text paragraph to use it as the document title.",
-      );
-      return;
-    }
-    const expected = currentSource.current;
-    const prepared = prepareLatexDocumentTitle(expected, selection.$from.index(0));
-    if (!prepared) {
-      setNotice(
-        "Use a plain text paragraph for this action. Custom title formatting remains editable in LaTeX source.",
-      );
-      return;
-    }
-    if (prepared.previousTitle.trim()) setTitleConversion({ expected, ...prepared });
-    else if (commitTitleSource(expected, prepared.source)) openTitleField("title");
-  };
   const openTitleField = (field: "title" | "author" | "date") => {
     if (!flushTypingRef.current() || !flushSourceEditRef.current()) return;
     const title = projection.current.blocks.find((block) => block.node.attrs?.kind === "title");
@@ -5790,7 +5838,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         return;
       }
       setTitleHelp(
-        "No editable title block is displayed. You can explicitly add a standard title block, or open the existing title in Source.",
+        "This document has no title yet. Add one, or open the existing title in Source.",
       );
       return;
     }
@@ -5894,13 +5942,12 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   });
   const documentSettings = (
     <LatexDocumentSettings
-      open={settingsOpen}
-      initialSection={settingsSection ?? "page"}
       onOpenChange={setSettingsOpen}
-      onClosed={() => setSettingsSection(null)}
       source={props.rootSource ?? props.source}
       disabled={readOnly || (!props.source.includes("\\begin{document}") && !props.canEditRoot)}
-      onOpenSource={() => (props.onOpenRoot ?? props.onOpenSource)()}
+      onOpenSource={() => {
+        settingsSourceAfterClose.current = true;
+      }}
       onApply={(draft, original) => {
         if (!flushTypingRef.current() || !flushSourceEditRef.current()) return false;
         const expected = currentSource.current;
@@ -6058,7 +6105,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     });
   };
   readerAction.current = (command) => {
-    if (command === "pdf.find") find.show();
+    if (command === "pdf.find") setSearchFocus((request) => request + 1);
     else if (command === "pdf.zoomIn") changeZoom(stepPdfZoom(zoom, "in"));
     else if (command === "pdf.zoomOut") changeZoom(stepPdfZoom(zoom, "out"));
     else if (command === "pdf.actualSize") changeZoom(1);
@@ -6100,20 +6147,41 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     };
   }, [pageCount, pageHeight, zoom]);
 
+  // The same inline formatting, in the same order, as the Markdown bar; LaTeX
+  // has no strikethrough.
+  // Inline formatting acts on text; on an object (title, figure, equation) it is off.
+  const caretInText = Boolean(
+    editor &&
+    !(editor.state.selection instanceof NodeSelection) &&
+    editor.state.selection.$from.parent.isTextblock,
+  );
   const formatActions = [
     {
-      label: "Bold",
-      icon: <Bold strokeWidth={2.5} />,
+      id: "latex.bold",
+      label: WRITING_COMMAND_LABELS.bold,
+      icon: <WritingCommandIcon command="bold" />,
       action: () => toggleLatexProseMark(editor, "bold"),
       active: editor?.isActive("bold"),
-      secondary: false,
+      preserveIconWeight: true,
+      disabled: !caretInText,
     },
     {
-      label: "Italic",
-      icon: <Italic />,
+      id: "latex.italic",
+      label: WRITING_COMMAND_LABELS.italic,
+      icon: <WritingCommandIcon command="italic" />,
       action: () => toggleLatexProseMark(editor, "italic"),
       active: editor?.isActive("italic"),
-      secondary: false,
+      preserveIconWeight: false,
+      disabled: !caretInText,
+    },
+    {
+      id: "latex.inlineCode",
+      label: WRITING_COMMAND_LABELS.inlineCode,
+      icon: <WritingCommandIcon command="inlineCode" />,
+      action: () => toggleLatexProseMark(editor, "code"),
+      active: editor?.isActive("code"),
+      preserveIconWeight: true,
+      disabled: !caretInText,
     },
   ];
 
@@ -6282,168 +6350,201 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     },
   };
   const headingNumbered = textStyle?.numbered ?? newHeadingNumbered;
+  // Icons follow the depth of the heading in this document class, as in the Markdown bar.
+  const headingIcons = [Heading1, Heading2, Heading3, Heading4, Heading5, Heading6];
+  const headingIcon = (level: number) => {
+    const Icon =
+      headingIcons[headingStyles.findIndex((style) => style.level === level)] ?? Heading1;
+    return <Icon className="size-4" />;
+  };
+  const activeStyle = textStyle?.value ?? "paragraph";
+  // Inside a list item the LaTeX source cannot hold a quote.
+  const quoteUnavailable = !textReadOnly && Boolean(listState?.type);
+  const textBlockItems = (ids: readonly string[]) =>
+    ids.map((id) => {
+      const action = insertActions.find((item) => item.id === id);
+      if (!action) return null;
+      return (
+        <DockCommandItem
+          key={id}
+          disabled={textReadOnly || action.disabled || Boolean(action.disabledReason)}
+          title={action.disabledReason}
+          onClick={action.run}
+        >
+          <MenuRow label={action.label} />
+        </DockCommandItem>
+      );
+    });
   const writingStyleItems = (
     <>
-      <MenuRadioGroup value={textStyle?.value ?? "paragraph"}>
+      <MenuRadioGroup value={activeStyle}>
         <DockCommandRadioItem value="paragraph" disabled={textReadOnly} onClick={setStandardStyle}>
-          <span className="flex items-center justify-between gap-2">
-            Text
-            <MenuRadioItemIndicator />
-          </span>
+          <MenuRow
+            icon={<WritingCommandIcon command="text" />}
+            label="Paragraph"
+            shortcut={menuShortcut("latex.paragraph")}
+          />
         </DockCommandRadioItem>
       </MenuRadioGroup>
-      <MenuSeparator />
-      <MenuGroup>
-        <MenuGroupLabel>Headings</MenuGroupLabel>
-        <div className="flex justify-center px-2 pb-2">
-          <ScientTooltip
-            side="right"
-            content={
-              textStyle?.numbered !== null && textStyle?.numbered !== undefined
-                ? headingNumbered
-                  ? "Numbering is on. Click to turn it off."
-                  : "Numbering is off. Click to turn it on."
-                : headingNumbered
-                  ? "New headings will be numbered. Click to turn numbering off."
-                  : "New headings will be unnumbered. Click to turn numbering on."
-            }
-          >
-            <MenuCheckboxItem
-              variant="button"
-              checked={headingNumbered}
-              disabled={textReadOnly}
-              closeOnClick={false}
-              onCheckedChange={(numbered) => {
-                if (textReadOnly) return;
-                setNewHeadingNumbered(numbered);
-                // Keep focus in the open menu while updating the selected heading.
-                if (editor?.isActive("heading"))
-                  editor.commands.updateAttributes("heading", { unnumbered: !numbered });
-              }}
-            >
-              Numbered
-            </MenuCheckboxItem>
-          </ScientTooltip>
-        </div>
-        <MenuRadioGroup value={textStyle?.value ?? "paragraph"}>
-          {headingStyles.map(({ level, label }) => (
-            <DockCommandRadioItem
-              key={level}
-              value={String(level)}
-              disabled={textReadOnly}
-              onClick={() => setHeadingStyle(level, !headingNumbered)}
-            >
-              <span className="flex items-center justify-between gap-2">
-                {label}
-                <MenuRadioItemIndicator />
-              </span>
-            </DockCommandRadioItem>
-          ))}
-        </MenuRadioGroup>
-      </MenuGroup>
       <MenuSeparator />
       <MenuRadioGroup value={textStyle?.value ?? "paragraph"}>
-        <DockCommandRadioItem value="quote" disabled={textReadOnly} onClick={setQuoteStyle}>
-          <span className="flex items-center justify-between gap-2">
-            Quote
-            <MenuRadioItemIndicator />
-          </span>
+        {headingStyles.map(({ level, label, command }) => (
+          <DockCommandRadioItem
+            key={level}
+            value={String(level)}
+            disabled={textReadOnly}
+            onClick={() => setHeadingStyle(level, !headingNumbered)}
+          >
+            <MenuRow
+              icon={headingIcon(level)}
+              label={label}
+              // "paragraph" here is the Paragraph heading, not the Text style.
+              shortcut={
+                command === "section" || command === "subsection" || command === "subsubsection"
+                  ? menuShortcut(`latex.${command}`)
+                  : undefined
+              }
+            />
+          </DockCommandRadioItem>
+        ))}
+      </MenuRadioGroup>
+      {textBlockItems(["part"])}
+      {/* Whether headings are numbered: the last line of the headings, a small switch. */}
+      <MenuCheckboxItem
+        variant="switch"
+        checked={headingNumbered}
+        disabled={textReadOnly}
+        closeOnClick={false}
+        onCheckedChange={(numbered) => {
+          if (textReadOnly) return;
+          setNewHeadingNumbered(numbered);
+          // Keep focus in the open menu while updating the selected heading.
+          if (editor?.isActive("heading"))
+            editor.commands.updateAttributes("heading", { unnumbered: !numbered });
+        }}
+      >
+        Numbered headings
+      </MenuCheckboxItem>
+      <MenuSeparator />
+      <MenuRadioGroup value={textStyle?.value ?? "paragraph"}>
+        <DockCommandRadioItem
+          value="quote"
+          disabled={textReadOnly || quoteUnavailable}
+          onClick={setQuoteStyle}
+        >
+          <MenuRow
+            icon={<WritingCommandIcon command="quote" />}
+            label={WRITING_COMMAND_LABELS.quote}
+          />
         </DockCommandRadioItem>
       </MenuRadioGroup>
+      {quoteUnavailable ? <p className="scient-menu-note">A list item can't be a quote.</p> : null}
+      {textBlockItems(["quotation"])}
     </>
   );
-  const writingStyleTools = (
-    <DockMenu
-      commandScope="latex"
-      label="Style: Text"
-      disabled={textReadOnly}
-      icon={
-        <>
-          <span className="scient-latex-tool-label">Text</span>
-          <span className="scient-latex-tool-symbol" aria-hidden="true">
-            T
-          </span>
-        </>
-      }
-    >
-      {writingStyleItems}
-    </DockMenu>
-  );
-  const writingFormatTools = (
+  const writingFormattingItems = (
     <>
-      {formatActions
-        .filter((item) => !item.secondary)
-        .map((item) => (
-          <DockButton
-            key={item.label}
-            label={`${item.label}${shortcutLabel(item.label === "Bold" ? "latex.bold" : "latex.italic") ? " (" + shortcutLabel(item.label === "Bold" ? "latex.bold" : "latex.italic") + ")" : ""}`}
-            icon={item.icon}
-            preserveIconWeight={item.label === "Bold"}
-            disabled={textReadOnly || !editor}
-            active={!mathActive && Boolean(item.active)}
-            onClick={item.action}
-          />
-        ))}
-      <DockDivider />
+      {formatActions.map((action) => (
+        <DockCommandCheckboxItem
+          key={action.id}
+          checked={!mathActive && Boolean(action.active)}
+          disabled={textReadOnly || !editor || action.disabled}
+          aria-keyshortcuts={commandShortcut(action.id)?.ariaKeyShortcuts}
+          onClick={action.action}
+        >
+          <MenuRow icon={action.icon} label={action.label} shortcut={commandShortcut(action.id)} />
+        </DockCommandCheckboxItem>
+      ))}
     </>
   );
+  const writingTextContents = {
+    paragraphStyle: writingStyleItems,
+    formatting: writingFormattingItems,
+    alignment: textBlockItems(["left-text", "right-text"]),
+    commandScope: "latex",
+  };
+  const writingTextTools = <TextMenu {...writingTextContents} disabled={textReadOnly} />;
+  // Some places cannot hold a list (a statement's title, a selected figure).
+  const listsUnavailable =
+    !textReadOnly &&
+    listState !== null &&
+    listState !== undefined &&
+    listState.type === null &&
+    !listState.available.bulletList &&
+    !listState.available.orderedList;
   const writingListItems = (
     <>
-      <MenuRadioGroup value={listState?.type ?? ""}>
+      <MenuRadioGroup value={listState?.type ?? "none"}>
         {(
           [
-            { value: "bulletList", label: "Bulleted list", icon: <List /> },
-            { value: "orderedList", label: "Numbered list", icon: <ListOrdered /> },
-            { value: "description", label: "Description list", icon: <List /> },
+            {
+              value: "bulletList",
+              label: WRITING_COMMAND_LABELS.bulletList,
+              icon: <WritingCommandIcon command="bulletList" />,
+              shortcut: menuShortcut("latex.bulletList"),
+            },
+            {
+              value: "orderedList",
+              label: WRITING_COMMAND_LABELS.numberedList,
+              icon: <WritingCommandIcon command="numberedList" />,
+              shortcut: menuShortcut("latex.orderedList"),
+            },
           ] as const
-        ).map(({ value, label, icon }) => (
+        ).map(({ value, label, icon, shortcut }) => (
           <DockCommandRadioItem
             key={value}
             value={value}
             disabled={textReadOnly || !listState?.available[value]}
+            aria-keyshortcuts={shortcut?.ariaKeyShortcuts}
             onClick={() => setListStyle(value)}
           >
-            <span className="flex items-center justify-between gap-2">
-              <MenuRow icon={icon} label={label} />
-              <MenuRadioItemIndicator />
-            </span>
+            <MenuRow icon={icon} label={label} shortcut={shortcut} />
           </DockCommandRadioItem>
         ))}
+        <MenuSeparator />
+        <DockCommandRadioItem
+          value="none"
+          disabled={textReadOnly || (Boolean(listState?.type) && !listState?.canRemove)}
+          onClick={() => {
+            // Outside a list this is the current state, not a change.
+            if (listState?.type) setListStyle(null);
+          }}
+        >
+          <MenuRow
+            icon={<WritingCommandIcon command="noList" />}
+            label={WRITING_COMMAND_LABELS.noList}
+          />
+        </DockCommandRadioItem>
       </MenuRadioGroup>
-      <MenuSeparator />
-      <DockCommandItem
-        onClick={() => {
-          editor?.chain().focus().sinkListItem("listItem").run();
-        }}
-        disabled={textReadOnly || !listState?.canIndent}
-      >
-        <MenuRow icon={<IndentIncrease />} label="Indent item" />
-      </DockCommandItem>
-      <DockCommandItem
-        onClick={() => {
-          editor?.chain().focus().liftListItem("listItem").run();
-        }}
-        disabled={textReadOnly || !listState?.canOutdent}
-      >
-        <MenuRow icon={<IndentDecrease />} label="Outdent item" />
-      </DockCommandItem>
-      <MenuSeparator />
-      <DockCommandItem
-        disabled={textReadOnly || !listState?.canRemove}
-        onClick={() => setListStyle(null)}
-      >
-        <MenuRow icon={<ListX />} label="Remove list formatting" />
-      </DockCommandItem>
+      {listsUnavailable ? (
+        <p className="scient-menu-note">
+          {caretInText
+            ? "A list can't be started at this place."
+            : "Click in the text to start a list."}
+        </p>
+      ) : null}
     </>
   );
+  const activeListLabel =
+    listState?.type === "orderedList"
+      ? "Numbered"
+      : listState?.type === "bulletList"
+        ? "Bullet"
+        : listState?.type === "description"
+          ? "Description"
+          : "None";
   const writingListTools = (
     <>
       <DockMenu
         commandScope="latex"
-        label="Lists"
-        icon={<List />}
+        label={`List: ${activeListLabel}`}
+        icon={
+          <WritingCommandIcon
+            command={listState?.type === "orderedList" ? "numberedList" : "bulletList"}
+          />
+        }
         disabled={textReadOnly}
-        popupClassName="w-56"
+        popupClassName="w-48"
       >
         {writingListItems}
       </DockMenu>
@@ -6451,7 +6552,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     </>
   );
   const writingInsertTools = (
-    <div className="scient-latex-toolbar-group">
+    <div ref={linkAnchor} className="scient-latex-toolbar-group">
       <LatexInsertMenu
         open={insertOpen && !readOnly}
         onOpenChange={setInsertOpen}
@@ -6492,10 +6593,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                 if (mathMenu?.placement !== action.id) action.run();
               }}
             >
-              <span className="flex items-center justify-between gap-2">
-                {action.label}
-                <MenuRadioItemIndicator />
-              </span>
+              {action.label}
             </DockCommandRadioItem>
           ))}
       </MenuRadioGroup>
@@ -6526,16 +6624,20 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     <DockMenu
       commandScope="latex"
       label="Math"
-      icon={
-        <>
-          <Sigma />
-          <span className="scient-latex-tool-label">Math</span>
-        </>
-      }
+      // The word alone: "Math" says what it is.
+      icon={<span className="scient-latex-tool-label">Math</span>}
       disabled={readOnly}
+      // As wide as its longest item, "Symbols & structures", and no wider.
+      popupClassName="w-max [&_[role=menuitem]]:whitespace-nowrap [&_[role=menuitemradio]]:whitespace-nowrap"
     >
       {writingMathItems}
     </DockMenu>
+  );
+  const writingMathBar = (
+    <>
+      {writingMathTools}
+      <DockDivider />
+    </>
   );
   const undo = () => {
     if (activeMath.get()) activeMath.get()?.undo(false);
@@ -6548,14 +6650,16 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   const writingHistoryTools = (
     <>
       <DockButton
-        label="Undo (Ctrl/Cmd+Z)"
-        icon={<Undo2 />}
+        label={WRITING_COMMAND_LABELS.undo}
+        shortcut={scientMarkdownShortcut("undo")}
+        icon={<WritingCommandIcon command="undo" />}
         disabled={readOnly || (!mathActive && !editor?.can().undo())}
         onClick={undo}
       />
       <DockButton
-        label="Redo (Ctrl/Cmd+Shift+Z)"
-        icon={<Redo2 />}
+        label={WRITING_COMMAND_LABELS.redo}
+        shortcut={scientMarkdownShortcut("redo")}
+        icon={<WritingCommandIcon command="redo" />}
         disabled={readOnly || (!mathActive && !editor?.can().redo())}
         onClick={redo}
       />
@@ -6587,725 +6691,757 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     () => !displayedTitle && prepareLatexDocumentTitle(props.source) !== null,
     [displayedTitle, props.source],
   );
-  const titleParagraph = editor?.state.selection.$from.parent;
-  const canUseParagraphAsTitle = Boolean(
-    editor &&
-    !textReadOnly &&
-    editor.state.selection.$from.depth === 1 &&
-    editor.state.selection.$from.sameParent(editor.state.selection.$to) &&
-    titleParagraph?.type.name === "paragraph" &&
-    titleParagraph.textContent.trim() &&
-    titleParagraph.content.content.every((node) => node.isText && node.marks.length === 0),
-  );
   const openDocumentSettings = (section: LatexDocumentSettingsSection) => {
     if (!flushTypingRef.current() || !flushSourceEditRef.current()) return;
     setSettingsSection(section);
     setSettingsOpen(true);
   };
+  const readerHost = useContext(ReaderBarHostContext);
   const documentItems = (
     <>
       <MenuSub>
         <MenuSubTrigger>Title &amp; authors</MenuSubTrigger>
-        <MenuSubPopup data-dock-command-scope="latex">
-          <DockCommandItem disabled={readOnly} onClick={() => openTitleField("title")}>
-            Edit title
-          </DockCommandItem>
-          <DockCommandItem disabled={readOnly} onClick={() => openTitleField("author")}>
-            Edit authors
-          </DockCommandItem>
-          <DockCommandItem disabled={readOnly} onClick={() => openTitleField("date")}>
-            Edit date
-          </DockCommandItem>
-          <MenuSeparator />
-          <DockCommandItem
-            disabled={readOnly || !canAddTitle}
-            title={
-              displayedTitle
-                ? "A title block already exists."
-                : !canAddTitle
-                  ? "This title is controlled by its LaTeX source."
-                  : undefined
-            }
-            onClick={addTitleBlock}
-          >
-            Add title block
-          </DockCommandItem>
+        <MenuSubPopup className="w-max min-w-0" data-dock-command-scope="latex">
+          {displayedTitle ? (
+            <>
+              <DockCommandItem disabled={readOnly} onClick={() => openTitleField("title")}>
+                Edit title
+              </DockCommandItem>
+              <DockCommandItem disabled={readOnly} onClick={() => openTitleField("author")}>
+                Edit authors
+              </DockCommandItem>
+              <DockCommandItem disabled={readOnly} onClick={() => openTitleField("date")}>
+                Edit date
+              </DockCommandItem>
+            </>
+          ) : (
+            // Only when the document has none: adding a title is always a choice.
+            <DockCommandItem
+              disabled={readOnly || !canAddTitle}
+              title={canAddTitle ? undefined : "This title is controlled by its LaTeX source."}
+              onClick={addTitleBlock}
+            >
+              Add a title
+            </DockCommandItem>
+          )}
         </MenuSubPopup>
       </MenuSub>
-      <DockCommandItem
-        disabled={!canUseParagraphAsTitle}
-        title={
-          !canUseParagraphAsTitle
-            ? "Place the cursor in a standalone plain-text paragraph."
-            : undefined
-        }
-        onClick={useParagraphAsTitle}
-      >
-        Use paragraph as title…
-      </DockCommandItem>
       <MenuSeparator />
-      <DockCommandItem onClick={() => openReferenceManager()}>References…</DockCommandItem>
-      <DockCommandItem disabled={readOnly} onClick={() => openDocumentSettings("page")}>
-        Page layout…
-      </DockCommandItem>
-      <DockCommandItem disabled={readOnly} onClick={() => openDocumentSettings("style")}>
-        Document style…
-      </DockCommandItem>
+      <MenuSub
+        open={settingsOpen}
+        onOpenChange={(open) => {
+          if (open) openDocumentSettings("page");
+          else setSettingsOpen(false);
+        }}
+        onOpenChangeComplete={(open) => {
+          if (open) return;
+          setSettingsSection(null);
+          if (settingsSourceAfterClose.current) {
+            settingsSourceAfterClose.current = false;
+            (props.onOpenRoot ?? props.onOpenSource)();
+          }
+        }}
+      >
+        <MenuSubTrigger disabled={readOnly}>Document settings</MenuSubTrigger>
+        <MenuSubPopup
+          className="w-96 max-w-[calc(100vw-2rem)]"
+          aria-label="Document settings"
+          data-dock-command-scope="latex"
+          finalFocus={false}
+        >
+          {settingsSection !== null ? documentSettings : null}
+        </MenuSubPopup>
+      </MenuSub>
+      <MenuSeparator />
+      <DockCommandItem onClick={() => openReferenceManager()}>References</DockCommandItem>
+      {readOnly ? null : <DockCommandItem onClick={find.show}>Find and replace</DockCommandItem>}
+      {readerHost?.documentActions}
       <MenuSeparator />
       <DockCommandItem onClick={() => setShortcutsOpen(true)}>Keyboard shortcuts</DockCommandItem>
     </>
   );
-
+  const [objectPosition, setObjectPosition] = useState<string | null>(null);
+  // The footer follows the caret: where it is, and how much has been written.
+  const footerPosition = (() => {
+    const heading = /^Heading (\d+)$/u.exec(selectionContext);
+    if (heading)
+      return headingStyles.find((style) => String(style.level) === heading[1])?.label ?? "Heading";
+    const selected = (editor?.state.selection as { readonly node?: ProseMirrorNode } | undefined)
+      ?.node;
+    if (selected?.type.name === "latexRawBlock") return "Source-only block";
+    if (objectPosition) return objectPosition;
+    if (selectionContext === "Body text" || selectionContext === "List") {
+      if (listState?.type === "bulletList") return WRITING_COMMAND_LABELS.bulletList;
+      if (listState?.type === "orderedList") return WRITING_COMMAND_LABELS.numberedList;
+      if (listState?.type === "description") return "Description list";
+      return WRITING_COMMAND_LABELS.text;
+    }
+    return selectionContext.slice(0, 1).toUpperCase() + selectionContext.slice(1);
+  })();
+  // Counted only where the footer shows it.
+  const hostsFooter = readerHost !== null && readerHost.slot !== null;
+  const sourceWords = useMemo(
+    () => (hostsFooter ? countLatexWords(props.source) : 0),
+    [hostsFooter, props.source],
+  );
+  const selectedWords = editor ? countSelectedWords(editor.state) : null;
+  const footerWords = {
+    // The total is an estimate from the source; it never reads below the selection.
+    total: Math.max(sourceWords, selectedWords ?? 0),
+    selected: selectedWords,
+  };
+  // The same find and replace bar as the Markdown editor.
+  const searchBar = find.open ? (
+    <ScientFindBar controller={find.controller} snapshot={find.snapshot} />
+  ) : null;
+  const contextTools = (
+    <LatexContextTools>
+      {editor && !readOnly && editor.isActive("heading") ? (
+        <LatexHeadingToolbar editor={editor} draftKey={props.draftKey} />
+      ) : null}
+    </LatexContextTools>
+  );
   return (
     <LatexBlockSourceContext value={blockSourceContext}>
       <LatexRootContext value={props.rootRelativePath ?? null}>
         <LatexReferencesContext value={referencesContext}>
-          <LatexMathEditingContext value={activeMath}>
-            <LatexDraftContext value={fieldContext}>
-              <div
-                ref={workspaceRef}
-                className="scient-latex-visual-workspace"
-                onKeyDown={(event) => {
-                  if (
-                    find.open &&
-                    event.key === "Escape" &&
-                    !event.defaultPrevented &&
-                    !event.nativeEvent.isComposing
-                  ) {
-                    event.preventDefault();
-                    find.close();
-                  }
-                }}
-                onFocusCapture={() => props.onEditingChange(true)}
-                onBlurCapture={(event) => {
-                  if (!event.currentTarget.contains(event.relatedTarget))
-                    props.onEditingChange(false);
-                }}
-              >
-                <WritingShortcutsDialog
-                  open={shortcutsOpen}
-                  onOpenChange={setShortcutsOpen}
-                  environmentId={props.environmentId}
-                />
-                {settingsSection !== null ? documentSettings : null}
-                <Dialog
-                  open={titleHelp !== null}
-                  onOpenChange={(open) => {
-                    if (!open) setTitleHelp(null);
-                  }}
-                  onOpenChangeComplete={(open) => {
-                    if (!open) {
-                      const action = titleHelpAction.current;
-                      titleHelpAction.current = null;
-                      action?.();
+          <LatexFooterPositionContext value={setObjectPosition}>
+            <LatexMathEditingContext value={activeMath}>
+              <LatexDraftContext value={fieldContext}>
+                <div
+                  ref={workspaceRef}
+                  className="scient-latex-visual-workspace"
+                  onKeyDown={(event) => {
+                    if (
+                      find.open &&
+                      event.key === "Escape" &&
+                      !event.defaultPrevented &&
+                      !event.nativeEvent.isComposing
+                    ) {
+                      event.preventDefault();
+                      find.close();
                     }
                   }}
+                  onFocusCapture={() => props.onEditingChange(true)}
+                  onBlurCapture={(event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget))
+                      props.onEditingChange(false);
+                  }}
                 >
-                  <DialogPopup finalFocus={() => titleHelpAction.current === null}>
-                    <DialogTitle>Document title</DialogTitle>
-                    <DialogDescription>{titleHelp}</DialogDescription>
-                    <div className="flex flex-wrap justify-end gap-2">
-                      <Button variant="outline" onClick={() => setTitleHelp(null)}>
-                        Cancel
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => {
-                          titleHelpAction.current = () =>
-                            (props.onOpenRoot ?? props.onOpenSource)();
-                          setTitleHelp(null);
-                        }}
-                      >
-                        Open Source
-                      </Button>
-                      {canAddTitle && (
+                  <WritingShortcutsDialog
+                    open={shortcutsOpen}
+                    onOpenChange={setShortcutsOpen}
+                    environmentId={props.environmentId}
+                  />
+                  <Dialog
+                    open={titleHelp !== null}
+                    onOpenChange={(open) => {
+                      if (!open) setTitleHelp(null);
+                    }}
+                    onOpenChangeComplete={(open) => {
+                      if (!open) {
+                        const action = titleHelpAction.current;
+                        titleHelpAction.current = null;
+                        action?.();
+                      }
+                    }}
+                  >
+                    <DialogPopup finalFocus={() => titleHelpAction.current === null}>
+                      <DialogTitle>Document title</DialogTitle>
+                      <DialogDescription>{titleHelp}</DialogDescription>
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <Button variant="outline" onClick={() => setTitleHelp(null)}>
+                          Cancel
+                        </Button>
                         <Button
+                          variant="outline"
                           onClick={() => {
-                            titleHelpAction.current = addTitleBlock;
+                            titleHelpAction.current = () =>
+                              (props.onOpenRoot ?? props.onOpenSource)();
                             setTitleHelp(null);
                           }}
                         >
-                          Add title block
+                          Open Source
                         </Button>
-                      )}
-                    </div>
-                  </DialogPopup>
-                </Dialog>
-                <Dialog
-                  open={titleConversion !== null}
-                  onOpenChange={(open) => {
-                    if (!open) setTitleConversion(null);
-                  }}
-                  onOpenChangeComplete={(open) => {
-                    if (!open && titleFocusAfterDialog.current) {
-                      titleFocusAfterDialog.current = false;
-                      openTitleField("title");
-                    }
-                  }}
-                >
-                  <DialogPopup finalFocus={() => !titleFocusAfterDialog.current}>
-                    <DialogTitle>Replace document title?</DialogTitle>
-                    <DialogDescription>
-                      The paragraph will move into the title block. Undo restores the paragraph and
-                      the previous title together.
-                    </DialogDescription>
-                    <dl className="scient-latex-title-comparison">
-                      <dt>Current title</dt>
-                      <dd>{titleConversion?.previousTitle}</dd>
-                      <dt>New title</dt>
-                      <dd>{titleConversion?.title}</dd>
-                    </dl>
-                    <div className="flex justify-end gap-2">
-                      <Button variant="outline" onClick={() => setTitleConversion(null)}>
-                        Cancel
-                      </Button>
-                      <Button
-                        onClick={() => {
-                          if (
-                            titleConversion &&
-                            commitTitleSource(titleConversion.expected, titleConversion.source)
-                          ) {
-                            titleFocusAfterDialog.current = true;
-                            setTitleConversion(null);
-                          }
-                        }}
-                      >
-                        Replace title
-                      </Button>
-                    </div>
-                  </DialogPopup>
-                </Dialog>
-                <div
-                  className="scient-latex-writing-toolbar"
-                  onMouseDown={(event) => {
-                    if (event.target instanceof Element && event.target.closest("button"))
-                      event.preventDefault();
-                  }}
-                >
-                  <DockOverflowRow
-                    label="Writing tools"
-                    fixed
-                    compactLabels
-                    commandScope="latex"
-                    expanded
-                    onExpandedChange={() => {}}
-                    groups={[
-                      {
-                        id: "history",
-                        priority: 30,
-                        estimatedWidth: 70,
-                        bar: writingHistoryTools,
-                        overflowLabel: "History",
-                        overflow: (
-                          <>
-                            <DockCommandItem
-                              disabled={readOnly || (!mathActive && !editor?.can().undo())}
-                              onClick={undo}
-                            >
-                              <Undo2 /> Undo
-                            </DockCommandItem>
-                            <DockCommandItem
-                              disabled={readOnly || (!mathActive && !editor?.can().redo())}
-                              onClick={redo}
-                            >
-                              <Redo2 /> Redo
-                            </DockCommandItem>
-                          </>
-                        ),
-                      },
-                      {
-                        id: "style",
-                        priority: 100,
-                        estimatedWidth: 115,
-                        bar: writingStyleTools,
-                        overflowLabel: "Text",
-                        overflow: writingStyleItems,
-                      },
-                      {
-                        id: "format",
-                        priority: 50,
-                        estimatedWidth: 76,
-                        bar: writingFormatTools,
-                        overflowLabel: "Formatting",
-                        overflow: (
-                          <>
-                            {formatActions.map((action) => (
-                              <DockCommandItem
-                                key={action.label}
-                                disabled={textReadOnly}
-                                onClick={action.action}
-                              >
-                                {action.icon}
-                                {action.label}
-                              </DockCommandItem>
-                            ))}
-                          </>
-                        ),
-                      },
-                      {
-                        id: "lists",
-                        priority: 20,
-                        estimatedWidth: 58,
-                        bar: writingListTools,
-                        overflowLabel: "Lists",
-                        overflow: writingListItems,
-                      },
-                      {
-                        id: "math",
-                        priority: 90,
-                        estimatedWidth: 90,
-                        bar: writingMathTools,
-                        overflowLabel: "Math",
-                        overflow: writingMathItems,
-                      },
-                      {
-                        id: "insert",
-                        priority: 80,
-                        estimatedWidth: 85,
-                        bar: writingInsertTools,
-                        overflowLabel: "Insert",
-                        overflow: (
-                          <LatexInsertMenuContent
-                            actions={overflowInsertActions}
-                            onInsertTable={insertTable}
-                            unavailableReason={
-                              readOnly
-                                ? "This document is read-only."
-                                : mathActive
-                                  ? "Finish editing math to insert a document element."
-                                  : undefined
-                            }
-                          />
-                        ),
-                      },
-                      {
-                        id: "document",
-                        priority: 10,
-                        estimatedWidth: 115,
-                        bar: (
-                          <DockMenu
-                            commandScope="latex"
-                            label="Document"
-                            icon={
-                              <>
-                                <FileText />
-                                <span className="scient-latex-tool-label">Document</span>
-                              </>
-                            }
+                        {canAddTitle && (
+                          <Button
+                            onClick={() => {
+                              titleHelpAction.current = addTitleBlock;
+                              setTitleHelp(null);
+                            }}
                           >
-                            {documentItems}
-                          </DockMenu>
-                        ),
-                        overflowLabel: "Document",
-                        overflow: documentItems,
-                      },
-                    ]}
-                  />
-                </div>
-                <LatexMatrixDialog
-                  open={mathPicker === "matrix"}
-                  environment={matrixEnvironment}
-                  onEnvironmentChange={setMatrixEnvironment}
-                  onOpenChange={(open) => {
-                    if (!open) setMathPicker(null);
-                  }}
-                  onOpenChangeComplete={mathPickerClosed}
-                  onInsert={(tex) => finishMathPicker(tex, true)}
-                />
-                {bibliographyDialog && (
-                  <LatexBibliographyDialog
-                    open={bibliographyDialog.open}
-                    source={props.rootSource ?? props.source}
-                    onClose={() => setBibliographyDialog({ open: false })}
-                    onCancel={() => {
-                      restoreInsertion();
-                      setBibliographyDialog(null);
-                    }}
-                    onInsert={(source) => {
-                      if (restoreInsertion()) insertVisualSource(source);
-                      setBibliographyDialog(null);
-                    }}
-                  />
-                )}
-                {linkDialog && (
-                  <LatexLinkDialog
-                    open={linkDialog.open}
-                    text={linkDialog.text}
-                    onClose={() =>
-                      setLinkDialog((current) => current && { ...current, open: false })
-                    }
-                    onInsert={(text, url) => {
-                      pendingLink.current = { text, url };
-                      setLinkDialog((current) => current && { ...current, open: false });
-                    }}
-                    onClosed={() => {
-                      const value = pendingLink.current;
-                      pendingLink.current = null;
-                      if (restoreInsertion() && value && editor) {
-                        const argument = value.url.replace(
-                          /[%#&]/gu,
-                          (character) => "\\" + character,
-                        );
-                        const linkText =
-                          value.text === linkDialog.text && linkDialog.source
-                            ? linkDialog.source
-                            : escapeText(value.text);
-                        editor
-                          .chain()
-                          .focus()
-                          .command(({ tr }) => {
-                            closeHistory(tr);
-                            return true;
-                          })
-                          .insertContent({
-                            type: "latexInlineCommand",
-                            attrs: {
-                              name: "href",
-                              argument,
-                              linkText,
-                              raw: `\\href{${argument}}{${linkText}}`,
-                            },
-                          })
-                          .run();
-                      }
-                      setLinkDialog(null);
-                    }}
-                  />
-                )}
-                <LatexReferenceDialog
-                  open={referenceOpen && !readOnly}
-                  onOpenChange={setReferenceOpen}
-                  source={props.source}
-                  setupSource={props.rootSource ?? props.source}
-                  mode={referenceMode}
-                  onCancel={() => {
-                    restoreInsertion();
-                  }}
-                  environmentId={props.environmentId}
-                  cwd={props.cwd}
-                  relativePath={props.rootRelativePath ?? props.relativePath}
-                  onInsert={insertReference}
-                />
-                {props.environmentId && props.cwd ? (
-                  <LatexFigureInsertDialog
-                    open={figureOpen && !readOnly}
-                    onOpenChange={setFigureOpen}
-                    environmentId={props.environmentId}
-                    cwd={props.cwd}
-                    relativePath={props.rootRelativePath ?? ""}
-                    source={props.source}
-                    onCancel={() => {
-                      restoreInsertion();
-                    }}
-                    onInsert={(source) => {
-                      if (restoreInsertion()) insertVisualSource(source);
-                    }}
-                  />
-                ) : null}
-
-                {(props.sourceError ?? notice) === null ? null : (
-                  <div className="scient-latex-visual-notice" role="alert">
-                    {props.sourceError ?? notice}
-                    {unsynced ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setNotice("Your draft is kept locally and has not replaced the file.")
-                          }
-                        >
-                          Keep draft
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            cancelTyping.current?.();
-                            cancelSourcePublish.current?.();
-                            pendingTyping.current = null;
-                            pendingSourceEdit.current = null;
-                            reportDraft("ordinary-text", false);
-                            reportDraft("source-publication", false);
-                            discardOwnTyping();
-                            currentSource.current = props.source;
-                            installProjection(
-                              projectLatexVisualDocument(
-                                props.source,
-                                0,
-                                props.rootSource ?? props.source,
-                              ),
-                              true,
-                            );
-                            setUnsynced(false);
-                            setNotice(null);
-                          }}
-                        >
-                          Discard draft
-                        </button>
-                      </>
-                    ) : null}
-                  </div>
-                )}
-                <div
-                  className="scient-latex-visual-body"
-                  data-navigation={navigationOpen || undefined}
-                  data-references={referencesOpen || undefined}
-                >
-                  {navigationOpen ? (
-                    <aside
-                      className="scient-latex-document-navigation"
-                      aria-label="Document navigation"
-                    >
-                      <div className="scient-latex-navigation-section">
-                        <strong>Document</strong>
-                        <span>
-                          {props.relativePath?.split(/[\\/]/u).at(-1) ?? "LaTeX document"}
-                        </span>
+                            Add a title
+                          </Button>
+                        )}
                       </div>
-                      <div
-                        className="scient-latex-navigation-tabs"
-                        role="group"
-                        aria-label="Document navigation view"
-                      >
-                        <button
-                          type="button"
-                          aria-pressed={navigationTab === "pages"}
-                          onClick={() => setNavigationTab("pages")}
-                        >
-                          Pages
-                        </button>
-                        <button
-                          type="button"
-                          aria-pressed={navigationTab === "outline"}
-                          onClick={() => setNavigationTab("outline")}
-                        >
-                          Outline
-                        </button>
-                      </div>
-                      {navigationTab === "pages" ? (
-                        <nav aria-label="Document pages">
-                          {Array.from({ length: pageCount }, (_, index) => (
-                            <button
-                              type="button"
-                              key={index + 1}
-                              aria-current={currentPage === index + 1 ? "page" : undefined}
-                              onClick={() => goToPage(index + 1)}
-                            >
-                              Page {index + 1}
-                            </button>
-                          ))}
-                        </nav>
-                      ) : (
-                        <nav aria-label="Document outline">
-                          <div className="scient-latex-navigation-heading">Outline</div>
-                          {outline.length === 0 ? (
-                            <p>Add headings to build an outline.</p>
-                          ) : (
-                            outline.map((heading) => (
-                              <button
-                                key={`${heading.position}-${heading.title}`}
-                                onClick={() =>
-                                  editor
-                                    ?.chain()
-                                    .focus()
-                                    .setTextSelection(heading.position + 1)
-                                    .scrollIntoView()
-                                    .run()
-                                }
-                                style={{ "--outline-level": heading.level } as CSSProperties}
-                                type="button"
+                    </DialogPopup>
+                  </Dialog>
+                  <div
+                    className="scient-latex-writing-toolbar"
+                    onMouseDown={(event) => {
+                      if (event.target instanceof Element && event.target.closest("button"))
+                        event.preventDefault();
+                    }}
+                  >
+                    <DockOverflowRow
+                      label="Writing tools"
+                      fixed
+                      compactLabels
+                      commandScope="latex"
+                      expanded
+                      onExpandedChange={() => {}}
+                      groups={[
+                        {
+                          id: "history",
+                          priority: 30,
+                          estimatedWidth: 70,
+                          bar: writingHistoryTools,
+                          overflowLabel: "History",
+                          overflow: (
+                            <>
+                              <DockCommandItem
+                                disabled={readOnly || (!mathActive && !editor?.can().undo())}
+                                onClick={undo}
                               >
-                                {heading.title}
-                              </button>
-                            ))
-                          )}
-                        </nav>
-                      )}
-                    </aside>
-                  ) : null}
-                  <div className="scient-latex-visual-scroll" ref={visualScroll}>
-                    <div
-                      className="scient-latex-page-zoom-frame"
-                      style={{ width: paperWidth * zoom, height: stageHeight * zoom }}
-                    >
-                      <div
-                        className="scient-latex-page-stage"
-                        style={
-                          {
-                            ...paperStyle,
-                            transform: `scale(${zoom})`,
-                          } as CSSProperties
-                        }
-                      >
-                        <div
-                          className="scient-latex-visual-paper"
-                          data-indent-after-heading={layout.indentAfterHeading}
-                          data-document-class={layout.documentClass}
-                          onDragOver={(event) => {
-                            if (!event.dataTransfer.types.includes("Files")) return;
-                            event.preventDefault();
-                            event.dataTransfer.dropEffect = "copy";
-                          }}
-                          onDrop={(event) => {
-                            if (
-                              event.defaultPrevented ||
-                              !event.dataTransfer.types.includes("Files")
-                            )
-                              return;
-                            const view = editor?.view;
-                            if (!view || !view.editable) return;
-                            event.preventDefault();
-                            const position =
-                              view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos ??
-                              view.state.doc.content.size;
-                            if (!handleImageTransfer(view, event.dataTransfer, position))
-                              setNotice("Drop a PNG or JPEG image into the document.");
-                          }}
-                        >
-                          <div className="scient-latex-page-stack" aria-hidden="true">
-                            {Array.from({ length: pageCount }, (_, index) => (
-                              <div
-                                className="scient-latex-page-sheet"
-                                key={index}
-                                style={{ top: index * (pageHeight + pageGap) }}
+                                <WritingCommandIcon command="undo" /> {WRITING_COMMAND_LABELS.undo}
+                              </DockCommandItem>
+                              <DockCommandItem
+                                disabled={readOnly || (!mathActive && !editor?.can().redo())}
+                                onClick={redo}
                               >
-                                <span>{index + 1}</span>
-                              </div>
-                            ))}
-                          </div>
-                          <LatexDocumentMathContext value={documentMathSetup.macros}>
-                            <EditorContent editor={editor} />
-                          </LatexDocumentMathContext>
-                        </div>
-                      </div>
-                    </div>
+                                <WritingCommandIcon command="redo" /> {WRITING_COMMAND_LABELS.redo}
+                              </DockCommandItem>
+                            </>
+                          ),
+                        },
+                        {
+                          id: "text",
+                          priority: 100,
+                          estimatedWidth: 62,
+                          bar: writingTextTools,
+                          overflowLabel: "Text",
+                          overflow: <TextMenuItems {...writingTextContents} />,
+                        },
+                        {
+                          id: "insert",
+                          priority: 20,
+                          estimatedWidth: 48,
+                          bar: writingInsertTools,
+                          overflowLabel: "Insert",
+                          overflow: (
+                            <LatexInsertMenuContent
+                              actions={overflowInsertActions}
+                              onInsertTable={insertTable}
+                              unavailableReason={
+                                readOnly
+                                  ? "This document is read-only."
+                                  : mathActive
+                                    ? "Finish editing math to insert a document element."
+                                    : undefined
+                              }
+                            />
+                          ),
+                        },
+                        {
+                          id: "math",
+                          priority: 90,
+                          estimatedWidth: 96,
+                          bar: writingMathBar,
+                          overflowLabel: "Math",
+                          overflow: writingMathItems,
+                        },
+                        {
+                          id: "lists",
+                          priority: 40,
+                          estimatedWidth: 48,
+                          bar: writingListTools,
+                          overflowLabel: "Lists",
+                          overflow: writingListItems,
+                        },
+                        {
+                          id: "document",
+                          priority: 10,
+                          estimatedWidth: 44,
+                          bar: (
+                            <span className="inline-flex">
+                              <DockMenu
+                                commandScope="latex"
+                                label="Document"
+                                icon={<FileText className="size-4" />}
+                              >
+                                {documentItems}
+                              </DockMenu>
+                            </span>
+                          ),
+                          overflowLabel: "Document",
+                          overflow: documentItems,
+                        },
+                      ]}
+                    />
                   </div>
-                  <LatexReferencesPanel
-                    open={referencesOpen}
-                    request={referencesRequest}
-                    onClose={() => setReferencesOpen(false)}
-                    documents={bibliographyDocuments}
-                    setupSource={props.rootSource ?? props.source}
-                    rootRelativePath={props.rootRelativePath ?? props.relativePath ?? ""}
-                    environmentId={props.environmentId}
-                    cwd={props.cwd}
-                    disabled={textReadOnly}
-                    onSetup={insertBibliography}
-                    onDraftChange={referenceDraftChanged}
-                    onSaved={() =>
-                      editor?.view.dispatch(
-                        editor.state.tr.setMeta(latexEquationReferencesKey, true),
-                      )
-                    }
-                    loadDetails={!!selectedCitation}
-                    onCatalogChange={setReferenceCatalog}
-                    draftKey={props.draftKey}
-                    fileCallbacks={props.referenceFiles}
-                    canOpenFiles={!!props.onOpenFileSource}
-                    onOpenSource={(id, path, offset) => {
-                      if (id.startsWith("bib:")) props.onOpenFileSource?.(path);
-                      else if (id === "root") (props.onOpenRoot ?? props.onOpenSource)();
-                      else if (offset !== undefined && props.onOpenSourceAt)
-                        props.onOpenSourceAt(offset);
-                      else props.onOpenSource();
+                  {readerHost ? searchBar : null}
+                  <LatexMatrixDialog
+                    open={mathPicker === "matrix"}
+                    environment={matrixEnvironment}
+                    onEnvironmentChange={setMatrixEnvironment}
+                    onOpenChange={(open) => {
+                      if (!open) setMathPicker(null);
                     }}
+                    onOpenChangeComplete={mathPickerClosed}
+                    onInsert={(tex) => finishMathPicker(tex, true)}
                   />
-                </div>
-                {find.open ? (
-                  <DocumentSearchBar
-                    label="Search this document"
-                    query={find.snapshot.findQuery}
-                    current={find.snapshot.findMatchCount ? find.snapshot.findActiveIndex + 1 : 0}
-                    total={find.snapshot.findMatchCount}
-                    notFound={
-                      Boolean(find.snapshot.findQuery) && find.snapshot.findMatchCount === 0
-                    }
-                    focusRequest={find.snapshot.findFocusRequest}
-                    onQuery={(query) =>
-                      find.controller.configureFind({
-                        query,
-                        caseSensitive: false,
-                        wholeWord: false,
-                      })
-                    }
-                    onNavigate={(backwards) => find.controller.navigateFind(backwards ? -1 : 1)}
-                    onClose={find.close}
-                  />
-                ) : null}
-                <footer className="scient-latex-reader-footer">
-                  {mathPicker === "symbols" && !readOnly && (
-                    <LatexMathPalette
-                      picker
-                      sourceOpen={false}
-                      onOpen={() => {}}
-                      onDismiss={() => {
-                        setMathPicker(null);
-                        mathPickerTarget.current = null;
-                        pendingMathInsert.current = null;
+                  {bibliographyDialog && (
+                    <LatexBibliographyDialog
+                      open={bibliographyDialog.open}
+                      source={props.rootSource ?? props.source}
+                      onClose={() => setBibliographyDialog({ open: false })}
+                      onCancel={() => {
+                        restoreInsertion();
+                        setBibliographyDialog(null);
                       }}
-                      onReturnToMath={() => {
-                        setMathPicker(null);
-                        mathPickerClosed(false);
-                      }}
-                      onInsert={(symbol) => {
-                        finishMathPicker(symbol.latex, false, symbol.action);
-                        mathPickerClosed(false);
+                      onInsert={(source) => {
+                        if (restoreInsertion()) insertVisualSource(source);
+                        setBibliographyDialog(null);
                       }}
                     />
                   )}
-                  {hasLocalDraft ? (
-                    <ScientTooltip content="Editing draft: complete the field to update the LaTeX source.">
-                      <span className="scient-latex-footer-draft" aria-label="Editing draft">
-                        •
-                      </span>
-                    </ScientTooltip>
-                  ) : null}
-                  <DocumentReaderControls
-                    contextControls={
-                      <>
-                        {/* Recovered work sits in the footer's free space, so no control moves. */}
-                        {recovery === null ? null : (
-                          <LatexVisualRecoveryBar
-                            key={recovery.identity}
-                            recovery={recovery}
-                            currentSource={props.source}
-                            applicable={singleFile}
-                            disabled={props.disabled}
-                            onApply={applyRecovery}
-                            onDiscard={discardRecovery}
-                          />
-                        )}
-                        <LatexContextTools>
-                          {editor && !readOnly && editor.isActive("heading") ? (
-                            <LatexHeadingToolbar editor={editor} draftKey={props.draftKey} />
-                          ) : null}
-                        </LatexContextTools>
-                      </>
-                    }
-                    label="Document"
-                    ready={Boolean(editor)}
-                    page={Math.min(currentPage, pageCount)}
-                    pageCount={pageCount}
-                    scale={zoom}
-                    sidebarOpen={navigationOpen}
-                    searchOpen={find.open}
-                    onPage={goToPage}
-                    onZoom={changeZoom}
-                    onActualSize={() => changeZoom(1)}
-                    onFitWidth={fitWidth}
-                    onToggleSidebar={() => setNavigationOpen(!navigationOpen)}
-                    onToggleSearch={() => (find.open ? find.close() : find.show())}
-                    onShowSearch={find.show}
-                    shortcutLabel={shortcutLabel}
+                  {linkDialog && (
+                    <LatexLinkDialog
+                      anchor={linkAnchor}
+                      fallbackAnchor={workspaceRef}
+                      open={linkDialog.open}
+                      text={linkDialog.text}
+                      onClose={(restoreFocus) => {
+                        if (!restoreFocus) insertionTarget.current = null;
+                        setLinkDialog((current) => current && { ...current, open: false });
+                      }}
+                      onInsert={(text, url) => {
+                        pendingLink.current = { text, url };
+                        setLinkDialog((current) => current && { ...current, open: false });
+                      }}
+                      onClosed={() => {
+                        const value = pendingLink.current;
+                        pendingLink.current = null;
+                        if (restoreInsertion() && value && editor) {
+                          const argument = value.url.replace(
+                            /[%#&]/gu,
+                            (character) => "\\" + character,
+                          );
+                          const linkText =
+                            value.text === linkDialog.text && linkDialog.source
+                              ? linkDialog.source
+                              : escapeText(value.text);
+                          editor
+                            .chain()
+                            .focus()
+                            .command(({ tr }) => {
+                              closeHistory(tr);
+                              return true;
+                            })
+                            .insertContent({
+                              type: "latexInlineCommand",
+                              attrs: {
+                                name: "href",
+                                argument,
+                                linkText,
+                                raw: `\\href{${argument}}{${linkText}}`,
+                              },
+                            })
+                            .run();
+                        }
+                        setLinkDialog(null);
+                      }}
+                    />
+                  )}
+                  <LatexReferenceDialog
+                    open={referenceOpen && !readOnly}
+                    onOpenChange={setReferenceOpen}
+                    source={props.source}
+                    setupSource={props.rootSource ?? props.source}
+                    mode={referenceMode}
+                    onCancel={() => {
+                      restoreInsertion();
+                    }}
+                    environmentId={props.environmentId}
+                    cwd={props.cwd}
+                    relativePath={props.rootRelativePath ?? props.relativePath}
+                    onInsert={insertReference}
                   />
-                </footer>
-                <span className="sr-only" role="status">
-                  {readOnly ? "Read-only" : selectionContext}
-                  {hasLocalDraft ? ". Editing draft" : ""}
-                  {shortcutHint ? ". " + shortcutHint : ""}
-                </span>
-              </div>
-            </LatexDraftContext>
-          </LatexMathEditingContext>
+                  {props.environmentId && props.cwd ? (
+                    <LatexFigureInsertDialog
+                      open={figureOpen && !readOnly}
+                      onOpenChange={setFigureOpen}
+                      environmentId={props.environmentId}
+                      cwd={props.cwd}
+                      relativePath={props.rootRelativePath ?? ""}
+                      source={props.source}
+                      onCancel={() => {
+                        restoreInsertion();
+                      }}
+                      onInsert={(source) => {
+                        if (restoreInsertion()) insertVisualSource(source);
+                      }}
+                    />
+                  ) : null}
+
+                  {(props.sourceError ?? notice) === null ? null : (
+                    <div className="scient-latex-visual-notice" role="alert">
+                      {props.sourceError ?? notice}
+                      {unsynced ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setNotice("Your draft is kept locally and has not replaced the file.")
+                            }
+                          >
+                            Keep draft
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              cancelTyping.current?.();
+                              cancelSourcePublish.current?.();
+                              pendingTyping.current = null;
+                              pendingSourceEdit.current = null;
+                              reportDraft("ordinary-text", false);
+                              reportDraft("source-publication", false);
+                              discardOwnTyping();
+                              currentSource.current = props.source;
+                              installProjection(
+                                projectLatexVisualDocument(
+                                  props.source,
+                                  0,
+                                  props.rootSource ?? props.source,
+                                ),
+                                true,
+                              );
+                              setUnsynced(false);
+                              setNotice(null);
+                            }}
+                          >
+                            Discard draft
+                          </button>
+                        </>
+                      ) : null}
+                    </div>
+                  )}
+                  <div
+                    className="scient-latex-visual-body"
+                    data-navigation={navigationOpen || undefined}
+                    data-references={referencesOpen || undefined}
+                  >
+                    {navigationOpen ? (
+                      <aside
+                        className="scient-latex-document-navigation"
+                        aria-label="Document navigation"
+                      >
+                        <div className="scient-latex-navigation-section">
+                          <strong>Document</strong>
+                          <span>
+                            {props.relativePath?.split(/[\\/]/u).at(-1) ?? "LaTeX document"}
+                          </span>
+                        </div>
+                        <div
+                          className="scient-latex-navigation-tabs"
+                          role="group"
+                          aria-label="Document navigation view"
+                        >
+                          <button
+                            type="button"
+                            aria-pressed={navigationTab === "pages"}
+                            onClick={() => setNavigationTab("pages")}
+                          >
+                            Pages
+                          </button>
+                          <button
+                            type="button"
+                            aria-pressed={navigationTab === "outline"}
+                            onClick={() => setNavigationTab("outline")}
+                          >
+                            Outline
+                          </button>
+                        </div>
+                        {navigationTab === "pages" ? (
+                          <nav aria-label="Document pages">
+                            {Array.from({ length: pageCount }, (_, index) => (
+                              <button
+                                type="button"
+                                key={index + 1}
+                                aria-current={currentPage === index + 1 ? "page" : undefined}
+                                onClick={() => goToPage(index + 1)}
+                              >
+                                Page {index + 1}
+                              </button>
+                            ))}
+                          </nav>
+                        ) : (
+                          <nav aria-label="Document outline">
+                            <div className="scient-latex-navigation-heading">Outline</div>
+                            {outline.length === 0 ? (
+                              <p>Add headings to build an outline.</p>
+                            ) : (
+                              outline.map((heading) => (
+                                <button
+                                  key={`${heading.position}-${heading.title}`}
+                                  onClick={() =>
+                                    editor
+                                      ?.chain()
+                                      .focus()
+                                      .setTextSelection(heading.position + 1)
+                                      .scrollIntoView()
+                                      .run()
+                                  }
+                                  style={{ "--outline-level": heading.level } as CSSProperties}
+                                  type="button"
+                                >
+                                  {heading.title}
+                                </button>
+                              ))
+                            )}
+                          </nav>
+                        )}
+                      </aside>
+                    ) : null}
+                    <div className="scient-latex-visual-scroll" ref={visualScroll}>
+                      <div
+                        className="scient-latex-page-zoom-frame"
+                        style={{ width: paperWidth * zoom, height: stageHeight * zoom }}
+                      >
+                        <div
+                          className="scient-latex-page-stage"
+                          style={
+                            {
+                              ...paperStyle,
+                              transform: `scale(${zoom})`,
+                            } as CSSProperties
+                          }
+                        >
+                          <div
+                            className="scient-latex-visual-paper"
+                            data-indent-after-heading={layout.indentAfterHeading}
+                            data-document-class={layout.documentClass}
+                            onDragOver={(event) => {
+                              if (!event.dataTransfer.types.includes("Files")) return;
+                              event.preventDefault();
+                              event.dataTransfer.dropEffect = "copy";
+                            }}
+                            onDrop={(event) => {
+                              if (
+                                event.defaultPrevented ||
+                                !event.dataTransfer.types.includes("Files")
+                              )
+                                return;
+                              const view = editor?.view;
+                              if (!view || !view.editable) return;
+                              event.preventDefault();
+                              const position =
+                                view.posAtCoords({ left: event.clientX, top: event.clientY })
+                                  ?.pos ?? view.state.doc.content.size;
+                              if (!handleImageTransfer(view, event.dataTransfer, position))
+                                setNotice("Drop a PNG or JPEG image into the document.");
+                            }}
+                          >
+                            <div className="scient-latex-page-stack" aria-hidden="true">
+                              {Array.from({ length: pageCount }, (_, index) => (
+                                <div
+                                  className="scient-latex-page-sheet"
+                                  key={index}
+                                  style={{ top: index * (pageHeight + pageGap) }}
+                                >
+                                  <span>{index + 1}</span>
+                                </div>
+                              ))}
+                            </div>
+                            <LatexDocumentMathContext value={documentMathSetup.macros}>
+                              <EditorContent editor={editor} />
+                            </LatexDocumentMathContext>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <LatexReferencesPanel
+                      open={referencesOpen}
+                      request={referencesRequest}
+                      onClose={() => setReferencesOpen(false)}
+                      documents={bibliographyDocuments}
+                      setupSource={props.rootSource ?? props.source}
+                      rootRelativePath={props.rootRelativePath ?? props.relativePath ?? ""}
+                      environmentId={props.environmentId}
+                      cwd={props.cwd}
+                      disabled={textReadOnly}
+                      onSetup={insertBibliography}
+                      onDraftChange={referenceDraftChanged}
+                      onSaved={() =>
+                        editor?.view.dispatch(
+                          editor.state.tr.setMeta(latexEquationReferencesKey, true),
+                        )
+                      }
+                      loadDetails={!!selectedCitation}
+                      onCatalogChange={setReferenceCatalog}
+                      draftKey={props.draftKey}
+                      fileCallbacks={props.referenceFiles}
+                      canOpenFiles={!!props.onOpenFileSource}
+                      onOpenSource={(id, path, offset) => {
+                        if (id.startsWith("bib:")) props.onOpenFileSource?.(path);
+                        else if (id === "root") (props.onOpenRoot ?? props.onOpenSource)();
+                        else if (offset !== undefined && props.onOpenSourceAt)
+                          props.onOpenSourceAt(offset);
+                        else props.onOpenSource();
+                      }}
+                    />
+                  </div>
+                  {readerHost ? null : searchBar}
+                  {readerHost ? (
+                    <DocumentFooter
+                      label="Document status"
+                      className="scient-latex-reader-footer"
+                      dataRecovery={recovery !== null}
+                      position={footerPosition}
+                      words={footerWords}
+                      leading={
+                        <>
+                          {recovery === null ? null : (
+                            <LatexVisualRecoveryBar
+                              key={recovery.identity}
+                              recovery={recovery}
+                              currentSource={props.source}
+                              applicable={singleFile}
+                              disabled={props.disabled}
+                              onApply={applyRecovery}
+                              onDiscard={discardRecovery}
+                            />
+                          )}
+                          {mathPicker === "symbols" && !readOnly && (
+                            <LatexMathPalette
+                              picker
+                              sourceOpen={false}
+                              onOpen={() => {}}
+                              onDismiss={() => {
+                                setMathPicker(null);
+                                mathPickerTarget.current = null;
+                                pendingMathInsert.current = null;
+                              }}
+                              onReturnToMath={() => {
+                                setMathPicker(null);
+                                mathPickerClosed(false);
+                              }}
+                              onInsert={(symbol) => {
+                                finishMathPicker(symbol.latex, false, symbol.action);
+                                mathPickerClosed(false);
+                              }}
+                            />
+                          )}
+                          {hasLocalDraft ? (
+                            <ScientTooltip content="Editing draft: complete the field to update the LaTeX source.">
+                              <span
+                                className="scient-latex-footer-draft"
+                                aria-label="Editing draft"
+                              >
+                                •
+                              </span>
+                            </ScientTooltip>
+                          ) : null}
+                          {/* Drawn in the surface header; nothing appears here. */}
+                          <DocumentReaderControls
+                            // Hosted in the surface header, the bar leaves the footer to the object options.
+                            {...(readerHost ? {} : { contextControls: contextTools })}
+                            label="Document"
+                            ready={Boolean(editor)}
+                            page={Math.min(currentPage, pageCount)}
+                            pageCount={pageCount}
+                            scale={zoom}
+                            sidebarOpen={navigationOpen}
+                            searchOpen={find.open}
+                            onPage={goToPage}
+                            onZoom={changeZoom}
+                            onActualSize={() => changeZoom(1)}
+                            onFitWidth={fitWidth}
+                            onToggleSidebar={() => setNavigationOpen(!navigationOpen)}
+                            onToggleSearch={() => (find.open ? find.close() : find.show())}
+                            onShowSearch={() => setSearchFocus((request) => request + 1)}
+                            search={headerSearch}
+                            shortcutLabel={shortcutLabel}
+                          />
+                        </>
+                      }
+                    >
+                      {contextTools}
+                    </DocumentFooter>
+                  ) : (
+                    <footer
+                      className="scient-latex-reader-footer"
+                      data-recovery={recovery === null ? undefined : ""}
+                    >
+                      {recovery === null ? null : (
+                        <LatexVisualRecoveryBar
+                          key={recovery.identity}
+                          recovery={recovery}
+                          currentSource={props.source}
+                          applicable={singleFile}
+                          disabled={props.disabled}
+                          onApply={applyRecovery}
+                          onDiscard={discardRecovery}
+                        />
+                      )}
+                      {mathPicker === "symbols" && !readOnly && (
+                        <LatexMathPalette
+                          picker
+                          sourceOpen={false}
+                          onOpen={() => {}}
+                          onDismiss={() => {
+                            setMathPicker(null);
+                            mathPickerTarget.current = null;
+                            pendingMathInsert.current = null;
+                          }}
+                          onReturnToMath={() => {
+                            setMathPicker(null);
+                            mathPickerClosed(false);
+                          }}
+                          onInsert={(symbol) => {
+                            finishMathPicker(symbol.latex, false, symbol.action);
+                            mathPickerClosed(false);
+                          }}
+                        />
+                      )}
+                      {hasLocalDraft ? (
+                        <ScientTooltip content="Editing draft: complete the field to update the LaTeX source.">
+                          <span className="scient-latex-footer-draft" aria-label="Editing draft">
+                            •
+                          </span>
+                        </ScientTooltip>
+                      ) : null}
+                      <DocumentReaderControls
+                        // Hosted in the surface header, the bar leaves the footer to the object options.
+                        {...(readerHost ? {} : { contextControls: contextTools })}
+                        label="Document"
+                        ready={Boolean(editor)}
+                        page={Math.min(currentPage, pageCount)}
+                        pageCount={pageCount}
+                        scale={zoom}
+                        sidebarOpen={navigationOpen}
+                        searchOpen={find.open}
+                        onPage={goToPage}
+                        onZoom={changeZoom}
+                        onActualSize={() => changeZoom(1)}
+                        onFitWidth={fitWidth}
+                        onToggleSidebar={() => setNavigationOpen(!navigationOpen)}
+                        onToggleSearch={() => (find.open ? find.close() : find.show())}
+                        onShowSearch={() => setSearchFocus((request) => request + 1)}
+                        search={headerSearch}
+                        shortcutLabel={shortcutLabel}
+                      />
+                    </footer>
+                  )}
+                  <span className="sr-only" role="status">
+                    {readOnly ? "Read-only" : selectionContext}
+                    {hasLocalDraft ? ". Editing draft" : ""}
+                    {shortcutHint ? ". " + shortcutHint : ""}
+                  </span>
+                </div>
+              </LatexDraftContext>
+            </LatexMathEditingContext>
+          </LatexFooterPositionContext>
         </LatexReferencesContext>
       </LatexRootContext>
     </LatexBlockSourceContext>

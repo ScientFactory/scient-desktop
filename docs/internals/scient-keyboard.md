@@ -105,8 +105,10 @@ The v1 profile accepts additive `customMath` expressions and `writingPresetVersi
 Custom actions are expressions with explicit `${selection}` and `${cursor}`
 markers, not executable LyX command scripts. Bound keys use ordinary profile
 overrides. Removing an action removes its overrides. Validation bounds action
-counts and input size and rejects document-level setup commands. Existing profiles
-without the writing revision retain their custom keys; only inherited defaults
+counts and input size and rejects document-level setup commands. The current
+writing revision is 2, which adds Inline code (`mod+e`) and Link (`mod+k`)
+defaults for the LaTeX editor. Existing profiles
+without the writing revision, or with an older one, retain their custom keys; only inherited defaults
 which collide with those customizations are disabled during import/read migration.
 
 `ShortcutReference` renders a local, sandboxed printable HTML document from the

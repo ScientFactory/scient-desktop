@@ -19,6 +19,7 @@ import {
   MenuItem,
   MenuPopup,
   MenuRadioItem,
+  MenuCheckboxItem,
   MenuSeparator,
   MenuShortcut,
   MenuTrigger,
@@ -26,7 +27,8 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 
-import type { ScientMarkdownShortcutPresentation } from "../shortcuts";
+import type { ShortcutPresentation } from "../keyboard/presentation";
+import "./dockChrome.css";
 
 /**
  * Layout of a dock control. Hover, focus, pressed, and disabled visuals are
@@ -42,7 +44,7 @@ export function dockButtonClass(active?: boolean): string {
 
 export function DockTooltipContent(props: {
   readonly label: string;
-  readonly shortcut?: ScientMarkdownShortcutPresentation | undefined;
+  readonly shortcut?: ShortcutPresentation | undefined;
 }) {
   return (
     <span className="flex items-center gap-3 whitespace-nowrap">
@@ -68,7 +70,7 @@ export function DockButton(props: {
   readonly active?: boolean | undefined;
   readonly disabled?: boolean | undefined;
   readonly preserveIconWeight?: boolean | undefined;
-  readonly shortcut?: ScientMarkdownShortcutPresentation | undefined;
+  readonly shortcut?: ShortcutPresentation | undefined;
 }) {
   return (
     <Tooltip>
@@ -130,6 +132,27 @@ export function DockCommandRadioItem({
   const queue = useContext(DockCommandContext);
   return (
     <MenuRadioItem
+      {...props}
+      closeOnClick
+      onClick={() => {
+        if (queue) queue(onClick);
+        else onClick();
+      }}
+    />
+  );
+}
+
+/** Formatting toggles defer execution until the whole menu releases focus. */
+export function DockCommandCheckboxItem({
+  onClick,
+  ...props
+}: Omit<ComponentProps<typeof MenuCheckboxItem>, "onClick" | "closeOnClick" | "onCheckedChange"> & {
+  readonly onClick: () => void;
+}) {
+  const queue = useContext(DockCommandContext);
+  return (
+    <MenuCheckboxItem
+      variant="icon"
       {...props}
       closeOnClick
       onClick={() => {
@@ -225,10 +248,11 @@ export function DockMenu(props: {
 export function MenuRow(props: {
   readonly icon?: ReactNode;
   readonly label: string;
-  readonly shortcut?: ScientMarkdownShortcutPresentation | undefined;
+  readonly shortcut?: ShortcutPresentation | undefined;
 }) {
   return (
-    <span className="flex w-full items-center gap-2">
+    // The icon takes the same room as an icon placed directly in a menu item.
+    <span className="flex w-full items-center gap-2 [&>svg]:-mx-0.5">
       {props.icon}
       {props.label}
       {props.shortcut ? (
@@ -327,6 +351,9 @@ export function DockOverflowRow(props: {
   readonly groups: readonly DockGroup[];
   /** Items that live in the overflow menu even when nothing is hidden. */
   readonly overflowItems?: ReactNode;
+  readonly overflowButtonLabel?: string;
+  readonly overflowButtonIcon?: ReactNode;
+  readonly overflowPosition?: "end" | "after-groups";
 }) {
   const dockRef = useRef<HTMLDivElement>(null);
   const widthsRef = useRef(new Map<string, number>());
@@ -460,12 +487,18 @@ export function DockOverflowRow(props: {
               {group.bar}
             </span>
           ))}
-          <div className="ms-auto flex items-center gap-0.5" data-dock-reserved>
+          <div
+            className={cn(
+              "flex items-center gap-0.5",
+              props.overflowPosition !== "after-groups" && "ms-auto",
+            )}
+            data-dock-reserved
+          >
             {showOverflowMenu ? (
               <DockMenu
-                label="More actions"
+                label={props.overflowButtonLabel ?? "More actions"}
                 commandScope={props.commandScope}
-                icon={<Ellipsis className="size-4" />}
+                icon={props.overflowButtonIcon ?? <Ellipsis className="size-4" />}
                 chevron={false}
                 align="end"
                 popupClassName="w-56"

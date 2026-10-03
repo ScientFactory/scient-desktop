@@ -8,8 +8,7 @@
 .scient-document-controls button:not(:disabled) {
   cursor: pointer;
 }
-.scient-pdf-toolbar,
-.scient-pdf-searchbar {
+.scient-pdf-toolbar {
   display: flex;
   min-height: 36px;
   flex: none;
@@ -53,18 +52,24 @@
   background: var(--border);
 }
 
+/* Previous and next page: narrower than the other buttons, same height. */
+.scient-pdf-toolbar-button.scient-pdf-action-page-step {
+  width: 20px;
+}
+
 .scient-pdf-page-control {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
+  /* Same visible distance to the arrows as the percentage has to its − and +. */
+  margin-inline: 3px;
   color: var(--muted-foreground);
   font-size: 11px;
   white-space: nowrap;
 }
 
 .scient-pdf-page-control input {
-  width: 38px;
   height: 24px;
   border: 1px solid var(--border);
   border-radius: 5px;
@@ -76,13 +81,19 @@
 }
 
 .scient-pdf-page-control input:focus,
-.scient-pdf-searchbar input:focus {
-  border-color: var(--ring);
-  box-shadow: 0 0 0 1px var(--ring);
+/* Zoom out and in: slightly smaller, and close to the percentage between them. */
+.scient-pdf-toolbar-button.scient-pdf-action-zoom-step {
+  width: 22px;
+}
+
+.scient-pdf-toolbar-button.scient-pdf-action-zoom-step > svg {
+  width: 13px;
+  height: 13px;
 }
 
 .scient-pdf-zoom-label {
-  min-width: 44px;
+  /* Wide enough for three digits, so what follows it does not move with the zoom. */
+  min-width: 40px;
   border-radius: 5px;
   padding: 3px 4px;
   color: var(--muted-foreground);
@@ -93,29 +104,6 @@
 .scient-pdf-zoom-label:hover:not(:disabled) {
   background: var(--accent);
   color: var(--accent-foreground);
-}
-
-.scient-pdf-searchbar {
-  gap: 5px;
-  padding-inline-start: 12px;
-}
-
-.scient-pdf-searchbar input {
-  min-width: 80px;
-  flex: 1;
-  border: 0;
-  background: transparent;
-  color: var(--foreground);
-  font-size: 12px;
-  outline: none;
-}
-
-.scient-pdf-find-count {
-  min-width: 52px;
-  color: var(--muted-foreground);
-  text-align: end;
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
 }
 
 @container scient-document-controls (max-width: 439px) {
@@ -133,20 +121,86 @@
 }
 
 @container scient-document-controls (max-width: 239px) {
-  .scient-pdf-action-fit,
-  .scient-pdf-action-search,
-  .scient-pdf-searchbar > svg,
-  .scient-pdf-find-count {
+  .scient-reader-search-count {
     display: none;
-  }
-
-  .scient-pdf-searchbar {
-    padding-inline: 8px;
   }
 }
 
-@container scient-document-controls (max-width: 199px) {
-  .scient-pdf-search-secondary {
-    display: none;
-  }
+/* Search rests like the sidebar's: an icon and "Search", no frame. */
+.scient-reader-search {
+  position: relative;
+  display: flex;
+  height: 26px;
+  min-width: 112px;
+  flex: 0 1 150px;
+  margin-inline: 2px;
+  cursor: text;
+}
+.scient-reader-search-box {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  border-radius: 6px;
+  padding-inline: 7px;
+  color: var(--muted-foreground);
+}
+.scient-reader-search:hover .scient-reader-search-box,
+.scient-reader-search:focus-within .scient-reader-search-box {
+  background: color-mix(in srgb, var(--accent) 80%, transparent);
+}
+.scient-reader-search:focus-within .scient-reader-search-box,
+.scient-reader-search[data-searching] .scient-reader-search-box {
+  color: var(--foreground);
+}
+.scient-reader-search-icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+.scient-reader-search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.scient-reader-search input::placeholder {
+  color: var(--muted-foreground);
+}
+.scient-reader-search-count {
+  flex: none;
+  color: var(--muted-foreground);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.scient-reader-search button {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: var(--muted-foreground);
+}
+.scient-reader-search button:not(:disabled) {
+  cursor: pointer;
+}
+.scient-reader-search button:hover:not(:disabled) {
+  background: var(--background);
+  color: var(--foreground);
+}
+.scient-reader-search button:disabled {
+  opacity: 0.4;
+}
+.scient-reader-search button svg {
+  width: 13px;
+  height: 13px;
 }

@@ -13,8 +13,9 @@ import { useEffect, useRef, useState } from "react";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
 import { cn } from "~/lib/utils";
 
-import { scientMarkdownShortcut } from "../shortcuts";
+import { scientMarkdownShortcut } from "../markdownEditor/shortcuts";
 import { DockButton } from "./dockChrome";
+import "./findBar.css";
 
 /** The find-state slice a surface must publish for the shared find bar. */
 export interface ScientFindBarState {
@@ -46,7 +47,8 @@ const findIconClassName = "size-3.5";
 const findInputClassName = "h-7";
 
 /**
- * Compact find & replace strip under the dock. One row while searching;
+ * The find and replace strip shared by the document editors, shown under the
+ * writing bar. One row while searching;
  * expanding the replace chevron reveals a second slim row aligned under the
  * find field. All controls are dock-sized so the bar reads as one chrome
  * family with the editing dock above it.

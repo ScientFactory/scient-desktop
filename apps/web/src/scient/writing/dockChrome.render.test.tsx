@@ -4,7 +4,7 @@ import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { scientMarkdownShortcut } from "../shortcuts";
+import { scientMarkdownShortcut } from "../markdownEditor/shortcuts";
 import {
   DockButton,
   DockCommandItem as MenuItem,

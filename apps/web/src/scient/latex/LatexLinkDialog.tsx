@@ -1,56 +1,66 @@
-import { useState } from "react";
+import { useRef, useState, type RefObject } from "react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
-import {
-  Dialog,
-  DialogPopup,
-  DialogTitle,
-  DialogDescription,
-  DialogHeader,
-  DialogPanel,
-} from "~/components/ui/dialog";
+import { Popover, PopoverPopup, PopoverTitle } from "~/components/ui/popover";
 
 export function LatexLinkDialog(props: {
   open: boolean;
+  anchor: RefObject<HTMLElement | null>;
+  fallbackAnchor: RefObject<HTMLElement | null>;
   text: string;
-  onClose: () => void;
+  onClose: (restoreFocus: boolean) => void;
   onClosed: () => void;
   onInsert: (text: string, url: string) => void;
 }) {
+  const addressInput = useRef<HTMLInputElement>(null);
   const [text, setText] = useState(props.text);
   const [url, setUrl] = useState("");
   const valid = /^(https?:\/\/|mailto:)/iu.test(url.trim()) && !/[{}\\\s]/u.test(url.trim());
   return (
-    <Dialog
+    <Popover
+      modal={false}
       open={props.open}
-      onOpenChange={(open) => {
-        if (!open) props.onClose();
+      onOpenChange={(open, details) => {
+        if (!open)
+          props.onClose(details.reason !== "outside-press" && details.reason !== "focus-out");
       }}
       onOpenChangeComplete={(open) => {
         if (!open) props.onClosed();
       }}
     >
-      <DialogPopup finalFocus={false} data-dock-command-scope="latex">
-        <DialogHeader>
-          <DialogTitle>Insert link</DialogTitle>
-          <DialogDescription>Choose the text and web or email address.</DialogDescription>
-        </DialogHeader>
-        <DialogPanel>
+      <PopoverPopup
+        anchor={() => props.anchor.current ?? props.fallbackAnchor.current}
+        align="start"
+        width="sm"
+        padding="tight"
+        keepMounted
+        initialFocus={addressInput}
+        finalFocus={false}
+        data-dock-command-scope="latex"
+        data-keybinding-capture=""
+      >
+        <div className="grid gap-2">
+          <PopoverTitle size="compact">Insert link</PopoverTitle>
           <form
-            className="grid gap-3"
+            className="grid gap-2"
             onSubmit={(event) => {
               event.preventDefault();
               if (valid) props.onInsert(text || url.trim(), url.trim());
             }}
           >
-            <label>
+            <label className="grid gap-1 text-xs">
               Text
-              <Input value={text} onChange={(event) => setText(event.target.value)} />
+              <Input
+                aria-label="Link text"
+                value={text}
+                onChange={(event) => setText(event.target.value)}
+              />
             </label>
-            <label>
+            <label className="grid gap-1 text-xs">
               Address
               <Input
-                autoFocus
+                ref={addressInput}
+                aria-label="Link destination"
                 type="url"
                 placeholder="https://"
                 value={url}
@@ -58,16 +68,16 @@ export function LatexLinkDialog(props: {
               />
             </label>
             <div className="flex justify-end gap-2">
-              <Button type="button" variant="outline" onClick={props.onClose}>
+              <Button size="xs" type="button" variant="outline" onClick={() => props.onClose(true)}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={!valid}>
+              <Button size="xs" type="submit" disabled={!valid}>
                 Insert link
               </Button>
             </div>
           </form>
-        </DialogPanel>
-      </DialogPopup>
-    </Dialog>
+        </div>
+      </PopoverPopup>
+    </Popover>
   );
 }

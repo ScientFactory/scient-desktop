@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - FileSystem cannot create a FIFO.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -1371,6 +1372,66 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
             Effect.orElseSucceed(() => false),
           ),
         ).toBe(false);
+      }),
+    );
+
+    it.effect("renames a file it cannot read whole without a revision, never replacing", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const bytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0, 1, 2, 3]);
+        yield* fileSystem.writeFile(path.join(cwd, "figure.pdf"), bytes);
+        yield* writeTextFile(cwd, "taken.pdf", "keep");
+
+        const refused = yield* workspaceFileSystem
+          .renameFile({ cwd, relativePath: "figure.pdf", destinationRelativePath: "taken.pdf" })
+          .pipe(Effect.flip);
+        expect(refused).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileExistsError);
+        expect(yield* fileSystem.readFileString(path.join(cwd, "taken.pdf"))).toBe("keep");
+
+        const renamed = yield* workspaceFileSystem.renameFile({
+          cwd,
+          relativePath: "figure.pdf",
+          destinationRelativePath: "figures/final.pdf",
+        });
+        expect(renamed.destinationRelativePath).toBe("figures/final.pdf");
+        expect(renamed.revision).toMatch(/^sha256:/u);
+        expect([...(yield* fileSystem.readFile(path.join(cwd, "figures/final.pdf")))]).toEqual([
+          ...bytes,
+        ]);
+        expect(
+          yield* fileSystem.stat(path.join(cwd, "figure.pdf")).pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          ),
+        ).toBe(false);
+      }),
+    );
+
+    it.effect("renames a truncated text file without a revision, reporting its leading bytes", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const contents = "x".repeat(1024 * 1024 + 4096);
+        yield* writeTextFile(cwd, "big.log", contents);
+        const opened = yield* workspaceFileSystem.readFile({ cwd, relativePath: "big.log" });
+        expect(opened.truncated).toBe(true);
+
+        const renamed = yield* workspaceFileSystem.renameFile({
+          cwd,
+          relativePath: "big.log",
+          destinationRelativePath: "big-renamed.log",
+        });
+        const leading = new TextEncoder().encode(contents).subarray(0, 1024 * 1024);
+        expect(renamed.revision).toBe(
+          `sha256:${NodeCrypto.createHash("sha256").update(leading).digest("hex")}`,
+        );
+        expect(renamed.revision).toBe(opened.revision);
+        expect(yield* fileSystem.readFileString(path.join(cwd, "big-renamed.log"))).toBe(contents);
       }),
     );
 

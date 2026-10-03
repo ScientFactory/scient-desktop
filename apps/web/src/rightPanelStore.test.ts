@@ -801,6 +801,29 @@ describe("rightPanelStore", () => {
     ).toMatchObject([{ id: `file:${treePath}`, relativePath: treePath, revealRequestId: 2 }]);
   });
 
+  it("keeps a renamed file's tab in place under its new path", () => {
+    const store = useRightPanelStore.getState();
+    store.openFile(refA, "a.md");
+    store.openFile(refA, "draft.tex");
+    store.openFile(refA, "z.md");
+    store.openFile(refA, "draft.tex");
+    store.renameFileSurface(refA, "draft.tex", "paper.tex");
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual([
+      "file:a.md",
+      "file:paper.tex",
+      "file:z.md",
+    ]);
+    expect(state.activeSurfaceId).toBe("file:paper.tex");
+    // A tab already open on the new path takes over.
+    useRightPanelStore.getState().renameFileSurface(refA, "a.md", "z.md");
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.map(
+        (surface) => surface.id,
+      ),
+    ).toEqual(["file:paper.tex", "file:z.md"]);
+  });
+
   it("opens an attachment as a file surface without the standalone explorer", () => {
     const attachment = {
       type: "file" as const,

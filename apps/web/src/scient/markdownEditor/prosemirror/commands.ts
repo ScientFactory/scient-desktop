@@ -32,6 +32,7 @@ import {
 import { scientMarkdownSchema } from "./schema";
 import { selectMarkdownTable } from "./tables";
 import { nextScientMarkdownFootnoteLabel } from "../footnotes";
+import { WRITING_COMMAND_LABELS } from "../../writing/commandNames";
 
 export type ScientMarkdownCommand =
   | "add-column-after"
@@ -99,14 +100,22 @@ export const DEFAULT_SCIENT_MARKDOWN_TABLE_DIMENSIONS = {
 export const MAX_SCIENT_MARKDOWN_TABLE_INSERT_DIMENSION = 15;
 
 const SCIENT_MARKDOWN_SLASH_COMMANDS: ReadonlyArray<ScientSlashCommandItem> = [
-  { command: "paragraph", label: "Text", keywords: "paragraph body" },
+  { command: "paragraph", label: WRITING_COMMAND_LABELS.text, keywords: "paragraph body" },
   { command: "heading-1", label: "Heading 1", keywords: "title h1" },
   { command: "heading-2", label: "Heading 2", keywords: "section h2" },
   { command: "heading-3", label: "Heading 3", keywords: "subsection h3" },
-  { command: "bullet-list", label: "Bulleted list", keywords: "unordered bullets" },
-  { command: "ordered-list", label: "Numbered list", keywords: "ordered numbers" },
+  {
+    command: "bullet-list",
+    label: WRITING_COMMAND_LABELS.bulletList,
+    keywords: "unordered bullets bulleted",
+  },
+  {
+    command: "ordered-list",
+    label: WRITING_COMMAND_LABELS.numberedList,
+    keywords: "ordered numbers",
+  },
   { command: "task-list", label: "Task list", keywords: "todo checkbox check" },
-  { command: "blockquote", label: "Quote", keywords: "blockquote citation" },
+  { command: "blockquote", label: WRITING_COMMAND_LABELS.quote, keywords: "blockquote citation" },
   { command: "code-block", label: "Code block", keywords: "fence programming" },
   { command: "display-math", label: "Equation", keywords: "math tex latex formula" },
   { command: "footnote", label: "Footnote", keywords: "note reference source" },

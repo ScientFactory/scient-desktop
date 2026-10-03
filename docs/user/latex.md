@@ -4,7 +4,7 @@ Use the LaTeX workspace to write a paper, report, thesis, or other scientific
 document while seeing the compiled PDF beside its source. Opening a `.tex` file
 offers Source, Split, Visual, and PDF across the top. Split places Source on the
 left and your last chosen PDF or Visual view on the right. PDF is the initial
-right-side choice. Use the PDF/Visual selector beside Update PDF to
+right-side choice. Use the PDF/Visual selector in the same header row to
 change it, and drag the divider to resize either side.
 
 ## Start a document
@@ -36,42 +36,41 @@ service is required for the writing workflow.
 Write is a source-derived writing canvas, not an editable PDF. You can start
 writing before installing or running TeX. The canvas uses a document workspace
 with a compact toolbar, a collapsible outline, and a contextual
-status bar. The **Text** menu includes Text, heading levels, and Quote, using
-plain labels and a checkmark for the current style. Heading levels are grouped
-under **Headings**, with a centered **Numbered** button. A filled gray button
-with a checkmark means numbering is on; an outlined button without a checkmark means it is off. It updates the current
-heading immediately and keeps the menu open. The heading footer uses the same
-label and pressed state. In ordinary
-text, choose numbering and then a heading level in the same menu. Changing
-heading level preserves the selected numbering setting; Text and Quote are
-unaffected. Chapter-based classes also offer Chapter. The toolbar button always
-says Text (or T when narrow). The toolbar supports bold, italic,
-lists, undo and redo. **Insert** opens a searchable menu for figures, tables, citations, cross-references,
-footnotes, links and statements. Equations and structures live in **Math**. Heading styles live in the style menu rather
+status bar. **Text > Paragraph style** lists Text, the heading levels and Quote, with
+thin lines between them; the current style is highlighted. **Numbered
+headings**, a small switch under the heading levels, turns numbering on or off
+for the current heading, or for the next heading chosen from ordinary text,
+without closing the menu. Changing heading level keeps that setting; Text and
+Quote are unaffected. Ctrl/Cmd+Alt+0 is Text and Ctrl/Cmd+Alt+1, 2 and 3 are the first
+three heading levels. Quote is not available inside a list item.
+Chapter-based classes also offer Chapter. The toolbar holds, in order: undo and
+redo; Text; Insert; Math; Lists; and Document. **Text > Formatting** offers bold,
+italic, inline code (Ctrl/Cmd+E), link (Ctrl/Cmd+K) and other supported marks. Link is unavailable when the selection spans more than one
+paragraph. **Insert** opens a menu for figures, tables, citations, cross-references,
+footnotes, links and statements. Equations and structures live in **Math**. Heading styles live in Text > Paragraph style rather
 than being duplicated in Insert. Type `/` on an empty
 paragraph or press Ctrl/Cmd+/ to open it; use the arrow keys and Enter to choose.
 The writing toolbar stays fixed at the top on one row. When the pane narrows,
-labels disappear first (Text becomes **T**); less-used groups then move into
+the Math label disappears first (its sigma stays); less-used groups then move into
 **More**. Insert holds elements and references; Lists holds list actions.
-**Document > Page layout** and **Document > Document style** open two sections of
-one settings dialog. **Outline** is a tab
-in the footer's Pages sidebar. Selected-object options appear between **Fit
-width** and **Search** in the footer; narrow panes use an object-named menu.
-**Document > Title & authors** groups Edit title, Edit authors, Edit date and
-Add title block. Editing jumps to the corresponding on-paper field. A missing or
-custom title offers an explicit creation/source action instead of silently adding
-a block. Add title block is disabled when a title already exists. Date modes in
+**Document > Document settings** opens one card with every document setting.
+**Document** also holds Find and replace and Export. **Outline** is a tab
+in the sidebar, which opens from the header row. Selected-object options appear
+on the left of the footer; narrow panes use an object-named menu.
+**Document > Title & authors** offers Edit title, Edit authors and Edit date when
+the document shows a title; editing jumps to the corresponding on-paper field.
+When it shows none, the only item is **Add a title**: a title block is never
+added silently. Date modes in
 the footer are Automatic (the compilation date), Custom and Hidden.
-Title, author, and date remain editable on paper. **Document > Title & authors > Add title block**
-explicitly restores the standard block. **Document > Use paragraph as title** moves a
-plain paragraph there, with confirmation before replacing an existing title.
+Title, author, and date remain editable on paper.
 
-**Lists** offers Bulleted list, Numbered list, Description list, Indent item,
-Outdent item, and Remove list formatting. A checkmark identifies the current
-type. Choose a type on an empty paragraph to start writing, or select paragraphs
+**Lists** offers Bullet list, Numbered list and No list. Description lists already in a document still show and can be edited. The
+current type is highlighted, and each row shows its shortcut: Ctrl/Cmd+Shift+8
+for a bullet list, Ctrl/Cmd+Shift+7 for a numbered list. Where a list cannot
+start, such as on a selected figure, the menu says so. Choose a type on an empty paragraph to start writing, or select paragraphs
 to turn them into items. With a caret inside a list, changing type affects that
 list at its current nesting level; selecting particular items changes only those
-items. Choosing the active type leaves it unchanged. Remove list formatting
+items. Choosing the active type leaves it unchanged. No list
 keeps the content, including supported equations and description terms.
 
 In bulleted and numbered lists, Enter creates an item; Enter on an empty item
@@ -88,10 +87,28 @@ such as `label=\alph*)`, including bold or italic item text. Supported decimal,
 alphabetic and Roman labels, `start` and `resume` options keep their source
 spelling during content edits. Custom label macros retain exact-source fallback.
 
-The footer shares PDF's page navigation, zoom and search controls. Minus/plus
-use five-percent steps in the 25–500% range; click the percentage to reset to
-actual size. **Fit width** fills the available pane and follows
-pane resizing automatically. Zoom changes only the on-screen view, not the LaTeX
+PDF, Visual and Split use one header row. From the left it holds build status,
+search and the view switch; sidebar, page and zoom controls follow, with the
+PDF/Visual choice after the page controls in Split. Rebuild and More are on the right. Click the search field and type: the
+count and two arrows appear at its end, Enter moves to the next result, and
+Escape clears it. Ctrl/Cmd+F puts the caret there. The view switch stays in the same place in
+Source, where the room before it is empty. Minus and plus sit on either side of the zoom percentage and use
+five-percent steps in the 25–500% range. Click the percentage to fit the page
+to the pane width; the fit follows pane resizing automatically. In Visual, **More > Find and replace** opens the full bar under the writing
+toolbar, with Replace and Replace all. Replace all works through the document one paragraph
+at a time, so a very long document takes a few seconds, and each paragraph is
+its own undo step. It stops if you type or undo while it is working. Text
+inside figures, tables and other objects is not searched.
+
+A thin footer stays under the document. On the left it shows the options of the
+selected object, such as a table, figure, equation or statement. On the right it
+shows where the caret is, for example "Section" or "Table · row 3, column 2",
+and the word count:
+"1,284 words", or "12 of 1,284 words" while text is selected. The count is an
+estimate from the source; math, code, comments, commands and reference keys are
+left out.
+
+Zoom changes only the on-screen view, not the LaTeX
 page dimensions or PDF layout. Pinch with two fingers on a trackpad, or hold Ctrl
 while scrolling, to zoom smoothly around the pointer without fixed percentage
 steps. Ordinary two-finger scrolling continues to move through the document.
@@ -111,14 +128,14 @@ caret targets and are never written into the compiled source.
 
 The **Math** menu offers six choices:
 
-| Option                | Behavior                                                                                                 |
-| --------------------- | -------------------------------------------------------------------------------------------------------- |
-| Inline math           | Insert math within a sentence, or move the active equation inline.                                       |
-| Display math          | Insert math on its own line, or move the active inline formula onto its own line.                        |
-| Aligned equations     | Start two rows aligned at a relation; an existing formula becomes the first row.                         |
-| Matrix                | Choose brackets using the compact selector above the table-style size grid, then click a size to insert. |
-| Cases                 | Insert a two-row piecewise expression with expression and condition columns.                             |
-| Symbols & structures… | Search for symbols or insert fractions, roots, accents, and other structures.                            |
+| Option               | Behavior                                                                                                 |
+| -------------------- | -------------------------------------------------------------------------------------------------------- |
+| Inline math          | Insert math within a sentence, or move the active equation inline.                                       |
+| Display math         | Insert math on its own line, or move the active inline formula onto its own line.                        |
+| Aligned equations    | Start two rows aligned at a relation; an existing formula becomes the first row.                         |
+| Matrix               | Choose brackets using the compact selector above the table-style size grid, then click a size to insert. |
+| Cases                | Insert a two-row piecewise expression with expression and condition columns.                             |
+| Symbols & structures | Search for symbols or insert fractions, roots, accents, and other structures.                            |
 
 The current inline/display placement has a checkmark. Placement changes retain
 existing math; converting inline math to display math retains the surrounding text
@@ -253,16 +270,16 @@ inspect exact output. A successful build never means the browser canvas is
 pixel-identical to that PDF. Compile errors preserve the last successful PDF.
 The canvas reads safe document-class, paper, base-font, `geometry`, paragraph
 indentation, paragraph spacing and line-spacing settings from the preamble.
-Use **Document > Page layout** for paper size, orientation and individual margins.
-Use **Document > Document style** for standard document type, base font size and
-paragraph style. Its **Packages and macros** summary shows explicit package
-declarations (including options), declared macros, and definitions requiring
-Source/PDF. Existing package options remain intact, and Visual adds only known
-missing requirements for inserted tools. Packages are never removed automatically.
-Both sections share one draft, with **Apply** and **Cancel**.
-Fields marked **Keep document setting** preserve the current source; blank margin
-fields do the same. Custom classes retain their class and text style in Source.
-**Edit settings in Source** opens the root setup. If the document changes while
+Use **Document > Document settings** for the document type, text size, paper,
+orientation, margins (Narrow, Normal, Wide, or Custom for each side) and
+paragraph style. Each setting shows what the document uses now; **Apply** writes
+only the settings you changed, and **Cancel** discards the draft. Blank custom
+margin fields preserve the current source. Its **Packages and macros** summary
+shows explicit package declarations (including options), declared macros, and
+definitions requiring Source/PDF. Existing package options remain intact, and
+Visual adds only known missing requirements for inserted tools. Packages are
+never removed automatically. Custom classes retain their class and text style
+in Source. **Open in Source** opens the root setup. If the document changes while
 settings are open, close and reopen the dialog before applying. In an included file, these settings update the root;
 these controls update explicit LaTeX preamble settings rather than maintaining
 private visual-only state. Saving required root changes must finish before PDF
@@ -280,8 +297,8 @@ The writing surface uses a vertical stack of pages. Paragraphs can continue
 across sheets, headings stay with following text when space allows, and tall
 supported tables continue at row boundaries. Description lists and the contents
 list can also continue between entries. These are live editor page breaks;
-the compiler still determines final PDF pagination. **Fit width** adjusts to the
-available workspace, and the status bar
+the compiler still determines final PDF pagination. Clicking the zoom percentage
+fits the page to the available workspace, and the page number in the header row
 shows the visible page. Choose **Outline** to open document navigation.
 Table tools appear in the existing footer; selecting a table does not add
 controls, labels, or empty caption fields to the paper.
@@ -291,6 +308,8 @@ taller than a page still need review in the compiled PDF.
 
 Write and PDF preview keep build messages closed until you select the warning
 or error badge in the header. This includes the shell-escape-disabled notice.
+The messages open as a card over the document and do not move it. Select the
+badge again, press Escape, or click anywhere else to close the card.
 
 Standard `\title`, `\author`, and `\date` metadata appears as the document's
 title block at `\maketitle` and can be edited directly on the page. Fields size
@@ -413,12 +432,12 @@ Search finds entries inside the submenus too.
 
 | Option            | Behavior                                                                                                                        |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Figure…           | Choose a project PNG, JPEG or PDF, or import a PNG/JPEG. Preview raster images, set an optional caption and width, then insert. |
+| Figure            | Choose a project PNG, JPEG or PDF, or import a PNG/JPEG. Preview raster images, set an optional caption and width, then insert. |
 | Table             | Choose a size from the grid to insert a table.                                                                                  |
-| Citation…         | Select one or more bibliography sources and choose a citation form supported by the document.                                   |
-| Cross-reference…  | Find a labelled object in this file and insert its reference or page number.                                                    |
+| Citation          | Select one or more bibliography sources and choose a citation form supported by the document.                                   |
+| Cross-reference   | Find a labelled object in this file and insert its reference or page number.                                                    |
 | Footnote          | Insert a note at the cursor, or move selected inline content into a note.                                                       |
-| Link…             | Give selected text a web/email address, or enter new link text.                                                                 |
+| Link              | Give selected text a web/email address, or enter new link text.                                                                 |
 | Theorems & proofs | Insert Theorem, Lemma, Proposition, Corollary, Claim, Definition, Example, Remark or Proof.                                     |
 | More              | Code block, Page break, Abstract, Table of contents, Bibliography and other specialized blocks.                                 |
 
@@ -545,12 +564,14 @@ open document fields to finish and waits for the root and included files to save
 even if you have only used Source. Unresolved field input, save errors or conflicts
 must be resolved first. The last successful PDF stays readable while building.
 A failed revision requires an explicit rebuild instead of repeated automatic attempts.
-**Export → PDF** uses the same save preparation and saves a copy only when the
+**Document → Export → PDF** in Visual, or **More → Export → PDF** in the
+other views, uses the same save preparation and saves a copy only when the
 latest PDF matches the saved source and freshly checked build dependencies.
 Update the PDF first if export is unavailable.
 
 An agent can still explicitly request a build through the existing tools. Errors and
-warnings from the build can be opened from the status chips above the document; each one shows
+warnings from the build can be opened from the error and warning counts in the
+header row, or from **Build failed · View details**; each one shows
 the file and line it came from when the compiler reported one. Click a message
 that names a project file to open that file at the reported line.
 
@@ -564,8 +585,10 @@ visual quality matters.
 ## Export to Word
 
 Save the source, choose the document root in the LaTeX toolbar if Scient has not
-found one, then select **Export ▸ Word**. Word export waits for the same document
-saves and field completion as Rebuild PDF. Scient converts the selected LaTeX
+found one, then select **Document > Export > Word** in Visual, or
+**More > Export > Word** in the other views.
+Word export waits for the same document saves and field completion as Rebuild
+PDF. Scient converts the selected LaTeX
 document to a `.docx` file; the first export offers to install Pandoc if it is
 not yet available. The export uses the root file and its literal `\input`,
 `\include`, and `\subfile` references. As in LaTeX, these resolve from the root

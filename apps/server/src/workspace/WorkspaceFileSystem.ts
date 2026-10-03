@@ -263,6 +263,36 @@ export const make = Effect.gen(function* () {
     revisionForBytes(new TextEncoder().encode(contents));
 
   /**
+   * The revision a read would report for a file's first bytes, for any file,
+   * binary included. A renamed file that is not read whole reports this.
+   */
+  const leadingBytesRevision = (
+    input: { readonly cwd: string; readonly relativePath: string },
+    absolutePath: string,
+  ) =>
+    Effect.tryPromise({
+      try: async () => {
+        const handle = await NodeFSP.open(absolutePath, "r");
+        try {
+          const buffer = Buffer.alloc(PROJECT_READ_FILE_MAX_BYTES);
+          const { bytesRead } = await handle.read(buffer, 0, PROJECT_READ_FILE_MAX_BYTES, 0);
+          return revisionForBytes(buffer.subarray(0, bytesRead));
+        } finally {
+          await handle.close();
+        }
+      },
+      catch: (cause) =>
+        new WorkspaceFileSystemOperationError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: absolutePath,
+          operationPath: absolutePath,
+          operation: "read",
+          cause,
+        }),
+    });
+
+  /**
    * Resolves the file a read targets, for one of two purposes.
    *
    * - `view`: viewing never depends on the project boundary. An absolute path,
@@ -983,17 +1013,24 @@ export const make = Effect.gen(function* () {
             destinationInput,
             initialDestination.realTargetPath,
           );
-          const current = yield* readFile({
-            cwd: input.cwd,
-            relativePath: input.relativePath,
-          });
-          if (current.truncated || current.revision !== input.expectedRevision) {
-            return yield* new WorkspaceFileRevisionConflictError({
-              workspaceRoot: input.cwd,
+          // A file the client edits carries the revision it last saw, so a
+          // newer version on disk is never renamed under its open editor. A
+          // file it cannot read whole (binary, or larger than a read) has no
+          // such revision and nothing open to lose: renaming moves its bytes
+          // unchanged, so it is renamed without the content check.
+          if (input.expectedRevision !== undefined) {
+            const current = yield* readFile({
+              cwd: input.cwd,
               relativePath: input.relativePath,
-              resolvedPath: sourceTarget.absolutePath,
-              currentRevision: current.revision,
             });
+            if (current.truncated || current.revision !== input.expectedRevision) {
+              return yield* new WorkspaceFileRevisionConflictError({
+                workspaceRoot: input.cwd,
+                relativePath: input.relativePath,
+                resolvedPath: sourceTarget.absolutePath,
+                currentRevision: current.revision,
+              });
+            }
           }
           const sourceStat = yield* Effect.tryPromise({
             try: () => NodeFSP.lstat(sourceTarget.absolutePath),
@@ -1037,6 +1074,14 @@ export const make = Effect.gen(function* () {
                   }),
               ),
             );
+          // The identity (device and inode, as bigints: 64-bit ids exceed a
+          // double) of the file being moved, taken before the new name exists.
+          const sourceIdentity = yield* Effect.promise(() =>
+            NodeFSP.lstat(source.realTargetPath, { bigint: true }).then(
+              (stat) => ({ dev: stat.dev, ino: stat.ino }),
+              () => null,
+            ),
+          );
           yield* Effect.tryPromise({
             try: () => NodeFSP.link(source.realTargetPath, destination.realTargetPath),
             catch: (cause) =>
@@ -1055,29 +1100,96 @@ export const make = Effect.gen(function* () {
                     cause,
                   }),
           });
-          const linked = yield* readFile({
-            cwd: input.cwd,
-            relativePath: input.destinationRelativePath,
-          });
-          if (linked.truncated || linked.revision !== input.expectedRevision) {
-            yield* Effect.tryPromise(() => NodeFSP.unlink(destination.realTargetPath)).pipe(
-              Effect.ignore,
-            );
-            return yield* new WorkspaceFileRevisionConflictError({
+          // The new name is known to hold the moved file only when it shows
+          // the identity taken before linking. Otherwise (the source replaced
+          // just before the link, or the new name replaced just after) nothing
+          // is removed: every ownership check below fails, and the rename
+          // reports a conflict with both names left in place. Cleanup removes
+          // the new name only while it holds the moved file; the old name is
+          // removed only while it still is that file.
+          const destinationPath = destination.realTargetPath;
+          const sourcePath = source.realTargetPath;
+          const linkedIdentity = yield* Effect.promise(() =>
+            NodeFSP.lstat(destinationPath, { bigint: true }).then(
+              (stat) =>
+                sourceIdentity !== null &&
+                stat.dev === sourceIdentity.dev &&
+                stat.ino === sourceIdentity.ino
+                  ? sourceIdentity
+                  : null,
+              () => null,
+            ),
+          );
+          const holdsLinkedFile = async (filePath: string) => {
+            if (linkedIdentity === null) return false;
+            try {
+              const stat = await NodeFSP.lstat(filePath, { bigint: true });
+              return stat.dev === linkedIdentity.dev && stat.ino === linkedIdentity.ino;
+            } catch {
+              return false;
+            }
+          };
+          // One rule for both removals: a name is removed only while the other
+          // name still holds the same file, so no removal can take a file's
+          // last name, whatever another program did to either name meanwhile.
+          const removeOwnLink = async () => {
+            const [destinationHolds, sourceHolds] = await Promise.all([
+              holdsLinkedFile(destinationPath),
+              holdsLinkedFile(sourcePath),
+            ]);
+            if (destinationHolds && sourceHolds) {
+              await NodeFSP.unlink(destinationPath).catch(() => undefined);
+            }
+          };
+          const conflict = (currentRevision: string) =>
+            new WorkspaceFileRevisionConflictError({
               workspaceRoot: input.cwd,
               relativePath: input.relativePath,
               resolvedPath: sourceTarget.absolutePath,
-              currentRevision: linked.revision,
+              currentRevision,
             });
+          let revision: string;
+          if (input.expectedRevision !== undefined) {
+            const linked = yield* readFile({
+              cwd: input.cwd,
+              relativePath: input.destinationRelativePath,
+            }).pipe(Effect.tapError(() => Effect.promise(removeOwnLink)));
+            if (linked.truncated || linked.revision !== input.expectedRevision) {
+              yield* Effect.promise(removeOwnLink);
+              return yield* conflict(linked.revision);
+            }
+            revision = linked.revision;
+          } else {
+            // A failed read must not leave the new name behind: a retry would
+            // then find it taken.
+            revision = yield* leadingBytesRevision(input, destinationPath).pipe(
+              Effect.tapError(() => Effect.promise(removeOwnLink)),
+            );
           }
-          yield* Effect.tryPromise({
+          // The locks order this service's own writes, not another program's.
+          // One that replaced the source after it was linked (an editor or a
+          // compiler writing atomically) keeps its file: the check and the
+          // unlink run back to back, and a replaced source is left alone.
+          const moved = yield* Effect.tryPromise({
             try: async () => {
+              // The old name may go only while the new name still holds the
+              // same file: otherwise removing it could delete that file's last
+              // name (the new one replaced by another program meanwhile).
+              const [sourceHolds, destinationHolds] = await Promise.all([
+                holdsLinkedFile(sourcePath),
+                holdsLinkedFile(destinationPath),
+              ]);
+              if (!sourceHolds || !destinationHolds) {
+                await removeOwnLink();
+                return false;
+              }
               try {
-                await NodeFSP.unlink(source.realTargetPath);
+                await NodeFSP.unlink(sourcePath);
               } catch (cause) {
-                await NodeFSP.unlink(destination.realTargetPath).catch(() => undefined);
+                await removeOwnLink();
                 throw cause;
               }
+              return true;
             },
             catch: (cause) =>
               new WorkspaceFileSystemOperationError({
@@ -1089,11 +1201,12 @@ export const make = Effect.gen(function* () {
                 cause,
               }),
           });
+          if (!moved) return yield* conflict(revision);
           yield* workspaceEntries.refresh(input.cwd);
           return {
             relativePath: sourceTarget.relativePath,
             destinationRelativePath: destination.target.relativePath,
-            revision: linked.revision,
+            revision,
           };
         }),
       ),
