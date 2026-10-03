@@ -5655,9 +5655,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
           />
         </DockCommandRadioItem>
       </MenuRadioGroup>
-      {quoteUnavailable ? (
-        <p className="scient-latex-menu-note">A list item can't be a quote.</p>
-      ) : null}
+      {quoteUnavailable ? <p className="scient-menu-note">A list item can't be a quote.</p> : null}
     </>
   );
   const writingStyleTools = (
@@ -5756,7 +5754,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         </DockCommandRadioItem>
       </MenuRadioGroup>
       {listsUnavailable ? (
-        <p className="scient-latex-menu-note">
+        <p className="scient-menu-note">
           {caretInText
             ? "A list can't be started at this place."
             : "Click in the text to start a list."}

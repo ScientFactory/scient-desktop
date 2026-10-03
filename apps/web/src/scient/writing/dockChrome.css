@@ -87,3 +87,13 @@
   margin-inline: 0.12rem;
   background: var(--border);
 }
+
+/* A quiet line under a menu's items, saying why some are unavailable. */
+.scient-menu-note {
+  margin: 2px 0 0;
+  border-top: 1px solid var(--border);
+  padding: 6px 8px 4px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.35;
+}

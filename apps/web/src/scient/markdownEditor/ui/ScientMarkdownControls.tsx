@@ -295,6 +295,8 @@ function StyleMenuItems({
             ) : null}
             <MenuRadioItem
               value={item.command}
+              // A table cell holds plain text: no headings and no quote.
+              disabled={snapshot.inTable && item.command !== "paragraph"}
               aria-keyshortcuts={shortcut?.ariaKeyShortcuts}
               onClick={() => controller.execute(item.command)}
             >
@@ -303,6 +305,7 @@ function StyleMenuItems({
           </Fragment>
         );
       })}
+      {snapshot.inTable ? <p className="scient-menu-note">A table cell holds text only.</p> : null}
     </MenuRadioGroup>
   );
 }
@@ -387,6 +390,7 @@ function ListsMenuItems({
           <MenuRadioItem
             key={item.command}
             value={item.command}
+            disabled={snapshot.inTable}
             aria-keyshortcuts={shortcut.ariaKeyShortcuts}
             onClick={() => controller.execute(item.command)}
           >
@@ -398,6 +402,7 @@ function ListsMenuItems({
       <MenuRadioItem value="list-none" onClick={() => controller.execute("list-none")}>
         <MenuRow icon={commandIcon("list-none")} label={WRITING_COMMAND_LABELS.noList} />
       </MenuRadioItem>
+      {snapshot.inTable ? <p className="scient-menu-note">A table cell holds text only.</p> : null}
     </MenuRadioGroup>
   );
 }

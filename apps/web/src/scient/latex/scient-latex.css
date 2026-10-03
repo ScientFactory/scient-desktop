@@ -3515,16 +3515,6 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   min-width: 0;
 }
 
-/* A quiet line under a menu's items, saying why they are unavailable. */
-.scient-latex-menu-note {
-  margin: 2px 0 0;
-  border-top: 1px solid var(--border);
-  padding: 6px 8px 4px;
-  color: var(--muted-foreground);
-  font-size: 11px;
-  line-height: 1.35;
-}
-
 /* Recovered work offered by the surface itself (Source and Split): one quiet
    line under the header, never a share of the document's height. Its details
    open downward, over the document. */
