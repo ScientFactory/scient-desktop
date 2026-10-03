@@ -85,10 +85,12 @@ Grok, Pi, Oh My Pi, and Scient Agent. The release-family runs are intentionally 
    `@scientfactory/provider-runtime`): every client refuses it, and because publication
    only accepts newer versions, a published next major would block later patches of the
    supported one. Qualifying a new major is a code change.
-   Scient Agent uses `ScientFactory/scient-agent` stable GitHub releases and its signed raw
-   `scient-agent-darwin-arm64` asset with the matching `.sha256` companion. Its first approved
-   target is macOS Apple silicon. A missing stable release is an unchanged result, not a
-   failed installation or permission to use an unsigned CI artifact.
+   Scient Agent uses `ScientFactory/scient-agent` stable GitHub releases and their raw
+   executables, one per target (`scient-agent-darwin-arm64`, `-darwin-x64`, `-linux-x64`,
+   `-linux-arm64`, `-windows-x64.exe`, `-windows-arm64.exe`), each with its `.sha256`
+   companion. The macOS executables are signed and notarized. A release is approved only when
+   it carries every target. A missing stable release is an unchanged result, not a failed
+   installation or permission to use an unsigned CI artifact.
 3. If the version is newer, its installer contract changed, or an older feed is
    missing a subsequently approved target, collect complete immutable metadata
    for every app-approved target.
@@ -105,8 +107,8 @@ Grok, Pi, Oh My Pi, and Scient Agent. The release-family runs are intentionally 
    managed-activation check against the installed binary: the RPC v2 handshake, the
    reported version, and `get_state`, in an isolated home without a session, tools,
    extensions, skills or rules. Its server dependencies are installed for that step.
-   Scient Agent uses the macOS Apple-silicon runner and its own runtime-info identity check
-   followed by RPC v2 and `get_state`. The same qualification runs during app activation.
+   Scient Agent runs its own runtime-info identity check, then RPC v2 and `get_state`, on all
+   six runners. The same qualification runs during app activation.
    Both the early executable smoke test and RPC qualification use temporary Scient-owned
    state and an empty home. A synthetic model configuration permits startup without an
    account; no model request is sent. Installation qualification is independent of sign-in.

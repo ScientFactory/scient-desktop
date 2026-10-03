@@ -334,18 +334,18 @@ The following table is **code-confirmed policy and catalog coverage**, not compl
 qualification. Current release coordinates live in the qualified catalog; supported targets and
 execution policy live in the provider manifests.
 
-| Provider                 | macOS                                                 | Windows            | Linux                          | Known exclusion                                                                  |
-| ------------------------ | ----------------------------------------------------- | ------------------ | ------------------------------ | -------------------------------------------------------------------------------- |
-| Codex                    | Apple silicon and Intel                               | ARM64 and x64      | ARM64 and x64 static artifacts | Other operating systems and architectures.                                       |
-| Claude                   | Apple silicon and Intel                               | ARM64 and x64      | ARM64 and x64, glibc and musl  | Other operating systems and architectures.                                       |
-| Antigravity (ACP)        | Apple silicon                                         | ARM64 and x64      | ARM64 and x64, glibc           | Intel macOS; musl Linux.                                                         |
-| Antigravity (legacy agy) | Apple silicon and Intel                               | ARM64 and x64      | ARM64 and x64, glibc           | Musl Linux.                                                                      |
-| Grok                     | Apple silicon and Intel                               | ARM64 and x64      | ARM64 and x64, glibc           | Musl Linux.                                                                      |
-| Droid                    | Apple silicon and Intel                               | ARM64 and x64      | ARM64 and x64, glibc           | Musl Linux.                                                                      |
-| Cursor                   | Apple silicon and Intel                               | ARM64 and x64      | ARM64 and x64, glibc           | Musl Linux.                                                                      |
-| OpenCode                 | No managed catalog                                    | No managed catalog | No managed catalog             | Scient-managed lifecycle is not advertised.                                      |
-| Pi                       | Apple silicon and Intel                               | ARM64 and x64      | ARM64 and x64, glibc           | Musl Linux.                                                                      |
-| Scient Agent             | Apple silicon policy; first qualified release pending | Not qualified      | Not qualified                  | No bundled release or unsigned development artifact is offered for installation. |
+| Provider                 | macOS                   | Windows            | Linux                          | Known exclusion                                                                                      |
+| ------------------------ | ----------------------- | ------------------ | ------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| Codex                    | Apple silicon and Intel | ARM64 and x64      | ARM64 and x64 static artifacts | Other operating systems and architectures.                                                           |
+| Claude                   | Apple silicon and Intel | ARM64 and x64      | ARM64 and x64, glibc and musl  | Other operating systems and architectures.                                                           |
+| Antigravity (ACP)        | Apple silicon           | ARM64 and x64      | ARM64 and x64, glibc           | Intel macOS; musl Linux.                                                                             |
+| Antigravity (legacy agy) | Apple silicon and Intel | ARM64 and x64      | ARM64 and x64, glibc           | Musl Linux.                                                                                          |
+| Grok                     | Apple silicon and Intel | ARM64 and x64      | ARM64 and x64, glibc           | Musl Linux.                                                                                          |
+| Droid                    | Apple silicon and Intel | ARM64 and x64      | ARM64 and x64, glibc           | Musl Linux.                                                                                          |
+| Cursor                   | Apple silicon and Intel | ARM64 and x64      | ARM64 and x64, glibc           | Musl Linux.                                                                                          |
+| OpenCode                 | No managed catalog      | No managed catalog | No managed catalog             | Scient-managed lifecycle is not advertised.                                                          |
+| Pi                       | Apple silicon and Intel | ARM64 and x64      | ARM64 and x64, glibc           | Musl Linux.                                                                                          |
+| Scient Agent             | Apple silicon and Intel | ARM64 and x64      | ARM64 and x64, glibc           | Musl Linux. Until its first release is published and qualified, nothing is offered for installation. |
 
 A release may advertise a row as platform-qualified only after its exact packaged install,
 cancellation, smoke test, authentication, repair, update, interruption, removal, and recovery paths
