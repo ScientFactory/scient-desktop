@@ -86,8 +86,8 @@ not pushed yet.
 
 **Decision:** editing controls must not block the document with a modal backdrop.
 Use compact anchored popovers for short forms; larger settings and reference
-workflows need a nonmodal panel. Link and Document settings have been converted in the local
-pilot so far. This inventory is based on current pilot source inspection,
+workflows need a nonmodal panel. Link uses a nonmodal popover; Document settings uses a hover submenu in the local
+pilot. This inventory is based on current pilot source inspection,
 not a visual or native interaction sweep; size varies by window.
 
 | Action / entry point | Markdown | LaTeX Visual | Status / proposed replacement |
@@ -97,7 +97,7 @@ not a visual or native interaction sweep; size varies by window.
 | Insert › Citation | Unavailable | Modal reference picker | Pending: nonmodal source picker panel. |
 | Insert › Cross-reference | Unavailable | Same modal reference picker | Pending: anchored picker or nonmodal panel. |
 | Insert › More › Bibliography | Unavailable | Modal bibliography form | Pending: compact popover or nonmodal panel. |
-| Document › Document settings | Unavailable | Nonmodal popover beside Document (384px, capped to viewport); smaller controls in the same style | **Fixed in local pilot; code not pushed.** No repeated title or whole-document description. Paper size and Orientation side by side; Top, Right, Left, Bottom in one row under Margin. Narrow margin fields beneath a distinct semibold Margin heading; margin help removed. No backdrop. |
+| Document › Document settings | Unavailable | Hover submenu beside the Document settings item (384px, capped to viewport); smaller controls in the same style | **Fixed in local pilot; code not pushed.** No repeated title or whole-document description. Paper size and Orientation side by side; Top, Right, Left, Bottom in one row under Margin. Narrow margin fields beneath a distinct semibold Margin heading; margin help removed. No backdrop. |
 | Title & authors: missing title or custom formatting fallback | Unavailable | Modal Document title guidance | Pending: inline guidance or compact popover. Ordinary title fields are inline, not modal. |
 | Keyboard shortcuts (Markdown More / LaTeX Document) | Large modal shortcut settings | Same large modal shortcut settings | Pending: nonmodal shortcuts panel. |
 | Keyboard shortcuts › My shortcut reference | Nested modal reference sheet | Same nested modal reference sheet | Pending: view within shortcuts panel. |
