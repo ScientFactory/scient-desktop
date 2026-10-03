@@ -5869,6 +5869,8 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         </>
       }
       disabled={readOnly}
+      // As wide as its longest item, "Symbols & structures", and no wider.
+      popupClassName="w-max [&_[role=menuitem]]:whitespace-nowrap [&_[role=menuitemradio]]:whitespace-nowrap"
     >
       {writingMathItems}
     </DockMenu>
