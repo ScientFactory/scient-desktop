@@ -116,9 +116,22 @@ import "./scient-latex.css";
 type FilePostRender = NonNullable<FileOptions<unknown>["onPostRender"]>;
 type LatexPdfDescriptor = ScientLatexBuildSnapshot["descriptor"];
 
+/** What the file header's rename needs to know about a LaTeX file. */
+export interface LatexRenameContext {
+  /** The main document that includes this file, when it is not the main one. */
+  readonly includedBy: string | null;
+  /** Unsaved Visual work would be lost by renaming now. */
+  readonly blocked: boolean;
+}
+
 interface ScientLatexSurfaceProps {
   /** Receives the exports the file header's download button offers. */
   readonly onDownloadActions: (actions: DocumentDownloadActions | null) => void;
+  /**
+   * Receives what renaming this file affects: the document that includes it,
+   * and whether unsaved Visual work makes renaming wait.
+   */
+  readonly onRenameContext: (context: LatexRenameContext | null) => void;
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly relativePath: string;
@@ -1182,6 +1195,16 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     });
   }, [onDownloadActions, pdfExportDisabled, wordExportDisabled]);
   useEffect(() => () => onDownloadActions(null), [onDownloadActions]);
+  const onRenameContext = props.onRenameContext;
+  const renameIncludedBy =
+    resolvedRootRelativePath !== null && resolvedRootRelativePath !== props.relativePath
+      ? resolvedRootRelativePath
+      : null;
+  const renameBlocked = hasLocalVisualDraft || visualProjectState.pending;
+  useEffect(() => {
+    onRenameContext({ includedBy: renameIncludedBy, blocked: renameBlocked });
+  }, [onRenameContext, renameIncludedBy, renameBlocked]);
+  useEffect(() => () => onRenameContext(null), [onRenameContext]);
   const exportMenu = (plain: boolean) => (
     <DocumentExportMenuItems
       plain={plain}

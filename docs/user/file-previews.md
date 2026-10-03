@@ -43,16 +43,23 @@ than the computer displaying Scient.
 
 Workspace and chat-linked host-file previews follow changes made on disk. The
 compact reload action in the file header remains available for an immediate
-retry or manual refresh. If automatic updates pause, that action is highlighted
+retry or manual refresh; it turns once when clicked. If automatic updates pause, that action is highlighted
 and its tooltip explains that reloading will retry them. A failed read keeps the
 last available preview visible while reporting the problem.
 
 The Files tree, Git status, and working diff also refresh after the agent
 finishes a file-changing tool or command. Unsaved source edits remain protected.
 
+To rename an open project file, click its name at the end of the file header.
+The name is selected without its extension, so typing a new name keeps the file
+type; a path such as `drafts/notes` also moves it. Renaming waits while unsaved
+edits are being saved, and never replaces an existing file. Renaming a LaTeX
+file that another document includes says so: update the line that includes it.
+Links to the file from other documents are not updated.
+
 Current limitation: automatic refresh follows the exact known path. If the file
-is renamed or moved, reopen it from its new location; Scient does not yet
-relocate an already open file automatically.
+is renamed or moved outside Scient, reopen it from its new location; Scient does
+not yet relocate an already open file automatically.
 
 - Markdown files open as rendered documents. Writable project Markdown is
   directly editable in that rendered surface; formatting controls appear

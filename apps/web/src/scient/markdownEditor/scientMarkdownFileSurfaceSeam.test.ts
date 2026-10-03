@@ -107,10 +107,11 @@ describe("Scient Markdown file-preview seam", () => {
 
   it("limits workspace lifecycle UI to one owned create and rename mount", () => {
     expect(browserSource.match(/<ScientMarkdownCreateButton\b/gu)).toHaveLength(1);
-    expect(panelSource.match(/<ScientMarkdownRenameButton\b/gu)).toHaveLength(1);
+    expect(panelSource.match(/<FileRenameButton\b/gu)).toHaveLength(1);
     expect(browserSource).not.toContain("createOnly: true");
     expect(panelSource).not.toContain("projects.renameFile");
-    expect(panelSource).toContain("isRichMarkdown && !file.data?.readOnly");
+    expect(panelSource).toContain("file.data?.readOnly !== true");
+    expect(panelSource).toContain("normalize: normalizeMarkdownCreatePath");
   });
 
   it("refreshes the current workspace tree and link index after refresh, creation, or agent edits", () => {
@@ -138,9 +139,9 @@ describe("Scient Markdown file-preview seam", () => {
     expect(surfaceSource).toContain("onOpenWikiLink={handleOpenWikiLink}");
   });
 
-  it("uses the current filename itself as the Markdown rename affordance", () => {
+  it("uses the current filename itself as the rename affordance, for every file", () => {
     expect(panelSource).toContain("currentFileControl={");
-    expect(panelSource).toContain("<ScientMarkdownRenameButton");
+    expect(panelSource).toContain("<FileRenameButton");
     expect(panelSource).toContain('label={relativePath.slice(relativePath.lastIndexOf("/") + 1)}');
   });
 

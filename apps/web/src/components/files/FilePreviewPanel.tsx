@@ -99,7 +99,9 @@ import {
 import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
 import { computeSourceLanguageForPath } from "~/scient/compute/computeSourceLanguage";
 import { computeFileContextId } from "~/scient/compute/computeContextStore";
-import { ScientMarkdownRenameButton } from "~/scient/markdownEditor/ui/ScientMarkdownRenameButton";
+import { FileRenameButton } from "./FileRenameButton";
+import { normalizeMarkdownCreatePath } from "~/scient/markdownEditor/ui/ScientMarkdownCreateButton";
+import type { LatexRenameContext } from "~/scient/latex/ScientLatexSurface";
 import {
   isScientMarkdownDocumentPath,
   shouldUseScientMarkdownEditor,
@@ -1764,6 +1766,25 @@ export default function FilePreviewPanel({
         savingCopyRef.current = false;
       });
   }, [absolutePath, createCopyUrl, environmentHttpBaseUrl, environmentId]);
+  // Any workspace file can be renamed from its name in the header. A file the
+  // editor holds is renamed only at the revision it last read; a file the app
+  // cannot read whole (media, PDF, other binary, or truncated) has no such
+  // revision and is renamed as it is.
+  const [latexRename, setLatexRename] = useState<LatexRenameContext | null>(null);
+  const canRenameFile =
+    relativePath !== null &&
+    !isHostFile &&
+    !isDirectory &&
+    file.data?.readOnly !== true &&
+    file.data?.outsideWorkspace !== true;
+  const renameRevision =
+    file.data && !file.data.truncated
+      ? (markdownSnapshot?.baselineRevision ?? file.data.revision)
+      : null;
+  const renameDisabled =
+    effectiveSourcePending ||
+    (latexRename?.blocked ?? false) ||
+    (file.data === null && file.failure !== "binary_file");
   // A LaTeX document's own exports, published by its surface.
   const [latexDownloads, setLatexDownloads] = useState<DocumentDownloadActions | null>(null);
   const canSaveCopy =
@@ -1921,30 +1942,42 @@ export default function FilePreviewPanel({
                 relativePath={relativePath}
                 onOpenFile={onOpenFile}
                 currentFileControl={
-                  isRichMarkdown && !file.data?.readOnly ? (
-                    <ScientMarkdownRenameButton
+                  canRenameFile ? (
+                    <FileRenameButton
                       {...(markdownLease
                         ? { beforeRename: () => markdownLease.holdForRename() }
+                        : {})}
+                      {...(isRichMarkdown
+                        ? {
+                            normalize: normalizeMarkdownCreatePath,
+                            invalidMessage: "Enter a relative Markdown path inside this workspace.",
+                          }
+                        : {})}
+                      {...(latexRename?.includedBy
+                        ? {
+                            notice: (
+                              <>
+                                {latexRename.includedBy} includes this file. After renaming, update
+                                the line that includes it.
+                              </>
+                            ),
+                          }
                         : {})}
                       environmentId={environmentId}
                       cwd={cwd}
                       relativePath={relativePath}
-                      revision={
-                        markdownSnapshot?.baselineRevision ?? file.data?.revision ?? "unavailable"
-                      }
-                      disabled={
-                        effectiveSourcePending ||
-                        file.data === null ||
-                        (file.data?.truncated ?? false)
-                      }
+                      revision={renameRevision}
+                      disabled={renameDisabled}
                       label={relativePath.slice(relativePath.lastIndexOf("/") + 1)}
                       onRenamed={(destinationRelativePath, revision) => {
-                        markdownPersistenceRegistry.forgetClean({
-                          environmentId,
-                          cwd,
-                          relativePath,
-                        });
-                        if (file.data) {
+                        if (usesDocumentSession) {
+                          markdownPersistenceRegistry.forgetClean({
+                            environmentId,
+                            cwd,
+                            relativePath,
+                          });
+                        }
+                        if (file.data && !file.data.truncated) {
                           setProjectFileQueryData(
                             environmentId,
                             cwd,
@@ -2278,6 +2311,7 @@ export default function FilePreviewPanel({
                 <ScientLatexSurface
                   key={`${relativePath}:${resolvedTheme}`}
                   onDownloadActions={setLatexDownloads}
+                  onRenameContext={setLatexRename}
                   environmentId={environmentId}
                   cwd={cwd}
                   relativePath={relativePath}

@@ -263,6 +263,36 @@ export const make = Effect.gen(function* () {
     revisionForBytes(new TextEncoder().encode(contents));
 
   /**
+   * The revision a read would report for a file's first bytes, for any file,
+   * binary included. A renamed file that is not read whole reports this.
+   */
+  const leadingBytesRevision = (
+    input: { readonly cwd: string; readonly relativePath: string },
+    absolutePath: string,
+  ) =>
+    Effect.tryPromise({
+      try: async () => {
+        const handle = await NodeFSP.open(absolutePath, "r");
+        try {
+          const buffer = Buffer.alloc(PROJECT_READ_FILE_MAX_BYTES);
+          const { bytesRead } = await handle.read(buffer, 0, PROJECT_READ_FILE_MAX_BYTES, 0);
+          return revisionForBytes(buffer.subarray(0, bytesRead));
+        } finally {
+          await handle.close();
+        }
+      },
+      catch: (cause) =>
+        new WorkspaceFileSystemOperationError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: absolutePath,
+          operationPath: absolutePath,
+          operation: "read",
+          cause,
+        }),
+    });
+
+  /**
    * Resolves the file a read targets, for one of two purposes.
    *
    * - `view`: viewing never depends on the project boundary. An absolute path,
@@ -983,17 +1013,24 @@ export const make = Effect.gen(function* () {
             destinationInput,
             initialDestination.realTargetPath,
           );
-          const current = yield* readFile({
-            cwd: input.cwd,
-            relativePath: input.relativePath,
-          });
-          if (current.truncated || current.revision !== input.expectedRevision) {
-            return yield* new WorkspaceFileRevisionConflictError({
-              workspaceRoot: input.cwd,
+          // A file the client edits carries the revision it last saw, so a
+          // newer version on disk is never renamed under its open editor. A
+          // file it cannot read whole (binary, or larger than a read) has no
+          // such revision and nothing open to lose: renaming moves its bytes
+          // unchanged, so it is renamed without the content check.
+          if (input.expectedRevision !== undefined) {
+            const current = yield* readFile({
+              cwd: input.cwd,
               relativePath: input.relativePath,
-              resolvedPath: sourceTarget.absolutePath,
-              currentRevision: current.revision,
             });
+            if (current.truncated || current.revision !== input.expectedRevision) {
+              return yield* new WorkspaceFileRevisionConflictError({
+                workspaceRoot: input.cwd,
+                relativePath: input.relativePath,
+                resolvedPath: sourceTarget.absolutePath,
+                currentRevision: current.revision,
+              });
+            }
           }
           const sourceStat = yield* Effect.tryPromise({
             try: () => NodeFSP.lstat(sourceTarget.absolutePath),
@@ -1055,20 +1092,26 @@ export const make = Effect.gen(function* () {
                     cause,
                   }),
           });
-          const linked = yield* readFile({
-            cwd: input.cwd,
-            relativePath: input.destinationRelativePath,
-          });
-          if (linked.truncated || linked.revision !== input.expectedRevision) {
-            yield* Effect.tryPromise(() => NodeFSP.unlink(destination.realTargetPath)).pipe(
-              Effect.ignore,
-            );
-            return yield* new WorkspaceFileRevisionConflictError({
-              workspaceRoot: input.cwd,
-              relativePath: input.relativePath,
-              resolvedPath: sourceTarget.absolutePath,
-              currentRevision: linked.revision,
+          let revision: string;
+          if (input.expectedRevision !== undefined) {
+            const linked = yield* readFile({
+              cwd: input.cwd,
+              relativePath: input.destinationRelativePath,
             });
+            if (linked.truncated || linked.revision !== input.expectedRevision) {
+              yield* Effect.tryPromise(() => NodeFSP.unlink(destination.realTargetPath)).pipe(
+                Effect.ignore,
+              );
+              return yield* new WorkspaceFileRevisionConflictError({
+                workspaceRoot: input.cwd,
+                relativePath: input.relativePath,
+                resolvedPath: sourceTarget.absolutePath,
+                currentRevision: linked.revision,
+              });
+            }
+            revision = linked.revision;
+          } else {
+            revision = yield* leadingBytesRevision(input, destination.realTargetPath);
           }
           yield* Effect.tryPromise({
             try: async () => {
@@ -1093,7 +1136,7 @@ export const make = Effect.gen(function* () {
           return {
             relativePath: sourceTarget.relativePath,
             destinationRelativePath: destination.target.relativePath,
-            revision: linked.revision,
+            revision,
           };
         }),
       ),

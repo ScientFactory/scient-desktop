@@ -1,7 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { FilePenLine } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -9,26 +9,56 @@ import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "~/component
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import { normalizeMarkdownCreatePath } from "./ScientMarkdownCreateButton";
-
 function failureCode(cause: unknown): string | null {
   if (typeof cause !== "object" || cause === null || !("failure" in cause)) return null;
   return typeof cause.failure === "string" ? cause.failure : null;
 }
 
-interface ScientMarkdownRenameButtonProps {
+function extension(path: string): string {
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(dot) : "";
+}
+
+/**
+ * A typed destination as a workspace-relative path, or null when it is not
+ * one. A name typed without an extension keeps the file's own.
+ */
+export function normalizeRenamePath(input: string, original: string): string | null {
+  let path = input.trim().replaceAll("\\", "/").replace(/^\.\//u, "");
+  if (path.length === 0 || path.startsWith("/") || /^[A-Za-z]:/u.test(path)) return null;
+  const segments = path.split("/");
+  if (segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")) {
+    return null;
+  }
+  if (extension(path) === "") path += extension(original);
+  return path.length <= 512 ? path : null;
+}
+
+interface FileRenameButtonProps {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly relativePath: string;
-  readonly revision: string;
+  /**
+   * The revision the editor last read, checked by the server before renaming.
+   * Null for a file the app cannot read whole (binary or truncated).
+   */
+  readonly revision: string | null;
   readonly disabled: boolean;
   /** Acquires the file's short clean-state barrier before dispatching the rename. */
   readonly beforeRename?: () => (() => void) | null;
+  /** Narrows the destinations a file type accepts; the default keeps any path. */
+  readonly normalize?: (input: string) => string | null;
+  /** What to enter, when the default message does not fit the file type. */
+  readonly invalidMessage?: string;
+  /** A note under the field, for example what else refers to this file. */
+  readonly notice?: ReactNode;
   readonly label: string;
   readonly onRenamed: (destinationRelativePath: string, revision: string) => void;
 }
 
-export function ScientMarkdownRenameButton(props: ScientMarkdownRenameButtonProps) {
+/** The open file's name, which renames the file when clicked. */
+export function FileRenameButton(props: FileRenameButtonProps) {
   const renameFile = useAtomCommand(projectEnvironment.renameFile, { reportFailure: false });
   const inputRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
@@ -43,9 +73,10 @@ export function ScientMarkdownRenameButton(props: ScientMarkdownRenameButtonProp
     queueMicrotask(() => {
       const input = inputRef.current;
       if (!input) return;
+      // The name is selected, not its extension, so typing keeps the file type.
       const slash = props.relativePath.lastIndexOf("/");
       const dot = props.relativePath.lastIndexOf(".");
-      input.setSelectionRange(slash + 1, dot > slash ? dot : props.relativePath.length);
+      input.setSelectionRange(slash + 1, dot > slash + 1 ? dot : props.relativePath.length);
     });
   }, [open, props.relativePath]);
 
@@ -57,9 +88,11 @@ export function ScientMarkdownRenameButton(props: ScientMarkdownRenameButtonProp
       setOpen(false);
       return;
     }
-    const destinationRelativePath = normalizeMarkdownCreatePath(path);
+    const destinationRelativePath = props.normalize
+      ? props.normalize(path)
+      : normalizeRenamePath(path, props.relativePath);
     if (!destinationRelativePath) {
-      setError("Enter a relative Markdown path inside this workspace.");
+      setError(props.invalidMessage ?? "Enter a relative path inside this workspace.");
       return;
     }
     if (destinationRelativePath === props.relativePath) {
@@ -80,7 +113,7 @@ export function ScientMarkdownRenameButton(props: ScientMarkdownRenameButtonProp
           cwd: props.cwd,
           relativePath: props.relativePath,
           destinationRelativePath,
-          expectedRevision: props.revision,
+          ...(props.revision === null ? {} : { expectedRevision: props.revision }),
         },
       });
       if (result._tag === "Success") {
@@ -98,7 +131,7 @@ export function ScientMarkdownRenameButton(props: ScientMarkdownRenameButtonProp
             ? "The file changed before it could be renamed. Reload it and try again."
             : cause instanceof Error
               ? cause.message
-              : "Unable to rename the Markdown file.",
+              : "Unable to rename the file.",
       );
     } finally {
       release?.();
@@ -114,13 +147,13 @@ export function ScientMarkdownRenameButton(props: ScientMarkdownRenameButtonProp
           <button
             type="button"
             aria-label={`Rename ${props.label}`}
-            className="group/markdown-filename -mx-1 inline-flex max-w-48 items-center gap-1 rounded-sm px-1 py-0.5 font-medium text-foreground outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-70"
+            className="group/file-name -mx-1 inline-flex max-w-48 items-center gap-1 rounded-sm px-1 py-0.5 font-medium text-foreground outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-70"
             disabled={props.disabled}
           >
             <span className="truncate">{props.label}</span>
             <FilePenLine
               aria-hidden
-              className="size-3 shrink-0 opacity-0 transition-opacity group-hover/markdown-filename:opacity-70 group-focus-visible/markdown-filename:opacity-70"
+              className="size-3 shrink-0 opacity-0 transition-opacity group-hover/file-name:opacity-70 group-focus-visible/file-name:opacity-70"
             />
           </button>
         }
@@ -133,17 +166,20 @@ export function ScientMarkdownRenameButton(props: ScientMarkdownRenameButtonProp
             void submit();
           }}
         >
-          <PopoverTitle>Rename Markdown document</PopoverTitle>
+          <PopoverTitle>Rename file</PopoverTitle>
           <Input
             ref={inputRef}
             aria-invalid={error !== null || undefined}
-            aria-label="Markdown file path"
+            aria-label="File path"
             disabled={submitting}
             onChange={(event) => setPath(event.target.value)}
             size="compact"
             spellCheck={false}
             value={path}
           />
+          {props.notice ? (
+            <div className="text-xs text-muted-foreground">{props.notice}</div>
+          ) : null}
           {error ? (
             <p className="text-xs text-destructive" role="alert">
               {error}

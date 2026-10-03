@@ -1374,6 +1374,41 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("renames a file it cannot read whole without a revision, never replacing", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const bytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0, 1, 2, 3]);
+        yield* fileSystem.writeFile(path.join(cwd, "figure.pdf"), bytes);
+        yield* writeTextFile(cwd, "taken.pdf", "keep");
+
+        const refused = yield* workspaceFileSystem
+          .renameFile({ cwd, relativePath: "figure.pdf", destinationRelativePath: "taken.pdf" })
+          .pipe(Effect.flip);
+        expect(refused).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileExistsError);
+        expect(yield* fileSystem.readFileString(path.join(cwd, "taken.pdf"))).toBe("keep");
+
+        const renamed = yield* workspaceFileSystem.renameFile({
+          cwd,
+          relativePath: "figure.pdf",
+          destinationRelativePath: "figures/final.pdf",
+        });
+        expect(renamed.destinationRelativePath).toBe("figures/final.pdf");
+        expect(renamed.revision).toMatch(/^sha256:/u);
+        expect([...(yield* fileSystem.readFile(path.join(cwd, "figures/final.pdf")))]).toEqual([
+          ...bytes,
+        ]);
+        expect(
+          yield* fileSystem.stat(path.join(cwd, "figure.pdf")).pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          ),
+        ).toBe(false);
+      }),
+    );
+
     it.effect("allows only one concurrent rename of the same source", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
