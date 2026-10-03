@@ -63,6 +63,7 @@ import { DockCommandItem } from "../writing/dockChrome";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "~/components/ui/menu";
 import { ReaderButton, IfRowHidden, ReaderRowContext } from "../writing/DocumentReaderControls";
 import { DocumentExportMenuItems } from "../documentExport/DocumentExportMenuItems";
+import type { DocumentDownloadActions } from "../documentExport/DocumentDownloadMenu";
 import { ReaderBarHostContext, type ReaderBarHost } from "../writing/readerBarHost";
 const LatexProjectVisualEditor = lazy(() =>
   import("./LatexProjectVisualEditor").then((module) => ({
@@ -116,6 +117,8 @@ type FilePostRender = NonNullable<FileOptions<unknown>["onPostRender"]>;
 type LatexPdfDescriptor = ScientLatexBuildSnapshot["descriptor"];
 
 interface ScientLatexSurfaceProps {
+  /** Receives the exports the file header's download button offers. */
+  readonly onDownloadActions: (actions: DocumentDownloadActions | null) => void;
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly relativePath: string;
@@ -1110,68 +1113,84 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     </ScientTooltip>
   );
   // Export: in the header's More, or in the Visual editor's Document menu.
+  const wordExportDisabled =
+    target === null ||
+    sourcePending ||
+    visualProjectState.pending ||
+    hasLocalVisualDraft ||
+    buildBlocked;
+  const pdfExportDisabled =
+    descriptor === null ||
+    !pdfMatchesBuffer ||
+    status.stale ||
+    status.busy ||
+    sourcePending ||
+    visualProjectState.pending ||
+    hasLocalVisualDraft ||
+    buildBlocked ||
+    exportingPdf;
+  const exportPdf = () => {
+    if (!descriptor || !pdfMatchesBuffer || status.stale || exportingPdf) return;
+    setExportingPdf(true);
+    setSyncNotice(null);
+    void (async () => {
+      const prepared = await prepareDocument();
+      if (!prepared?.isCurrent() || !target) return;
+      const snapshot = await readLatexBuildStatus(target.environmentId, {
+        workspaceRoot: target.cwd,
+        relativePath: target.relativePath,
+      });
+      if (!prepared.isCurrent()) return;
+      const current = { ...build, snapshot };
+      if (
+        !snapshot?.descriptor ||
+        latexStatusStripModel(current, props.cwd).stale ||
+        latexStatusStripModel(current, props.cwd).busy ||
+        [...prepared.revisions].some(
+          ([path, revision]) =>
+            isLatexPreviewFile(path) && snapshot.visualSourceRevisions?.[path] !== revision,
+        )
+      ) {
+        setSyncNotice({
+          label: "Rebuild needed",
+          message: "Rebuild the PDF before exporting the current document.",
+        });
+        return;
+      }
+      await savePdfCopy(snapshot.descriptor);
+    })()
+      .catch((error: unknown) =>
+        setSyncNotice({
+          label: "Export failed",
+          message: error instanceof Error ? error.message : "Could not save the PDF copy.",
+        }),
+      )
+      .finally(() => setExportingPdf(false));
+  };
+  const exportWord = () => setWordExportOpen(true);
+  // The file header's download button offers the same exports.
+  const downloadActions = useRef({ pdf: exportPdf, word: exportWord });
+  downloadActions.current = { pdf: exportPdf, word: exportWord };
+  const onDownloadActions = props.onDownloadActions;
+  useEffect(() => {
+    onDownloadActions({
+      pdf: () => downloadActions.current.pdf(),
+      pdfDisabled: pdfExportDisabled,
+      pdfUnavailableReason: "Rebuild PDF to export the current document.",
+      word: () => downloadActions.current.word(),
+      wordDisabled: wordExportDisabled,
+    });
+  }, [onDownloadActions, pdfExportDisabled, wordExportDisabled]);
+  useEffect(() => () => onDownloadActions(null), [onDownloadActions]);
   const exportMenu = (plain: boolean) => (
     <DocumentExportMenuItems
       plain={plain}
-      onWordExport={() => setWordExportOpen(true)}
-      wordDisabled={
-        target === null ||
-        sourcePending ||
-        visualProjectState.pending ||
-        hasLocalVisualDraft ||
-        buildBlocked
-      }
+      onWordExport={exportWord}
+      wordDisabled={wordExportDisabled}
       pdfLabel={exportingPdf ? "Exporting\u2026" : "PDF"}
-      pdfDisabled={
-        descriptor === null ||
-        !pdfMatchesBuffer ||
-        status.stale ||
-        status.busy ||
-        sourcePending ||
-        visualProjectState.pending ||
-        hasLocalVisualDraft ||
-        buildBlocked ||
-        exportingPdf
-      }
+      pdfDisabled={pdfExportDisabled}
       pdfUnavailableReason="Rebuild PDF to export the current document."
-      onPdfExport={() => {
-        if (!descriptor || !pdfMatchesBuffer || status.stale || exportingPdf) return;
-        setExportingPdf(true);
-        setSyncNotice(null);
-        void (async () => {
-          const prepared = await prepareDocument();
-          if (!prepared?.isCurrent() || !target) return;
-          const snapshot = await readLatexBuildStatus(target.environmentId, {
-            workspaceRoot: target.cwd,
-            relativePath: target.relativePath,
-          });
-          if (!prepared.isCurrent()) return;
-          const current = { ...build, snapshot };
-          if (
-            !snapshot?.descriptor ||
-            latexStatusStripModel(current, props.cwd).stale ||
-            latexStatusStripModel(current, props.cwd).busy ||
-            [...prepared.revisions].some(
-              ([path, revision]) =>
-                isLatexPreviewFile(path) && snapshot.visualSourceRevisions?.[path] !== revision,
-            )
-          ) {
-            setSyncNotice({
-              label: "Rebuild needed",
-              message: "Rebuild the PDF before exporting the current document.",
-            });
-            return;
-          }
-          await savePdfCopy(snapshot.descriptor);
-        })()
-          .catch((error: unknown) =>
-            setSyncNotice({
-              label: "Export failed",
-              message: error instanceof Error ? error.message : "Could not save the PDF copy.",
-            }),
-          )
-          .finally(() => setExportingPdf(false));
-      }}
+      onPdfExport={exportPdf}
     />
   );
   const exportItems = exportMenu(false);

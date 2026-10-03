@@ -1,5 +1,6 @@
 import type { ProjectFileErrorReason } from "@t3tools/contracts";
 import { AlertTriangle, Check, RefreshCw } from "lucide-react";
+import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -20,6 +21,8 @@ export function ScientFileReloadButton(props: {
   readonly size?: "icon-sm" | "icon-xs";
 }) {
   const label = props.label ?? "Reload file from disk";
+  // A reload usually takes a few milliseconds; one short turn shows it happened.
+  const [turns, setTurns] = useState(0);
   const actionLabel = props.isPending
     ? "Reloading file…"
     : props.automaticRefreshUnavailable
@@ -31,14 +34,25 @@ export function ScientFileReloadButton(props: {
         render={
           <Button
             className="shrink-0"
-            onClick={props.onReload}
+            onClick={() => {
+              setTurns((count) => count + 1);
+              props.onReload();
+            }}
             aria-label={actionLabel}
             aria-busy={props.isPending}
             disabled={props.isPending}
             variant={props.automaticRefreshUnavailable ? "ghost-warning" : "ghost"}
             size={props.size ?? "icon-sm"}
           >
-            <RefreshCw className={cn("size-3.5", props.isPending && "animate-spin")} />
+            <RefreshCw
+              key={turns}
+              className={cn(
+                "size-3.5",
+                props.isPending
+                  ? "animate-spin"
+                  : turns > 0 && "animate-[spin_0.6s_ease-in-out_1] motion-reduce:animate-none",
+              )}
+            />
           </Button>
         }
       />

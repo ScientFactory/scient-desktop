@@ -40,6 +40,10 @@ import {
   WrapTextIcon,
 } from "lucide-react";
 import { MarkdownDownloadMenu } from "~/scient/documentExport/MarkdownDownloadMenu";
+import {
+  DocumentDownloadMenu,
+  type DocumentDownloadActions,
+} from "~/scient/documentExport/DocumentDownloadMenu";
 import * as Schema from "effect/Schema";
 import {
   lazy,
@@ -1760,6 +1764,8 @@ export default function FilePreviewPanel({
         savingCopyRef.current = false;
       });
   }, [absolutePath, createCopyUrl, environmentHttpBaseUrl, environmentId]);
+  // A LaTeX document's own exports, published by its surface.
+  const [latexDownloads, setLatexDownloads] = useState<DocumentDownloadActions | null>(null);
   const canSaveCopy =
     attachment === undefined && absolutePath !== null && !isDirectory && !!environmentHttpBaseUrl;
 
@@ -2025,6 +2031,12 @@ export default function FilePreviewPanel({
               persistence={markdownLease}
               onSaveCopy={handleSaveCopy}
             />
+          ) : canSaveCopy && latexDownloads ? (
+            <DocumentDownloadMenu
+              {...latexDownloads}
+              sourceLabel="LaTeX source (.tex)"
+              onSaveCopy={handleSaveCopy}
+            />
           ) : canSaveCopy ? (
             <FileSurfaceAction label="Save a copy to this device" onPress={handleSaveCopy}>
               <Download className="size-3.5" />
@@ -2261,6 +2273,7 @@ export default function FilePreviewPanel({
               >
                 <ScientLatexSurface
                   key={`${relativePath}:${resolvedTheme}`}
+                  onDownloadActions={setLatexDownloads}
                   environmentId={environmentId}
                   cwd={cwd}
                   relativePath={relativePath}

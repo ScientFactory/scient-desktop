@@ -252,6 +252,7 @@ describe("the LaTeX surface on a document session", () => {
     const snapshot = useSyncExternalStore(lease.subscribe, lease.getSnapshot);
     return (
       <ScientLatexSurface
+        onDownloadActions={() => {}}
         environmentId={environmentId}
         cwd={cwd}
         relativePath={relativePath}
@@ -838,6 +839,7 @@ describe("navigation between LaTeX source and its PDF", () => {
     await act(async () => {
       root.render(
         <ScientLatexSurface
+          onDownloadActions={() => {}}
           environmentId={environmentId}
           cwd={cwd}
           relativePath={relativePath}
@@ -1045,6 +1047,7 @@ describe("document actions before Visual has ever mounted", () => {
     await act(async () =>
       root.render(
         <ScientLatexSurface
+          onDownloadActions={() => {}}
           environmentId={environmentId}
           cwd={cwd}
           relativePath="paper.tex"
