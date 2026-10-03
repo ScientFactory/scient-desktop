@@ -39,6 +39,7 @@ import {
   Table2,
   WrapTextIcon,
 } from "lucide-react";
+import { MarkdownDownloadMenu } from "~/scient/documentExport/MarkdownDownloadMenu";
 import * as Schema from "effect/Schema";
 import {
   lazy,
@@ -1967,6 +1968,17 @@ export default function FilePreviewPanel({
               enableShortcut={false}
             />
           ) : null}
+          {/* Word wrap comes before the view toggle, so the toggle keeps its place
+              when it switches to the source and back. */}
+          {showsRawText ? (
+            <FileSurfaceAction
+              label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
+              pressed={wordWrap}
+              onPress={() => updateClientSettings({ wordWrap: !wordWrap })}
+            >
+              <WrapTextIcon className="size-3.5" />
+            </FileSurfaceAction>
+          ) : null}
           {canToggleRenderedForSurface ? (
             <FileSurfaceAction
               label={renderedToggleLabel(renderedMode!, surfaceRendered)}
@@ -1980,15 +1992,6 @@ export default function FilePreviewPanel({
               ) : (
                 <Eye className="size-3.5" />
               )}
-            </FileSurfaceAction>
-          ) : null}
-          {showsRawText ? (
-            <FileSurfaceAction
-              label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
-              pressed={wordWrap}
-              onPress={() => updateClientSettings({ wordWrap: !wordWrap })}
-            >
-              <WrapTextIcon className="size-3.5" />
             </FileSurfaceAction>
           ) : null}
           {canOpenInBrowser ? (
@@ -2012,7 +2015,17 @@ export default function FilePreviewPanel({
               }
             />
           ) : null}
-          {canSaveCopy ? (
+          {canSaveCopy && isRichMarkdown && markdownLease && relativePath ? (
+            // A Markdown file downloads as itself, or as a PDF or Word document.
+            <MarkdownDownloadMenu
+              environmentId={environmentId}
+              cwd={cwd}
+              relativePath={relativePath}
+              threadRef={threadRef}
+              persistence={markdownLease}
+              onSaveCopy={handleSaveCopy}
+            />
+          ) : canSaveCopy ? (
             <FileSurfaceAction label="Save a copy to this device" onPress={handleSaveCopy}>
               <Download className="size-3.5" />
             </FileSurfaceAction>
