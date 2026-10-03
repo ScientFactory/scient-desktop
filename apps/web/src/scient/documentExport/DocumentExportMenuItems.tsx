@@ -19,8 +19,9 @@ export function DocumentExportMenuItems(props: {
         {props.plain ? null : <FileDown />}
         <span>Export</span>
       </MenuSubTrigger>
-      {/* As wide as "PDF" and "Word"; the reason a format is unavailable wraps. */}
-      <MenuSubPopup className="w-max max-w-60">
+      {/* Narrow: "PDF" and "Word" with a little room after them (the menu's
+          default minimum is 10rem). The reason a format is unavailable wraps. */}
+      <MenuSubPopup className="w-max min-w-24 max-w-60">
         <DockCommandItem disabled={props.pdfDisabled} onClick={props.onPdfExport}>
           <span className="flex min-w-0 flex-col">
             <span>{props.pdfLabel ?? "PDF"}</span>
