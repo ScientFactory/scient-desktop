@@ -47,22 +47,22 @@ const AGENT_ACCOUNT_GROUP_ORDER = new Map([
   ["google-vertex", 2],
 ]);
 
-/** Default Pi/OMP account groups; preserve catalog order within each group. */
+/** Default native agent account groups; preserve catalog order within each group. */
 export function sortAgentModelsByAccount<T extends { readonly slug: string }>(
   driver: string,
   models: ReadonlyArray<T>,
 ): T[] {
-  if (driver !== "pi" && driver !== "omp") return [...models];
+  if (driver !== "pi" && driver !== "omp" && driver !== "scient") return [...models];
   const rank = (model: T) => AGENT_ACCOUNT_GROUP_ORDER.get(model.slug.split("/")[0] ?? "") ?? 3;
   return [...models].sort((a, b) => rank(a) - rank(b));
 }
 
-/** Curated picker defaults for native Pi/OMP catalogs, independent of account access. */
+/** Curated picker defaults for native agent catalogs, independent of account access. */
 export function getDefaultHiddenAgentModels(
   driver: string,
   models: ReadonlyArray<{ readonly slug: string; readonly isCustom?: boolean }>,
 ): string[] {
-  if (driver !== "pi" && driver !== "omp") return [];
+  if (driver !== "pi" && driver !== "omp" && driver !== "scient") return [];
   return models
     .filter(
       (model) =>
@@ -83,7 +83,7 @@ export function resolveProviderModelPreferences(
     | { readonly hiddenModels: ReadonlyArray<string>; readonly modelOrder: ReadonlyArray<string> }
     | undefined,
 ) {
-  if (driver !== "pi" && driver !== "omp") {
+  if (driver !== "pi" && driver !== "omp" && driver !== "scient") {
     return preferences ?? { hiddenModels: [], modelOrder: [] };
   }
   if (preferences?.modelOrder.length) return preferences;

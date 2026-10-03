@@ -192,6 +192,8 @@ export const DROID_DEFAULT_MODEL = "droid-default";
 export const PI_DEFAULT_TEXT_GENERATION_MODEL = "pi-default";
 /** Resolve from this Oh My Pi instance's discovered catalog before background generation. */
 export const OMP_DEFAULT_TEXT_GENERATION_MODEL = "omp-default";
+/** Resolve from this Scient Agent instance's discovered catalog before background generation. */
+export const SCIENT_DEFAULT_TEXT_GENERATION_MODEL = "scient-default";
 export const DEFAULT_TEXT_GENERATION_REASONING_EFFORT = "low";
 
 export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
@@ -217,6 +219,7 @@ export const DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [DROID_DRIVER_KIND]: DROID_DEFAULT_MODEL,
   [PI_DRIVER_KIND]: PI_DEFAULT_TEXT_GENERATION_MODEL,
   [OMP_DRIVER_KIND]: OMP_DEFAULT_TEXT_GENERATION_MODEL,
+  [SCIENT_DRIVER_KIND]: SCIENT_DEFAULT_TEXT_GENERATION_MODEL,
 };
 
 // Droid ships no static default model: its ACP catalog is authoritative and

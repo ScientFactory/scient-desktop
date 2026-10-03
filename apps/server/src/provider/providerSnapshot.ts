@@ -73,13 +73,13 @@ export interface ServerProviderPresentation {
 
 export type ServerProviderDraft = Omit<ServerProvider, "instanceId" | "driver">;
 
-/** Keep previously discovered Pi/OMP models visible in Settings after native discovery removes them. */
+/** Keep previously discovered native agent models visible in Settings after native discovery removes them. */
 export function retainUnavailableAgentModels(
   previous: ServerProvider,
   next: ServerProvider,
 ): ServerProvider {
   if (
-    (next.driver !== "pi" && next.driver !== "omp") ||
+    (next.driver !== "pi" && next.driver !== "omp" && next.driver !== "scient") ||
     previous.instanceId !== next.instanceId ||
     previous.driver !== next.driver ||
     !next.enabled ||

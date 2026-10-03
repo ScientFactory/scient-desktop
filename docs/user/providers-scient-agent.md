@@ -58,6 +58,25 @@ Signing out removes the sign-in and then stops Scient Agent's running conversati
 keeps using it. They resume when you next use them. A stored sign-in that no longer works can be
 renewed or signed out of from the same list.
 
+The model picker initially shows Sonnet 5.5, Opus 5.5, and Fable 5.5 for Anthropic;
+GPT-6-Astra, GPT-6-Luna, and GPT-6.1-Sol for Codex; and Gemini 3.8 Flash, Gemini 3.1 Pro,
+and Claude Opus 4.6 for Antigravity, whenever the agent reports those models. Other models
+in these account groups start hidden. They remain on the provider page, where you can enable
+them. Other account routes and custom models keep their existing defaults.
+
+The default account order is Anthropic, OpenAI/Codex, then Google/Antigravity. Models keep
+their catalog order within each group. Your saved visibility and ordering choices take
+precedence and belong to this client and Scient Agent instance, independently of Pi and Oh My Pi.
+These defaults curate the display; they do not prove subscription access.
+
+If a successful refresh stops reporting a native model, the provider page retains it with an
+unavailable explanation, and selectors exclude it. A failed refresh does not establish a denial.
+The remembered catalog lasts for the running server and resets when runtime settings or version
+change. Custom models removed from settings are not retained.
+
+When Scient Agent is the automatic writer for titles or source-control text, Scient resolves a
+concrete model from that instance's ready catalog. An explicit writer selection stays explicit.
+
 When Scient Agent has no model at all, its provider card says so and how to add one.
 
 ## Where it keeps things

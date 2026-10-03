@@ -37,7 +37,7 @@ const makeStubInstance = (
   instanceId: ProviderInstanceId,
   textGeneration: TextGeneration.TextGeneration["Service"],
   options?: {
-    driver: "pi" | "omp";
+    driver: "pi" | "omp" | "scient";
     snapshot: Effect.Effect<ServerProvider>;
     enabled?: boolean;
   },
@@ -93,7 +93,7 @@ const makeGeneration = (instances: ReadonlyArray<ProviderInstance>) =>
 
 const nativeSnapshot = (
   instanceId: ProviderInstanceId,
-  driver: "pi" | "omp",
+  driver: "pi" | "omp" | "scient",
   overrides: Partial<ServerProvider> = {},
 ): ServerProvider => ({
   instanceId,
@@ -120,7 +120,7 @@ const nativeSnapshot = (
 });
 
 describe("TextGeneration.make", () => {
-  for (const driver of ["pi", "omp"] as const) {
+  for (const driver of ["pi", "omp", "scient"] as const) {
     it.effect(`resolves ${driver} automatic models for title, regeneration and SCM`, () =>
       Effect.gen(function* () {
         const instanceId = ProviderInstanceId.make(`${driver}_work`);
