@@ -1340,7 +1340,6 @@ export function ScientMarkdownControls({
           // The same searchable content as the bar's menu.
           overflow: (
             <InsertMenuContent
-              searchTakesFocus={false}
               actions={markdownInsertActions(controller)}
               layout={markdownInsertLayout}
               onInsertTable={(rows, columns) => {

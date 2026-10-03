@@ -32,27 +32,10 @@ describe("the shared Insert menu", () => {
       {item("citation")}
     </>
   );
-  const search = () =>
-    document.body.querySelector<HTMLInputElement>('input[aria-label="Search insert options"]')!;
   const items = () =>
     [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].map(
       (item) => item.textContent?.trim() ?? "",
     );
-  const type = (value: string) =>
-    act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
-        search(),
-        value,
-      );
-      search().dispatchEvent(new Event("input", { bubbles: true }));
-    });
-  const enter = (composing: boolean) =>
-    act(async () => {
-      const event = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
-      if (composing) Object.defineProperty(event, "keyCode", { value: 229 });
-      search().dispatchEvent(event);
-    });
-
   beforeEach(() => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     ran.length = 0;
@@ -73,34 +56,23 @@ describe("the shared Insert menu", () => {
     );
   }
 
-  it("shows the editor's arrangement, then only what matches the search", async () => {
+  it("shows the editor's arrangement, with no search field", async () => {
     await open();
     expect(items()).toEqual(["Figure", "Footnote", "Citation"]);
-    await type("foot");
-    expect(items()).toEqual(["Footnote"]);
-    // The description is searched together with the name.
-    await type("caption");
-    expect(items()).toEqual(["Figure"]);
-    await type("nothing like this");
-    expect(items()).toEqual([]);
-    expect(document.body.textContent).toContain("No matching elements.");
+    expect(document.body.querySelector("input")).toBeNull();
   });
 
-  it("runs the first match on Enter, but not while text is being composed", async () => {
+  it("runs an item, but never one that is unavailable", async () => {
     await open();
-    await type("foot");
-    await enter(true);
+    const citation = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (item) => item.textContent?.trim() === "Citation",
+    )!;
+    await act(async () => citation.click());
     expect(ran).toEqual([]);
-    expect(search()).not.toBeNull();
-    await enter(false);
+    const footnote = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (item) => item.textContent?.trim() === "Footnote",
+    )!;
+    await act(async () => footnote.click());
     await vi.waitFor(() => expect(ran).toEqual(["footnote"]));
-  });
-
-  it("never runs an item that is unavailable", async () => {
-    await open();
-    await type("citation");
-    await enter(false);
-    await act(async () => {});
-    expect(ran).toEqual([]);
   });
 });

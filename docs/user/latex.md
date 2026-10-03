@@ -47,7 +47,7 @@ Chapter-based classes also offer Chapter. The toolbar button shows
 the icon of the current style. The toolbar holds, in order: undo and redo; bold,
 italic, inline code (Ctrl/Cmd+E) and link (Ctrl/Cmd+K); Style; Lists; Insert;
 Math; and Document. Link is unavailable when the selection spans more than one
-paragraph. **Insert** opens a searchable menu for figures, tables, citations, cross-references,
+paragraph. **Insert** opens a menu for figures, tables, citations, cross-references,
 footnotes, links and statements. Equations and structures live in **Math**. Heading styles live in the style menu rather
 than being duplicated in Insert. Type `/` on an empty
 paragraph or press Ctrl/Cmd+/ to open it; use the arrow keys and Enter to choose.

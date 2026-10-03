@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { ChevronDown, Table as TableIcon } from "lucide-react";
 
 import { Menu, MenuPopup, MenuTrigger } from "~/components/ui/menu";
@@ -9,7 +9,6 @@ import { DocumentTableSizeMenu } from "./DocumentTableSizeMenu";
 import { WritingCommandIcon } from "./commandIcons";
 import { WRITING_COMMAND_LABELS } from "./commandNames";
 import { dockButtonClass, DockCommandItem, MenuRow } from "./dockChrome";
-import "./insertMenu.css";
 
 /** One thing a document editor can insert. Each editor lists only what it can save. */
 export interface InsertMenuAction {
@@ -33,9 +32,9 @@ export interface InsertMenuAction {
 export type InsertMenuLayout = (item: (id: string) => ReactNode, table: ReactNode) => ReactNode;
 
 /**
- * The inside of the Insert menu, shared by the document editors: a search
- * field over every action, and the editor's own arrangement when the field is
- * empty. The bar's menu and the More menu use the same content.
+ * The inside of the Insert menu, shared by the document editors: each editor's
+ * own arrangement of its actions. The bar's menu and the More menu use the same
+ * content.
  */
 export function InsertMenuContent(props: {
   readonly actions: readonly InsertMenuAction[];
@@ -45,29 +44,12 @@ export function InsertMenuContent(props: {
   readonly unavailableReason?: string | undefined;
   /** Lets the menu close before the command runs. */
   readonly onRun?: ((command: () => void) => void) | undefined;
-  /** False where the content is one section of a larger menu. Default: true. */
-  readonly searchTakesFocus?: boolean | undefined;
 }) {
-  const [query, setQuery] = useState("");
-  const input = useRef<HTMLInputElement>(null);
-  const content = useRef<HTMLDivElement>(null);
-  const searchTakesFocus = props.searchTakesFocus ?? true;
-  useEffect(() => {
-    if (searchTakesFocus) input.current?.focus();
-  }, [searchTakesFocus]);
   const run = (command: () => void) => (props.onRun ? props.onRun(command) : command());
   const actionById = new Map(props.actions.map((action) => [action.id, action]));
-  // In the flat list of search results, rows without an icon keep its column,
-  // so every name starts at the same place.
-  const anyIcon = props.actions.some((action) => action.icon);
-  const renderAction = (id: string, keepIconColumn = false) => {
+  const renderAction = (id: string) => {
     const action = actionById.get(id);
     if (!action) return null;
-    const icon =
-      action.icon ??
-      (keepIconColumn && anyIcon ? (
-        <span className="-mx-0.5 size-4 shrink-0" aria-hidden="true" />
-      ) : null);
     const reason = props.unavailableReason ?? action.disabledReason;
     return (
       <DockCommandItem
@@ -78,18 +60,11 @@ export function InsertMenuContent(props: {
         title={reason}
         onClick={() => run(action.run)}
       >
-        <MenuRow icon={icon} label={action.label} shortcut={action.shortcut} />
+        <MenuRow icon={action.icon} label={action.label} shortcut={action.shortcut} />
       </DockCommandItem>
     );
   };
-  const needle = query.trim().toLowerCase();
-  const filtered = props.actions.filter((action) =>
-    `${action.label} ${action.description ?? ""} ${action.group ?? ""}`
-      .toLowerCase()
-      .includes(needle),
-  );
   const onInsertTable = props.onInsertTable;
-  const tableMatches = onInsertTable !== undefined && "table grid rows columns".includes(needle);
   const table =
     onInsertTable === undefined ? null : props.unavailableReason ? (
       <DockCommandItem disabled title={props.unavailableReason}>
@@ -101,50 +76,10 @@ export function InsertMenuContent(props: {
       />
     );
   return (
-    <div ref={content}>
-      <div className="scient-insert-search">
-        <input
-          ref={input}
-          aria-label="Search insert options"
-          placeholder="Search insert options"
-          // As one section of a larger menu it is a pointer convenience: the
-          // menu opens on its first item and the keyboard walks the items.
-          tabIndex={searchTakesFocus ? undefined : -1}
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Escape" || event.key === "Tab") return;
-            event.stopPropagation();
-            // Enter that confirms composed text (IME) is not a command.
-            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-            const items = content.current?.querySelectorAll<HTMLElement>(
-              '[role="menuitem"]:not([aria-disabled="true"]):not([data-disabled])',
-            );
-            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-              event.preventDefault();
-              items?.item(event.key === "ArrowUp" ? items.length - 1 : 0)?.focus();
-            } else if (event.key === "Enter") {
-              event.preventDefault();
-              items?.item(0)?.click();
-            }
-          }}
-        />
-      </div>
-      {props.unavailableReason && <p className="scient-insert-empty">{props.unavailableReason}</p>}
-      <div className="scient-insert-items">
-        {needle ? (
-          <>
-            {tableMatches && table}
-            {filtered.map((action) => renderAction(action.id, true))}
-            {!filtered.length && !tableMatches && (
-              <p className="scient-insert-empty">No matching elements.</p>
-            )}
-          </>
-        ) : (
-          props.layout((id) => renderAction(id), table)
-        )}
-      </div>
-    </div>
+    <>
+      {props.unavailableReason && <p className="scient-menu-note">{props.unavailableReason}</p>}
+      {props.layout((id) => renderAction(id), table)}
+    </>
   );
 }
 
@@ -207,7 +142,8 @@ export function InsertMenu(props: {
       </ScientTooltip>
       <MenuPopup
         align="start"
-        className="w-72"
+        // As wide as its longest item.
+        className="w-max [&_[role=menuitem]]:whitespace-nowrap"
         finalFocus={() => {
           // A command places focus itself (the editor, a dialog, a picker).
           if (commandOwnsFocus.current) return false;

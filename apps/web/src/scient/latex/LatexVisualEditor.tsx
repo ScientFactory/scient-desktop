@@ -6148,7 +6148,6 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                         overflowLabel: "Insert",
                         overflow: (
                           <LatexInsertMenuContent
-                            searchTakesFocus={false}
                             actions={overflowInsertActions}
                             onInsertTable={insertTable}
                             unavailableReason={

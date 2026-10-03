@@ -245,8 +245,8 @@ the existing PDF save-copy hook and requires current revision/dependency evidenc
 These writing features introduce no hosted service, new compiler, or second save
 path. Project creation remains owned by the project sidebar.
 
-Insert is the shared `writing/InsertMenu.tsx`: a search field over every action,
-and the editor's own arrangement when the field is empty. `LatexInsertMenu.tsx`
+Insert is the shared `writing/InsertMenu.tsx`, with each editor's own arrangement
+of its actions and no search field; the menu is as wide as its longest item. `LatexInsertMenu.tsx`
 supplies the LaTeX actions and layout, and `LatexInsertMenuContent` is used in
 both the regular and overflow menus.
 Its top level is Figure, Table, Citation, Cross-reference, Footnote, Link,

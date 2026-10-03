@@ -70,7 +70,7 @@ relocate an already open file automatically.
   shows where the caret is, for example "Heading 2" or "Table · row 3,
   column 2", and the word count: "1,284 words", or "12 of 1,284 words" while
   text is selected.
-- In the formatting tools, **Insert** has a search field. **More actions** holds
+- In the formatting tools, **Insert** lists what a Markdown file can hold. **More actions** holds
   **Find & Replace**, which opens a bar under the formatting tools, and
   **Keyboard shortcuts**, which opens the list of writing shortcuts.
 - Code blocks and HTML/YAML/TOML source boxes stay directly editable and offer

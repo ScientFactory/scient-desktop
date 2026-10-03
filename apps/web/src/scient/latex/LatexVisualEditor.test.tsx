@@ -97,17 +97,13 @@ describe("writing editor source transactions", () => {
       [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
         (element) => element.textContent?.trim() === name,
       );
-    if (!find()) {
-      const search = document.body.querySelector<HTMLInputElement>(
-        'input[aria-label="Search insert options"]',
-      )!;
-      await act(() => {
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
-          search,
-          name,
-        );
-        search.dispatchEvent(new Event("input", { bubbles: true }));
-      });
+    // Items in submenus (Theorems & proofs, More) are reached by opening them.
+    for (const submenu of ["Theorems & proofs", "More", "Other blocks"]) {
+      if (find()) break;
+      const trigger = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+        (element) => element.textContent?.trim() === submenu,
+      );
+      if (trigger) await act(() => trigger.click());
     }
     const item = find();
     expect(item).toBeDefined();

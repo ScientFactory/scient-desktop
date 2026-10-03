@@ -73,7 +73,7 @@ formatting controls preserves scroll and selection where the surfaces allow.
   kit in `apps/web/src/scient/writing/dockChrome.tsx` (styles in `dockChrome.css`), which the LaTeX
   Visual editor also uses. Command names and icons that both editors offer come from
   `writing/commandNames.ts` and `writing/commandIcons.tsx`. Insert is the shared
-  `writing/InsertMenu.tsx` with a search field; Markdown supplies its own items. Find and replace
+  `writing/InsertMenu.tsx`; Markdown supplies its own items and arrangement. Find and replace
   is the shared `writing/ScientFindBar.tsx`, shown under this row. **More actions** ends with
   **Keyboard shortcuts**, which opens the writing shortcuts dialog. Shortcut presentation helpers
   live in `apps/web/src/scient/keyboard/presentation.ts`.
