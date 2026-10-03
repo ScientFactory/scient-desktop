@@ -1348,6 +1348,7 @@ export function ScientMarkdownControls({
       <DockOverflowRow
         label="Document actions"
         overflowButtonLabel="Document"
+        overflowPosition="after-groups"
         overflowButtonIcon={<FileText className="size-4" />}
         expanded={expanded}
         onExpandedChange={onExpandedChange}
