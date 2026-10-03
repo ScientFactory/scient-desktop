@@ -25,10 +25,12 @@ export function shouldPreviewQueueAdmission(input: {
 
 /** The receipt chooses the final surface; predicting queue placement never admits work. */
 export function settleQueueAdmissionPreview(
-  messages: ReadonlyArray<OptimisticUserMessage>,
+  messages: OptimisticUserMessage[],
   messageId: string,
   queued: boolean,
 ): OptimisticUserMessage[] {
+  if (!messages.some((message) => message.id === messageId && (queued || message.queueAdmission)))
+    return messages;
   return messages.flatMap((message) => {
     if (message.id !== messageId) return [message];
     if (queued) {
@@ -48,11 +50,11 @@ export function pendingQueueAdmissionPreviews(
   items: ReadonlyArray<ScientThreadQueueItem>,
   serverMessages: ReadonlyArray<ChatMessage>,
 ) {
+  const pending = messages.filter((message) => message.queueAdmission?.threadKey === threadKey);
+  if (pending.length === 0) return pending;
   const knownIds = new Set([
     ...items.flatMap((item) => (item.messageId ? [item.messageId] : [])),
     ...serverMessages.map((message) => message.id),
   ]);
-  return messages.filter(
-    (message) => message.queueAdmission?.threadKey === threadKey && !knownIds.has(message.id),
-  );
+  return pending.filter((message) => !knownIds.has(message.id));
 }

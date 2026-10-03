@@ -214,39 +214,41 @@ export function ThreadQueueStrip(props: {
       )}
       {(props.items.length > 0 || pendingMessages.length > 0) && (
         <div className="max-h-36 overflow-y-auto">
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
-            onDragEnd={handleDragEnd}
-          >
-            <SortableContext
-              items={props.items.map((item) => item.queueItemId)}
-              strategy={verticalListSortingStrategy}
+          {props.items.length > 0 && (
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
+              onDragEnd={handleDragEnd}
             >
-              {props.items.map((item, index) => (
-                <QueueRow
-                  key={item.queueItemId}
-                  item={item}
-                  canReorder={props.items.length > 1}
-                  threadBusy={props.threadBusy}
-                  canSend={
-                    index === 0 &&
-                    props.supportsExplicitSend &&
-                    !props.threadBusy &&
-                    props.awaitingCompletion &&
-                    !props.paused &&
-                    !props.items.some((entry) => entry.steerRequested)
-                  }
-                  dispatching={props.dispatchingItemId === item.queueItemId}
-                  onSend={props.onSend}
-                  onSteer={props.onSteer}
-                  onEdit={props.onEdit}
-                  onDelete={props.onDelete}
-                />
-              ))}
-            </SortableContext>
-          </DndContext>
+              <SortableContext
+                items={props.items.map((item) => item.queueItemId)}
+                strategy={verticalListSortingStrategy}
+              >
+                {props.items.map((item, index) => (
+                  <QueueRow
+                    key={item.queueItemId}
+                    item={item}
+                    canReorder={props.items.length > 1}
+                    threadBusy={props.threadBusy}
+                    canSend={
+                      index === 0 &&
+                      props.supportsExplicitSend &&
+                      !props.threadBusy &&
+                      props.awaitingCompletion &&
+                      !props.paused &&
+                      !props.items.some((entry) => entry.steerRequested)
+                    }
+                    dispatching={props.dispatchingItemId === item.queueItemId}
+                    onSend={props.onSend}
+                    onSteer={props.onSteer}
+                    onEdit={props.onEdit}
+                    onDelete={props.onDelete}
+                  />
+                ))}
+              </SortableContext>
+            </DndContext>
+          )}
           {pendingMessages.map((message) => (
             <div
               key={message.id}

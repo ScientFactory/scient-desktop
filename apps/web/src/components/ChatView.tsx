@@ -6542,6 +6542,7 @@ function ChatViewContent(props: ChatViewProps) {
     };
   }, [activeThread?.id, activeThread?.messages, handoffAttachmentPreviews, optimisticUserMessages]);
 
+  // Retire admitted previews permanently so editing/deleting a queue row cannot reveal them again.
   useEffect(() => {
     const queuedIds = new Set(threadQueue.items.map((item) => item.messageId));
     if (

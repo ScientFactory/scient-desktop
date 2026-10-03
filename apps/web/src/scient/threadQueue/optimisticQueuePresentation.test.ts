@@ -77,7 +77,9 @@ describe("optimistic queue admission presentation", () => {
 
   it("keeps ordinary optimistic Send intact and removes it if admission unexpectedly queues it", () => {
     const { queueAdmission: _queueAdmission, ...ordinary } = message;
-    expect(settleQueueAdmissionPreview([ordinary], ordinary.id, false)).toEqual([ordinary]);
+    const messages = [ordinary];
+    expect(settleQueueAdmissionPreview(messages, ordinary.id, false)).toBe(messages);
+    expect(settleQueueAdmissionPreview(messages, "another-submission", true)).toBe(messages);
     expect(settleQueueAdmissionPreview([ordinary], ordinary.id, true)).toEqual([]);
   });
 });
