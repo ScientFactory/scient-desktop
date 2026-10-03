@@ -51,7 +51,7 @@ export function LatexMatrixSizeMenu({
       options={
         <div
           // Close to the grid below it: the choice belongs to the grid.
-          className="px-1.5 pt-0.5 pb-0 text-xs"
+          className="scient-latex-matrix-options px-1.5 pt-0.5 pb-0 text-xs"
           onKeyDown={(event) => {
             // Keep picker keys from navigating the enclosing size menu.
             if (event.key !== "Escape" && event.key !== "Tab") event.stopPropagation();

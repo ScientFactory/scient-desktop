@@ -3636,3 +3636,12 @@ body:has(.scient-latex-mathfield math-field:focus-within)
   flex: 1;
   opacity: 1;
 }
+
+/* The matrix bracket choice sits flush with the grid below it, with a small
+   hover area around its own text. */
+.scient-latex-matrix-options [data-slot="select-trigger"] {
+  height: 26px;
+  min-height: 0;
+  gap: 2px;
+  padding-inline: 2px 4px;
+}
