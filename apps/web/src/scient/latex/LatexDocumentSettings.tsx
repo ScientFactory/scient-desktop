@@ -1,12 +1,5 @@
-import { useRef, useState } from "react";
-import {
-  Dialog,
-  DialogPopup,
-  DialogTitle,
-  DialogDescription,
-  DialogHeader,
-  DialogPanel,
-} from "~/components/ui/dialog";
+import { useRef, useState, type RefObject } from "react";
+import { Popover, PopoverPopup, PopoverTitle } from "~/components/ui/popover";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { LatexSelect } from "./LatexSelect";
@@ -17,6 +10,8 @@ export type LatexDocumentSettingsSection = "page" | "style";
 
 export function LatexDocumentSettings(props: {
   open: boolean;
+  anchor: RefObject<HTMLElement | null>;
+  fallbackAnchor: RefObject<HTMLElement | null>;
   initialSection: LatexDocumentSettingsSection;
   onOpenChange: (open: boolean) => void;
   source: string;
@@ -25,7 +20,7 @@ export function LatexDocumentSettings(props: {
   onOpenSource: () => void;
   onClosed: () => void;
 }) {
-  // The parent mounts a fresh dialog for each opening. Tabs share one draft.
+  // The parent mounts a fresh popover for each opening. Tabs share one draft.
   const [original] = useState(props.source);
   const [profile] = useState(() => latexVisualLayoutProfile(original));
   const [section, setSection] = useState(props.initialSection);
@@ -40,7 +35,8 @@ export function LatexDocumentSettings(props: {
     setError(null);
   };
   return (
-    <Dialog
+    <Popover
+      modal={false}
       open={props.open}
       onOpenChange={props.onOpenChange}
       onOpenChangeComplete={(open) => {
@@ -51,16 +47,34 @@ export function LatexDocumentSettings(props: {
         if (!open) props.onClosed();
       }}
     >
-      <DialogPopup finalFocus={() => !openSourceAfterClose.current} data-dock-command-scope="latex">
-        <DialogHeader>
-          <DialogTitle>Document settings</DialogTitle>
-          <DialogDescription>
-            Settings apply to the whole document. Only your changes are applied.
-          </DialogDescription>
-        </DialogHeader>
-        <DialogPanel>
+      <PopoverPopup
+        anchor={() => props.anchor.current ?? props.fallbackAnchor.current}
+        align="start"
+        width="lg"
+        padding="tight"
+        keepMounted
+        finalFocus={false}
+        data-dock-command-scope="latex"
+        data-keybinding-capture=""
+      >
+        <div className="grid gap-3">
+          <div className="flex items-center justify-between gap-2">
+            <PopoverTitle size="compact">Document settings</PopoverTitle>
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Close document settings"
+              onClick={() => props.onOpenChange(false)}
+            >
+              ×
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Whole document · only changed fields apply.
+          </p>
           <div className="flex gap-2" role="group" aria-label="Settings section">
             <Button
+              size="xs"
               variant={section === "page" ? "selected" : "ghost"}
               aria-pressed={section === "page"}
               onClick={() => setSection("page")}
@@ -68,6 +82,7 @@ export function LatexDocumentSettings(props: {
               Page layout
             </Button>
             <Button
+              size="xs"
               variant={section === "style" ? "selected" : "ghost"}
               aria-pressed={section === "style"}
               onClick={() => setSection("style")}
@@ -76,7 +91,7 @@ export function LatexDocumentSettings(props: {
             </Button>
           </div>
           <form
-            className="grid gap-4"
+            className="grid gap-3"
             onSubmit={(event) => {
               event.preventDefault();
               if (!changed || props.disabled || stale) return;
@@ -87,12 +102,13 @@ export function LatexDocumentSettings(props: {
                 );
             }}
           >
-            <fieldset className="grid gap-3" disabled={props.disabled || stale}>
+            <fieldset className="grid gap-2 text-xs" disabled={props.disabled || stale}>
               {section === "page" ? (
                 <>
-                  <label className="grid gap-1">
+                  <label className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-2">
                     Paper size
                     <LatexSelect
+                      size="compact"
                       value={changes.paper ?? ""}
                       onValueChange={(value) =>
                         update({ paper: value as LatexVisualLayoutUpdate["paper"] })
@@ -100,7 +116,7 @@ export function LatexDocumentSettings(props: {
                       disabled={props.disabled || stale}
                       aria-label="Paper size"
                       options={[
-                        { value: "", label: "Keep document setting", disabled: true },
+                        { value: "", label: "Unchanged", disabled: true },
                         ...Object.entries(LATEX_PAPER_SIZES).map(([value, paper]) => ({
                           value,
                           label: paper.label,
@@ -108,9 +124,10 @@ export function LatexDocumentSettings(props: {
                       ]}
                     />
                   </label>
-                  <label className="grid gap-1">
+                  <label className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-2">
                     Orientation
                     <LatexSelect
+                      size="compact"
                       value={changes.orientation ?? ""}
                       onValueChange={(value) =>
                         update({ orientation: value as "portrait" | "landscape" })
@@ -118,19 +135,21 @@ export function LatexDocumentSettings(props: {
                       disabled={props.disabled || stale}
                       aria-label="Orientation"
                       options={[
-                        { value: "", label: "Keep document setting", disabled: true },
+                        { value: "", label: "Unchanged", disabled: true },
                         { value: "portrait", label: "Portrait" },
                         { value: "landscape", label: "Landscape" },
                       ]}
                     />
                   </label>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-2 gap-2">
                     {(["top", "right", "bottom", "left"] as const).map((side) => (
-                      <label key={side} className="grid gap-1">
+                      <label key={side} className="grid gap-1 text-xs">
                         {side[0]!.toUpperCase() + side.slice(1)} margin
                         <Input
+                          size="compact"
+                          aria-label={`${side[0]!.toUpperCase() + side.slice(1)} margin`}
                           value={changes.margins?.[side] ?? ""}
-                          placeholder="Keep document setting"
+                          placeholder="Unchanged"
                           onChange={(event) => {
                             const margins = { ...changes.margins };
                             if (event.target.value.trim()) margins[side] = event.target.value;
@@ -147,16 +166,16 @@ export function LatexDocumentSettings(props: {
                       </label>
                     ))}
                   </div>
-                  <p className="text-sm text-muted-foreground">
-                    Enter a margin such as 2cm or 1in. Empty fields preserve the document setting.
-                    The PDF shows the final layout.
+                  <p className="text-xs text-muted-foreground">
+                    Margins: e.g. 2cm or 1in. Blank keeps the current setting.
                   </p>
                 </>
               ) : (
                 <>
-                  <label className="grid gap-1">
+                  <label className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-2">
                     Document type
                     <LatexSelect
+                      size="compact"
                       value={changes.documentClass ?? profile.documentClass}
                       disabled={props.disabled || stale || customClass}
                       onValueChange={(value) => update({ documentClass: value })}
@@ -177,14 +196,15 @@ export function LatexDocumentSettings(props: {
                     />
                   </label>
                   {customClass && (
-                    <p className="text-sm text-muted-foreground">
+                    <p className="text-xs text-muted-foreground">
                       This document uses a custom class. Its class and text style remain controlled
                       by its LaTeX setup.
                     </p>
                   )}
-                  <label className="grid gap-1">
+                  <label className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-2">
                     Base text size
                     <LatexSelect
+                      size="compact"
                       disabled={props.disabled || stale || customClass}
                       value={changes.baseFontPt ?? ""}
                       onValueChange={(value) =>
@@ -192,7 +212,7 @@ export function LatexDocumentSettings(props: {
                       }
                       aria-label="Base text size"
                       options={[
-                        { value: "", label: "Keep document setting", disabled: true },
+                        { value: "", label: "Unchanged", disabled: true },
                         ...[10, 11, 12].map((size) => ({
                           value: String(size),
                           label: `${size} pt`,
@@ -200,9 +220,10 @@ export function LatexDocumentSettings(props: {
                       ]}
                     />
                   </label>
-                  <label className="grid gap-1">
+                  <label className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-2">
                     Paragraphs
                     <LatexSelect
+                      size="compact"
                       disabled={props.disabled || stale || customClass}
                       value={changes.paragraphStyle ?? ""}
                       onValueChange={(value) =>
@@ -210,7 +231,7 @@ export function LatexDocumentSettings(props: {
                       }
                       aria-label="Paragraphs"
                       options={[
-                        { value: "", label: "Keep document setting", disabled: true },
+                        { value: "", label: "Unchanged", disabled: true },
                         { value: "indented", label: "First-line indent" },
                         { value: "spaced", label: "Space between paragraphs" },
                       ]}
@@ -228,6 +249,7 @@ export function LatexDocumentSettings(props: {
             {error && <p role="alert">{error}</p>}
             <div className="flex flex-wrap justify-between gap-2">
               <Button
+                size="xs"
                 type="button"
                 variant="ghost"
                 onClick={() => {
@@ -235,20 +257,25 @@ export function LatexDocumentSettings(props: {
                   props.onOpenChange(false);
                 }}
               >
-                Edit settings in Source
+                Edit in Source
               </Button>
               <div className="flex gap-2">
-                <Button type="button" variant="outline" onClick={() => props.onOpenChange(false)}>
+                <Button
+                  size="xs"
+                  type="button"
+                  variant="outline"
+                  onClick={() => props.onOpenChange(false)}
+                >
                   Cancel
                 </Button>
-                <Button type="submit" disabled={!changed || props.disabled || stale}>
+                <Button size="xs" type="submit" disabled={!changed || props.disabled || stale}>
                   Apply
                 </Button>
               </div>
             </div>
           </form>
-        </DialogPanel>
-      </DialogPopup>
-    </Dialog>
+        </div>
+      </PopoverPopup>
+    </Popover>
   );
 }

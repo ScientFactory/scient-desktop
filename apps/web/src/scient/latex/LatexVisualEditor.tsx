@@ -3619,6 +3619,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     source: string;
   } | null>(null);
   const linkAnchor = useRef<HTMLDivElement>(null);
+  const documentAnchor = useRef<HTMLSpanElement>(null);
   const pendingLink = useRef<{ text: string; url: string } | null>(null);
   const insertionTarget = useRef<{ doc: ProseMirrorNode; selection: Selection } | null>(null);
   const [figureOpen, setFigureOpen] = useState(false);
@@ -5132,6 +5133,8 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   };
   const documentSettings = (
     <LatexDocumentSettings
+      anchor={documentAnchor}
+      fallbackAnchor={workspaceRef}
       open={settingsOpen}
       initialSection={settingsSection ?? "page"}
       onOpenChange={setSettingsOpen}
@@ -5931,7 +5934,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         </MenuSubPopup>
       </MenuSub>
       <MenuSeparator />
-      {/* One dialog, with Page layout and Document style as its two tabs. */}
+      {/* One popover, with Page layout and Document style as its two tabs. */}
       <DockCommandItem disabled={readOnly} onClick={() => openDocumentSettings("page")}>
         Document settings
       </DockCommandItem>
@@ -6165,13 +6168,15 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                         priority: 10,
                         estimatedWidth: 44,
                         bar: (
-                          <DockMenu
-                            commandScope="latex"
-                            label="Document"
-                            icon={<FileText className="size-4" />}
-                          >
-                            {documentItems}
-                          </DockMenu>
+                          <span ref={documentAnchor} className="inline-flex">
+                            <DockMenu
+                              commandScope="latex"
+                              label="Document"
+                              icon={<FileText className="size-4" />}
+                            >
+                              {documentItems}
+                            </DockMenu>
+                          </span>
                         ),
                         overflowLabel: "Document",
                         overflow: documentItems,

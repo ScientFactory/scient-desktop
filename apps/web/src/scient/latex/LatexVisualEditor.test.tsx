@@ -440,6 +440,39 @@ describe("writing editor source transactions", () => {
       "Writing shortcuts",
     );
   });
+  it("applies settings from a nonmodal popover while preserving its draft across tabs", async () => {
+    await mount("Hello");
+    const toolbar = container.querySelector('[role="toolbar"][aria-label="Writing tools"]')!;
+    await act(() =>
+      toolbar.querySelector<HTMLButtonElement>('button[aria-label="Document"]')!.click(),
+    );
+    const settings = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (item) => item.textContent?.trim() === "Document settings",
+    )!;
+    await act(() => settings.click());
+    const popup = document.body.querySelector('[data-slot="popover-popup"]')!;
+    expect(popup).not.toBeNull();
+    expect(document.body.querySelector('[data-slot="dialog-backdrop"]')).toBeNull();
+    expect(document.body.querySelector('[data-slot="dialog-popup"]')).toBeNull();
+    await setField(popup.querySelector<HTMLInputElement>('input[aria-label="Top margin"]')!, "2cm");
+    const button = (label: string) =>
+      [...popup.querySelectorAll<HTMLButtonElement>("button")].find(
+        (item) => item.textContent?.trim() === label,
+      )!;
+    await act(() => button("Document style").click());
+    await act(() => button("Page layout").click());
+    expect(popup.querySelector<HTMLInputElement>('input[aria-label="Top margin"]')!.value).toBe(
+      "2cm",
+    );
+    await act(() => button("Apply").click());
+    await vi.waitFor(() => expect(current).toContain("top=2cm"));
+    expect(current).toContain("Hello");
+    expect(current).toContain("\\documentclass{article}");
+    await vi.waitFor(() =>
+      expect(document.body.querySelector('[data-slot="popover-popup"]')).toBeNull(),
+    );
+  });
+
   it("moves lower-priority writing groups into More on narrow panes", async () => {
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (
       this: HTMLElement,
