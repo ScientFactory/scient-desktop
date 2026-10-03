@@ -33,17 +33,21 @@ only what its file format can save.
 | Text direction (Auto, LTR, RTL) | Bar | — | **Text › Direction** (Markdown only) — decided |
 | Bullet list, Numbered list, No list | Lists menu | Lists menu | **Lists** |
 | Task list | Lists menu | — | **Lists** (Markdown only) |
-| Link | Bar | Bar, and again in Insert | **Insert** (one place) — decided; Cmd+K stays |
+| Link | Bar | Bar, and again in Insert | **Insert › References** — decided; Cmd+K stays |
 | Table (size picker) | Insert | Insert | **Insert** |
 | Image / Figure | Insert (Image) | Insert (Figure) | **Insert** |
 | Code block | Insert | Insert › More | **Insert** |
-| Footnote | Insert | Insert | **Insert** |
-| Citation, Cross-reference | — | Insert | **Insert** (LaTeX only) |
-| Wiki link | Insert | — | **Insert** (Markdown only) |
+| Footnote | Insert | Insert | **Insert › References** |
+| Citation, Cross-reference | — | Insert | **Insert › References** (LaTeX only) |
+| Wiki link | Insert | — | **Insert › References** (Markdown only) |
 | Divider line / Page break | Insert | Insert › More | **Insert** |
 | Line break | Insert | — | **Insert** (Markdown only) |
 | Theorems & proofs | — | Insert › submenu | **Insert** (LaTeX only) |
-| Abstract, Table of contents, Bibliography, other blocks | — | Insert › More | **Insert › More** (LaTeX only) |
+| Abstract, Table of contents, Bibliography | — | Insert › More | **Insert › Document blocks** (LaTeX only) |
+| Literal text | — | Insert › More › Other blocks | **Insert**, directly beneath Code block |
+| Long quotation, Part | — | Insert › More › Other blocks | **Text › Paragraph style**; retain block insertion behavior |
+| Left-aligned / Right-aligned text | — | Insert › More › Other blocks | **Text › Alignment**; retain block insertion behavior |
+| Question and solution, Subquestions, Verse | — | Insert › More › Other blocks | Removed from creation menus; existing content stays supported |
 | Inline math, Display math | Insert (display only) | Math menu | **Math** — decided |
 | Aligned equations, Matrix, Cases | — | Math menu | **Math** (Markdown: whatever it can store) |
 | Symbols & structures | Ω button in the bar | Math menu | **Math** — decided |
@@ -62,7 +66,7 @@ only what its file format can save.
 
 | # | Question | Decision |
 | --- | --- | --- |
-| 1 | Where does Link go? | **Insert**, next to Citation, Cross-reference and Footnote. No Link button in the bar; Cmd+K stays. |
+| 1 | Where does Link go? | **Insert › References**, alongside Citation, Cross-reference and Footnote. No Link button in the bar; Cmd+K stays. |
 | 2 | How does the Insert button look? | **The word "Insert"**, not a plus icon. |
 | 3 | Math in Markdown? | **The same Math menu as LaTeX**, replacing the Ω button and the "Math equation" item in Insert. |
 | 4 | Text direction? | **Moves into the Text (Style) menu** (Markdown only), freeing a bar button. |
@@ -86,7 +90,9 @@ instead of reserving a separate left gutter.
 The bar button reads **Text** in both editors. Hover opens these categories:
 
 - **Paragraph style:** Paragraph, heading levels, Quote. LaTeX also has its
-  Numbered headings switch alongside its heading choices.
+  Numbered headings switch alongside its heading choices, Part and Long quotation.
+  Part and Long quotation retain their existing block insertion behavior.
+- **Alignment (LaTeX):** Left-aligned text, Right-aligned text; existing block insertions.
 - **Formatting:** Bold, Italic, Inline code in both; Strikethrough and Clear
   formatting in Markdown. Active formatting has a checkmark; shortcuts remain.
 - **Direction:** Auto, Left-to-right, Right-to-left in Markdown. In a table this
@@ -97,6 +103,24 @@ bar. Clear formatting is removed from Markdown's More menu. The selection
 floating toolbar is unchanged. Size remains deferred; subscript/superscript
 remain out of scope. `apps/web/src/scient/writing/TextMenu.tsx` owns the shared
 categories; each editor supplies its supported commands.
+
+## Insert organisation (decided; local pilot)
+
+Each item occupies its own vertical row. References and Document blocks open
+secondary cards on hover, as do the other menu categories.
+
+- **LaTeX:** Figure, Table, Code block, Literal text; References; Theorems & proofs;
+  Document blocks; Page break. References contains Citation, Cross-reference,
+  Link, then Footnote after a separator. Document blocks contains Abstract,
+  Table of contents, Bibliography.
+- **Markdown:** Image, Table, Code block; References; Divider line, Line break.
+  References contains Link, Wiki link, then Footnote after a separator.
+- More and Other blocks are removed from LaTeX Insert. Question and solution,
+  Subquestions and Verse are removed from the creation menu. These menu changes
+  do not remove support for existing document content.
+- Long quotation and Part move to Text › Paragraph style. Left-aligned and
+  Right-aligned text move to Text › Alignment. Their source and insertion
+  semantics are unchanged.
 
 ## Still open
 
@@ -112,11 +136,11 @@ not a visual or native interaction sweep; size varies by window.
 
 | Action / entry point | Markdown | LaTeX Visual | Status / proposed replacement |
 | --- | --- | --- | --- |
-| Insert › Link; link keyboard shortcut | Compact nonmodal popover | Changed from modal to compact nonmodal popover beside Insert (256px, capped to viewport) | **Fixed in local pilot; code not pushed.** Text and address fields retained; no screen backdrop. |
+| Insert › References › Link; link keyboard shortcut | Compact nonmodal popover | Changed from modal to compact nonmodal popover beside Insert (256px, capped to viewport) | **Fixed in local pilot; code not pushed.** Text and address fields retained; no screen backdrop. |
 | Insert › Figure | Local image controls; no corresponding editor modal found | Modal figure form | Pending: anchored figure popover or nonmodal panel. |
-| Insert › Citation | Unavailable | Modal reference picker | Pending: nonmodal source picker panel. |
-| Insert › Cross-reference | Unavailable | Same modal reference picker | Pending: anchored picker or nonmodal panel. |
-| Insert › More › Bibliography | Unavailable | Modal bibliography form | Pending: compact popover or nonmodal panel. |
+| Insert › References › Citation | Unavailable | Modal reference picker | Pending: nonmodal source picker panel. |
+| Insert › References › Cross-reference | Unavailable | Same modal reference picker | Pending: anchored picker or nonmodal panel. |
+| Insert › Document blocks › Bibliography | Unavailable | Modal bibliography form | Pending: compact popover or nonmodal panel. |
 | Document › Document settings | Unavailable | Hover submenu beside the Document settings item (384px, capped to viewport); smaller controls in the same style | **Fixed in local pilot; code not pushed.** No repeated title or whole-document description. Paper size and Orientation side by side; Top, Right, Left, Bottom in one row under Margin. Narrow margin fields beneath a distinct semibold Margin heading; margin help removed. No backdrop. |
 | Title & authors: missing title or custom formatting fallback | Unavailable | Modal Document title guidance | Pending: inline guidance or compact popover. Ordinary title fields are inline, not modal. |
 | Keyboard shortcuts (Markdown More / LaTeX Document) | Large modal shortcut settings | Same large modal shortcut settings | Pending: nonmodal shortcuts panel. |
