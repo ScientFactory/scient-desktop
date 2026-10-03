@@ -3618,6 +3618,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     text: string;
     source: string;
   } | null>(null);
+  const linkAnchor = useRef<HTMLDivElement>(null);
   const pendingLink = useRef<{ text: string; url: string } | null>(null);
   const insertionTarget = useRef<{ doc: ProseMirrorNode; selection: Selection } | null>(null);
   const [figureOpen, setFigureOpen] = useState(false);
@@ -5752,7 +5753,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     </>
   );
   const writingInsertTools = (
-    <div className="scient-latex-toolbar-group">
+    <div ref={linkAnchor} className="scient-latex-toolbar-group">
       <LatexInsertMenu
         open={insertOpen && !readOnly}
         onOpenChange={setInsertOpen}
@@ -6206,11 +6207,14 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                 )}
                 {linkDialog && (
                   <LatexLinkDialog
+                    anchor={linkAnchor}
+                    fallbackAnchor={workspaceRef}
                     open={linkDialog.open}
                     text={linkDialog.text}
-                    onClose={() =>
-                      setLinkDialog((current) => current && { ...current, open: false })
-                    }
+                    onClose={(restoreFocus) => {
+                      if (!restoreFocus) insertionTarget.current = null;
+                      setLinkDialog((current) => current && { ...current, open: false });
+                    }}
                     onInsert={(text, url) => {
                       pendingLink.current = { text, url };
                       setLinkDialog((current) => current && { ...current, open: false });

@@ -401,7 +401,22 @@ describe("writing editor source transactions", () => {
     expect(link).toBeDefined();
     await act(() => link.click());
     await act(() => {});
-    expect(document.body.textContent).toContain("Insert link");
+    const popup = document.body.querySelector('[data-slot="popover-popup"]')!;
+    expect(popup).not.toBeNull();
+    expect(popup.classList.contains("w-64")).toBe(true);
+    expect(document.body.querySelector('[data-slot="dialog-backdrop"]')).toBeNull();
+    expect(document.body.querySelector('[data-slot="dialog-popup"]')).toBeNull();
+    await setField(
+      popup.querySelector<HTMLInputElement>('input[aria-label="Link destination"]')!,
+      "https://example.com",
+    );
+    await act(() =>
+      popup
+        .querySelector("form")!
+        .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
+    );
+    await vi.waitFor(() => expect(current).toContain("\\href{https://example.com}{Hello}"));
+    expect(editor().isFocused).toBe(true);
   });
 
   it("puts plain-text shortcut help under Document without extra More actions", async () => {
