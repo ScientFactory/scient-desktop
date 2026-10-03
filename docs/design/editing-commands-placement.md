@@ -27,13 +27,13 @@ only what its file format can save.
 | Italic | Bar | Bar | **Text › Formatting** |
 | Strikethrough | Bar | — | **Text › Formatting** (Markdown only) |
 | Inline code | Bar | Bar | **Text › Formatting** |
-| Subscript, Superscript | — | — | **Text › Formatting** (new, both can store it) |
+| Subscript, Superscript | — | — | Not now (decided) |
 | Clear formatting | More | — | **Text › Formatting** |
 | Font size | — | — | **Text › Size** (LaTeX only, later) |
-| Text direction (Auto, LTR, RTL) | Bar | — | **Text › Direction** (Markdown only) |
+| Text direction (Auto, LTR, RTL) | Bar | — | **Text › Direction** (Markdown only) — decided |
 | Bullet list, Numbered list, No list | Lists menu | Lists menu | **Lists** |
 | Task list | Lists menu | — | **Lists** (Markdown only) |
-| Link | Bar | Bar, and again in Insert | **Insert** (one place) |
+| Link | Bar | Bar, and again in Insert | **Insert** (one place) — decided; Cmd+K stays |
 | Table (size picker) | Insert | Insert | **Insert** |
 | Image / Figure | Insert (Image) | Insert (Figure) | **Insert** |
 | Code block | Insert | Insert › More | **Insert** |
@@ -44,9 +44,9 @@ only what its file format can save.
 | Line break | Insert | — | **Insert** (Markdown only) |
 | Theorems & proofs | — | Insert › submenu | **Insert** (LaTeX only) |
 | Abstract, Table of contents, Bibliography, other blocks | — | Insert › More | **Insert › More** (LaTeX only) |
-| Inline math, Display math | Insert (display only) | Math menu | **Math** |
+| Inline math, Display math | Insert (display only) | Math menu | **Math** — decided |
 | Aligned equations, Matrix, Cases | — | Math menu | **Math** (Markdown: whatever it can store) |
-| Symbols & structures | Ω button in the bar | Math menu | **Math** |
+| Symbols & structures | Ω button in the bar | Math menu | **Math** — decided |
 | Title & authors | — | Document menu | **Document** (LaTeX only) |
 | Document settings | — | Document menu | **Document** (LaTeX only) |
 | Document outline | More | Sidebar button in the header | **Document** in Markdown; the sidebar in LaTeX |
@@ -54,7 +54,7 @@ only what its file format can save.
 | Move block up/down, Duplicate, Delete block | More | — | **Document** (Markdown only), or a menu on the block itself |
 | Export | More | Header More | **Document** in Markdown; header in LaTeX |
 | Keyboard shortcuts | More | Document menu | **Document** |
-| Hide formatting tools | Bar (left handle) | — | Open decision (one rule for both) |
+| Hide formatting tools | Bar (left handle) | — | Keep in Markdown — decided |
 | Table rows, columns, alignment | Footer | Footer | Footer (unchanged) |
 | Figure, equation, statement options | — | Footer | Footer (unchanged) |
 
@@ -68,6 +68,9 @@ only what its file format can save.
 | 4 | Text direction? | **Moves into the Text (Style) menu** (Markdown only), freeing a bar button. |
 | 5 | Subscript and superscript? | **Not now.** |
 | 6 | Markdown's "hide formatting tools" handle? | **Keep it.** |
+
+Decisions 1–4 are built in the owner's local test app for review; that code is
+not pushed yet.
 
 ## Still open
 
