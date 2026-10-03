@@ -68,6 +68,7 @@ only what its file format can save.
 | 4 | Text direction? | **Moves into the Text (Style) menu** (Markdown only), freeing a bar button. |
 | 5 | Subscript and superscript? | **Not now.** |
 | 6 | Markdown's "hide formatting tools" handle? | **Keep it.** |
+| 7 | Screen-blocking editing dialogs? | **None wanted.** Link becomes a compact popover; remaining modal controls are inventoried below for conversion. |
 
 Decisions 1–4 are built in the owner's local test app for review; that code is
 not pushed yet.
@@ -78,3 +79,39 @@ not pushed yet.
    the second card, so two clicks), or kept as bar buttons.
 2. **Markdown's More becomes Document**, so both editors end with the same menu.
 3. **Font size** in Text › Size (LaTeX only): which sizes, and when.
+
+## Screen-blocking dialogs (owner review, 2026-10-03)
+
+**Decision:** editing controls must not block the document with a modal backdrop.
+Use compact anchored popovers for short forms; larger settings and reference
+workflows need a nonmodal panel. Only Link has been converted in the local
+pilot so far. This inventory is based on current pilot source inspection,
+not a visual or native interaction sweep; size varies by window.
+
+| Action / entry point | Markdown | LaTeX Visual | Status / proposed replacement |
+| --- | --- | --- | --- |
+| Insert › Link; link keyboard shortcut | Compact nonmodal popover | Changed from modal to compact nonmodal popover beside Insert (256px, capped to viewport) | **Fixed in local pilot; code not pushed.** Text and address fields retained; no screen backdrop. |
+| Insert › Figure | Local image controls; no corresponding editor modal found | Modal figure form | Pending: anchored figure popover or nonmodal panel. |
+| Insert › Citation | Unavailable | Modal reference picker | Pending: nonmodal source picker panel. |
+| Insert › Cross-reference | Unavailable | Same modal reference picker | Pending: anchored picker or nonmodal panel. |
+| Insert › More › Bibliography | Unavailable | Modal bibliography form | Pending: compact popover or nonmodal panel. |
+| Document › Document settings | Unavailable | Modal with Page layout and Document style tabs | Pending: nonmodal settings panel. |
+| Title & authors: missing title or custom formatting fallback | Unavailable | Modal Document title guidance | Pending: inline guidance or compact popover. Ordinary title fields are inline, not modal. |
+| Keyboard shortcuts (Markdown More / LaTeX Document) | Large modal shortcut settings | Same large modal shortcut settings | Pending: nonmodal shortcuts panel. |
+| Keyboard shortcuts › My shortcut reference | Nested modal reference sheet | Same nested modal reference sheet | Pending: view within shortcuts panel. |
+| Keyboard shortcuts › New/Edit math action | Nested modal action form | Same nested modal action form | Pending: compact form within shortcuts panel. |
+| Export › Word | Modal export/progress/install UI | Same modal export/progress/install UI | Pending: nonmodal export panel or status popover. Native file-save windows are separate OS UI. |
+| Matrix action through LaTeX's overflow command path | Math palette is nonmodal | Modal matrix form still wired to the overflow action; normal Math menu uses the compact grid picker | Pending: reuse compact grid picker for overflow too. |
+
+`LatexTableInsertDialog.tsx` also contains a modal, but has no callers in the
+current source; it is not listed as a reachable control. The normal Table
+size picker is already compact. Math symbols, normal Matrix picker, menus,
+Find, outline and inline object/footer controls do not use these modal dialogs.
+
+Source owners: `apps/web/src/scient/latex/LatexLinkDialog.tsx`,
+`LatexFigureInsertDialog.tsx`, `LatexReferenceDialog.tsx`,
+`LatexBibliographyDialog.tsx`, `LatexDocumentSettings.tsx`,
+`LatexVisualEditor.tsx`, `LatexMatrixDialog.tsx`;
+`apps/web/src/scient/keyboard/WritingShortcutsDialog.tsx`,
+`ShortcutReference.tsx`, `CustomMathActionDialog.tsx`;
+`apps/web/src/scient/wordExport/WordFileExportDialog.tsx`.
