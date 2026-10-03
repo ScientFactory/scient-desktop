@@ -119,15 +119,37 @@ function isDirectionWrapperLine(node: MdastValueNode): "open" | "close" | null {
   return value === DIRECTION_CLOSE_TEXT ? "close" : null;
 }
 
+const DIRECTABLE_KINDS = new Set(["heading", "paragraph", "table"]);
+
+/**
+ * Indexes of wrapper lines that form a supported region: an opening line, one
+ * paragraph, heading or table, then a closing line. Any other arrangement
+ * (reversed, unbalanced, nested, or around a block that has no direction)
+ * stays HTML, so the container keeps its exact source.
+ */
+function directionWrapperIndexes(children: ReadonlyArray<MdastValueNode>): Set<number> {
+  const indexes = new Set<number>();
+  for (let index = 0; index < children.length; index += 1) {
+    const open = children[index];
+    const inner = children[index + 1];
+    const close = children[index + 2];
+    if (!open || !inner || !close || isDirectionWrapperLine(open) !== "open") continue;
+    if (isDirectionWrapperLine(close) !== "close" || !DIRECTABLE_KINDS.has(inner.type)) continue;
+    indexes.add(index);
+    indexes.add(index + 2);
+    index += 2;
+  }
+  return indexes;
+}
+
 function nestedBlockKinds(node: MdastValueNode): string[] {
   const kinds = new Set<string>();
   const visit = (container: MdastValueNode): void => {
     if (!CONTAINER_NODE_KINDS.has(container.type)) return;
     const children = container.children ?? [];
-    const wrapperLines = children.map(isDirectionWrapperLine);
-    const pairedWrapper = wrapperLines.includes("open") && wrapperLines.includes("close");
+    const wrapperIndexes = directionWrapperIndexes(children);
     children.forEach((child, index) => {
-      kinds.add(pairedWrapper && wrapperLines[index] ? DIRECTION_WRAPPER_KIND : child.type);
+      kinds.add(wrapperIndexes.has(index) ? DIRECTION_WRAPPER_KIND : child.type);
       visit(child);
     });
   };

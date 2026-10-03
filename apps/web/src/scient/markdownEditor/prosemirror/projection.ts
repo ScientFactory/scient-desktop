@@ -102,10 +102,20 @@ const NODE_NAMES_BY_BLOCK_KIND: Partial<Record<MarkdownSourceBlock["kind"], Read
     thematicBreak: new Set(["horizontal_rule"]),
   };
 
+// Blocks that carry a text direction; a `<div dir>` around anything else
+// would be dropped the next time the block is rewritten.
+const DIRECTABLE_BLOCK_KINDS = new Set<MarkdownSourceBlock["kind"]>([
+  "heading",
+  "paragraph",
+  "table",
+]);
+
 /** Whether the rich node is the kind of block the source ledger found. */
 function matchesBlockKind(block: MarkdownSourceBlock, node: ProseMirrorNode): boolean {
   // A `<div dir>` region is one ledger "paragraph" around the block it directs.
-  const names = NODE_NAMES_BY_BLOCK_KIND[block.directionWrappedKind ?? block.kind];
+  const kind = block.directionWrappedKind ?? block.kind;
+  if (block.directionWrappedKind && !DIRECTABLE_BLOCK_KINDS.has(kind)) return false;
+  const names = NODE_NAMES_BY_BLOCK_KIND[kind];
   return !names || names.has(node.type.name);
 }
 
@@ -122,15 +132,21 @@ const SOURCE_ONLY_NESTED_KINDS = new Set([
 ]);
 
 // A heading is one line in Markdown. An atom whose source spans lines (a
-// multi-line equation or citation) cannot be written back into it.
-function isOneLineHeading(node: ProseMirrorNode): boolean {
-  if (node.type.name !== "heading") return true;
+// multi-line equation or citation) cannot be written back into it, at the
+// top level or inside a quote or list.
+function headingsAreOneLine(node: ProseMirrorNode): boolean {
   let oneLine = true;
-  node.forEach((child) => {
-    if (!child.isAtom) return;
-    for (const value of Object.values(child.attrs)) {
-      if (typeof value === "string" && /[\r\n]/u.test(value)) oneLine = false;
-    }
+  const check = (heading: ProseMirrorNode) =>
+    heading.forEach((child) => {
+      if (!child.isAtom) return;
+      for (const value of Object.values(child.attrs)) {
+        if (typeof value === "string" && /[\r\n]/u.test(value)) oneLine = false;
+      }
+    });
+  if (node.type.name === "heading") check(node);
+  node.descendants((descendant) => {
+    if (descendant.type.name === "heading") check(descendant);
+    return oneLine;
   });
   return oneLine;
 }
@@ -154,7 +170,7 @@ function parseBlock(
   const parsed = parseFaithfully(block.source, { references: { ...environment.references } });
   if (!parsed || parsed.childCount !== 1) return rawBlock(block);
   const node = parsed.child(0);
-  if (!matchesBlockKind(block, node) || !isOneLineHeading(node)) return rawBlock(block);
+  if (!matchesBlockKind(block, node) || !headingsAreOneLine(node)) return rawBlock(block);
   return withMarkdownSourceId(node, block.id);
 }
 

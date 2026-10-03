@@ -838,6 +838,18 @@ export const scientMarkdownSerializer = new ScientMarkdownSerializer(
         defaultMarkdownSerializer.nodes.heading?.(state, node, parent, index);
       });
     },
+    code_block: (state, node) => {
+      const params = typeof node.attrs.params === "string" ? node.attrs.params : "";
+      // A backtick fence cannot carry an info string that contains a backtick.
+      const marker = params.includes("`") ? "~" : "`";
+      const runs = node.textContent.match(marker === "`" ? /`{3,}/gu : /~{3,}/gu) ?? [];
+      const fence = marker.repeat(Math.max(3, ...runs.map((run) => run.length + 1)));
+      state.write(`${fence}${params}\n`);
+      state.text(node.textContent, false);
+      state.write("\n");
+      state.write(fence);
+      state.closeBlock(node);
+    },
     raw_block: (state, node) => state.write(String(node.attrs.source)),
     wiki_link: (state, node) => {
       const target = String(node.attrs.target);

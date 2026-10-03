@@ -78,6 +78,24 @@ describe("faithful Markdown projection", () => {
     ["a quote holding a reference definition", "> [r]: https://example.org\n>\n> Keep body.\n"],
     ["a quote holding an HTML comment", "> Quote text\n>\n> <!-- keep me -->\n"],
     ["a list item holding display math", "- Alpha item\n\n  $$\n  x^2\n  $$\n\n- Beta\n"],
+    [
+      "a quote holding a heading whose equation spans lines",
+      "> Title \\(a\n> b\\)\n> ===\n>\n> Body.\n",
+    ],
+    ["a quote with reversed direction lines", '> </div>\n>\n> Text\n>\n> <div dir="rtl">\n'],
+    [
+      "a quote with a surplus closing line",
+      '> <div dir="rtl">\n>\n> Text\n>\n> </div>\n>\n> </div>\n',
+    ],
+    [
+      "a quote with nested direction wrappers",
+      '> <div dir="rtl">\n>\n> <div dir="ltr">\n>\n> Inner\n>\n> </div>\n>\n> Outer\n>\n> </div>\n',
+    ],
+    [
+      "a quote with direction around code",
+      '> <div dir="rtl">\n>\n> ```\n> code\n> ```\n>\n> </div>\n',
+    ],
+    ["direction around a code block", '<div dir="rtl">\n\n```\ncode\n```\n\n</div>\n'],
   ])("keeps %s as editable source", (_case, source) => {
     const projection = createScientMarkdownProjection(source);
 
@@ -94,6 +112,26 @@ describe("faithful Markdown projection", () => {
     const projection = createScientMarkdownProjection(source);
 
     expect(projection.document.firstChild?.type.name).toBe(name);
+  });
+
+  it("writes a fence that keeps an info string containing backticks", () => {
+    const source = "> ~~~ js `extra`\n> code\n> ~~~\n>\n> Keep body.\n";
+    const session = new ScientProseMirrorSession({ source, revision: "r1", mode: "write" });
+    const params = session.state.doc.firstChild?.child(0).attrs.params;
+    expect(String(params).trim()).toBe("js `extra`");
+    const from = textPosition(session, "Keep");
+    const strong = session.state.schema.marks.strong;
+    if (!strong) throw new Error("Missing strong mark.");
+
+    session.applyTransaction(session.state.tr.addMark(from, from + 4, strong.create()), "user");
+
+    const reopened = createScientMarkdownProjection(session.session.draftSource).document;
+    const quote = reopened.firstChild;
+    expect(quote?.type.name).toBe("blockquote");
+    expect(quote?.child(0).type.name).toBe("code_block");
+    expect(quote?.child(0).attrs.params).toBe(params);
+    expect(quote?.child(0).textContent).toBe("code");
+    expect(quote?.child(1).textContent).toBe("Keep body.");
   });
 
   it("names a heading with math by its TeX in the outline", () => {
@@ -155,6 +193,29 @@ describe("makeFaithfulMarkdownParse", () => {
     nested = "a **b** c";
     expect(reentrantParse("*a* c", {})).not.toBeNull();
     expect(inner).toBeNull();
+  });
+
+  it("keeps an outer refusal that happened before the inner parse ran", () => {
+    let inner: ReturnType<typeof parse> | undefined;
+    const reentrant = new MarkdownParser(
+      defaultMarkdownParser.schema,
+      defaultMarkdownParser.tokenizer,
+      {
+        ...defaultMarkdownParser.tokens,
+        strong: { block: "code_block" },
+        em: {
+          mark: "em",
+          getAttrs: () => {
+            inner = reentrantParse("plain", {});
+            return null;
+          },
+        },
+      },
+    );
+    const reentrantParse = makeFaithfulMarkdownParse(reentrant);
+
+    expect(reentrantParse("a **b** c\n\n*a*", {})).toBeNull();
+    expect(inner).not.toBeNull();
   });
 
   it("starts each parse without the previous parse's refusal", () => {
