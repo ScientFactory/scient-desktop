@@ -134,11 +134,15 @@ const verifyDroidProtocol = (binary: string, version: string, platform: NodeJS.P
     platform,
   });
 
-/** Every process below `root`, read from `ps` (POSIX); children before their own children. */
-function posixDescendants(root: number): number[] {
+/**
+ * Every process below `root`, read from `ps` (POSIX); children before their own
+ * children. `undefined` when the listing failed: that is not an empty tree.
+ */
+function posixDescendants(root: number): number[] | undefined {
   const listing = NodeChildProcess.spawnSync("ps", ["-A", "-o", "pid=,ppid="], {
     encoding: "utf8",
   });
+  if (listing.error || listing.status !== 0 || !listing.stdout) return undefined;
   const children = new Map<number, number[]>();
   for (const line of (listing.stdout ?? "").split("\n")) {
     const [pid, ppid] = line.trim().split(/\s+/u).map(Number);
@@ -165,19 +169,21 @@ function isRunning(pid: number): boolean {
 }
 
 /**
- * Ends `root` and every process below it, and resolves when they have exited
- * (or after 10 seconds). On POSIX the agent runs in its own process group, so
- * killing the supervisor alone would leave it running: the tree is read first,
- * because orphans lose their parent link once the supervisor dies.
+ * Ends `root` and every process below it, and resolves to whether they are all
+ * known to have exited (waiting up to 10 seconds). On POSIX the agent runs in
+ * its own process group, so killing the supervisor alone would leave it
+ * running: the tree is read first, because orphans lose their parent link once
+ * the supervisor dies. A tree that could not be read is not known to have ended.
  */
-async function terminateProcessTree(root: number): Promise<void> {
+async function terminateProcessTree(root: number): Promise<boolean> {
   if (HostProcessPlatform.defaultValue() === "win32") {
-    NodeChildProcess.spawnSync("taskkill", ["/pid", String(root), "/T", "/F"], {
+    const result = NodeChildProcess.spawnSync("taskkill", ["/pid", String(root), "/T", "/F"], {
       windowsHide: true,
     });
-    return;
+    return !result.error && result.status === 0;
   }
-  const tree = [...posixDescendants(root), root];
+  const descendants = posixDescendants(root);
+  const tree = [...(descendants ?? []), root];
   for (const pid of tree) {
     try {
       process.kill(-pid, "SIGKILL"); // the group it leads, if any
@@ -189,6 +195,7 @@ async function terminateProcessTree(root: number): Promise<void> {
   for (let waited = 0; waited < 100 && tree.some(isRunning); waited += 1) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
+  return descendants !== undefined && !tree.some(isRunning);
 }
 
 /**
@@ -218,8 +225,8 @@ async function verifyRpc(
     provider === "scient"
       ? await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-agent-rpc-qualification-"))
       : undefined;
-  // Set when the tree had to be ended; the home is removed only after it exits.
-  let treeEnded: Promise<void> | undefined;
+  // Set when the tree had to be ended.
+  let treeEnded: Promise<boolean> | undefined;
   try {
     await new Promise<void>((resolve, reject) => {
       const child = NodeChildProcess.spawn(
@@ -267,8 +274,15 @@ async function verifyRpc(
       });
     });
   } finally {
-    await treeEnded;
-    if (home) await NodeFSP.rm(home, { recursive: true, force: true });
+    // Removed only once the tree is known to have exited; never under an agent
+    // that may still be running.
+    const ended = (await treeEnded) ?? true;
+    if (home && ended) await NodeFSP.rm(home, { recursive: true, force: true });
+    else if (home) {
+      process.stderr.write(
+        `Left ${home} in place: the qualification's processes could not be confirmed to have exited.\n`,
+      );
+    }
   }
 }
 
