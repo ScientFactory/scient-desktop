@@ -443,7 +443,7 @@ describe("writing editor source transactions", () => {
       "Writing shortcuts",
     );
   });
-  it("applies settings from a nonmodal popover while preserving its draft across tabs", async () => {
+  it("applies settings from a submenu while preserving its draft across tabs", async () => {
     await mount("Hello");
     const toolbar = container.querySelector('[role="toolbar"][aria-label="Writing tools"]')!;
     await act(() =>
@@ -452,8 +452,14 @@ describe("writing editor source transactions", () => {
     const settings = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
       (item) => item.textContent?.trim() === "Document settings",
     )!;
-    await act(() => settings.click());
-    const popup = document.body.querySelector('[data-slot="popover-popup"]')!;
+    await act(() => {
+      settings.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false }));
+      settings.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+    });
+    await vi.waitFor(() => expect(settings.getAttribute("aria-expanded")).toBe("true"));
+    const popup = document.body.querySelector(
+      '[data-slot="menu-sub-content"][aria-label="Document settings"]',
+    )!;
     expect(popup).not.toBeNull();
     expect(document.body.querySelector('[data-slot="dialog-backdrop"]')).toBeNull();
     expect(document.body.querySelector('[data-slot="dialog-popup"]')).toBeNull();
@@ -472,7 +478,11 @@ describe("writing editor source transactions", () => {
     expect(current).toContain("Hello");
     expect(current).toContain("\\documentclass{article}");
     await vi.waitFor(() =>
-      expect(document.body.querySelector('[data-slot="popover-popup"]')).toBeNull(),
+      expect(
+        document.body.querySelector(
+          '[data-slot="menu-sub-content"][aria-label="Document settings"]',
+        ),
+      ).toBeNull(),
     );
   });
 

@@ -3608,7 +3608,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     source: string;
   } | null>(null);
   const linkAnchor = useRef<HTMLDivElement>(null);
-  const documentAnchor = useRef<HTMLSpanElement>(null);
+  const settingsSourceAfterClose = useRef(false);
   const pendingLink = useRef<{ text: string; url: string } | null>(null);
   const insertionTarget = useRef<{ doc: ProseMirrorNode; selection: Selection } | null>(null);
   const [figureOpen, setFigureOpen] = useState(false);
@@ -5117,15 +5117,13 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   };
   const documentSettings = (
     <LatexDocumentSettings
-      anchor={documentAnchor}
-      fallbackAnchor={workspaceRef}
-      open={settingsOpen}
       initialSection={settingsSection ?? "page"}
       onOpenChange={setSettingsOpen}
-      onClosed={() => setSettingsSection(null)}
       source={props.rootSource ?? props.source}
       disabled={readOnly || (!props.source.includes("\\begin{document}") && !props.canEditRoot)}
-      onOpenSource={() => (props.onOpenRoot ?? props.onOpenSource)()}
+      onOpenSource={() => {
+        settingsSourceAfterClose.current = true;
+      }}
       onApply={(draft, original) => {
         if (!flushTypingRef.current() || !flushSourceEditRef.current()) return false;
         const expected = currentSource.current;
@@ -5915,10 +5913,31 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         </MenuSubPopup>
       </MenuSub>
       <MenuSeparator />
-      {/* One popover, with Page layout and Document style as its two tabs. */}
-      <DockCommandItem disabled={readOnly} onClick={() => openDocumentSettings("page")}>
-        Document settings
-      </DockCommandItem>
+      <MenuSub
+        open={settingsOpen}
+        onOpenChange={(open) => {
+          if (open) openDocumentSettings("page");
+          else setSettingsOpen(false);
+        }}
+        onOpenChangeComplete={(open) => {
+          if (open) return;
+          setSettingsSection(null);
+          if (settingsSourceAfterClose.current) {
+            settingsSourceAfterClose.current = false;
+            (props.onOpenRoot ?? props.onOpenSource)();
+          }
+        }}
+      >
+        <MenuSubTrigger disabled={readOnly}>Document settings</MenuSubTrigger>
+        <MenuSubPopup
+          className="w-96 max-w-[calc(100vw-2rem)]"
+          aria-label="Document settings"
+          data-dock-command-scope="latex"
+          finalFocus={false}
+        >
+          {settingsSection !== null ? documentSettings : null}
+        </MenuSubPopup>
+      </MenuSub>
       <MenuSeparator />
       {readOnly ? null : <DockCommandItem onClick={find.show}>Find and replace</DockCommandItem>}
       {readerHost?.documentActions}
@@ -5998,7 +6017,6 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                   onOpenChange={setShortcutsOpen}
                   environmentId={props.environmentId}
                 />
-                {settingsSection !== null ? documentSettings : null}
                 <Dialog
                   open={titleHelp !== null}
                   onOpenChange={(open) => {
@@ -6150,7 +6168,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                         priority: 10,
                         estimatedWidth: 44,
                         bar: (
-                          <span ref={documentAnchor} className="inline-flex">
+                          <span className="inline-flex">
                             <DockMenu
                               commandScope="latex"
                               label="Document"
