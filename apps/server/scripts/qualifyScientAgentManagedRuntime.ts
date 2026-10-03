@@ -16,7 +16,7 @@ import { qualifyManagedScientAgentRuntime } from "../src/scient/providerLifecycl
  * managed-runtime catalog qualification calls this before a release can be
  * published, so a binary that only answers `--version` never reaches clients.
  *
- *   node apps/server/scripts/qualifyScientAgentManagedRuntime.ts --binary <path> --version <x.y.z>
+ *   node apps/server/scripts/qualifyScientAgentManagedRuntime.ts --binary <path> --version <x.y.z> [--cwd <dir>]
  */
 function argument(name: string): string | undefined {
   const index = process.argv.indexOf(name);
@@ -31,9 +31,24 @@ const cancellation = new AbortController();
 const cancel = () => cancellation.abort();
 process.once("SIGTERM", cancel);
 process.once("SIGINT", cancel);
-const cwd = await NodeFSP.mkdtemp(
-  NodePath.join(NodeOS.tmpdir(), "scient-agent-rpc-qualification-"),
-);
+// A parent that started this with an IPC channel cancels through it: Windows
+// has no SIGTERM. The channel must not keep this process alive by itself.
+const onMessage = (message: unknown) => {
+  if (
+    typeof message === "object" &&
+    message !== null &&
+    "type" in message &&
+    message.type === "cancel"
+  )
+    cancel();
+};
+process.on("message", onMessage);
+process.channel?.unref();
+// A parent that owns the private home passes it and removes it itself.
+const givenCwd = argument("--cwd");
+const cwd =
+  givenCwd ??
+  (await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-agent-rpc-qualification-")));
 try {
   await Effect.runPromise(
     qualifyManagedScientAgentRuntime({
@@ -52,5 +67,6 @@ try {
 } finally {
   process.removeListener("SIGTERM", cancel);
   process.removeListener("SIGINT", cancel);
-  await NodeFSP.rm(cwd, { recursive: true, force: true });
+  process.removeListener("message", onMessage);
+  if (!givenCwd) await NodeFSP.rm(cwd, { recursive: true, force: true });
 }

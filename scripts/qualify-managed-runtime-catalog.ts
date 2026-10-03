@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// @effect-diagnostics nodeBuiltinImport:off -- Native CI qualification intentionally exercises provider downloads in an isolated temporary runtime root.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off -- Native CI qualification intentionally exercises provider downloads in an isolated temporary runtime root; the child process it supervises, and its cancellation grace timer, live outside Effect.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -155,36 +155,65 @@ async function verifyRpc(
       ? AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(90_000)])
       : undefined;
   cancellation?.throwIfAborted();
-  await new Promise<void>((resolve, reject) => {
-    const child = NodeChildProcess.spawn(
-      process.execPath,
-      [script, "--binary", binary, "--version", version],
-      { cwd: process.cwd(), env: process.env, stdio: "inherit", windowsHide: true },
-    );
-    let failure: unknown;
-    const cancel = () => {
-      failure = cancellation?.reason;
-      // The Scient CLI handles SIGTERM by interrupting its Effect, closing the
-      // detached RPC child tree, and removing its private home before exiting.
-      child.kill("SIGTERM");
-    };
-    cancellation?.addEventListener("abort", cancel, { once: true });
-    if (cancellation?.aborted) cancel();
-    child.once("error", (cause) => {
-      failure = cause;
+  // The parent owns the qualification's private home, so it is removed however
+  // the child ends, including a forced termination that skips its own cleanup.
+  const home =
+    provider === "scient"
+      ? await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-agent-rpc-qualification-"))
+      : undefined;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const child = NodeChildProcess.spawn(
+        process.execPath,
+        [script, "--binary", binary, "--version", version, ...(home ? ["--cwd", home] : [])],
+        {
+          cwd: process.cwd(),
+          env: process.env,
+          // The IPC channel carries cancellation: Windows has no SIGTERM, and
+          // child.kill() there ends the process without running its cleanup.
+          stdio: home ? ["inherit", "inherit", "inherit", "ipc"] : "inherit",
+          windowsHide: true,
+        },
+      );
+      let failure: unknown;
+      let forced: ReturnType<typeof setTimeout> | undefined;
+      const cancel = () => {
+        failure = cancellation?.reason;
+        // Ask first: the Scient CLI interrupts its Effect, which closes the RPC
+        // child tree. If it has not exited after a grace period, end the tree.
+        if (child.connected) child.send({ type: "cancel" });
+        else child.kill("SIGTERM");
+        forced = setTimeout(() => {
+          if (child.exitCode !== null || child.signalCode !== null || child.pid === undefined)
+            return;
+          if (HostProcessPlatform.defaultValue() === "win32") {
+            NodeChildProcess.spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+              windowsHide: true,
+            });
+          } else child.kill("SIGKILL");
+        }, 15_000);
+      };
+      cancellation?.addEventListener("abort", cancel, { once: true });
+      if (cancellation?.aborted) cancel();
+      child.once("error", (cause) => {
+        failure = cause;
+      });
+      child.once("close", (code, exitSignal) => {
+        cancellation?.removeEventListener("abort", cancel);
+        if (forced) clearTimeout(forced);
+        if (failure !== undefined) reject(failure);
+        else if (code === 0) resolve();
+        else
+          reject(
+            new Error(
+              `${provider} RPC qualification failed${exitSignal ? ` with signal ${exitSignal}` : ` with exit code ${String(code)}`}.`,
+            ),
+          );
+      });
     });
-    child.once("close", (code, exitSignal) => {
-      cancellation?.removeEventListener("abort", cancel);
-      if (failure !== undefined) reject(failure);
-      else if (code === 0) resolve();
-      else
-        reject(
-          new Error(
-            `${provider} RPC qualification failed${exitSignal ? ` with signal ${exitSignal}` : ` with exit code ${String(code)}`}.`,
-          ),
-        );
-    });
-  });
+  } finally {
+    if (home) await NodeFSP.rm(home, { recursive: true, force: true });
+  }
 }
 
 const providerFactories: Readonly<
