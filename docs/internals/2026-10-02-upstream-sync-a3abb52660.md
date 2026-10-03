@@ -7,7 +7,7 @@ Date: 2026-10-02. Status: alignment qualification receipt, not release authoriza
 - Owned base: `299a8f8f7273fc06d1b99781dd8912dc21d6ad52` (`main`, the merge of pull request #428).
 - Previous official integration: `5cc99e1c23980d7995a13c47f969b47cb68ed1be`.
 - Official target: `a3abb5266080c15b2a675d7f92b517b567c427e2`.
-- Range: 15 first-parent official commits, 135 official paths, 19 overlapping with Sciant.
+- Range: 15 first-parent official commits, 135 official paths, 19 overlapping with Scient.
 - Nearest official tag: `v0.0.45-nightly.20260930.2493`.
 - Branch: `codex/t3-sync-a3abb52660-20261002`.
 - Upstream merge: the merge commit whose second parent is the exact official target.
@@ -42,7 +42,7 @@ Seven paths needed resolution.
 
 - `AGENTS.md` keeps Scient's repository boundary and code map. Upstream replaced the
   file with its own product manifesto and team authority, which does not apply here.
-  Upstream's one applicable technical rule was adopted as a Sciant architectural
+  Upstream's one applicable technical rule was adopted as a Scient architectural
   boundary: a `ws.ts` handler, HTTP route, MCP tool, scheduled task, or CLI entry
   decodes input, calls one service method, and maps errors, with
   `docs/internals/effect-services.md` as the reference.
@@ -56,7 +56,7 @@ Seven paths needed resolution.
   deliberately not mapped; the patch file stays in the repository so adopting the
   newer version needs no new artifact. This remains an open owner decision.
 - `pnpm-lock.yaml` is regenerated from the composed sources rather than hand-merged.
-- `apps/web/package.json` keeps Sciant's `@types/plotly.js` and takes upstream's
+- `apps/web/package.json` keeps Scient's `@types/plotly.js` and takes upstream's
   `@types/react ~19.3.0`. See the repair below for why.
 - `docs/user/usage.md` keeps Scient's Android 12L requirement and gains upstream's
   background-launch fact.
@@ -69,7 +69,7 @@ Seven paths needed resolution.
 while mobile moved to `~19.3` left the lockfile carrying both. `apps/web` compiled
 against two React type identities and 14 icon assignments failed with mutually
 unrelated `Ref` and `VoidOrUndefinedOnly` types. Taking upstream's `~19.3.0` gives
-one identity. Sciant's `@types/plotly.js` is unaffected.
+one identity. Scient's `@types/plotly.js` is unaffected.
 
 **Missing `noxcturnal` license notices.** The Expo 58 upgrade pulls in `noxcturnal`,
 whose notices were dropped with upstream's config side. `apps/mobile/metro.config.js`

@@ -157,6 +157,7 @@ const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
 const DROID_DRIVER_KIND = ProviderDriverKind.make("droid");
 const PI_DRIVER_KIND = ProviderDriverKind.make("pi");
 const OMP_DRIVER_KIND = ProviderDriverKind.make("omp");
+const SCIENT_DRIVER_KIND = ProviderDriverKind.make("scient");
 const ANTIGRAVITY_DRIVER_KIND = ProviderDriverKind.make("antigravity");
 
 export const DEFAULT_MODEL = "gpt-6.1-sol";
@@ -260,6 +261,7 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
 
 /** Canonical first-party provider order across Settings, onboarding, and pickers. */
 export const PROVIDER_DISPLAY_ORDER: ReadonlyArray<ProviderDriverKind> = [
+  SCIENT_DRIVER_KIND,
   CODEX_DRIVER_KIND,
   CLAUDE_DRIVER_KIND,
   ANTIGRAVITY_DRIVER_KIND,
@@ -295,5 +297,6 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [DROID_DRIVER_KIND]: "Droid",
   [PI_DRIVER_KIND]: "Pi",
   [OMP_DRIVER_KIND]: "Oh My Pi",
+  [SCIENT_DRIVER_KIND]: "Scient",
   [ANTIGRAVITY_DRIVER_KIND]: "Antigravity",
 };

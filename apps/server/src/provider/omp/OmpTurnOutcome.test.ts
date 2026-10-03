@@ -7,6 +7,7 @@ import {
   type OmpTurnEvidence,
   type OmpTurnVerdict,
 } from "./OmpTurnOutcome.ts";
+import { ompTarget } from "./OmpTarget.ts";
 
 const terminal = { settlement: "terminal" } as const;
 
@@ -82,14 +83,14 @@ const cases: ReadonlyArray<readonly [string, OmpTurnEvidence, OmpTurnVerdict]> =
 
 describe("classifyOmpTurnOutcome", () => {
   it.each(cases)("%s", (_label, evidence, verdict) => {
-    expect(classifyOmpTurnOutcome(evidence)).toEqual(verdict);
+    expect(classifyOmpTurnOutcome(ompTarget, evidence)).toEqual(verdict);
   });
 
   it("clips error messages to 512 characters and never returns an empty one", () => {
-    const clipped = clipOmpErrorMessage("x".repeat(2000));
+    const clipped = clipOmpErrorMessage(ompTarget, "x".repeat(2000));
     expect(clipped).toHaveLength(OMP_ERROR_MESSAGE_MAX_CHARS);
     expect(clipped.endsWith("…")).toBe(true);
-    expect(clipOmpErrorMessage("  detail  ")).toBe("detail");
-    expect(clipOmpErrorMessage(undefined)).toBe("Oh My Pi failed this turn.");
+    expect(clipOmpErrorMessage(ompTarget, "  detail  ")).toBe("detail");
+    expect(clipOmpErrorMessage(ompTarget, undefined)).toBe("Oh My Pi failed this turn.");
   });
 });

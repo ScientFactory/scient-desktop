@@ -23,6 +23,7 @@ import {
   type OmpTurnSignal,
   type OmpTurnState,
 } from "./OmpTurnMachine.ts";
+import type { OmpTarget } from "./OmpTarget.ts";
 import { classifyOmpTurnOutcome, clipOmpErrorMessage } from "./OmpTurnOutcome.ts";
 
 const OMP_DRAIN_RETRY_LIMIT = 20;
@@ -363,6 +364,7 @@ const assistantItemStatus = (message: unknown): "completed" | "failed" => {
 };
 
 export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function* (input: {
+  readonly target: OmpTarget;
   readonly client: OmpRpcClient;
   /** Unique to this runtime, including after a session restart. */
   readonly continuationIdPrefix: string;
@@ -489,11 +491,11 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     if (outcome === "failed") {
       return {
         outcome,
-        detail: clipOmpErrorMessage(failureDetail),
+        detail: clipOmpErrorMessage(input.target, failureDetail),
         ...(commandRejected ? { source: "command" as const } : {}),
       };
     }
-    const verdict = classifyOmpTurnOutcome({
+    const verdict = classifyOmpTurnOutcome(input.target, {
       settlement: outcome === "unknown" ? "unconfirmed" : "terminal",
       ...evidence,
     });
@@ -597,7 +599,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     if (now - promptWaitStartedAt >= OMP_PROMPT_RESULT_WAIT_MILLIS) {
       yield* publish({
         type: "warning",
-        message: "Oh My Pi did not report the result of this message.",
+        message: `${input.target.name} did not report the result of this message.`,
       });
       yield* applySignal({ type: "unconfirmed" });
       return;
@@ -638,7 +640,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       if (decision === "give-up") {
         yield* publish({
           type: "warning",
-          message: "Oh My Pi stayed busy after the turn ended.",
+          message: `${input.target.name} stayed busy after the turn ended.`,
         });
         yield* applySignal({ type: "unconfirmed" });
         return;
@@ -664,7 +666,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     if (state._tag === "Failure") {
       yield* publish({
         type: "warning",
-        message: "Oh My Pi did not confirm the session was idle.",
+        message: `${input.target.name} did not confirm the session was idle.`,
       });
       yield* applySignal({ type: "unconfirmed" });
       return;
@@ -697,7 +699,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
               content: [
                 {
                   type: "text",
-                  text: "Scient has not registered host tools for this Oh My Pi session.",
+                  text: `Scient has not registered host tools for this ${input.target.name} session.`,
                 },
               ],
             },
@@ -711,7 +713,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
           .hostUriResult({
             id,
             isError: true,
-            error: "Scient has not registered host URI schemes for this Oh My Pi session.",
+            error: `Scient has not registered host URI schemes for this ${input.target.name} session.`,
           })
           .pipe(Effect.ignore);
 
@@ -794,7 +796,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         type: "question",
         id,
         method,
-        title: text(event.title) ?? "Oh My Pi",
+        title: text(event.title) ?? input.target.name,
         message:
           text(event.message) ??
           text(event.placeholder) ??
@@ -899,7 +901,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         const cause = clip(event.errorMessage);
         yield* publish({
           type: "warning",
-          message: `Oh My Pi is retrying the model request${attempt}${cause ? `: ${cause}` : "."}`,
+          message: `${input.target.name} is retrying the model request${attempt}${cause ? `: ${cause}` : "."}`,
         });
         return;
       }
@@ -916,7 +918,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         if (state._tag === "Failure") {
           yield* publish({
             type: "warning",
-            message: "Oh My Pi changed model state but did not report a readable state.",
+            message: `${input.target.name} changed model state but did not report a readable state.`,
           });
           return;
         }
@@ -937,14 +939,20 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         if (failure) {
           yield* publish({
             type: "warning",
-            message: `Oh My Pi compaction failed${event.willRetry === true ? " and will retry" : ""}: ${failure}`,
+            message: `${input.target.name} compaction failed${event.willRetry === true ? " and will retry" : ""}: ${failure}`,
           });
         } else if (event.aborted === true) {
-          yield* publish({ type: "warning", message: "Oh My Pi compaction was aborted." });
+          yield* publish({
+            type: "warning",
+            message: `${input.target.name} compaction was aborted.`,
+          });
         } else if (event.skipped === true) {
           return;
         } else if (event.willRetry === true) {
-          yield* publish({ type: "warning", message: "Oh My Pi compaction will retry." });
+          yield* publish({
+            type: "warning",
+            message: `${input.target.name} compaction will retry.`,
+          });
         } else {
           yield* publish({ type: "compacted" });
         }
@@ -1094,7 +1102,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       if (event.type === "extension_error") {
         yield* publish({
           type: "warning",
-          message: clip(event.error) ?? "Oh My Pi reported an extension error.",
+          message: clip(event.error) ?? `${input.target.name} reported an extension error.`,
         });
         return;
       }
@@ -1122,7 +1130,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         if (id) yield* rejectHostTool(id);
         yield* publish({
           type: "warning",
-          message: "Ignored an Oh My Pi host-tool call. Scient tools are not registered.",
+          message: `Ignored ${input.target.nameWithArticle} host-tool call. Scient tools are not registered.`,
         });
         return;
       }
@@ -1131,7 +1139,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         if (id) yield* rejectHostUri(id);
         yield* publish({
           type: "warning",
-          message: "Ignored an Oh My Pi host URI request. No host URI schemes are registered.",
+          message: `Ignored ${input.target.nameWithArticle} host URI request. No host URI schemes are registered.`,
         });
         return;
       }
@@ -1146,7 +1154,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       seenUnknownEvents.add(event.type);
       yield* publish({
         type: "warning",
-        message: `Unrecognized Oh My Pi event "${eventTypeLabel(event.type)}" at sequence ${sequence}.`,
+        message: `Unrecognized ${input.target.name} event "${eventTypeLabel(event.type)}" at sequence ${sequence}.`,
       });
     });
 
@@ -1173,7 +1181,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         const route = routePromptOutcome(notification.id);
         if (route === "hold") holdPromptOutcome(notification);
         if (route !== "current") return;
-        failureDetail = clipOmpErrorMessage(notification.error);
+        failureDetail = clipOmpErrorMessage(input.target, notification.error);
         yield* applySignal({ type: "prompt-failed", requestId: notification.id });
         return;
       }

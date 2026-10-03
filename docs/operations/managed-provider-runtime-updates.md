@@ -34,6 +34,15 @@ contract revision for each release family. The app, discovery, native qualificat
 and publication use this registry. Each bundled provider entry must declare the
 same revision; its version and artifact receipts must remain previously qualified.
 
+A new family may ship compiled packaging policy before its first release. Scient Agent does
+this for macOS, Linux (glibc) and Windows on x86-64 and ARM64: its policy fixes the repository,
+stable version floor, each platform's asset name,
+checksum algorithm, executable, and qualification behavior, but the bundled catalog contains
+no Scient entry. Discovery keeps it absent when GitHub reports no stable release. Only a real
+release that passes native qualification can add the first entry. No placeholder checksum or
+download URL is an installable artifact. A cached qualified release and a durable installation
+receipt remain usable after an offline restart; the receipt can also select the repair artifact.
+
 When a provider's new releases require changed extraction or execution policy,
 advance only that family's revision and list the previously published revision
 as historical. Published historical entries are preserved as data, without
@@ -64,7 +73,7 @@ and their limits; the counts are observed so far, not a scan of the entire archi
 `managed-provider-runtime-updates.yml` runs every two hours and may also be
 started manually. It invokes `managed-provider-runtime-update-provider.yml`
 once for each of Codex, Claude, legacy Antigravity, official Antigravity ACP, Cursor, Droid,
-Grok, Pi, and Oh My Pi. The nine release-family runs are intentionally independent:
+Grok, Pi, Oh My Pi, and Scient Agent. The release-family runs are intentionally independent:
 
 1. Read the latest generated catalog, or the bundled catalog before the branch
    exists.
@@ -76,6 +85,10 @@ Grok, Pi, and Oh My Pi. The nine release-family runs are intentionally independe
    `@scientfactory/provider-runtime`): every client refuses it, and because publication
    only accepts newer versions, a published next major would block later patches of the
    supported one. Qualifying a new major is a code change.
+   Scient Agent uses `ScientFactory/scient-agent` stable GitHub releases and its signed raw
+   `scient-agent-darwin-arm64` asset with the matching `.sha256` companion. Its first approved
+   target is macOS Apple silicon. A missing stable release is an unchanged result, not a
+   failed installation or permission to use an unsigned CI artifact.
 3. If the version is newer, its installer contract changed, or an older feed is
    missing a subsequently approved target, collect complete immutable metadata
    for every app-approved target.
@@ -92,6 +105,11 @@ Grok, Pi, and Oh My Pi. The nine release-family runs are intentionally independe
    managed-activation check against the installed binary: the RPC v2 handshake, the
    reported version, and `get_state`, in an isolated home without a session, tools,
    extensions, skills or rules. Its server dependencies are installed for that step.
+   Scient Agent uses the macOS Apple-silicon runner and its own runtime-info identity check
+   followed by RPC v2 and `get_state`. The same qualification runs during app activation.
+   Both the early executable smoke test and RPC qualification use temporary Scient-owned
+   state and an empty home. A synthetic model configuration permits startup without an
+   account; no model request is sent. Installation qualification is independent of sign-in.
    Droid uses all six runners for the shared lifecycle checks. On the two macOS runners the
    installed binary also runs the live Droid suites once (`--droid-live-tests`), against
    local stubs with a fixture key and a private home, so no Factory account or network is
@@ -206,7 +224,7 @@ runs again, previously published releases may remain unavailable to fresh apps.
 
 ## Operating and recovery
 
-- Open **Actions > Promote managed provider runtime updates** to inspect the eight
+- Open **Actions > Promote managed provider runtime updates** to inspect the
   release-family results or start a manual run.
 - Open the failed provider's reusable-workflow run to identify whether stable
   discovery, metadata collection, a native runner, or publication failed.

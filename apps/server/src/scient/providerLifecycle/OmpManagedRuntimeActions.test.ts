@@ -29,6 +29,7 @@ import {
   makeQualifiedManagedOmpRuntime,
   qualifyManagedOmpRuntime,
 } from "./OmpManagedRuntimeActions.ts";
+import { ompTarget } from "../../provider/omp/OmpTarget.ts";
 
 const artifact = resolveReviewedOmpArtifact({ platform: "darwin", arch: "arm64" })!;
 
@@ -52,7 +53,7 @@ const dependencies = {
 const canLease = (gate: OmpExecutableGateShape, executable: string) =>
   canonicalOmpExecutablePath(executable).pipe(
     Effect.flatMap((identity) =>
-      Effect.scoped(gate.acquireProcess(identity, { kind: "one-shot" })),
+      Effect.scoped(gate.acquireProcess(identity, { target: ompTarget, kind: "one-shot" })),
     ),
     Effect.provide(NodeServices.layer),
     Effect.as(true),
@@ -82,7 +83,11 @@ describe("managed Oh My Pi activation", () => {
                 );
                 const activation = input.activations.find((held) => held.identity === identity);
                 yield* Effect.scoped(
-                  gate.acquireProcess(identity, { kind: "one-shot", activation }),
+                  gate.acquireProcess(identity, {
+                    target: ompTarget,
+                    kind: "one-shot",
+                    activation,
+                  }),
                 ).pipe(Effect.orDie);
                 events.push("qualify:own=true");
               }),
@@ -210,7 +215,7 @@ describe("managed Oh My Pi activation", () => {
         );
         const conversation = yield* Scope.make();
         yield* gate
-          .acquireProcess(identity, { kind: "session" })
+          .acquireProcess(identity, { target: ompTarget, kind: "session" })
           .pipe(Effect.provideService(Scope.Scope, conversation));
         const failure = yield* Effect.tryPromise(() =>
           runtime.install({ artifact, signal: new AbortController().signal }),
@@ -289,7 +294,7 @@ describe("configured Oh My Pi health probe", () => {
       try {
         const activation = yield* Scope.make();
         yield* gate
-          .acquireActivation(identity)
+          .acquireActivation(identity, { target: ompTarget })
           .pipe(Effect.provideService(Scope.Scope, activation));
         const during = yield* resolve;
         expect(versionProbes()).toEqual([]);

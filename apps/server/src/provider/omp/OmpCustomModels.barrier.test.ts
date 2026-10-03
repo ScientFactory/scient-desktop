@@ -25,6 +25,7 @@ import { makeOmpCustomModelsClientFactory, type OmpCustomModelsTiming } from "./
 import { makeFakeOmpModelsExtension } from "./OmpCustomModelsTestHelpers.ts";
 import { OMP_PENDING_CONNECTION_DETAIL } from "./OmpModel.ts";
 import type { OmpRpcProcess, OmpRpcProcessOptions } from "./OmpRpcProcess.ts";
+import { ompTarget } from "./OmpTarget.ts";
 
 const instanceId = ProviderInstanceId.make("omp-barrier-test");
 const model = {
@@ -139,6 +140,7 @@ const setup = (input: {
     const settingsChanges = yield* Queue.unbounded<ServerSettings>();
     let extension: FakeExtension | undefined;
     const factory = yield* makeOmpCustomModelsClientFactory(
+      ompTarget,
       {
         resolveCustomModels: () =>
           Effect.sync(() => {
@@ -156,7 +158,7 @@ const setup = (input: {
         }),
       input.timing,
     );
-    const client = yield* factory({ command: "fake-omp", env: { PATH: "" } });
+    const client = yield* factory({ target: ompTarget, command: "fake-omp", env: { PATH: "" } });
     if (!extension) throw new Error("fake process was not launched");
     const loaded = extension;
     yield* Effect.addFinalizer(() => Effect.sync(() => loaded.stop()));

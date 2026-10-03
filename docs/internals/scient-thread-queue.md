@@ -15,6 +15,13 @@ and manual product acceptance are separate; no visual acceptance is implied.
   an immediate turn or a durable queue entry in the existing event/receipt
   transaction. Busy/completion-boundary races never require a second Send.
   It never silently becomes steering.
+- A normal follow-up submitted while work is running appears above the composer
+  as **Queuing…**, rather than briefly appearing as a sent conversation message.
+  The server receipt determines its final placement. An accepted queued preview
+  remains there until the queue snapshot or delivered message arrives; if the
+  turn finished and the server sent it immediately, it enters the conversation.
+  Draft content is still cleared only after acceptance, and pending previews
+  expose no queue editing, steering, deletion, or reordering actions.
 - Each waiting message starts individually after the preceding turn's answer
   ingestion **and** checkpoint finalization settles. A failed checkpoint does not
   make a successfully delivered answer unsuccessful. A session's `ready` status

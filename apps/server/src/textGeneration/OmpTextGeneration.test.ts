@@ -17,6 +17,7 @@ import {
   makeOmpScriptedWire,
 } from "../provider/omp/OmpCaptureReplay.testFixtures.ts";
 import { makeOmpRedaction, type OmpRpcProcess } from "../provider/omp/OmpRpcProcess.ts";
+import { ompTarget } from "../provider/omp/OmpTarget.ts";
 
 const toJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -31,6 +32,7 @@ const response = (command: string, data: unknown = {}): OmpRpcResponse => ({
 const makeClient = (events: ReadonlyArray<OmpRpcNotification>) =>
   ({
     version: "18.2.8",
+    runtimeVersion: "18.2.8",
     ready: Effect.succeed({
       type: "ready" as const,
       protocolVersion: 1,
@@ -81,7 +83,7 @@ const modelSelection = createModelSelection(ProviderInstanceId.make("omp"), "ant
 describe("Oh My Pi text generation", () => {
   it.effect("reconciles a complete assistant message when deltas are absent", () =>
     Effect.gen(function* () {
-      const service = yield* makeOmpTextGeneration(settings, {}, () =>
+      const service = yield* makeOmpTextGeneration(ompTarget, settings, {}, () =>
         Effect.succeed(
           makeClient([
             {
@@ -121,7 +123,7 @@ describe("Oh My Pi text generation", () => {
           finalError: "429 Too Many Requests: rate limit exceeded",
         },
       ]) {
-        const service = yield* makeOmpTextGeneration(settings, {}, () =>
+        const service = yield* makeOmpTextGeneration(ompTarget, settings, {}, () =>
           Effect.succeed(
             makeClient([
               { _tag: "Event", event },
@@ -149,7 +151,7 @@ describe("Oh My Pi text generation", () => {
 
   it.effect("settles a later local prompt_result instead of waiting for agent_end", () =>
     Effect.gen(function* () {
-      const service = yield* makeOmpTextGeneration(settings, {}, () =>
+      const service = yield* makeOmpTextGeneration(ompTarget, settings, {}, () =>
         Effect.succeed(
           makeClient([{ _tag: "Event", event: { type: "prompt_result", agentInvoked: false } }]),
         ),
@@ -178,6 +180,7 @@ const wireProcess =
       return {
         ...client,
         version: "18.3.1",
+        runtimeVersion: "18.3.1",
         shutdown: Effect.succeed({ code: 0, forced: false, stderrTail: "" }),
         redaction: makeOmpRedaction(undefined, secrets),
       };
@@ -210,7 +213,7 @@ const assistantEnd = (message: Frame) => ({
 const agentEnd = { type: "agent_end", messages: [], isTerminal: true };
 
 const generateTitle = (makeProcess: () => Effect.Effect<OmpRpcProcess, never, Scope.Scope>) =>
-  makeOmpTextGeneration(settings, {}, makeProcess).pipe(
+  makeOmpTextGeneration(ompTarget, settings, {}, makeProcess).pipe(
     Effect.flatMap((service) =>
       service.generateThreadTitle({ cwd: process.cwd(), message: "review", modelSelection }),
     ),

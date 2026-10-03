@@ -5,6 +5,8 @@ import * as NodePath from "node:path";
 
 import * as Effect from "effect/Effect";
 
+import type { OmpTarget } from "./OmpTarget.ts";
+
 /**
  * Locks held by one adapter. The adapter owns this table for its lifetime, so
  * a record this adapter wrote but no longer tracks is provably a leftover,
@@ -198,17 +200,18 @@ export const tryAcquireOmpSessionLockSync = (
 
 /** One live writer for a conversation directory. A dead holder's lock is reclaimed. */
 export const acquireOmpSessionLock = (
+  target: OmpTarget,
   lockPath: string,
   registry: OmpSessionLockRegistry,
   fs: OmpLockFs = nodeOmpLockFs,
 ): Effect.Effect<OmpSessionLockHandle, string> =>
   Effect.try({
     try: () => tryAcquireOmpSessionLockSync(lockPath, registry, fs),
-    catch: () => "Oh My Pi could not lock this conversation.",
+    catch: () => `${target.name} could not lock this conversation.`,
   }).pipe(
     Effect.filterOrFail(
       (result): result is OmpSessionLockHandle => result !== "busy",
-      () => "This Oh My Pi conversation is already open.",
+      () => `This ${target.name} conversation is already open.`,
     ),
   );
 

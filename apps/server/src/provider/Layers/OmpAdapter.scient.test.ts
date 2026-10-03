@@ -62,9 +62,11 @@ import { makeOmpAdapter, type OmpAdapterOptions } from "./OmpAdapter.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import { makeProviderServiceLive } from "./ProviderService.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
+import { ompTarget } from "../omp/OmpTarget.ts";
 
 type FakeProcess = OmpRpcClient & {
   readonly version: string;
+  readonly runtimeVersion: string;
   readonly shutdown: Effect.Effect<OmpProcessExit, never>;
 };
 
@@ -92,6 +94,7 @@ const makeClient = (input: {
   const sessionFile = NodePath.join(input.sessionDir, "session.jsonl");
   return {
     version: "18.3.1",
+    runtimeVersion: "18.3.1",
     ready: Effect.succeed(readyFrame),
     events: Stream.fromQueue(input.events),
     flushEvents: () => Queue.offer(input.events, { _tag: "Drain" }).pipe(Effect.asVoid),
@@ -222,6 +225,7 @@ const makeAdapter = (input: {
   readonly makeProcess: NonNullable<OmpAdapterOptions["makeProcess"]>;
 }) =>
   makeOmpAdapter({
+    target: ompTarget,
     binaryPath: "omp",
     providerInstanceId: instanceId,
     stateDir: NodePath.join(input.root, "state"),
@@ -262,7 +266,7 @@ describe("Scient tools, skills and awareness for Oh My Pi", () => {
             const contents = NodeFS.readFileSync(file, "utf8");
             const bootstrap = consumeBootstrap(file);
             bootstraps.push(bootstrap);
-            expect(contents).toBe(ompScientExtensionSource(bootstrap.path));
+            expect(contents).toBe(ompScientExtensionSource(ompTarget, bootstrap.path));
             expect(contents).not.toContain("synthetic-scient-omp-token");
             expect(contents).not.toContain(endpoint);
             const events = yield* Queue.unbounded<OmpRpcNotification, Cause.Done>();
@@ -465,6 +469,7 @@ describe("Scient tools, skills and awareness for Oh My Pi", () => {
         };
         const settingsChanges = yield* Queue.unbounded<ServerSettingsValue>();
         const customModels = yield* makeOmpCustomModelsClientFactory(
+          ompTarget,
           {
             resolveCustomModels: () => Effect.succeed([connection]),
             subscribeChanges: Effect.succeed(Stream.fromQueue(settingsChanges)),
@@ -591,6 +596,7 @@ describe("Scient tool authority for Oh My Pi", () => {
         const ompInstanceId = ProviderInstanceId.make("omp");
         const tools = new Map<string, LoadedTool>();
         const adapter = yield* makeOmpAdapter({
+          target: ompTarget,
           binaryPath: "omp",
           providerInstanceId: ompInstanceId,
           stateDir: NodePath.join(root, "state"),

@@ -1,7 +1,13 @@
 import { useAtomValue } from "@effect/atom-react";
-import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  parseScopedThreadKey,
+  scopedThreadKey,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
+import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import { sortActiveThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
 import type {
   ScopedThreadRef,
   ThreadSection,
@@ -16,7 +22,13 @@ import type { useHandleNewThread } from "../../hooks/useHandleNewThread";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { resolveThreadActionProjectRef } from "../../lib/chatThreadActions";
 import { readLocalApi } from "../../localApi";
-import { useEnvironments } from "../../state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
+import { environmentServerConfigsAtom } from "../../state/server";
+import { allEnvironmentProjectSnapshotsReadyAtom } from "../../state/shell";
+import { useUiStateStore } from "../../uiStateStore";
+import { readThreadShell } from "../../state/entities";
+import { placementEligible } from "./placementEligibility";
+import { useAutomaticPlacement } from "./useAutomaticPlacement";
 import { useThreadSectionActions } from "./actions";
 import { loadedThreadEnvironmentsKeyAtom } from "./loadedEnvironments";
 import { useThreadSectionCatalog } from "./catalog";
@@ -52,6 +64,9 @@ export type SidebarSectionsOwnViewProps = Pick<
   | "onRenamingSectionChange"
   | "onRenameSection"
   | "onStartCreateSection"
+  | "canonicalGroupOrders"
+  | "onManualPlacement"
+  | "onInteractionChange"
 >;
 
 /**
@@ -69,6 +84,7 @@ export function useSidebarSections(input: {
   readonly pinnedThreads: readonly Shell[];
   readonly activeThreads: readonly Shell[];
   readonly routeThreadKey: string | null;
+  readonly now?: string;
   readonly newThreadContext: ReturnType<typeof useHandleNewThread>;
   /** Closes the mobile sidebar before navigating to a new draft. */
   readonly onBeforeNewThread: () => void;
@@ -89,6 +105,10 @@ export function useSidebarSections(input: {
     return () => setSidebarSectionScope(null);
   }, [scopeProjectRefs]);
   const { environments } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  const snapshotsReady = useAtomValue(allEnvironmentProjectSnapshotsReadyAtom);
+  const visits = useUiStateStore((state) => state.threadLastVisitedAtById);
 
   const [viewMode, setViewMode] = useLocalStorage(
     SIDEBAR_VIEW_MODE_KEY,
@@ -137,7 +157,7 @@ export function useSidebarSections(input: {
       }),
     [catalog.sections, input.threads, loadedEnvironmentIds, scopeProjectKeys],
   );
-  const groups = useMemo(
+  const canonicalGroups = useMemo(
     () =>
       groupThreadsBySection({
         sections: catalog.sections,
@@ -147,6 +167,104 @@ export function useSidebarSections(input: {
         listedSectionIds,
       }),
     [activeThreads, catalog.generalIndex, catalog.sections, listedSectionIds, pinnedThreads],
+  );
+  const completeGroups = useMemo(() => {
+    const now = input.now ?? new Date().toISOString();
+    const active = input.threads.filter((thread) => {
+      if (thread.archivedAt !== null || thread.projectId === null || thread.pinnedAt != null)
+        return false;
+      const capabilities = serverConfigs.get(thread.environmentId)?.environment.capabilities;
+      return (
+        !(capabilities?.threadSettlement && thread.settledOverride === "settled") &&
+        !(capabilities?.threadSnooze && effectiveSnoozed(thread, { now }))
+      );
+    });
+    return groupThreadsBySection({
+      sections: catalog.sections,
+      generalIndex: catalog.generalIndex,
+      pinned: [],
+      active: sortActiveThreadsByOrderKey(active),
+    });
+  }, [catalog.generalIndex, catalog.sections, input.now, input.threads, serverConfigs]);
+  const placementInputs = useMemo(
+    () =>
+      completeGroups.map((group) => ({
+        id: group.id,
+        rows: group.threads.map((thread) => {
+          const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+          return {
+            key,
+            orderKey: thread.activeOrderKey ?? null,
+            eligible: placementEligible(thread, visits[key], input.now ?? new Date().toISOString()),
+          };
+        }),
+      })),
+    [completeGroups, input.now, visits],
+  );
+  const knownPlacementKeys = useMemo(
+    () =>
+      input.threads
+        .filter((thread) => thread.archivedAt === null)
+        .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+    [input.threads],
+  );
+  const placement = useAutomaticPlacement({
+    scope: primaryEnvironmentId ?? "unavailable",
+    groups: placementInputs,
+    openKey: routeThreadKey,
+    ready: supported && snapshotsReady === true,
+    knownKeys: knownPlacementKeys,
+  });
+  const groups = useMemo(() => {
+    if (!placement.enabled) return canonicalGroups;
+    return canonicalGroups.map((group) => {
+      const order = placement.state.groups.find((entry) => entry.id === group.id)?.order;
+      if (order === undefined) return group;
+      const rank = new Map(order.map((key, index) => [key, index]));
+      const pinned = group.threads.filter((thread) => thread.pinnedAt != null);
+      const active = group.threads
+        .filter((thread) => thread.pinnedAt == null)
+        .toSorted(
+          (left, right) =>
+            (rank.get(scopedThreadKey(scopeThreadRef(left.environmentId, left.id))) ?? Infinity) -
+            (rank.get(scopedThreadKey(scopeThreadRef(right.environmentId, right.id))) ?? Infinity),
+        );
+      return { ...group, threads: [...pinned, ...active] };
+    });
+  }, [canonicalGroups, placement.enabled, placement.state]);
+  const canonicalGroupOrders = useMemo(
+    () =>
+      placement.enabled
+        ? new Map(
+            canonicalGroups.map((group) => [
+              group.id,
+              group.threads
+                .filter((thread) => thread.pinnedAt == null)
+                .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+            ]),
+          )
+        : undefined,
+    [canonicalGroups, placement.enabled],
+  );
+  const onManualPlacement = useCallback<NonNullable<SidebarSectionsViewProps["onManualPlacement"]>>(
+    (groupId, order, key, orderKeys) => {
+      const ref = parseScopedThreadKey(key);
+      const thread = ref === null ? null : readThreadShell(ref);
+      const movedRow =
+        thread === null
+          ? undefined
+          : {
+              key,
+              orderKey: thread.activeOrderKey ?? null,
+              eligible: placementEligible(
+                thread,
+                useUiStateStore.getState().threadLastVisitedAtById[key],
+                new Date().toISOString(),
+              ),
+            };
+      placement.onManualPlacement(groupId, order, key, orderKeys, movedRow);
+    },
+    [placement.onManualPlacement],
   );
   /** Rows in display order; a collapsed section still shows the open thread. */
   const visibleGroupThreads = useMemo(
@@ -282,6 +400,7 @@ export function useSidebarSections(input: {
       // Moves step over General like any other section, and only over listed ones.
       const order = groups.map((group) => group.id);
       const index = order.indexOf(section.id);
+      placement.onInteractionChange(true);
       const clicked = await settlePromise(() =>
         api.contextMenu.show(
           [
@@ -304,6 +423,7 @@ export function useSidebarSections(input: {
           position,
         ),
       );
+      placement.onInteractionChange(false);
       if (clicked._tag === "Failure" || clicked.value === null) return;
       switch (clicked.value) {
         case "new-thread":
@@ -326,7 +446,13 @@ export function useSidebarSections(input: {
           return;
       }
     },
-    [deleteSection, groups, reorderSections, startNewThreadInSection],
+    [
+      deleteSection,
+      groups,
+      placement.onInteractionChange,
+      reorderSections,
+      startNewThreadInSection,
+    ],
   );
 
   const toggleGroup = useCallback(
@@ -339,6 +465,9 @@ export function useSidebarSections(input: {
 
   const viewProps: SidebarSectionsOwnViewProps = {
     groups,
+    canonicalGroupOrders,
+    onManualPlacement,
+    onInteractionChange: placement.onInteractionChange,
     collapsedGroupIds,
     routeThreadKey,
     onToggleGroup: toggleGroup,
@@ -364,6 +493,7 @@ export function useSidebarSections(input: {
   return {
     /** True while the sidebar is grouped by section. */
     sectionsView,
+    onInteractionChange: placement.onInteractionChange,
     visibleGroupThreads,
     viewProps,
     /** The header's grouping toggle; null when sections are unavailable. */

@@ -1,5 +1,6 @@
 import React, { type SVGProps, useId } from "react";
 import { cn } from "~/lib/utils";
+import scientAgentSymbolUrl from "../assets/scient-agent-symbol.svg?url";
 export type Icon = React.FC<SVGProps<SVGSVGElement>>;
 
 export const UltrafastIcon: Icon = (props) => (
@@ -811,6 +812,14 @@ export const OhMyPiIcon: Icon = ({ className, ...props }) => {
     </svg>
   );
 };
+
+// Scient Agent's symbol: a Möbius strip blending from blue to peach. The drawing is a few hundred
+// masked slices, so it is kept as an asset and shown as an image.
+export const ScientAgentIcon: Icon = (props) => (
+  <svg {...props} viewBox="0 0 512 512" fill="none">
+    <image href={scientAgentSymbolUrl} width="512" height="512" />
+  </svg>
+);
 
 // Official two-color mark from https://forgejo.org/favicon.svg.
 export const ForgejoIcon: Icon = (props) => (

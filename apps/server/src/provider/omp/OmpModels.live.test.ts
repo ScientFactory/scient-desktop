@@ -9,7 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as OmpExecutableGate from "./OmpExecutableGate.ts";
-import { ompLiveInstance, ompQualifyBinary } from "./OmpLive.testFixtures.ts";
+import { ompLiveInstance, ompQualifyBinary, ompQualifyTarget } from "./OmpLive.testFixtures.ts";
 import { makeOmpRpcProcess, OMP_ISOLATED_ARGS } from "./OmpRpcProcess.ts";
 
 // Exercise the actual client decoder and v2 transport with a multi-provider
@@ -54,6 +54,7 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi model discovery", () => {
         };`,
           );
           const client = yield* makeOmpRpcProcess({
+            target: ompQualifyTarget,
             command: ompQualifyBinary!,
             cwd: root,
             env: environment,

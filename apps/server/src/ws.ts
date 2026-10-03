@@ -84,6 +84,7 @@ import {
   type RelayClientInstallProgressEvent,
   ServerSelfUpdateError,
   type ServerSelfUpdateProgressEvent,
+  type ProviderConnectionOperation,
   type ServerProvider,
   ScientSkillManagementError,
   type ServerLifecycleStreamEvent,
@@ -310,28 +311,44 @@ export const resolveFileManagerRevealKindForConfig = <E, R>(
   discovery: Effect.Effect<FileManagerRevealKind | undefined, E, R>,
 ) => resolveDiscoveryForConfig(discovery, () => undefined);
 
-const redactProviderAuthorizationForReadOnlyClient = (provider: ServerProvider): ServerProvider => {
-  const connection = provider.connection;
-  const operation = connection?.operation;
-  if (
-    connection === undefined ||
-    operation === null ||
-    operation === undefined ||
-    (operation.authorizationUrl === undefined && operation.userCode === undefined)
-  ) {
-    return provider;
-  }
+const hasAuthorizationMaterial = (
+  operation: ProviderConnectionOperation | null | undefined,
+): operation is ProviderConnectionOperation =>
+  operation !== null &&
+  operation !== undefined &&
+  (operation.authorizationUrl !== undefined ||
+    operation.userCode !== undefined ||
+    operation.instructions !== undefined);
 
+const withoutAuthorizationMaterial = (
+  operation: ProviderConnectionOperation,
+): ProviderConnectionOperation => {
   const redactedOperation = { ...operation };
   delete redactedOperation.authorizationUrl;
   delete redactedOperation.authorizationUrlKind;
   delete redactedOperation.userCode;
+  // The provider's own wording can repeat the device code.
+  delete redactedOperation.instructions;
+  return redactedOperation;
+};
 
+const redactProviderAuthorizationForReadOnlyClient = (provider: ServerProvider): ServerProvider => {
+  const connection = provider.connection;
+  if (connection === undefined) return provider;
+  const { operation, accountOperation } = connection;
+  if (!hasAuthorizationMaterial(operation) && !hasAuthorizationMaterial(accountOperation)) {
+    return provider;
+  }
   return {
     ...provider,
     connection: {
       ...connection,
-      operation: redactedOperation,
+      ...(hasAuthorizationMaterial(operation)
+        ? { operation: withoutAuthorizationMaterial(operation) }
+        : {}),
+      ...(hasAuthorizationMaterial(accountOperation)
+        ? { accountOperation: withoutAuthorizationMaterial(accountOperation) }
+        : {}),
     },
   };
 };
@@ -3398,7 +3415,8 @@ const makeWsRpcLayer = (
               !supportsModelConnections(instance.driverKind, connection.protocol)
             )
               return yield* new CustomModelError({
-                message: "Connect this model to an enabled Pi, Droid, or Oh My Pi agent first.",
+                message:
+                  "Connect this model to an enabled Pi, Droid, Oh My Pi, or Scient agent first.",
               });
             const resolved = yield* serverSettings.resolveCustomModels(input.instanceId);
             const credentialError = resolved.find((c) => c.id === connection.id)?.credentialError;
@@ -3407,7 +3425,7 @@ const makeWsRpcLayer = (
             const slug =
               instance.driverKind === "droid"
                 ? droidCustomModelId(connection.id, model.id)
-                : instance.driverKind === "omp"
+                : instance.driverKind === "omp" || instance.driverKind === "scient"
                   ? encodeOmpModelSlug(customModelProviderId(connection.id), model.modelId)
                   : encodePiModelSlug(customModelProviderId(connection.id), model.modelId);
             if (!slug) return yield* new CustomModelError({ message: "Invalid model ID." });

@@ -7,10 +7,14 @@
  */
 import {
   MANAGED_RUNTIME_CATALOG_PROVIDERS as managedProviders,
+  MANAGED_RUNTIME_POLICY,
   compareManagedRuntimeVersions,
   hydrateManagedRuntimeArtifact,
   managedRuntimeTargetKey,
+  resolveScientAgentArtifactPolicy,
+  SCIENT_AGENT_TARGETS,
   type ManagedRuntimeArtifact,
+  type ManagedRuntimeArtifactPolicy,
   type ManagedRuntimeArtifactReceipt,
   type ManagedRuntimeCatalogProvider,
 } from "@scientfactory/provider-runtime";
@@ -120,6 +124,35 @@ export const BUNDLED_MANAGED_RUNTIME_CATALOG: ManagedRuntimeCatalogData = Schema
 )(bundledCatalogJson);
 
 /**
+ * A newly supported family can ship policy before its first qualified release.
+ * Its release must carry exactly the targets the policy names, each one valid
+ * under that target's policy: the same complete set discovery requires.
+ */
+function isApprovedUnbundledRelease(
+  provider: ManagedRuntimeCatalogProvider,
+  release: ManagedRuntimeCatalogData["providers"][string],
+): boolean {
+  if (provider !== "scient") return false;
+  const expected = SCIENT_AGENT_TARGETS.map(managedRuntimeTargetKey).toSorted();
+  const targets = Object.keys(release.artifacts).toSorted();
+  if (targets.length !== expected.length || targets.some((key, index) => key !== expected[index])) {
+    return false;
+  }
+  const catalog = { schemaVersion: 1 as const, providers: { [provider]: release } };
+  return SCIENT_AGENT_TARGETS.every((target) => {
+    const policy = resolveScientAgentArtifactPolicy(target);
+    return (
+      policy !== undefined &&
+      resolveManagedRuntimeCatalogArtifact({
+        catalog,
+        policy,
+        contractRevision: MANAGED_RUNTIME_POLICY.scient.revision,
+      }) !== undefined
+    );
+  });
+}
+
+/**
  * Merges only strictly newer provider releases. Missing entries, downgrades,
  * contract drift, and same-version repacks never displace a known-good entry.
  */
@@ -131,7 +164,15 @@ export function mergeManagedRuntimeCatalogs(
   for (const provider of managedProviders) {
     const existing = current.providers[provider];
     const next = candidate.providers[provider];
-    if (!existing || !next || next.contractRevision !== existing.contractRevision) continue;
+    if (!next) continue;
+    if (!BUNDLED_MANAGED_RUNTIME_CATALOG.providers[provider]) {
+      if (!isApprovedUnbundledRelease(provider, next)) continue;
+      if (!existing) {
+        providers[provider] = next;
+        continue;
+      }
+    }
+    if (!existing || next.contractRevision !== existing.contractRevision) continue;
     if (
       compareManagedRuntimeVersions({
         provider,
@@ -226,8 +267,25 @@ export function resolveFetchedManagedRuntimeCatalog(
     const bundled = BUNDLED_MANAGED_RUNTIME_CATALOG.providers[provider];
     const existing = current.providers[provider] ?? bundled;
     const candidate = fetched.providers[provider];
+    // With no bundled release there is no reviewed rollback floor. Preserve
+    // the last known-good release, accepting only valid first or newer ones.
+    if (!bundled) {
+      if (
+        candidate &&
+        isApprovedUnbundledRelease(provider, candidate) &&
+        (!existing ||
+          compareManagedRuntimeVersions({
+            provider,
+            current: existing.version,
+            candidate: candidate.version,
+          }) === "newer" ||
+          extendsProviderRelease(candidate, existing))
+      ) {
+        providers[provider] = candidate;
+      }
+      continue;
+    }
     if (
-      !bundled ||
       !existing ||
       !candidate ||
       candidate.channel !== "stable" ||
@@ -287,7 +345,7 @@ function catalogRevision(input: {
  */
 export function resolveManagedRuntimeCatalogArtifact(input: {
   readonly catalog: ManagedRuntimeCatalogData;
-  readonly policy: ManagedRuntimeArtifact;
+  readonly policy: ManagedRuntimeArtifactPolicy;
   readonly contractRevision: number;
 }): ManagedRuntimeArtifact | undefined {
   const provider = input.catalog.providers[input.policy.provider];
@@ -336,15 +394,18 @@ function isSameManagedRuntimeRelease(
 export function resolveManagedRuntimeCatalogCandidate(input: {
   readonly catalog: ManagedRuntimeCatalogData;
   readonly bundledArtifact: ManagedRuntimeArtifact | undefined;
+  readonly artifactPolicy?: ManagedRuntimeArtifactPolicy | undefined;
   readonly contractRevision: number;
 }): ManagedRuntimeArtifact | undefined {
   const { bundledArtifact } = input;
-  if (!bundledArtifact) return undefined;
+  const policy = input.artifactPolicy ?? bundledArtifact;
+  if (!policy) return undefined;
   const remote = resolveManagedRuntimeCatalogArtifact({
     catalog: input.catalog,
-    policy: bundledArtifact,
+    policy,
     contractRevision: input.contractRevision,
   });
+  if (!bundledArtifact) return remote;
   if (!remote) return bundledArtifact;
   if (isSameManagedRuntimeRelease(remote, bundledArtifact)) return remote;
   return isManagedRuntimeUpdate({
@@ -359,13 +420,15 @@ export function resolveManagedRuntimeCatalogCandidate(input: {
 /** Latest known qualified repair target, including a newer durable installation receipt offline. */
 export function resolveManagedRuntimeRepairArtifact(input: {
   readonly bundledArtifact: ManagedRuntimeArtifact | undefined;
+  readonly artifactPolicy?: ManagedRuntimeArtifactPolicy | undefined;
   readonly candidateArtifact: ManagedRuntimeArtifact | undefined;
   readonly activeArtifact: ManagedRuntimeArtifactReceipt | null | undefined;
 }): ManagedRuntimeArtifact | undefined {
   const candidate = input.candidateArtifact;
+  const policy = input.artifactPolicy ?? input.bundledArtifact;
   const installed =
-    input.bundledArtifact && input.activeArtifact
-      ? hydrateManagedRuntimeArtifact(input.bundledArtifact, input.activeArtifact)
+    policy && input.activeArtifact
+      ? hydrateManagedRuntimeArtifact(policy, input.activeArtifact)
       : undefined;
   return installed &&
     (!candidate ||

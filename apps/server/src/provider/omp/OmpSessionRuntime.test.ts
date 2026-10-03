@@ -18,6 +18,7 @@ import type { OmpRpcResponse } from "effect-omp-rpc/schema";
 
 import { makeOmpScriptedWire } from "./OmpCaptureReplay.testFixtures.ts";
 import { makeOmpSessionRuntime, type OmpSessionUpdate } from "./OmpSessionRuntime.ts";
+import { ompTarget } from "./OmpTarget.ts";
 
 const response = (command: string, data: unknown = {}): OmpRpcResponse => ({
   id: "test-request",
@@ -72,6 +73,7 @@ const runtimeHarness = Effect.fn("ompRuntimeHarness")(function* () {
   const updates = yield* Queue.unbounded<OmpSessionUpdate>();
   const scope = yield* Scope.make("sequential");
   const runtime = yield* makeOmpSessionRuntime({
+    target: ompTarget,
     continuationIdPrefix: "test-continuation",
     client: makeClient(events),
     scope,
@@ -343,6 +345,7 @@ const wireHarness = Effect.fn("ompWireHarness")(function* () {
   yield* client.ready;
   const updates = yield* Queue.unbounded<OmpSessionUpdate>();
   const runtime = yield* makeOmpSessionRuntime({
+    target: ompTarget,
     continuationIdPrefix: "test-continuation",
     client,
     scope,
@@ -970,6 +973,7 @@ it.effect("a buffered idle snapshot cannot resurrect monitoring after session_se
     const client = makeClient(events);
     let settled = false;
     const runtime = yield* makeOmpSessionRuntime({
+      target: ompTarget,
       continuationIdPrefix: "drain-race",
       scope,
       client: {
@@ -1025,6 +1029,7 @@ const failingStateHarness = Effect.fn("ompFailingStateHarness")(function* (
   const updates = yield* Queue.unbounded<OmpSessionUpdate>();
   const scope = yield* Scope.make("sequential");
   const runtime = yield* makeOmpSessionRuntime({
+    target: ompTarget,
     continuationIdPrefix: "state-continuation",
     client: { ...makeClient(events), getState },
     scope,

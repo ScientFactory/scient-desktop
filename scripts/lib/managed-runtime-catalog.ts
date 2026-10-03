@@ -22,7 +22,9 @@ import {
   OMP_SUPPORTED_MAJOR,
   resolveReviewedOmpArtifact,
   resolveReviewedPiArtifact,
-  type ManagedRuntimeArtifact,
+  resolveScientAgentArtifactPolicy,
+  isSupportedScientAgentVersion,
+  type ManagedRuntimeArtifactPolicy,
   type ManagedRuntimeProvider,
   type ManagedRuntimeCatalogProvider,
   type ManagedRuntimeTarget,
@@ -73,7 +75,7 @@ export interface ManagedRuntimeCatalogRefreshResult {
 }
 
 type Fetch = (input: URL, init?: RequestInit) => Promise<Response>;
-type PolicyResolver = (target: ManagedRuntimeTarget) => ManagedRuntimeArtifact | undefined;
+type PolicyResolver = (target: ManagedRuntimeTarget) => ManagedRuntimeArtifactPolicy | undefined;
 
 const targets: ReadonlyArray<ManagedRuntimeTarget> = [
   { platform: "darwin", arch: "arm64" },
@@ -95,6 +97,7 @@ const policyResolvers: Readonly<Record<ManagedRuntimeProvider, PolicyResolver>> 
   grok: resolveReviewedGrokArtifact,
   pi: resolveReviewedPiArtifact,
   omp: resolveReviewedOmpArtifact,
+  scient: resolveScientAgentArtifactPolicy,
 };
 
 export function isManagedRuntimeProvider(value: string): value is ManagedRuntimeCatalogProvider {
@@ -156,6 +159,7 @@ async function request(input: {
   readonly url: string;
   readonly method?: "GET" | "HEAD";
   readonly timeoutMs?: number;
+  readonly allowNotFound?: boolean;
 }): Promise<Response> {
   const url = new URL(input.url);
   if (
@@ -172,7 +176,7 @@ async function request(input: {
     signal: AbortSignal.timeout(input.timeoutMs ?? REQUEST_TIMEOUT_MS),
     headers: { "user-agent": "Scient-managed-runtime-catalog/1" },
   });
-  if (!response.ok) {
+  if (!response.ok && !(input.allowNotFound && response.status === 404)) {
     throw new Error(`Release request failed with HTTP ${response.status}: ${input.url}`);
   }
   return response;
@@ -446,9 +450,10 @@ export function validateManagedRuntimeCatalog(input: unknown): ManagedRuntimeCat
 
 function releaseChanged(
   provider: ManagedRuntimeCatalogProvider,
-  current: ManagedRuntimeCatalogProviderData,
+  current: ManagedRuntimeCatalogProviderData | undefined,
   version: string,
 ): boolean {
+  if (!current) return true;
   if (current.version === version) {
     return (
       current.contractRevision !== MANAGED_RUNTIME_POLICY[provider].revision ||
@@ -699,7 +704,9 @@ async function discoverCursor(fetch_: Fetch): Promise<ManagedRuntimeCatalogProvi
 async function discoverDroid(fetch_: Fetch): Promise<ManagedRuntimeCatalogProviderData> {
   const version = parseDroidStableVersion(await metadataText(fetch_, DROID_LATEST_VERSION_URL));
   const entries = await mapConcurrent(policyEntries("droid"), 4, async ({ key, policy }) => {
-    const current = new URL(policy.url);
+    const bundled = resolveReviewedDroidArtifact(policy.target);
+    if (!bundled) throw new Error(`Droid ${key} has no reviewed packaging baseline.`);
+    const current = new URL(bundled.url);
     current.pathname = current.pathname.replace(
       /\/factory-cli\/releases\/[^/]+\//u,
       `/factory-cli/releases/${version}/`,
@@ -725,12 +732,14 @@ async function discoverDroid(fetch_: Fetch): Promise<ManagedRuntimeCatalogProvid
 async function discoverGrok(fetch_: Fetch): Promise<ManagedRuntimeCatalogProviderData> {
   const version = parseGrokStableVersion(await metadataText(fetch_, "https://x.ai/cli/stable"));
   const entries = await mapConcurrent(policyEntries("grok"), 2, async ({ key, policy }) => {
-    const url = policy.url.replace(policy.version, version);
+    const bundled = resolveReviewedGrokArtifact(policy.target);
+    if (!bundled) throw new Error(`Grok ${key} has no reviewed packaging baseline.`);
+    const url = bundled.url.replace(bundled.version, version);
     const release = await artifactDigest(fetch_, url, "sha512");
     return [
       key,
       {
-        artifactName: policy.artifactName.replace(policy.version, version),
+        artifactName: policy.artifactName.replace(bundled.version, version),
         url,
         checksum: { algorithm: "sha512" as const, digest: release.digest },
         size: release.size,
@@ -887,6 +896,80 @@ async function discoverOmp(fetch_: Fetch): Promise<ManagedRuntimeCatalogProvider
   return candidateProvider({ provider: "omp", version, artifacts: Object.fromEntries(entries) });
 }
 
+const SCIENT_AGENT_RELEASE_API =
+  "https://api.github.com/repos/ScientFactory/scient-agent/releases/latest";
+
+async function scientAgentRelease(fetch_: Fetch): Promise<Record<string, unknown> | undefined> {
+  const response = await request({
+    fetch: fetch_,
+    url: SCIENT_AGENT_RELEASE_API,
+    allowNotFound: true,
+  });
+  if (response.status === 404) return undefined;
+  const declared = Number(response.headers.get("content-length") ?? "0");
+  if (declared > MAX_METADATA_BYTES) throw new Error("Scient Agent release metadata is too large.");
+  const body = await response.text();
+  if (Buffer.byteLength(body) > MAX_METADATA_BYTES)
+    throw new Error("Scient Agent release metadata is too large.");
+  const release = record(JSON.parse(body), "Scient Agent stable release");
+  if (release.prerelease !== false || release.draft !== false) {
+    throw new Error("Scient Agent release is not stable.");
+  }
+  const tag = stringField(release, "tag_name", "Scient Agent release");
+  if (!tag.startsWith("v") || !isSupportedScientAgentVersion(tag.slice(1))) {
+    throw new Error(`Scient Agent release tag '${tag}' is not a supported stable version.`);
+  }
+  return release;
+}
+
+async function discoverScientAgent(fetch_: Fetch): Promise<ManagedRuntimeCatalogProviderData> {
+  const release = await scientAgentRelease(fetch_);
+  if (!release) throw new Error("Scient Agent stable release disappeared during discovery.");
+  const version = stringField(release, "tag_name", "Scient Agent release").slice(1);
+  if (!Array.isArray(release.assets)) throw new Error("Scient Agent release assets are missing.");
+  const assets = release.assets.map((value) => record(value, "Scient Agent release asset"));
+  const entries = await mapConcurrent(policyEntries("scient"), 2, async ({ key, policy }) => {
+    const url = `${policy.releaseUrlPrefix}${version}/${policy.artifactName}`;
+    const asset = assets.find((value) => value.name === policy.artifactName);
+    const checksumName = `${policy.artifactName}.sha256`;
+    const checksumAsset = assets.find((value) => value.name === checksumName);
+    if (!asset || !checksumAsset)
+      throw new Error(`Scient Agent release is missing ${policy.artifactName} or its checksum.`);
+    if (
+      stringField(asset, "browser_download_url", "Scient Agent release asset") !== url ||
+      stringField(checksumAsset, "browser_download_url", "Scient Agent checksum asset") !==
+        `${url}.sha256`
+    ) {
+      throw new Error("Scient Agent release asset URL differs from its policy.");
+    }
+    const checksum = (await metadataText(fetch_, `${url}.sha256`)).trim();
+    const match = /^([0-9a-fA-F]{64})[ \t]+\*?([^\r\n]+)$/u.exec(checksum);
+    if (!match || match[2] !== policy.artifactName)
+      throw new Error("Scient Agent checksum does not identify its release artifact.");
+    const digest = strictDigest(match[1]!, "sha256", "Scient Agent release checksum");
+    if (
+      asset.digest !== undefined &&
+      asset.digest !== null &&
+      (typeof asset.digest !== "string" || asset.digest !== `sha256:${digest}`)
+    ) {
+      throw new Error("Scient Agent release checksum differs from GitHub's asset digest.");
+    }
+    const size = await artifactSize(fetch_, url);
+    if (asset.size !== size)
+      throw new Error("Scient Agent release size differs from GitHub's asset metadata.");
+    return [
+      key,
+      {
+        artifactName: policy.artifactName,
+        url,
+        checksum: { algorithm: "sha256" as const, digest },
+        size,
+      },
+    ] as const;
+  });
+  return candidateProvider({ provider: "scient", version, artifacts: Object.fromEntries(entries) });
+}
+
 const discoverers: Readonly<
   Record<
     ManagedRuntimeCatalogProvider,
@@ -902,6 +985,7 @@ const discoverers: Readonly<
   grok: discoverGrok,
   pi: discoverPi,
   omp: discoverOmp,
+  scient: discoverScientAgent,
 };
 
 export async function refreshManagedRuntimeCatalog(
@@ -924,11 +1008,10 @@ export async function refreshManagedRuntimeCatalog(
 function existingOrBundledRelease(
   catalog: ManagedRuntimeCatalogData,
   provider: ManagedRuntimeCatalogProvider,
-): ManagedRuntimeCatalogProviderData {
+): ManagedRuntimeCatalogProviderData | undefined {
   const release =
     catalog.providers[provider] ??
     validateManagedRuntimeCatalog(bundledCatalogJson).providers[provider];
-  if (!release) throw new Error(`Managed runtime catalog is missing ${provider}.`);
   return release;
 }
 
@@ -945,6 +1028,14 @@ export async function refreshManagedRuntimeProvider(
   const existing = existingOrBundledRelease(current, provider);
   report(`Checking ${provider} stable channel.`);
   const latestVersion = await discoverLatestVersion(provider, fetch_);
+  if (latestVersion === undefined) {
+    report(
+      existing
+        ? `${provider} has no published stable release pointer; keeping qualified ${existing.version}.`
+        : `${provider} has no published stable release; leaving its catalog entry absent.`,
+    );
+    return { catalog: current, changedProviders: [] };
+  }
   const changed = releaseChanged(provider, existing, latestVersion);
   if (current.providers[provider] && !changed) {
     report(`${provider} is already current at ${latestVersion}.`);
@@ -980,6 +1071,12 @@ export function mergeQualifiedManagedRuntimeProvider(input: {
   const currentRelease = existingOrBundledRelease(input.current, input.provider);
   const candidateRelease = validateManagedRuntimeCandidate(input.candidate, input.provider);
   const policyContract = MANAGED_RUNTIME_POLICY[input.provider];
+  if (!currentRelease) {
+    return {
+      schemaVersion: 1,
+      providers: { ...input.current.providers, [input.provider]: candidateRelease },
+    };
+  }
   if (
     (currentRelease.contractRevision !== policyContract.revision &&
       !policyContract.historicalRevisions.includes(currentRelease.contractRevision)) ||
@@ -1035,7 +1132,7 @@ export function mergeQualifiedManagedRuntimeProvider(input: {
 async function discoverLatestVersion(
   provider: ManagedRuntimeCatalogProvider,
   fetch_: Fetch,
-): Promise<string> {
+): Promise<string | undefined> {
   switch (provider) {
     case "antigravityAcp":
       return strictVersion(
@@ -1095,6 +1192,12 @@ async function discoverLatestVersion(
         stringField(release, "tag_name", "Pi release").replace(/^v/u, ""),
         "Pi release",
       );
+    }
+    case "scient": {
+      const release = await scientAgentRelease(fetch_);
+      return release
+        ? stringField(release, "tag_name", "Scient Agent release").slice(1)
+        : undefined;
     }
     case "omp": {
       const release = record(
