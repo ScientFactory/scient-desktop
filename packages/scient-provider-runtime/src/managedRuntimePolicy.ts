@@ -25,4 +25,5 @@ export const MANAGED_RUNTIME_POLICY: Readonly<
   grok: { revision: 1, historicalRevisions: [] },
   pi: { revision: 1, historicalRevisions: [] },
   omp: { revision: 1, historicalRevisions: [] },
+  scient: { revision: 1, historicalRevisions: [] },
 };

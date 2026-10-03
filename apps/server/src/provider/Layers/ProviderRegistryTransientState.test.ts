@@ -296,6 +296,49 @@ describe("ProviderRegistry transient lifecycle overlays", () => {
       ),
   );
 
+  it.effect("publishes a sign-in to one of a provider's accounts in its own field", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { registry, snapshotRef, cachePath } = yield* makeHarness();
+        const accountOperation: ProviderConnectionOperation = {
+          ...connectionOperation,
+          operationId: "connection-account",
+          method: "scient_agent_account",
+          account: "openai-codex",
+          instructions: "Enter code: ABCD-1234",
+        };
+
+        const withAccount = yield* registry.setProviderConnectionOperation({
+          instanceId: INSTANCE_ID,
+          operation: accountOperation,
+        });
+        // A client that predates accounts decodes `operation`, and must not
+        // meet a method it does not know there.
+        assert.strictEqual(withAccount[0]?.connection?.operation, null);
+        assert.deepStrictEqual(withAccount[0]?.connection?.accountOperation, accountOperation);
+
+        yield* Ref.set(snapshotRef, provider("2026-08-24T00:00:02.000Z"));
+        const refreshed = yield* registry.refreshInstance(INSTANCE_ID);
+        assert.deepStrictEqual(refreshed[0]?.connection?.accountOperation, accountOperation);
+        // Its link and instructions are never written to the status cache.
+        const cached = yield* readProviderStatusCache(cachePath).pipe(
+          Effect.provide(NodeServices.layer),
+        );
+        assert.exists(cached);
+        assert.strictEqual(cached.connection?.operation, null);
+        assert.strictEqual("accountOperation" in (cached.connection ?? {}), false);
+
+        // An ordinary sign-in replaces it, and neither field keeps the other's.
+        const withOrdinary = yield* registry.setProviderConnectionOperation({
+          instanceId: INSTANCE_ID,
+          operation: connectionOperation,
+        });
+        assert.deepStrictEqual(withOrdinary[0]?.connection?.operation, connectionOperation);
+        assert.strictEqual("accountOperation" in (withOrdinary[0]?.connection ?? {}), false);
+      }),
+    ),
+  );
+
   it.effect("preserves a concurrent runtime operation during catalog reconciliation", () =>
     Effect.scoped(
       Effect.gen(function* () {

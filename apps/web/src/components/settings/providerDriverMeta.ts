@@ -8,6 +8,7 @@ import {
   OpenCodeSettings,
   PiSettings,
   OmpSettings,
+  ScientAgentSettings,
   compareProviderDriverKinds,
   ProviderDriverKind,
 } from "@t3tools/contracts";
@@ -23,6 +24,7 @@ import {
   OpenCodeIcon,
   PiIcon,
   OhMyPiIcon,
+  ScientAgentIcon,
 } from "../Icons";
 
 type ProviderSettingsSchema = {
@@ -73,6 +75,13 @@ const PROVIDER_CLIENT_DEFINITIONS_UNORDERED: readonly ProviderClientDefinition[]
     label: "Oh My Pi",
     icon: OhMyPiIcon,
     settingsSchema: OmpSettings,
+    supportsCustomModels: false,
+  },
+  {
+    value: ProviderDriverKind.make("scient"),
+    label: "Scient",
+    icon: ScientAgentIcon,
+    settingsSchema: ScientAgentSettings,
     supportsCustomModels: false,
   },
   {

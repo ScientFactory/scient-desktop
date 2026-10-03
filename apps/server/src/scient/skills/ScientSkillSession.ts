@@ -33,6 +33,7 @@ export const SCIENT_SKILL_DELIVERY = {
   opencode: "mcp",
   omp: "mcp",
   pi: "mcp",
+  scient: "mcp",
 } as const;
 
 /** Unknown future drivers fail closed until their transport is reviewed. */

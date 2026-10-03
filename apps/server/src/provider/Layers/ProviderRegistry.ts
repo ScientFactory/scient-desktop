@@ -134,9 +134,11 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
   // the picker. Same state-aware policy as OpenCode below — retain during
   // pending initial probes and failed installed-probe refreshes, replace on
   // successful discovery.
+  // Scient Agent lists its models live from the running agent, the same way.
   if (
     provider.driver === ProviderDriverKind.make("droid") ||
-    provider.driver === ProviderDriverKind.make("pi")
+    provider.driver === ProviderDriverKind.make("pi") ||
+    provider.driver === ProviderDriverKind.make("scient")
   ) {
     const isPendingInitialProbe =
       provider.enabled && !provider.installed && provider.status === "warning";
@@ -191,8 +193,14 @@ const mergeProviderModels = (
 
   const previousBySlug = new Map(previousModels.map((model) => [model.slug, model] as const));
   const mergedModels = nextModels.map((model) => {
-    // A successful Pi inventory explicitly describes the current model's options.
-    if (provider.driver === ProviderDriverKind.make("pi")) return model;
+    // A successful Pi or Scient Agent inventory explicitly describes the
+    // current model's options, including that it has none.
+    if (
+      provider.driver === ProviderDriverKind.make("pi") ||
+      provider.driver === ProviderDriverKind.make("scient")
+    ) {
+      return model;
+    }
     const previousModel = previousBySlug.get(model.slug);
     if (provider.driver === ProviderDriverKind.make("droid")) {
       // Droid uses the contract's nullable capability shape as an authority
@@ -499,12 +507,20 @@ export const ProviderRegistryLive = Layer.effect(
       if (!providerWithUpdateState.connection) {
         return providerWithUpdateState;
       }
+      // A sign-in to one of a provider's accounts has its own field, which an
+      // older client ignores. See `ProviderConnectionSummary.accountOperation`.
+      const { accountOperation: _accountOperation, ...connectionWithoutAccountOperation } =
+        providerWithUpdateState.connection;
       const providerWithConnection = {
         ...providerWithUpdateState,
-        connection: {
-          ...providerWithUpdateState.connection,
-          operation: connectionOperation ?? null,
-        },
+        connection:
+          connectionOperation?.account === undefined
+            ? { ...connectionWithoutAccountOperation, operation: connectionOperation ?? null }
+            : {
+                ...connectionWithoutAccountOperation,
+                operation: null,
+                accountOperation: connectionOperation,
+              },
       };
       const providerWithRuntime: ServerProvider & {
         readonly connection: NonNullable<ServerProvider["connection"]>;

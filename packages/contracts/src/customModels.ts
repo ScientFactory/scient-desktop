@@ -29,7 +29,7 @@ export function supportsModelConnections(
   protocol?: CustomModelProtocol,
 ): boolean {
   return (
-    (driver === "pi" || driver === "droid" || driver === "omp") &&
+    (driver === "pi" || driver === "droid" || driver === "omp" || driver === "scient") &&
     (protocol === undefined || CustomModelProtocol.literals.includes(protocol))
   );
 }

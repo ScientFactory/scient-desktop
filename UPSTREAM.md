@@ -147,6 +147,33 @@ rather than a pipeline failure. The upgrade must not be treated as qualified unt
 the owner chooses between restoring the locks in a patch, holding the Expo 58
 bump, or recording an explicit exception for the two checks.
 
+The alignment after that one is recorded in
+[the 2026-10-02 receipt](docs/internals/2026-10-02-upstream-sync-54084ae1e6.md) and
+`upstream-state.json`. It integrates 12 first-parent official commits through
+`54084ae1e6c32809db040e4fa571c80fdf2d8ae4` onto owned base
+`af07bfc0bd1838e9f2e569cde6e3263e49951225`. Upstream merge
+`0b0fba47a69b381bbbdf4f7061e69ec952749de6` retains that exact target as its second
+parent. Its overlap with the previous alignment is zero files.
+
+`54084ae1e6` is upstream's repair for the Expo SDK 58 upgrade: it moves `expo`,
+`expo-widgets`, `expo-sharing`, `expo-audio`, `expo-blur`, `@expo/cli`,
+`expo-updates`, and others within SDK 58 and updates the patch map keys with them.
+The Android subscription widget and the iOS Live Activity that 0.6.21 listed as
+adopted were not working on 58.0.0. Mobile publication stayed held, so no public
+build carried that breakage. The `expo-modules-core` thread-safety regression
+above is untouched by this range and its two harnesses still fail locally.
+
+Two Scient compositions matter here. Upstream's beta Working shelf folds working
+and monitoring threads out of the inbox, but Scient's sidebar has two mutually
+exclusive layouts, `status` and `sections`, and the Sections view replaces the
+Status layout entirely. The shelf therefore lives only in the Status layout, and
+the Sections view receives the complete inbox in normal order so the toggle can
+neither hide nor reorder a thread inside a section. The shelf setting still
+decodes to `false`, so the beta is opt-in. Separately, upstream's mobile update
+documentation was removed from user Help: `docs/internals/scient-mobile-release-hold.md`
+records that there is no supported Scient mobile app and prohibits presenting that
+channel as Scient distribution.
+
 ## Receiving T3 updates
 
 The local alignment through `1ab2dfb5` is documented in the
@@ -611,7 +638,11 @@ the undo-action union in `showThreadUndoNotice.ts`. New thread always opens the
 "New thread in…" picker (`shouldOpenNewThreadTargetPicker` changes in place), which
 keeps Add project above No project beneath the scrolling project list, so a project,
 including the first, can be added from New thread; Shift+click and ⇧⌘N still start directly in the current project. The
-Sections view reuses T3's rows, shelves and order keys and never changes pin state. If T3 ships its own
+Sections view reuses T3's rows, shelves and canonical manual order keys and never changes pin state.
+Its optional **Keep active threads near the top** presentation is client-local, lives
+in `apps/web/src/scient/sections`, and never writes order keys on status transitions.
+Manual drops update only the deliberate placement; Status view continues to use the
+canonical order. If T3 ships its own
 grouping or collapsible shelves, reconcile against these seams instead of layering a
 second grouping. Decisions, invariants and the full seam list are in
 [sidebar sections](docs/internals/scient-sidebar-sections.md).

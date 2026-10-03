@@ -2,9 +2,13 @@ import { Schema } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  ProviderConnectionDisconnectInput,
   ProviderConnectionOperation,
+  ProviderConnectionStartInput,
   ProviderConnectionSubmitAuthorizationCodeInput,
+  ProviderConnectionSummary,
   ProviderRuntimeSummary,
+  publishedProviderConnectionOperation,
 } from "./providerLifecycle.ts";
 
 const decodeAuthorizationCode = Schema.decodeUnknownSync(
@@ -153,5 +157,81 @@ describe("ProviderRuntimeSummary", () => {
         },
       }).diagnostics,
     ).not.toHaveProperty("credential");
+  });
+});
+
+describe("provider sign-in lists", () => {
+  const decodeSummary = Schema.decodeUnknownSync(ProviderConnectionSummary);
+  const decodeStart = Schema.decodeUnknownSync(ProviderConnectionStartInput);
+  const decodeDisconnect = Schema.decodeUnknownSync(ProviderConnectionDisconnectInput);
+  const account = {
+    id: "openai-codex",
+    name: "ChatGPT Plus/Pro",
+    kind: "account",
+    connected: false,
+    canDisconnect: false,
+  };
+
+  it("keeps the list optional for providers with a single account and for older servers", () => {
+    const summary = decodeSummary({
+      methods: ["codex_browser"],
+      canDisconnect: false,
+      operation: null,
+    });
+    expect("accounts" in summary).toBe(false);
+    expect("accountOperation" in summary).toBe(false);
+    expect(publishedProviderConnectionOperation(summary)).toBeNull();
+  });
+
+  it("carries a provider's own sign-in list and the account an operation is for", () => {
+    const summary = decodeSummary({
+      methods: [],
+      canDisconnect: false,
+      accounts: [account, { ...account, id: "llama.cpp", name: "llama.cpp", kind: "key" }],
+      operation: null,
+      accountOperation: {
+        operationId: "connect-1",
+        method: "scient_agent_account",
+        status: "waiting_for_device_code",
+        startedAt: "2026-10-02T00:00:00.000Z",
+        finishedAt: null,
+        message: "Enter the code in the provider's secure sign-in page.",
+        account: "openai-codex",
+        instructions: "Enter code: A2L1-00QJC",
+        userCode: "A2L1-00QJC",
+      },
+    });
+    expect(summary.accounts?.map((entry) => entry.id)).toEqual(["openai-codex", "llama.cpp"]);
+    expect(summary.operation).toBeNull();
+    expect(summary.accountOperation?.account).toBe("openai-codex");
+    expect(summary.accountOperation?.instructions).toBe("Enter code: A2L1-00QJC");
+    expect(publishedProviderConnectionOperation(summary)).toBe(summary.accountOperation);
+  });
+
+  it("names the account in a sign-in and a sign-out", () => {
+    expect(
+      decodeStart({ instanceId: "scient", method: "scient_agent_account", account: "openai-codex" })
+        .account,
+    ).toBe("openai-codex");
+    expect(decodeDisconnect({ instanceId: "scient", account: "openai-codex" }).account).toBe(
+      "openai-codex",
+    );
+    expect("account" in decodeDisconnect({ instanceId: "codex" })).toBe(false);
+  });
+
+  it("rejects an account id that is not a plain provider id", () => {
+    for (const id of ["has space", "semi;colon", "../up", "x".repeat(129)]) {
+      expect(() =>
+        decodeStart({ instanceId: "scient", method: "scient_agent_account", account: id }),
+      ).toThrow();
+      expect(() =>
+        decodeSummary({
+          methods: [],
+          canDisconnect: false,
+          operation: null,
+          accounts: [{ ...account, id }],
+        }),
+      ).toThrow();
+    }
   });
 });

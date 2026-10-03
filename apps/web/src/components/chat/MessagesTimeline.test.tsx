@@ -2038,6 +2038,34 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-timeline-row-id="live-activity-row"');
   });
 
+  it("marks an agent's own tool with the one-colour Scient symbol", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-dynamic-tool",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "work-dynamic-tool",
+              createdAt: MESSAGE_CREATED_AT,
+              toolCallId: "call-dynamic-tool",
+              label: "lsp",
+              toolTitle: "lsp",
+              tone: "tool",
+              itemType: "dynamic_tool_call",
+              toolLifecycleStatus: "completed",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-scient-symbol="mono"');
+    expect(markup).not.toContain("lucide-hammer");
+  });
+
   it("keeps the completed command in the shared activity row with a present-tense label", () => {
     const turnId = TurnId.make("turn-live");
     const markup = renderToStaticMarkup(

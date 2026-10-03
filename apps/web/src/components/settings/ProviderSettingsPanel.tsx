@@ -61,6 +61,7 @@ import {
   isProviderUpdateActive,
   type ProviderSettingsUpdateCandidate,
 } from "../ProviderUpdateLaunchNotification.logic";
+import { ProviderUpdatesAction } from "../ProviderUpdatesAction";
 import { Button } from "../ui/button";
 import {
   Empty,
@@ -871,7 +872,11 @@ export function EnvironmentProviderSettings({
     const driver = rows.find((row) => row.instanceId === instanceId)?.driver;
     updateClientSettings({
       providerModelPreferences:
-        hiddenModels.length === 0 && modelOrder.length === 0 && driver !== "pi" && driver !== "omp"
+        hiddenModels.length === 0 &&
+        modelOrder.length === 0 &&
+        driver !== "pi" &&
+        driver !== "omp" &&
+        driver !== "scient"
           ? rest
           : {
               ...rest,
@@ -1042,6 +1047,7 @@ export function EnvironmentProviderSettings({
         variant="plain"
         headerAction={
           <div className="flex min-w-0 items-center gap-2">
+            <ProviderUpdatesAction />
             {readOnly ? (
               <span className="min-w-0 truncate text-xs text-muted-foreground">
                 <ProviderLastChecked lastCheckedAt={lastCheckedAt} />

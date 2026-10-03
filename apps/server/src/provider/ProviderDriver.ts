@@ -133,6 +133,12 @@ export interface ProviderSkillActions {
 export interface ProviderConnectionActionFailure {
   readonly message: string;
   readonly cause?: unknown;
+  /**
+   * An account sign-out failed without the provider saying it kept the
+   * sign-in (its process ended, or never answered). The manager then treats
+   * the sign-in as possibly removed.
+   */
+  readonly signInMayBeRemoved?: boolean | undefined;
 }
 
 export interface ProviderConnectionAttempt {
@@ -143,6 +149,8 @@ export interface ProviderConnectionAttempt {
   /** Explicit initial state; never inferred from method names, URLs, or codes. */
   readonly initialStatus: "waiting_for_browser" | "waiting_for_device_code" | "verifying";
   readonly userCode?: string | undefined;
+  /** What the provider asks the user to do or paste, shown as written. */
+  readonly instructions?: string | undefined;
   readonly authorizationResponseKind?: "code" | "callback_url" | undefined;
   /**
    * Some official browser flows return a code or redirect URL that must be handed
@@ -151,6 +159,20 @@ export interface ProviderConnectionAttempt {
    */
   readonly submitAuthorizationCode?:
     | ((code: string) => Effect.Effect<void, ProviderConnectionActionFailure>)
+    | undefined;
+  /**
+   * For a flow whose first question can come after the attempt is described:
+   * resolves when the provider asks it. The manager then republishes the
+   * operation as accepting an answer. Absent when a question already arrived
+   * or the flow never asks one.
+   */
+  readonly laterQuestion?:
+    | Effect.Effect<{
+        readonly instructions?: string | undefined;
+        readonly submitAuthorizationCode: (
+          code: string,
+        ) => Effect.Effect<void, ProviderConnectionActionFailure>;
+      }>
     | undefined;
   readonly waitForCompletion: Effect.Effect<void, ProviderConnectionActionFailure>;
   readonly cancel: Effect.Effect<void, ProviderConnectionActionFailure>;
@@ -162,10 +184,26 @@ export interface ProviderConnectionAttempt {
  */
 export interface ProviderConnectionActions {
   readonly methods: ReadonlyArray<ProviderConnectionMethod>;
+  /**
+   * `account` names an entry of the provider's own sign-in list. The manager
+   * passes it only for a provider whose snapshot lists accounts, and only an
+   * id from that list.
+   */
   readonly start: (
     method: ProviderConnectionMethod,
+    account?: string,
   ) => Effect.Effect<ProviderConnectionAttempt, ProviderConnectionActionFailure, Scope.Scope>;
   readonly disconnect: Effect.Effect<void, ProviderConnectionActionFailure, Scope.Scope>;
+  /**
+   * The provider signs in to accounts from its own list, never to a single
+   * account. The manager then starts nothing, and publishes nothing, without
+   * an account from that list.
+   */
+  readonly requiresAccount?: boolean | undefined;
+  /** Signs out of one entry of the provider's sign-in list. */
+  readonly disconnectAccount?:
+    | ((account: string) => Effect.Effect<void, ProviderConnectionActionFailure, Scope.Scope>)
+    | undefined;
 }
 
 export interface ProviderManagedRuntimeProgress {

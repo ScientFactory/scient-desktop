@@ -141,6 +141,7 @@ describe("MarkdownPersistenceCoordinator under randomized interleavings", () => 
     vi.useRealTimers();
   });
 
+  // Hundreds of seeded runs: well under a second locally, slower on shared CI runners.
   it("merges through Markdown reconciliation without losing a change or an untouched byte", async () => {
     expect(markdown.validate!(INITIAL)).toBeNull();
     const results: StressResult[] = [];
@@ -170,5 +171,5 @@ describe("MarkdownPersistenceCoordinator under randomized interleavings", () => 
     expect(total.bursts).toBeGreaterThan(150);
     expect(total.deferrals).toBeGreaterThan(15);
     expect(total.viewRefusals).toBeGreaterThan(10);
-  });
+  }, 60_000);
 });

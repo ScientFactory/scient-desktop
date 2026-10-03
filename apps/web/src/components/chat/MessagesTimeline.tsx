@@ -110,7 +110,7 @@ import {
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown, { ChatMarkdownAssetImage } from "../ChatMarkdown";
 import { ComputerUseAppIcon } from "../Icons";
-import { ScientSymbol } from "../ScientSymbol";
+import { ScientSymbol, ScientSymbolMono } from "../ScientSymbol";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Root, RootContent } from "mdast";
@@ -3823,7 +3823,7 @@ function toolGroupSummaryIconName(
     case "other":
       return "wrench";
     case "dynamic-tool":
-      return "hammer";
+      return "scient-mono";
     case "agent-tool":
       return "bot";
     case "tone-tool":
@@ -4647,6 +4647,7 @@ type WorkEntryIconName =
   | "square-pen"
   | "terminal"
   | "pull-request"
+  | "scient-mono"
   | "t3-code"
   | "wrench"
   | "x"
@@ -4825,6 +4826,8 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
       return <SmartphoneIcon className={className} aria-hidden />;
     case "t3-code":
       return <ScientSymbol className={className} />;
+    case "scient-mono":
+      return <ScientSymbolMono className={className} />;
     case "check":
       return <CheckIcon className={className} aria-hidden />;
     case "circle-alert":
@@ -4959,7 +4962,7 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
     case "mcp_tool_call":
       return "wrench";
     case "dynamic_tool_call":
-      return "hammer";
+      return "scient-mono";
     case "collab_agent_tool_call":
       return "bot";
   }

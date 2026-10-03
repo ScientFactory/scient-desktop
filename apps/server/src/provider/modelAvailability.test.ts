@@ -30,7 +30,7 @@ const snapshot = (
 });
 
 describe("native agent catalog refresh", () => {
-  it.each(["omp", "pi"])(
+  it.each(["omp", "pi", "scient"])(
     "retains removed %s models for Settings and clears their default",
     (kind) => {
       const identity = {
