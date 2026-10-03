@@ -1373,17 +1373,13 @@ export function ScientMarkdownControls({
         {
           id: "math",
           priority: 90,
-          estimatedWidth: 76,
+          estimatedWidth: 60,
           bar: (
             <span ref={mathMenuAnchor} className="inline-flex">
               <DockMenu
                 label="Math"
-                icon={
-                  <>
-                    <Sigma className="size-4" />
-                    <span className="text-[13px]">Math</span>
-                  </>
-                }
+                // The word alone: "Math" says what it is.
+                icon={<span className="text-[13px]">Math</span>}
                 popupClassName="w-max [&_[role=menuitem]]:whitespace-nowrap"
               >
                 <MathMenuItems controller={controller} />

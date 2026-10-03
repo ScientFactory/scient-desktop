@@ -153,7 +153,6 @@ import {
   Heading4,
   Heading5,
   Heading6,
-  Sigma,
   FileText,
 } from "lucide-react";
 import { mathSourceCompletions, type MathSourceCompletion } from "./latexMathCompletion";
@@ -5828,12 +5827,8 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     <DockMenu
       commandScope="latex"
       label="Math"
-      icon={
-        <>
-          <Sigma className="size-4" />
-          <span className="scient-latex-tool-label">Math</span>
-        </>
-      }
+      // The word alone: "Math" says what it is.
+      icon={<span className="scient-latex-tool-label">Math</span>}
       disabled={readOnly}
       // As wide as its longest item, "Symbols & structures", and no wider.
       popupClassName="w-max [&_[role=menuitem]]:whitespace-nowrap [&_[role=menuitemradio]]:whitespace-nowrap"
