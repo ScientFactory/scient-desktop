@@ -3241,7 +3241,7 @@ function ReasoningTraceBlock({
           type="button"
           aria-expanded={expanded}
           onClick={() => ctx.onToggleReasoning(first.id, !expanded, anchorKey)}
-          className="flex min-h-6 cursor-pointer select-none items-center gap-1.5 rounded-md ps-0.5 pe-2 text-start text-sm leading-relaxed transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+          className="flex min-h-6 cursor-pointer select-none items-center gap-1.5 rounded-md py-1 ps-0.5 pe-2 text-start text-sm leading-relaxed transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
         >
           <span className="flex size-6 shrink-0 items-center justify-center text-icon-muted">
             <BrainIcon aria-hidden className="block size-4 shrink-0 stroke-2 opacity-70" />
@@ -3314,7 +3314,7 @@ const ReasoningTimelineRow = memo(function ReasoningTimelineRow({
         type="button"
         aria-expanded={expanded}
         onClick={toggle}
-        className="flex cursor-pointer select-none items-center gap-1.5 rounded-md px-0.5 py-0.5 text-start transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        className="flex cursor-pointer select-none items-center gap-1.5 rounded-md px-0.5 py-1 text-start transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
         <span className="flex size-6 shrink-0 items-center justify-center text-icon-muted">
           <BrainIcon aria-hidden className="block size-4 shrink-0 stroke-2 opacity-70" />
@@ -3597,7 +3597,7 @@ function ExpandedWorkGroupEntries({
         extraData={workspaceRoot}
         keyExtractor={workEntryKey}
         renderItem={renderEntry}
-        estimatedItemSize={24}
+        estimatedItemSize={28}
         drawDistance={240}
         recycleItems
         {...(initialScrollIndex ? { initialScrollIndex } : {})}
@@ -3715,7 +3715,7 @@ function LiveActivityContent({
   return (
     <span
       className={cn(
-        "flex min-h-6 min-w-0 items-center gap-1.5 py-0.5",
+        "flex min-h-6 min-w-0 items-center gap-1.5 py-1",
         iconName ? "px-0.5" : "px-1",
         highlighted ? "text-foreground" : "text-secondary-label",
       )}
@@ -3843,7 +3843,7 @@ function WorkGroupToggleTimelineRow({
   return (
     <button
       type="button"
-      className="group/tool-group group/timeline-row relative flex min-h-6 w-full cursor-pointer items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left text-sm leading-relaxed transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+      className="group/tool-group group/timeline-row relative flex min-h-6 w-full cursor-pointer items-center gap-1.5 rounded-md px-0.5 py-1 text-left text-sm leading-relaxed transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       aria-label={row.hasFailure ? `${row.summary}, tool call failed` : undefined}
       aria-expanded={row.expanded}
       onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
@@ -5152,7 +5152,7 @@ function AgentSpawnMemberRow({
           : undefined
       }
       className={cn(
-        "flex flex-col rounded-md px-1 py-0.5 transition-colors",
+        "flex flex-col rounded-md px-1 py-1 transition-colors",
         canExpand &&
           "cursor-pointer hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
       )}
@@ -5350,7 +5350,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
     <div
       className={cn(
         "group/timeline-row relative flex flex-col rounded-md px-0.5 transition-colors",
-        isExpandedToolGroupEntry ? "py-0" : "py-0.5",
+        isExpandedToolGroupEntry ? "py-0.5" : "py-1",
         expanded && "mb-1",
         canExpand &&
           "cursor-pointer hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
