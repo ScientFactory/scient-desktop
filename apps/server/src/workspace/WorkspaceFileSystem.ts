@@ -1129,8 +1129,15 @@ export const make = Effect.gen(function* () {
               return false;
             }
           };
+          // One rule for both removals: a name is removed only while the other
+          // name still holds the same file, so no removal can take a file's
+          // last name, whatever another program did to either name meanwhile.
           const removeOwnLink = async () => {
-            if (await holdsLinkedFile(destinationPath)) {
+            const [destinationHolds, sourceHolds] = await Promise.all([
+              holdsLinkedFile(destinationPath),
+              holdsLinkedFile(sourcePath),
+            ]);
+            if (destinationHolds && sourceHolds) {
               await NodeFSP.unlink(destinationPath).catch(() => undefined);
             }
           };
@@ -1165,7 +1172,14 @@ export const make = Effect.gen(function* () {
           // unlink run back to back, and a replaced source is left alone.
           const moved = yield* Effect.tryPromise({
             try: async () => {
-              if (!(await holdsLinkedFile(sourcePath))) {
+              // The old name may go only while the new name still holds the
+              // same file: otherwise removing it could delete that file's last
+              // name (the new one replaced by another program meanwhile).
+              const [sourceHolds, destinationHolds] = await Promise.all([
+                holdsLinkedFile(sourcePath),
+                holdsLinkedFile(destinationPath),
+              ]);
+              if (!sourceHolds || !destinationHolds) {
                 await removeOwnLink();
                 return false;
               }
