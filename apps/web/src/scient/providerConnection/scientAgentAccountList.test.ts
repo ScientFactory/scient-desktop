@@ -54,6 +54,30 @@ describe("scientAgentAccountSections", () => {
     expect([...none.yours, ...none.accounts, ...none.keys]).toEqual([]);
   });
 
+  it("shows an account once when two entries sign in to it", () => {
+    const chatgpt = entry("openai-codex", { name: "ChatGPT Plus/Pro (Codex Subscription)" });
+    const device = entry("openai-codex-device", {
+      name: "ChatGPT Plus/Pro (Codex, headless/device)",
+      sameAccountAs: "openai-codex",
+    });
+    const signedIn = { connected: true, canDisconnect: true };
+    // Signed in: one row among the user's own, and no second way offered.
+    const connected = scientAgentAccountSections(
+      [
+        { ...chatgpt, ...signedIn },
+        { ...device, ...signedIn },
+      ],
+      "",
+    );
+    expect(ids(connected.yours)).toEqual(["openai-codex"]);
+    expect(ids(connected.accounts)).toEqual([]);
+    // Signed out: both ways to sign in are offered.
+    expect(ids(scientAgentAccountSections([chatgpt, device], "").accounts)).toEqual([
+      "openai-codex",
+      "openai-codex-device",
+    ]);
+  });
+
   it("keeps a stored sign-in that no longer works among the user's own", () => {
     const sections = scientAgentAccountSections(
       [entry("openai-codex", { canDisconnect: true }), entry("github-copilot")],

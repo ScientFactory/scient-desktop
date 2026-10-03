@@ -44,6 +44,12 @@ export const ProviderConnectionAccount = Schema.Struct({
   connected: Schema.Boolean,
   /** A sign-in is stored for it, so signing out has something to remove. */
   canDisconnect: Schema.Boolean,
+  /**
+   * Another entry of the list whose account this one signs in to: the two keep
+   * one stored sign-in (ChatGPT's browser and device flows), so they share
+   * their status and their sign-out, and the account is shown once.
+   */
+  sameAccountAs: Schema.optionalKey(ProviderConnectionAccountId),
 });
 export type ProviderConnectionAccount = typeof ProviderConnectionAccount.Type;
 

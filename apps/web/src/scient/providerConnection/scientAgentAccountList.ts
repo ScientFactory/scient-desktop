@@ -20,7 +20,9 @@ const isYours = (account: ProviderConnectionAccount) => account.connected || acc
 
 /**
  * The agent's sign-in list as the screen shows it. The agent decides what is
- * on the list and in what order; this only groups it and applies the search.
+ * on the list and in what order; this groups it, applies the search, and
+ * shows an account once: an entry that signs in to another entry's account
+ * (`sameAccountAs`) is left out while that account is one of the user's.
  */
 export function scientAgentAccountSections(
   accounts: ReadonlyArray<ProviderConnectionAccount>,
@@ -31,7 +33,10 @@ export function scientAgentAccountSections(
     needle.length === 0 ||
     account.name.toLowerCase().includes(needle) ||
     account.id.toLowerCase().includes(needle);
-  const visible = accounts.filter(matches);
+  const yoursIds = new Set(accounts.filter(isYours).map((account) => account.id));
+  const shownElsewhere = (account: ProviderConnectionAccount) =>
+    account.sameAccountAs !== undefined && yoursIds.has(account.sameAccountAs);
+  const visible = accounts.filter((account) => !shownElsewhere(account) && matches(account));
   return {
     yours: visible.filter(isYours),
     accounts: visible.filter((account) => !isYours(account) && account.kind === "account"),

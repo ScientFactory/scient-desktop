@@ -399,6 +399,49 @@ describe("readScientAgentAccounts", () => {
     }),
   );
 
+  it.effect("links two entries that keep one stored sign-in, and only those", () =>
+    Effect.gen(function* () {
+      const accounts = yield* listing([
+        {
+          id: "openai-codex",
+          name: "ChatGPT",
+          authenticated: true,
+          kind: "account",
+          stored: true,
+          store: "openai-codex",
+        },
+        {
+          id: "openai-codex-device",
+          name: "ChatGPT (device)",
+          authenticated: true,
+          kind: "account",
+          stored: true,
+          store: "openai-codex",
+        },
+        // A store that names no entry on the list links nothing.
+        {
+          id: "zai-coding-plan",
+          name: "Z.ai Coding Plan",
+          authenticated: false,
+          kind: "key",
+          stored: false,
+          store: "zai",
+        },
+        // An agent build that predates `store`.
+        { id: "deepseek", name: "DeepSeek", authenticated: false, kind: "key", stored: false },
+      ]);
+      assert.deepStrictEqual(
+        accounts?.map((entry) => [entry.id, entry.sameAccountAs]),
+        [
+          ["openai-codex", undefined],
+          ["openai-codex-device", "openai-codex"],
+          ["zai-coding-plan", undefined],
+          ["deepseek", undefined],
+        ],
+      );
+    }),
+  );
+
   it.effect("leaves out an entry whose id Scient could not send back", () =>
     Effect.gen(function* () {
       const accounts = yield* listing([

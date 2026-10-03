@@ -63,6 +63,8 @@ const SignInList = Schema.Struct({
       // Absent from an agent build that predates sign-in from a host.
       kind: Schema.optional(Schema.Literals(["account", "key"])),
       stored: Schema.optional(Schema.Boolean),
+      // The id the sign-in is stored under; absent from older agent builds.
+      store: Schema.optional(Schema.String),
     }),
   ),
 });
@@ -94,7 +96,17 @@ export const readScientAgentAccounts = (
           canDisconnect: entry.stored,
         });
       }
-      return accounts;
+      // Two entries stored under one id sign in to one account. The entry
+      // whose own id is that store stands for the account; the other points
+      // to it. A store that names no entry links nothing.
+      const listed = new Set(accounts.map((account) => account.id));
+      const storeOf = new Map(list.value.providers.map((entry) => [entry.id, entry.store]));
+      return accounts.map((account) => {
+        const store = storeOf.get(account.id);
+        return store !== undefined && store !== account.id && listed.has(store)
+          ? { ...account, sameAccountAs: store }
+          : account;
+      });
     }),
     Effect.orElseSucceed(() => undefined),
   );
