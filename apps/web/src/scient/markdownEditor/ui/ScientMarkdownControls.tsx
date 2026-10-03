@@ -43,8 +43,6 @@ import {
   SquareCode,
   Strikethrough,
   Table as TableIcon,
-  TextInitial,
-  TextQuote,
   Trash2,
 } from "lucide-react";
 import {
@@ -88,6 +86,8 @@ import {
   type InsertMenuAction,
   type InsertMenuLayout,
 } from "../../writing/InsertMenu";
+import { TextMenu, TextMenuItems } from "../../writing/TextMenu";
+import { DockCommandCheckboxItem } from "../../writing/dockChrome";
 import { WRITING_COMMAND_LABELS } from "../../writing/commandNames";
 
 import {
@@ -130,6 +130,14 @@ type LinkEditorHandle = ReturnType<typeof createLinkEditorHandle>;
 function commandIcon(command: ScientMarkdownCommand): ReactNode {
   const className = "size-4 text-muted-foreground";
   switch (command) {
+    case "bold":
+      return <WritingCommandIcon command="bold" className={className} />;
+    case "italic":
+      return <WritingCommandIcon command="italic" className={className} />;
+    case "inline-code":
+      return <WritingCommandIcon command="inlineCode" className={className} />;
+    case "strike":
+      return <Strikethrough className={className} />;
     case "paragraph":
       return <WritingCommandIcon command="text" className={className} />;
     case "heading-1":
@@ -213,7 +221,7 @@ const STYLE_ITEMS: ReadonlyArray<{
   readonly label: string;
   readonly shortcut?: ScientMarkdownShortcutId;
 }> = [
-  { command: "paragraph", label: WRITING_COMMAND_LABELS.text, shortcut: "paragraph" },
+  { command: "paragraph", label: "Paragraph", shortcut: "paragraph" },
   { command: "heading-1", label: "Heading 1", shortcut: "heading1" },
   { command: "heading-2", label: "Heading 2", shortcut: "heading2" },
   { command: "heading-3", label: "Heading 3", shortcut: "heading3" },
@@ -222,19 +230,6 @@ const STYLE_ITEMS: ReadonlyArray<{
   { command: "heading-6", label: "Heading 6", shortcut: "heading6" },
   { command: "blockquote", label: WRITING_COMMAND_LABELS.quote },
 ];
-
-function styleMenuLabel(snapshot: ScientMarkdownEditorSnapshot): string {
-  switch (snapshot.blockType) {
-    case "heading":
-      return snapshot.headingLevel !== null ? `Heading ${snapshot.headingLevel}` : "Heading";
-    case "blockquote":
-      return WRITING_COMMAND_LABELS.quote;
-    case "code_block":
-      return "Code block";
-    default:
-      return WRITING_COMMAND_LABELS.text;
-  }
-}
 
 function styleMenuValue(snapshot: ScientMarkdownEditorSnapshot): string {
   switch (snapshot.blockType) {
@@ -247,32 +242,6 @@ function styleMenuValue(snapshot: ScientMarkdownEditorSnapshot): string {
       return "paragraph";
     default:
       return "";
-  }
-}
-
-function styleTriggerIcon(snapshot: ScientMarkdownEditorSnapshot): ReactNode {
-  switch (snapshot.blockType) {
-    case "heading":
-      switch (snapshot.headingLevel) {
-        case 2:
-          return <Heading2 className="size-4" />;
-        case 3:
-          return <Heading3 className="size-4" />;
-        case 4:
-          return <Heading4 className="size-4" />;
-        case 5:
-          return <Heading5 className="size-4" />;
-        case 6:
-          return <Heading6 className="size-4" />;
-        default:
-          return <Heading1 className="size-4" />;
-      }
-    case "blockquote":
-      return <TextQuote className="size-4" />;
-    case "code_block":
-      return <SquareCode className="size-4" />;
-    default:
-      return <TextInitial className="size-4" />;
   }
 }
 
@@ -306,17 +275,6 @@ function StyleMenuItems({
         );
       })}
       {snapshot.inTable ? <p className="scient-menu-note">A table cell holds text only.</p> : null}
-      <MenuSeparator />
-      {/* Text direction lives with the other text settings. */}
-      <MenuSub>
-        <MenuSubTrigger>
-          {directionTriggerIcon(snapshot.textDirection)}
-          <span>{snapshot.inTable ? "Table direction" : "Direction"}</span>
-        </MenuSubTrigger>
-        <MenuSubPopup className="w-max">
-          <DirectionMenuItems controller={controller} snapshot={snapshot} />
-        </MenuSubPopup>
-      </MenuSub>
     </MenuRadioGroup>
   );
 }
@@ -333,22 +291,71 @@ function MathMenuItems({ controller }: { readonly controller: ScientMarkdownEdit
   );
 }
 
-function StyleMenu({
+function FormattingMenuItems({
   controller,
   snapshot,
 }: {
-  readonly controller: ScientMarkdownEditorView;
-  readonly snapshot: ScientMarkdownEditorSnapshot;
+  controller: ScientMarkdownEditorView;
+  snapshot: ScientMarkdownEditorSnapshot;
 }) {
+  const active = new Set(snapshot.activeMarks);
+  const items: ReadonlyArray<{
+    command: ScientMarkdownCommand;
+    label: string;
+    mark: string;
+    shortcut: ScientMarkdownShortcutId;
+  }> = [
+    { command: "bold", label: WRITING_COMMAND_LABELS.bold, mark: "strong", shortcut: "bold" },
+    { command: "italic", label: WRITING_COMMAND_LABELS.italic, mark: "em", shortcut: "italic" },
+    {
+      command: "inline-code",
+      label: WRITING_COMMAND_LABELS.inlineCode,
+      mark: "code",
+      shortcut: "inlineCode",
+    },
+    { command: "strike", label: "Strikethrough", mark: "strike", shortcut: "strike" },
+  ];
   return (
-    <DockMenu
-      label={`Style: ${styleMenuLabel(snapshot)}`}
-      icon={styleTriggerIcon(snapshot)}
-      popupClassName="w-50 p-0 [&>div]:px-0.5 [&_[data-slot=menu-radio-item]]:px-2.5"
-    >
-      <StyleMenuItems controller={controller} snapshot={snapshot} />
-    </DockMenu>
+    <>
+      {items.map((item) => (
+        <DockCommandCheckboxItem
+          key={item.command}
+          checked={active.has(item.mark)}
+          aria-keyshortcuts={scientMarkdownShortcut(item.shortcut).ariaKeyShortcuts}
+          onClick={() => controller.execute(item.command)}
+        >
+          <MenuRow
+            icon={commandIcon(item.command)}
+            label={item.label}
+            shortcut={scientMarkdownShortcut(item.shortcut)}
+          />
+        </DockCommandCheckboxItem>
+      ))}
+      <MenuSeparator />
+      <MenuItem
+        onClick={() => controller.execute("clear-formatting")}
+        aria-keyshortcuts={scientMarkdownShortcut("clearFormatting").ariaKeyShortcuts}
+      >
+        <MenuRow
+          icon={<RemoveFormatting />}
+          label="Clear formatting"
+          shortcut={scientMarkdownShortcut("clearFormatting")}
+        />
+      </MenuItem>
+    </>
   );
+}
+
+function markdownTextContents(
+  controller: ScientMarkdownEditorView,
+  snapshot: ScientMarkdownEditorSnapshot,
+) {
+  return {
+    paragraphStyle: <StyleMenuItems controller={controller} snapshot={snapshot} />,
+    formatting: <FormattingMenuItems controller={controller} snapshot={snapshot} />,
+    direction: <DirectionMenuItems controller={controller} snapshot={snapshot} />,
+    directionLabel: snapshot.inTable ? "Table direction" : "Direction",
+  };
 }
 
 function listMenuLabel(kind: ScientMarkdownEditorSnapshot["listKind"]): string {
@@ -531,17 +538,6 @@ const DIRECTION_ITEMS: ReadonlyArray<{
   { command: "direction-rtl", label: "Right-to-left" },
 ];
 
-function directionTriggerIcon(direction: ScientMarkdownEditorSnapshot["textDirection"]): ReactNode {
-  switch (direction) {
-    case "ltr":
-      return <PilcrowRight className="size-4" />;
-    case "rtl":
-      return <PilcrowLeft className="size-4" />;
-    default:
-      return <ArrowRightLeft className="size-4" />;
-  }
-}
-
 function DirectionMenuItems({
   controller,
   snapshot,
@@ -582,7 +578,6 @@ function BlockActionsMenuItems({
   readonly snapshot: ScientMarkdownEditorSnapshot;
 }) {
   const findShortcut = scientMarkdownShortcut("find");
-  const clearFormattingShortcut = scientMarkdownShortcut("clearFormatting");
   const moveUpShortcut = scientMarkdownShortcut("moveBlockUp");
   const moveDownShortcut = scientMarkdownShortcut("moveBlockDown");
   const duplicateShortcut = scientMarkdownShortcut("duplicateBlock");
@@ -638,16 +633,6 @@ function BlockActionsMenuItems({
       </MenuItem>
       {snapshot.editable ? (
         <>
-          <MenuItem
-            aria-keyshortcuts={clearFormattingShortcut.ariaKeyShortcuts}
-            onClick={() => controller.execute("clear-formatting")}
-          >
-            <RemoveFormatting />
-            <span>Clear formatting</span>
-            <MenuShortcut aria-hidden="true" dir="ltr">
-              {clearFormattingShortcut.display}
-            </MenuShortcut>
-          </MenuItem>
           <MenuSeparator />
           <MenuItem
             aria-keyshortcuts={
@@ -1274,57 +1259,13 @@ export function ScientMarkdownControls({
           ),
         },
         {
-          id: "format",
+          id: "text",
           priority: 100,
           pinned: true,
-          estimatedWidth: 160,
-          bar: (
-            <>
-              <CommandButton
-                controller={controller}
-                command="bold"
-                label={WRITING_COMMAND_LABELS.bold}
-                icon={<WritingCommandIcon command="bold" />}
-                preserveIconWeight
-                active={active.has("strong")}
-                shortcut="bold"
-              />
-              <CommandButton
-                controller={controller}
-                command="italic"
-                label={WRITING_COMMAND_LABELS.italic}
-                icon={<WritingCommandIcon command="italic" />}
-                active={active.has("em")}
-                shortcut="italic"
-              />
-              <CommandButton
-                controller={controller}
-                command="strike"
-                label="Strikethrough"
-                icon={<Strikethrough className="size-4" />}
-                active={active.has("strike")}
-                shortcut="strike"
-              />
-              <CommandButton
-                controller={controller}
-                command="inline-code"
-                label={WRITING_COMMAND_LABELS.inlineCode}
-                icon={<WritingCommandIcon command="inlineCode" />}
-                preserveIconWeight
-                active={active.has("code")}
-                shortcut="inlineCode"
-              />
-              <DockDivider />
-            </>
-          ),
-        },
-        {
-          id: "style",
-          priority: 50,
-          estimatedWidth: 44,
-          bar: <StyleMenu controller={controller} snapshot={snapshot} />,
-          overflowLabel: "Style",
-          overflow: <StyleMenuItems controller={controller} snapshot={snapshot} />,
+          estimatedWidth: 62,
+          bar: <TextMenu {...markdownTextContents(controller, snapshot)} />,
+          overflowLabel: "Text",
+          overflow: <TextMenuItems {...markdownTextContents(controller, snapshot)} />,
         },
         {
           id: "lists",

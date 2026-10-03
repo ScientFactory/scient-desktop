@@ -1,3 +1,5 @@
+import { TextMenu, TextMenuItems } from "../writing/TextMenu";
+import { DockCommandCheckboxItem } from "../writing/dockChrome";
 import { randomUUID } from "~/lib/utils";
 import { LatexSelect } from "./LatexSelect";
 import { isLatexContextEvent } from "./latexContextEvents";
@@ -5117,7 +5119,6 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   };
   const documentSettings = (
     <LatexDocumentSettings
-      initialSection={settingsSection ?? "page"}
       onOpenChange={setSettingsOpen}
       source={props.rootSource ?? props.source}
       disabled={readOnly || (!props.source.includes("\\begin{document}") && !props.canEditRoot)}
@@ -5540,10 +5541,6 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     return <Icon className="size-4" />;
   };
   const activeStyle = textStyle?.value ?? "paragraph";
-  const activeHeading = headingStyles.find((style) => String(style.level) === activeStyle);
-  const activeStyleLabel =
-    activeHeading?.label ??
-    (activeStyle === "quote" ? WRITING_COMMAND_LABELS.quote : WRITING_COMMAND_LABELS.text);
   // Inside a list item the LaTeX source cannot hold a quote.
   const quoteUnavailable = !textReadOnly && Boolean(listState?.type);
   const writingStyleItems = (
@@ -5552,7 +5549,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
         <DockCommandRadioItem value="paragraph" disabled={textReadOnly} onClick={setStandardStyle}>
           <MenuRow
             icon={<WritingCommandIcon command="text" />}
-            label={WRITING_COMMAND_LABELS.text}
+            label="Paragraph"
             shortcut={menuShortcut("latex.paragraph")}
           />
         </DockCommandRadioItem>
@@ -5582,7 +5579,6 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       {/* Whether headings are numbered: the last line of the headings, a small switch. */}
       <MenuCheckboxItem
         variant="switch"
-        className="min-h-7 ps-2.5 text-muted-foreground sm:min-h-7 sm:text-xs"
         checked={headingNumbered}
         disabled={textReadOnly}
         closeOnClick={false}
@@ -5612,44 +5608,33 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
       {quoteUnavailable ? <p className="scient-menu-note">A list item can't be a quote.</p> : null}
     </>
   );
-  const writingStyleTools = (
-    <DockMenu
-      commandScope="latex"
-      label={`Style: ${activeStyleLabel}`}
-      disabled={textReadOnly}
-      icon={
-        activeHeading ? (
-          headingIcon(activeHeading.level)
-        ) : (
-          <WritingCommandIcon command={activeStyle === "quote" ? "quote" : "text"} />
-        )
-      }
-      // Markdown's Style menu framing, a little wider for "Subsubsection".
-      popupClassName="w-56 p-0 [&>div]:px-0.5 [&_[data-slot=menu-radio-item]]:px-2.5"
-    >
-      {writingStyleItems}
-    </DockMenu>
-  );
-  const writingFormatTools = (
+  const writingFormattingItems = (
     <>
       {formatActions
-        // Link is in Insert, with the other references; Cmd+K stays.
-        .filter((item) => !item.secondary && item.id !== "latex.link")
-        .map((item) => (
-          <DockButton
-            key={item.id}
-            label={item.label}
-            shortcut={commandShortcut(item.id)}
-            icon={item.icon}
-            preserveIconWeight={item.preserveIconWeight}
-            disabled={textReadOnly || !editor || item.disabled}
-            active={!mathActive && Boolean(item.active)}
-            onClick={item.action}
-          />
+        .filter((action) => action.id !== "latex.link")
+        .map((action) => (
+          <DockCommandCheckboxItem
+            key={action.id}
+            checked={!mathActive && Boolean(action.active)}
+            disabled={textReadOnly || !editor || action.disabled}
+            aria-keyshortcuts={commandShortcut(action.id)?.ariaKeyShortcuts}
+            onClick={action.action}
+          >
+            <MenuRow
+              icon={action.icon}
+              label={action.label}
+              shortcut={commandShortcut(action.id)}
+            />
+          </DockCommandCheckboxItem>
         ))}
-      <DockDivider />
     </>
   );
+  const writingTextContents = {
+    paragraphStyle: writingStyleItems,
+    formatting: writingFormattingItems,
+    commandScope: "latex",
+  };
+  const writingTextTools = <TextMenu {...writingTextContents} disabled={textReadOnly} />;
   // Some places cannot hold a list (a statement's title, a selected figure).
   const listsUnavailable =
     !textReadOnly &&
@@ -6099,33 +6084,12 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
                         ),
                       },
                       {
-                        id: "format",
+                        id: "text",
                         priority: 100,
-                        estimatedWidth: 136,
-                        bar: writingFormatTools,
-                        overflowLabel: "Formatting",
-                        overflow: (
-                          <>
-                            {formatActions.map((action) => (
-                              <DockCommandItem
-                                key={action.id}
-                                disabled={textReadOnly || action.disabled}
-                                onClick={action.action}
-                              >
-                                {action.icon}
-                                {action.label}
-                              </DockCommandItem>
-                            ))}
-                          </>
-                        ),
-                      },
-                      {
-                        id: "style",
-                        priority: 50,
-                        estimatedWidth: 44,
-                        bar: writingStyleTools,
-                        overflowLabel: "Style",
-                        overflow: writingStyleItems,
+                        estimatedWidth: 62,
+                        bar: writingTextTools,
+                        overflowLabel: "Text",
+                        overflow: <TextMenuItems {...writingTextContents} />,
                       },
                       {
                         id: "lists",

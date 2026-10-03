@@ -235,10 +235,10 @@ describe("formatting menu focus", () => {
   });
 
   it.each([
-    ["Style:", "Heading 2", "heading-2", "A paragraph\n"],
+    ["Text", "Heading 2", "heading-2", "A paragraph\n"],
     ["List:", "Numbered list", "ordered-list", "A paragraph\n"],
-    ["Style:", "Text", "paragraph", "A paragraph\n"],
-    ["Style:", "Text", "paragraph", "> A quote\n"],
+    ["Text", "Paragraph", "paragraph", "A paragraph\n"],
+    ["Text", "Paragraph", "paragraph", "> A quote\n"],
   ])(
     "closes %s after %s and leaves the caret ready to type (%s, %s)",
     async (prefix, label, command, source) => {
@@ -251,6 +251,12 @@ describe("formatting menu focus", () => {
         trigger.focus();
         trigger.click();
       });
+      if (prefix === "Text")
+        await act(() =>
+          [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+            .find((item) => item.textContent === "Paragraph style")!
+            .click(),
+        );
       const item = Array.from(
         document.body.querySelectorAll<HTMLElement>("[role='menuitemradio']"),
       ).find((node) => node.textContent?.trim().startsWith(label));
@@ -302,7 +308,7 @@ describe("formatting menu focus", () => {
     // Direction lives in the Style menu, under Direction (Table direction in a table).
     const openDirection = async () => {
       await act(() =>
-        controlsHost.querySelector<HTMLButtonElement>("button[aria-label^='Style:']")!.click(),
+        controlsHost.querySelector<HTMLButtonElement>("button[aria-label='Text']")!.click(),
       );
       const submenu = Array.from(
         document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'),
@@ -337,7 +343,7 @@ describe("formatting menu focus", () => {
   it("keeps normal trigger focus on Escape without running a command", async () => {
     const { controller, controlsHost } = await fixture();
     const execute = vi.spyOn(controller, "execute");
-    const trigger = controlsHost.querySelector<HTMLButtonElement>("button[aria-label^='Style:']")!;
+    const trigger = controlsHost.querySelector<HTMLButtonElement>("button[aria-label='Text']")!;
     await act(() => {
       trigger.focus();
       trigger.click();
@@ -371,16 +377,68 @@ describe("formatting menu focus", () => {
     expect(editor.hidden).toBe(false);
   });
 
+  it("formats selected text from the shared hover card and restores editor focus", async () => {
+    const { view, controller, controlsHost } = await fixture("Hello world.\n");
+    await act(() =>
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 6))),
+    );
+    const openFormatting = async () => {
+      await act(() =>
+        controlsHost.querySelector<HTMLButtonElement>('button[aria-label="Text"]')!.click(),
+      );
+      const trigger = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+        (item) => item.textContent === "Formatting",
+      )!;
+      await act(() => {
+        trigger.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false }));
+        trigger.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+      });
+      return await vi.waitFor(() => {
+        const bold = [
+          ...document.body.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]'),
+        ].find((item) => item.textContent?.startsWith("Bold"));
+        expect(bold).toBeDefined();
+        return bold!;
+      });
+    };
+    let bold = await openFormatting();
+    await act(() => bold.click());
+    await vi.waitFor(() => expect(controller.session.session.draftSource).toContain("**Hello**"));
+    expect(view.hasFocus()).toBe(true);
+    bold = await openFormatting();
+    expect(bold.getAttribute("aria-checked")).toBe("true");
+    const clear = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (item) => item.textContent?.startsWith("Clear formatting"),
+    )!;
+    await act(() => clear.click());
+    await vi.waitFor(() => expect(controller.session.session.draftSource).toBe("Hello world.\n"));
+    expect(view.hasFocus()).toBe(true);
+  });
+
   it("shows understated LTR shortcut hints without changing action names", async () => {
     const { controlsHost } = await fixture();
-    const bold = controlsHost.querySelector<HTMLButtonElement>("[aria-label='Bold']")!;
-    expect(bold.textContent).toBe("");
+    await act(() =>
+      controlsHost.querySelector<HTMLButtonElement>('button[aria-label="Text"]')!.click(),
+    );
+    await act(() =>
+      [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+        .find((item) => item.textContent === "Formatting")!
+        .click(),
+    );
+    const bold = [...document.body.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')].find(
+      (item) => item.textContent?.startsWith("Bold"),
+    )!;
     expect(bold.getAttribute("aria-keyshortcuts")).toBe(
       scientMarkdownShortcut("bold").ariaKeyShortcuts,
     );
-
     await act(() =>
-      controlsHost.querySelector<HTMLButtonElement>("button[aria-label^='Style:']")!.click(),
+      bold.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+    );
+    // Escape closes the submenu; open the paragraph category in the same Text menu.
+    await act(() =>
+      [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+        .find((item) => item.textContent === "Paragraph style")!
+        .click(),
     );
     const heading = Array.from(
       document.body.querySelectorAll<HTMLElement>("[role='menuitemradio']"),

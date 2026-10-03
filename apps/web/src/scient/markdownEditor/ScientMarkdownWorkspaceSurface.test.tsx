@@ -569,24 +569,14 @@ describe("ScientMarkdownWorkspaceSurface", () => {
 
     await act(() => handle!.click());
 
-    const bold = host.querySelector<HTMLButtonElement>("[aria-label='Bold']");
-    expect(bold).not.toBeNull();
-    expect(bold?.getAttribute("aria-keyshortcuts")).toBe(
-      scientMarkdownShortcut("bold").ariaKeyShortcuts,
-    );
-    expect(bold?.textContent).toBe("");
-    expect(
-      host.querySelector("[aria-label='Bold']")?.getAttribute("data-preserve-icon-weight"),
-    ).toBe("true");
-    expect(
-      host.querySelector("[aria-label='Inline code']")?.getAttribute("data-preserve-icon-weight"),
-    ).toBe("true");
+    expect(host.querySelector('button[aria-label="Text"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Bold"]')).toBeNull();
     // Link is in Insert, not a bar button.
     expect(host.querySelector("[aria-label='Add or edit link']")).toBeNull();
     expect(host.querySelector("[aria-label='Hide formatting tools']")).not.toBeNull();
   });
 
-  it("shows distinct Paragraph and Quote icons in the primary editor controls", async () => {
+  it("uses the same Text trigger for paragraphs and quotes", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 
     const renderExpandedSurface = async (source: string, ariaLabel: string) => {
@@ -615,12 +605,12 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     };
 
     const paragraph = await renderExpandedSurface("Plain text.\n", "Paragraph fixture");
-    const paragraphStyle = paragraph.querySelector("[aria-label='Style: Text']");
-    expect(paragraphStyle?.querySelector(".lucide-text-initial")).not.toBeNull();
+    const paragraphStyle = paragraph.querySelector("[aria-label='Text']");
+    expect(paragraphStyle?.textContent).toBe("Text");
 
     const quote = await renderExpandedSurface("> Quoted text.\n", "Quote fixture");
-    const quoteStyle = quote.querySelector("[aria-label='Style: Quote']");
-    expect(quoteStyle?.querySelector(".lucide-text-quote")).not.toBeNull();
+    const quoteStyle = quote.querySelector("[aria-label='Text']");
+    expect(quoteStyle?.textContent).toBe("Text");
   });
 
   it("uses the shared compact popover treatment for link editing", async () => {

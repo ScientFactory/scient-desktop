@@ -19,6 +19,7 @@ import {
   MenuItem,
   MenuPopup,
   MenuRadioItem,
+  MenuCheckboxItem,
   MenuSeparator,
   MenuShortcut,
   MenuTrigger,
@@ -131,6 +132,26 @@ export function DockCommandRadioItem({
   const queue = useContext(DockCommandContext);
   return (
     <MenuRadioItem
+      {...props}
+      closeOnClick
+      onClick={() => {
+        if (queue) queue(onClick);
+        else onClick();
+      }}
+    />
+  );
+}
+
+/** Formatting toggles defer execution until the whole menu releases focus. */
+export function DockCommandCheckboxItem({
+  onClick,
+  ...props
+}: Omit<ComponentProps<typeof MenuCheckboxItem>, "onClick" | "closeOnClick" | "onCheckedChange"> & {
+  readonly onClick: () => void;
+}) {
+  const queue = useContext(DockCommandContext);
+  return (
+    <MenuCheckboxItem
       {...props}
       closeOnClick
       onClick={() => {

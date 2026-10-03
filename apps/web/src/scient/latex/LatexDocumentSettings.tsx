@@ -1,32 +1,145 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { XIcon } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
+import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { LatexSelect } from "./LatexSelect";
 import { latexVisualLayoutProfile, type LatexVisualLayoutUpdate } from "./latexVisualDocument";
 import { LATEX_PAPER_SIZES } from "./latexVisualLayout";
 
 export type LatexDocumentSettingsSection = "page" | "style";
 
+const CM_PER_INCH = 2.54;
+/** Margin presets: the same length on all four sides. */
+const MARGIN_PRESETS = { narrow: 1.5, normal: 2.5, wide: 3.5 } as const;
+type MarginPreset = keyof typeof MARGIN_PRESETS;
+type MarginChoice = MarginPreset | "default" | "custom";
+const SIDES = ["top", "bottom", "left", "right"] as const;
+
+function centimetres(inches: number): string {
+  return `${Math.round(inches * CM_PER_INCH * 100) / 100}cm`;
+}
+
+/** What the document uses now, read from its preamble the way the page is drawn. */
+function currentSettings(source: string) {
+  const profile = latexVisualLayoutProfile(source);
+  const begin = source.indexOf("\\begin{document}");
+  const preamble = begin < 0 ? source : source.slice(0, begin);
+  const inches = {
+    top: profile.marginTopIn,
+    bottom: profile.marginBottomIn,
+    left: profile.marginLeftIn,
+    right: profile.marginRightIn,
+  };
+  const ownMargins = /\\usepackage(?:\[[^\]]*\])?\{geometry\}|\\geometry\s*\{/u.test(preamble);
+  const preset = (Object.keys(MARGIN_PRESETS) as MarginPreset[]).find((name) =>
+    SIDES.every((side) => Math.abs(inches[side] * CM_PER_INCH - MARGIN_PRESETS[name]) < 0.05),
+  );
+  const margin: MarginChoice = !ownMargins ? "default" : (preset ?? "custom");
+  return {
+    profile,
+    orientation: (profile.paperWidthIn > profile.paperHeightIn ? "landscape" : "portrait") as
+      | "portrait"
+      | "landscape",
+    paragraphs: (profile.paragraphIndentEm === 0 ? "spaced" : "indented") as "indented" | "spaced",
+    margin,
+    margins: Object.fromEntries(SIDES.map((side) => [side, centimetres(inches[side])])) as Record<
+      (typeof SIDES)[number],
+      string
+    >,
+  };
+}
+
+/** A small label above its control. */
+function Field(props: { readonly label: string; readonly children: ReactNode }) {
+  return (
+    <div className="grid min-w-0 gap-1">
+      <span className="text-xs text-muted-foreground">{props.label}</span>
+      {props.children}
+    </div>
+  );
+}
+
+/** Two or three choices side by side, like the view switch. */
+function Choice<T extends string>(props: {
+  readonly label: string;
+  readonly value: T;
+  readonly options: readonly { readonly value: T; readonly label: string }[];
+  readonly disabled: boolean;
+  readonly onChange: (value: T) => void;
+}) {
+  return (
+    <ToggleGroup
+      aria-label={props.label}
+      className="w-full *:flex-1"
+      value={[props.value]}
+      disabled={props.disabled}
+      onValueChange={(next) => {
+        const value = props.options.find((option) => option.value === next[0]);
+        if (value) props.onChange(value.value);
+      }}
+    >
+      {props.options.map((option) => (
+        <Toggle key={option.value} value={option.value}>
+          {option.label}
+        </Toggle>
+      ))}
+    </ToggleGroup>
+  );
+}
+
+/**
+ * One card: every setting shows what the document uses now, and Apply writes
+ * only what was changed.
+ */
 export function LatexDocumentSettings(props: {
-  initialSection: LatexDocumentSettingsSection;
   onOpenChange: (open: boolean) => void;
   source: string;
   disabled: boolean;
   onApply: (layout: Partial<LatexVisualLayoutUpdate>, expectedSource: string) => boolean;
   onOpenSource: () => void;
 }) {
-  // The parent mounts a fresh settings form for each opening. Tabs share one draft.
+  // The parent mounts a fresh settings form for each opening.
   const [original] = useState(props.source);
-  const [profile] = useState(() => latexVisualLayoutProfile(original));
-  const [section, setSection] = useState(props.initialSection);
+  const [current] = useState(() => currentSettings(original));
+  const { profile } = current;
   const [changes, setChanges] = useState<Partial<LatexVisualLayoutUpdate>>({});
+  const [marginChoice, setMarginChoice] = useState<MarginChoice>(current.margin);
   const [error, setError] = useState<string | null>(null);
   const customClass = !["article", "report", "book"].includes(profile.documentClass);
   const changed = Object.keys(changes).length > 0;
   const stale = props.source !== original;
-  const update = (patch: Partial<LatexVisualLayoutUpdate>) => {
-    setChanges((value) => ({ ...value, ...patch }));
+  const locked = props.disabled || stale;
+  // A setting put back to what the document uses is no longer a change.
+  const update = <K extends keyof LatexVisualLayoutUpdate>(
+    key: K,
+    value: LatexVisualLayoutUpdate[K],
+    now: LatexVisualLayoutUpdate[K],
+  ) => {
+    setChanges(({ [key]: _previous, ...rest }) =>
+      value === now ? rest : ({ ...rest, [key]: value } as Partial<LatexVisualLayoutUpdate>),
+    );
+    setError(null);
+  };
+  const chooseMargin = (choice: MarginChoice) => {
+    setMarginChoice(choice);
+    setError(null);
+    setChanges(({ margin: _margin, margins: _margins, ...rest }) =>
+      choice === "narrow" || choice === "normal" || choice === "wide"
+        ? choice === current.margin
+          ? rest
+          : { ...rest, margin: `${MARGIN_PRESETS[choice]}cm` }
+        : rest,
+    );
+  };
+  const setSide = (side: (typeof SIDES)[number], value: string) => {
+    setChanges((previous) => {
+      const margins = { ...previous.margins };
+      if (value.trim() && value.trim() !== current.margins[side]) margins[side] = value.trim();
+      else delete margins[side];
+      const { margins: _margins, ...rest } = previous;
+      return Object.keys(margins).length ? { ...rest, margins } : rest;
+    });
     setError(null);
   };
   return (
@@ -47,210 +160,176 @@ export function LatexDocumentSettings(props: {
           <XIcon />
         </Button>
       </div>
-      <div className="space-y-3 p-4">
-        <div className="flex gap-2" role="group" aria-label="Settings section">
+      <form
+        className="grid gap-3 p-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!changed || locked) return;
+          if (props.onApply(changes, original)) props.onOpenChange(false);
+          else
+            setError(
+              "These settings could not be applied. Check the margins and document type, or edit the settings in Source.",
+            );
+        }}
+      >
+        <h3 className="text-sm font-semibold">Document settings</h3>
+        <fieldset className="grid grid-cols-2 gap-x-3 gap-y-2.5" disabled={locked}>
+          <Field label="Type">
+            <LatexSelect
+              size="sm"
+              value={changes.documentClass ?? profile.documentClass}
+              disabled={locked || customClass}
+              title={
+                customClass
+                  ? "This document uses a custom class, controlled by its LaTeX setup."
+                  : undefined
+              }
+              onValueChange={(value) => update("documentClass", value, profile.documentClass)}
+              aria-label="Document type"
+              options={[
+                ...(customClass
+                  ? [{ value: profile.documentClass, label: `${profile.documentClass} (custom)` }]
+                  : []),
+                { value: "article", label: "Article" },
+                { value: "report", label: "Report" },
+                { value: "book", label: "Book" },
+              ]}
+            />
+          </Field>
+          <Field label="Text size">
+            <LatexSelect
+              size="sm"
+              disabled={locked || customClass}
+              value={String(changes.baseFontPt ?? profile.baseFontPt)}
+              onValueChange={(value) =>
+                update(
+                  "baseFontPt",
+                  Number(value) as LatexVisualLayoutUpdate["baseFontPt"],
+                  profile.baseFontPt,
+                )
+              }
+              aria-label="Text size"
+              options={[10, 11, 12].map((size) => ({ value: String(size), label: `${size} pt` }))}
+            />
+          </Field>
+          <Field label="Paper">
+            <LatexSelect
+              size="sm"
+              value={changes.paper ?? profile.paper}
+              onValueChange={(value) =>
+                update("paper", value as LatexVisualLayoutUpdate["paper"], profile.paper)
+              }
+              disabled={locked}
+              aria-label="Paper size"
+              options={Object.entries(LATEX_PAPER_SIZES).map(([value, paper]) => ({
+                value,
+                label: paper.label,
+              }))}
+            />
+          </Field>
+          <Field label="Orientation">
+            <Choice
+              label="Orientation"
+              value={changes.orientation ?? current.orientation}
+              disabled={locked}
+              onChange={(orientation) => update("orientation", orientation, current.orientation)}
+              options={[
+                { value: "portrait", label: "Portrait" },
+                { value: "landscape", label: "Landscape" },
+              ]}
+            />
+          </Field>
+          <Field label="Margins">
+            <LatexSelect
+              size="sm"
+              value={marginChoice}
+              onValueChange={(value) => chooseMargin(value as MarginChoice)}
+              disabled={locked}
+              aria-label="Margins"
+              options={[
+                ...(current.margin === "default"
+                  ? [{ value: "default", label: "LaTeX default" }]
+                  : []),
+                ...(Object.entries(MARGIN_PRESETS) as [MarginPreset, number][]).map(
+                  ([value, cm]) => ({
+                    value,
+                    label: `${value[0]!.toUpperCase()}${value.slice(1)} · ${cm} cm`,
+                  }),
+                ),
+                { value: "custom", label: "Custom" },
+              ]}
+            />
+          </Field>
+          <Field label="Paragraphs">
+            <Choice
+              label="Paragraphs"
+              value={changes.paragraphStyle ?? current.paragraphs}
+              disabled={locked || customClass}
+              onChange={(paragraphStyle) =>
+                update("paragraphStyle", paragraphStyle, current.paragraphs)
+              }
+              options={[
+                { value: "indented", label: "Indented" },
+                { value: "spaced", label: "Spaced" },
+              ]}
+            />
+          </Field>
+          {marginChoice === "custom" ? (
+            <div className="col-span-2 grid grid-cols-4 gap-2" role="group" aria-label="Margin">
+              {SIDES.map((side) => {
+                const name = side[0]!.toUpperCase() + side.slice(1);
+                return (
+                  <Field key={side} label={name}>
+                    <Input
+                      size="compact"
+                      aria-label={`${name} margin`}
+                      defaultValue={current.margins[side]}
+                      onChange={(event) => setSide(side, event.target.value)}
+                    />
+                  </Field>
+                );
+              })}
+            </div>
+          ) : null}
+        </fieldset>
+        {stale && (
+          <p role="alert" className="text-xs">
+            The document changed while settings were open. Close and reopen settings to use the
+            latest version.
+          </p>
+        )}
+        {error && (
+          <p role="alert" className="text-xs">
+            {error}
+          </p>
+        )}
+        <div className="flex items-center justify-between gap-2">
           <Button
             size="xs"
-            variant={section === "page" ? "selected" : "ghost"}
-            aria-pressed={section === "page"}
-            onClick={() => setSection("page")}
+            type="button"
+            variant="ghost-muted"
+            onClick={() => {
+              props.onOpenChange(false);
+              props.onOpenSource();
+            }}
           >
-            Page layout
+            Open in Source
           </Button>
-          <Button
-            size="xs"
-            variant={section === "style" ? "selected" : "ghost"}
-            aria-pressed={section === "style"}
-            onClick={() => setSection("style")}
-          >
-            Document style
-          </Button>
-        </div>
-        <form
-          className="grid gap-3"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (!changed || props.disabled || stale) return;
-            if (props.onApply(changes, original)) props.onOpenChange(false);
-            else
-              setError(
-                "These settings could not be applied. Check the margins and document type, or edit the settings in Source.",
-              );
-          }}
-        >
-          <fieldset className="grid gap-3" disabled={props.disabled || stale}>
-            {section === "page" ? (
-              <>
-                <div className="grid grid-cols-2 gap-2">
-                  <label className="grid gap-1 text-xs">
-                    Paper size
-                    <LatexSelect
-                      size="sm"
-                      value={changes.paper ?? ""}
-                      onValueChange={(value) =>
-                        update({ paper: value as LatexVisualLayoutUpdate["paper"] })
-                      }
-                      disabled={props.disabled || stale}
-                      aria-label="Paper size"
-                      options={[
-                        { value: "", label: "Keep current", disabled: true },
-                        ...Object.entries(LATEX_PAPER_SIZES).map(([value, paper]) => ({
-                          value,
-                          label: paper.label,
-                        })),
-                      ]}
-                    />
-                  </label>
-                  <label className="grid gap-1 text-xs">
-                    Orientation
-                    <LatexSelect
-                      size="sm"
-                      value={changes.orientation ?? ""}
-                      onValueChange={(value) =>
-                        update({ orientation: value as "portrait" | "landscape" })
-                      }
-                      disabled={props.disabled || stale}
-                      aria-label="Orientation"
-                      options={[
-                        { value: "", label: "Keep current", disabled: true },
-                        { value: "portrait", label: "Portrait" },
-                        { value: "landscape", label: "Landscape" },
-                      ]}
-                    />
-                  </label>
-                </div>
-                <div className="grid gap-2" role="group" aria-label="Margin">
-                  <h3 className="text-sm font-semibold">Margin</h3>
-                  <div className="grid grid-cols-4 gap-2">
-                    {(["top", "right", "left", "bottom"] as const).map((side) => (
-                      <label key={side} className="grid gap-1 text-xs">
-                        {side[0]!.toUpperCase() + side.slice(1)}
-                        <Input
-                          size="compact"
-                          aria-label={`${side[0]!.toUpperCase() + side.slice(1)} margin`}
-                          value={changes.margins?.[side] ?? ""}
-                          placeholder="Keep"
-                          onChange={(event) => {
-                            const margins = { ...changes.margins };
-                            if (event.target.value.trim()) margins[side] = event.target.value;
-                            else delete margins[side];
-                            setChanges((value) => {
-                              const next = { ...value };
-                              if (Object.keys(margins).length) next.margins = margins;
-                              else delete next.margins;
-                              return next;
-                            });
-                            setError(null);
-                          }}
-                        />
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              </>
-            ) : (
-              <>
-                <label className="grid gap-1 text-xs">
-                  Document type
-                  <LatexSelect
-                    size="sm"
-                    value={changes.documentClass ?? profile.documentClass}
-                    disabled={props.disabled || stale || customClass}
-                    onValueChange={(value) => update({ documentClass: value })}
-                    aria-label="Document type"
-                    options={[
-                      ...(customClass
-                        ? [
-                            {
-                              value: profile.documentClass,
-                              label: `${profile.documentClass} (custom)`,
-                            },
-                          ]
-                        : []),
-                      { value: "article", label: "Article" },
-                      { value: "report", label: "Report" },
-                      { value: "book", label: "Book" },
-                    ]}
-                  />
-                </label>
-                {customClass && (
-                  <p className="text-sm text-muted-foreground">
-                    This document uses a custom class. Its class and text style remain controlled by
-                    its LaTeX setup.
-                  </p>
-                )}
-                <label className="grid gap-1 text-xs">
-                  Base text size
-                  <LatexSelect
-                    size="sm"
-                    disabled={props.disabled || stale || customClass}
-                    value={changes.baseFontPt ?? ""}
-                    onValueChange={(value) => update({ baseFontPt: Number(value) as 10 | 11 | 12 })}
-                    aria-label="Base text size"
-                    options={[
-                      { value: "", label: "Keep current", disabled: true },
-                      ...[10, 11, 12].map((size) => ({
-                        value: String(size),
-                        label: `${size} pt`,
-                      })),
-                    ]}
-                  />
-                </label>
-                <label className="grid gap-1 text-xs">
-                  Paragraphs
-                  <LatexSelect
-                    size="sm"
-                    disabled={props.disabled || stale || customClass}
-                    value={changes.paragraphStyle ?? ""}
-                    onValueChange={(value) =>
-                      update({ paragraphStyle: value as "indented" | "spaced" })
-                    }
-                    aria-label="Paragraphs"
-                    options={[
-                      { value: "", label: "Keep current", disabled: true },
-                      { value: "indented", label: "First-line indent" },
-                      { value: "spaced", label: "Space between paragraphs" },
-                    ]}
-                  />
-                </label>
-              </>
-            )}
-          </fieldset>
-          {stale && (
-            <p role="alert">
-              The document changed while settings were open. Close and reopen settings to use the
-              latest version.
-            </p>
-          )}
-          {error && <p role="alert">{error}</p>}
-          <div className="flex flex-wrap justify-between gap-2">
+          <div className="flex gap-2">
             <Button
               size="xs"
               type="button"
-              variant="ghost"
-              onClick={() => {
-                props.onOpenChange(false);
-                props.onOpenSource();
-              }}
+              variant="outline"
+              onClick={() => props.onOpenChange(false)}
             >
-              Edit settings in Source
+              Cancel
             </Button>
-            <div className="flex gap-2">
-              <Button
-                size="xs"
-                type="button"
-                variant="outline"
-                onClick={() => props.onOpenChange(false)}
-              >
-                Cancel
-              </Button>
-              <Button size="xs" type="submit" disabled={!changed || props.disabled || stale}>
-                Apply
-              </Button>
-            </div>
+            <Button size="xs" type="submit" disabled={!changed || locked}>
+              Apply
+            </Button>
           </div>
-        </form>
-      </div>
+        </div>
+      </form>
     </div>
   );
 }

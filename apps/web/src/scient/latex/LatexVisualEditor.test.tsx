@@ -198,8 +198,8 @@ describe("writing editor source transactions", () => {
       [...toolbar.querySelectorAll("[data-dock-group]")].map((group) =>
         group.getAttribute("data-dock-group"),
       ),
-    ).toEqual(["history", "format", "style", "lists", "insert", "math", "document"]);
-    expect(toolbar.querySelector('button[aria-label="Style: Text"]')).not.toBeNull();
+    ).toEqual(["history", "text", "lists", "insert", "math", "document"]);
+    expect(toolbar.querySelector('button[aria-label="Text"]')).not.toBeNull();
     expect(toolbar.querySelector('[aria-label="Hide formatting tools"]')).toBeNull();
     expect(toolbar.querySelector('input[aria-label="Page number"]')).toBeNull();
     expect(
@@ -376,23 +376,39 @@ describe("writing editor source transactions", () => {
   it("offers the Markdown bar's inline formatting in the same order, without strikethrough", async () => {
     await mount();
     const toolbar = container.querySelector('[role="toolbar"][aria-label="Writing tools"]')!;
-    const format = toolbar.querySelector('[data-dock-group="format"]')!;
-    expect(
-      [...format.querySelectorAll("button")].map((button) => button.getAttribute("aria-label")),
-    ).toEqual(["Bold", "Italic", "Inline code"]);
-    await act(() => {
-      editor().commands.setTextSelection({ from: 1, to: 6 });
-    });
-    await act(() =>
-      format.querySelector<HTMLButtonElement>('button[aria-label="Inline code"]')!.click(),
-    );
+    expect(toolbar.querySelector('button[aria-label="Bold"]')).toBeNull();
+    const openFormatting = async () => {
+      await act(() =>
+        toolbar.querySelector<HTMLButtonElement>('button[aria-label="Text"]')!.click(),
+      );
+      const trigger = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+        (item) => item.textContent === "Formatting",
+      )!;
+      await act(() => {
+        trigger.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false }));
+        trigger.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+      });
+      return await vi.waitFor(() => {
+        const items = [...document.body.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')];
+        expect(
+          items.map((item) =>
+            item.textContent
+              ?.trim()
+              .split(/Ctrl|⌘|⌥/)[0]
+              ?.trim(),
+          ),
+        ).toEqual(["Bold", "Italic", "Inline code"]);
+        return items;
+      });
+    };
+    await act(() => editor().commands.setTextSelection({ from: 1, to: 6 }));
+    let items = await openFormatting();
+    await act(() => items[2]!.click());
     expect(current).toContain("\\texttt{Hello}");
-    expect(
-      format.querySelector('button[aria-label="Inline code"]')!.getAttribute("aria-pressed"),
-    ).toBe("true");
-    await act(() =>
-      format.querySelector<HTMLButtonElement>('button[aria-label="Inline code"]')!.click(),
-    );
+    expect(editor().isFocused).toBe(true);
+    items = await openFormatting();
+    expect(items[2]!.getAttribute("aria-checked")).toBe("true");
+    await act(() => items[2]!.click());
     expect(current).not.toContain("\\texttt");
     // Link lives in Insert, not in the bar.
     await act(() =>
@@ -443,7 +459,7 @@ describe("writing editor source transactions", () => {
       "Writing shortcuts",
     );
   });
-  it("applies settings from a submenu while preserving its draft across tabs", async () => {
+  it("applies settings from a one-card submenu that shows the current values", async () => {
     await mount("Hello");
     const toolbar = container.querySelector('[role="toolbar"][aria-label="Writing tools"]')!;
     await act(() =>
@@ -463,16 +479,34 @@ describe("writing editor source transactions", () => {
     expect(popup).not.toBeNull();
     expect(document.body.querySelector('[data-slot="dialog-backdrop"]')).toBeNull();
     expect(document.body.querySelector('[data-slot="dialog-popup"]')).toBeNull();
-    await setField(popup.querySelector<HTMLInputElement>('input[aria-label="Top margin"]')!, "2cm");
     const button = (label: string) =>
       [...popup.querySelectorAll<HTMLButtonElement>("button")].find(
         (item) => item.textContent?.trim() === label,
       )!;
-    await act(() => button("Document style").click());
-    await act(() => button("Page layout").click());
-    expect(popup.querySelector<HTMLInputElement>('input[aria-label="Top margin"]')!.value).toBe(
-      "2cm",
-    );
+    // No tabs: every setting is on one card, showing what the document uses now.
+    expect(button("Page layout")).toBeUndefined();
+    expect(popup.textContent).toContain("Article");
+    expect(popup.textContent).toContain("10 pt");
+    expect(popup.textContent).toContain("Letter");
+    expect(popup.textContent).toContain("LaTeX default");
+    expect(button("Apply").disabled).toBe(true);
+    // Margins: the four boxes appear under Custom.
+    expect(popup.querySelector('input[aria-label="Top margin"]')).toBeNull();
+    await act(() => popup.querySelector<HTMLButtonElement>('[aria-label="Margins"]')!.click());
+    const custom = await vi.waitFor(() => {
+      const option = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find(
+        (item) => item.textContent?.trim() === "Custom",
+      );
+      expect(option).toBeDefined();
+      return option!;
+    });
+    await act(() => custom.click());
+    const top = await vi.waitFor(() => {
+      const input = popup.querySelector<HTMLInputElement>('input[aria-label="Top margin"]');
+      expect(input).not.toBeNull();
+      return input!;
+    });
+    await setField(top, "2cm");
     await act(() => button("Apply").click());
     await vi.waitFor(() => expect(current).toContain("top=2cm"));
     expect(current).toContain("Hello");
@@ -500,7 +534,7 @@ describe("writing editor source transactions", () => {
     await mount();
     const toolbar = container.querySelector('[role="toolbar"][aria-label="Writing tools"]')!;
     // Bold and italic leave last, as in the Markdown bar.
-    expect(toolbar.querySelector('[data-dock-group="format"]')).not.toBeNull();
+    expect(toolbar.querySelector('[data-dock-group="text"]')).not.toBeNull();
     expect(toolbar.querySelector('[data-dock-group="history"]')).toBeNull();
     await act(() =>
       toolbar.querySelector<HTMLButtonElement>('button[aria-label="More actions"]')!.click(),

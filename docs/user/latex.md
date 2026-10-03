@@ -54,8 +54,8 @@ paragraph or press Ctrl/Cmd+/ to open it; use the arrow keys and Enter to choose
 The writing toolbar stays fixed at the top on one row. When the pane narrows,
 labels disappear first (Math keeps its sigma); less-used groups then move into
 **More**. Insert holds elements and references; Lists holds list actions.
-**Document > Document settings** opens one dialog with two tabs, Page layout and
-Document style. **Outline** is a tab
+**Document > Document settings** opens one card with every document setting.
+**Document** also holds Find and replace and Export. **Outline** is a tab
 in the sidebar, which opens from the header row. Selected-object options appear
 on the left of the footer; narrow panes use an object-named menu.
 **Document > Title & authors** offers Edit title, Edit authors and Edit date when
@@ -226,12 +226,11 @@ inspect exact output. A successful build never means the browser canvas is
 pixel-identical to that PDF. Compile errors preserve the last successful PDF.
 The canvas reads safe document-class, paper, base-font, `geometry`, paragraph
 indentation, paragraph spacing and line-spacing settings from the preamble.
-Use **Document > Page layout** for paper size, orientation and individual margins.
-Use **Document > Document style** for standard document type, base font size and
-paragraph style. Both sections share one draft, with **Apply** and **Cancel**.
-Fields marked **Keep document setting** preserve the current source; blank margin
-fields do the same. Custom classes retain their class and text style in Source.
-**Edit settings in Source** opens the root setup. If the document changes while
+Use **Document > Document settings** for the document type, text size, paper,
+orientation, margins (Narrow, Normal, Wide, or Custom for each side) and
+paragraph style. Each setting shows what the document uses now; **Apply** writes
+only the settings you changed. Custom classes retain their class and text style
+in Source. **Open in Source** opens the root setup. If the document changes while
 settings are open, close and reopen the dialog before applying. In an included file, these settings update the root;
 these controls update explicit LaTeX preamble settings rather than maintaining
 private visual-only state. Saving required root changes must finish before PDF

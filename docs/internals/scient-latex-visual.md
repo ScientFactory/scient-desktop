@@ -329,13 +329,12 @@ and date while a title block is displayed, and only **Add a title** while none
 is; that explicitly creates or restores the standard block while preserving
 existing metadata. There is no command that turns a paragraph into the title. Custom title pages and
 unsupported title formatting remain source-owned. Standard article/report/book
-classes can be selected in Document style; incompatible switches and custom
+classes can be selected in Document settings; incompatible switches and custom
 classes stay protected.
 
-Document has these entries: Title & authors, Document settings and Keyboard
-shortcuts. Document settings opens one dialog, with Page layout and Document
-style as its two tabs,
-with a shared draft, explicit Apply/Cancel, and a source snapshot checked again
+Document has these entries: Title & authors, Document settings, Find and
+replace, Export and Keyboard shortcuts. Document settings opens one card showing
+the current values read by `latexVisualLayoutProfile`, with a draft of changes only, explicit Apply/Cancel, and a source snapshot checked again
 before mutation. Unchanged fields remain source-controlled. Margin updates carry
 only edited sides; adding geometry to a standard class retains the other projected
 margins. Custom classes without an explicit geometry setup require Source for this
