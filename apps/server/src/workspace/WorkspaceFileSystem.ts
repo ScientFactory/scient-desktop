@@ -1165,7 +1165,14 @@ export const make = Effect.gen(function* () {
           // unlink run back to back, and a replaced source is left alone.
           const moved = yield* Effect.tryPromise({
             try: async () => {
-              if (!(await holdsLinkedFile(sourcePath))) {
+              // The old name may go only while the new name still holds the
+              // same file: otherwise removing it could delete that file's last
+              // name (the new one replaced by another program meanwhile).
+              const [sourceHolds, destinationHolds] = await Promise.all([
+                holdsLinkedFile(sourcePath),
+                holdsLinkedFile(destinationPath),
+              ]);
+              if (!sourceHolds || !destinationHolds) {
                 await removeOwnLink();
                 return false;
               }
