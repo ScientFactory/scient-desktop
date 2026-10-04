@@ -26,6 +26,7 @@ const BLOCK_REVEAL_KEYFRAMES: Keyframe[] = [
   },
 ];
 const REVEAL_MS_PER_LINE = 200;
+const REVEAL_LEAD_MS = 150;
 const MIN_REVEAL_MS = 450;
 const MAX_REVEAL_MS = 1800;
 // Steady: the follow scroll keeps the same pace, so the two move as one.
@@ -96,7 +97,8 @@ export function useStreamingBlockEntrance(
       for (const block of blocks.slice(entered)) {
         if (typeof block.animate !== "function") continue;
         const now = performance.now();
-        const delay = Math.max(0, revealEndsAt - now);
+        // A short lead: the follow scroll is already moving when it starts showing.
+        const delay = Math.max(REVEAL_LEAD_MS, revealEndsAt - now);
         const duration = revealDuration(block);
         revealEndsAt = now + delay + duration;
         latestRevealEndsAt = Math.max(latestRevealEndsAt, revealEndsAt);

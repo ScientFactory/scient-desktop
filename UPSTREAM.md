@@ -26,7 +26,9 @@ mask sweep; its line just appears)
 (`chat/timelineEntranceMotion.ts`; played entrances never replay on row remount). While an
 answer streams, each block (the first included) is revealed top-down line by line, one block
 after the other (about 200ms a line, linear), counted per message so remounted rows never replay;
-the follow scroll paces itself to arrive as the last revealed line shows (`streamingRevealEndsAt`) (`chat/useStreamingBlockEntrance.ts`). The
+each block starts 150ms after it arrives. A followed response's scroll is velocity-based: it
+accelerates gently, cruises at most 1px/ms, brakes into place, and while text is being revealed
+goes no faster than needed to arrive as it finishes (`streamingRevealEndsAt`) (`chat/useStreamingBlockEntrance.ts`). The
 timeline's working state (`chat/timelineWorkingState.ts`) is held back until a send's prompt
 is listed and bridged from the server's acknowledgement until a session starts the turn.
 Preserve the existing first-message framing. Eligible sends, and queued prompts the server delivers while

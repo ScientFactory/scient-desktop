@@ -13,9 +13,11 @@ const ESTIMATED_ROW_SIZE = 90;
 const REVEAL_PACE = { maxPxPerMs: 1.2, easeMs: 90 };
 /** The gap the timeline keeps between its last row and the composer at the end. */
 const END_GAP = 16;
-const FOLLOW_PACE = { maxPxPerMs: 0.6, easeMs: 180 };
-/** Below this, a reveal is nearly done: finish with the usual easing. */
-const MIN_PACED_REVEAL_MS = 50;
+/** A followed response's drift: a calm top speed, gentle acceleration and braking. */
+const FOLLOW_MAX_SPEED = 1; // px per ms
+const FOLLOW_ACCELERATION = 0.004; // px per ms², so ~250ms to top speed
+/** Below this, a reveal is about done and no longer sets the pace. */
+const FOLLOW_REVEAL_PACING_MIN_MS = 120;
 
 /**
  * How far the reveal may scroll now. Growth is revealed only while the sent
@@ -84,14 +86,26 @@ export function useBoundedAnswerFollow({
   /** Called once when the reveal for `promptMessageId` ends (revealed or cancelled). */
   onFinished?: (promptMessageId: string) => void;
 }) {
-  const intent = useRef<{ prompt: string | null; stopped: boolean; sawRunning: boolean }>({
+  const intent = useRef<{
+    prompt: string | null;
+    stopped: boolean;
+    sawRunning: boolean;
+    /** A followed response's motion, kept across updates so its speed never jumps. */
+    motion: { velocity: number; position: number | null };
+  }>({
     prompt: null,
     stopped: false,
     sawRunning: false,
+    motion: { velocity: 0, position: null },
   });
   useLayoutEffect(() => {
     if (intent.current.prompt !== promptMessageId)
-      intent.current = { prompt: promptMessageId, stopped: false, sawRunning: false };
+      intent.current = {
+        prompt: promptMessageId,
+        stopped: false,
+        sawRunning: false,
+        motion: { velocity: 0, position: null },
+      };
     if (responseRunning) intent.current.sawRunning = true;
     if (!promptMessageId || suspended || intent.current.stopped) return;
     const promptIndex = rows.findIndex(
@@ -217,17 +231,44 @@ export function useBoundedAnswerFollow({
         frame = requestAnimationFrame(tick);
         return;
       }
+      if (followResponse && !reducedMotion) {
+        // A followed response drifts with a speed of its own that only changes
+        // gradually: it speeds up gently, cruises at a calm top speed however
+        // fast text arrives (catching up rather than rushing), and brakes into
+        // place. It aims to arrive as the text being revealed finishes showing.
+        const motion = intent.current.motion;
+        // The view's own position, unless something else moved it.
+        if (motion.position === null || Math.abs(viewport.scrollTop - motion.position) > 1.5)
+          motion.position = viewport.scrollTop;
+        // Braking that arrives (not a creep that never does); while text is
+        // still being revealed, no faster than needed to arrive as it finishes.
+        const revealLeft = streamingRevealEndsAt() - now;
+        const cruise = Math.min(
+          FOLLOW_MAX_SPEED,
+          Math.sqrt(2 * FOLLOW_ACCELERATION * delta),
+          revealLeft > FOLLOW_REVEAL_PACING_MIN_MS ? delta / revealLeft : Infinity,
+        );
+        const change = cruise - motion.velocity;
+        const limit = FOLLOW_ACCELERATION * elapsed;
+        motion.velocity = Math.max(0, motion.velocity + Math.max(-limit, Math.min(limit, change)));
+        const step = Math.min(delta, motion.velocity * elapsed);
+        motion.position += step;
+        viewport.scrollTop = motion.position;
+        revealTop = Math.max(revealTop, viewport.scrollTop);
+        // Keep going while there is distance left and the view can still move
+        // (the browser may round the position to whole pixels, so allow that).
+        const stalled = motion.position - viewport.scrollTop > 2;
+        if (delta - step > 0.5 && !stalled) frame = requestAnimationFrame(tick);
+        else {
+          motion.velocity = 0;
+          motion.position = viewport.scrollTop;
+        }
+        return;
+      }
       // A bounded animation only while content actually needs revealing; never an idle loop.
-      // A followed response moves at a calmer pace, so bursts of steps read as one drift.
-      const pace = followResponse ? FOLLOW_PACE : REVEAL_PACE;
+      const pace = REVEAL_PACE;
       const eased = delta * (1 - Math.exp(-elapsed / pace.easeMs));
-      // While streamed text is being revealed line by line, keep its pace: a
-      // steady speed that arrives as its last line shows, not a hop per block.
-      const revealLeft = streamingRevealEndsAt() - now;
-      const step =
-        followResponse && revealLeft > MIN_PACED_REVEAL_MS
-          ? Math.max(0.5, (delta * elapsed) / revealLeft)
-          : Math.max(0.5, Math.min(elapsed * pace.maxPxPerMs, eased));
+      const step = Math.max(0.5, Math.min(elapsed * pace.maxPxPerMs, eased));
       viewport.scrollTop += reducedMotion ? delta : Math.min(delta, step);
       revealTop = Math.max(revealTop, viewport.scrollTop);
       if (Math.abs(viewport.scrollTop - before) > 0.1) frame = requestAnimationFrame(tick);
