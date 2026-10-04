@@ -3,7 +3,7 @@
 The Device panel shows a live iOS Simulator or Android Emulator next to a
 thread, so you can watch an agent verify mobile work and tap the device
 yourself. Agents get the same device through `device_*` tools and the
-`agent-device` command line, which T3 Code sets up for them.
+`agent-device` command line, which Scient sets up for them.
 
 ## Open a device
 
@@ -29,7 +29,7 @@ off.
 Simulators run on the machine that hosts the environment server. iOS needs
 macOS with Xcode. Android needs the SDK Platform-Tools, Android Emulator,
 and Command-line Tools (latest), plus a virtual device created in Android
-Studio's Device Manager. T3 Code detects standard SDK locations; set
+Studio's Device Manager. Scient detects standard SDK locations; set
 `ANDROID_HOME` for a custom location. The panel explains missing dependencies.
 After installing them, restart the environment server and refresh devices.
 
@@ -113,6 +113,6 @@ localhost without forwarding or another reachable address.
 
 ## Device tool updates
 
-The connected T3 server manages the device hub and agent tools on its own machine and configured SSH hosts. Required versions install automatically the next time those tools are used. Settings → Integrations → Check device tool versions reads installed versions without installing tools or starting devices.
+The connected Scient server manages the device hub and agent tools on its own machine and configured SSH hosts. Required versions install automatically the next time those tools are used. Settings → Integrations → Check device tool versions reads installed versions without installing tools or starting devices.
 
-To receive newer tool versions on a remote environment, update that environment's T3 server. Updating only the browser or mobile app does not update the remote server. An offline host keeps its installed files, but an update needs network access before device support can start; T3 does not fall back to an older version. Reconnect the host and use Retry if installation fails. Existing device and agent-access settings are preserved.
+To receive newer tool versions on a remote environment, update that environment's Scient server. Updating only the browser or mobile app does not update the remote server. An offline host keeps its installed files, but an update needs network access before device support can start; Scient does not fall back to an older version. Reconnect the host and use Retry if installation fails. Existing device and agent-access settings are preserved.

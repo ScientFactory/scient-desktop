@@ -41,6 +41,7 @@ import {
   type ConversationForkSource,
 } from "./ConversationForkPlan.ts";
 import { freezeConversationForkNativeSource } from "./ConversationForkNativeSource.ts";
+import { conversationForkBoundaryItem } from "./ConversationForkBoundaryItem.ts";
 
 export class ConversationForkService extends Context.Service<
   ConversationForkService,
@@ -273,6 +274,24 @@ const make = Effect.gen(function* () {
         return yield* failure("The destination already exists. Choose a new fork identity.");
       const inspected = yield* inspect(command, command.newThreadId);
       const { projection, plan, source, cwd, fromCheckpointRef, checkpointAvailable } = inspected;
+      const markerSource =
+        source.kind === "user-message"
+          ? {
+              type: "message" as const,
+              threadId: projection.thread.id,
+              messageId: source.messageId,
+              position: "before" as const,
+            }
+          : plan.boundaryRunId !== null
+            ? { type: "run" as const, threadId: projection.thread.id, runId: plan.boundaryRunId }
+            : source.kind === "assistant-response"
+              ? {
+                  type: "message" as const,
+                  threadId: projection.thread.id,
+                  messageId: source.messageId,
+                  position: "after" as const,
+                }
+              : yield* failure("The fork's durable conversation boundary is unavailable.");
       if (command.workspaceMode === "new-worktree" && !checkpointAvailable)
         return yield* failure(
           "This boundary has no saved workspace checkpoint. Fork locally instead.",
@@ -429,6 +448,18 @@ const make = Effect.gen(function* () {
           type: "turn-item.updated",
           payload,
         })),
+        {
+          id: EventId.make(`scient-fork:${command.commandId}:boundary`),
+          threadId: thread.id,
+          occurredAt: now,
+          type: "turn-item.updated",
+          payload: conversationForkBoundaryItem({
+            targetThreadId: thread.id,
+            source: markerSource,
+            ordinal: plan.items.length,
+            createdAt: now,
+          }),
+        },
         ...plan.nodes.map((payload, index): OrchestrationV2DomainEvent => ({
           id: EventId.make(`scient-fork:${command.commandId}:node:${index}`),
           threadId: thread.id,

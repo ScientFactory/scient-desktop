@@ -34,6 +34,7 @@ import {
   selectHistory,
 } from "../ContextHandoffBudget.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
+import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
 import {
@@ -45,6 +46,7 @@ import {
   THREAD_FORK_NATIVE_TARGET_PROMPT,
 } from "../testkit/fixtures/shared.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
+import { conversationForkBoundaryItem } from "./ConversationForkBoundaryItem.ts";
 
 const encodeFrame = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeFrame = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -371,7 +373,17 @@ for (const nested of [false, true]) {
                 targetThreadId: childId,
                 source: { kind: "assistant-response", messageId: boundaryAnswer.messageId },
               });
-              const owned = expectedPrefix.items;
+              const boundaryRun = boundary.runs.at(-1);
+              assert.ok(boundaryRun);
+              const owned = [
+                ...expectedPrefix.items,
+                conversationForkBoundaryItem({
+                  targetThreadId: childId,
+                  source: { type: "run", threadId: parentId, runId: boundaryRun.id },
+                  ordinal: expectedPrefix.items.length,
+                  createdAt: now,
+                }),
+              ];
               const messages = owned.flatMap((item) => {
                 const message = historicalMessage(item);
                 return message === null ? [] : [message];
@@ -484,6 +496,34 @@ for (const nested of [false, true]) {
               Effect.timeout("10 seconds"),
             );
             assert.ok(Option.isSome(ready));
+            const boundaryItem = ready.value.turnItems.find(
+              (item) =>
+                item.type === "fork" &&
+                item.targetThreadId === childId &&
+                item.inheritedFrom === undefined,
+            );
+            assert.ok(boundaryItem?.type === "fork");
+            assert.deepEqual(boundaryItem.source, {
+              type: "run",
+              threadId: parentId,
+              runId: run.id,
+            });
+            assert.isNull(boundaryItem.runId);
+            assert.isNull(boundaryItem.nodeId);
+            assert.isNull(boundaryItem.providerTurnId);
+            assert.isNull(ready.value.thread.forkedFrom);
+            const boundaryRow = ready.value.visibleTurnItems.find(
+              (row) => row.item.id === boundaryItem.id,
+            );
+            assert.ok(boundaryRow);
+            assert.equal(boundaryRow.visibility, "local");
+            assert.equal(boundaryRow.position, ready.value.visibleTurnItems.length - 1);
+            const projectionStore = yield* ProjectionStoreV2;
+            const storedBoundary = yield* projectionStore.getTimelinePage(childId, {
+              itemId: boundaryItem.id,
+              limit: 1,
+            });
+            assert.deepEqual(storedBoundary.items, [boundaryRow]);
             if (nested) {
               const copy = ready.value.thread.conversationFork?.attachmentCopies[0];
               assert.ok(copy);
@@ -522,6 +562,11 @@ for (const nested of [false, true]) {
             });
             if (sourceFilePath !== undefined)
               yield* (yield* FileSystem.FileSystem).remove(sourceFilePath, { force: true });
+            const retainedBoundary = yield* projectionStore.getTimelinePage(childId, {
+              itemId: boundaryItem.id,
+              limit: 1,
+            });
+            assert.deepEqual(retainedBoundary.items, storedBoundary.items);
             yield* orchestrator.dispatch({
               type: "message.dispatch",
               commandId: CommandId.make("native-run-fork-child-local"),
@@ -554,6 +599,45 @@ for (const nested of [false, true]) {
               delivered.contextTransfers[0]?.resolution?.strategy,
               nested ? "portable_context" : "native_fork",
             );
+            if (nested) {
+              const localHandoffs = delivered.visibleTurnItems.filter(
+                (row) => row.visibility === "local" && row.item.type === "handoff",
+              );
+              assert.lengthOf(localHandoffs, 1);
+              const handoff = localHandoffs[0]?.item;
+              assert.ok(handoff?.type === "handoff");
+              const transfer = delivered.contextTransfers.find(
+                (candidate) => candidate.type === "fork",
+              );
+              assert.ok(transfer?.resolution?.strategy === "portable_context");
+              assert.equal(
+                transfer.sourceProviderInstanceId,
+                transfer.targetProviderInstanceId,
+                "This is also a same-provider initialization",
+              );
+              assert.equal(transfer.targetThreadId, handoff.threadId);
+              assert.equal(transfer.targetRunId, handoff.runId);
+              assert.equal(transfer.resolution.contextHandoffId, handoff.contextHandoffId);
+              const reloaded = yield* projectionStore.getThreadProjection(childId);
+              assert.deepEqual(
+                reloaded.turnItems.find((item) => item.id === handoff.id),
+                handoff,
+              );
+              assert.deepEqual(
+                reloaded.contextTransfers.find((candidate) => candidate.id === transfer.id),
+                transfer,
+              );
+              const page = yield* projectionStore.getTimelinePage(childId, {
+                itemId: handoff.id,
+                limit: 1,
+              });
+              assert.deepEqual(page.items, localHandoffs);
+              assert.equal(
+                reloaded.contextHandoffs.find((context) => context.id === handoff.contextHandoffId)
+                  ?.delivery?.status,
+                "injected",
+              );
+            }
             if (nested) {
               const answerContext =
                 delivered.contextHandoffs[0]?.history?.messages.at(-1)?.text ?? "";

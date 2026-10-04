@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
   MessageId,
@@ -32,6 +33,7 @@ import {
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
+import { persistChatAttachments } from "../AttachmentPersistence.ts";
 
 const driver = ProviderDriverKind.make("codex");
 const instanceId = ProviderInstanceId.make("codex");
@@ -199,6 +201,19 @@ for (const mailbox of [false, true]) {
               yield* Fiber.join(running);
               const first = started[0]!;
               const messageId = MessageId.make("message:steering");
+              const attachments = yield* persistChatAttachments({
+                threadId,
+                messageId,
+                attachments: [
+                  {
+                    type: "image",
+                    name: "image.png",
+                    mimeType: "image/png",
+                    sizeBytes: 10,
+                    dataUrl: "data:image/png;base64,AAECAwQFBgcICQ==",
+                  },
+                ],
+              });
               const taskId = NodeId.make("task:mailbox");
               if (mailbox) {
                 const sink = yield* EventSink.EventSinkV2;
@@ -262,15 +277,7 @@ for (const mailbox of [false, true]) {
                 threadId,
                 messageId,
                 text: "fix the popover",
-                attachments: [
-                  {
-                    type: "image",
-                    id: "steering-screenshot",
-                    name: "image.png",
-                    mimeType: "image/png",
-                    sizeBytes: 10,
-                  },
-                ],
+                attachments,
                 dispatchMode: mailbox
                   ? { type: "queue_after_active" }
                   : { type: "steer_active", targetRunId: first.runId },
@@ -362,15 +369,7 @@ for (const mailbox of [false, true]) {
               assert.equal(started[1]?.message.messageId, messageId);
               if (mailbox) assert.include(started[1]?.message.text ?? "", String(taskId));
               else assert.equal(started[1]?.message.text, "fix the popover");
-              assert.deepEqual(started[1]?.message.attachments, [
-                {
-                  type: "image",
-                  id: "steering-screenshot",
-                  name: "image.png",
-                  mimeType: "image/png",
-                  sizeBytes: 10,
-                },
-              ]);
+              assert.deepEqual(started[1]?.message.attachments, attachments);
               assert.equal(steerCalls, timing === "during delivery" ? 1 : 0);
               const final = yield* orchestrator.getThreadProjection(threadId);
               assert.equal(final.messages.filter((message) => message.id === messageId).length, 1);
@@ -398,7 +397,7 @@ for (const mailbox of [false, true]) {
               ),
             );
           }),
-        ),
+        ).pipe(Effect.provide(NodeServices.layer)),
     );
   }
 }

@@ -8,6 +8,7 @@ import * as Predicate from "effect/Predicate";
 export function materializeCodexOwnerReload(
   transcript: ProviderReplayTranscript,
   beforeTurnStartOrdinal: number,
+  options?: { readonly beforeEntryLabel: string },
 ): ProviderReplayTranscript {
   let turnOrdinal = 0;
   const targetIndex = transcript.entries.findIndex((entry) => {
@@ -52,7 +53,7 @@ export function materializeCodexOwnerReload(
       index < responseIndex &&
       entry.type === "expect_outbound" &&
       Predicate.isObject(entry.frame) &&
-      entry.frame.method === "thread/start" &&
+      (entry.frame.method === "thread/start" || entry.frame.method === "thread/fork") &&
       entry.frame.id === responseFrame.id,
   );
   if (
@@ -61,20 +62,41 @@ export function materializeCodexOwnerReload(
     !Predicate.isObject(start.frame.params)
   )
     throw new Error("Declared Codex owner reload has no recorded creation policy.");
+  const insertionIndex =
+    options === undefined
+      ? targetIndex
+      : transcript.entries.findIndex(
+          (entry, index) =>
+            index > responseIndex &&
+            index <= targetIndex &&
+            entry.type === "expect_outbound" &&
+            entry.label === options.beforeEntryLabel,
+        );
+  const insertion = transcript.entries[insertionIndex];
+  if (
+    insertion?.type !== "expect_outbound" ||
+    !Predicate.isObject(insertion.frame) ||
+    typeof insertion.frame.id !== "number"
+  )
+    throw new Error("Declared Codex owner reload has no recorded insertion boundary.");
+  // Fork-only boundary fields are authority for the clone, never resume parameters.
+  const runtimeParams = { ...start.frame.params };
+  delete runtimeParams.lastTurnId;
+  delete runtimeParams.threadId;
   const entries: ProviderReplayEntry[] = [];
   let requestOffset = 0;
   const requestIds = new Map<number, number>();
   for (const [index, entry] of transcript.entries.entries()) {
-    if (index === targetIndex) {
+    if (index === insertionIndex) {
       entries.push(
         {
           type: "expect_outbound",
           label: "canonical-owner.thread/resume",
           frame: {
-            id: target.frame.id,
+            id: insertion.frame.id,
             method: "thread/resume",
             params: {
-              ...start.frame.params,
+              ...runtimeParams,
               threadId: nativeThreadId,
               excludeTurns: true,
             },
@@ -84,7 +106,7 @@ export function materializeCodexOwnerReload(
           type: "emit_inbound",
           label: "canonical-owner.thread/resume:response",
           frame: {
-            id: target.frame.id,
+            id: insertion.frame.id,
             result: { ...response.frame.result },
           },
         },
@@ -130,6 +152,7 @@ export function materializeCodexOwnerReload(
       ...transcript.metadata,
       canonicalOwnerReload: {
         beforeTurnStartOrdinal,
+        ...(options === undefined ? {} : { beforeEntryLabel: options.beforeEntryLabel }),
         boundary:
           "synthetic recorded-policy reload; native payloads preserved; client request correlations translated",
       },

@@ -1095,8 +1095,12 @@ export const layer: Layer.Layer<
           payload: runningRootNode,
         },
       ];
+      // Explicit refusal records settlement without delivery; old or uncertain
+      // receipts may have delivered and must not duplicate native history.
       const deliveredAttemptIds = new Set(
-        projection.providerTurns.map((turn) => turn.runAttemptId),
+        projection.providerTurns
+          .filter((turn) => turn.acceptedAt !== undefined || turn.nativeAcceptance !== "pending")
+          .map((turn) => turn.runAttemptId),
       );
       const missedRuns = projection.runs.filter(
         (source) =>

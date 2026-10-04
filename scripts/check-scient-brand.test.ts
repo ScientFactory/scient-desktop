@@ -21,6 +21,9 @@ describe("Scient brand guard", () => {
     "packages/client-runtime/src/work-log/presentation.ts",
     "apps/mobile/src/lib/threadActivity.ts",
     "apps/mobile/src/features/threads/thread-work-log.tsx",
+    "apps/mobile/src/components/CompactBrandTitle.tsx",
+    "apps/mobile/src/lib/authClientMetadata.ts",
+    "apps/mobile/src/features/settings/SettingsAboutRouteScreen.tsx",
   ])("covers owned tool presentation without expanding donor-wide enforcement: %s", (path) => {
     const contents = 'const label = "Reading a T3 thread";';
     expect(findPublicBrandViolations([{ path, contents }])).toEqual([
