@@ -358,6 +358,30 @@ it.effect(
       });
       assert.equal((yield* orchestrator.getThreadProjection(descendant)).turnItems.length, 3);
       yield* orchestrator.dispatch({
+        type: "thread.section.set",
+        commandId: CommandId.make("unsectioned-fork-source"),
+        threadId: userTarget,
+        sectionId: null,
+      });
+      const unsectionedSource = yield* orchestrator.getThreadProjection(userTarget);
+      const unsectionedAnswer = unsectionedSource.turnItems.find(
+        (item) => item.type === "assistant_message",
+      );
+      assert.ok(unsectionedAnswer?.type === "assistant_message");
+      const unsectionedTarget = ThreadId.make("thread:unsectioned-fork");
+      yield* forks.dispatch({
+        ...command,
+        originThreadId: userTarget,
+        newThreadId: unsectionedTarget,
+        commandId: CommandId.make("unsectioned-fork-command"),
+        sourceAssistantMessageId: unsectionedAnswer.messageId,
+      });
+      assert.isNull((yield* orchestrator.getThreadProjection(unsectionedTarget)).thread.sectionId);
+      const sourceAfterFork = yield* orchestrator.getThreadProjection(userTarget);
+      assert.deepEqual(sourceAfterFork.thread, unsectionedSource.thread);
+      assert.deepEqual(sourceAfterFork.messages, unsectionedSource.messages);
+      assert.deepEqual(sourceAfterFork.turnItems, unsectionedSource.turnItems);
+      yield* orchestrator.dispatch({
         type: "thread.delete",
         commandId: CommandId.make("delete-fork-source"),
         threadId,

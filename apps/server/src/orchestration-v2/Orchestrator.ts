@@ -2521,6 +2521,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.type === "thread.unpin" ||
         command.type === "thread.pin.reorder" ||
         command.type === "thread.active.reorder" ||
+        command.type === "thread.section.set" ||
         command.type === "thread.pull-request.sync") &&
       thread.archivedAt !== null
     ) {

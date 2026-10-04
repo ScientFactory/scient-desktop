@@ -42,11 +42,7 @@ import {
   request,
 } from "../rpc/client.ts";
 import type { EnvironmentSupervisor } from "../connection/supervisor.ts";
-// SCIENT-FORK:START — the V1 command contract still carries the two commands
-// upstream's V2 union dropped: `thread.section.set` and the conversation
-// `thread.fork` (which forks at a chosen transcript boundary rather than
-// forking a whole run). Both are dispatched over the shared
-// `orchestration.dispatchCommand` tag, whose payload accepts either union.
+// SCIENT-FORK:START — retained conversation-boundary fork input, extracted in P03.
 type V1CommandType = ClientOrchestrationCommand["type"];
 type V1CommandOf<T extends V1CommandType> = Extract<
   ClientOrchestrationCommand,
@@ -251,10 +247,12 @@ export interface ForkThreadFromRunInput extends CommandMetadata {
   readonly title?: string;
 }
 
-// SCIENT-FORK:START — thread sections and conversation fork are V1-only
-// commands; their payload shapes are derived from `ClientOrchestrationCommand`
-// so they cannot drift from the wire contract.
-export type SetThreadSectionInput = V1CommandInput<"thread.section.set">;
+export type SetThreadSectionInput = Omit<
+  Extract<OrchestrationV2Command, { readonly type: "thread.section.set" }>,
+  "type" | "commandId"
+> &
+  CommandMetadata;
+// SCIENT-FORK:START
 export type ForkThreadInput = V1CommandInput<"thread.fork">;
 // SCIENT-FORK:END
 
@@ -608,7 +606,7 @@ export const visitThread = Effect.fn("EnvironmentCommands.visitThread")(function
 export const setThreadSection: (input: SetThreadSectionInput) => CommandEffect = Effect.fn(
   "EnvironmentCommands.setThreadSection",
 )(function* (input) {
-  return yield* dispatchV1({
+  return yield* dispatch({
     ...input,
     type: "thread.section.set",
     commandId: yield* allocateCommandId(input),
