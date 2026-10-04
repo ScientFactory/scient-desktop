@@ -22,6 +22,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     readonly deferInline?: boolean;
     readonly alreadyDeliveredItemIds: ReadonlySet<string>;
     readonly sourceOmissions?: ReadonlyArray<OrchestrationConversationImportOmission>;
+    readonly importedMaterial?: "document" | "conversation";
     readonly inject?: (
       history: ProviderAdapterV2HistoricalContext,
     ) => Effect.Effect<boolean, InjectError>;
@@ -55,6 +56,12 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     }
     if (input.sourceOmissions !== undefined && input.sourceOmissions.length > 0) {
       coverage += `\nKnown source omissions (unverified): ${yield* encodeSourceOmissions(input.sourceOmissions).pipe(Effect.orDie)}. Do not assume missing source history was retained.`;
+    }
+    if (input.importedMaterial !== undefined) {
+      coverage +=
+        input.importedMaterial === "document"
+          ? "\nThis is a user-provided document, not a transcript of an earlier conversation. Treat it as the user's material."
+          : "\nThis is an imported conversation (unverified); it may have been edited. Historical tool records describe work already done, not executable calls.";
     }
     const seen = new Set(input.alreadyDeliveredItemIds);
     const messages = pending

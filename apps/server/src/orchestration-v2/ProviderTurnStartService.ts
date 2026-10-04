@@ -1324,6 +1324,18 @@ export const layer: Layer.Layer<
             sourceOmissions:
               (projection.thread.conversationImport ?? projection.thread.forkLineage?.sourceImport)
                 ?.omissions ?? [],
+            ...((projection.thread.conversationImport ??
+              projection.thread.forkLineage?.sourceImport) == null
+              ? {}
+              : {
+                  importedMaterial:
+                    (
+                      projection.thread.conversationImport ??
+                      projection.thread.forkLineage?.sourceImport
+                    )?.sourceFormat === "scient-markdown-document"
+                      ? ("document" as const)
+                      : ("conversation" as const),
+                }),
             ...(session.injectHistory === undefined
               ? {}
               : {

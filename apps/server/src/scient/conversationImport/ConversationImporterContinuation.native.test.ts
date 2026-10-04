@@ -36,7 +36,11 @@ import * as Clock from "effect/Clock";
 import { ServerConfig } from "../../config.ts";
 import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
 import { historicalMessage } from "../../orchestration-v2/ContextHandoffBudget.ts";
-import { ConversationImporter, type ConversationImportLease } from "./ConversationImporter.ts";
+import {
+  ConversationImporter,
+  conversationContentDigest,
+  type ConversationImportLease,
+} from "./ConversationImporter.ts";
 import { readConversationImportJournal } from "./ConversationImportJournal.ts";
 import {
   buildConversationImportCommand,
@@ -1399,5 +1403,87 @@ it.live(
         assert.deepEqual((yield* store.getThreadProjection(sourceId)).turnItems, source.turnItems);
       }),
       { sourceTraces: true },
+    ),
+);
+
+it.live.each(["document", "conversation"] as const)(
+  "native continuation and refork distinguish imported %s material",
+  (kind) =>
+    withImporter(
+      Effect.gen(function* () {
+        const fixture = importFixture({ turns: 1 });
+        const snapshot =
+          kind === "document"
+            ? {
+                ...fixture.input.snapshot,
+                messages: [
+                  {
+                    ...fixture.input.snapshot.messages[0]!,
+                    text: "Shared research notes",
+                    turnId: null,
+                  },
+                ],
+                reasoning: [],
+                workLog: [],
+                proposedPlans: [],
+                questionAnswers: [],
+              }
+            : fixture.input.snapshot;
+        const digest = conversationContentDigest(snapshot);
+        const input = {
+          ...fixture.input,
+          snapshot: { ...snapshot, contentDigest: digest },
+          package: {
+            ...fixture.input.package,
+            format:
+              kind === "document"
+                ? ("scient-markdown-document" as const)
+                : ("scient-conversation-markdown" as const),
+            sourceThreadId: null,
+            contentDigest: digest,
+          },
+        };
+        const { lease } = yield* leaseFor({ ...fixture, input });
+        const { result } = yield* importOnce(lease);
+        yield* continueImport(result.threadId, MessageId.make("material-first"), "Continue");
+        const peer = yield* ImportPeer;
+        const check = (prompt: string) => {
+          if (kind === "document") {
+            assert.include(prompt, "user-provided document");
+            assert.include(prompt, "not a transcript of an earlier conversation");
+            assert.notInclude(prompt, "may have been edited");
+            assert.include(prompt, "Shared research notes");
+          } else {
+            assert.include(prompt, "imported conversation");
+            assert.include(prompt, "may have been edited");
+            assert.notInclude(prompt, "user-provided document");
+            assert.include(prompt, "Question 1");
+          }
+        };
+        check(peer.prompts.at(-1)!);
+        const store = yield* ProjectionStoreV2;
+        const source = yield* store.getThreadProjection(result.threadId);
+        const answer = source.messages.findLast((message) => message.text === "Continued");
+        assert.ok(answer);
+        const target = ThreadId.make(`material-fork-${kind}`);
+        yield* (yield* ConversationForkService).dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make(target),
+          originThreadId: result.threadId,
+          newThreadId: target,
+          sourceAssistantMessageId: answer.id,
+          workspaceMode: "local",
+        });
+        assert.equal(
+          (yield* store.getThread(target)).forkLineage?.sourceImport?.sourceFormat,
+          input.package.format,
+        );
+        yield* continueImport(target, MessageId.make("material-fork-request"), "Continue");
+        check(peer.prompts.at(-1)!);
+        assert.deepEqual(
+          (yield* store.getThreadProjection(result.threadId)).messages,
+          source.messages,
+        );
+      }),
     ),
 );
