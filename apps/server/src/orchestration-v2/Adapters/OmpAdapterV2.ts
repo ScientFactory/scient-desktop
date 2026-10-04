@@ -58,6 +58,7 @@ import {
   type OmpSessionUpdate,
 } from "../../provider/omp/OmpSessionRuntime.ts";
 import type { OmpProcessFactory } from "../../provider/Layers/OmpProvider.ts";
+import type { OmpRpcProcess } from "../../provider/omp/OmpRpcProcess.ts";
 import { planOmpImages } from "../../provider/Layers/OmpAdapter.ts";
 import type * as ProviderAdapter from "../ProviderAdapter.ts";
 import { AcpProviderCapabilitiesV2 } from "./AcpAdapterV2.ts";
@@ -159,9 +160,18 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
               detail: `${target.name} session directory escaped Scient's state directory.`,
             }),
           );
-        yield* Effect.acquireRelease(
+        let ownedProcess: OmpRpcProcess | undefined;
+        const sessionLock = yield* Effect.acquireRelease(
           acquireOmpSessionLock(target, path.join(root, ".session.lock"), locks),
-          (lock) => releaseOmpSessionLock(lock, locks),
+          (lock) =>
+            Effect.gen(function* () {
+              if (ownedProcess !== undefined) {
+                const exit = yield* ownedProcess.shutdown.pipe(Effect.option);
+                if (Option.isNone(exit) || (exit.value.code === null && exit.value.exited !== true))
+                  return;
+              }
+              yield* releaseOmpSessionLock(lock, locks);
+            }),
         );
         const mcp =
           input.configureMcp === false ? undefined : readMcpProviderSession(input.threadId);
@@ -200,7 +210,18 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
             Effect.provideService(FileSystem.FileSystem, fs),
             Effect.provideService(Path.Path, path),
           );
+        ownedProcess = client;
         yield* Effect.addFinalizer(() => client.shutdown.pipe(Effect.ignore));
+        const stopOwnedProcess = Effect.gen(function* () {
+          const exit = yield* client.shutdown;
+          if (exit.code === null && exit.exited !== true)
+            return yield* new NativeSessionOperationError({
+              detail: `${target.name} shutdown could not confirm process exit; its conversation remains locked.`,
+            });
+          // The manager scope can outlive a broken native process. Releasing its
+          // exact token permits recovery without touching a replacement's lock.
+          yield* releaseOmpSessionLock(sessionLock, locks);
+        });
         const home = expandHomePath(
           options.homePath?.trim() ||
             options.settings.homePath?.trim() ||
@@ -319,27 +340,36 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                   )
                 : Effect.void;
             case "turn-outcome":
-              return onUpdate({
-                type: "terminal",
-                status:
-                  update.stopReason === "abort"
-                    ? "cancelled"
-                    : update.outcome === "completed" || update.outcome === "local"
-                      ? "completed"
-                      : "failed",
-                ...(update.detail === undefined
-                  ? {}
-                  : { detail: client.redaction.text(update.detail) }),
-                ...(update.stopReason === undefined ? {} : { stopReason: update.stopReason }),
-                broken: update.source === "process" || update.source === "unconfirmed",
+              return Effect.gen(function* () {
+                if (update.source === "process" || update.source === "unconfirmed")
+                  yield* stopOwnedProcess.pipe(Effect.ignore);
+                yield* onUpdate({
+                  type: "terminal",
+                  status:
+                    update.stopReason === "abort"
+                      ? "cancelled"
+                      : update.outcome === "completed" || update.outcome === "local"
+                        ? "completed"
+                        : "failed",
+                  ...(update.detail === undefined
+                    ? {}
+                    : { detail: client.redaction.text(update.detail) }),
+                  ...(update.stopReason === undefined ? {} : { stopReason: update.stopReason }),
+                  broken: update.source === "process" || update.source === "unconfirmed",
+                });
               });
             case "process-exited":
-              return onUpdate({
-                type: "terminal",
-                status: "failed",
-                detail: `${target.name} exited before its turn could be confirmed.`,
-                broken: true,
-              });
+              return stopOwnedProcess.pipe(
+                Effect.ignore,
+                Effect.andThen(
+                  onUpdate({
+                    type: "terminal",
+                    status: "failed",
+                    detail: `${target.name} exited before its turn could be confirmed.`,
+                    broken: true,
+                  }),
+                ),
+              );
             case "error":
               return onUpdate({
                 type: "tool",
@@ -765,7 +795,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
               Effect.provideService(Scope.Scope, scope),
               Effect.mapError(nativeSessionFailure),
             ),
-          interrupt: client.shutdown.pipe(Effect.asVoid, Effect.mapError(nativeSessionFailure)),
+          interrupt: stopOwnedProcess.pipe(Effect.mapError(nativeSessionFailure)),
           resume,
           respond: (id, response) =>
             Effect.gen(function* () {

@@ -8,6 +8,7 @@ import { ScientTooltip } from "../presentation/ScientTooltip";
 function runtimeSourceTitle(source: ServerProvider["connection"]): string {
   const value = source?.runtime?.source;
   if (value === "scient_managed") return "Scient-managed";
+  if (value === "registry") return "Scient-owned ACP Registry";
   if (value === "system") return "System";
   if (value === "custom") return "Custom";
   if (value === "missing") return "Missing";
@@ -34,6 +35,7 @@ export function ProviderRuntimeDiagnosticsDetails(props: {
   readonly managedActionBusy?: boolean | undefined;
 }) {
   const diagnostics = resolveProviderRuntimeDiagnostics(props.provider);
+  const installation = props.provider.connection?.runtime?.installation;
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "server executable path" });
   if (!diagnostics) return null;
 
@@ -58,6 +60,26 @@ export function ProviderRuntimeDiagnosticsDetails(props: {
           </dd>
           <dt className="text-muted-foreground">Server backend</dt>
           <dd className="min-w-0 truncate text-right text-foreground">{diagnostics.backend}</dd>
+          {installation ? (
+            <>
+              <dt className="text-muted-foreground">Installation</dt>
+              <dd className="min-w-0 truncate text-right text-foreground">
+                {installation.agentId} · {installation.distribution}
+              </dd>
+              <dt className="text-muted-foreground">Installer</dt>
+              <dd className="min-w-0 truncate text-right text-foreground">
+                <ScientTooltip content={installation.installer ?? "Not recorded"}>
+                  <code>{installation.installer ?? "Not recorded"}</code>
+                </ScientTooltip>
+              </dd>
+              <dt className="text-muted-foreground">Owned directory</dt>
+              <dd className="min-w-0 truncate text-right text-foreground">
+                <ScientTooltip content={installation.installRoot}>
+                  <code>{installation.installRoot}</code>
+                </ScientTooltip>
+              </dd>
+            </>
+          ) : null}
           <dt className="text-muted-foreground">Server account home</dt>
           <dd className="min-w-0 truncate text-right text-foreground">
             <ScientTooltip content={diagnostics.homePath ?? "Default"}>

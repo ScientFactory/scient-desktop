@@ -125,6 +125,88 @@ function findActionButton(
 }
 
 describe("ProviderRuntimeSection", () => {
+  it("offers the shared removal command for a Scient-owned registry installation", async () => {
+    const registryProvider: ServerProvider = {
+      ...provider,
+      driver: ProviderDriverKind.make("acpRegistry"),
+      installed: true,
+      connection: {
+        ...provider.connection!,
+        runtime: {
+          ...provider.connection!.runtime!,
+          source: "registry",
+          target: "registry:example:/owned/example",
+          actions: ["remove"],
+          managedVersion: "1.2.3",
+        },
+      },
+    };
+    commands.plan.mockResolvedValue({
+      _tag: "Success",
+      value: {
+        instanceId,
+        action: "remove",
+        target: "registry:example:/owned/example",
+        version: "1.2.3",
+        downloadBytes: null,
+        sourceLabel: "Scient-owned ACP Registry installation",
+        catalogRevision: "owned-installation:1",
+        message: "Remove this owned registry installation.",
+      },
+    });
+    commands.start.mockResolvedValue({ _tag: "Success", value: { providers: [provider] } });
+    const props = {
+      environmentId,
+      provider: registryProvider,
+      displayName: "Registry Agent",
+      initialAction: "remove" as const,
+    };
+    hooks.beginRender();
+    ProviderRuntimeSection(props);
+    await vi.waitFor(() =>
+      expect(commands.plan).toHaveBeenCalledWith({
+        environmentId,
+        input: { instanceId, action: "remove" },
+      }),
+    );
+    expect(commands.start).not.toHaveBeenCalled();
+    hooks.beginRender();
+    const plan = ProviderRuntimeSection(props);
+    expect(renderToStaticMarkup(plan)).toContain("Remove Registry Agent?");
+    const remove = findActionButton(plan, "Remove");
+    expect(remove).toBeDefined();
+    if (!remove || typeof remove.props.onClick !== "function")
+      throw new Error("Expected registry removal action");
+    remove.props.onClick();
+    await vi.waitFor(() =>
+      expect(commands.start).toHaveBeenCalledWith({
+        environmentId,
+        input: { instanceId, action: "remove", catalogRevision: "owned-installation:1" },
+      }),
+    );
+  });
+
+  it("labels registry ownership without presenting it as a system executable", () => {
+    hooks.beginRender();
+    const markup = renderToStaticMarkup(
+      ProviderRuntimeSection({
+        environmentId,
+        displayName: "Registry Agent",
+        provider: {
+          ...provider,
+          driver: ProviderDriverKind.make("acpRegistry"),
+          connection: {
+            ...provider.connection!,
+            runtime: { ...provider.connection!.runtime!, source: "registry", actions: ["remove"] },
+          },
+        },
+      }),
+    );
+    expect(markup).toContain("ACP Registry installation managed by Scient");
+    expect(markup).toContain('aria-label="Remove Registry Agent"');
+    expect(markup).not.toContain("System installation");
+  });
+
   it("presents a missing Cursor CLI as separate from bundled SDK execution", () => {
     hooks.beginRender();
     const markup = renderToStaticMarkup(

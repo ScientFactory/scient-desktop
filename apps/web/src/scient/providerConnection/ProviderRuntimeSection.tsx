@@ -137,6 +137,7 @@ function runtimeSourceLabel(
     if (runtime.source === "missing") return "Cursor CLI not installed";
     return "Cursor CLI status unavailable";
   }
+  if (runtime.source === "registry") return "ACP Registry installation managed by Scient";
   if (runtime.source === "scient_managed") return "Managed by Scient";
   if (runtime.source === "system") return "System installation";
   if (runtime.source === "custom") return "Custom installation";

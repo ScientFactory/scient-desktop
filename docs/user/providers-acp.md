@@ -32,8 +32,16 @@ Agents install under `tools/<agent-id>/<version>/` inside the Scient server's st
 provides one; entries without a checksum retain the Registry's HTTPS distribution guarantee.
 Registry `npx` and `uvx` packages use Scient-owned npm prefixes and Python tool directories at the exact
 version published by the Registry. Their commands are available in a new server terminal for
-sign-in and direct use. Removing an agent's last provider instance removes Scient-managed binary files
-but keeps package installs. To use an existing local binary, set **Executable override** explicitly.
+sign-in and direct use. The provider's management controls identify Registry installations as
+Scient-owned and show their recorded installer, location and version. Older binary caches may have
+no recorded installer; Scient shows that information as unknown.
+
+Choose **Remove** to remove an app-owned Registry installation. Other configured instances using
+that agent must be removed first. Removing the agent's last provider instance also cleans its
+Scient-owned binary, npm and Python installations. Account credentials and external tools stay
+in place. Refreshing provider status does not reinstall removed files; choose **Install** or
+prepare the provider again when you want to use it. To use an existing local binary, set
+**Executable override** explicitly; Scient does not remove that executable.
 
 ## Signing in
 
