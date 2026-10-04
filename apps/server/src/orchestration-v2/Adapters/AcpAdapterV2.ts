@@ -231,6 +231,10 @@ export interface AcpAdapterV2ToolPresentation {
 export interface AcpAdapterV2Flavor {
   /** Interprets provider-specific prompt errors before they cross into orchestration. */
   readonly promptFailure?: (cause: unknown) => OrchestrationV2ProviderFailure;
+  readonly beforeRuntimeReuse?: (
+    runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+  ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+  readonly isRuntimeCurrent?: (runtime: AcpSessionRuntime.AcpSessionRuntime["Service"]) => boolean;
   readonly modelSupportsImages?: (
     runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
     selection: ModelSelection,
@@ -6868,7 +6872,7 @@ export function makeAcpAdapterV2(
           threadId: ThreadId | null,
         ) {
           const restartRequired = yield* Ref.get(runtimeRestartRequired);
-          if (!restartRequired) return false;
+          if (!restartRequired && flavor.isRuntimeCurrent?.(runtime) !== false) return false;
           yield* restartAcpRuntime(threadId);
           yield* Ref.set(runtimeRestartRequired, false);
           yield* Ref.set(activeSessionId, null);
@@ -6895,6 +6899,7 @@ export function makeAcpAdapterV2(
                 detail: `ACP provider turn ${existing.providerTurnId} is still active`,
               });
             }
+            if (flavor.beforeRuntimeReuse) yield* flavor.beforeRuntimeReuse(runtime);
             useProviderThreadIdentity(turnInput.providerThread);
             // Session activation can itself invoke client fs/terminal methods.
             // Install the incoming thread policy before load/resume so those

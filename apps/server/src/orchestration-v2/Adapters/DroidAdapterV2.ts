@@ -3,6 +3,7 @@ import { ProviderDriverKind, type DroidSettings } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Clock from "effect/Clock";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
@@ -83,6 +84,7 @@ const isAcpProcessExitedError = Schema.is(EffectAcpErrors.AcpProcessExitedError)
 
 export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
   const runtimes = new WeakMap<object, DroidAcpRuntime>();
+  const reportedRetirements = new WeakSet<object>();
   const effortNotices = new WeakMap<
     object,
     {
@@ -132,6 +134,27 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
     modelContextWindow: (runtime, selection) =>
       runtimes.get(runtime)?.getContextWindow?.(selection.model),
     supportsCompaction: true,
+    beforeRuntimeReuse: (runtime) =>
+      Effect.gen(function* () {
+        const droid = runtimes.get(runtime);
+        if (droid?.checkConfiguration)
+          yield* droid
+            .checkConfiguration()
+            .pipe(
+              Effect.catch((error) =>
+                droid.isConfigurationRetired?.() ? Effect.void : Effect.fail(error),
+              ),
+            );
+        if (droid?.isConfigurationRetired?.() && !reportedRetirements.has(droid)) {
+          reportedRetirements.add(droid);
+          return yield* new EffectAcpErrors.AcpRequestError({
+            code: -32602,
+            errorMessage:
+              "Custom models changed, so Droid restarted this conversation and your message was not sent. Send it again.",
+          });
+        }
+      }),
+    isRuntimeCurrent: (runtime) => runtimes.get(runtime)?.isConfigurationCurrent?.() ?? true,
     terminalizeRunOwnedItemsOnFailure: true,
     terminateRuntimeProcessGroupOnInterrupt: true,
     applyRuntimePolicy: (runtime, policy) =>
@@ -341,8 +364,32 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
                   code: -32603,
                   errorMessage: "Droid ended the turn because its agent reported an error.",
                 });
+              if (runtime.isConfigurationRetired?.()) {
+                reportedRetirements.add(runtime);
+                yield* (
+                  input.onProviderNotice?.({
+                    id: "droid-configuration-retired",
+                    message:
+                      "Stopped because a custom model's key was replaced or a model was removed or changed in Custom models. Send a message to continue.",
+                  }) ?? Effect.void
+                );
+                return { stopReason: "cancelled" as const };
+              }
               return result;
             }).pipe(
+              Effect.catchCause((cause) => {
+                if (runtime.isConfigurationRetired?.() && !isAcpRequestError(Cause.squash(cause))) {
+                  reportedRetirements.add(runtime);
+                  return (
+                    input.onProviderNotice?.({
+                      id: "droid-configuration-retired",
+                      message:
+                        "Stopped because a custom model's key was replaced or a model was removed or changed in Custom models. Send a message to continue.",
+                    }) ?? Effect.void
+                  ).pipe(Effect.as({ stopReason: "cancelled" as const }));
+                }
+                return Effect.failCause(cause);
+              }),
               Effect.mapError((error) => {
                 if (isAcpRequestError(error))
                   return new EffectAcpErrors.AcpRequestError({

@@ -1820,7 +1820,7 @@ it.layer(testLayer, { excludeTestServices: true })("Droid native lifecycle", (it
           liveClock: true,
           blockPromptWrite: true,
           body: `
-        fs.watch(".", () => {if (fs.existsSync(__CONTROL_PATH__)) process.exit(7);});
+        setInterval(() => {if (fs.existsSync(__CONTROL_PATH__)) process.exit(7);}, 5);
         function onPrompt(message) { reply(message, {stopReason: "end_turn"}); }
       `,
         });
@@ -1903,7 +1903,7 @@ const customModelFixture = Effect.fnUntraced(function* (
   defaultReasoningLevel: "high" | "minimal" = "high",
 ) {
   const instanceId = ProviderInstanceId.make("droid-v2-test");
-  const connections: ReadonlyArray<
+  let connections: ReadonlyArray<
     ResolvedModelConnection & {
       readonly apiKey: Redacted.Redacted<string>;
       readonly credentialError?: never;
@@ -1946,7 +1946,7 @@ const customModelFixture = Effect.fnUntraced(function* (
     ...DEFAULT_SERVER_SETTINGS,
     customModels: { revision: 0, connections },
   });
-  const factory = yield* makeDroidCustomModelsRuntimeFactory(
+  const productionFactory = yield* makeDroidCustomModelsRuntimeFactory(
     {
       committedCustomModels: () => snapshot().customModels,
       resolveCustomModels: () => Effect.sync(() => connections),
@@ -1956,6 +1956,36 @@ const customModelFixture = Effect.fnUntraced(function* (
     makeDroidAcpRuntime,
     () => Effect.succeed("overlay-hooks-allowed" as const),
   );
+  const customRuntimes: Array<Effect.Success<ReturnType<DroidAcpRuntimeFactory>>> = [];
+  const factory: DroidAcpRuntimeFactory = (input) =>
+    productionFactory(input).pipe(
+      Effect.tap((runtime) =>
+        Effect.sync(() => {
+          customRuntimes.push(runtime);
+        }),
+      ),
+    );
+  const update = (change: "add" | "rotate" | "remove") =>
+    Effect.gen(function* () {
+      connections =
+        change === "remove"
+          ? []
+          : connections.map((connection) => ({
+              ...connection,
+              ...(change === "rotate"
+                ? { credentialId: "rotated", apiKey: Redacted.make("synthetic-rotated-model-key") }
+                : {}),
+              models:
+                change === "add"
+                  ? [
+                      ...connection.models,
+                      { ...connection.models[0]!, id: "added", modelId: "added" },
+                    ]
+                  : connection.models,
+            }));
+      yield* PubSub.publish(changes, snapshot());
+      while (customRuntimes.at(-1)?.isConfigurationCurrent?.() !== false) yield* Effect.sleep(10);
+    });
   const model = droidCustomModelId("fixture", "model");
   const body = `
     const settingsIndex = process.argv.indexOf("--settings");
@@ -1970,7 +2000,7 @@ const customModelFixture = Effect.fnUntraced(function* (
       reply(message, {stopReason: "end_turn"});
     }
   `;
-  return { factory, model, body };
+  return { factory, model, body, update };
 });
 const notices = (h: Effect.Success<ReturnType<typeof harness>>) =>
   h.recorded.flatMap((event) => {
@@ -2131,3 +2161,157 @@ it.layer(testLayer, { excludeTestServices: true })("Droid native custom model se
     );
   }
 });
+
+it.layer(testLayer, { excludeTestServices: true })(
+  "Droid native custom model generations",
+  (it) => {
+    it.effect(
+      "finishes the active prompt and adopts an added model only at the idle boundary",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const f = yield* customModelFixture();
+            const body =
+              f.body +
+              `
+        const normalPrompt = onPrompt;
+        onPrompt = message => {if (state.prompts > 1 || fs.existsSync(__CONTROL_PATH__)) return normalPrompt(message);
+          update({sessionUpdate: "agent_message_chunk", content: {type: "text", text: "Held active prompt."}});
+          const watcher = fs.watch(".", () => {if (!fs.existsSync(__CONTROL_PATH__)) return; watcher.close(); normalPrompt(message);});
+        };
+      `;
+            const h = yield* harness(false, false, false, undefined, {
+              liveClock: true,
+              body,
+              model: f.model,
+              makeRuntime: f.factory,
+            });
+            yield* h.send(1, "full-access", "default", "held", f.model);
+            yield* h.waitForMessage("Held active prompt.");
+            yield* f.update("add");
+            assert.lengthOf(terminals(h), 0);
+            assert.lengthOf(h.ownedPids(), 1);
+            yield* h.signal("finish");
+            assert.equal((yield* h.terminal).status, "completed");
+            const added = droidCustomModelId("fixture", "added");
+            yield* h.send(2, "full-access", "default", "new model", added);
+            assert.equal((yield* h.terminal).status, "completed");
+            assert.equal(new Set(h.ownedPids()).size, 2);
+            assert.isTrue(
+              h.recorded.some(
+                (event) => event.type === "message.updated" && event.message.text.includes(added),
+              ),
+            );
+            assert.lengthOf(terminals(h), 2);
+          }),
+        ),
+    );
+    it.effect(
+      "rejects an already-retired generation with a typed undelivered receipt then recovers",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const f = yield* customModelFixture();
+            const h = yield* harness(false, false, false, undefined, {
+              liveClock: true,
+              body: f.body,
+              model: f.model,
+              makeRuntime: f.factory,
+            });
+            yield* f.update("rotate");
+            const pid = h.ownedPids()[0]!;
+            while (true) {
+              const alive = yield* Effect.sync(() => {
+                try {
+                  process.kill(pid, 0);
+                  return true;
+                } catch {
+                  return false;
+                }
+              });
+              if (!alive) break;
+              yield* Effect.sleep(10);
+            }
+            const rejected = yield* h
+              .send(1, "full-access", "default", "retired", f.model)
+              .pipe(Effect.result);
+            assert.equal(rejected._tag, "Failure");
+            if (rejected._tag === "Failure") {
+              assert.equal(rejected.failure._tag, "ProviderAdapterTurnStartError");
+              assert.include(
+                String(
+                  rejected.failure._tag === "ProviderAdapterTurnStartError"
+                    ? rejected.failure.cause
+                    : rejected.failure,
+                ),
+                "Custom models changed",
+              );
+            }
+            assert.isFalse(
+              (yield* h.readLog!()).some((message) => message.method === "session/prompt"),
+            );
+            assert.lengthOf(terminals(h), 0);
+            yield* h.send(2, "full-access", "default", "recovered", f.model);
+            assert.equal((yield* h.terminal).status, "completed");
+            assert.equal(new Set(h.ownedPids()).size, 2);
+            assert.lengthOf(terminals(h), 1);
+          }),
+        ),
+    );
+    for (const change of ["rotate", "remove"] as const) {
+      it.effect(`preserves partial native output, cancels once and recovers after ${change}`, () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const f = yield* customModelFixture();
+            const h = yield* harness(false, false, false, undefined, {
+              liveClock: true,
+              model: f.model,
+              makeRuntime: f.factory,
+              body:
+                f.body +
+                `
+          const normalPrompt = onPrompt;
+          onPrompt = message => {if (fs.existsSync(__CONTROL_PATH__)) return normalPrompt(message);
+            fs.writeFileSync(__CONTROL_PATH__, "started");
+            update({sessionUpdate: "agent_message_chunk", content: {type: "text", text: "Preserved partial answer."}});
+          };
+        `,
+            });
+            yield* h.send(1, "full-access", "default", "partial", f.model);
+            yield* h.waitForMessage("Preserved partial answer.");
+            yield* f.update("add");
+            assert.lengthOf(terminals(h), 0);
+            yield* f.update(change);
+            assert.equal((yield* h.terminal).status, "cancelled");
+            assert.isTrue(
+              h.recorded.some(
+                (event) =>
+                  event.type === "message.updated" &&
+                  event.message.text === "Preserved partial answer.",
+              ),
+            );
+            assert.deepEqual(
+              notices(h).map((item) => item.summary),
+              [
+                "Stopped because a custom model's key was replaced or a model was removed or changed in Custom models. Send a message to continue.",
+              ],
+            );
+            yield* h.send(
+              2,
+              "full-access",
+              "default",
+              "continue",
+              change === "remove" ? "droid-native" : f.model,
+            );
+            assert.equal((yield* h.terminal).status, "completed");
+            assert.deepEqual(
+              terminals(h).map((event) => event.status),
+              ["cancelled", "completed"],
+            );
+            assert.equal(new Set(h.ownedPids()).size, 2);
+          }),
+        ),
+      );
+    }
+  },
+);
