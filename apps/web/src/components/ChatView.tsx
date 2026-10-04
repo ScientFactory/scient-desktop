@@ -41,6 +41,7 @@ import {
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { usageLimitsBannerItem } from "./chat/ComposerUsageLimits";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
+import { hasCommittedConversationMessages } from "./chat/composerModelPickerFork";
 // SCIENT-FORK: imported-conversation notice.
 import { conversationImportBannerItem } from "./chat/scient-import/ConversationImportBanner";
 import { useApprovalResponse } from "./chat/useApprovalResponse";
@@ -2357,7 +2358,7 @@ function ChatViewContent(props: ChatViewProps) {
                 messageId: forkCommandTarget.messageId,
                 latest:
                   forkCommandTarget.source === "latest-response" ||
-                  forkCommandTarget.source === "switch-provider",
+                  forkCommandTarget.source === "new-chat",
               }
             : {
                 kind: forkCommandTarget.kind,
@@ -2434,6 +2435,16 @@ function ChatViewContent(props: ChatViewProps) {
   const activeMessageCount = isServerThread
     ? Math.max(committedServerMessageIds.size, serverProjection?.messages.length ?? 0)
     : 0;
+  const hasConversationMessages = useMemo(
+    () =>
+      isServerThread &&
+      hasCommittedConversationMessages({
+        messages: serverProjection?.messages ?? [],
+        runs: serverProjection?.runs ?? [],
+        items: serverVisibleTurnItems.map(({ item }) => item),
+      }),
+    [isServerThread, serverProjection, serverVisibleTurnItems],
+  );
   const activeThreadEnvironmentId = activeThread?.environmentId ?? null;
   useEffect(() => {
     setForkCommandTarget((current) =>
@@ -4441,7 +4452,7 @@ function ChatViewContent(props: ChatViewProps) {
         environmentId: activeThreadEnvironmentId,
         kind: "assistant-response",
         messageId: latestCompletedAssistantMessageId,
-        source: options?.preserveComposerDraft ? "switch-provider" : "latest-response",
+        source: options?.preserveComposerDraft ? "new-chat" : "latest-response",
       });
     },
     [
@@ -12174,6 +12185,7 @@ function ChatViewContent(props: ChatViewProps) {
                               activeThread={activeThread}
                               activeThreadShell={activeThreadShell}
                               promptHistoryMessages={timelineMessages}
+                              hasConversationMessages={hasConversationMessages}
                               isServerThread={isServerThread}
                               isLocalDraftThread={isLocalDraftThread}
                               forceExpandedOnMobile={
@@ -12722,7 +12734,7 @@ function ChatViewContent(props: ChatViewProps) {
               beforeNavigate,
               confirmSkippedImages,
               ...(target.kind === "assistant-response" &&
-              target.source === "switch-provider" &&
+              target.source === "new-chat" &&
               activeThreadRef
                 ? { composerDraftSource: activeThreadRef }
                 : {}),

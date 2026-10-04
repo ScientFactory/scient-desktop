@@ -1,19 +1,33 @@
 # Context handoffs
 
-Portable provider and fork handoffs are textual summaries. They do not claim native provider context
-parity.
+V2 supports switching provider instances inside an existing conversation. When the target cannot
+reuse native context, the server prepares a portable handoff from durable app history. The model
+picker remains unlocked when the environment supports provider switching through handoff. Its
+**Continue in a new chat** footer is a separate Fork action: it opens Scient's fork dialog while
+preserving the composer draft. An empty conversation, including one with only held queued future
+messages, has no footer. Provider switches still show the **Context handoff** timeline row.
 
-`ContextHandoffServiceV2` includes user messages, assistant messages, command executions, file
-changes, checkpoints, and prior handoffs. It skips other turn item types. For text-bearing items,
-`compactText` replaces every whitespace run with one space, trims the result, and returns at most
-240 characters. A truncated value contains the first 237 characters followed by `...`. File changes
-carry the filename, while checkpoints carry only the number of files.
+Portable provider delivery keeps eligible history items whole. It prioritizes the latest request and
+answer, then the original request, and fills the remaining budget from newest to oldest. Selected
+items are delivered in their original order. Oversized items are omitted rather than shortened.
+The default cap is 16,000 tokens with a 64,000-byte ceiling; delivery reduces the budget for the
+selected model's context window, native occupancy, current input, attachments and reserved headroom.
+The implementation uses a conservative byte-based token estimate rather than a provider tokenizer.
 
-Provider handoffs use either the full eligible app history or the delta since that provider last
-participated. Fork merge-back handoffs summarize eligible delta items from the child. Neither path
-reconstructs provider-native session state, tool state, approvals, or omitted text.
+Historical messages retain item/run/thread/provider attribution. The handoff records omitted item
+IDs and counts and tells the agent that history is context, not a new request or execution authority.
+Its recovery pointer uses `scient_thread_read({threadId, view:"activity", limit:20,
+maxCharsPerItem:4000})`; paginate using `afterPosition=nextPosition`, or fetch an individual `itemId`
+with `textOffset=nextTextOffset`. Native tool/reasoning state and attachment bytes are not replayed
+by this textual history delivery. Submitted callback answers are inert historical facts.
 
-Legacy v1 continuation uses a separate algorithm. It considers only user and assistant messages,
-walks backward from the newest message, and builds a transcript suffix within a 32,000-character
-budget. Do not describe that migration budget as the limit for portable handoffs, and do not describe
-the 240-character prefix as a migration rule.
+Fork merge-back summaries remain a separate path. `ContextHandoffServiceV2.prepareForkDelta`
+summarizes user/assistant text, commands and prior handoffs with whitespace normalization and a
+240-character maximum per text-bearing item; file changes carry filenames and checkpoints carry
+file counts. This rule does not apply to portable provider history selection or exact fork-prefix
+preservation. Neither a portable handoff nor a merge-back summary claims native session parity.
+
+Legacy V1 data is hydrated into V2 app history before continuation or boundary inspection. Imported queued
+future messages remain app-owned native held runs until explicitly released. Migrated transcripts
+use the V2 portable delivery budget; the older V1 transcript-suffix algorithm is not the current
+native authority or provider handoff rule.

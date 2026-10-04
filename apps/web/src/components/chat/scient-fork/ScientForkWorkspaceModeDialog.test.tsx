@@ -29,7 +29,7 @@ describe("scientForkDialogCopy", () => {
       ["latest-response", "Fork from the latest response"],
       ["this-response", "Fork from this response"],
       ["this-message", "Fork and edit this message"],
-      ["switch-provider", "Fork and continue with another provider"],
+      ["new-chat", "Continue in a new chat"],
       ["running-turn", "Fork with work in progress"],
     ] as const;
     for (const [source, description] of cases) {

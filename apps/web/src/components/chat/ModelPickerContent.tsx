@@ -25,7 +25,8 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { DownloadIcon, Loader2Icon, SearchIcon, SplitIcon } from "lucide-react";
+import { DownloadIcon, Loader2Icon, SearchIcon } from "lucide-react";
+import { ModelPickerNewChatFooter } from "./ModelPickerNewChatFooter";
 import { ModelListDisclosureContent } from "./ModelListDisclosureContent";
 import { ModelListRow } from "./ModelListRow";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
@@ -186,31 +187,6 @@ function ModelListSeparator() {
   return <div className="h-0.5" />;
 }
 
-export function ModelPickerProviderLockNotice(props: {
-  readonly disabled: boolean;
-  readonly onFork: () => void;
-}) {
-  return (
-    <div className="flex shrink-0 items-center gap-2 border-t border-border/70 px-2 py-1">
-      <p className="min-w-0 text-[11px] leading-snug text-muted-foreground">
-        Continue this conversation with another provider.
-      </p>
-      <Button
-        type="button"
-        size="micro"
-        variant="ghost-muted"
-        className="shrink-0"
-        disabled={props.disabled}
-        aria-label="Fork conversation to switch providers"
-        onClick={props.onFork}
-      >
-        <SplitIcon className="size-3 rotate-90 text-primary/80" />
-        Fork
-      </Button>
-    </div>
-  );
-}
-
 export function ModelPickerProviderUpdateFooter(props: {
   readonly displayName: string;
   readonly driverKind: ProviderDriverKind;
@@ -328,8 +304,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   renderProviderSetup?: (entry: ProviderInstanceEntry) => ReactNode;
   /** Optional context row beneath the selected provider's model list. */
   renderProviderFooter?: (entry: ProviderInstanceEntry) => ReactNode;
-  onForkToSwitchProvider?: () => void;
-  forkToSwitchProviderDisabled?: boolean;
+  onContinueInNewChat?: () => void;
+  continueInNewChatDisabled?: boolean;
 }) {
   const {
     keybindings: providedKeybindings,
@@ -600,10 +576,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
     return [...available, ...disabled];
   }, [instanceEntries, isLocked, matchesLockedProvider, props.activeInstanceId]);
-  const hasAlternativeProvider = useMemo(
-    () => sidebarInstanceEntries.some((entry) => !matchesLockedProvider(entry)),
-    [matchesLockedProvider, sidebarInstanceEntries],
-  );
   const setupAvailableInstanceIds = useMemo(() => {
     if (!props.isProviderSetupAvailable || !props.renderProviderSetup || isLocked) {
       return undefined;
@@ -892,11 +864,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     });
   }, []);
 
-  const handleForkToSwitchProvider = useCallback(() => {
-    if (props.forkToSwitchProviderDisabled) return;
+  const handleContinueInNewChat = useCallback(() => {
+    if (props.continueInNewChatDisabled) return;
     props.onRequestClose?.();
-    props.onForkToSwitchProvider?.();
-  }, [props.forkToSwitchProviderDisabled, props.onForkToSwitchProvider, props.onRequestClose]);
+    props.onContinueInNewChat?.();
+  }, [props.continueInNewChatDisabled, props.onContinueInNewChat, props.onRequestClose]);
 
   const handleModelSelect = useCallback(
     (modelSlug: string, instanceId: ProviderInstanceId, additive = false) => {
@@ -1399,12 +1371,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             {selectedFooterEntry && props.renderProviderFooter
               ? props.renderProviderFooter(selectedFooterEntry)
               : null}
-            {isLocked && hasAlternativeProvider && props.onForkToSwitchProvider ? (
-              <ModelPickerProviderLockNotice
-                disabled={props.forkToSwitchProviderDisabled ?? false}
-                onFork={handleForkToSwitchProvider}
-              />
-            ) : null}
             {providerSetupEntries.length > 0 && !selectedSetupEntry ? (
               <div className="max-h-44 shrink-0 overflow-y-auto border-t border-border/70 p-2">
                 {providerSetupEntries.map((entry) => (
@@ -1426,6 +1392,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                   </div>
                 ))}
               </div>
+            ) : null}
+            {props.onContinueInNewChat ? (
+              <ModelPickerNewChatFooter
+                disabled={props.continueInNewChatDisabled ?? false}
+                onFork={handleContinueInNewChat}
+              />
             ) : null}
           </div>
         </Combobox>

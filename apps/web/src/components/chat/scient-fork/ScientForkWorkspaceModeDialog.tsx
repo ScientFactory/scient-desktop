@@ -36,7 +36,7 @@ export type ScientForkSource =
   | "latest-response"
   | "this-response"
   | "this-message"
-  | "switch-provider"
+  | "new-chat"
   // SCIENT-FORK: the running turn, with the work it has done so far.
   | "running-turn";
 
@@ -53,8 +53,8 @@ export function scientForkDialogCopy(source: ScientForkSource): {
       return { title, description: "Fork from this response" };
     case "this-message":
       return { title, description: "Fork and edit this message" };
-    case "switch-provider":
-      return { title, description: "Fork and continue with another provider" };
+    case "new-chat":
+      return { title, description: "Continue in a new chat" };
     case "running-turn":
       return { title, description: "Fork with work in progress" };
   }

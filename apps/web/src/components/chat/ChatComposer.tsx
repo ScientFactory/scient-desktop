@@ -286,6 +286,7 @@ import {
 } from "~/state/pullRequests";
 import { useDebouncedValue } from "~/state/queries";
 import { ProviderModelPicker } from "./ProviderModelPicker";
+import { useComposerModelPickerFork } from "./composerModelPickerFork";
 import { resolveModelPickerSelectedModel } from "./ModelPickerContent";
 import {
   type ComposerCommandItem,
@@ -1561,6 +1562,8 @@ export interface ChatComposerProps {
   activeThread: Thread | undefined;
   /** The routed server thread's shell, present before its detail loads. */
   activeThreadShell: ThreadShell | null;
+  /** Committed conversation messages, excluding drafts and queue admission previews. */
+  hasConversationMessages: boolean;
   /** Timeline messages including optimistic sends, for ArrowUp prompt recall. */
   promptHistoryMessages: ReadonlyArray<ChatMessage>;
   isServerThread: boolean;
@@ -2573,9 +2576,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     key: 0,
     active: false,
   });
-  const handleForkToSwitchProvider = useCallback(() => {
-    onForkConversation({ preserveComposerDraft: true });
-  }, [onForkConversation]);
+  const continueInNewChat = useComposerModelPickerFork({
+    hasConversationMessages: props.hasConversationMessages,
+    onForkConversation,
+  });
 
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
@@ -5663,13 +5667,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // through the onboarding picker, which subsumes upstream's plain
   // "No provider available" ComposerControl (this condition is a strict
   // superset of upstream's `showProviderUnavailable`). The model picker below
-  // is upstream's, with this fork's provider-setup/fork-switch affordances
+  // is upstream's, with this fork's provider-setup/new-chat affordances
   // re-applied.
   const composerControls =
     selectedProviderNeedsConnection || showProviderUnavailable || isProviderOnboardingOpen ? (
       <ProviderOnboardingPicker
         key={composerTargetKey(composerDraftTarget)}
         autoSelectReadyProvider={!hasStartedModelSession && lockedProvider === null}
+        {...(continueInNewChat ? { onContinueInNewChat: continueInNewChat } : {})}
+        continueInNewChatDisabled={
+          phase === "running" ||
+          isSendBusy ||
+          isConnecting ||
+          isPreparingWorktree ||
+          environmentUnavailable !== null
+        }
         compact={isComposerFooterCompact || composerControlsCollapsed}
         environmentId={environmentId}
         instanceEntries={providerInstanceEntries}
@@ -5783,8 +5795,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           isProviderSetupAvailable={isProviderSetupAvailable}
           renderProviderSetup={renderProviderSetup}
           renderProviderFooter={renderProviderUpdateFooter}
-          onForkToSwitchProvider={handleForkToSwitchProvider}
-          forkToSwitchProviderDisabled={
+          {...(continueInNewChat ? { onContinueInNewChat: continueInNewChat } : {})}
+          continueInNewChatDisabled={
             phase === "running" ||
             isSendBusy ||
             isConnecting ||
