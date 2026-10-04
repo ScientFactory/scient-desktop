@@ -7829,6 +7829,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
 
       const now = yield* DateTime.now;
+      // Clients capture updatedAt to extract this exact payload. Each accepted
+      // edit must invalidate that token even within one clock millisecond.
+      const updatedAt = DateTime.makeUnsafe(
+        Math.max(DateTime.toEpochMillis(now), DateTime.toEpochMillis(queuedMessage.updatedAt) + 1),
+      );
       const emitEvent = emit(events, command);
       const editedAttachments =
         command.attachments === undefined ? {} : { attachments: command.attachments };
@@ -7839,7 +7844,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.selectedScientSkillNames === undefined
           ? {}
           : { selectedScientSkillNames: command.selectedScientSkillNames }),
-        updatedAt: now,
+        updatedAt,
       };
       if (command.context === null) delete editedMessage.context;
       else if (command.context !== undefined) editedMessage.context = command.context;
@@ -7861,7 +7866,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...queuedTurnItem,
           text: command.text,
           ...editedAttachments,
-          updatedAt: now,
+          updatedAt,
         };
         if (command.context === null) delete editedItem.context;
         else if (command.context !== undefined) editedItem.context = command.context;

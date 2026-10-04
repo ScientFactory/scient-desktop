@@ -22,6 +22,7 @@ import * as FileSystem from "effect/FileSystem";
 import { ServerConfig } from "../config.ts";
 import { createAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
 import * as DateTime from "effect/DateTime";
+import * as Clock from "effect/Clock";
 import { EventSinkV2 } from "./EventSink.ts";
 import { EffectOutboxV2 } from "./EffectOutbox.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
@@ -1368,110 +1369,166 @@ it.live("competing native sends admit once across the provider acknowledgement g
 it.live(
   "native extraction rejects foreign and changed payloads and replays only its durable receipt",
   () =>
-    withNativeQueue(
-      "queue-native-extraction-races",
-      ({ orchestrator, threadId, takeOffer, offers, waitFor }) =>
-        Effect.gen(function* () {
-          yield* send(orchestrator, threadId, "foreground");
-          const foreground = yield* takeOffer;
-          yield* send(orchestrator, threadId, "first", true);
-          yield* send(orchestrator, threadId, "second", true);
-          const before = yield* orchestrator.getThreadProjection(threadId);
-          const first = before.runs.find(
-            (run) => run.userMessageId === MessageId.make(`${threadId}:message:first`),
-          );
-          const second = before.runs.find(
-            (run) => run.userMessageId === MessageId.make(`${threadId}:message:second`),
-          );
-          assert.ok(first && second);
-          const captured = before.messages.find((message) => message.id === first.userMessageId);
-          assert.ok(captured);
-          const foreignId = ThreadId.make(`${threadId}:foreign`);
-          yield* orchestrator.dispatch({
-            type: "thread.create",
-            commandId: CommandId.make(`${threadId}:foreign:create`),
-            threadId: foreignId,
-            projectId: ProjectId.make(`project:${threadId}`),
-            title: "Foreign",
-            modelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: null,
-            createdBy: "user",
-            creationSource: "web",
-          });
-          assert.equal(
-            (yield* Effect.result(
-              orchestrator.dispatch({
-                type: "queued-run.cancel",
-                commandId: CommandId.make(`${threadId}:foreign:extract`),
-                threadId: foreignId,
-                runId: first.id,
-                expectedUpdatedAt: captured.updatedAt,
-              }),
-            ))._tag,
-            "Failure",
-          );
-          yield* orchestrator.dispatch({
-            type: "queued-run.edit",
-            commandId: CommandId.make(`${threadId}:edit`),
-            threadId,
-            runId: first.id,
-            text: "Edited first",
-          });
-          const edited = (yield* orchestrator.getThreadProjection(threadId)).messages.find(
-            (message) => message.id === captured.id,
-          );
-          assert.ok(edited);
-          assert.equal(
-            (yield* Effect.result(
-              orchestrator.dispatch({
-                type: "queued-run.cancel",
-                commandId: CommandId.make(`${threadId}:stale:extract`),
-                threadId,
-                runId: first.id,
-                expectedUpdatedAt: DateTime.subtract(edited.updatedAt, { milliseconds: 1 }),
-              }),
-            ))._tag,
-            "Failure",
-          );
-          const extract = {
-            type: "queued-run.cancel" as const,
-            commandId: CommandId.make(`${threadId}:extract`),
-            threadId,
-            runId: first.id,
-            expectedUpdatedAt: edited.updatedAt,
-          };
-          const receipt = yield* orchestrator.dispatch(extract);
-          assert.equal((yield* orchestrator.dispatch(extract)).sequence, receipt.sequence);
-          assert.equal(
-            (yield* Effect.result(
-              orchestrator.dispatch({
-                type: "queued-run.edit",
-                commandId: CommandId.make(`${threadId}:other-editor`),
-                threadId,
-                runId: first.id,
-                text: "Overwrite extracted bytes",
-              }),
-            ))._tag,
-            "Failure",
-          );
-          yield* foreground.settle("completed");
-          const delivered = yield* takeOffer;
-          assert.equal(delivered.input.runId, second.id);
-          yield* delivered.settle("completed");
-          const after = yield* waitFor(
-            (projection) =>
-              projection.runs.find((run) => run.id === second.id)?.status === "completed",
-          );
-          assert.equal(after.runs.find((run) => run.id === first.id)?.status, "cancelled");
-          assert.equal(
-            after.messages.find((message) => message.id === captured.id)?.text,
-            "Edited first",
-          );
-          assert.deepEqual(offers, ["foreground", "second"]);
+    Clock.clockWith((clock) =>
+      withNativeQueue(
+        "queue-native-extraction-races",
+        ({ orchestrator, threadId, takeOffer, offers, waitFor }) =>
+          Effect.gen(function* () {
+            yield* send(orchestrator, threadId, "foreground");
+            const foreground = yield* takeOffer;
+            yield* send(orchestrator, threadId, "first", true);
+            yield* send(orchestrator, threadId, "second", true);
+            const before = yield* orchestrator.getThreadProjection(threadId);
+            const first = before.runs.find(
+              (run) => run.userMessageId === MessageId.make(`${threadId}:message:first`),
+            );
+            const second = before.runs.find(
+              (run) => run.userMessageId === MessageId.make(`${threadId}:message:second`),
+            );
+            assert.ok(first && second);
+            const captured = before.messages.find((message) => message.id === first.userMessageId);
+            assert.ok(captured);
+            const foreignId = ThreadId.make(`${threadId}:foreign`);
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make(`${threadId}:foreign:create`),
+              threadId: foreignId,
+              projectId: ProjectId.make(`project:${threadId}`),
+              title: "Foreign",
+              modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              createdBy: "user",
+              creationSource: "web",
+            });
+            assert.equal(
+              (yield* Effect.result(
+                orchestrator.dispatch({
+                  type: "queued-run.cancel",
+                  commandId: CommandId.make(`${threadId}:foreign:extract`),
+                  threadId: foreignId,
+                  runId: first.id,
+                  expectedUpdatedAt: captured.updatedAt,
+                }),
+              ))._tag,
+              "Failure",
+            );
+            yield* orchestrator.dispatch({
+              type: "queued-run.edit",
+              commandId: CommandId.make(`${threadId}:edit`),
+              threadId,
+              runId: first.id,
+              text: "Edited first",
+            });
+            const edited = (yield* orchestrator.getThreadProjection(threadId)).messages.find(
+              (message) => message.id === captured.id,
+            );
+            assert.ok(edited);
+            assert.equal(DateTime.toEpochMillis(captured.updatedAt), 1776739349000);
+            assert.equal(
+              (yield* Effect.result(
+                orchestrator.dispatch({
+                  type: "queued-run.cancel",
+                  commandId: CommandId.make(`${threadId}:stale:extract`),
+                  threadId,
+                  runId: first.id,
+                  expectedUpdatedAt: captured.updatedAt,
+                }),
+              ))._tag,
+              "Failure",
+            );
+            assert.isAbove(
+              DateTime.toEpochMillis(edited.updatedAt),
+              DateTime.toEpochMillis(captured.updatedAt),
+            );
+            const preserved = yield* orchestrator.getThreadProjection(threadId);
+            assert.equal(
+              preserved.messages.find((message) => message.id === captured.id)?.text,
+              "Edited first",
+            );
+            assert.equal(preserved.runs.find((run) => run.id === first.id)?.status, "queued");
+            yield* orchestrator.dispatch({
+              type: "queued-run.edit",
+              commandId: CommandId.make(`${threadId}:edit-again`),
+              threadId,
+              runId: first.id,
+              text: "Edited first again",
+            });
+            const revised = (yield* orchestrator.getThreadProjection(threadId)).messages.find(
+              (message) => message.id === captured.id,
+            );
+            assert.ok(revised);
+            assert.isAbove(
+              DateTime.toEpochMillis(revised.updatedAt),
+              DateTime.toEpochMillis(edited.updatedAt),
+            );
+            assert.equal(
+              (yield* Effect.result(
+                orchestrator.dispatch({
+                  type: "queued-run.cancel",
+                  commandId: CommandId.make(`${threadId}:stale-second-editor`),
+                  threadId,
+                  runId: first.id,
+                  expectedUpdatedAt: edited.updatedAt,
+                }),
+              ))._tag,
+              "Failure",
+            );
+            const afterStaleEdit = yield* orchestrator.getThreadProjection(threadId);
+            assert.equal(
+              afterStaleEdit.messages.find((message) => message.id === captured.id)?.text,
+              "Edited first again",
+            );
+            assert.equal(afterStaleEdit.runs.find((run) => run.id === first.id)?.status, "queued");
+            const extract = {
+              type: "queued-run.cancel" as const,
+              commandId: CommandId.make(`${threadId}:extract`),
+              threadId,
+              runId: first.id,
+              expectedUpdatedAt: revised.updatedAt,
+            };
+            const receipt = yield* orchestrator.dispatch(extract);
+            assert.equal((yield* orchestrator.dispatch(extract)).sequence, receipt.sequence);
+            assert.equal(
+              (yield* Effect.result(
+                orchestrator.dispatch({
+                  type: "queued-run.edit",
+                  commandId: CommandId.make(`${threadId}:other-editor`),
+                  threadId,
+                  runId: first.id,
+                  text: "Overwrite extracted bytes",
+                }),
+              ))._tag,
+              "Failure",
+            );
+            yield* foreground.settle("completed");
+            const delivered = yield* takeOffer;
+            assert.equal(delivered.input.runId, second.id);
+            yield* delivered.settle("completed");
+            const after = yield* waitFor(
+              (projection) =>
+                projection.runs.find((run) => run.id === second.id)?.status === "completed",
+            );
+            assert.equal(after.runs.find((run) => run.id === first.id)?.status, "cancelled");
+            assert.equal(
+              after.messages.find((message) => message.id === captured.id)?.text,
+              "Edited first again",
+            );
+            assert.deepEqual(offers, ["foreground", "second"]);
+          }),
+      ).pipe(
+        Effect.provideService(Clock.Clock, {
+          currentTimeMillisUnsafe: () => 1776739349000,
+          currentTimeMillis: Effect.succeed(1776739349000),
+          currentTimeNanosUnsafe: () => 1776739349000000000n,
+          currentTimeNanos: Effect.succeed(1776739349000000000n),
+          monotonicTimeNanosUnsafe: () => clock.monotonicTimeNanosUnsafe(),
+          monotonicTimeNanos: clock.monotonicTimeNanos,
+          sleep: (duration) => clock.sleep(duration),
         }),
+      ),
     ),
 );
 
