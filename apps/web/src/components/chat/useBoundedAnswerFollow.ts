@@ -10,23 +10,28 @@ const FIRST_LINES_PX = 48;
 const ESTIMATED_ROW_SIZE = 90;
 
 /**
- * How far the reveal may scroll now. Growth is revealed only while the sent
- * prompt's text keeps room above it. When traces and tool rows push the
- * latest message below the fold, the reveal continues past the prompt just
- * far enough to show that message's first lines, and never scrolls the
- * message itself above the reading margin: the answer is read from its
- * beginning, not followed to its end.
+ * How far the reveal may scroll now. The response's growth (traces, tool
+ * rows and messages) is followed only while the sent prompt's text keeps room
+ * above it. When traces and tool rows push the latest message below the fold,
+ * the reveal continues past the prompt just far enough to show that message's
+ * first lines, and never scrolls the message itself above the reading margin:
+ * the answer is read from its beginning, not followed to its end.
  */
 export function boundedAnswerScrollDelta(input: {
   promptTextTop: number;
   answerTop: number | null;
   answerBottom: number;
+  /** The bottom of the response's latest row; defaults to the answer's. */
+  responseBottom?: number;
   viewportTop: number;
   viewportBottom: number;
 }) {
   const readingTop = input.viewportTop + CHAT_TIMELINE_ANCHOR_OFFSET;
   const promptRoom = Math.max(0, input.promptTextTop - readingTop);
-  const hiddenBelow = Math.max(0, input.answerBottom - input.viewportBottom);
+  const hiddenBelow = Math.max(
+    0,
+    (input.responseBottom ?? input.answerBottom) - input.viewportBottom,
+  );
   const growth = Math.min(promptRoom, hiddenBelow);
   if (input.answerTop === null) return growth;
   const firstLinesHidden = Math.max(
@@ -39,9 +44,11 @@ export function boundedAnswerScrollDelta(input: {
 
 /**
  * After an eligible send, reveals the prompt and then the start of its
- * response. The response's latest assistant message is the target, so the
- * reveal moves past progress notes and trace runs to the message the agent is
- * writing now. It stops once the response has settled and its last message
+ * response, following its traces, tool rows and messages as they arrive until
+ * the prompt reaches the top margin. Past that, the response's latest
+ * assistant message is the target, so the reveal moves past progress notes and
+ * trace runs only to show the first lines of the message the agent is writing
+ * now. It stops once the response has settled and its last message
  * is revealed, or when the reader scrolls back up. Scrolling down, clicks,
  * text selection and scrolling inside nested output never cancel it.
  */
@@ -77,10 +84,12 @@ export function useBoundedAnswerFollow({
     );
     if (promptIndex < 0) return;
     let answerIndex = -1;
+    let responseIndex = promptIndex;
     for (let i = promptIndex + 1; i < rows.length; i++) {
       const row = rows[i];
+      if (row?.kind === "message" && row.message.role === "user") break;
+      responseIndex = i;
       if (row?.kind !== "message") continue;
-      if (row.message.role === "user") break;
       if (row.message.role === "assistant" && row.message.text.trim()) answerIndex = i;
     }
 
@@ -88,6 +97,7 @@ export function useBoundedAnswerFollow({
     const viewport = list?.getScrollableNode();
     const promptRow = rows[promptIndex]!;
     const answerRow = rows[answerIndex] ?? promptRow;
+    const responseRow = rows[responseIndex] ?? promptRow;
     const answerSettled =
       answerIndex >= 0 &&
       !responseRunning &&
@@ -98,7 +108,7 @@ export function useBoundedAnswerFollow({
       intent.current.stopped = true;
       onFinished?.(promptMessageId);
     };
-    let observedAnswer: Element | null = null;
+    const observed = new Set<Element>();
     let mountAttempts = 12;
     let frame: number | null = null;
     let previousFrameTime = performance.now();
@@ -144,11 +154,12 @@ export function useBoundedAnswerFollow({
         if (mountAttempts-- > 0) frame = requestAnimationFrame(tick);
         return;
       }
-      const answer = answerBox.element;
-      if (answer && observedAnswer !== answer) {
-        if (observedAnswer) observer.unobserve(observedAnswer);
-        observer.observe(answer);
-        observedAnswer = answer;
+      const responseBox = responseRow === answerRow ? answerBox : rowRect(responseRow.id);
+      for (const element of [answerBox.element, responseBox?.element]) {
+        if (element && !observed.has(element)) {
+          observer.observe(element);
+          observed.add(element);
+        }
       }
       const promptBox = rowRect(promptRow.id);
       const promptText =
@@ -161,6 +172,7 @@ export function useBoundedAnswerFollow({
         promptTextTop,
         answerTop: answerIndex >= 0 ? rect.top : null,
         answerBottom: rect.bottom,
+        responseBottom: responseBox?.rect.bottom ?? rect.bottom,
         viewportTop: viewportRect.top,
         viewportBottom: viewportRect.top + viewport.clientHeight - composerInset,
       });

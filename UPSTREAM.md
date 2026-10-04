@@ -17,14 +17,15 @@ answer keeps its latest content as the end. One rule,
 `readerAtReadingEnd`, decides being at the end for the end control, sending,
 navigation, saved positions and idle end keeping: at most the answer's last three
 lines hidden, in its own line height, never less than the inherited 40-pixel band.
-Every eligible send, not only the first message, and every queued prompt the server
-delivers while the reader is at the end, is anchored at the top margin on Legend's
-anchored end space (`ChatView` `placePromptAtTop`; `MessagesTimeline`
-resolves the anchor by message id instead of the shared first-prompt-only
-`resolveChatListAnchoredEndSpace`, which mobile keeps). Upstream deliberately does not
-push follow-ups to the top; keep this divergence. Eligible sends, and queued prompts
-the server delivers (`queue:` ids) while the reader is at the end, then reveal the
-start of the response's latest message through `chat/useBoundedAnswerFollow.ts`: capped at the prompt's first line
+Preserve the existing first-message framing. A later eligible send, and a queued
+prompt the server delivers (`queue:` ids) while the reader is at the end, rests partway
+(`partwayPromptOffset`: its bottom at the middle of the reading area) on Legend's
+anchored end space (`ChatView` `placeFollowUpPrompt`; `MessagesTimeline` resolves the
+anchor by message id instead of the shared first-prompt-only
+`resolveChatListAnchoredEndSpace`, which mobile keeps). Upstream does not anchor
+follow-ups; keep this divergence. `chat/useBoundedAnswerFollow.ts` then follows the
+response's latest row (traces and tools too) until the prompt's first line reaches the
+top margin, and shows the first lines of the response's latest message: capped at the prompt's first line
 reaching the top margin, past it only to show a message pushed below the fold, never
 past that message's top. Scrolling up by any means (wheel, keys, touch, scrollbar)
 cancels pending placement and bounded following; scrolling down, clicks and selection do not. `onIsAtEndChange` reacts to

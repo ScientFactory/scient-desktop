@@ -178,6 +178,7 @@ import {
 import { type LegendListRef } from "@legendapp/list/react";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
+  partwayPromptOffset,
   readTimelinePosition,
   timelineContentOverflowsViewport,
   type TimelineScrollMode,
@@ -6177,16 +6178,22 @@ function ChatViewContent(props: ChatViewProps) {
   const captureSendReadingPosition = useCallback(
     () => ({
       atEnd: isDraftHeroState || (readerAtEndNow() ?? isAtEndRef.current),
+      firstMessage:
+        activeLatestTurn === null && !timelineMessages.some((message) => message.role === "user"),
       threadKey: routeThreadKey,
       navigationGeneration: anchorUserScrollGenerationRef.current,
     }),
-    [isDraftHeroState, routeThreadKey, readerAtEndNow],
+    [isDraftHeroState, routeThreadKey, timelineMessages, activeLatestTurn, readerAtEndNow],
   );
-  // A prompt sent at the end rises to the top of the reading area, on space
-  // reserved below it; the bounded reveal then shows its answer's start.
-  const placePromptAtTop = useCallback(
+  // Where a placed prompt goes: the first message to the top of the reading
+  // area, a later one partway, leaving the lower half for its response's start.
+  const promptPlacementRef = useRef<"top" | "partway">("top");
+  // A later prompt sent at the end rises partway, on space reserved below it;
+  // the bounded reveal then follows its response until the prompt reaches the top.
+  const placeFollowUpPrompt = useCallback(
     (messageId: MessageId) => {
       cancelTimelinePositioning();
+      promptPlacementRef.current = "partway";
       setReadingFollowPromptId(messageId);
       timelineScrollModeRef.current = "anchoring-new-turn";
       setTimelinePositioningPending(true);
@@ -6223,9 +6230,19 @@ function ChatViewContent(props: ChatViewProps) {
         })
       )
         return;
-      placePromptAtTop(messageId);
+      if (!snapshot.firstMessage) {
+        placeFollowUpPrompt(messageId);
+        return;
+      }
+      cancelPositionRestoreRef.current?.();
+      promptPlacementRef.current = "top";
+      setReadingFollowPromptId(messageId);
+      timelineScrollModeRef.current = "anchoring-new-turn";
+      setTimelinePositioningPending(true);
+      positionedTimelineAnchorRef.current = null;
+      setTimelineAnchor({ threadKey: activeThreadKey, messageId });
     },
-    [placePromptAtTop],
+    [activeThreadKey, placeFollowUpPrompt],
   );
   const latestPromptId = useMemo(
     () => timelineMessages.findLast((message) => message.role === "user")?.id ?? null,
@@ -6248,8 +6265,8 @@ function ChatViewContent(props: ChatViewProps) {
       })
     )
       return;
-    placePromptAtTop(latestPromptId as MessageId);
-  }, [routeThreadKey, latestPromptId, placePromptAtTop]);
+    placeFollowUpPrompt(latestPromptId as MessageId);
+  }, [routeThreadKey, latestPromptId, placeFollowUpPrompt]);
   useEffect(() => {
     let removeListeners: (() => void) | null = null;
     let frame: number | null = null;
@@ -6445,22 +6462,41 @@ function ChatViewContent(props: ChatViewProps) {
               row.kind === "message" && row.message?.id === messageId,
           );
         if (currentAnchorIndex < 0) return;
+        const finishPlacement = () => {
+          if (positionedTimelineAnchorRef.current !== messageId) {
+            return;
+          }
+          setTimelinePositioningPending(false);
+          positionedTimelineAnchorRef.current = null;
+          timelineScrollModeRef.current = "free-scrolling";
+          legendListRef.current?.getScrollableNode()?.dispatchEvent(new Event("scroll"));
+        };
+        let viewOffset = CHAT_TIMELINE_ANCHOR_OFFSET;
+        const viewport = list.getScrollableNode();
+        if (promptPlacementRef.current === "partway" && viewport) {
+          const state = list.getState();
+          viewOffset = partwayPromptOffset(
+            viewport.clientHeight - composerTimelineInsetRef.current,
+            state.sizeAtIndex(currentAnchorIndex) ?? 0,
+          );
+          const prompt = state.elementAtIndex(currentAnchorIndex);
+          const promptTop = prompt?.isConnected
+            ? prompt.getBoundingClientRect().top - viewport.getBoundingClientRect().top
+            : (state.positionAtIndex(currentAnchorIndex) ?? 0) - state.scroll;
+          // A prompt already that high is never moved back down.
+          if (promptTop <= viewOffset + 1) {
+            finishPlacement();
+            return;
+          }
+        }
         void list
           .scrollToIndex({
             index: currentAnchorIndex,
             animated: true,
             viewPosition: 0,
-            viewOffset: CHAT_TIMELINE_ANCHOR_OFFSET,
+            viewOffset,
           })
-          .then(() => {
-            if (positionedTimelineAnchorRef.current !== messageId) {
-              return;
-            }
-            setTimelinePositioningPending(false);
-            positionedTimelineAnchorRef.current = null;
-            timelineScrollModeRef.current = "free-scrolling";
-            legendListRef.current?.getScrollableNode()?.dispatchEvent(new Event("scroll"));
-          });
+          .then(finishPlacement);
       });
     };
     requestAnimationFrame(() => positionAnchor(12));

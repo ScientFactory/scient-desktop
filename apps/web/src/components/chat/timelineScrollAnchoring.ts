@@ -5,6 +5,15 @@ export const CHAT_TIMELINE_ANCHOR_OFFSET = 24;
 
 export type TimelineScrollMode = "anchoring-new-turn" | "free-scrolling";
 
+/**
+ * Where a later prompt rests after its send, from the top of the viewport:
+ * its bottom at the middle of the reading area, so the lower half shows the
+ * start of its response; a tall prompt goes no higher than the top margin.
+ */
+export function partwayPromptOffset(readingHeight: number, promptHeight: number) {
+  return Math.max(CHAT_TIMELINE_ANCHOR_OFFSET, readingHeight / 2 - promptHeight);
+}
+
 export interface TimelineListMeasurementState {
   readonly data: readonly unknown[];
   readonly scroll: number;

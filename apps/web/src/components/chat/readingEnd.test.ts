@@ -4,7 +4,7 @@ import {
   savedPositionIsAtEnd,
   shouldRevealArrivedPrompt,
 } from "./readerScrollPolicy";
-import { CHAT_TIMELINE_ANCHOR_OFFSET } from "./timelineScrollAnchoring";
+import { CHAT_TIMELINE_ANCHOR_OFFSET, partwayPromptOffset } from "./timelineScrollAnchoring";
 import { boundedAnswerScrollDelta } from "./useBoundedAnswerFollow";
 
 // Viewport 0..600, reading margin at the anchor offset.
@@ -48,6 +48,31 @@ describe("boundedAnswerScrollDelta", () => {
         answerBottom: 3000,
       }),
     ).toBe(0);
+  });
+
+  it("follows traces and tool rows below the prompt, not only the answer", () => {
+    // No answer yet; the response's latest trace ends 150px below the fold.
+    expect(
+      boundedAnswerScrollDelta({
+        ...view,
+        promptTextTop: 300,
+        answerTop: null,
+        answerBottom: 340,
+        responseBottom: 750,
+        viewportTop: 0,
+        viewportBottom: 600,
+      }),
+    ).toBe(150);
+    // Still never past the prompt reaching the top margin.
+    expect(
+      boundedAnswerScrollDelta({
+        ...view,
+        promptTextTop: 100,
+        answerTop: null,
+        answerBottom: 140,
+        responseBottom: 1500,
+      }),
+    ).toBe(100 - CHAT_TIMELINE_ANCHOR_OFFSET);
   });
 
   it("reveals the prompt itself before any answer exists", () => {
@@ -98,5 +123,13 @@ describe("end control transitions", () => {
     expect(savedPositionIsAtEnd({ atEnd: false })).toBe(false);
     expect(savedPositionIsAtEnd({ atEnd: true })).toBe(true);
     expect(savedPositionIsAtEnd(null)).toBe(true);
+  });
+});
+
+describe("partwayPromptOffset", () => {
+  it("rests a later prompt with its bottom at the middle of the reading area", () => {
+    expect(partwayPromptOffset(500, 60)).toBe(190);
+    // A tall prompt goes no higher than the top margin.
+    expect(partwayPromptOffset(500, 400)).toBe(CHAT_TIMELINE_ANCHOR_OFFSET);
   });
 });
