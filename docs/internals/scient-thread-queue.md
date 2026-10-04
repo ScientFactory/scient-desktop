@@ -52,7 +52,8 @@ according to current state and `CommandPolicy`. Queue admission is not provider 
 transactionally; no client-side remove or mounted queue pump owns delivery.
 
 Each queued run names its durable user message and captured model selection, runtime mode,
-interaction mode, selected Scient skills, typed context, and optional composer snapshot.
+interaction mode, selected Scient skills, and typed context. Ordinary native submissions do not
+accept a composer edit snapshot; imported messages may retain an opaque legacy one.
 `QueuedRunOrder` defines delivery order; automatic delegated completions are not ordinary user
 rows. `QueuedMessageBudget` enforces the 20-item/64-MiB cap under thread serialization. It counts
 serialized messages and the actual file size of each owned attachment reference, including a
@@ -88,15 +89,15 @@ Never reinterpret the older V1 successful-answer release rule as permission to u
 
 ## Composer draft compatibility and recovery
 
-The capability foundation adds optional `selectedScientSkillNames`
-and `composerSnapshot` to native queued messages. The latter is bounded versioned JSON
-(4 MiB per item, also within the existing thread-byte cap), retained opaquely by
-the server and decoded by the client with the existing draft-context codecs.
-It contains raw composer text and terminal/preview/review selections;
-images and delivery settings remain in their existing fields. It is edit data,
-not provider input or authority. Delivery uses `text`, the same typed message
-`context` as immediate turns, attachments, and independently captured Skill
-selections. V2 delivery never interprets the edit snapshot as provider input or permission.
+New native `message.dispatch` submissions preserve canonical `text`, typed `context`, attachments,
+and selected Scient skills. Neither the dispatch schema nor the native client operation accepts
+`composerSnapshot`. Imported messages may retain that opaque legacy edit data, which the client
+can decode with the existing draft-context codecs; it is never provider input or authority.
+The native persisted-message schema permits an optional unbounded snapshot string. Its queue
+admission budget counts serialized messages and actual attachment bytes together, enforcing
+20 items/64 MiB in aggregate. There is no separate native 4 MiB snapshot limit. The retained legacy
+`ScientThreadQueueItem` schema instead limits snapshot string length to `4 * 1024 * 1024`;
+that is not a byte limit or the native submission contract.
 
 `threadQueueMessageContext` advertises typed queue support separately from
 `inlineMessageContext`: older hosts can understand immediate context without
@@ -104,7 +105,7 @@ preserving queued records. Clients use the existing legacy-context serializer
 when queue support is absent. Image IDs and capture metadata survive queueing
 and editing; the normal attachment pipeline rebinds client IDs at admission.
 
-New edit snapshots use version 2. Version 1 snapshots and older edit journals
+The retained snapshot codec uses version 2. Version 1 snapshots and older edit journals
 migrate saved element picks into preview annotations and terminal placeholders
 into references. Migration reuses the ordinary composer's conversion helpers;
 malformed selections are reported rather than discarded, and reading a journal
@@ -117,8 +118,10 @@ snapshots leave the item untouched. Legacy items/journals without separated
 context cannot safely infer `$name` selections: an affected edit is retained
 with an explanation to compose a new selected-Skill message. Plain legacy text
 remains editable, and already queued delivery does not require an edit snapshot.
-An update replaces/removes optional context and selection fields rather than
-retaining stale data or selection intent from the previous version.
+Native `queued-run.edit` retains context and selected skills when their fields are omitted.
+Explicit `context: null` clears context; an explicit empty skill-selection list clears selections.
+Every accepted native edit discards the previous composer snapshot. This command differs from
+the strip's cancellation/extraction followed by a new ordinary submission.
 
 `editSession.ts` keeps both complete drafts in the existing IndexedDB journal,
 including attachment bytes. Before extraction, the client saves the queued message's
