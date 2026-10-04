@@ -1271,3 +1271,289 @@ it.live("queued plan extraction and resubmission consume only the exact accepted
       }),
   ),
 );
+
+it.live("competing native sends admit once across the provider acknowledgement gap", () =>
+  withNativeQueue(
+    "queue-competing-native-sends",
+    ({ orchestrator, threadId, takeOffer, offers, waitFor }) =>
+      Effect.gen(function* () {
+        yield* Effect.all(
+          [send(orchestrator, threadId, "first"), send(orchestrator, threadId, "first")],
+          { concurrency: 2 },
+        );
+        const first = yield* takeOffer;
+        yield* Effect.all(
+          [send(orchestrator, threadId, "second"), send(orchestrator, threadId, "third")],
+          { concurrency: 2 },
+        );
+        const pending = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(pending.runs.length, 3);
+        assert.equal(pending.runs.filter((run) => run.status === "running").length, 1);
+        assert.equal(pending.runs.filter((run) => run.status === "queued").length, 2);
+        assert.equal(pending.messages.filter((message) => message.text === "first").length, 1);
+        assert.equal(pending.providerTurns.length, 0);
+        assert.deepEqual(offers, ["first"]);
+        yield* first.releaseSend;
+        yield* first.settle("completed");
+        const second = yield* takeOffer;
+        yield* second.settle("completed");
+        const third = yield* takeOffer;
+        yield* third.settle("completed");
+        const settled = yield* waitFor((projection) =>
+          projection.runs.every((run) => run.status === "completed"),
+        );
+        yield* send(orchestrator, threadId, "first");
+        assert.equal(settled.messages.filter((message) => message.role === "user").length, 3);
+        assert.equal(offers.length, 3);
+        assert.deepEqual(new Set(offers), new Set(["first", "second", "third"]));
+      }),
+    { holdFirstSend: true },
+  ),
+);
+
+it.live(
+  "native extraction rejects foreign and changed payloads and replays only its durable receipt",
+  () =>
+    withNativeQueue(
+      "queue-native-extraction-races",
+      ({ orchestrator, threadId, takeOffer, offers, waitFor }) =>
+        Effect.gen(function* () {
+          yield* send(orchestrator, threadId, "foreground");
+          const foreground = yield* takeOffer;
+          yield* send(orchestrator, threadId, "first", true);
+          yield* send(orchestrator, threadId, "second", true);
+          const before = yield* orchestrator.getThreadProjection(threadId);
+          const first = before.runs.find(
+            (run) => run.userMessageId === MessageId.make(`${threadId}:message:first`),
+          );
+          const second = before.runs.find(
+            (run) => run.userMessageId === MessageId.make(`${threadId}:message:second`),
+          );
+          assert.ok(first && second);
+          const captured = before.messages.find((message) => message.id === first.userMessageId);
+          assert.ok(captured);
+          const foreignId = ThreadId.make(`${threadId}:foreign`);
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`${threadId}:foreign:create`),
+            threadId: foreignId,
+            projectId: ProjectId.make(`project:${threadId}`),
+            title: "Foreign",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdBy: "user",
+            creationSource: "web",
+          });
+          assert.equal(
+            (yield* Effect.result(
+              orchestrator.dispatch({
+                type: "queued-run.cancel",
+                commandId: CommandId.make(`${threadId}:foreign:extract`),
+                threadId: foreignId,
+                runId: first.id,
+                expectedUpdatedAt: captured.updatedAt,
+              }),
+            ))._tag,
+            "Failure",
+          );
+          yield* orchestrator.dispatch({
+            type: "queued-run.edit",
+            commandId: CommandId.make(`${threadId}:edit`),
+            threadId,
+            runId: first.id,
+            text: "Edited first",
+          });
+          const edited = (yield* orchestrator.getThreadProjection(threadId)).messages.find(
+            (message) => message.id === captured.id,
+          );
+          assert.ok(edited);
+          assert.equal(
+            (yield* Effect.result(
+              orchestrator.dispatch({
+                type: "queued-run.cancel",
+                commandId: CommandId.make(`${threadId}:stale:extract`),
+                threadId,
+                runId: first.id,
+                expectedUpdatedAt: DateTime.subtract(edited.updatedAt, { milliseconds: 1 }),
+              }),
+            ))._tag,
+            "Failure",
+          );
+          const extract = {
+            type: "queued-run.cancel" as const,
+            commandId: CommandId.make(`${threadId}:extract`),
+            threadId,
+            runId: first.id,
+            expectedUpdatedAt: edited.updatedAt,
+          };
+          const receipt = yield* orchestrator.dispatch(extract);
+          assert.equal((yield* orchestrator.dispatch(extract)).sequence, receipt.sequence);
+          assert.equal(
+            (yield* Effect.result(
+              orchestrator.dispatch({
+                type: "queued-run.edit",
+                commandId: CommandId.make(`${threadId}:other-editor`),
+                threadId,
+                runId: first.id,
+                text: "Overwrite extracted bytes",
+              }),
+            ))._tag,
+            "Failure",
+          );
+          yield* foreground.settle("completed");
+          const delivered = yield* takeOffer;
+          assert.equal(delivered.input.runId, second.id);
+          yield* delivered.settle("completed");
+          const after = yield* waitFor(
+            (projection) =>
+              projection.runs.find((run) => run.id === second.id)?.status === "completed",
+          );
+          assert.equal(after.runs.find((run) => run.id === first.id)?.status, "cancelled");
+          assert.equal(
+            after.messages.find((message) => message.id === captured.id)?.text,
+            "Edited first",
+          );
+          assert.deepEqual(offers, ["foreground", "second"]);
+        }),
+    ),
+);
+
+it.live(
+  "explicit head Send cannot bypass an active native run and repeated Resume drains once",
+  () =>
+    withNativeQueue(
+      "queue-native-resume-barrier",
+      ({ orchestrator, threadId, takeOffer, offers, waitFor }) =>
+        Effect.gen(function* () {
+          yield* send(orchestrator, threadId, "foreground");
+          const foreground = yield* takeOffer;
+          yield* send(orchestrator, threadId, "first", true);
+          yield* send(orchestrator, threadId, "second", true);
+          const before = yield* orchestrator.getThreadProjection(threadId);
+          const first = before.runs.find(
+            (run) => run.userMessageId === MessageId.make(`${threadId}:message:first`),
+          );
+          const second = before.runs.find(
+            (run) => run.userMessageId === MessageId.make(`${threadId}:message:second`),
+          );
+          assert.ok(first && second);
+          assert.equal(
+            (yield* Effect.result(
+              orchestrator.dispatch({
+                type: "queue.resume",
+                commandId: CommandId.make(`${threadId}:send-active`),
+                threadId,
+                runId: first.id,
+              }),
+            ))._tag,
+            "Failure",
+          );
+          const resume = {
+            type: "queue.resume" as const,
+            commandId: CommandId.make(`${threadId}:resume`),
+            threadId,
+          };
+          yield* Effect.all([orchestrator.dispatch(resume), orchestrator.dispatch(resume)], {
+            concurrency: 2,
+          });
+          assert.deepEqual(offers, ["foreground"]);
+          yield* foreground.settle("completed");
+          const head = yield* takeOffer;
+          assert.equal(head.input.runId, first.id);
+          yield* head.settle("completed");
+          const rest = yield* takeOffer;
+          assert.equal(rest.input.runId, second.id);
+          yield* rest.settle("completed");
+          yield* waitFor((projection) =>
+            projection.runs.every((run) => run.status === "completed"),
+          );
+          assert.deepEqual(offers, ["foreground", "first", "second"]);
+        }),
+    ),
+);
+
+it.live(
+  "failed native recovery sends only the idle head and a second Stop holds the remaining payload",
+  () =>
+    withNativeQueue(
+      "queue-native-repeated-stop",
+      ({ orchestrator, threadId, takeOffer, offers, waitFor }) =>
+        Effect.gen(function* () {
+          yield* send(orchestrator, threadId, "foreground");
+          const foreground = yield* takeOffer;
+          yield* send(orchestrator, threadId, "first", true);
+          yield* send(orchestrator, threadId, "second", true);
+          yield* foreground.settle("failed");
+          const held = yield* waitFor(
+            (projection) =>
+              projection.runs.find((run) => run.id === foreground.input.runId)?.status ===
+                "failed" &&
+              projection.runs
+                .filter((run) => run.status === "queued")
+                .every((run) => run.queueHeld),
+          );
+          const first = held.runs.find(
+            (run) => run.userMessageId === MessageId.make(`${threadId}:message:first`),
+          );
+          const second = held.runs.find(
+            (run) => run.userMessageId === MessageId.make(`${threadId}:message:second`),
+          );
+          assert.ok(first && second);
+          assert.equal(
+            (yield* Effect.result(
+              orchestrator.dispatch({
+                type: "queue.resume",
+                threadId,
+                runId: second.id,
+                commandId: CommandId.make(`${threadId}:non-head`),
+              }),
+            ))._tag,
+            "Failure",
+          );
+          yield* orchestrator.dispatch({
+            type: "queue.resume",
+            threadId,
+            runId: first.id,
+            commandId: CommandId.make(`${threadId}:head`),
+          });
+          const recovery = yield* takeOffer;
+          assert.equal(recovery.input.runId, first.id);
+          yield* waitFor((projection) =>
+            projection.providerTurns.some(
+              (turn) => turn.runAttemptId === recovery.input.attemptId && turn.status === "running",
+            ),
+          );
+          const stop = {
+            type: "run.interrupt" as const,
+            threadId,
+            runId: first.id,
+            holdQueue: true,
+            commandId: CommandId.make(`${threadId}:stop-recovery`),
+          };
+          yield* Effect.all([orchestrator.dispatch(stop), orchestrator.dispatch(stop)], {
+            concurrency: 2,
+          });
+          yield* waitFor(
+            (projection) =>
+              projection.runs.find((run) => run.id === first.id)?.status === "interrupted",
+          );
+          yield* send(orchestrator, threadId, "later-recovery");
+          const later = yield* takeOffer;
+          yield* later.settle("completed");
+          const after = yield* waitFor(
+            (projection) =>
+              projection.runs.find((run) => run.id === later.input.runId)?.status === "completed",
+          );
+          assert.equal(after.runs.find((run) => run.id === second.id)?.status, "queued");
+          assert.isTrue(after.runs.find((run) => run.id === second.id)?.queueHeld);
+          assert.equal(
+            after.messages.find((message) => message.id === second.userMessageId)?.text,
+            "second",
+          );
+          assert.deepEqual(offers, ["foreground", "first", "later-recovery"]);
+        }),
+    ),
+);
