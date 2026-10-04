@@ -417,6 +417,36 @@ describe("production subject reachability", () => {
     expect(result.diagnostics).toEqual([]);
   });
 
+  it("normalizes worker URLs and diagnoses missing execution inputs only when reached", () => {
+    const f = fixture();
+    f.write(
+      "apps/server/src/main.ts",
+      "const workerUrl = new URL('./worker.ts?worker#entry', import.meta.url); new Worker(workerUrl); new SharedWorker(new URL('./shared.ts#hash', import.meta.url));",
+    );
+    f.write("apps/server/src/worker.ts", "export const worker = true;");
+    f.write("apps/server/src/shared.ts", "export const shared = true;");
+    f.write("apps/server/src/dormant.ts", "new Worker(new URL('./missing.ts', import.meta.url));");
+    f.write(
+      "apps/server/src/existence.test.ts",
+      "new URL('./missing.ts?worker', import.meta.url);",
+    );
+    expect(f.inspect().reachableFiles).toEqual(
+      expect.arrayContaining(["apps/server/src/worker.ts", "apps/server/src/shared.ts"]),
+    );
+    expect(f.inspect().diagnostics).toEqual([]);
+    expect(f.test("existence").status).toBe("no-subject");
+    f.write(
+      "apps/server/src/main.ts",
+      "new Worker(new URL('./missing.ts?worker', import.meta.url));",
+    );
+    expect(runLivecode(["--strict"], f.options).exitCode).toBe(1);
+    expect(f.inspect().diagnostics[0].message).toContain("./missing.ts?worker");
+    expect(
+      runtimeImports("worker.ts", "new Worker(new URL(path, import.meta.url));").diagnostics[0]
+        .kind,
+    ).toBe("warning");
+  });
+
   it("surfaces missing entry points and local edges for strict qualification", () => {
     const f = fixture();
     f.write("apps/server/src/main.ts", "import './missing';");

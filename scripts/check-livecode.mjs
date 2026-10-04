@@ -309,6 +309,41 @@ export function runtimeImports(path, text) {
       });
     }
   }
+  const executionURLs = new Set();
+  function urlInitializer(expression, use, seen = new Set()) {
+    if (!expression || seen.has(expression)) return undefined;
+    seen.add(expression);
+    if (ts.isNewExpression(expression) && expression.expression.getText(source) === "URL")
+      return expression;
+    if (!ts.isIdentifier(expression)) return undefined;
+    for (let scope = use.parent; scope; scope = scope.parent) {
+      if (
+        ts.isFunctionLike(scope) &&
+        scope.parameters.some((p) => p.name.getText(source) === expression.text)
+      )
+        return undefined;
+      if (ts.isBlock(scope) || ts.isSourceFile(scope)) {
+        for (const statement of scope.statements)
+          if (ts.isVariableStatement(statement))
+            for (const declaration of statement.declarationList.declarations)
+              if (declaration.name.getText(source) === expression.text)
+                return urlInitializer(declaration.initializer, declaration, seen);
+      }
+    }
+    return undefined;
+  }
+  function findWorkers(node) {
+    if (ts.isTypeNode(node)) return;
+    if (
+      ts.isNewExpression(node) &&
+      /^(?:.*\.)?(?:Worker|SharedWorker)$/u.test(node.expression.getText(source))
+    ) {
+      const url = urlInitializer(node.arguments?.[0], node);
+      if (url) executionURLs.add(url);
+    }
+    ts.forEachChild(node, findWorkers);
+  }
+  findWorkers(source);
   function visit(node, originals = new Map()) {
     // import('x') inside a type, ambient declarations and import type are erased.
     if (
@@ -398,10 +433,11 @@ export function runtimeImports(path, text) {
       ts.isIdentifier(node.expression) &&
       node.expression.text === "URL" &&
       node.arguments?.[1]?.getText(source) === "import.meta.url" &&
-      ts.isStringLiteralLike(node.arguments[0]) &&
-      isSource(node.arguments[0].text)
+      (executionURLs.has(node) ||
+        (ts.isStringLiteralLike(node.arguments[0]) &&
+          isSource(node.arguments[0].text.replace(/[?#].*$/u, ""))))
     )
-      add(node, node.arguments[0], "url");
+      add(node, node.arguments[0], executionURLs.has(node) ? "worker" : "url");
     ts.forEachChild(node, (child) => visit(child, originals));
   }
   visit(source);
@@ -580,6 +616,7 @@ export function inspectLivecode({
   const subjectGraph = new Map();
   const helpers = new Set([...files].filter(isHelper));
   const diagnostics = [];
+  const unresolvedWorkers = [];
   for (const input of discoverProductionInputs(root))
     if (!entries.includes(input))
       diagnostics.push({
@@ -610,7 +647,7 @@ export function inspectLivecode({
         if (imported.kind !== "url") subjectTargets.add(target);
       }
       if (imported.kind !== "url" && resolved.local && !resolved.targets.length)
-        diagnostics.push({
+        (imported.kind === "worker" ? unresolvedWorkers : diagnostics).push({
           kind: "error",
           file,
           line: imported.line,
@@ -662,6 +699,7 @@ export function inspectLivecode({
       });
     pending.push(...[...graph.get(file)].map((target) => ({ file: target, from: file })));
   }
+  diagnostics.push(...unresolvedWorkers.filter((diagnostic) => reachable.has(diagnostic.file)));
   const testFiles = new Set([...files].filter((file) => testPattern.test(file)));
   const allowed = readAllowlist(root, allowlist, testFiles);
   const tests = [...testFiles].sort().map((test) => {
