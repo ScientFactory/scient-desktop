@@ -15,6 +15,7 @@ import {
   RunId,
   MessageId,
   ThreadId,
+  type ModelSelection,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
 } from "@t3tools/contracts";
@@ -34,6 +35,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import type { OpenCodeRuntimeShape } from "../../provider/opencodeRuntime.ts";
@@ -178,6 +180,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
   client: object,
   external = true,
   setup: {
+    readonly preference?: Omit<ModelSelection, "instanceId">;
     readonly policy?: ProviderAdapterV2RuntimePolicy;
     readonly existingProviderThread?: OrchestrationV2ProviderThread;
   } = {},
@@ -189,6 +192,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     instanceId,
     model: "anthropic/claude-sonnet",
     options: [],
+    ...setup.preference,
   };
   const policy = setup.policy ?? runtimePolicy("full-access", { cwd: "/workspace" });
   const adapter = makeOpenCodeAdapterV2({
@@ -276,6 +280,84 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
+  for (const explicitOptions of [true, false]) {
+    it.effect(
+      `includes Scient guidance with a bound custom instance's ${explicitOptions ? "agent and variant" : "captured default model"}`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const prompts: Array<Parameters<OpencodeClient["session"]["promptAsync"]>[0]> = [];
+            const nativeEvents = asyncEventStream();
+            const suffix = `bound-options-${explicitOptions}`;
+            const h = yield* makeOpenCodeRuntimeHarness(
+              suffix,
+              "bound-native",
+              {
+                event: {
+                  subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+                    options.signal?.addEventListener("abort", () => nativeEvents.close(), {
+                      once: true,
+                    });
+                    return { stream: nativeEvents.stream };
+                  },
+                },
+                session: {
+                  ...nativePermissionPeer(),
+                  create: async () => ({
+                    data: { id: "bound-native", time: { created: 1, updated: 1 } },
+                  }),
+                  promptAsync: async (
+                    input: Parameters<OpencodeClient["session"]["promptAsync"]>[0],
+                  ) => {
+                    prompts.push(input);
+                    return { data: true };
+                  },
+                  abort: async () => ({ data: true }),
+                  children: async () => ({ data: [] }),
+                },
+              },
+              true,
+              {
+                preference: {
+                  model: "anthropic/claude-sonnet-4-5",
+                  options: explicitOptions
+                    ? [
+                        { id: "agent", value: "github-copilot" },
+                        { id: "variant", value: "high" },
+                      ]
+                    : [],
+                },
+              },
+            );
+            yield* h.startTurn("Fix it");
+            assert.lengthOf(prompts, 1);
+            const prompt = prompts[0]!;
+            assert.equal(
+              h.providerThread.providerInstanceId,
+              ProviderInstanceId.make(`opencode-${suffix}`),
+            );
+            assert.equal(prompt.sessionID, "bound-native");
+            assert.match(prompt.messageID ?? "", /^msg_/);
+            assert.deepEqual(prompt.model, {
+              providerID: "anthropic",
+              modelID: "claude-sonnet-4-5",
+            });
+            assert.equal(prompt.agent, explicitOptions ? "github-copilot" : undefined);
+            assert.equal(prompt.variant, explicitOptions ? "high" : undefined);
+            assert.include(prompt.system ?? "", buildScientAwareness());
+            assert.include(
+              prompt.system ?? "",
+              buildRuntimeInstructions({
+                harness: "OpenCode",
+                model: "anthropic/claude-sonnet-4-5",
+              }),
+            );
+            assert.deepEqual(prompt.parts, [{ type: "text", text: "Fix it" }]);
+          }),
+        ).pipe(Effect.provide(IdAllocator.layer)),
+    );
+  }
+
   for (const accepted of [true, false]) {
     it.effect(
       `records native prompt ${accepted ? "acceptance" : "uncertainty after transport failure"}`,
