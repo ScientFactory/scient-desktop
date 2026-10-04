@@ -4,7 +4,8 @@
 
 **Status: integration corrections under final qualification.** The literal upstream
 merge, owned-main catch-up and native execution corrections are committed locally
-through `c4aad71535abbd98c38659711b2cc47b1ab2fe5d`, including qualified stash
+through `d7b4042e3d`, with reviewed seam batch `7ef738fb31` composed afterward,
+including qualified stash
 provenance, queue reservation, historical task transport, direct Node/bundle
 compatibility, native retry history, persisted fork boundaries and fork handoff
 presentation, Registry provenance/removal and OMP production-process corrections.
@@ -26,7 +27,8 @@ Collaborative-preview screenshot capture fails and its browser animation frames
 do not arrive in a bounded probe. Raising the owned native window subsequently
 produces a current held-edit screenshot at `3564658e28`; the six final comparison
 states still require capture. DOM and SQL evidence are not visual approval. The separate
-V1-removal lane has not delivered its patch. No publication or user acceptance
+V1-removal lane has delivered its reviewed seam extractions; V1 deletion and its
+other active repairs remain separate. No publication or user acceptance
 is claimed.
 
 ## Candidate and ancestry
@@ -704,3 +706,23 @@ matches all sixteen integrated blobs and finds no remaining bounded defect
 (`addendum7-answer-attention-qualified-handoff.md`,
 `addendum7-answer-attention-final-independent-integration-review.md`). Whole
 candidate and actual foreground/reload/second-window acceptance remain open.
+
+### Reviewed seam cleanup integration
+
+The committed cleanup batch `7ef738fb31` is merged with literal lane history
+preserved. Its eight extractions retain host exports, construction timing,
+capability behavior and build phase ownership. Native-preview qualification now
+hashes the extracted association and packaging helpers, so prior evidence cannot
+silently cover changed inputs. Independent immutable seventeen-file review found
+no production behavior regression, but confirmed a missing OMP classification
+for the new provider-settings leaf. The actual composed seam checker reproduces
+that exact failure; only the leaf is added to owned files, retaining the host
+mount and all detection rules. Final seam/provenance gates remain required.
+
+The batch's reported scoped evidence covers433 unique tests across nine complete
+files and32 passing compiler tasks. Its final lint log contains13 retained warnings,
+correcting the earlier four-warning summary. Its older production build precedes
+the final hash repair and merge; it does not certify this combined candidate.
+Independent source and evidence review:
+`full-seam-batch-independent-integration-review-7ef738.md`. Other cleanup lanes,
+full runtime/build/archive checks and manual acceptance remain open.

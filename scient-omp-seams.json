@@ -8,6 +8,7 @@
     "apps/server/src/provider/scient"
   ],
   "ownedFiles": [
+    "packages/contracts/src/scient/providerSettings.ts",
     "apps/server/src/provider/testUtils/controlledOmpPeer.mjs",
     "apps/server/src/orchestration-v2/Adapters/OmpAdapterV2.ts",
     "apps/server/scripts/qualify-omp-rpc.ts",
