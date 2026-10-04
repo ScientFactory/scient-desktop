@@ -149,9 +149,8 @@ const make = Effect.gen(function* () {
     const plan = yield* planConversationFork({ projection, targetThreadId, source });
     const project = yield* projects.get(projection.thread.projectId);
     if (Option.isNone(project)) return yield* failure("The conversation's project is unavailable.");
-    const cwd = projection.thread.worktreePath ?? project.value.workspaceRoot;
-    if (!(yield* baseline.workspaceExists(cwd)))
-      return yield* failure("The original workspace is unavailable.");
+    const originCwd = projection.thread.worktreePath ?? project.value.workspaceRoot;
+    const localAvailable = yield* baseline.workspaceExists(originCwd);
     const sourceRun = projection.runs.find((run) => run.id === plan.boundaryRunId);
     let fromCheckpointRef =
       projection.checkpoints.find(
@@ -172,12 +171,30 @@ const make = Effect.gen(function* () {
       )
         fromCheckpointRef = projection.thread.conversationFork.checkpointRef;
     }
+    const cwd = localAvailable ? originCwd : project.value.workspaceRoot;
+    if (
+      !localAvailable &&
+      (source.kind === "running-turn" ||
+        fromCheckpointRef === null ||
+        !(yield* baseline.workspaceExists(cwd)))
+    )
+      return yield* failure("The original workspace is unavailable.");
     const gitRepository = yield* baseline.isGitRepository(cwd);
     const checkpointAvailable =
       gitRepository &&
       (source.kind === "running-turn" ||
         (fromCheckpointRef !== null && (yield* baseline.hasCheckpoint(cwd, fromCheckpointRef))));
-    return { projection, source, plan, cwd, fromCheckpointRef, checkpointAvailable };
+    if (!localAvailable && !checkpointAvailable)
+      return yield* failure("The original worktree and its saved checkpoint are unavailable.");
+    return {
+      projection,
+      source,
+      plan,
+      cwd,
+      fromCheckpointRef,
+      checkpointAvailable,
+      localAvailable,
+    };
   });
 
   const metadataEvent = Effect.fnUntraced(function* (
@@ -273,6 +290,10 @@ const make = Effect.gen(function* () {
         return yield* failure("The destination already exists. Choose a new fork identity.");
       const inspected = yield* inspect(command, command.newThreadId);
       const { projection, plan, source, cwd, fromCheckpointRef, checkpointAvailable } = inspected;
+      if (command.workspaceMode === "local" && !inspected.localAvailable)
+        return yield* failure(
+          "The original worktree is unavailable. Restore its saved checkpoint into a new worktree instead.",
+        );
       if (command.workspaceMode === "new-worktree" && !checkpointAvailable)
         return yield* failure(
           "This boundary has no saved workspace checkpoint. Fork locally instead.",
@@ -628,10 +649,12 @@ const make = Effect.gen(function* () {
       ),
     getOptions: (input) =>
       inspect(input, ThreadId.make(`scient-options:${input.originThreadId}`)).pipe(
-        Effect.map(({ source, checkpointAvailable }): ForkOptions => ({
+        Effect.map(({ source, checkpointAvailable, localAvailable }): ForkOptions => ({
           available: true,
-          localAvailable: true,
-          reason: null,
+          localAvailable,
+          reason: localAvailable
+            ? null
+            : "The original worktree is unavailable. A saved checkpoint can be restored into a new worktree.",
           newWorktree: checkpointAvailable,
           sourceAssistantMessageId: source.kind === "assistant-response" ? source.messageId : null,
           sourceUserMessageId: source.kind === "user-message" ? source.messageId : null,

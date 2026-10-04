@@ -1,3 +1,4 @@
+import type { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -316,6 +317,12 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     readonly runEffectWorker?: boolean;
     /** Inject a fault around the production copier without replacing native provisioning. */
     readonly forkAttachmentCopierLayer?: typeof ScientForkAttachmentCopierLive;
+    /** Exercise native fork checkout with the production Git workflow. */
+    readonly forkGitWorkflowLayer?: Layer.Layer<
+      GitWorkflowService,
+      never,
+      ServerConfig.ServerConfig
+    >;
     /** Exercise production session credential issuance; disabled for recorded transports. */
     readonly configureMcp?: boolean;
     readonly mcpSessionRegistryLayer?: Layer.Layer<McpSessionRegistry.McpSessionRegistry>;
@@ -590,7 +597,15 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     effectWorkerProvided,
     eventSinkProvided,
     continuationWorkerProvided,
-  ).pipe(Layer.provide(worktreeRepairDependenciesTestLayer), Layer.provide(NodeServices.layer));
+  ).pipe(
+    Layer.provide(
+      Layer.merge(
+        worktreeRepairDependenciesTestLayer,
+        (options.forkGitWorkflowLayer ?? Layer.empty).pipe(Layer.provide(serverConfigLayer)),
+      ),
+    ),
+    Layer.provide(NodeServices.layer),
+  );
 
   // Build the daemon from the exact worker instance exposed alongside the
   // orchestrator. Keeping this acquisition in the replay layer makes the
