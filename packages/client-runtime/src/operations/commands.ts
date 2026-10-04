@@ -6,8 +6,7 @@ import {
   CheckpointScopeId,
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationV2CheckpointUnavailableError,
-  ORCHESTRATION_WS_METHODS,
-  type ClientOrchestrationCommand,
+  type ThreadForkCommand,
   WS_METHODS,
   type ChatAttachment,
   type MessageId,
@@ -42,23 +41,6 @@ import {
   request,
 } from "../rpc/client.ts";
 import type { EnvironmentSupervisor } from "../connection/supervisor.ts";
-// SCIENT-FORK:START — retained conversation-boundary fork input, extracted in P03.
-type V1CommandType = ClientOrchestrationCommand["type"];
-type V1CommandOf<T extends V1CommandType> = Extract<
-  ClientOrchestrationCommand,
-  {
-    readonly type: T;
-  }
->;
-/** Command payload minus the envelope fields the client allocates itself. */
-type V1CommandInput<T extends V1CommandType> = Omit<
-  V1CommandOf<T>,
-  "type" | "commandId" | "createdAt"
-> & {
-  readonly commandId?: CommandId;
-};
-// SCIENT-FORK:END
-
 interface CommandMetadata {
   readonly commandId?: CommandId;
   readonly createdAt?: string;
@@ -253,7 +235,7 @@ export type SetThreadSectionInput = Omit<
 > &
   CommandMetadata;
 // SCIENT-FORK:START
-export type ForkThreadInput = V1CommandInput<"thread.fork">;
+export type ForkThreadInput = Omit<ThreadForkCommand, "type" | "commandId"> & CommandMetadata;
 // SCIENT-FORK:END
 
 export interface MergeThreadBackInput extends CommandMetadata {
@@ -310,18 +292,16 @@ const allocateCommandId = Effect.fn("EnvironmentCommands.allocateCommandId")(fun
 const dispatch = (command: OrchestrationV2Command) =>
   request(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, command);
 
-// SCIENT-FORK:START — V1-only commands share the `orchestration.dispatchCommand`
-// tag with V2. The RPC payload accepts either union, so the V1 transport is the
-// same `request` call typed against `ClientOrchestrationCommand`.
-type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
+// SCIENT-FORK:START — dedicated conversation-boundary fork transport.
+type DispatchTag = typeof ORCHESTRATION_V2_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
   EnvironmentRpcSuccess<DispatchTag>,
   EnvironmentRpcFailure<DispatchTag> | EnvironmentRpcUnavailableError,
   Crypto.Crypto | EnvironmentSupervisor
 >;
 
-const dispatchV1 = (command: ClientOrchestrationCommand) =>
-  request(ORCHESTRATION_WS_METHODS.dispatchCommand, command);
+const dispatchConversationFork = (command: ThreadForkCommand) =>
+  request(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, command);
 // SCIENT-FORK:END
 
 const getProjection = (threadId: ThreadId) =>
@@ -1072,7 +1052,7 @@ export const promoteQueuedRun = Effect.fn("EnvironmentCommands.promoteQueuedRun"
 export const forkThread: (input: ForkThreadInput) => CommandEffect = Effect.fn(
   "EnvironmentCommands.forkThread",
 )(function* (input) {
-  return yield* dispatchV1({
+  return yield* dispatchConversationFork({
     ...input,
     type: "thread.fork",
     commandId: input.commandId ?? CommandId.make(`client:thread-fork:${input.newThreadId}`),

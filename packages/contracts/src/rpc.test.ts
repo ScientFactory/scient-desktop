@@ -91,6 +91,46 @@ describe("WebSocket RPC contracts", () => {
     expect(methods.filter((method) => method.startsWith("orchestrationV1."))).toEqual([]);
   });
 
+  it("accepts native run forks and Scient message forks but refuses V1 turn commands", () => {
+    for (const source of [
+      { sourceAssistantMessageId: "assistant" },
+      { sourceUserMessageId: "user" },
+      { sourceRunningRunId: "running-run" },
+    ]) {
+      const command = {
+        type: "thread.fork",
+        commandId: "scient-fork",
+        originThreadId: "origin",
+        newThreadId: "destination",
+        workspaceMode: "local",
+        ...source,
+      };
+      expect(decodeDispatchPayload(command)).toEqual(command);
+    }
+    const runFork = {
+      type: "thread.fork",
+      commandId: "native-fork",
+      sourceThreadId: "origin",
+      targetThreadId: "destination",
+      sourcePoint: { type: "run", runId: "run" },
+      createdBy: "user",
+      creationSource: "web",
+    };
+    expect(decodeDispatchPayload(runFork)).toEqual(runFork);
+    expect(() =>
+      decodeDispatchPayload({
+        type: "thread.turn.start",
+        commandId: "old-turn",
+        threadId: "origin",
+        message: { messageId: "message", role: "user", text: "Old command", attachments: [] },
+        modelSelection: { instanceId: "codex", model: "fixture" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdAt: "2026-10-04T00:00:00.000Z",
+      }),
+    ).toThrow();
+  });
+
   it("rejects server-internal commands sent to dispatchCommand", () => {
     const dispatchCommand = WsRpcGroup.requests.get(ORCHESTRATION_V2_WS_METHODS.dispatchCommand);
     if (dispatchCommand === undefined) throw new Error("dispatchCommand is not registered");

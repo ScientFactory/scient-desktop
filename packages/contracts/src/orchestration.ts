@@ -1,3 +1,18 @@
+import {
+  OrchestrationForkWorkspaceMode,
+  ThreadForkCommand,
+  ThreadForkAttachmentCopy,
+  ScientConversationDispatchResult as DispatchResult,
+} from "./scientConversationFork.ts";
+export {
+  OrchestrationForkWorkspaceMode,
+  ThreadForkCommand,
+  GetForkOptionsInput,
+  ForkOptions,
+  ThreadForkAttachmentCopy,
+  ScientConversationDispatchResult as DispatchResult,
+  OrchestrationGetSnapshotError,
+} from "./scientConversationFork.ts";
 import { ScientCompletedAnswer } from "./scientAnswerAttention.ts";
 export { ForkDisposition, OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import {
@@ -12,7 +27,6 @@ import {
 // definitions of it are not.
 import {
   ChatAttachment,
-  ChatAttachmentId,
   SNAP_SHOT_ACCESSIBLE_TEXT_MAX_CHARS,
   SnapShotAccessibilityNode,
   UploadChatAttachment,
@@ -60,7 +74,6 @@ import {
   // SCIENT-FORK:END
   TrimmedNonEmptyString,
   TurnId,
-  RunId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
@@ -1086,9 +1099,6 @@ const ThreadSessionStopCommand = Schema.Struct({
 // Workspace substrate choice, made explicitly at fork time (the product "always
 // asks"): "new-worktree" provisions a fresh worktree branched from the fork
 // point; "local" reuses the origin thread's workspace.
-export const OrchestrationForkWorkspaceMode = Schema.Literals(["new-worktree", "local"]);
-export type OrchestrationForkWorkspaceMode = typeof OrchestrationForkWorkspaceMode.Type;
-
 // Provider continuity is explicit instead of being folded into a vague overall
 // "fidelity" label. Exact-boundary forks start a fresh provider session and
 // inject the retained transcript once with the first post-fork turn. This avoids
@@ -1118,59 +1128,6 @@ export const OrchestrationForkWorkspaceStatus = Schema.Literals([
 ]);
 export type OrchestrationForkWorkspaceStatus = typeof OrchestrationForkWorkspaceStatus.Type;
 
-export const ThreadForkCommand = Schema.Struct({
-  type: Schema.Literal("thread.fork"),
-  commandId: CommandId,
-  originThreadId: ThreadId,
-  newThreadId: ThreadId,
-  // Exactly one source message identifies the public fork point. Assistant
-  // responses retain that response. User messages retain only the completed
-  // transcript before the message; the client stages the selected message as
-  // an unsent composer draft in the destination thread.
-  sourceAssistantMessageId: Schema.optional(MessageId),
-  sourceUserMessageId: Schema.optional(MessageId),
-  // The running turn itself: retain every completed turn plus that turn's
-  // latest state (reasoning, tool work and text produced so far).
-  sourceRunningTurnId: Schema.optional(TurnId),
-  sourceRunningRunId: Schema.optional(RunId),
-  workspaceMode: OrchestrationForkWorkspaceMode,
-  // Explicit destination title chosen by the user. When absent, the server
-  // allocates the automatic collision-safe title at commit time.
-  titleOverride: Schema.optional(TrimmedNonEmptyString),
-}).check(
-  Schema.makeFilter(
-    (command) =>
-      [
-        command.sourceAssistantMessageId,
-        command.sourceUserMessageId,
-        command.sourceRunningTurnId,
-        command.sourceRunningRunId,
-      ].filter((source) => source !== undefined).length === 1 ||
-      "exactly one fork source must be specified",
-  ),
-);
-export type ThreadForkCommand = typeof ThreadForkCommand.Type;
-
-/** Omit both message ids to resolve the latest completed response on the server. */
-export const GetForkOptionsInput = Schema.Struct({
-  originThreadId: ThreadId,
-  sourceAssistantMessageId: Schema.optional(MessageId),
-  sourceUserMessageId: Schema.optional(MessageId),
-  sourceRunningTurnId: Schema.optional(TurnId),
-  sourceRunningRunId: Schema.optional(RunId),
-});
-export type GetForkOptionsInput = typeof GetForkOptionsInput.Type;
-export const ForkOptions = Schema.Struct({
-  available: Schema.Boolean,
-  localAvailable: Schema.Boolean,
-  reason: Schema.NullOr(Schema.String),
-  sourceAssistantMessageId: Schema.NullOr(MessageId),
-  sourceUserMessageId: Schema.NullOr(MessageId),
-  sourceRunningTurnId: Schema.optional(Schema.NullOr(TurnId)),
-  sourceRunningRunId: Schema.optional(Schema.NullOr(RunId)),
-  newWorktree: Schema.Boolean,
-});
-export type ForkOptions = typeof ForkOptions.Type;
 // SCIENT-FORK:END
 
 const DispatchableClientOrchestrationCommand = Schema.Union([
@@ -1812,12 +1769,6 @@ export const ThreadRevertedPayload = Schema.Struct({
 });
 
 // SCIENT-FORK:START — immutable fork lineage plus explicit provider behavior.
-export const ThreadForkAttachmentCopy = Schema.Struct({
-  source: ChatAttachment,
-  target: ChatAttachment,
-});
-export type ThreadForkAttachmentCopy = typeof ThreadForkAttachmentCopy.Type;
-
 /**
  * One completed logical turn copied into a fork's immutable transcript.
  *
@@ -2243,20 +2194,6 @@ export type ProjectionPendingApprovalStatus = typeof ProjectionPendingApprovalSt
 export const ProjectionPendingApprovalDecision = Schema.NullOr(ProviderApprovalDecision);
 export type ProjectionPendingApprovalDecision = typeof ProjectionPendingApprovalDecision.Type;
 
-export const DispatchResult = Schema.Struct({
-  submission: Schema.optional(
-    Schema.Struct({
-      submissionId: TrimmedNonEmptyString,
-      outcome: Schema.Literals(["sent", "queued"]),
-    }),
-  ),
-  queued: Schema.optional(Schema.Boolean),
-  sequence: NonNegativeInt,
-  /** Scient fork receipt: exact retained attachment ownership, absent on older servers. */
-  forkAttachmentIdMap: Schema.optional(Schema.Record(ChatAttachmentId, ChatAttachmentId)),
-});
-export type DispatchResult = typeof DispatchResult.Type;
-
 // The thread-search scan input and match source moved to threadSearch.ts
 // upstream; those two declarations were identical. The match itself is not —
 // see the V1 definition below.
@@ -2346,11 +2283,3 @@ export const OrchestrationRpcSchemas = {
     output: OrchestrationShellStreamItem,
   },
 } as const;
-
-export class OrchestrationGetSnapshotError extends Schema.TaggedError<OrchestrationGetSnapshotError>()(
-  "OrchestrationGetSnapshotError",
-  {
-    message: TrimmedNonEmptyString,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {}
