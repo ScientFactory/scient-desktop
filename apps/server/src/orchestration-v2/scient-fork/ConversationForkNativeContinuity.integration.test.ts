@@ -85,6 +85,27 @@ const waitCompleted = Effect.fn("NativeFork.waitCompleted")(function* (
   return complete.value;
 });
 
+// A settled run reloads its native thread before the next turn; record the
+// actual app-server exchange without changing the frozen-boundary assertions.
+const resumeFrames = (id: number, nativeThreadId: string, cwd: string, response: unknown) => [
+  {
+    type: "expect_outbound" as const,
+    label: "thread/resume/settled",
+    frame: {
+      id,
+      method: "thread/resume",
+      params: {
+        threadId: nativeThreadId,
+        excludeTurns: true,
+        cwd,
+        model: "gpt-5.4",
+        config: { "tools.update_plan.enabled": true },
+      },
+    },
+  },
+  { type: "emit_inbound" as const, label: "thread/resume/settled", frame: response },
+];
+
 const createSource = Effect.fn("NativeFork.createSource")(function* (cwd: string) {
   const orchestrator = yield* OrchestratorV2;
   const sink = yield* EventSinkV2;
@@ -284,12 +305,7 @@ for (const scenario of [
                     .replaceAll("native-fork-user-item", "native-source-later-user-item")
                     .replaceAll("native-fork-agent-item", "native-source-later-agent-item"),
                 );
-                return typeof frame === "object" &&
-                  frame !== null &&
-                  "id" in frame &&
-                  typeof frame.id === "number"
-                  ? { ...entry, frame: { ...frame, id: frame.id - 1 } }
-                  : { ...entry, frame };
+                return { ...entry, frame };
               });
             const forkAndTarget = entries.slice(forkIndex).map((entry) => {
               if (entry.type !== "expect_outbound" && entry.type !== "emit_inbound") return entry;
@@ -298,14 +314,23 @@ for (const scenario of [
                 frame !== null &&
                 "id" in frame &&
                 typeof frame.id === "number"
-                ? { ...entry, frame: { ...frame, id: frame.id + 1 } }
+                ? { ...entry, frame: { ...frame, id: frame.id + 2 } }
                 : entry;
             });
             const sourceStart = entries.find(
               (entry) => entry.type === "emit_inbound" && entry.label === "thread/start/source",
             );
             assert.ok(sourceStart?.type === "emit_inbound");
-            entries.splice(forkIndex, entries.length - forkIndex, ...laterTurn, ...forkAndTarget);
+            const resumeResponse = decodeFrame(
+              encodeFrame(sourceStart.frame).replace('"id":2', '"id":4'),
+            );
+            entries.splice(
+              forkIndex,
+              entries.length - forkIndex,
+              ...resumeFrames(4, "native-source-thread", cwd, resumeResponse),
+              ...laterTurn,
+              ...forkAndTarget,
+            );
             yield* orchestrator.dispatch({
               type: "message.dispatch",
               commandId: CommandId.make("append-source-after-freeze"),
@@ -341,7 +366,7 @@ for (const scenario of [
                   : entry;
               });
               const revertResponse: unknown = decodeFrame(
-                encodeFrame(sourceStart.frame).replace('"id":2', '"id":7'),
+                encodeFrame(sourceStart.frame).replace('"id":2', '"id":8'),
               );
               entries.splice(
                 nextFork,
@@ -350,7 +375,7 @@ for (const scenario of [
                   type: "expect_outbound",
                   label: "thread/read/source-rollback",
                   frame: {
-                    id: 5,
+                    id: 6,
                     method: "thread/read",
                     params: { threadId: "native-source-thread", includeTurns: false },
                   },
@@ -359,7 +384,7 @@ for (const scenario of [
                   type: "emit_inbound",
                   label: "thread/read/source-rollback",
                   frame: {
-                    id: 5,
+                    id: 6,
                     result: {
                       thread: {
                         id: "native-source-thread",
@@ -373,7 +398,7 @@ for (const scenario of [
                   type: "expect_outbound",
                   label: "thread/turns/list/source-rollback",
                   frame: {
-                    id: 6,
+                    id: 7,
                     method: "thread/turns/list",
                     params: {
                       threadId: "native-source-thread",
@@ -388,7 +413,7 @@ for (const scenario of [
                   type: "emit_inbound",
                   label: "thread/turns/list/source-rollback",
                   frame: {
-                    id: 6,
+                    id: 7,
                     result: {
                       data: [
                         {
@@ -406,7 +431,7 @@ for (const scenario of [
                   type: "expect_outbound",
                   label: "thread/revert/source-rollback",
                   frame: {
-                    id: 7,
+                    id: 8,
                     method: "thread/revert",
                     params: {
                       threadId: "native-source-thread",
@@ -901,7 +926,7 @@ it.live("a failed first turn retries the persisted clone instead of forking agai
         );
         const retryFrames = entries.slice(forkIndex + 2).map((entry) => {
           if (entry.type !== "expect_outbound" && entry.type !== "emit_inbound") return entry;
-          const frame: unknown = decodeFrame(encodeFrame(entry.frame).replace('"id":5', '"id":7'));
+          const frame: unknown = decodeFrame(encodeFrame(entry.frame).replace('"id":5', '"id":8'));
           return { ...entry, frame };
         });
         const forkResponse = entries[forkIndex + 1];
@@ -911,7 +936,7 @@ it.live("a failed first turn retries the persisted clone instead of forking agai
         entries.splice(forkIndex + 3, entries.length - forkIndex - 3, {
           type: "emit_inbound",
           label: "turn/start/fork/rejected",
-          frame: { id: 5, error: { code: -32000, message: "first turn rejected" } },
+          frame: { id: 5, error: { code: -32602, message: "first turn rejected" } },
         });
         yield* orchestrator.dispatch({
           type: "message.dispatch",
@@ -950,11 +975,17 @@ it.live("a failed first turn retries the persisted clone instead of forking agai
           coverage: `Context handoff (delta_since_target_last_seen):\n${handoffCoverage({ threadId: targetId, coveredRunOrdinals: { from: 1, to: 1 }, items: missed })}`,
         });
         entries.push(
+          ...resumeFrames(
+            6,
+            "native-fork-thread",
+            cwd,
+            decodeFrame(encodeFrame(forkResponse.frame).replace('"id":4', '"id":6')),
+          ),
           {
             type: "expect_outbound",
             label: "thread/inject_items/rejected-turn",
             frame: {
-              id: 6,
+              id: 7,
               method: "thread/inject_items",
               params: {
                 threadId: "native-fork-thread",
@@ -965,7 +996,7 @@ it.live("a failed first turn retries the persisted clone instead of forking agai
           {
             type: "emit_inbound",
             label: "thread/inject_items/rejected-turn",
-            frame: { id: 6, result: {} },
+            frame: { id: 7, result: {} },
           },
           ...retryFrames,
         );

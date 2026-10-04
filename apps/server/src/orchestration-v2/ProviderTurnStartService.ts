@@ -1096,7 +1096,13 @@ export const layer: Layer.Layer<
         },
       ];
       const deliveredAttemptIds = new Set(
-        projection.providerTurns.map((turn) => turn.runAttemptId),
+        projection.providerTurns
+          .filter(
+            (turn) =>
+              turn.nativeAcceptance !== "pending" &&
+              (turn.nativeAcceptance !== undefined || turn.nativeTurnRef !== null),
+          )
+          .map((turn) => turn.runAttemptId),
       );
       const missedRuns = projection.runs.filter(
         (source) =>
