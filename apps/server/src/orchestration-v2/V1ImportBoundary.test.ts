@@ -39,7 +39,6 @@ const legacyReaderFiles: Record<string, string> = {
   "persistence/RetiredThreadAttachmentCleanup.ts": "retired legacy attachment cleanup",
   "scient/answerAttention/completedAnswerSql.ts":
     "retained V1 completed-answer query; native shells produce their own metadata",
-  "scient/projectScope/WorkspaceAuthorityProjection.ts": "legacy workspace authority projection",
   "scient/threadQueue/Ledger.ts": "legacy admission journal checks its bootstrap handoff message",
 };
 
@@ -249,12 +248,22 @@ it("keeps legacy hydration and admission imports at explicit boundaries", () => 
   assert.deepEqual(importers, [
     "mcp/toolkits/threads/handlers.ts",
     "mcp/toolkits/threads/tools.ts",
+    "orchestration-v2/EventSink.ts",
     "orchestration-v2/Orchestrator.ts",
     "orchestration-v2/ThreadManagementService.ts",
     "orchestration-v2/runtimeLayer.ts",
+    "orchestration-v2/scient-fork/ConversationForkPlan.ts",
+    "orchestration-v2/scient-fork/ConversationForkService.ts",
+    "orchestration-v2/scient-fork/ForkBoundaryReadModel.ts",
+    "orchestration-v2/scient-fork/importRepository.ts",
+    "orchestration-v2/testkit/ProviderReplayHarness.ts",
     "project/ProjectService.ts",
     "scient/conversationExport/ConversationSnapshotService.ts",
+    "scient/conversationExport/conversationSnapshotProjection.ts",
+    "scient/threadQueue/Ledger.ts",
+    "scient/threadQueue/admission.ts",
     "scient/threadQueue/http.ts",
+    "scient/threadQueue/migration.ts",
     "serverRuntimeStartup.ts",
   ]);
 });

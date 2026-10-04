@@ -17,7 +17,7 @@ import type * as Path from "effect/Path";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { ServerConfig } from "../../config.ts";
 import { listScientThreadQueue } from "../../scient/threadQueue/Store.ts";
-import { readQueue, writeQueue } from "../../scient/threadQueue/Ledger.ts";
+import { readQueue, writeQueue } from "./LegacyQueueLedger.ts";
 import { enqueueQueue } from "../../scient/threadQueue/admission.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { ThreadManagementService } from "../ThreadManagementService.ts";

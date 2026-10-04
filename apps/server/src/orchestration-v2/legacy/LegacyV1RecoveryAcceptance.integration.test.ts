@@ -28,7 +28,7 @@ import { deriveServerPaths, ServerConfig } from "../../config.ts";
 import { layerConfig } from "../../persistence/Layers/Sqlite.ts";
 import { runMigrations } from "../../persistence/Migrations.ts";
 import { legacyQueueFilePath } from "../../scient/threadQueue/Store.ts";
-import { readQueue } from "../../scient/threadQueue/Ledger.ts";
+import { readQueue } from "./LegacyQueueLedger.ts";
 import { runOrderedV2StartupPhases } from "../../serverRuntimeStartup.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { AcpProviderCapabilitiesV2 } from "../Adapters/AcpAdapterV2.ts";
