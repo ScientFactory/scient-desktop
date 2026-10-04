@@ -17,6 +17,8 @@ export const PRODUCTION_ENTRIES = [
   "apps/server/src/pdf.worker.ts",
   // apps/web/index.html -> bootstrap -> dynamic main import.
   "apps/web/src/bootstrap.ts",
+  // apps/web/vite.config.ts second HTML input: scient-document.html.
+  "apps/web/src/scient/documentPage/main.tsx",
   // apps/desktop/package.json main and vite.config.ts pack entries.
   "apps/desktop/src/boot.ts",
   "apps/desktop/src/compileCache.ts",
@@ -117,6 +119,63 @@ function inventory(root) {
     if (entry.isFile() && isSource(entry.name)) files.add(entry.name);
   }
   return { files, manifests };
+}
+
+/** Audit independently loaded framework inputs without evaluating build code. */
+export function discoverProductionInputs(root) {
+  const inputs = new Set();
+  const configPath = "apps/web/vite.config.ts";
+  const config = NodePath.join(root, configPath);
+  if (NodeFS.existsSync(config)) {
+    const source = ts.createSourceFile(
+      configPath,
+      NodeFS.readFileSync(config, "utf8"),
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    const html = new Set();
+    function collect(node) {
+      if (ts.isStringLiteralLike(node) && node.text.endsWith(".html"))
+        html.add(slash(NodePath.join(NodePath.dirname(configPath), node.text)));
+      ts.forEachChild(node, collect);
+    }
+    function visit(node) {
+      if (
+        ts.isPropertyAssignment(node) &&
+        node.name.getText(source).replace(/["']/gu, "") === "input"
+      )
+        collect(node.initializer);
+      else ts.forEachChild(node, visit);
+    }
+    visit(source);
+    if (!html.size) html.add("apps/web/index.html");
+    for (const file of [...html].sort()) {
+      const content = NodeFS.readFileSync(NodePath.join(root, file), "utf8");
+      for (const match of content.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gu)) {
+        const src = match[1].replace(/[?#].*$/u, "");
+        if (isSource(src) && !/^(?:[a-z]+:)?\/\//iu.test(src))
+          inputs.add(
+            slash(
+              NodePath.join(
+                src.startsWith("/") ? "apps/web" : NodePath.dirname(file),
+                src.replace(/^\//u, ""),
+              ),
+            ),
+          );
+      }
+    }
+  }
+  const pages = NodePath.join(root, "apps/marketing/src/pages");
+  function walk(directory) {
+    for (const entry of NodeFS.readdirSync(directory, { withFileTypes: true })) {
+      const path = NodePath.join(directory, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (entry.isFile() && isSource(entry.name) && !isHelper(entry.name))
+        inputs.add(slash(NodePath.relative(root, path)));
+    }
+  }
+  if (NodeFS.existsSync(pages)) walk(pages);
+  return [...inputs].sort();
 }
 
 function runtimeTargets(value) {
@@ -415,6 +474,13 @@ export function inspectLivecode({
   const subjectGraph = new Map();
   const helpers = new Set([...files].filter(isHelper));
   const diagnostics = [];
+  for (const input of discoverProductionInputs(root))
+    if (!entries.includes(input))
+      diagnostics.push({
+        kind: "error",
+        file: input,
+        message: "Production input is missing from the explicit entry list",
+      });
   for (const file of [...files].sort()) {
     const parsed = runtimeImports(file, NodeFS.readFileSync(NodePath.join(root, file), "utf8"));
     if (

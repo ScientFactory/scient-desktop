@@ -3,7 +3,14 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { formatReport, inspectLivecode, runLivecode, runtimeImports } from "./check-livecode.mjs";
+import {
+  discoverProductionInputs,
+  PRODUCTION_ENTRIES,
+  formatReport,
+  inspectLivecode,
+  runLivecode,
+  runtimeImports,
+} from "./check-livecode.mjs";
 
 const directories = [];
 afterEach(() => {
@@ -82,6 +89,39 @@ describe("runtime import syntax", () => {
 });
 
 describe("production subject reachability", () => {
+  it("declares every current production HTML/build and file-routed marketing input", () => {
+    const inputs = discoverProductionInputs(NodePath.resolve(import.meta.dirname, ".."));
+    expect(inputs).toContain("apps/web/src/scient/documentPage/main.tsx");
+    expect(inputs.filter((input) => !PRODUCTION_ENTRIES.includes(input))).toEqual([]);
+  });
+
+  it("rejects newly added HTML inputs and marketing pages until their roots are declared", () => {
+    const f = fixture();
+    f.write(
+      "apps/web/vite.config.ts",
+      "export default { build: { rolldownOptions: { input: { main: new URL('./index.html', import.meta.url), document: new URL('./document.html', import.meta.url) } } } };",
+    );
+    f.write("apps/web/index.html", '<script type="module" src="/src/bootstrap.ts"></script>');
+    f.write("apps/web/document.html", '<script type="module" src="/src/document.ts"></script>');
+    f.write("apps/web/src/bootstrap.ts", "export const bootstrap = true;");
+    f.write("apps/web/src/document.ts", "import './readiness';");
+    f.write("apps/web/src/readiness.ts", "export const ready = true;");
+    f.write("apps/web/src/readiness.test.ts", "import './readiness';");
+    f.write("apps/marketing/src/pages/new.astro", "<p>New page</p>");
+    const entries = [...f.options.entries, ...discoverProductionInputs(f.root)];
+    expect(inspectLivecode({ root: f.root, entries }).tests[0].status).toBe("live");
+    expect(
+      f.inspect().diagnostics.filter((entry) => entry.message.includes("entry list")),
+    ).toHaveLength(3);
+    expect(runLivecode(["--strict"], f.options).exitCode).toBe(1);
+    f.write("apps/marketing/src/pages/another.astro", "<p>Another page</p>");
+    expect(
+      inspectLivecode({ root: f.root, entries }).diagnostics.some((entry) =>
+        entry.file.endsWith("another.astro"),
+      ),
+    ).toBe(true);
+  });
+
   it("finds a dead subject even when its dependencies and test support are live", () => {
     const f = fixture();
     f.write("apps/server/src/main.ts", "import './support'; import type { Dead } from './Dead';");
