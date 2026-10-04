@@ -210,6 +210,32 @@ describe("production subject reachability", () => {
     expect(tests[0].subjects).toEqual(["apps/server/src/testUtils/fakeCli.ts"]);
   });
 
+  it("attributes actual Vitest loads and partial mocks but excludes full substitutions", () => {
+    const f = fixture();
+    f.write("apps/server/src/real.ts", "export const real = true;");
+    const cases = {
+      full: "import './real'; vi.mock('./real', () => ({ real: false }));",
+      partial:
+        "vi.mock('./real', async (importOriginal) => ({ ...(await importOriginal<typeof import('./real')>()) }));",
+      actual:
+        "vi.mock('./real', () => ({})); await vi.importActual<typeof import('./real')>('./real');",
+      dynamicFull: "vi.mock(import('./real'), () => ({}));",
+      dynamicPartial: "vi.mock(import('./real'), async (original) => await original());",
+      alias: "import { vi as testApi } from 'vitest'; await testApi.importActual('./real');",
+      shadow:
+        "vi.mock('./real', (original) => { const wrap = (original) => original(); return {}; });",
+      typesOnly:
+        "vi.mock('./real', (original) => { type Shape = typeof import('./real'); return {}; });",
+    };
+    for (const [name, code] of Object.entries(cases))
+      f.write(`apps/server/src/${name}.test.ts`, code);
+    for (const name of ["partial", "actual", "dynamicPartial", "alias"])
+      expect(f.test(name).subjects).toEqual(["apps/server/src/real.ts"]);
+    for (const name of ["full", "dynamicFull", "shadow", "typesOnly"])
+      expect(f.test(name).status).toBe("no-subject");
+    expect(f.inspect().diagnostics).toEqual([]);
+  });
+
   it("honors actual production imports of test support and exposes that unusual edge", () => {
     const f = fixture();
     f.write("apps/server/src/main.ts", "import './dead.test';");

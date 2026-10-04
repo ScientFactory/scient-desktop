@@ -271,6 +271,26 @@ export function runtimeImports(path, text) {
     true,
   );
   const imports = [];
+  const mocked = [];
+  const viNames = new Set(["vi", "vitest"]);
+  for (const statement of source.statements) {
+    if (
+      ts.isImportDeclaration(statement) &&
+      ["vitest", "vite-plus/test"].includes(statement.moduleSpecifier.text)
+    ) {
+      const bindings = statement.importClause?.namedBindings;
+      if (bindings && ts.isNamedImports(bindings))
+        for (const binding of bindings.elements)
+          if (["vi", "vitest"].includes(binding.propertyName?.text ?? binding.name.text))
+            viNames.add(binding.name.text);
+    }
+  }
+  const viMethod = (node) =>
+    ts.isPropertyAccessExpression(node.expression) &&
+    ts.isIdentifier(node.expression.expression) &&
+    viNames.has(node.expression.expression.text)
+      ? node.expression.name.text
+      : undefined;
   const diagnostics = source.parseDiagnostics.map((diagnostic) => ({
     kind: "error",
     file: path,
@@ -289,7 +309,7 @@ export function runtimeImports(path, text) {
       });
     }
   }
-  function visit(node) {
+  function visit(node, originals = new Map()) {
     // import('x') inside a type, ambient declarations and import type are erased.
     if (
       ts.isTypeNode(node) ||
@@ -329,6 +349,43 @@ export function runtimeImports(path, text) {
         add(node, node.moduleReference.expression);
       return;
     }
+    if (ts.isCallExpression(node)) {
+      const method = viMethod(node);
+      if (method === "mock" || method === "doMock") {
+        const argument = node.arguments[0];
+        const target =
+          argument &&
+          ts.isCallExpression(argument) &&
+          argument.expression.kind === ts.SyntaxKind.ImportKeyword
+            ? argument.arguments[0]
+            : argument;
+        if (target && ts.isStringLiteralLike(target)) mocked.push(target.text);
+        else add(node, target, "mock");
+        const factory = node.arguments[1];
+        if (factory && (ts.isArrowFunction(factory) || ts.isFunctionExpression(factory))) {
+          const callback = factory.parameters[0]?.name;
+          const scope = new Map(originals);
+          for (const parameter of factory.parameters) scope.delete(parameter.name.getText(source));
+          if (callback && ts.isIdentifier(callback)) scope.set(callback.text, target);
+          visit(factory.body, scope);
+        } else if (factory) visit(factory, originals);
+        return;
+      }
+      if (method === "importActual") add(node, node.arguments[0], "actual");
+      if (ts.isIdentifier(node.expression) && originals.has(node.expression.text))
+        add(node, originals.get(node.expression.text), "actual");
+    }
+    // A nested parameter or local binding can shadow the factory callback.
+    if (ts.isFunctionLike(node) || ts.isBlock(node)) {
+      originals = new Map(originals);
+      for (const parameter of node.parameters ?? [])
+        originals.delete(parameter.name.getText(source));
+      if (ts.isBlock(node))
+        for (const statement of node.statements)
+          if (ts.isVariableStatement(statement))
+            for (const declaration of statement.declarationList.declarations)
+              originals.delete(declaration.name.getText(source));
+    }
     if (
       ts.isCallExpression(node) &&
       (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
@@ -345,10 +402,10 @@ export function runtimeImports(path, text) {
       isSource(node.arguments[0].text)
     )
       add(node, node.arguments[0], "url");
-    ts.forEachChild(node, visit);
+    ts.forEachChild(node, (child) => visit(child, originals));
   }
   visit(source);
-  return { imports, diagnostics };
+  return { imports, mocked, diagnostics };
 }
 
 function resolver(root, files, manifests) {
@@ -541,11 +598,17 @@ export function inspectLivecode({
     diagnostics.push(...parsed.diagnostics);
     const targets = new Set();
     const subjectTargets = new Set();
+    const mockTargets = new Set(
+      parsed.mocked.flatMap((specifier) => resolve(file, specifier).targets),
+    );
     for (const imported of parsed.imports) {
+      if (imported.kind === "mock") continue;
       const resolved = resolve(file, imported.specifier);
-      for (const target of resolved.targets) targets.add(target);
-      if (imported.kind !== "url")
-        for (const target of resolved.targets) subjectTargets.add(target);
+      for (const target of resolved.targets) {
+        if (imported.kind !== "actual" && mockTargets.has(target)) continue;
+        targets.add(target);
+        if (imported.kind !== "url") subjectTargets.add(target);
+      }
       if (imported.kind !== "url" && resolved.local && !resolved.targets.length)
         diagnostics.push({
           kind: "error",
