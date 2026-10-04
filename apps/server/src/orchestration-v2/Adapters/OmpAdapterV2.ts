@@ -226,6 +226,15 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
             acquireOmpSessionLock(target, path.join(root, ".session.lock"), locks),
             (lock) => releaseOmpSessionLock(lock, locks),
           );
+          // The owned lock excludes another writer while crash-left prompt files are removed.
+          for (const name of yield* fs.readDirectory(root)) {
+            if (
+              /^scient-(?:prompt|context)-[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}\.txt$/iu.test(
+                name,
+              )
+            )
+              yield* fs.remove(path.join(root, name), { force: true });
+          }
           const mcp =
             input.configureMcp === false ? undefined : readMcpProviderSession(input.threadId);
           if (mcp && mcp.providerInstanceId !== options.instanceId)
