@@ -726,3 +726,19 @@ the final hash repair and merge; it does not certify this combined candidate.
 Independent source and evidence review:
 `full-seam-batch-independent-integration-review-7ef738.md`. Other cleanup lanes,
 full runtime/build/archive checks and manual acceptance remain open.
+
+The composed provenance gate rejects both new owned merges because their second
+parents are newer than the frozen owned-main base. Exact reviewed owned merge
+receipts now record the ordered parents of `7ef738fb31` and `7a4fedcbbe`, with this
+committed maintainer record. The checker validates full IDs, unique receipts,
+actual ordered two-parent identity, inspected-history ancestry and a regular
+committed review record. It exempts only those exact edges; nested unapproved
+donor merges remain rejected. Official target, integration cursor, original base,
+historical donor exceptions and workflow admission modes remain unchanged.
+The complete eighteen-case provenance suite passes, including actual temporary
+Git histories proving reviewed-edge acceptance, exact-parent displacement, nested
+foreign rejection and untracked/symlink report refusal. Scripts compilation,
+scoped formatting/lint/diff and the actual provenance gate against original
+owned main and exact official target pass (`owned-merge-provenance-*-round1.txt`).
+The earlier static-round10 failure is retained as causal evidence. Final composed
+gates remain required after later integrations.

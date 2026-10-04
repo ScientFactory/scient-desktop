@@ -180,6 +180,22 @@ current owned main. In the receipt, retain the original owned base and upstream 
 record the owned-main commit and catch-up merge ID. The catch-up does not advance `integrationBase`
 or replace `lastRefreshMerge` with an owned-main merge.
 
+### Compose reviewed owned implementation branches
+
+Preserve authored Scient branch history when integrating an independently reviewed
+implementation batch. Record each introduced owned merge in
+`upstream-state.json`'s `ownedIntegrationMerges`: a unique ID, full merge commit,
+its two full ordered parent commits, and a committed maintainer review record
+under `docs/`. The provenance checker requires the exact actual parent vector,
+the merge in the inspected candidate's history, and a regular nonempty review
+record committed in that candidate. A local or symlinked report is insufficient.
+
+This records only the exact reviewed merge edges. Every nested merge introduced
+by the implementation branch is still checked; an owned branch must not carry
+an unreviewed upstream PR parent. Keep the original owned base, official target,
+historical donor exceptions and trusted queue/push modes unchanged. An owned
+composition does not advance `integrationBase` or qualify runtime behavior.
+
 ## 4. Audit protected seams
 
 Every alignment explicitly reviews:
