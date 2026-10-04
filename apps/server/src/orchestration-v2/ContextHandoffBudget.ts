@@ -160,21 +160,26 @@ export function historicalMessage(
       text = item.text;
       break;
     case "reasoning":
-      // Portable files explicitly selected this text; native reasoning stays excluded.
-      if (item.runId !== null || item.historyTurnId === undefined || item.nativeItemRef !== null)
+      // Imports and exact forks freeze visible text without retaining execution authority.
+      if (
+        item.runId !== null ||
+        (item.historyTurnId === undefined && item.inheritedFrom?.runId == null) ||
+        item.nativeItemRef !== null
+      )
         return null;
       text = item.text;
       break;
     case "dynamic_tool":
-      // Import stores validated work-log records as inert historical activities.
-      if (
-        item.runId !== null ||
-        item.historyTurnId === undefined ||
-        item.nativeItemRef !== null ||
-        !isImportedActivity(item.input)
-      )
-        return null;
-      text = `${item.input.summary}\n${JSON.stringify(item.input.payload)}`;
+      if (item.runId !== null || item.nativeItemRef !== null) return null;
+      if (item.historyTurnId !== undefined && isImportedActivity(item.input)) {
+        text = `${item.input.summary}\n${JSON.stringify(item.input.payload)}`;
+      } else if (item.inheritedFrom?.runId != null) {
+        text = [
+          `Tool: ${item.toolName}`,
+          `Input: ${JSON.stringify(item.input)}`,
+          `Output: ${typeof item.output === "string" ? item.output : JSON.stringify(item.output)}`,
+        ].join("\n");
+      } else return null;
       break;
     case "command_execution":
       text = [

@@ -35,6 +35,7 @@ import * as Clock from "effect/Clock";
 
 import { ServerConfig } from "../../config.ts";
 import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
+import { historicalMessage } from "../../orchestration-v2/ContextHandoffBudget.ts";
 import { ConversationImporter, type ConversationImportLease } from "./ConversationImporter.ts";
 import { readConversationImportJournal } from "./ConversationImportJournal.ts";
 import {
@@ -47,6 +48,7 @@ import {
   importFixture,
   principal,
   PROVIDER_ID,
+  PROJECT_ID,
   testLease,
   type ImportFixture,
 } from "./conversationImport.test-fixtures.ts";
@@ -104,7 +106,10 @@ class ImportPeer extends Context.Service<
 
 const withImporter = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
-  options: { readonly modelContextWindow?: (model: string) => number } = {},
+  options: {
+    readonly modelContextWindow?: (model: string) => number;
+    readonly sourceTraces?: boolean;
+  } = {},
 ) =>
   Effect.gen(function* () {
     const prompts: string[] = [];
@@ -150,6 +155,33 @@ const withImporter = <A, E, R>(
             send: (turn) =>
               Effect.gen(function* () {
                 prompts.push(turn.message.text);
+                if (options.sourceTraces && turn.message.text === "Trace source") {
+                  yield* publish({
+                    type: "text",
+                    id: "source-thinking",
+                    delta: "Visible retained reasoning",
+                    reasoning: true,
+                  });
+                  yield* publish({ type: "text-completed", id: "source-thinking" });
+                  yield* publish({
+                    type: "tool",
+                    id: "source-tool",
+                    name: "read_file",
+                    input: { path: "data.csv" },
+                    output: "Superseded partial result",
+                    status: "running",
+                  });
+                  yield* publish({
+                    type: "tool",
+                    id: "source-tool",
+                    name: "read_file",
+                    input: { path: "data.csv" },
+                    output: `Retained native result ${"o".repeat(40_000)}`,
+                    status: "completed",
+                  });
+                  yield* publish({ type: "text", id: "source-answer", delta: "Source answer" });
+                  yield* publish({ type: "text-completed", id: "source-answer" });
+                }
                 if (
                   turn.message.text.trimEnd().endsWith("Continue") ||
                   turn.message.text.trimEnd().endsWith("Temporary follow-up")
@@ -1298,4 +1330,74 @@ it.live("the environment cap overrides the maximum preset on actual native fork 
       ConfigProvider.fromUnknown({ T3CODE_CONTEXT_HANDOFF_TOKEN_CAP: "5000" }),
     ),
   ),
+);
+
+it.live(
+  "native fork continuation carries frozen visible reasoning and the final work log before the current request",
+  () =>
+    withImporter(
+      Effect.gen(function* () {
+        const sourceId = ThreadId.make("native-trace-source");
+        const orchestrator = yield* OrchestratorV2;
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("native-trace-create"),
+          threadId: sourceId,
+          projectId: PROJECT_ID,
+          title: "Native trace source",
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          modelSelection: { instanceId: PROVIDER_ID, model: "gpt-5.4" },
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* continueImport(sourceId, MessageId.make("native-trace-input"), "Trace source");
+        const store = yield* ProjectionStoreV2;
+        const source = yield* store.getThreadProjection(sourceId);
+        const answer = source.messages.find((message) => message.text === "Source answer");
+        const thinking = source.turnItems.find((item) => item.type === "reasoning");
+        const work = source.turnItems.find(
+          (item) => item.type === "dynamic_tool" && item.toolName === "read_file",
+        );
+        assert.ok(answer && thinking && work);
+        assert.isNull(historicalMessage(thinking));
+        assert.isNull(historicalMessage(work));
+        const target = ThreadId.make("native-trace-fork");
+        yield* (yield* ConversationForkService).dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make(target),
+          originThreadId: sourceId,
+          newThreadId: target,
+          sourceAssistantMessageId: answer.id,
+          workspaceMode: "local",
+        });
+        const frozen = yield* store.getThreadProjection(target);
+        const retainedThinking = frozen.turnItems.find((item) => item.type === "reasoning");
+        assert.ok(retainedThinking);
+        assert.isUndefined(retainedThinking.historyTurnId);
+        assert.equal(retainedThinking.inheritedFrom?.runId, source.runs.at(-1)?.id);
+        assert.isNull(retainedThinking.runId);
+        assert.isNull(retainedThinking.nativeItemRef);
+        assert.deepEqual(frozen.runtimeRequests, []);
+        assert.deepEqual(frozen.runs, []);
+        yield* continueImport(target, MessageId.make("native-trace-continue"), "Continue");
+        const prompt = (yield* ImportPeer).prompts.at(-1)!;
+        const reasonAt = prompt.indexOf("Visible retained reasoning");
+        const workAt = prompt.indexOf(`Retained native result ${"o".repeat(40_000)}`);
+        const answerAt = prompt.indexOf("Source answer");
+        const currentAt = prompt.lastIndexOf("User message:");
+        assert.isAtLeast(reasonAt, 0);
+        assert.isAbove(workAt, reasonAt);
+        assert.isAbove(answerAt, workAt);
+        assert.isAbove(currentAt, answerAt);
+        assert.notInclude(prompt, "Superseded partial result");
+        assert.isTrue(prompt.trimEnd().endsWith("Continue"));
+        const continued = yield* store.getThreadProjection(target);
+        assert.equal(continued.messages.at(-2)?.text, "Continue");
+        assert.deepEqual((yield* store.getThreadProjection(sourceId)).turnItems, source.turnItems);
+      }),
+      { sourceTraces: true },
+    ),
 );
