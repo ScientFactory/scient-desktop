@@ -20,6 +20,8 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Scope from "effect/Scope";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -2104,6 +2106,169 @@ describe("PiAdapterV2", () => {
       const uiResponse = yield* fake.takeRequest("extension_ui_response");
       assert.equal(uiResponse["id"], "ui-trust");
       assert.equal(uiResponse["confirmed"], true);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  for (const timing of [
+    "answer-first",
+    "timeout-first",
+    "same-tick",
+    "close",
+    "write-failure",
+  ] as const) {
+    it.effect(`resolves a native Pi question exactly once (${timing})`, () =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        let failResponse = timing === "write-failure";
+        const attemptedResponses: PiRpcRecord[] = [];
+        const makeConnection: typeof makePiRpcConnection = (input) =>
+          makePiRpcConnection(input).pipe(
+            Effect.map((connection) => ({
+              ...connection,
+              send: (record) => {
+                if (record.type === "extension_ui_response") attemptedResponses.push(record);
+                if (record.type === "extension_ui_response" && failResponse) {
+                  failResponse = false;
+                  return Effect.fail(
+                    new PiRpcError({ operation: "stdin write", detail: "fixture rejection" }),
+                  );
+                }
+                return connection.send(record);
+              },
+            })),
+          );
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const { runtime, takeEvent, observed } = yield* openRuntime(
+          fake,
+          "default",
+          THREAD_ID,
+          SESSION_ID,
+          undefined,
+          makeConnection,
+        ).pipe(Effect.provideService(Scope.Scope, scope));
+        yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        yield* fake.emit({
+          type: "extension_ui_request",
+          id: "expiring",
+          method: "confirm",
+          title: "Proceed?",
+          timeout: 100,
+        });
+        const pending = yield* takeEvent(
+          (event) =>
+            event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+        );
+        if (pending.type !== "runtime_request.updated") return;
+        const answer = runtime.respondToRuntimeRequest({
+          requestId: pending.runtimeRequest.id,
+          decision: "accept",
+        });
+        if (timing === "answer-first") {
+          yield* answer;
+          yield* TestClock.adjust("101 millis");
+        } else if (timing === "same-tick") {
+          yield* Effect.all([answer.pipe(Effect.result), TestClock.adjust("100 millis")], {
+            concurrency: "unbounded",
+          });
+        } else if (timing === "write-failure") {
+          assert.equal((yield* answer.pipe(Effect.result))._tag, "Failure");
+          yield* TestClock.adjust("101 millis");
+        } else if (timing === "close") {
+          yield* Scope.close(scope, Exit.void);
+          yield* TestClock.adjust("101 millis");
+        } else {
+          yield* TestClock.adjust("101 millis");
+        }
+        assert.equal((yield* answer.pipe(Effect.result))._tag, "Failure");
+        const responses = fake
+          .allRequests()
+          .filter((record) => record.type === "extension_ui_response");
+        if (timing === "close") {
+          // Scope closure has already stopped the native stdin writer. The
+          // request is cancelled once locally and can never be answered later.
+          assert.equal(attemptedResponses.length, 1);
+          assert.equal(attemptedResponses[0]?.cancelled, true);
+          assert.equal(responses.length, 0);
+        } else {
+          assert.equal(responses.length, 1);
+          assert.equal(responses[0]?.id, "expiring");
+        }
+        if (timing === "answer-first") assert.equal(responses[0]?.confirmed, true);
+        if (timing === "timeout-first" || timing === "write-failure")
+          assert.equal(responses[0]?.cancelled, true);
+        if (timing !== "close")
+          assert.equal(
+            observed.filter(
+              (event) =>
+                event.type === "runtime_request.updated" &&
+                event.runtimeRequest.status !== "pending",
+            ).length,
+            1,
+          );
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+  }
+
+  it.effect("answers native Pi UI while initial prompt acceptance waits", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent, observed } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "preflight",
+        method: "confirm",
+        title: "Approve command",
+        message: "Run the command?",
+      });
+      const pending = yield* takeEvent(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+      );
+      if (pending.type !== "runtime_request.updated") return;
+      for (const invalid of [false, 12, {}, [], [12], "   ", "anything", ["true", "false"]]) {
+        assert.equal(
+          (yield* runtime
+            .respondToRuntimeRequest({
+              requestId: pending.runtimeRequest.id,
+              answers: { preflight: invalid },
+            })
+            .pipe(Effect.result))._tag,
+          "Failure",
+        );
+      }
+      assert.equal(
+        fake.allRequests().filter((record) => record.type === "extension_ui_response").length,
+        0,
+      );
+      yield* runtime.respondToRuntimeRequest({
+        requestId: pending.runtimeRequest.id,
+        decision: "accept",
+      });
+      assert.equal((yield* fake.takeRequest("extension_ui_response")).confirmed, true);
+      assert.isFalse(
+        observed.some(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.acceptedAt !== undefined,
+        ),
+      );
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "agent_settled" });
+      assert.equal(
+        (yield* takeEvent((event) => event.type === "turn.terminal")).type,
+        "turn.terminal",
+      );
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 

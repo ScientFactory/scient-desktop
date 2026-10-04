@@ -1214,6 +1214,14 @@ export function makePiAdapterV2(
           });
         });
 
+      yield* Effect.addFinalizer(() =>
+        sessionEventPermit.withPermits(1)(
+          Effect.gen(function* () {
+            yield* cancelPendingPrompts(yield* DateTime.now);
+          }),
+        ),
+      );
+
       const handleExtensionUiRequest = Effect.fnUntraced(function* (event: PiRpcRecord) {
         const method = recordString(event, "method");
         const nativeRequestId = recordString(event, "id");
@@ -1351,7 +1359,7 @@ export function makePiAdapterV2(
                 requestId,
                 questions: [piQuestion(nativeRequestId, method, title, event)],
               };
-        pendingPrompts.set(String(requestId), {
+        const pending: PendingPiPrompt = {
           nativeRequestId,
           method,
           questionId: nativeRequestId,
@@ -1359,7 +1367,23 @@ export function makePiAdapterV2(
           runtimeRequest,
           node,
           turnItem,
-        });
+        };
+        pendingPrompts.set(String(requestId), pending);
+        const timeout = recordNumber(event, "timeout");
+        if (timeout !== undefined && timeout >= 0) {
+          yield* Effect.sleep(Duration.millis(timeout)).pipe(
+            Effect.andThen(
+              sessionEventPermit.withPermits(1)(
+                Effect.gen(function* () {
+                  if (pendingPrompts.get(String(requestId)) !== pending) return;
+                  pendingPrompts.delete(String(requestId));
+                  yield* cancelPrompt(pending, yield* DateTime.now);
+                }),
+              ),
+            ),
+            Effect.forkIn(scope),
+          );
+        }
         yield* emit({
           type: "runtime_request.updated",
           driver: PI_PROVIDER,
@@ -2743,6 +2767,7 @@ export function makePiAdapterV2(
               );
             }
             const response = piUiResponse(pending, requestInput.decision, requestInput.answers);
+            if (response === undefined) return yield* protocolError("Invalid Pi extension answer.");
             yield* connection.send({
               type: "extension_ui_response",
               id: pending.nativeRequestId,
@@ -3150,17 +3175,21 @@ function piUiResponse(
   pending: PendingPiPrompt,
   decision: ProviderApprovalDecision | undefined,
   answers: Record<string, unknown> | undefined,
-): PiRpcRecord {
+): PiRpcRecord | undefined {
   if (pending.method === "confirm") {
     if (decision === "accept" || decision === "acceptForSession") return { confirmed: true };
     if (decision === "decline") return { confirmed: false };
-    return { cancelled: true };
+    if (decision === "cancel") return { cancelled: true };
+    const answer = answers?.[pending.questionId];
+    if (answer === "true") return { confirmed: true };
+    if (answer === "false") return { confirmed: false };
+    return undefined;
   }
   const answer = answers?.[pending.questionId];
   // An empty string is a valid dialog value per the RPC spec (the extension
   // receives ""), distinct from cancelling (the extension receives undefined).
   if (typeof answer === "string") return { value: answer };
-  return { cancelled: true };
+  return decision === "cancel" ? { cancelled: true } : undefined;
 }
 
 // ── driver ────────────────────────────────────────────────────
