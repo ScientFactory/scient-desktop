@@ -93,31 +93,18 @@ const animationsOf = (element: Element | null | undefined) =>
     : [];
 const working = { isWorking: true, runningTurnId: TurnId.make("turn-1") };
 
-it("darkens the working label in once per prompt, not again when its row remounts", async () => {
+it("gives the working label the thinking traces' live shine for as long as the turn works", async () => {
   const prompt = entry(1, "First question");
   render("motion:working", [prompt], working);
-  // The label darkens in; the line itself just appears.
-  const line = () => host!.querySelector('[data-timeline-row-kind="working"] .border-b > div');
-  await expect.poll(() => line()).not.toBeNull();
-  expect(animationsOf(line())).toHaveLength(1);
-  // Shown at once (faint, not hidden), at its full size: masking only, nothing moves.
-  expect(line()!.getBoundingClientRect().width).toBeGreaterThan(100);
-  expect(getComputedStyle(line()!).opacity).toBe("1");
-  const style = getComputedStyle(line()!);
-  expect(`${style.maskImage} ${style.webkitMaskImage}`).toContain("linear-gradient");
-  // The list remounts the row (thread switch and back): no replay.
-  render("motion:other", [entry(50, "Elsewhere")]);
-  await frames(4);
-  render("motion:working", [prompt], working);
-  await expect.poll(() => line()).not.toBeNull();
-  expect(animationsOf(line())).toHaveLength(0);
-  // A new prompt's working line draws in again.
-  render("motion:working", [prompt, entry(2, "Second question")], {
-    ...working,
-    runningTurnId: TurnId.make("turn-2"),
-  });
-  await frames(4);
-  expect(animationsOf(line())).toHaveLength(1);
+  const shine = () =>
+    host!.querySelector('[data-timeline-row-kind="working"] .live-activity-focus');
+  await expect.poll(() => shine()).not.toBeNull();
+  // The same overlay the thinking row uses, and no one-time entrance on the label.
+  expect(
+    host!.querySelector('[data-timeline-row-kind="thinking"] .live-activity-focus'),
+  ).not.toBeNull();
+  const label = host!.querySelector('[data-timeline-row-kind="working"] .border-b > div');
+  expect(animationsOf(label)).toHaveLength(0);
 });
 
 it("plays the entrance for a first prompt being placed, and for no other prompt", async () => {
@@ -145,7 +132,7 @@ it("plays the entrance for a first prompt being placed, and for no other prompt"
   expect(animationsOf(bubble(later.message.id))).toHaveLength(0);
 });
 
-it("reveals each paragraph of a streaming answer top-down, in turn, once, and nothing else", async () => {
+it("inks each paragraph of a streaming answer in line by line, in turn, once, and nothing else", async () => {
   const prompt = entry(1, "Question");
   const answer = (text: string, streaming: boolean) => ({
     ...entry(2, text),
@@ -160,8 +147,9 @@ it("reveals each paragraph of a streaming answer top-down, in turn, once, and no
   render("motion:stream", [prompt, answer("First paragraph.\n\nSecond paragraph.", true)], working);
   await expect.poll(() => paragraphs().length).toBe(2);
   expect(animationsOf(paragraphs()[1])).toHaveLength(1);
-  // It waits for the first to finish revealing: one after the other, top to bottom.
-  expect(Number(animationsOf(paragraphs()[1])[0]!.effect!.getTiming().delay)).toBeGreaterThan(0);
+  // Inked in through the line mask, after the first: one after the other, top to bottom.
+  expect(paragraphs()[1]!.classList.contains("streamed-ink")).toBe(true);
+  expect(Number(animationsOf(paragraphs()[1])[0]!.effect!.getTiming().delay)).toBeGreaterThan(150);
   // Remounted mid-stream (a thread switch and back): nothing replays.
   render("motion:elsewhere-stream", [entry(70, "Elsewhere")]);
   await frames(4);

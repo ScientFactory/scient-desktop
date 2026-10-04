@@ -326,8 +326,6 @@ interface TimelineRowActivityState {
   isWorking: boolean;
   /** A thread's first prompt while it is being placed: it plays its entrance. */
   enteringPromptId: string | null;
-  /** The prompt the current working line belongs to: its line draws in once. */
-  workingLineKey: string | null;
   isPreparingWorktree: boolean;
   isCompacting: boolean;
   isRevertingCheckpoint: boolean;
@@ -391,39 +389,8 @@ const PROMPT_ENTRANCE_KEYFRAMES: Keyframe[] = [
   { opacity: 1, clipPath: "inset(0 0 0 0)" },
 ];
 const PROMPT_ENTRANCE_TIMING: KeyframeAnimationOptions = { duration: 300, delay: 100 };
-// The working label shows at once, faint, and a wide soft edge darkens it to
-// full color from left to right. Its line simply appears. Masking only: nothing moves.
-const WORKING_HEADER_MASK = "linear-gradient(to right, #000 33.3%, rgb(0 0 0 / 0.25) 66.6%)";
-const WORKING_HEADER_KEYFRAMES: Keyframe[] = [
-  {
-    maskImage: WORKING_HEADER_MASK,
-    maskSize: "300% 100%",
-    maskPosition: "100% 0",
-    webkitMaskImage: WORKING_HEADER_MASK,
-    webkitMaskSize: "300% 100%",
-    webkitMaskPosition: "100% 0",
-  },
-  {
-    maskImage: WORKING_HEADER_MASK,
-    maskSize: "300% 100%",
-    maskPosition: "0% 0",
-    webkitMaskImage: WORKING_HEADER_MASK,
-    webkitMaskSize: "300% 100%",
-    webkitMaskPosition: "0% 0",
-  },
-];
-// Slow and even: an ease-in-out, not a fast start.
-const WORKING_HEADER_EASING = "cubic-bezier(0.45, 0, 0.55, 1)";
-const WORKING_HEADER_TIMING: KeyframeAnimationOptions = {
-  duration: 1400,
-  delay: 100,
-  easing: WORKING_HEADER_EASING,
-};
-// After a first prompt's entrance (100ms delay + 300ms) settles.
-const WORKING_HEADER_AFTER_ENTRANCE_TIMING: KeyframeAnimationOptions = {
-  ...WORKING_HEADER_TIMING,
-  delay: 400,
-};
+// A finished turn's working header closes evenly, without a fast start.
+const WORKING_ROW_EXIT_EASING = "cubic-bezier(0.45, 0, 0.55, 1)";
 function TimelineListFooter({ composerInset }: { readonly composerInset: number }) {
   return (
     <div aria-hidden>
@@ -1709,15 +1676,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       : null;
   // Only a first prompt is placed with pending positioning (later ones are revealed).
   const enteringPromptId = timelinePositioningPending ? anchorMessageId : null;
-  const workingLineKey = useMemo(
-    () => rows.findLast((row) => row.kind === "message" && row.message.role === "user")?.id ?? null,
-    [rows],
-  );
   const activityState = useMemo<TimelineRowActivityState>(
     () => ({
       isWorking,
       enteringPromptId,
-      workingLineKey,
       isPreparingWorktree,
       isCompacting,
       isRevertingCheckpoint,
@@ -1730,7 +1692,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     [
       backgroundWorktreeSetup,
       enteringPromptId,
-      workingLineKey,
       isCompacting,
       isRevertingCheckpoint,
       isWorking,
@@ -3088,23 +3049,13 @@ const TurnPlanTimelineRow = memo(function TurnPlanTimelineRow({
 });
 
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
-  const {
-    isCompacting,
-    isPreparingWorktree,
-    backgroundWorktreeSetup,
-    workingLineKey,
-    enteringPromptId,
-  } = use(TimelineRowActivityCtx);
-  // The header appears faint and darkens from left to right, once per prompt,
-  // after a first prompt's entrance settles.
-  const headerRef = useEntranceMotion(
-    workingLineKey ? `working-header:${workingLineKey}` : null,
-    WORKING_HEADER_KEYFRAMES,
-    enteringPromptId ? WORKING_HEADER_AFTER_ENTRANCE_TIMING : WORKING_HEADER_TIMING,
-  );
+  const { isCompacting, isPreparingWorktree, backgroundWorktreeSetup } =
+    use(TimelineRowActivityCtx);
+  const exiting = Boolean(row.exiting);
   // One span for every label so the setup-to-working handoff swaps text in
-  // place instead of remounting the row.
-  const shimmer = isPreparingWorktree || isCompacting;
+  // place instead of remounting the row. The label carries the same live
+  // shine as the thinking traces for as long as the turn works.
+  const shimmer = !exiting;
   const label = isPreparingWorktree ? (
     "Setting up worktree…"
   ) : isCompacting ? (
@@ -3117,7 +3068,6 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
     "Working..."
   );
   const rootRef = useRef<HTMLDivElement>(null);
-  const exiting = Boolean(row.exiting);
   useLayoutEffect(() => {
     const root = rootRef.current;
     if (!exiting || !root || typeof root.animate !== "function") return;
@@ -3128,7 +3078,7 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
         { height: `${root.getBoundingClientRect().height}px`, opacity: 1, marginBottom: "0px" },
         { height: "0px", opacity: 0, marginBottom: "-6px" },
       ],
-      { duration: WORKING_ROW_EXIT_MS, easing: WORKING_HEADER_EASING, fill: "forwards" },
+      { duration: WORKING_ROW_EXIT_MS, easing: WORKING_ROW_EXIT_EASING, fill: "forwards" },
     );
   }, [exiting]);
   return (
@@ -3136,10 +3086,7 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
       ref={rootRef}
       className={cn("border-b border-border/60 pb-2 pt-1", exiting && "overflow-hidden")}
     >
-      <div
-        ref={headerRef}
-        className="flex h-6 min-w-0 items-baseline gap-2 px-1 text-sm leading-relaxed text-muted-foreground tabular-nums"
-      >
+      <div className="flex h-6 min-w-0 items-baseline gap-2 px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">
         <span
           ref={shimmer ? observeVisibleAnimation : undefined}
           className="relative shrink-0 overflow-hidden whitespace-nowrap"

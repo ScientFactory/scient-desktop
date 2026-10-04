@@ -21,11 +21,12 @@ Send motion (Scient): the draft hero composer's move to the thread always animat
 (`DRAFT_HERO_TRANSITION_DURATION_MS`, decelerating curve), not only with the opt-in panel
 animation setting; reduced motion skips it. A first prompt being placed is revealed top-down
 and fades in on the same curve (clip and opacity only, never a transform, so the reveal's
-measurements hold), and the "Working for" label shows faint and darkens from left to right once per prompt (a slow
-mask sweep; its line just appears)
+measurements hold), and the "Working for" label carries the thinking traces' live shine (ActivityShimmerOverlay)
+for as long as the turn works; its line just appears
 (`chat/timelineEntranceMotion.ts`; played entrances never replay on row remount). While an
-answer streams, each block (the first included) is revealed top-down line by line, one block
-after the other (about 200ms a line, linear), counted per message so remounted rows never replay;
+answer streams, each block (the first included) shows at once, lighter, and is inked in line by
+line from left to right (about 300ms a line, `.streamed-ink` mask, registered `--ink-line`/`--ink-x`),
+one block after the other, counted per message so remounted rows never replay;
 each block starts 150ms after it arrives. A followed response's scroll is velocity-based: it
 accelerates gently, cruises at most 1px/ms, brakes into place, and while text is being revealed
 goes no faster than needed to arrive as it finishes (`streamingRevealEndsAt`) (`chat/useStreamingBlockEntrance.ts`). The

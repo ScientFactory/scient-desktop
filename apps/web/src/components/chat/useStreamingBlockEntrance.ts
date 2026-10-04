@@ -3,34 +3,30 @@ import { type RefObject, useLayoutEffect } from "react";
 /** The text blocks a streamed answer arrives in (providers send whole paragraphs). */
 const STREAMED_BLOCK_SELECTOR = "p, li, h1, h2, h3, h4, h5, h6, blockquote, table, hr";
 
-// Each block is revealed from the top down, a soft edge moving down at a steady
-// pace (about a line at a time), as if it were being written. Masking only:
-// nothing moves, so the reveal and scroll measurements are unaffected.
-const BLOCK_REVEAL_MASK = "linear-gradient(to bottom, #000 33.3%, transparent 66.6%)";
-const BLOCK_REVEAL_KEYFRAMES: Keyframe[] = [
-  {
-    maskImage: BLOCK_REVEAL_MASK,
-    maskSize: "100% 300%",
-    maskPosition: "0 100%",
-    webkitMaskImage: BLOCK_REVEAL_MASK,
-    webkitMaskSize: "100% 300%",
-    webkitMaskPosition: "0 100%",
-  },
-  {
-    maskImage: BLOCK_REVEAL_MASK,
-    maskSize: "100% 300%",
-    maskPosition: "0 0",
-    webkitMaskImage: BLOCK_REVEAL_MASK,
-    webkitMaskSize: "100% 300%",
-    webkitMaskPosition: "0 0",
-  },
-];
-const REVEAL_MS_PER_LINE = 200;
+// Each block shows at once, lighter, and is inked in line by line: a soft dark
+// edge runs across each line from left to right and the text stays dark behind
+// it, one block after the other. Masking only (`.streamed-ink`): nothing moves.
+const INK_MS_PER_LINE = 300;
+/** A long block inks faster per line, so it never takes longer than this. */
+const MAX_INK_MS = 2400;
 const REVEAL_LEAD_MS = 150;
-const MIN_REVEAL_MS = 450;
-const MAX_REVEAL_MS = 1800;
-// Steady: the follow scroll keeps the same pace, so the two move as one.
-const REVEAL_EASING = "linear";
+
+/** One sweep per line: the edge crosses line i, then line i + 1 starts. */
+function inkKeyframes(lines: number): Keyframe[] {
+  const frames: Keyframe[] = [];
+  for (let line = 0; line < lines; line += 1) {
+    frames.push({ offset: line / lines, "--ink-line": line, "--ink-x": 0 });
+    frames.push({ offset: (line + 1) / lines - 1e-4, "--ink-line": line, "--ink-x": 1 });
+  }
+  frames.push({ offset: 1, "--ink-line": lines, "--ink-x": 0 });
+  return frames;
+}
+
+function blockLines(block: HTMLElement) {
+  const lineHeight = Number.parseFloat(getComputedStyle(block).lineHeight) || 22;
+  const lines = Math.max(1, Math.round(block.getBoundingClientRect().height / lineHeight));
+  return { lineHeight, lines };
+}
 
 /**
  * When the streamed text being revealed now will be fully shown
@@ -40,12 +36,6 @@ const REVEAL_EASING = "linear";
 let latestRevealEndsAt = 0;
 export function streamingRevealEndsAt() {
   return latestRevealEndsAt;
-}
-
-function revealDuration(block: HTMLElement) {
-  const lineHeight = Number.parseFloat(getComputedStyle(block).lineHeight) || 22;
-  const lines = Math.max(1, Math.round(block.getBoundingClientRect().height / lineHeight));
-  return Math.min(MAX_REVEAL_MS, Math.max(MIN_REVEAL_MS, lines * REVEAL_MS_PER_LINE));
 }
 
 /**
@@ -66,9 +56,9 @@ function streamedBlocks(root: HTMLElement): HTMLElement[] {
 
 /**
  * While a message streams, each block that arrives (a paragraph, list item,
- * heading…) is revealed from the top down, line by line, one block after the
- * other, instead of appearing in one frame; the first one too, which arrives
- * with the message's row. Blocks that
+ * heading…) shows at once, lighter, and is inked in line by line from left to
+ * right, one block after the other, instead of appearing in one frame; the
+ * first one too, which arrives with the message's row. Blocks that
  * already entered never replay; finished messages and reduced motion are left
  * alone.
  */
@@ -90,7 +80,7 @@ export function useStreamingBlockEntrance(
     let entered = messageId
       ? (enteredBlockCounts.get(messageId) ?? 0)
       : streamedBlocks(root).length;
-    // Blocks reveal one after the other: a block waits for the one before it.
+    // Blocks ink in one after the other: a block waits for the one before it.
     let revealEndsAt = 0;
     const enterNewBlocks = () => {
       const blocks = streamedBlocks(root);
@@ -99,15 +89,20 @@ export function useStreamingBlockEntrance(
         const now = performance.now();
         // A short lead: the follow scroll is already moving when it starts showing.
         const delay = Math.max(REVEAL_LEAD_MS, revealEndsAt - now);
-        const duration = revealDuration(block);
+        const { lineHeight, lines } = blockLines(block);
+        const duration = Math.min(MAX_INK_MS, lines * INK_MS_PER_LINE);
         revealEndsAt = now + delay + duration;
         latestRevealEndsAt = Math.max(latestRevealEndsAt, revealEndsAt);
-        block.animate(BLOCK_REVEAL_KEYFRAMES, {
+        block.style.setProperty("--ink-lh", `${lineHeight}px`);
+        block.classList.add("streamed-ink");
+        const ink = block.animate(inkKeyframes(lines), {
           duration,
           delay,
-          easing: REVEAL_EASING,
+          easing: "linear",
           fill: "backwards",
         });
+        const inked = () => block.classList.remove("streamed-ink");
+        ink.finished.then(inked, inked);
       }
       entered = Math.max(entered, blocks.length);
       if (!messageId) return;

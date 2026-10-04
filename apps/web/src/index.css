@@ -652,6 +652,64 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   margin-left: var(--live-activity-focus-width);
 }
 
+/* A streamed block, while it is inked in (chat/useStreamingBlockEntrance.ts):
+   lines already inked are full strength, the current line is inked from left
+   to right with a soft edge, and the lines below wait, readable but lighter. */
+@property --ink-line {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+@property --ink-x {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+.streamed-ink {
+  --ink-faint: rgb(0 0 0 / 0.42);
+  --ink-edge: 2.5rem;
+  --ink-front: calc(var(--ink-x) * (100% + var(--ink-edge)));
+  --ink-top: calc(var(--ink-line) * var(--ink-lh, 1.5em));
+  -webkit-mask-image:
+    linear-gradient(#000, #000),
+    linear-gradient(
+      to right,
+      #000 calc(var(--ink-front) - var(--ink-edge)),
+      var(--ink-faint) var(--ink-front)
+    ),
+    linear-gradient(var(--ink-faint), var(--ink-faint));
+  mask-image:
+    linear-gradient(#000, #000),
+    linear-gradient(
+      to right,
+      #000 calc(var(--ink-front) - var(--ink-edge)),
+      var(--ink-faint) var(--ink-front)
+    ),
+    linear-gradient(var(--ink-faint), var(--ink-faint));
+  -webkit-mask-size:
+    100% var(--ink-top),
+    100% var(--ink-lh, 1.5em),
+    100% 100%;
+  mask-size:
+    100% var(--ink-top),
+    100% var(--ink-lh, 1.5em),
+    100% 100%;
+  -webkit-mask-position:
+    0 0,
+    0 var(--ink-top),
+    0 calc(var(--ink-top) + var(--ink-lh, 1.5em));
+  mask-position:
+    0 0,
+    0 var(--ink-top),
+    0 calc(var(--ink-top) + var(--ink-lh, 1.5em));
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  /* List markers sit outside the box; leave them unmasked. */
+  mask-clip: no-clip;
+}
+
 @property --assistant-citation-highlight-opacity {
   syntax: "<number>";
   inherits: true;
