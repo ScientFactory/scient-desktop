@@ -428,7 +428,6 @@ import {
   removeInlineContextReference,
   stripInlineContextReferences,
 } from "../lib/composerContextReferences";
-import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
 import {
   buildMessageContext,
   previewAnnotationContextLabel,
@@ -9684,9 +9683,6 @@ function ChatViewContent(props: ChatViewProps) {
                     "The previous request may have started. Open its thread to check before sending again.",
                   );
                 }
-                const supportsInlineMessageContext =
-                  appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
-                    .capabilities.inlineMessageContext === true;
                 requestMayHaveStarted = true;
                 const result = await startThreadTurn({
                   environmentId,
@@ -9696,15 +9692,9 @@ function ChatViewContent(props: ChatViewProps) {
                     message: {
                       messageId: newMessageId(),
                       role: "user",
-                      text:
-                        context && !supportsInlineMessageContext
-                          ? serializeLegacyContextMessage({
-                              text: target.text,
-                              records: context.records,
-                            })
-                          : target.text,
+                      text: target.text,
                       attachments,
-                      ...(context && supportsInlineMessageContext ? { context } : {}),
+                      ...(context ? { context } : {}),
                     },
                     modelSelection: target.selection,
                     titleSeed: title,
@@ -10117,21 +10107,6 @@ function ChatViewContent(props: ChatViewProps) {
                   ),
                 );
                 if (context === undefined) return {};
-                // Read the capability at dispatch time: the upload and persistence
-                // awaits above can span a server reconnect that changes it. Servers
-                // from before inline context drop the records and forward the links
-                // as literal text, so their turns carry the payload the legacy way.
-                const supportsInlineMessageContext =
-                  appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
-                    .capabilities.inlineMessageContext === true;
-                if (!supportsInlineMessageContext) {
-                  return {
-                    text: serializeLegacyContextMessage({
-                      text: outgoingMessageText,
-                      records: context.records,
-                    }),
-                  };
-                }
                 return { context };
               })(),
             },
@@ -10742,15 +10717,8 @@ function ChatViewContent(props: ChatViewProps) {
               message: {
                 messageId: messageIdForSend,
                 role: "user",
-                ...(appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)
-                  ?.environment.capabilities.inlineMessageContext === true
-                  ? { text: outgoingMessageText, ...(context ? { context } : {}) }
-                  : {
-                      text: serializeLegacyContextMessage({
-                        text: outgoingMessageText,
-                        records: context?.records ?? [],
-                      }),
-                    }),
+                text: outgoingMessageText,
+                ...(context ? { context } : {}),
                 attachments: [],
               },
               modelSelection: ctxSelectedModelSelection,

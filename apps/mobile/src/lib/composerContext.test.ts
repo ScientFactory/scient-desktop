@@ -1,4 +1,3 @@
-import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
 import { buildProjectThreadStartTurnInput } from "./projectThreadStartTurn";
 import {
   ProjectId,
@@ -206,8 +205,8 @@ describe("mobile composer context", () => {
   });
 });
 
-describe("host context compatibility", () => {
-  it.each(["existing-thread", "new-task"])("serializes %s sends for an older host", (path) => {
+describe("native context delivery", () => {
+  it.each(["existing-thread", "new-task"])("preserves inline records on %s sends", (path) => {
     const pr = pullRequestComposerContext(
       {
         number: 42,
@@ -230,8 +229,7 @@ describe("host context compatibility", () => {
     };
     const context: OrchestrationMessageContext = { version: 1, records: [terminal, review, pr] };
     const text = context.records.map(formatComposerContextReference).join(" ");
-    // Missing capability on an old host is treated like false by both dispatch paths.
-    const wire = serializeComposerMessageForServer(text, context, false);
+    const wire = serializeComposerMessageForServer(text, context);
     const message =
       path === "existing-thread"
         ? wire
@@ -253,21 +251,8 @@ describe("host context compatibility", () => {
             startFromOrigin: false,
             worktreeBranchName: "unused",
           }).message;
-    expect(message).not.toHaveProperty("context");
-    expect(message.text).not.toContain("t3-context://");
-    expect(
-      upgradeLegacyContextMessage(message.text).records.find(
-        (record) => record.kind === "terminal",
-      ),
-    ).toMatchObject({
-      text: terminal.text,
-      lineStart: terminal.lineStart,
-      lineEnd: terminal.lineEnd,
-    });
-    expect(message.text).toContain(review.text);
-    expect(message.text).toContain(review.diff);
-    expect(message.text).toContain(pr.pullRequest!.url);
-    expect(serializeComposerMessageForServer(text, context, true)).toEqual({ text, context });
+    expect(message.context).toEqual(context);
+    expect(message.text).toBe(text);
     expect(context.records).toEqual([terminal, review, pr]);
   });
 });
