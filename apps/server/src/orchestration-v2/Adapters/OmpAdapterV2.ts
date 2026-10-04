@@ -138,6 +138,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
   const target = options.target ?? ompTarget;
   const locks = makeOmpSessionLockRegistry();
   return makeNativeSessionAdapterV2({
+    settleIdleSubagents: true,
     ...options,
     mcpSessionInjection: true,
     defaultCwd: options.serverConfig.cwd,
@@ -638,9 +639,11 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
               case "background-result":
                 return update.detail
                   ? onUpdate({
-                      type: "text",
+                      type: "tool",
                       id: "background-result",
-                      delta: client.redaction.text(update.detail),
+                      name: "Background result",
+                      status: "completed",
+                      output: client.redaction.text(update.detail),
                     })
                   : Effect.void;
               case "compacted":
@@ -674,7 +677,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                 return Effect.void;
               case "turn-started":
                 ordinaryTools.clear();
-                return Effect.void;
+                return onUpdate({ type: "continuation-started" });
               case "model-changed":
                 return update.model
                   ? onUpdate({ type: "model", model: update.model })

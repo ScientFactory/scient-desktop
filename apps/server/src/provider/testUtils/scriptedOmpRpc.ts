@@ -96,6 +96,7 @@ export const scriptedOmpRpc = (input: {
     log: [] as Array<string>,
     prompts: [] as Array<{ readonly frame: Frame; readonly bytes: number }>,
     pendingAsyncWork: false,
+    streaming: false,
     sessionOrdinal: 0,
     frames: [] as Array<Frame>,
     shutdowns: 0,
@@ -191,7 +192,7 @@ export const scriptedOmpRpc = (input: {
                 : { thinkingLevel: state.thinkingLevel }),
               sessionFile,
               sessionId: `models-session-${state.sessionOrdinal}`,
-              isStreaming: false,
+              isStreaming: state.streaming,
               hasPendingAsyncWork: state.pendingAsyncWork,
               isSettled: !state.pendingAsyncWork,
             });
