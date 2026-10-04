@@ -1581,6 +1581,9 @@ export const layer: Layer.Layer<
             message: input.message,
             modelSelection: input.modelSelection,
             runtimePolicy: input.runtimePolicy,
+            ...(input.shouldStartProviderTurn === undefined
+              ? {}
+              : { shouldStartProviderTurn: input.shouldStartProviderTurn }),
           };
           const compact =
             input.message.attachments.length === 0 &&

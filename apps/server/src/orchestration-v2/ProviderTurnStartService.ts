@@ -155,7 +155,29 @@ export const layer: Layer.Layer<
             ),
             Effect.catchCause(() => Effect.succeed(input.inheritedBackgroundTurnItems)),
           ),
-        shouldStartProviderTurn: () => isCurrentAttemptInStatus("running"),
+        shouldStartProviderTurn: () =>
+          isCurrentAttemptInStatus("running").pipe(
+            Effect.flatMap((current) =>
+              current
+                ? projectionStore
+                    .hasUnpairedRunInterruptRequest(
+                      input.threadId,
+                      idAllocator.derive.runSignalTurnItem({
+                        runId: input.runId,
+                        signal: "interrupt-request",
+                      }),
+                      idAllocator.derive.runSignalTurnItem({
+                        runId: input.runId,
+                        signal: "interrupt-result",
+                      }),
+                    )
+                    .pipe(
+                      Effect.map((requested) => !requested),
+                      Effect.catchCause(() => Effect.succeed(false)),
+                    )
+                : Effect.succeed(false),
+            ),
+          ),
         shouldFinalizeRun: () =>
           projectionStore.getRuntimeRecoveryProjection(input.threadId).pipe(
             Effect.map((current) => {

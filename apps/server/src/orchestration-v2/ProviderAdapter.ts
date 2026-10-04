@@ -418,6 +418,8 @@ export interface ProviderAdapterV2TurnInput {
   readonly message: ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
+  /** Recheck after native preparation and immediately before the prompt write. */
+  readonly shouldStartProviderTurn?: () => Effect.Effect<boolean>;
 }
 
 export interface ProviderAdapterV2SteerInput {
