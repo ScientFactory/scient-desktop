@@ -4,13 +4,16 @@
 
 **Status: integration corrections under final qualification.** The literal upstream
 merge, owned-main catch-up and native execution corrections are committed locally
-through `c2ff7e742d8c4057159bb2626898754889d34466`, including qualified stash
+through `d7b4042e3d`, with reviewed seam batch `7ef738fb31` composed afterward,
+including qualified stash
 provenance, queue reservation, historical task transport, direct Node/bundle
 compatibility, native retry history, persisted fork boundaries and fork handoff
-presentation. Registry provenance/removal and OMP production-process corrections are now
-qualified in their scopes and await the final composition gates. Scoped proof is recorded below; historical passing gates do not establish readiness
-of the combined candidate. The complete server run exposed failures and was
-interrupted for repair; it is not a passing suite.
+presentation, Registry provenance/removal and OMP production-process corrections.
+Scoped proof is recorded below; historical passing gates do not establish readiness
+of the combined candidate. The completed server gate at that checkpoint reports
+11,928 passed, 21 failed and 152 skipped cases across 890 files. Its seven failing
+files are under repair; this is not a passing suite. All 32 package typechecks
+pass at that checkpoint, while final composition and repaired-app gates remain open.
 
 The clean detached review candidate at `3564658e28` and MAIN reference at
 `33ab8e307a` run in isolated profiles. The owner is now using the review app;
@@ -24,7 +27,8 @@ Collaborative-preview screenshot capture fails and its browser animation frames
 do not arrive in a bounded probe. Raising the owned native window subsequently
 produces a current held-edit screenshot at `3564658e28`; the six final comparison
 states still require capture. DOM and SQL evidence are not visual approval. The separate
-V1-removal lane has not delivered its patch. No publication or user acceptance
+V1-removal lane has delivered its reviewed seam extractions; V1 deletion and its
+other active repairs remain separate. No publication or user acceptance
 is claimed.
 
 ## Candidate and ancestry
@@ -648,3 +652,194 @@ All21 cases in the complete native hold-policy file pass, including four actual 
 The original E2/B3 gate now qualifies47 cases across three complete files:25 adapter,20 process and two actual default-process/native SQL cases. The test executable is deliberately simulated, but production executable version admission, process factory, stdio/RPC, provider manager, EventSink, SQLite, interruption and saved-transcript Resume are exercised. Normal successful completion drains the unheld queue; Stop confirms the owned child is gone, retains the original transcript prefix once, and Resume delivers each queued user/assistant exactly once through the replacement process. Every opened peer PID exits. The previous actual-process red result was caused by the durable queue-ordering defect corrected above.
 
 OMP locks now release only after observing the exact owned child exit, including signal termination without a numeric exit code. An uncertain shutdown keeps the lock; a later observation may confirm that same child exited. Finalizers retain exact-token guards against a replacement owner. A separately confirmed native kill-await gap now has a finite deadline: two seconds of stdin grace, three for the native kill and three for exit lookup. Deadline expiry is not exit proof. Removing only this deadline makes the controlled-clock regression fail at its original bound and cleanly tear down; restoring it passes. Canonical server TypeScript/Effect, six-path formatting and lint pass without errors or warnings. The constructor still relies on the existing scoped process/spawner cleanup before handing over its process; compounded OS kill failure in interrupted construction is not newly qualified. Exact source manifests, causal red/green logs and native-process evidence are in the final E2 OMP handoff. This proves local host integration with controlled peers, not live vendor/account compatibility.
+
+### Final review and composed-gate repairs
+
+The immutable full-diff review at `c4aad71535` found one confirmed P2: OpenCode 2
+marked the offered turn accepted before checking its typed prompt response and
+exact owner. Foreign response IDs or sessions could therefore consume a source
+plan without native acceptance evidence. The adapter now validates response,
+registered session, provider thread, active turn and latest attempt/root/native
+cursor before promotion. A genuine native execution event remains independent
+acceptance evidence; terminal-before-response status and usage are retained.
+
+The causal baseline fails both foreign-response cases through the actual adapter
+and SQLite EventSink, while exact acknowledgement and displaced-attempt guards
+pass. The corrected complete four-file batch passes 132 unique cases; the final
+four-case SQL file also passes after a test-only nullable-node correction.
+Canonical server TypeScript/Effect and three-file formatting/lint pass without
+errors or warnings. The permission fixture now uses one subscriber to route
+actual request and terminal events, avoiding competing consumers of its unicast
+queue. Existing permission, retry, fork and usage assertions remain. Independent
+source review finds no remaining confirmed defect in the bounded adapter repair.
+Exact manifests and causal logs are recorded in `oc2-ack-final-handoff.md`.
+Combined qualification and vendor/manual acceptance remain separate.
+
+The complete server checkpoint exposed outdated fixture assumptions for explicit
+Resume after setup failure, attempt-specific queue-release command IDs, newly
+registered Scient migrations, Cursor CLI setup copy and Grok's Scient guidance.
+The startup-failure observer also discarded guarded writes in its mock; production
+already commits failure before refreshing pull requests. Historical boundary
+declarations must name the existing inert migration guards and hydration readers.
+These corrections retain attachment bytes, checkpoint workspace, native ownership,
+permission argv and ordering assertions. The corrected seven complete files pass
+151 cases, and the canonical server TypeScript/Effect check passes with no hard
+diagnostics or warnings. Scoped formatting/lint/diff checks pass. Qualification
+also removed the obsolete V1-reader exemption for the now-native workspace
+authority service and verified the exact twenty-entry Scient migration ledger.
+Two fixture typing errors found by the compiler were repaired without changing
+asserted behavior. The new controlled OMP subprocess fixture is classified by
+its exact path; final composed seam/provenance gates remain required. Evidence:
+`root-server-gate-repairs-*-round3.txt`; earlier failed rounds remain retained.
+
+Answer-attention Addendum 7 now uses one canonical completed-answer selector
+for web acknowledgment, SQL/in-memory Unicode whitespace and binary ID-ordering
+parity, and web/mobile read watermarks based on the exact loaded foreground
+answer. General thread activity no longer publishes an answer-read watermark.
+Explicit null stays authoritative; successful legacy fallback requires absent
+canonical metadata. Same-conversation mark-unread remains sticky, changing
+conversation resets dedupe, and failed visits retry only on a later foreground
+signal with exact-dispatch fencing. Seven complete files pass312 cases; shared,
+server, web and mobile compilers and scoped formatting/lint pass. The104 retained
+lint warnings are at unchanged declaration sites. Independent final source review
+matches all sixteen integrated blobs and finds no remaining bounded defect
+(`addendum7-answer-attention-qualified-handoff.md`,
+`addendum7-answer-attention-final-independent-integration-review.md`). Whole
+candidate and actual foreground/reload/second-window acceptance remain open.
+
+### Reviewed seam cleanup integration
+
+The committed cleanup batch `7ef738fb31` is merged with literal lane history
+preserved. Its eight extractions retain host exports, construction timing,
+capability behavior and build phase ownership. Native-preview qualification now
+hashes the extracted association and packaging helpers, so prior evidence cannot
+silently cover changed inputs. Independent immutable seventeen-file review found
+no production behavior regression, but confirmed a missing OMP classification
+for the new provider-settings leaf. The actual composed seam checker reproduces
+that exact failure; only the leaf is added to owned files, retaining the host
+mount and all detection rules. Final seam/provenance gates remain required.
+
+The batch's reported scoped evidence covers433 unique tests across nine complete
+files and32 passing compiler tasks. Its final lint log contains13 retained warnings,
+correcting the earlier four-warning summary. Its older production build precedes
+the final hash repair and merge; it does not certify this combined candidate.
+Independent source and evidence review:
+`full-seam-batch-independent-integration-review-7ef738.md`. Other cleanup lanes,
+full runtime/build/archive checks and manual acceptance remain open.
+
+The composed provenance gate rejects both new owned merges because their second
+parents are newer than the frozen owned-main base. Exact reviewed owned merge
+receipts now record the ordered parents of `7ef738fb31` and `7a4fedcbbe`, with this
+committed maintainer record. The checker validates full IDs, unique receipts,
+actual ordered two-parent identity, inspected-history ancestry and a regular
+committed review record. It exempts only those exact edges; nested unapproved
+donor merges remain rejected. Official target, integration cursor, original base,
+historical donor exceptions and workflow admission modes remain unchanged.
+The complete eighteen-case provenance suite passes, including actual temporary
+Git histories proving reviewed-edge acceptance, exact-parent displacement, nested
+foreign rejection and untracked/symlink report refusal. Scripts compilation,
+scoped formatting/lint/diff and the actual provenance gate against original
+owned main and exact official target pass (`owned-merge-provenance-*-round1.txt`).
+The earlier static-round10 failure is retained as causal evidence. Final composed
+gates remain required after later integrations.
+
+The original D3 requirement now has actual WebSocket endpoint proof rather than
+only a URL predicate test. Absent, older, newer and malformed query protocols
+receive the exact HTTP 426 upgrade response before the live authentication service
+or V2 intake runs; a current HTTP header does not substitute for the required
+query. The positive control reaches actual authentication and an authenticated
+`server.getConfig` WebSocket RPC. The unchanged production admission gate already
+enforced this order. The complete server route file passes 242 cases, with scoped
+formatting/lint and whitespace checks clean. Round1 compilation passed before
+the final same-typed future-version test row; final combined compilation remains
+required. Independent review matches the exact final test and production blobs
+(`d3-ws-protocol-qualified-handoff-round2.md`,
+`d3-ws-protocol-independent-review-round2.md`). Installed-client upgrade and
+remote/mobile acceptance remain separate from this controlled endpoint proof.
+
+### Reviewed architecture and boundary composition
+
+The coordinator composition retains 37 independently reviewed maintainer Markdown
+paths, the owned OpenCode acknowledgement fix and canonical loaded-answer attention
+across server/web/mobile. The architecture documentation explicitly distinguishes
+live V2 execution from old-data readers; inherited test origin is determined from
+Scient-added assertions and fixture/parameter conditions, not title or filename.
+The branch keeps every upstream and owned parent. The skills-release mount repair
+classifies the actual Scient catalog and inherited workspace-manifest fixture,
+without weakening any seam checker or changing runtime behavior.
+
+The composed boundary qualification passes 463 focused cases across server, shared,
+web and mobile, all 32 compiler tasks and scoped formatting/lint. The separate OC2
+owned acknowledgement group passes 100 cases plus its compiler/style checks. Web
+logs retain existing React warnings. The current full seam suite passes after the
+previous two unclassified skills-release references were classified. The final
+provenance/WebSocket composition passes 18 provenance and 242 actual server-route
+cases, scripts/server compilers, scoped formatting/lint and whitespace. Independent
+frozen source reviews accept both incoming patches and the exact resolved tree
+`c6e81605ca603ac82e03099d142cd98c15583b5c`. These are bounded local evidence, not
+whole-candidate, vendor/platform or manual acceptance.
+
+Exact reviewed owned merge edges are recorded below and in upstream-state.json.
+Only their complete ordered vectors are admitted; nested ancestry remains audited.
+The original owned base, official target, integration cursor, historical exceptions
+and trusted workflow flags are unchanged. No runtime qualification is inferred
+from a provenance receipt.
+
+| Merge                                      | First parent                               | Second parent                              |
+| ------------------------------------------ | ------------------------------------------ | ------------------------------------------ |
+| `6dc7de1d74a288c404b9481874c6a77b1986e580` | `7ef738fb31cf7595142254dc8fe6dfd47523aa35` | `b180c89867f74fa67ef4cd008fd913c2292cb5e5` |
+| `649a9caa1e0a7eba51942bf84e475c3d9931a71e` | `6dc7de1d74a288c404b9481874c6a77b1986e580` | `2a672bd865b89e20768476643925b3e85fc2d90f` |
+| `7992b26bef3b9636e2a547c28d1393c8bc4749ac` | `649a9caa1e0a7eba51942bf84e475c3d9931a71e` | `238eb3d822faefa29aef40b1ef70193111b00f16` |
+| `a61371f826c605c8202267cee8a15cc3c7ecce83` | `3911b36ee87de0c827465a1886e0685aad495a74` | `d3bc827adf4fb19ca916355e9f07c6fab86dfac7` |
+
+V1 removal and remaining provider/context/queue preservation fixes still require
+reviewed composition. Final complete checks/build/smoke/package, independent full
+review, current documentation refresh and actual app/manual acceptance remain open.
+
+The broader maintainer review also confirms two stale explanations already in
+this candidate. Accepted fork navigation uses dialog-subtree removal followed
+by a layout commit, preserving source-leaving and retry guards even if an
+animation callback never arrives. Current V2 conversation export is supported;
+offline recovery of the untouched original V1 database is a separate procedure.
+The two paragraphs now match those boundaries. Independent source review:
+`docs-boundaries-independent-integration-review-3911b36.md`. The reviewed architecture-documentation batch is composed here; remaining
+migration guidance still needs a final refresh after core ports and deletion.
+These paragraph corrections do not qualify the whole guide or runtime acceptance.
+
+The desktop smoke gate previously reported success after its launched process
+exited early with code7 and no fatal text. The actual CLI reproduces that false
+pass. The repaired gate requires survival until requested shutdown, accepts only
+the intended graceful exit, rejects forced termination, and evaluates output
+after stream closure. Incomplete inherited pipes cause a bounded failure. The
+original eight-second survival and two-second grace limits are unchanged.
+Eleven real controlled subprocess cases pass, including early exits, launch
+failure, late fatal output and exact descendant cleanup; scoped lint and
+formatting pass without warnings. Independent review matches both integrated
+blobs (`desktop-smoke-gate-qualified-handoff.md`,
+`desktop-smoke-gate-independent-frozen-review.md`). Desktop compilation passes
+but excludes these standalone JavaScript files; actual execution and lint
+qualify them. This proves gate honesty on macOS controlled children, not
+Electron/backend/renderer readiness or Windows execution. Fresh built-app and
+packaged smoke remain required.
+
+The actual original-base provenance gate exposed one additional owned docs-lane
+synchronization edge already in the reviewed architecture ancestry. Record only
+`df7866c8d98f1d9bee15b17f033fa8ed1406d848`, ordered parents
+`fde2233486a4f03ad5577e89a858bcb38cbf88fd` and
+`c4aad71535abbd98c38659711b2cc47b1ab2fe5d`. Its non-documentation blobs
+match that retained alignment parent; nested history remains audited. The failed
+actual gate is retained as evidence, and must pass again on the final composition.
+
+The reviewed smoke/documentation composition retains both parents at
+`c1d9a5ea1d498403b5dc257286bf24f85c838353`, ordered
+`fbbfdd58c28fbc6988aee22d842452c94026d2fe` and
+`736d7c02183a978102b5a0bd2af92537be2b9ff8`. Exact resolved tree
+`8c6831d6cabbeed1ac36a70ce2fd6170f9c6ed28` passes eleven real controlled
+smoke-gate cases, scoped formatting/lint/whitespace and the complete seam path
+classification against frozen upstream `ca7df394ed8151fa77f856beefa90bc60a785d60`.
+The first seam invocation used the old stored cursor and refused V2 mount
+classification; the corrected explicit target/index check passes without changing
+any manifest or checker. Independent frozen composition review preserves all
+rich V2 migration/fork rules and matches both smoke script blobs. Actual final
+ancestry qualification, built-app/packaged smoke and manual acceptance are
+separate gates; none is inferred from this merge receipt.

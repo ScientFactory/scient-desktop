@@ -1,3 +1,4 @@
+import { completedAnswerTimestamp } from "@t3tools/shared/orchestrationV2ThreadShell";
 import {
   parseScopedThreadKey,
   scopeProjectRef,
@@ -213,7 +214,7 @@ function useMarkThreadUnread() {
         return;
       }
       const thread = readThreadShell(target);
-      markThreadUnreadLocal(scopedThreadKey(target), thread?.latestRun?.completedAt);
+      markThreadUnreadLocal(scopedThreadKey(target), completedAnswerTimestamp(thread));
     },
     [markThreadUnreadLocal, markThreadUnreadMutation],
   );

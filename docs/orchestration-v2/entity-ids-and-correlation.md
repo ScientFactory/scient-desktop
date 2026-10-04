@@ -1,5 +1,7 @@
 # Entity IDs And Correlation
 
+Historical V2 design reference; [the maintained architecture](../internals/overview.md) describes the live engine and compatibility boundaries.
+
 ## Principle
 
 Provider ids are evidence. App ids are identity.

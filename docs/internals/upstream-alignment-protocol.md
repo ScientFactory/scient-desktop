@@ -145,6 +145,11 @@ Do not resolve a substantial conflict by taking one whole side without checking 
 their callers. Preserve immutable migration order; an upstream migration number that collides with a
 shipped Scient migration must be renumbered, never reused.
 
+When upstream replaces a subsystem, remove Scient's copy of the old subsystem in the same
+alignment. Never keep superseded execution code compiling beside its replacement: green tests
+of dead code hide lost behavior. Preserve required immutable formats/migrations through bounded
+readers, and port Scient behavior into the live replacement.
+
 ### Extend an existing alignment PR
 
 Continue in its current branch and worktree; do **not** use `alignment:start` or create another
@@ -180,6 +185,22 @@ current owned main. In the receipt, retain the original owned base and upstream 
 record the owned-main commit and catch-up merge ID. The catch-up does not advance `integrationBase`
 or replace `lastRefreshMerge` with an owned-main merge.
 
+### Compose reviewed owned implementation branches
+
+Preserve authored Scient branch history when integrating an independently reviewed
+implementation batch. Record each introduced owned merge in
+`upstream-state.json`'s `ownedIntegrationMerges`: a unique ID, full merge commit,
+its two full ordered parent commits, and a committed maintainer review record
+under `docs/`. The provenance checker requires the exact actual parent vector,
+the merge in the inspected candidate's history, and a regular nonempty review
+record committed in that candidate. A local or symlinked report is insufficient.
+
+This records only the exact reviewed merge edges. Every nested merge introduced
+by the implementation branch is still checked; an owned branch must not carry
+an unreviewed upstream PR parent. Keep the original owned base, official target,
+historical donor exceptions and trusted queue/push modes unchanged. An owned
+composition does not advance `integrationBase` or qualify runtime behavior.
+
 ## 4. Audit protected seams
 
 Every alignment explicitly reviews:
@@ -205,6 +226,13 @@ While composing, run focused tests for every touched contract and protected seam
 entire staged diff for conflict markers, duplicated branches, stale product copy, accidental package
 changes, and silently reintroduced upstream authority. Regenerate generated artifacts and lockfiles
 from the composed sources; do not hand-edit generated conflict blocks.
+
+Before deleting superseded code, inventory Scient-added assertions and fixture or parameter
+conditions, including those inside inherited upstream tests. Exclude only untouched upstream-only
+conditions. Group the remaining promises by feature; mark a behavior **covered** only when a live
+replacement test asserts its deciding conditions, and port real gaps. Test titles, file origin,
+import reachability and test counts do not establish origin or equivalent behavior. Unresolved
+Scient conditions block deletion of their only proving path.
 
 ### 5.1 Read an error count only when the syntax gate is open
 

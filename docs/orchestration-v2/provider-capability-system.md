@@ -1,5 +1,7 @@
 # Provider Capability System
 
+Historical V2 design reference; [the maintained architecture](../internals/overview.md) describes the live engine and compatibility boundaries.
+
 V2 must not assume every provider can do what Codex can do. Provider behavior should be expressed through capabilities and policies, not provider-name conditionals spread across orchestration.
 
 ## Capability Shape

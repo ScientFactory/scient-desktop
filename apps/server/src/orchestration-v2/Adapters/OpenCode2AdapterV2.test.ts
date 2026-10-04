@@ -423,6 +423,7 @@ describe("OpenCode2 adapter", () => {
     "foreign-session",
     "missing-id",
     "terminal-first",
+    "native-start-foreign-id",
   ] as const) {
     it.effect(`confirms only native-owned prompt boundaries: ${proof}`, () =>
       Effect.gen(function* () {
@@ -431,7 +432,10 @@ describe("OpenCode2 adapter", () => {
           releaseTerminal = resolve;
         });
         const body: Record<string, unknown> = {
-          id: proof === "foreign-id" ? "msg_foreign_boundary" : PROMPT_ID,
+          id:
+            proof === "foreign-id" || proof === "native-start-foreign-id"
+              ? "msg_foreign_boundary"
+              : PROMPT_ID,
           sessionID: proof === "foreign-session" ? "ses_foreign_boundary" : SESSION,
           time: { created: 1790656601410 },
           type: "user",
@@ -443,11 +447,15 @@ describe("OpenCode2 adapter", () => {
         const { runtime, thread } = yield* resumed(
           [
             out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
-            ...(proof === "terminal-first" ? [terminalFrame] : []),
+            ...(proof === "terminal-first"
+              ? [terminalFrame]
+              : proof === "native-start-foreign-id"
+                ? [event("session.execution.started", { sessionID: SESSION })]
+                : []),
             replyData("session.prompt", body),
             ...(proof === "terminal-first" || proof === "missing-id" ? [] : [terminalFrame]),
           ],
-          proof === "terminal-first"
+          proof === "terminal-first" || proof === "native-start-foreign-id"
             ? {
                 beforeResponse: (operation) =>
                   operation === "session.prompt" ? nativeTerminalObserved : Promise.resolve(),
@@ -461,6 +469,12 @@ describe("OpenCode2 adapter", () => {
           Stream.runForEach((entry) =>
             Effect.gen(function* () {
               seen.push(entry);
+              if (
+                proof === "native-start-foreign-id" &&
+                entry.type === "provider_turn.updated" &&
+                entry.providerTurn.nativeAcceptance === "accepted"
+              )
+                releaseTerminal?.();
               if (entry.type === "turn.terminal") {
                 releaseTerminal?.();
                 yield* Deferred.succeed(terminal, undefined);
@@ -496,6 +510,21 @@ describe("OpenCode2 adapter", () => {
           );
           assert.ok(latest.acceptedAt);
           assert.equal(latest.nativeAcceptance, "accepted");
+        }
+        if (expectedStrong || proof === "native-start-foreign-id") {
+          assert.equal(latest.nativeAcceptance, "accepted");
+          assert.ok(latest.acceptedAt);
+        }
+        if (proof === "native-start-foreign-id") {
+          assert.isTrue(
+            seen.some(
+              (entry) =>
+                entry.type === "provider_turn.updated" &&
+                entry.providerTurn.status === "running" &&
+                entry.providerTurn.nativeAcceptance === "accepted" &&
+                entry.providerTurn.nativeTurnRef?.strength === "weak",
+            ),
+          );
         }
         if (proof === "terminal-first") {
           const terminalIndex = seen.findIndex((entry) => entry.type === "turn.terminal");
@@ -1711,7 +1740,7 @@ describe("OpenCode2 adapter", () => {
           body: { _tag: "InvalidRequestError", message: "bad prompt" },
         }),
         // A clear refusal: nothing runs, so the next turn prompts directly.
-        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
         promptAccepted,
         event("session.execution.succeeded", { sessionID: SESSION }),
       ]);
@@ -2234,18 +2263,34 @@ describe("OpenCode2 adapter", () => {
         ],
         { supervised: true },
       );
-      const requested = yield* requestOf(runtime).pipe(Effect.forkScoped);
-      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      const requested =
+        yield* Deferred.make<
+          Extract<ProviderAdapterV2Event, { type: "runtime_request.updated" }>["runtimeRequest"]
+        >();
+      const terminal =
+        yield* Deferred.make<Extract<ProviderAdapterV2Event, { type: "turn.terminal" }>>();
+      // Runtime events are a unicast queue. One reader must route both facts:
+      // competing request/terminal streams can consume each other's events.
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) =>
+          event.type === "runtime_request.updated"
+            ? Deferred.succeed(requested, event.runtimeRequest).pipe(Effect.asVoid)
+            : event.type === "turn.terminal"
+              ? Deferred.succeed(terminal, event).pipe(Effect.asVoid)
+              : Effect.void,
+        ),
+        Effect.forkScoped,
+      );
       yield* runtime.startTurn({
         ...withLineage(thread),
         runtimePolicy: policy("approval-required"),
       });
-      const request = yield* Fiber.join(requested);
+      const request = yield* Deferred.await(requested);
       yield* runtime.respondToRuntimeRequest({
-        requestId: request!.id,
+        requestId: request.id,
         decision: "acceptForSession",
       });
-      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+      assert.equal((yield* Deferred.await(terminal)).status, "completed");
     }).pipe(Effect.scoped),
   );
 

@@ -1,5 +1,7 @@
 # Upstream sync through `dedcd99a9d`
 
+Historical record; implementation paths and checks describe its dated snapshot, not current V2 architecture.
+
 Date: 2026-08-22
 
 ## Provenance

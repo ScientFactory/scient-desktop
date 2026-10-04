@@ -1,5 +1,7 @@
 # Scient/T3 divergence, integration, provenance, and retirements
 
+Historical record; implementation paths and checks describe its dated snapshot, not current V2 architecture.
+
 Status: Historical
 Owner: Yaacov
 Created: 2026-08-28
