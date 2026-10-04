@@ -135,14 +135,16 @@ describe("native OMP lifecycle", () => {
         expect(NodeFS.existsSync(f.lock())).toBe(true);
         yield* replacement.start({ text: "Immediate same-owner replacement" });
         yield* replacementPeer.promptDelivered();
-        yield* p.emit([
-          { type: "agent_start" },
-          {
-            type: "subagent_lifecycle",
-            payload: { id: "late-child", status: "completed", message: "old wake" },
-          },
-          { type: "agent_end", messages: [], isTerminal: true },
-        ]);
+        expect(
+          yield* p.tryEmit([
+            { type: "agent_start" },
+            {
+              type: "subagent_lifecycle",
+              payload: { id: "late-child", status: "completed" },
+            },
+            { type: "agent_end", messages: [], isTerminal: true },
+          ]),
+        ).toEqual([false, false, false]);
         yield* replacementPeer.emit([
           { type: "agent_start" },
           {

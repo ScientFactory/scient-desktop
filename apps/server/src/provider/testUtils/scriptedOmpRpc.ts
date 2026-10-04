@@ -83,7 +83,9 @@ export const scriptedOmpRpc = (input: {
 }) => {
   let finish: Effect.Effect<void> = Effect.void;
   let promptDelivered: Effect.Effect<void> = Effect.void;
-  let emit: (frames: ReadonlyArray<unknown>) => Effect.Effect<void> = () => Effect.void;
+  let tryEmit: (frames: ReadonlyArray<unknown>) => Effect.Effect<ReadonlyArray<boolean>> = () =>
+    Effect.succeed([]);
+  const emit = (frames: ReadonlyArray<unknown>) => tryEmit(frames).pipe(Effect.asVoid);
   let close: Effect.Effect<void> = Effect.void;
   let raw: (text: string) => Effect.Effect<void> = () => Effect.void;
   let lastPromptId: string | undefined;
@@ -114,8 +116,7 @@ export const scriptedOmpRpc = (input: {
       const decoder = new TextDecoder();
       const line = (value: unknown) => encoder.encode(`${encodeJson(value)}\n`);
       raw = (text) => Queue.offer(stdout, encoder.encode(text)).pipe(Effect.asVoid);
-      emit = (frames) =>
-        Effect.forEach(frames, (frame) => Queue.offer(stdout, line(frame)), { discard: true });
+      tryEmit = (frames) => Effect.forEach(frames, (frame) => Queue.offer(stdout, line(frame)));
       close = Queue.end(stdout).pipe(Effect.asVoid);
       const respond = (frame: Frame, data?: unknown, error?: string) =>
         line({
@@ -320,6 +321,7 @@ export const scriptedOmpRpc = (input: {
     finish: () => finish,
     promptDelivered: () => promptDelivered,
     emit: (frames: ReadonlyArray<unknown>) => emit(frames),
+    tryEmit: (frames: ReadonlyArray<unknown>) => tryEmit(frames),
     close: () => close,
     raw: (text: string) => raw(text),
   };
