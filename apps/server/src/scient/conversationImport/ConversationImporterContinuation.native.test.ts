@@ -38,6 +38,7 @@ import * as Clock from "effect/Clock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Schema from "effect/Schema";
 import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import { makeSqlitePersistenceLive } from "../../persistence/Layers/Sqlite.ts";
 import { LegacyV1ThreadImporter } from "../../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 
@@ -143,6 +144,7 @@ const withImporter = <A, E, R>(
     readonly beforeFresh?: () => Effect.Effect<void, NativeSessionOperationError>;
     readonly beforeSend?: () => Effect.Effect<void, NativeSessionOperationError>;
     readonly onResume?: (nativeId: string) => Effect.Effect<void, NativeSessionOperationError>;
+    readonly onSteer?: (text: string) => Effect.Effect<void, NativeSessionOperationError>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -165,6 +167,10 @@ const withImporter = <A, E, R>(
     const capabilities = {
       ...AcpProviderCapabilitiesV2,
       threads: { ...AcpProviderCapabilitiesV2.threads, canRollbackThread: true },
+      turns: {
+        ...AcpProviderCapabilitiesV2.turns,
+        supportsActiveSteering: options.onSteer !== undefined,
+      },
       checkpointing: {
         ...AcpProviderCapabilitiesV2.checkpointing,
         providerCanRollbackConversation: true,
@@ -200,9 +206,18 @@ const withImporter = <A, E, R>(
                   }),
               respond: () => Effect.die("Imported answers cannot be executable requests"),
               interrupt: publish({ type: "terminal", status: "cancelled" }),
-              send: (turn) =>
+              ...(options.onSteer === undefined
+                ? {}
+                : {
+                    steer: (
+                      input: import("../../orchestration-v2/ProviderAdapter.ts").ProviderAdapterV2SteerInput,
+                    ) => options.onSteer!(input.message.text),
+                  }),
+              send: (turn, nativeTurnId) =>
                 Effect.gen(function* () {
                   prompts.push(turn.message.text);
+                  if (options.onSteer !== undefined)
+                    yield* publish({ type: "accepted", nativeTurnId });
                   yield* options.beforeSend?.() ?? Effect.void;
                   if (options.sourceTraces && turn.message.text === "Trace source") {
                     yield* publish({
@@ -2346,4 +2361,111 @@ it.live(
       },
     ).pipe(Effect.timeout("90 seconds"));
   },
+);
+
+it.live("native steering reaches an accepted carrying turn before its long send returns", () =>
+  Effect.gen(function* () {
+    const sending = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const steered = yield* Deferred.make<string>();
+    let held = true;
+    return yield* withImporter(
+      Effect.gen(function* () {
+        const { lease } = yield* leaseFor(importFixture({ turns: 2 }));
+        const threadId = (yield* importOnce(lease)).result.threadId;
+        const orchestrator = yield* OrchestratorV2;
+        const store = yield* ProjectionStoreV2;
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("long-carrying-send"),
+          threadId,
+          messageId: MessageId.make("long-carrying-send"),
+          text: "Continue",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* Deferred.await(sending).pipe(Effect.timeout("10 seconds"));
+        const cursor = yield* orchestrator.getThreadEventSequence(threadId);
+        const pull = yield* Stream.toPull(
+          orchestrator.streamStoredEventsFrom({ threadId, afterSequence: cursor }),
+        );
+        const accepted = yield* Stream.concat(
+          Stream.succeed(undefined),
+          Stream.fromPull(Effect.succeed(pull)),
+        ).pipe(
+          Stream.mapEffect(() => store.getThreadProjection(threadId)),
+          Stream.filter((projection) =>
+            projection.providerTurns.some((turn) => turn.acceptedAt !== undefined),
+          ),
+          Stream.runHead,
+          Effect.timeout("5 seconds"),
+          Effect.catchTag("TimeoutError", () => Effect.die("Native acceptance never reached SQL")),
+        );
+        const before = Option.getOrThrow(accepted);
+        const run = before.runs.at(-1)!;
+        assert.equal(run.status, "running");
+        assert.equal(before.contextHandoffs.at(-1)?.delivery?.status, "pending");
+        assert.equal((yield* ImportPeer).prompts.length, 1);
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("steer-held-carry"),
+          threadId,
+          messageId: MessageId.make("steer-held-carry"),
+          text: "Use the retained evidence",
+          attachments: [],
+          dispatchMode: { type: "steer_active", targetRunId: run.id },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        assert.equal(
+          yield* Deferred.await(steered).pipe(
+            Effect.timeout("5 seconds"),
+            Effect.catchTag("TimeoutError", () =>
+              Effect.die("Steering remained blocked by the long send"),
+            ),
+          ),
+          "Use the retained evidence",
+        );
+        assert.isFalse(yield* Deferred.isDone(release));
+        const during = yield* store.getThreadProjection(threadId);
+        assert.equal(during.runs.length, before.runs.length);
+        assert.equal(during.contextHandoffs.length, before.contextHandoffs.length);
+        assert.equal(during.contextHandoffs.at(-1)?.delivery?.status, "pending");
+        assert.equal((yield* ImportPeer).prompts.length, 1);
+        const completeCursor = yield* orchestrator.getThreadEventSequence(threadId);
+        const completed = yield* orchestrator
+          .streamStoredEventsFrom({ threadId, afterSequence: completeCursor })
+          .pipe(
+            Stream.mapEffect(() => store.getThreadProjection(threadId)),
+            Stream.filter(
+              (projection) =>
+                projection.runs.find((candidate) => candidate.id === run.id)?.status ===
+                  "completed" && projection.contextHandoffs.at(-1)?.delivery?.status === "inline",
+            ),
+            Stream.runHead,
+            Effect.forkScoped,
+          );
+        held = false;
+        yield* Deferred.succeed(release, undefined);
+        assert.isTrue(
+          Option.isSome(yield* Fiber.join(completed).pipe(Effect.timeout("10 seconds"))),
+        );
+        assert.equal(
+          (yield* store.getThreadProjection(threadId)).contextHandoffs.at(-1)?.delivery?.status,
+          "inline",
+        );
+        yield* continueImport(threadId, MessageId.make("after-long-carry"), "Continue");
+        assert.notInclude((yield* ImportPeer).prompts.at(-1)!, "Question 1");
+      }),
+      {
+        beforeSend: () =>
+          held
+            ? Deferred.succeed(sending, undefined).pipe(Effect.andThen(Deferred.await(release)))
+            : Effect.void,
+        onSteer: (text) => Deferred.succeed(steered, text).pipe(Effect.asVoid),
+      },
+    );
+  }).pipe(Effect.scoped, Effect.timeout("30 seconds")),
 );
