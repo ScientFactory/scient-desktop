@@ -383,31 +383,37 @@ const PROMPT_ENTRANCE_KEYFRAMES: Keyframe[] = [
   { opacity: 1, clipPath: "inset(0 0 0 0)" },
 ];
 const PROMPT_ENTRANCE_TIMING: KeyframeAnimationOptions = { duration: 300, delay: 100 };
-// The working header (label and line) shows at once, faint, and a soft edge
-// darkens it to full color from left to right. Masking only: nothing moves.
-const WORKING_HEADER_MASK = "linear-gradient(to right, #000 40%, rgb(0 0 0 / 0.3) 60%)";
+// The working label shows at once, faint, and a wide soft edge darkens it to
+// full color from left to right. Its line simply appears. Masking only: nothing moves.
+const WORKING_HEADER_MASK = "linear-gradient(to right, #000 33.3%, rgb(0 0 0 / 0.25) 66.6%)";
 const WORKING_HEADER_KEYFRAMES: Keyframe[] = [
   {
     maskImage: WORKING_HEADER_MASK,
-    maskSize: "250% 100%",
+    maskSize: "300% 100%",
     maskPosition: "100% 0",
     webkitMaskImage: WORKING_HEADER_MASK,
-    webkitMaskSize: "250% 100%",
+    webkitMaskSize: "300% 100%",
     webkitMaskPosition: "100% 0",
   },
   {
     maskImage: WORKING_HEADER_MASK,
-    maskSize: "250% 100%",
+    maskSize: "300% 100%",
     maskPosition: "0% 0",
     webkitMaskImage: WORKING_HEADER_MASK,
-    webkitMaskSize: "250% 100%",
+    webkitMaskSize: "300% 100%",
     webkitMaskPosition: "0% 0",
   },
 ];
-const WORKING_HEADER_TIMING: KeyframeAnimationOptions = { duration: 800, delay: 100 };
+// Slow and even: an ease-in-out, not a fast start.
+const WORKING_HEADER_EASING = "cubic-bezier(0.45, 0, 0.55, 1)";
+const WORKING_HEADER_TIMING: KeyframeAnimationOptions = {
+  duration: 1400,
+  delay: 100,
+  easing: WORKING_HEADER_EASING,
+};
 // After a first prompt's entrance (100ms delay + 300ms) settles.
 const WORKING_HEADER_AFTER_ENTRANCE_TIMING: KeyframeAnimationOptions = {
-  duration: 800,
+  ...WORKING_HEADER_TIMING,
   delay: 400,
 };
 function TimelineListFooter({ composerInset }: { readonly composerInset: number }) {
@@ -3075,8 +3081,11 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
     "Working..."
   );
   return (
-    <div ref={headerRef} className="border-b border-border/60 pb-2 pt-1">
-      <div className="flex h-6 min-w-0 items-baseline gap-2 px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">
+    <div className="border-b border-border/60 pb-2 pt-1">
+      <div
+        ref={headerRef}
+        className="flex h-6 min-w-0 items-baseline gap-2 px-1 text-sm leading-relaxed text-muted-foreground tabular-nums"
+      >
         <span
           ref={shimmer ? observeVisibleAnimation : undefined}
           className="relative shrink-0 overflow-hidden whitespace-nowrap"

@@ -1,19 +1,41 @@
 import { type RefObject, useLayoutEffect } from "react";
-import { DRAFT_HERO_TRANSITION_EASING } from "./draftHeroTransition";
 
 /** The text blocks a streamed answer arrives in (providers send whole paragraphs). */
 const STREAMED_BLOCK_SELECTOR = "p, li, h1, h2, h3, h4, h5, h6, blockquote, table, hr";
 
-// Revealed from the top down while it fades in. The sides reach past the box so
-// list markers and table borders are not clipped. Clip and opacity only: nothing moves.
-const BLOCK_ENTRANCE_KEYFRAMES: Keyframe[] = [
-  { opacity: 0, clipPath: "inset(0 -2em 100% -2em)" },
-  { opacity: 1, clipPath: "inset(0 -2em 0 -2em)" },
+// Each block is revealed from the top down, a soft edge moving down at a steady
+// pace (about a line at a time), as if it were being written. Masking only:
+// nothing moves, so the reveal and scroll measurements are unaffected.
+const BLOCK_REVEAL_MASK = "linear-gradient(to bottom, #000 33.3%, transparent 66.6%)";
+const BLOCK_REVEAL_KEYFRAMES: Keyframe[] = [
+  {
+    maskImage: BLOCK_REVEAL_MASK,
+    maskSize: "100% 300%",
+    maskPosition: "0 100%",
+    webkitMaskImage: BLOCK_REVEAL_MASK,
+    webkitMaskSize: "100% 300%",
+    webkitMaskPosition: "0 100%",
+  },
+  {
+    maskImage: BLOCK_REVEAL_MASK,
+    maskSize: "100% 300%",
+    maskPosition: "0 0",
+    webkitMaskImage: BLOCK_REVEAL_MASK,
+    webkitMaskSize: "100% 300%",
+    webkitMaskPosition: "0 0",
+  },
 ];
-const BLOCK_ENTRANCE_TIMING: KeyframeAnimationOptions = {
-  duration: 380,
-  easing: DRAFT_HERO_TRANSITION_EASING,
-};
+const REVEAL_MS_PER_LINE = 200;
+const MIN_REVEAL_MS = 450;
+const MAX_REVEAL_MS = 1800;
+// Steady through the middle, settling gently at the end.
+const REVEAL_EASING = "cubic-bezier(0.3, 0.1, 0.3, 1)";
+
+function revealDuration(block: HTMLElement) {
+  const lineHeight = Number.parseFloat(getComputedStyle(block).lineHeight) || 22;
+  const lines = Math.max(1, Math.round(block.getBoundingClientRect().height / lineHeight));
+  return Math.min(MAX_REVEAL_MS, Math.max(MIN_REVEAL_MS, lines * REVEAL_MS_PER_LINE));
+}
 
 /**
  * How many blocks of each streaming message have entered. Kept outside the
@@ -33,8 +55,9 @@ function streamedBlocks(root: HTMLElement): HTMLElement[] {
 
 /**
  * While a message streams, each block that arrives (a paragraph, list item,
- * heading…) fades in from the top down instead of appearing in one frame,
- * including the first one, which arrives with the message's row. Blocks that
+ * heading…) is revealed from the top down, line by line, one block after the
+ * other, instead of appearing in one frame; the first one too, which arrives
+ * with the message's row. Blocks that
  * already entered never replay; finished messages and reduced motion are left
  * alone.
  */
@@ -56,11 +79,22 @@ export function useStreamingBlockEntrance(
     let entered = messageId
       ? (enteredBlockCounts.get(messageId) ?? 0)
       : streamedBlocks(root).length;
+    // Blocks reveal one after the other: a block waits for the one before it.
+    let revealEndsAt = 0;
     const enterNewBlocks = () => {
       const blocks = streamedBlocks(root);
       for (const block of blocks.slice(entered)) {
-        if (typeof block.animate === "function")
-          block.animate(BLOCK_ENTRANCE_KEYFRAMES, BLOCK_ENTRANCE_TIMING);
+        if (typeof block.animate !== "function") continue;
+        const now = performance.now();
+        const delay = Math.max(0, revealEndsAt - now);
+        const duration = revealDuration(block);
+        revealEndsAt = now + delay + duration;
+        block.animate(BLOCK_REVEAL_KEYFRAMES, {
+          duration,
+          delay,
+          easing: REVEAL_EASING,
+          fill: "backwards",
+        });
       }
       entered = Math.max(entered, blocks.length);
       if (!messageId) return;

@@ -93,10 +93,11 @@ const animationsOf = (element: Element | null | undefined) =>
     : [];
 const working = { isWorking: true, runningTurnId: TurnId.make("turn-1") };
 
-it("darkens the working header in once per prompt, not again when its row remounts", async () => {
+it("darkens the working label in once per prompt, not again when its row remounts", async () => {
   const prompt = entry(1, "First question");
   render("motion:working", [prompt], working);
-  const line = () => host!.querySelector('[data-timeline-row-kind="working"] .border-b');
+  // The label darkens in; the line itself just appears.
+  const line = () => host!.querySelector('[data-timeline-row-kind="working"] .border-b > div');
   await expect.poll(() => line()).not.toBeNull();
   expect(animationsOf(line())).toHaveLength(1);
   // Shown at once (faint, not hidden), at its full size: masking only, nothing moves.
@@ -144,7 +145,7 @@ it("plays the entrance for a first prompt being placed, and for no other prompt"
   expect(animationsOf(bubble(later.message.id))).toHaveLength(0);
 });
 
-it("fades each paragraph of a streaming answer in, once, and nothing else", async () => {
+it("reveals each paragraph of a streaming answer top-down, in turn, once, and nothing else", async () => {
   const prompt = entry(1, "Question");
   const answer = (text: string, streaming: boolean) => ({
     ...entry(2, text),
@@ -159,6 +160,8 @@ it("fades each paragraph of a streaming answer in, once, and nothing else", asyn
   render("motion:stream", [prompt, answer("First paragraph.\n\nSecond paragraph.", true)], working);
   await expect.poll(() => paragraphs().length).toBe(2);
   expect(animationsOf(paragraphs()[1])).toHaveLength(1);
+  // It waits for the first to finish revealing: one after the other, top to bottom.
+  expect(Number(animationsOf(paragraphs()[1])[0]!.effect!.getTiming().delay)).toBeGreaterThan(0);
   // Remounted mid-stream (a thread switch and back): nothing replays.
   render("motion:elsewhere-stream", [entry(70, "Elsewhere")]);
   await frames(4);
