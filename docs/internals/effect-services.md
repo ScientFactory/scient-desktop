@@ -33,6 +33,21 @@ message) are fine next to the service; the capability itself is the method.
   ),
 ```
 
+## Orchestration V2 ownership
+
+Live conversation work belongs in `apps/server/src/orchestration-v2/`. Transports call
+`ThreadManagementService`, `ThreadLaunchService`, `ConversationForkService`, or another existing
+capability owner. `Orchestrator` plans commands under per-thread serialization; `EventSink` commits
+facts, projections, command receipts, and effects together. Provider and workspace execution runs
+through the durable `EffectOutbox` and `EffectWorker` service executor after commit.
+
+Extend the relevant V2 service and its production layer in `runtimeLayer.ts`. Provider protocol
+work belongs in `Adapters/*AdapterV2.ts`, with session residency in `ProviderSessionManager` and
+output normalization in `ProviderEventIngestor`. Legacy import services only translate saved facts
+into V2. The V1 `OrchestrationEngine`, `ProviderService`, decider/projector pipeline, and execution
+reactors are superseded; their tests cannot prove a live V2 behavior. See
+[the architecture overview](./overview.md) for the current command and execution flow.
+
 ## Shape of a service module
 
 One module per service, in this order: imports, errors and schemas, the `Context.Service` tag with
