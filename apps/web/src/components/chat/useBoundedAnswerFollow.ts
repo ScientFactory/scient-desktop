@@ -188,14 +188,9 @@ export function useBoundedAnswerFollow({
         const last = rows.at(-1);
         const endBox = last ? rowRect(last.id) : null;
         const restingBottom = viewportRect.top + viewport.clientHeight - composerInset - END_GAP;
-        const end = endBox ? Math.min(toMax, endBox.rect.bottom - restingBottom) : toMax;
-        // While the answer is revealed line by line, keep up with the lines
-        // shown so far, never the text still hidden below them.
-        const revealed = revealedHeight();
-        const text =
-          revealed === null ? null : answerBox?.element?.querySelector(".streamed-reveal");
-        if (revealed === null || !text) return end;
-        return Math.min(end, text.getBoundingClientRect().top + revealed - restingBottom);
+        // The answer is clipped to its revealed lines, so this is the real end:
+        // the latest line and what follows it, resting above the composer.
+        return endBox ? Math.min(toMax, endBox.rect.bottom - restingBottom) : toMax;
       };
       const answerBox = rowRect(answerRow.id);
       if (!answerBox) {

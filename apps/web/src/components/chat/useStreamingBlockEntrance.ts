@@ -1,4 +1,4 @@
-import { type RefObject, useLayoutEffect, useRef } from "react";
+import { type RefObject, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 
 /**
  * A streaming answer is revealed as one continuous flow, even though providers
@@ -11,6 +11,48 @@ const REVEAL_BUFFER_MS = 1000;
 const REVEAL_LINES_PER_SECOND = 4;
 /** More than this many lines waiting and the reveal speeds up to catch up. */
 const REVEAL_MAX_LAG_LINES = 8;
+/** The blank space between blocks is crossed this much faster: no pause between paragraphs. */
+const REVEAL_GAP_SPEEDUP = 5;
+
+/** Whether the front is in the blank space before or between the message's blocks. */
+function inBlankGap(root: HTMLElement, front: number) {
+  const top = root.getBoundingClientRect().top;
+  let previousBottom = 0;
+  for (const child of Array.from(root.children)) {
+    const rect = child.getBoundingClientRect();
+    if (rect.height === 0) continue;
+    const childTop = rect.top - top;
+    if (front < childTop) return front >= previousBottom;
+    previousBottom = rect.bottom - top;
+    if (front < previousBottom) return false;
+  }
+  return false;
+}
+
+/**
+ * Messages whose lines are appearing right now (past the short wait, not yet
+ * all shown). The live "Thinking" row stays out of the way while they do.
+ */
+const appearing = new Set<string>();
+const appearingListeners = new Set<() => void>();
+function setAppearing(messageId: string, isAppearing: boolean) {
+  if (appearing.has(messageId) === isAppearing) return;
+  if (isAppearing) appearing.add(messageId);
+  else appearing.delete(messageId);
+  for (const listener of appearingListeners) listener();
+}
+function subscribeAppearing(listener: () => void) {
+  appearingListeners.add(listener);
+  return () => appearingListeners.delete(listener);
+}
+/** Whether this message's lines are appearing right now. */
+export function useStreamingTextAppearing(messageId: string | null): boolean {
+  return useSyncExternalStore(
+    subscribeAppearing,
+    () => messageId !== null && appearing.has(messageId),
+    () => false,
+  );
+}
 
 /**
  * How far each streaming message has been revealed, in pixels from its top.
@@ -93,15 +135,18 @@ export function useStreamingBlockEntrance(
         const waitingLines = (height - front) / lineHeight;
         const speed =
           ((REVEAL_LINES_PER_SECOND * lineHeight) / 1000) *
-          Math.max(1, waitingLines / REVEAL_MAX_LAG_LINES);
+          Math.max(1, waitingLines / REVEAL_MAX_LAG_LINES) *
+          (inBlankGap(root, front) ? REVEAL_GAP_SPEEDUP : 1);
         front = Math.min(end, front + speed * elapsed);
         apply();
       }
       if (!streamingRef.current && front >= end) {
         revealedHeights.delete(messageId);
+        setAppearing(messageId, false);
         clear();
         return;
       }
+      setAppearing(messageId, front > 0);
       rememberRevealed(messageId, front);
       frame = requestAnimationFrame(tick);
     };

@@ -26,8 +26,10 @@ for as long as the turn works; its line just appears
 (`chat/timelineEntranceMotion.ts`; played entrances never replay on row remount). While an
 answer streams it is revealed as one flow (`chat/useStreamingBlockEntrance.ts`, `.streamed-reveal`):
 after a 1s buffer, lines appear top-down at ~4 lines/s (faster when >8 lines wait), at 65%, with
-the full tone one line behind; the answer is clipped to its revealed lines, and the follow scroll
-keeps up with them (`streamingRevealedHeight`). Revealed height is kept per message, so remounted
+the full tone one line behind, crossing blank space between blocks 5x faster; the answer is
+clipped to its revealed lines, so the follow scroll simply goes to the real end. The live
+"Thinking" row fades out (keeping its place) while the answer right above it is appearing
+(`useStreamingTextAppearing`). Revealed height is kept per message, so remounted
 rows continue rather than replay (`chat/useStreamingBlockEntrance.ts`). The
 timeline's working state (`chat/timelineWorkingState.ts`) is held back until a send's prompt
 is listed and bridged from the server's acknowledgement until a session starts the turn.

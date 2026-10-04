@@ -531,6 +531,9 @@ it("scrolls continuously with the line-by-line reveal, never ahead of it", async
   expect(Math.max(...steps)).toBeLessThan(12);
   expect(steps.every((step) => step >= -0.5)).toBe(true);
   expect(aheadOfReveal).toBeLessThanOrEqual(0);
+  // It follows all the way to the end: the latest line and the row after it,
+  // resting above the composer, not half hidden behind it.
+  await expect.poll(toEnd, { timeout: 4000 }).toBeLessThanOrEqual(1);
 });
 
 it("keeps the reveal of a first prompt as it was: traces do not move it", async () => {

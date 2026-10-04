@@ -1,6 +1,7 @@
 import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-presentation";
 import { useBoundedAnswerFollow } from "./useBoundedAnswerFollow";
 import { useEntranceMotion } from "./timelineEntranceMotion";
+import { useStreamingTextAppearing } from "./useStreamingBlockEntrance";
 import {
   findWorkingRow,
   nextWorkingRowExit,
@@ -326,6 +327,8 @@ interface TimelineRowActivityState {
   isWorking: boolean;
   /** A thread's first prompt while it is being placed: it plays its entrance. */
   enteringPromptId: string | null;
+  /** The answer right above the live "Thinking" row, if any: it hides while that text appears. */
+  thinkingFollowsAnswerId: string | null;
   isPreparingWorktree: boolean;
   isCompacting: boolean;
   isRevertingCheckpoint: boolean;
@@ -1676,10 +1679,18 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       : null;
   // Only a first prompt is placed with pending positioning (later ones are revealed).
   const enteringPromptId = timelinePositioningPending ? anchorMessageId : null;
+  const thinkingFollowsAnswerId = useMemo(() => {
+    const index = rows.findIndex((row) => row.kind === "thinking");
+    const previous = index > 0 ? rows[index - 1] : undefined;
+    return previous?.kind === "message" && previous.message.role === "assistant"
+      ? previous.message.id
+      : null;
+  }, [rows]);
   const activityState = useMemo<TimelineRowActivityState>(
     () => ({
       isWorking,
       enteringPromptId,
+      thinkingFollowsAnswerId,
       isPreparingWorktree,
       isCompacting,
       isRevertingCheckpoint,
@@ -1692,6 +1703,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     [
       backgroundWorktreeSetup,
       enteringPromptId,
+      thinkingFollowsAnswerId,
       isCompacting,
       isRevertingCheckpoint,
       isWorking,
@@ -3242,10 +3254,21 @@ function ActivityGroupTimelineRow({
 }
 
 function ThinkingTimelineRow() {
-  const { isCompacting, isPreparingWorktree } = use(TimelineRowActivityCtx);
+  const { isCompacting, isPreparingWorktree, thinkingFollowsAnswerId } =
+    use(TimelineRowActivityCtx);
+  // While the answer above it is appearing line by line, the flowing text shows
+  // the work; the row fades out (keeping its place) and returns when the agent
+  // thinks or uses tools again.
+  const answerAppearing = useStreamingTextAppearing(thinkingFollowsAnswerId);
   // Reserve the activity row during setup so the handoff keeps the same height.
   return (
-    <div className="min-h-7">
+    <div
+      className={cn(
+        "min-h-7 transition-opacity duration-300 ease-in-out motion-reduce:transition-none",
+        answerAppearing && "opacity-0",
+      )}
+      aria-hidden={answerAppearing || undefined}
+    >
       {isPreparingWorktree || isCompacting ? null : (
         <LiveActivityRow label="Thinking" iconName="brain" active shimmer />
       )}

@@ -195,3 +195,75 @@ it("closes a finished turn's working header gradually, so the answer slides up",
   expect(midway).toBeGreaterThan(after + 2);
   expect(before - after).toBeGreaterThan(20);
 });
+
+it("hides Thinking while the answer's lines appear, and brings it back when the agent moves on", async () => {
+  const prompt = entry(1, "Question");
+  const answer = {
+    ...entry(41, "First paragraph.\n\nSecond paragraph."),
+    message: {
+      ...entry(41, "First paragraph.\n\nSecond paragraph.").message,
+      role: "assistant" as const,
+      streaming: true,
+    },
+  };
+  const thinking = () =>
+    host!.querySelector('[data-timeline-row-kind="thinking"] > div') as HTMLElement | null;
+  render("motion:thinking", [prompt, answer], working);
+  await expect.poll(() => thinking()).not.toBeNull();
+  // During the short wait before any line shows, Thinking still shows the work.
+  expect(thinking()!.classList.contains("opacity-0")).toBe(false);
+  // Once the lines appear, it steps aside.
+  await expect
+    .poll(() => thinking()?.classList.contains("opacity-0"), { timeout: 3000 })
+    .toBe(true);
+  // The agent goes back to work after the text (a tool step): its live activity
+  // shows again (here the running tool takes the activity row's place).
+  const tool = {
+    id: "tool-after-text",
+    kind: "work" as const,
+    createdAt: date,
+    entry: {
+      id: "tool-after-text",
+      createdAt: date,
+      turnId: TurnId.make("turn-1"),
+      label: "Run command",
+      tone: "tool" as const,
+      toolLifecycleStatus: "completed" as const,
+      detail: "Command output",
+    },
+  };
+  render("motion:thinking", [prompt, answer, tool], working);
+  await expect
+    .poll(() => {
+      const live = host!.querySelector('[data-timeline-row-kind="work-live"]');
+      const visibleThinking = thinking() && !thinking()!.classList.contains("opacity-0");
+      return Boolean(live) || Boolean(visibleThinking);
+    })
+    .toBe(true);
+});
+
+it("crosses the blank space between paragraphs without pausing", async () => {
+  const prompt = entry(1, "Question");
+  const text = "One line.\n\nTwo line.\n\nThree line.";
+  const answer = {
+    ...entry(2, text),
+    message: { ...entry(2, text).message, role: "assistant" as const, streaming: true },
+  };
+  render("motion:gaps", [prompt, answer], working);
+  const root = () =>
+    host!.querySelector<HTMLElement>('[data-message-role="assistant"] .chat-markdown');
+  await expect.poll(() => root()?.classList.contains("streamed-reveal")).toBe(true);
+  const paragraphs = Array.from(root()!.querySelectorAll("p"));
+  const top = root()!.getBoundingClientRect().top;
+  const gapStart = paragraphs[0]!.getBoundingClientRect().bottom - top;
+  const gapEnd = paragraphs[1]!.getBoundingClientRect().top - top;
+  const lineHeight = Number.parseFloat(getComputedStyle(root()!).lineHeight);
+  const front = () => Number.parseFloat(root()!.style.getPropertyValue("--reveal-front") || "0");
+  await expect.poll(() => front() >= gapStart, { timeout: 4000 }).toBe(true);
+  const entered = performance.now();
+  await expect.poll(() => front() >= gapEnd, { timeout: 4000 }).toBe(true);
+  const crossed = performance.now() - entered;
+  // At the line pace the gap would take (gap / 4 lines a second); it takes far less.
+  const atLinePace = ((gapEnd - gapStart) / lineHeight) * 250;
+  expect(crossed).toBeLessThan(Math.max(80, atLinePace / 2));
+});
