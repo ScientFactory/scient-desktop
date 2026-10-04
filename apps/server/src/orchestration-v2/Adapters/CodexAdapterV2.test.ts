@@ -2748,6 +2748,23 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             scenario: `images-${outcome}`,
             entries: [
               ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Draw an image" }),
+              {
+                type: "emit_inbound",
+                label: "ordinary image view is not generated output",
+                frame: {
+                  method: "item/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    item: {
+                      id: "ordinary-image-view",
+                      type: "imageView",
+                      path: sourcePath,
+                      result: "ordinary-view-metadata",
+                    },
+                  },
+                },
+              },
               imageEvent,
               { ...imageEvent, label: "duplicate native image receipt" },
               ...(outcome !== "saved"
@@ -2844,6 +2861,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               event.message.text !== "The image is ready.",
           );
           assert.lengthOf(imageMessages, outcome === "saved" ? 3 : 2);
+          assert.isFalse(
+            harness.events.some(
+              (event) =>
+                event.type === "message.updated" &&
+                event.message.attachments.some((attachment) =>
+                  attachment.id.includes("ordinary-image-view"),
+                ),
+            ),
+          );
           const first = imageMessages[0];
           const replay = imageMessages[1];
           if (first?.type !== "message.updated" || replay?.type !== "message.updated")
