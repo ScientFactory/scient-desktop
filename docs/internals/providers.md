@@ -520,6 +520,13 @@ forks. Forks use Pi's CLI in the destination directory because RPC session switc
 source session's cwd. Provider switches still use portable handoff summaries. See the
 [adapter](../../apps/server/src/orchestration-v2/Adapters/PiAdapterV2.ts).
 
+Pi's session manager leases each known native session file before opening a
+replacement process. It resolves symlinks to one server-side path, admits a
+single live writer across provider instances, and retains the lease until the
+owning process scope closes successfully. Failed cleanup retains the lease. A cancelled startup releases both unpublished and
+published ownership; a later start can then acquire the file. Repeated opens of
+the same provider session share its runtime and spawn one process.
+
 The native adapter/test foundation was selectively adapted from the main-based
 [T3 Pi proposal #5688](https://github.com/pingdotgg/t3code/pull/5688), donor
 `f3eb5d0f6779059aa463ee5e7b54439f7eea4aa2`. It was not merged wholesale and is not inherited T3 main
