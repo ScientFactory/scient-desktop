@@ -211,7 +211,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
             mcpServers: [
               {
                 type: "http",
-                name: "t3-code",
+                name: "scient",
                 url: mcp.endpoint,
                 headers: [{ name: "Authorization", value: "Bearer synthetic-cursor-session" }],
               },

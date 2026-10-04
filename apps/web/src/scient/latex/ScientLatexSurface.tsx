@@ -6,7 +6,6 @@ import {
   type DocumentBindingChange,
 } from "@scientfactory/document-artifacts";
 import {
-  ProjectWriteFileError,
   type EnvironmentId,
   type ScientLatexBuildSnapshot,
   type ScientLatexDiagnostic,
@@ -18,9 +17,19 @@ import { ChevronRight, CircleAlert, LoaderCircle, RotateCw, TriangleAlert, X } f
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  memo,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
-import { EditableFileSurface } from "~/components/files/FilePreviewPanel";
+import { MarkdownSourceSurface } from "~/components/files/FilePreviewPanel";
 import { projectFileCacheKey } from "~/components/files/fileContentRevision";
 import { type DraftId } from "~/composerDraftStore";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
@@ -28,8 +37,13 @@ import { DIFF_SURFACE_THEME_UNSAFE_CSS, resolveDiffThemeName } from "~/lib/diffR
 import { cn } from "~/lib/utils";
 import type { LatexFilePresentationRequest, OpenFileOptions } from "~/rightPanelStore";
 import { scientificSourceLanguageOverride } from "~/scient/analysis/sourceLanguage";
-import { type FileSaveResolution } from "~/scient/fileSurfaces/useWorkspaceFileRefresh";
+import { savedMarkdownRevision } from "~/scient/documentExport/markdownSavedRevision";
 import { useScientSplit } from "~/scient/layout/useScientSplit";
+import { onDocumentSaved } from "~/scient/markdownEditor/persistence/documentPublication";
+import {
+  markdownPersistenceRegistry,
+  type MarkdownPersistenceLease,
+} from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { ResizeSeparator } from "~/scient/layout/ResizeSeparator";
 import type {
   PdfForwardSyncTarget,
@@ -83,16 +97,21 @@ interface ScientLatexSurfaceProps {
   /** Root carried by navigation from an already established LaTeX document. */
   readonly latexRootRelativePath: string | null;
   readonly composerDraftTarget: ScopedThreadRef | DraftId;
+  /** The working source: the session's draft when there is one. */
   readonly contents: string;
+  /** The revision last confirmed on disk. The draft may be ahead of it. */
   readonly revision: string;
-  readonly truncated: boolean;
+  /**
+   * The file's document session, which owns saving for every view of it. Null
+   * when the file cannot be edited completely; the source is then read-only.
+   */
+  readonly persistence: MarkdownPersistenceLease | null;
   readonly resolvedTheme: "light" | "dark";
   readonly revealLine: number | null;
   readonly revealRequestId: number;
   readonly latexPresentationRequest: LatexFilePresentationRequest | null;
   readonly wordWrap: boolean;
   readonly onPostRender: FilePostRender;
-  readonly onPendingChange: (relativePath: string, pending: boolean) => void;
   readonly onOpenFileSource: (
     relativePath: string,
     line?: number,
@@ -102,22 +121,25 @@ interface ScientLatexSurfaceProps {
     relativePath: string,
     request: LatexFilePresentationRequest,
   ) => void;
-  readonly onSaveFailure: (relativePath: string, error: unknown) => void;
-  readonly onSaveConfirmed: (relativePath: string, contents: string, revision: string) => void;
-  readonly onSaveResolutionApplied: () => void;
-  readonly saveResolution: FileSaveResolution | null;
 }
+
+const noSubscription = () => () => {};
+const notPending = () => false;
 
 const NO_DIAGNOSTICS: ReadonlyArray<ScientLatexDiagnostic> = [];
 const EMPTY_BINDING_CHANGES_ATOM = Atom.make(
   AsyncResult.initial<DocumentBindingChange, never>(false),
 ).pipe(Atom.withLabel("scient-latex-binding-changes:empty"));
-const isProjectWriteFileError = Schema.is(ProjectWriteFileError);
 
 interface LatexSyncNotice {
   readonly label: string;
   readonly message: string;
 }
+
+const UNSAVED_SYNC_NOTICE: LatexSyncNotice = {
+  label: "Unsaved changes",
+  message: "Navigation between source and PDF is available once changes are saved and built.",
+};
 
 function syncUnavailableLabel(reason: ScientLatexSyncUnavailableReason): string {
   switch (reason) {
@@ -463,15 +485,14 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   );
   const [splitFraction, setSplitFraction] = useState(initialSplitFraction);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
   const [syncNotice, setSyncNotice] = useState<LatexSyncNotice | null>(null);
   const [wordExportOpen, setWordExportOpen] = useState(false);
-  const [sourcePending, setSourcePending] = useState(false);
-  const [confirmedSave, setConfirmedSave] = useState<{
-    path: string;
-    shownRevision: string;
-    savedRevision: string;
-  } | null>(null);
+  const { persistence } = props;
+  // Unsaved, saving, or waiting on a conflict or a failed save.
+  const sourcePending = useSyncExternalStore(
+    persistence?.subscribe ?? noSubscription,
+    persistence ? () => persistence.getSnapshot().pending : notPending,
+  );
   const [forwardSyncTarget, setForwardSyncTarget] = useState<PdfForwardSyncTarget | null>(null);
   const [handledRevealRequestId, setHandledRevealRequestId] = useState<number | null>(null);
   const lastBindingChangeRef = useRef<DocumentBindingChange | null>(null);
@@ -501,33 +522,14 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     if (target !== null) notifyLatexBindingChange(target);
   }, [bindingChange, target]);
 
-  const { onOpenFileSource, onSaveConfirmed, onSaveFailure, revealLine, revealRequestId } = props;
-  const handleSaveConfirmed = useCallback(
-    (path: string, contents: string, revision: string) => {
-      setConfirmedSave({ path, shownRevision: props.revision, savedRevision: revision });
-      setSaveError(null);
-      onSaveConfirmed(path, contents, revision);
-      if (target !== null) requestLatexRebuild(target);
-    },
-    [onSaveConfirmed, props.revision, target],
-  );
-  const handleSaveFailure = useCallback(
-    (path: string, error: unknown) => {
-      onSaveFailure(path, error);
-      // A conflicting write is the panel's notice to resolve, and saying it
-      // twice would only compete with the buttons that fix it. Anything else —
-      // an unreachable environment, a file that turned read-only — has nowhere
-      // else to surface.
-      setSaveError(
-        isProjectWriteFileError(error) && error.failure === "revision_conflict"
-          ? null
-          : error instanceof Error
-            ? error.message
-            : "The file could not be saved.",
-      );
-    },
-    [onSaveFailure],
-  );
+  const { onOpenFileSource, revealLine, revealRequestId } = props;
+  // The PDF follows the file on disk, so it is rebuilt when a save lands while
+  // this view is open. A save that lands with no view open is picked up by the
+  // build store's own status checks.
+  useEffect(() => {
+    if (persistence === null || target === null) return;
+    return onDocumentSaved(persistence, () => requestLatexRebuild(target));
+  }, [persistence, target]);
   const handleInstallToolchain = useCallback(() => {
     if (target !== null) requestManagedLatexInstall(target);
   }, [target]);
@@ -570,6 +572,18 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
     setSyncNotice(null);
   }, [descriptorRevision]);
 
+  // An answer computed for one draft is not an answer for the next.
+  useEffect(() => {
+    if (persistence === null) return;
+    let editVersion = persistence.getSnapshot().editVersion;
+    return persistence.subscribe(() => {
+      const next = persistence.getSnapshot().editVersion;
+      if (next === editVersion) return;
+      editVersion = next;
+      syncRequestRef.current += 1;
+    });
+  }, [persistence]);
+
   const handlePdfPageChange = useCallback((page: number) => {
     pdfPageRef.current = page;
   }, []);
@@ -588,6 +602,11 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           label: "Build required",
           message: "Source-to-PDF navigation is available after the current build succeeds.",
         });
+        return;
+      }
+      // Positions are those of the compiled file, and a draft has moved on from it.
+      if (persistence?.getSnapshot().pending) {
+        setSyncNotice(UNSAVED_SYNC_NOTICE);
         return;
       }
       const issued = syncRequestRef.current + 1;
@@ -624,7 +643,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           });
         });
     },
-    [build.snapshot, descriptor, props.cwd, props.environmentId, props.relativePath],
+    [build.snapshot, descriptor, persistence, props.cwd, props.environmentId, props.relativePath],
   );
 
   const handleInverseSync = useCallback(
@@ -659,6 +678,21 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           if (syncRequestRef.current !== issued) return;
           if (result._tag === "unavailable") {
             setSyncNotice({ label: syncUnavailableLabel(result.reason), message: result.message });
+            return;
+          }
+          // The line belongs to the compiled file; an unsaved draft of it has other lines.
+          if (
+            markdownPersistenceRegistry
+              .getSnapshot()
+              .some(
+                (entry) =>
+                  entry.pending &&
+                  entry.environmentId === props.environmentId &&
+                  entry.cwd === props.cwd &&
+                  entry.relativePath === result.relativePath,
+              )
+          ) {
+            setSyncNotice(UNSAVED_SYNC_NOTICE);
             return;
           }
           onOpenFileSource(result.relativePath, result.line, {
@@ -807,11 +841,6 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
               <span className="scient-latex-chip">Stale</span>
             )
           ) : null}
-          {saveError === null ? null : (
-            <ScientTooltip content={saveError}>
-              <span className="scient-latex-chip scient-latex-chip-error">Save failed</span>
-            </ScientTooltip>
-          )}
           {syncNotice === null ? null : (
             <ScientTooltip content={syncNotice.message}>
               <span
@@ -917,7 +946,7 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                 if (position !== null) handleForwardSync(position);
               }}
             >
-              {props.truncated ? (
+              {persistence === null ? (
                 <LatexReadOnlyHalf
                   cwd={props.cwd}
                   relativePath={props.relativePath}
@@ -927,25 +956,16 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
                   onPostRender={props.onPostRender}
                 />
               ) : (
-                <EditableFileSurface
+                <MarkdownSourceSurface
+                  persistence={persistence}
                   environmentId={props.environmentId}
                   cwd={props.cwd}
                   relativePath={props.relativePath}
                   composerDraftTarget={props.composerDraftTarget}
-                  contents={props.contents}
-                  revision={props.revision}
                   resolvedTheme={props.resolvedTheme}
                   revealRequestId={props.revealRequestId}
                   wordWrap={props.wordWrap}
                   onPostRender={props.onPostRender}
-                  onPendingChange={(relativePath, pending) => {
-                    setSourcePending(pending);
-                    props.onPendingChange(relativePath, pending);
-                  }}
-                  onSaveFailure={handleSaveFailure}
-                  onSaveConfirmed={handleSaveConfirmed}
-                  onSaveResolutionApplied={props.onSaveResolutionApplied}
-                  saveResolution={props.saveResolution}
                 />
               )}
             </div>
@@ -991,13 +1011,10 @@ export function ScientLatexSurface(props: ScientLatexSurfaceProps) {
           cwd={props.cwd}
           relativePath={props.relativePath}
           rootRelativePath={target.relativePath}
+          // Export reads the file on disk: flush first, and refuse while a
+          // conflict or a failed save keeps the draft ahead of it.
           savedRevision={async () =>
-            sourcePending
-              ? null
-              : confirmedSave?.path === props.relativePath &&
-                  confirmedSave.shownRevision === props.revision
-                ? confirmedSave.savedRevision
-                : props.revision
+            persistence === null ? props.revision : savedMarkdownRevision(persistence)
           }
           onClose={() => setWordExportOpen(false)}
         />

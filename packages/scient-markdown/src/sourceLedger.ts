@@ -65,13 +65,10 @@ export interface MarkdownSourceBlockReplacement {
   readonly markdown: string | null;
 }
 
-export interface MarkdownSourcePatch {
-  /** Inclusive UTF-16 source offset. */
-  readonly start: number;
-  /** Exclusive UTF-16 source offset. */
-  readonly end: number;
-  readonly replacement: string;
-}
+export {
+  applyDocumentSourcePatches as applyMarkdownSourcePatches,
+  type DocumentSourcePatch as MarkdownSourcePatch,
+} from "@scientfactory/scient-document";
 
 function requiredOffset(
   position: { readonly offset?: number | undefined } | undefined,
@@ -394,56 +391,4 @@ export function replaceMarkdownSourceBlocks(
     output += block.trailing;
   }
   return output;
-}
-
-function assertSafeBoundary(source: string, offset: number): void {
-  if (offset <= 0 || offset >= source.length) return;
-  const previous = source.charCodeAt(offset - 1);
-  const current = source.charCodeAt(offset);
-  const splitsSurrogatePair =
-    previous >= 0xd800 && previous <= 0xdbff && current >= 0xdc00 && current <= 0xdfff;
-  if (splitsSurrogatePair) {
-    throw new Error(`Markdown patch boundary ${offset} splits a Unicode surrogate pair.`);
-  }
-  if (source[offset - 1] === "\r" && source[offset] === "\n") {
-    throw new Error(`Markdown patch boundary ${offset} splits a CRLF line ending.`);
-  }
-}
-
-/**
- * Apply non-overlapping exact source patches. This deliberately knows nothing
- * about a rich-editor serializer; callers must first constrain patches to the
- * source ranges owned by user-authored transactions.
- */
-export function applyMarkdownSourcePatches(
-  source: string,
-  patches: ReadonlyArray<MarkdownSourcePatch>,
-): string {
-  const ordered = patches.toSorted(
-    (left, right) => left.start - right.start || left.end - right.end,
-  );
-  let previousEnd = 0;
-  for (const [index, patch] of ordered.entries()) {
-    if (!Number.isInteger(patch.start) || !Number.isInteger(patch.end)) {
-      throw new Error("Markdown patch offsets must be integers.");
-    }
-    if (patch.start < 0 || patch.end < patch.start || patch.end > source.length) {
-      throw new Error(`Markdown patch [${patch.start}, ${patch.end}) is outside the source.`);
-    }
-    if (index > 0 && patch.start < previousEnd) {
-      throw new Error("Markdown source patches overlap.");
-    }
-    assertSafeBoundary(source, patch.start);
-    assertSafeBoundary(source, patch.end);
-    previousEnd = patch.end;
-  }
-
-  let cursor = 0;
-  let output = "";
-  for (const patch of ordered) {
-    output += source.slice(cursor, patch.start);
-    output += patch.replacement;
-    cursor = patch.end;
-  }
-  return output + source.slice(cursor);
 }

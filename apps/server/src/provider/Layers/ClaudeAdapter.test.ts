@@ -6870,7 +6870,7 @@ describe("ClaudeAdapterLive", () => {
         ].join("\n\n"),
       });
       assert.deepEqual(createInput?.options.mcpServers, {
-        "t3-code": {
+        scient: {
           type: "http",
           url: "http://127.0.0.1:43123/mcp",
           headers: { Authorization: "Bearer claude-tools-test" },

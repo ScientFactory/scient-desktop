@@ -566,6 +566,14 @@ does not mint a credential or advertise MCP-delivered Skills. Managed OpenCode
 opts in; an externally managed OpenCode server does not.
 See [workspace authority and agent capabilities](docs/internals/scient-workspace-binding.md).
 
+Scient's injected MCP connection is named `scient`, and the omitted-history
+reader is `scient_thread_read`. Tool descriptions, provider-qualified names,
+generated handoff instructions and activity presentation use Scient identity.
+Preserve this public boundary when adopting upstream toolkits. Historical
+`t3-code`/`t3_` activity identities are normalized only for display; they are not
+callable aliases. Credentials, capability grants, operation IDs, storage and
+compatibility environment-variable names are unchanged.
+
 Explicit Skill selections travel as optional `selectedScientSkillNames`
 metadata through composer, turn commands/events, queue and provider preparation.
 Do not infer them from augmented prompts, captured text or assistant plans.
@@ -834,6 +842,7 @@ validation, and publication must stay outside inherited T3 files. See
 [Scient document PDF export](docs/internals/scient-document-pdf-export.md).
 
 The rich Markdown editor is isolated under `packages/scient-markdown`,
+`packages/scient-document` (its format-neutral session and persistence coordinator),
 `apps/web/src/scient/markdownEditor`, `apps/web/src/scient/presentation`, and
 `apps/server/src/scient/markdown`, with `packages/contracts/src/scientMarkdown.ts`
 and `packages/client-runtime/src/state/scientMarkdownHttp.ts` as the owned files
@@ -850,6 +859,12 @@ positioner props on `ui/menu.tsx` and `ui/popover.tsx`, `useMediaActionUrl` in
 behavior, and Markdown transport must remain outside inherited T3 components;
 `index.css` inherited rule bodies stay byte-identical. See
 [Scient rich Markdown editor](docs/internals/scient-rich-markdown-editor.md).
+
+LaTeX Source saving shares the Scient-owned document session and
+`apps/web/src/scient/markdownEditor/persistence/markdownPersistenceRegistry.ts`.
+The registry selects conflict-only reconciliation for LaTeX and keeps one saver
+per file; it is also classified in `scient-latex-seams.json`. Preserve this shared
+ownership rather than adding a second LaTeX saver in the inherited file panel.
 
 Markdown file quotes deliberately extend the inherited assistant Cite flow.
 Preserve the concrete `FileCitation` variant and `composerCitations` helpers,

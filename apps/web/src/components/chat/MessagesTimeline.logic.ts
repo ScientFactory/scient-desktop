@@ -41,7 +41,7 @@ import {
   resolveMarkdownDirectionHint,
   type FixedContentDirection,
 } from "../../scient/bidi/contentDirection";
-import { formatWorkspaceRelativePath } from "../../filePathDisplay";
+import { compactPathLabel } from "../../scient/presentation/compactPathLabel";
 import {
   deriveTerminalAssistantMessageIds,
   deriveTurnFolds,
@@ -75,10 +75,10 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
   if (toolPresentation) return toolPresentation.displayName;
   if (entry.command) return entry.command;
   if (entry.detail && (entry.tone !== "error" || workLogEntryIsToolLike(entry)))
-    return entry.detail;
+    return compactPathLabel(entry.detail, workspaceRoot);
   const [firstPath] = entry.changedFiles ?? [];
   if (firstPath) {
-    const path = formatWorkspaceRelativePath(firstPath, workspaceRoot);
+    const path = compactPathLabel(firstPath, workspaceRoot);
     return entry.changedFiles!.length === 1
       ? path
       : `${path} +${entry.changedFiles!.length - 1} more`;
@@ -379,7 +379,7 @@ export type MessagesTimelineRow =
       summaryKind: ToolGroupSummaryKind;
       toolSurface?: WorkLogEntry["toolSurface"];
       toolIcon?: WorkLogEntry["toolIcon"];
-      summaryToolIcon?: "browser" | "device" | "t3-code" | "pull-request";
+      summaryToolIcon?: "browser" | "device" | "scient" | "pull-request";
       hasFailure: boolean;
     }
   | {

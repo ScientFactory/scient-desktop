@@ -69,6 +69,7 @@ function ScientMarkdownWorkspaceSurface(props: TestSurfaceProps) {
         if (accepted && previous !== source) bindings.current.onDraftSourceChange?.(source);
         return accepted;
       },
+      applyEdit: coordinator.applyEdit.bind(coordinator),
       noteFreshnessHint: (reason) => coordinator.noteFreshnessHint(reason),
       flushNow: () => coordinator.flushNow(),
       retry: () => coordinator.retry(),

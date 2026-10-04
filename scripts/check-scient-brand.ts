@@ -15,6 +15,9 @@ const PRODUCT_SURFACE_ROOTS = [
 
 const PRODUCT_SURFACE_FILES = new Set([
   "packages/shared/src/relayClient.ts",
+  "packages/client-runtime/src/work-log/presentation.ts",
+  "apps/mobile/src/lib/threadActivity.ts",
+  "apps/mobile/src/features/threads/thread-work-log.tsx",
   "scripts/build-desktop-artifact.ts",
   "scripts/canonical-main-sync.mjs",
   "scripts/local-dev-app.mjs",
@@ -25,7 +28,7 @@ const PRODUCT_SURFACE_FILES = new Set([
 const EXCLUDED_ROOTS = ["apps/mobile/", "apps/marketing/"] as const;
 const SOURCE_EXTENSIONS = new Set([".html", ".js", ".jsx", ".mjs", ".ts", ".tsx"]);
 const FORBIDDEN_PUBLIC_BRANDS =
-  /\bT3 Code\b|\bT3 Tools\b|\bT3Wordmark\b|aria-label=["']T3["']|ScientFactory\/scient-desktop-next|github\.com\/(?:pingdotgg\/t3code|t3dotgg\/t3-code)\/releases\b/i;
+  /\bT3 Code\b|\bT3 Tools\b|\bT3 threads?\b|\bT3 MCP\b|\bt3-code MCP\b|Tool\.make\(["']t3_|\bT3Wordmark\b|aria-label=["']T3["']|ScientFactory\/scient-desktop-next|github\.com\/(?:pingdotgg\/t3code|t3dotgg\/t3-code)\/releases\b/i;
 
 const REQUIRED_SCIENT_ANCHORS = new Map<string, readonly string[]>([
   ["apps/desktop/package.json", ['"productName": "Scient"']],
@@ -42,13 +45,32 @@ const REQUIRED_SCIENT_ANCHORS = new Map<string, readonly string[]>([
     "scripts/local-dev-app.mjs",
     ['LOCAL_DEV_APP_NAME = "Scient (Dev)"', 'LOCAL_DEV_APP_STABLE_NAME = "Scient (Dev) Stable"'],
   ],
+  // The Möbius outline's opening segment pins the geometry; colours pin each variant.
   [
     "assets/prod/app-icon.icon/Assets/symbol.svg",
-    ['fill="#46587E"', 'fill="#471A1A"', 'd="M292 108', 'height="16"'],
+    [
+      'd="M246.52 503.73C322.54 503.73 398.52 472.32 450.13 416.07',
+      '<mask id="scient-strip"',
+      'fill="#5BA2C2"',
+      'fill="#F8AC8B"',
+    ],
+  ],
+  [
+    "assets/dev/app-icon.icon/Assets/symbol.svg",
+    ['d="M246.52 503.73C322.54 503.73 398.52 472.32 450.13 416.07', 'fill="#252B32"'],
+  ],
+  [
+    "assets/nightly/app-icon.icon/Assets/symbol.svg",
+    ['d="M246.52 503.73C322.54 503.73 398.52 472.32 450.13 416.07', 'fill="#FFFFFF"'],
   ],
   [
     "apps/web/src/assets/scient-symbol.svg",
-    ['fill="#46587E"', 'fill="#471A1A"', 'd="M292 108', 'height="16"'],
+    [
+      'd="M246.52 503.73C322.54 503.73 398.52 472.32 450.13 416.07',
+      '<mask id="scient-strip"',
+      'fill="#5BA2C2"',
+      'fill="#F8AC8B"',
+    ],
   ],
   ["apps/web/src/components/sidebar/SidebarChrome.tsx", ["APP_BASE_NAME", "<ScientSymbol"]],
   ["assets/dev/app-icon.icon/icon.json", ['"scale": 8.0', '"translation-in-points": [0, 0]']],
@@ -68,7 +90,8 @@ function extension(path: string): string {
 }
 
 export function isProductSurface(path: string): boolean {
-  if (EXCLUDED_ROOTS.some((root) => path.startsWith(root))) return false;
+  if (EXCLUDED_ROOTS.some((root) => path.startsWith(root)) && !PRODUCT_SURFACE_FILES.has(path))
+    return false;
   if (path.includes(".test.") || path.includes(".spec.")) return false;
   if (!SOURCE_EXTENSIONS.has(extension(path))) return false;
   return (

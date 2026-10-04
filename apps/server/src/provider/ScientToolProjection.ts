@@ -17,7 +17,7 @@ export const CANONICAL_SCIENT_TOOL_PROJECTION: ScientToolProjection = {
 };
 
 export const CLAUDE_SCIENT_TOOL_PROJECTION: ScientToolProjection = {
-  name: (name) => `mcp__t3-code__${name}`,
+  name: (name) => `mcp__scient__${name}`,
   providerNativeSkillTool: true,
   deferred: false,
 };
