@@ -1,4 +1,13 @@
 import {
+  OrchestrationMessageRole,
+  OrchestrationMessage,
+  OrchestrationProposedPlan,
+  SourceProposedPlanReference,
+  OrchestrationThreadActivity,
+  OrchestrationLatestTurn,
+} from "./scientConversationView.ts";
+export * from "./scientConversationView.ts";
+import {
   OrchestrationForkWorkspaceMode,
   ThreadForkCommand,
   ThreadForkAttachmentCopy,
@@ -46,7 +55,6 @@ import {
   ProviderUserInputAnswers,
   RuntimeMode,
   UserInputAttachments,
-  UserInputAttachmentAnswerPayload,
 } from "./providerPolicy.ts";
 export * from "./chatAttachment.ts";
 
@@ -165,12 +173,7 @@ const SnapShotAccessibilityWire = Schema.Union([
   }),
 ]);
 
-// SCIENT-FORK:START — imported history names the message that carries an answer.
-/** The ID of the user message chat folds into this submitted answer. */
-export function questionAnswerMessageId(answer: UserInputAttachmentAnswerPayload): string {
-  return answer.messageId ?? `async-answer:${answer.requestId}`;
-}
-// SCIENT-FORK:END
+export { questionAnswerMessageId } from "./scientQuestionAnswer.ts";
 
 // SCIENT-FORK:START — the Scient thread queue stores upload-shaped
 // attachments so a queued item dispatches through thread.turn.start
@@ -219,51 +222,6 @@ export const OrchestrationProject = Schema.Struct({
   deletedAt: Schema.NullOr(IsoDateTime),
 });
 export type OrchestrationProject = typeof OrchestrationProject.Type;
-
-/** `reasoning` carries a provider's thinking trace: a reasoning summary, or
- *  the raw chain of thought when the model exposes one. It is a sibling of the
- *  assistant text it precedes, not a replacement for it. */
-export const OrchestrationMessageRole = Schema.Literals([
-  "user",
-  "assistant",
-  "system",
-  "reasoning",
-]);
-export type OrchestrationMessageRole = typeof OrchestrationMessageRole.Type;
-
-export const OrchestrationMessage = Schema.Struct({
-  id: MessageId,
-  role: OrchestrationMessageRole,
-  text: Schema.String,
-  attachments: Schema.optional(Schema.Array(ChatAttachment)),
-  context: Schema.optional(OrchestrationMessageContext),
-  turnId: Schema.NullOr(TurnId),
-  streaming: Schema.Boolean,
-  createdAt: IsoDateTime,
-  updatedAt: IsoDateTime,
-});
-export type OrchestrationMessage = typeof OrchestrationMessage.Type;
-
-export const OrchestrationProposedPlanId = TrimmedNonEmptyString;
-export type OrchestrationProposedPlanId = typeof OrchestrationProposedPlanId.Type;
-
-export const OrchestrationProposedPlan = Schema.Struct({
-  id: OrchestrationProposedPlanId,
-  turnId: Schema.NullOr(TurnId),
-  planMarkdown: TrimmedNonEmptyString,
-  implementedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  implementationThreadId: Schema.NullOr(ThreadId).pipe(
-    Schema.withDecodingDefault(Effect.succeed(null)),
-  ),
-  createdAt: IsoDateTime,
-  updatedAt: IsoDateTime,
-});
-export type OrchestrationProposedPlan = typeof OrchestrationProposedPlan.Type;
-
-const SourceProposedPlanReference = Schema.Struct({
-  threadId: ThreadId,
-  planId: OrchestrationProposedPlanId,
-});
 
 export const OrchestrationSessionStatus = Schema.Literals([
   "idle",
@@ -339,45 +297,6 @@ export const ThreadConversationImportTurn = Schema.Struct({
 });
 export type ThreadConversationImportTurn = typeof ThreadConversationImportTurn.Type;
 // SCIENT-FORK:END
-
-export const OrchestrationThreadActivityTone = Schema.Literals([
-  "info",
-  "tool",
-  "approval",
-  "error",
-]);
-export type OrchestrationThreadActivityTone = typeof OrchestrationThreadActivityTone.Type;
-
-export const OrchestrationThreadActivity = Schema.Struct({
-  id: EventId,
-  tone: OrchestrationThreadActivityTone,
-  kind: TrimmedNonEmptyString,
-  summary: TrimmedNonEmptyString,
-  payload: Schema.Unknown,
-  turnId: Schema.NullOr(TurnId),
-  sequence: Schema.optional(NonNegativeInt),
-  createdAt: IsoDateTime,
-});
-export type OrchestrationThreadActivity = typeof OrchestrationThreadActivity.Type;
-
-const OrchestrationLatestTurnState = Schema.Literals([
-  "running",
-  "interrupted",
-  "completed",
-  "error",
-]);
-export type OrchestrationLatestTurnState = typeof OrchestrationLatestTurnState.Type;
-
-export const OrchestrationLatestTurn = Schema.Struct({
-  turnId: TurnId,
-  state: OrchestrationLatestTurnState,
-  requestedAt: IsoDateTime,
-  startedAt: Schema.NullOr(IsoDateTime),
-  completedAt: Schema.NullOr(IsoDateTime),
-  assistantMessageId: Schema.NullOr(MessageId),
-  sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
-});
-export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
 // Version changes even when a manual rename keeps the same text.
 export const ThreadTitleState = Schema.Struct({
