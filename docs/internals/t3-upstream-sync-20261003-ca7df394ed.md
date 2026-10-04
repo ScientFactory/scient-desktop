@@ -742,3 +742,17 @@ scoped formatting/lint/diff and the actual provenance gate against original
 owned main and exact official target pass (`owned-merge-provenance-*-round1.txt`).
 The earlier static-round10 failure is retained as causal evidence. Final composed
 gates remain required after later integrations.
+
+The original D3 requirement now has actual WebSocket endpoint proof rather than
+only a URL predicate test. Absent, older, newer and malformed query protocols
+receive the exact HTTP 426 upgrade response before the live authentication service
+or V2 intake runs; a current HTTP header does not substitute for the required
+query. The positive control reaches actual authentication and an authenticated
+`server.getConfig` WebSocket RPC. The unchanged production admission gate already
+enforced this order. The complete server route file passes 242 cases, with scoped
+formatting/lint and whitespace checks clean. Round1 compilation passed before
+the final same-typed future-version test row; final combined compilation remains
+required. Independent review matches the exact final test and production blobs
+(`d3-ws-protocol-qualified-handoff-round2.md`,
+`d3-ws-protocol-independent-review-round2.md`). Installed-client upgrade and
+remote/mobile acceptance remain separate from this controlled endpoint proof.
