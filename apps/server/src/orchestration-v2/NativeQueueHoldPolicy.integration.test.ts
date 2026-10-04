@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
+  ChatAttachmentId,
   EventId,
   NodeId,
   PlanId,
@@ -14,6 +15,9 @@ import {
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import { ServerConfig } from "../config.ts";
+import { createAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
 import * as DateTime from "effect/DateTime";
 import { EventSinkV2 } from "./EventSink.ts";
 import { EffectOutboxV2 } from "./EffectOutbox.ts";
@@ -32,7 +36,10 @@ import {
 } from "./Adapters/NativeSessionAdapterV2.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
 import { OrchestratorV2, type OrchestratorV2Error } from "./Orchestrator.ts";
-import type { ProviderAdapterV2TurnInput } from "./ProviderAdapter.ts";
+import {
+  ProviderAdapterOpenSessionError,
+  type ProviderAdapterV2TurnInput,
+} from "./ProviderAdapter.ts";
 import { makeLayer } from "./ProviderAdapterRegistry.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
@@ -53,6 +60,9 @@ const withNativeQueue = <A, E, R>(
     readonly threadId: ThreadId;
     readonly orchestrator: OrchestratorV2["Service"];
     readonly offers: ReadonlyArray<string>;
+    readonly preparationReady: Effect.Effect<void>;
+    readonly releasePreparation: Effect.Effect<void>;
+    readonly preparationAttempts: () => number;
     readonly nativeInterruptions: () => number;
     readonly takeOffer: Effect.Effect<NativeOffer, Cause.TimeoutError>;
     readonly waitFor: (
@@ -71,6 +81,8 @@ const withNativeQueue = <A, E, R>(
     readonly acceptBeforeSyncFailure?: boolean;
     readonly holdSyncFailure?: boolean;
     readonly ingestSyncAcceptance?: boolean;
+    readonly holdPreparation?: boolean;
+    readonly refusePreparation?: boolean;
   } = {},
 ) =>
   Effect.scoped(
@@ -80,9 +92,12 @@ const withNativeQueue = <A, E, R>(
       const scope = yield* Scope.Scope;
       const offered = yield* Queue.unbounded<NativeOffer>();
       const firstSendReleased = yield* Deferred.make<void>();
+      const preparationReady = yield* Deferred.make<void>();
+      const preparationReleased = yield* Deferred.make<void>();
+      let preparationAttempts = 0;
       const offers: string[] = [];
       let nativeInterruptions = 0;
-      const adapter = makeNativeSessionAdapterV2({
+      const adapterOptions = {
         instanceId,
         driver: ProviderDriverKind.make("omp"),
         capabilities: AcpProviderCapabilitiesV2,
@@ -174,6 +189,12 @@ const withNativeQueue = <A, E, R>(
               ),
             ),
           }),
+      } satisfies Parameters<typeof makeNativeSessionAdapterV2>[0];
+      const adapter = makeNativeSessionAdapterV2(adapterOptions);
+      const preparationInstanceId = ProviderInstanceId.make("queue-preparation-target");
+      const preparationAdapter = makeNativeSessionAdapterV2({
+        ...adapterOptions,
+        instanceId: preparationInstanceId,
       });
       const layer = makeOrchestratorV2ReplayLayerWithRegistry(
         {
@@ -209,6 +230,26 @@ const withNativeQueue = <A, E, R>(
                   ),
               }
             : adapter,
+          ...(options.holdPreparation
+            ? [
+                {
+                  ...preparationAdapter,
+                  openSession: (input: Parameters<typeof preparationAdapter.openSession>[0]) =>
+                    Effect.gen(function* () {
+                      preparationAttempts += 1;
+                      yield* Deferred.succeed(preparationReady, undefined);
+                      yield* Deferred.await(preparationReleased);
+                      if (options.refusePreparation)
+                        return yield* new ProviderAdapterOpenSessionError({
+                          driver: preparationAdapter.driver,
+                          providerSessionId: input.providerSessionId,
+                          cause: "Controlled external provider preparation refusal",
+                        });
+                      return yield* preparationAdapter.openSession(input);
+                    }),
+                },
+              ]
+            : []),
         ]),
         { configureMcp: false },
       );
@@ -257,6 +298,9 @@ const withNativeQueue = <A, E, R>(
           threadId,
           orchestrator,
           offers,
+          preparationReady: Deferred.await(preparationReady),
+          releasePreparation: Deferred.succeed(preparationReleased, undefined).pipe(Effect.asVoid),
+          preparationAttempts: () => preparationAttempts,
           takeOffer,
           waitFor,
           nativeInterruptions: () => nativeInterruptions,
@@ -282,6 +326,221 @@ const send = (
     creationSource: "web",
     dispatchMode: { type: queue ? "queue_after_active" : "start_immediately" },
   });
+
+for (const { bytes, refused } of [
+  { bytes: false, refused: true },
+  { bytes: false, refused: false },
+  { bytes: true, refused: true },
+  { bytes: true, refused: false },
+]) {
+  it.live(
+    `reserves queued ${bytes ? "bytes" : "count"} through preparation until ${refused ? "held failure" : "native acceptance"}`,
+    () =>
+      withNativeQueue(
+        `queue-reservation:${bytes}:${refused}`,
+        ({
+          orchestrator,
+          threadId,
+          takeOffer,
+          waitFor,
+          preparationReady,
+          releasePreparation,
+          preparationAttempts,
+        }) =>
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const config = yield* ServerConfig;
+            const ownedAttachment = Effect.fnUntraced(function* (name: string, size: number) {
+              const id = createAttachmentId(threadId);
+              assert.ok(id);
+              const attachment = {
+                type: "file" as const,
+                id: ChatAttachmentId.make(id),
+                name,
+                mimeType: "application/octet-stream",
+                sizeBytes: 1,
+              };
+              const path = resolveAttachmentPath({
+                attachmentsDir: config.attachmentsDir,
+                attachment,
+              });
+              assert.ok(path);
+              yield* fs.makeDirectory(config.attachmentsDir, { recursive: true });
+              yield* fs.writeFile(path, new Uint8Array(size).fill(73));
+              assert.equal(Number((yield* fs.stat(path)).size), size);
+              return { attachment, path };
+            });
+            yield* send(orchestrator, threadId, "Foreground");
+            const foreground = yield* takeOffer;
+            const headAttachment = bytes
+              ? yield* ownedAttachment("head.bin", 31 * 1024 * 1024)
+              : undefined;
+            const tailAttachment = bytes
+              ? yield* ownedAttachment("tail.bin", 32 * 1024 * 1024)
+              : undefined;
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              threadId,
+              commandId: CommandId.make(`${threadId}:head`),
+              messageId: MessageId.make(`${threadId}:head`),
+              text: "Queued head",
+              attachments: headAttachment ? [headAttachment.attachment] : [],
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("queue-preparation-target"),
+                model: "queue-policy-model",
+              },
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: "user",
+              creationSource: "web",
+              selectedScientSkillNames: ["preserved-skill"],
+            });
+            for (let index = 0; index < (bytes ? 1 : 19); index++) {
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                threadId,
+                commandId: CommandId.make(`${threadId}:tail:${index}`),
+                messageId: MessageId.make(`${threadId}:tail:${index}`),
+                text: `Tail ${index}`,
+                attachments: tailAttachment ? [tailAttachment.attachment] : [],
+                dispatchMode: { type: "queue_after_active" },
+                createdBy: "user",
+                creationSource: "web",
+              });
+            }
+            const before = yield* orchestrator.getThreadProjection(threadId);
+            const head = before.runs.find(
+              (run) => run.userMessageId === MessageId.make(`${threadId}:head`),
+            );
+            assert.ok(head);
+            assert.equal(head.status, "queued");
+            const originalMessage = before.messages.find(
+              (message) => message.id === head.userMessageId,
+            );
+            assert.ok(originalMessage);
+            yield* foreground.settle("completed");
+            yield* preparationReady;
+            const preparing = yield* orchestrator.getThreadProjection(threadId);
+            assert.equal(preparing.runs.find((run) => run.id === head.id)?.status, "starting");
+            assert.equal(
+              preparing.runs.filter((run) => run.status === "queued").length,
+              bytes ? 1 : 19,
+            );
+            const extra = bytes ? yield* ownedAttachment("extra.bin", 2 * 1024 * 1024) : undefined;
+            const candidate = {
+              type: "message.dispatch" as const,
+              threadId,
+              commandId: CommandId.make(`${threadId}:replacement`),
+              messageId: MessageId.make(`${threadId}:replacement`),
+              text: "Replacement",
+              attachments: extra ? [extra.attachment] : [],
+              dispatchMode: { type: "queue_after_active" as const },
+              createdBy: "user" as const,
+              creationSource: "web" as const,
+            };
+            if (tailAttachment && extra) {
+              const tailRun = preparing.runs.find(
+                (run) => run.userMessageId === MessageId.make(`${threadId}:tail:0`),
+              );
+              assert.ok(tailRun);
+              const edit = yield* Effect.result(
+                orchestrator.dispatch({
+                  type: "queued-run.edit",
+                  threadId,
+                  runId: tailRun.id,
+                  commandId: CommandId.make(`${threadId}:edit-while-reserved`),
+                  text: "Enlarged tail",
+                  attachments: [tailAttachment.attachment, extra.attachment],
+                }),
+              );
+              assert.equal(
+                edit._tag,
+                "Failure",
+                "A queued edit must retain the starting head's bytes",
+              );
+              assert.deepEqual(
+                (yield* orchestrator.getThreadProjection(threadId)).messages.find(
+                  (message) => message.id === tailRun.userMessageId,
+                )?.attachments,
+                [tailAttachment.attachment],
+              );
+            }
+            const rejected = yield* Effect.result(orchestrator.dispatch(candidate));
+            assert.equal(
+              rejected._tag,
+              "Failure",
+              "Promotion cannot release a potentially restored head's budget",
+            );
+            assert.equal(
+              (yield* orchestrator.getThreadProjection(threadId)).messages.some(
+                (message) => message.id === candidate.messageId,
+              ),
+              false,
+            );
+            yield* releasePreparation;
+            if (refused) {
+              const held = yield* waitFor((projection) =>
+                projection.runs.some(
+                  (run) => run.id === head.id && run.status === "queued" && run.queueHeld === true,
+                ),
+              );
+              assert.equal(preparationAttempts(), 5);
+              assert.equal(
+                held.runs.filter((run) => run.status === "queued").length,
+                bytes ? 2 : 20,
+              );
+              assert.deepEqual(
+                held.messages.find((message) => message.id === head.userMessageId),
+                originalMessage,
+              );
+              const again = yield* Effect.result(
+                orchestrator.dispatch({
+                  type: "legacy-queue.import",
+                  threadId,
+                  commandId: CommandId.make(`${threadId}:after-held`),
+                  queueItemId: "reserved-import",
+                  messageId: candidate.messageId,
+                  text: candidate.text,
+                  attachments: candidate.attachments,
+                  createdAt: yield* DateTime.now,
+                }),
+              );
+              assert.equal(
+                again._tag,
+                "Failure",
+                "Held legacy admission shares the restored queue's budget",
+              );
+            } else {
+              const nativeHead = yield* takeOffer;
+              assert.equal(nativeHead.input.runId, head.id);
+              yield* waitFor((projection) =>
+                projection.providerTurns.some(
+                  (turn) =>
+                    turn.runAttemptId === nativeHead.input.attemptId &&
+                    turn.nativeAcceptance === "accepted",
+                ),
+              );
+              yield* orchestrator.dispatch({
+                ...candidate,
+                commandId: CommandId.make(`${threadId}:after-accepted`),
+              });
+              const admitted = yield* orchestrator.getThreadProjection(threadId);
+              assert.equal(
+                admitted.messages.some((message) => message.id === candidate.messageId),
+                true,
+              );
+              assert.equal(
+                admitted.runs.filter((run) => run.status === "queued").length,
+                bytes ? 2 : 20,
+              );
+            }
+            if (headAttachment)
+              assert.equal(Number((yield* fs.stat(headAttachment.path)).size), 31 * 1024 * 1024);
+            if (extra) assert.equal(Number((yield* fs.stat(extra.path)).size), 2 * 1024 * 1024);
+          }),
+        { holdPreparation: true, refusePreparation: refused },
+      ),
+  );
+}
 
 for (const { queued, ambiguous } of [
   { queued: false, ambiguous: false },

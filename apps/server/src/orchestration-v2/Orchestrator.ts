@@ -693,7 +693,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const serverConfig = yield* ServerConfig;
   const validateQueueBudget = (
     command: OrchestrationV2ServerCommand,
-    projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "messages">,
+    projection: Pick<
+      OrchestrationV2ThreadProjection,
+      "thread" | "runs" | "messages" | "providerTurns"
+    >,
     message: OrchestrationV2ConversationMessage,
   ) =>
     ensureQueuedMessageBudget({ projection, message }).pipe(
@@ -7776,7 +7779,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       const projection = yield* projectionStore
-        .getThreadRecords(command.threadId, ["runs", "messages", "turnItems"], {
+        .getThreadRecords(command.threadId, ["runs", "messages", "turnItems", "providerTurns"], {
           turnItemTypes: ["user_message"],
           messageRoles: ["user"],
         })
@@ -9806,7 +9809,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       }
       case "legacy-queue.import": {
-        const projection = yield* loadProjectionForCommand(command, ["runs", "messages"]);
+        const projection = yield* loadProjectionForCommand(command, [
+          "runs",
+          "messages",
+          "providerTurns",
+        ]);
         if (
           projection.thread.deletedAt !== null ||
           isProviderNativeSubagentThread(projection.thread)

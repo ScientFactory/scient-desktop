@@ -550,6 +550,11 @@ export async function restoreQueueEditStash(
   const recoveryKey = activeSession?.journalKey ?? randomUUID();
   let recovery: EditSession = {
     ...(activeSession ?? session),
+    // An ordinary stash restores authored content, not the extracted run's
+    // plan or retry identity. An existing target edit keeps its own provenance.
+    ...(!activeSession && side === "ordinary"
+      ? { extractedItem: undefined, nativeRun: undefined }
+      : {}),
     key: targetKey,
     journalKey: recoveryKey,
     originalTarget: target,

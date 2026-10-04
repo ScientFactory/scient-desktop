@@ -114,6 +114,49 @@ beforeEach(async () => {
   vi.mocked(extractNativeQueuedRun).mockReset();
 });
 describe("queue extraction into an ordinary draft", () => {
+  it.each([false, true])(
+    "restores an ordinary stash with only the target edit's plan provenance (active edit: %s)",
+    async (activeEdit) => {
+      useComposerDraftStore.getState().setPrompt(target, "ordinary authored draft");
+      const sourceItem = {
+        ...item,
+        sourceProposedPlan: { threadId: target.threadId, planId: PlanId.make("source-plan") },
+      };
+      const sourceRun = {
+        runId: RunId.make("source-run"),
+        messageId: MessageId.make("source-message"),
+        expectedUpdatedAt: item.updatedAt,
+      };
+      vi.mocked(extractNativeQueuedRun).mockResolvedValue({ sequence: 1 });
+      await beginQueueEdit(target, sourceItem, sourceRun);
+      const sourceSession = useQueueEditSessions.getState().sessions[composerTargetKey(target)]!;
+      const entry = usePromptStashStore
+        .getState()
+        .entries.find((candidate) => candidate.queueEditSide === "ordinary")!;
+      await finishQueueEdit(sourceSession);
+      if (activeEdit) {
+        await beginQueueEdit(other, {
+          ...item,
+          threadId: other.threadId,
+          sourceProposedPlan: { threadId: other.threadId, planId: PlanId.make("target-plan") },
+        });
+      }
+      await restoreQueueEditStash(entry, other, other.environmentId);
+      const recovered = useQueueEditSessions.getState().sessions[composerTargetKey(other)]!;
+      expect(useComposerDraftStore.getState().getComposerDraft(other)?.prompt).toContain(
+        "ordinary authored draft",
+      );
+      expect(recovered.extractedItem?.sourceProposedPlan?.planId).toBe(
+        activeEdit ? "target-plan" : undefined,
+      );
+      expect(recovered.nativeRun).toBeUndefined();
+      const persisted = (await readQueueEditJournal(recovered.journalKey))!;
+      expect(persisted.extractedItem?.sourceProposedPlan).toEqual(
+        activeEdit ? { threadId: other.threadId, planId: "target-plan" } : undefined,
+      );
+      expect(persisted.nativeRun).toBeUndefined();
+    },
+  );
   it.each([
     {
       label: "imported captured policy",
