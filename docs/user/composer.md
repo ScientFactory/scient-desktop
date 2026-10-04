@@ -574,8 +574,7 @@ clients must update before sending to a server using the new queue protocol.
 
 By default, an answer grows below your reading position. Reaching the bottom
 or clicking Scroll to end does not enable automatic following, and tool
-activity does not pull the conversation downward, apart from the short follow
-after you send described below. "The bottom" means the end
+activity does not pull the conversation downward. "The bottom" means the end
 of the latest answer's text, and you still count as at the bottom with up to
 its last three lines hidden behind the composer. A changed-files list, tool
 activity, timestamps or your own message sent after that answer do not count
@@ -585,15 +584,15 @@ to end** appears. The same holds after you stop the turn or it fails, and
 when it finishes without writing an answer.
 
 Sending at the bottom (by that same rule) gently reveals your message and its
-answer. The first message retains its existing placement near the top. A later
-message rises partway, its bottom about the middle of the reading area, so the
-lower half shows the first thinking and tool steps. The view then follows that
-activity as it arrives until your message's first line reaches the top of the
-reading area; only the bubble's padding may pass above it. It then stays there
+answer. The first message retains its existing placement
+near the top. After a later message, the view follows everything the agent
+produces (thinking, tool steps and text) at a calm pace, staying at the bottom.
+Movement stops when your sent message's first line reaches the top
+of the reading area; only the bubble's padding may pass above it. It then stays there
 while the rest grows below the screen. When progress notes, reasoning or tool
 activity push the message the agent is writing below the screen, the reveal
 continues just far enough to show that message's first lines, never its end. A
-queued message that is sent while you are at the bottom is placed the same way.
+queued message that is sent while you are at the bottom is revealed the same way.
 If you were reading earlier content, sending leaves that position alone.
 Scrolling back up cancels both pending placement and limited answer following,
 including during an upload; clicking, selecting text, or scrolling down does not.

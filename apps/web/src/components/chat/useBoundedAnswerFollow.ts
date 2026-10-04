@@ -8,30 +8,36 @@ import { isTimelineScrollTarget } from "./timelineScrollTarget";
 const FIRST_LINES_PX = 48;
 /** The timeline's estimated row height, for a row not yet measured. */
 const ESTIMATED_ROW_SIZE = 90;
+/** How the reveal moves: a top speed and how gently it eases to a stop. */
+const REVEAL_PACE = { maxPxPerMs: 1.2, easeMs: 90 };
+/** The gap the timeline keeps between its last row and the composer at the end. */
+const END_GAP = 16;
+const FOLLOW_PACE = { maxPxPerMs: 0.6, easeMs: 180 };
 
 /**
- * How far the reveal may scroll now. The response's growth (traces, tool
- * rows and messages) is followed only while the sent prompt's text keeps room
- * above it. When traces and tool rows push the latest message below the fold,
- * the reveal continues past the prompt just far enough to show that message's
- * first lines, and never scrolls the message itself above the reading margin:
- * the answer is read from its beginning, not followed to its end.
+ * How far the reveal may scroll now. Growth is revealed only while the sent
+ * prompt's text keeps room above it. When traces and tool rows push the
+ * latest message below the fold, the reveal continues past the prompt just
+ * far enough to show that message's first lines, and never scrolls the
+ * message itself above the reading margin: the answer is read from its
+ * beginning, not followed to its end.
  */
 export function boundedAnswerScrollDelta(input: {
   promptTextTop: number;
   answerTop: number | null;
   answerBottom: number;
-  /** The bottom of the response's latest row; defaults to the answer's. */
-  responseBottom?: number;
   viewportTop: number;
   viewportBottom: number;
+  /**
+   * For a later prompt: how far the conversation's end is below the view.
+   * Its whole response (traces, tool rows and messages) is then followed,
+   * keeping the view at the end, instead of only the answer's growth.
+   */
+  endBelow?: number;
 }) {
   const readingTop = input.viewportTop + CHAT_TIMELINE_ANCHOR_OFFSET;
   const promptRoom = Math.max(0, input.promptTextTop - readingTop);
-  const hiddenBelow = Math.max(
-    0,
-    (input.responseBottom ?? input.answerBottom) - input.viewportBottom,
-  );
+  const hiddenBelow = Math.max(0, input.endBelow ?? input.answerBottom - input.viewportBottom);
   const growth = Math.min(promptRoom, hiddenBelow);
   if (input.answerTop === null) return growth;
   const firstLinesHidden = Math.max(
@@ -44,13 +50,14 @@ export function boundedAnswerScrollDelta(input: {
 
 /**
  * After an eligible send, reveals the prompt and then the start of its
- * response, following its traces, tool rows and messages as they arrive until
- * the prompt reaches the top margin. Past that, the response's latest
- * assistant message is the target, so the reveal moves past progress notes and
- * trace runs only to show the first lines of the message the agent is writing
- * now. It stops once the response has settled and its last message
- * is revealed, or when the reader scrolls back up. Scrolling down, clicks,
- * text selection and scrolling inside nested output never cancel it.
+ * response. The response's latest assistant message is the target, so the
+ * reveal moves past progress notes and trace runs to the message the agent is
+ * writing now. For a later prompt (`followResponse`), the whole response is
+ * followed at a calmer pace, keeping the view at the conversation's end, until
+ * the prompt reaches the top margin. It stops once the response has settled
+ * and its last message is revealed, or when the reader scrolls back up.
+ * Scrolling down, clicks, text selection and scrolling inside nested output
+ * never cancel it.
  */
 export function useBoundedAnswerFollow({
   listRef,
@@ -59,6 +66,7 @@ export function useBoundedAnswerFollow({
   responseRunning,
   suspended,
   composerInset,
+  followResponse = false,
   onFinished,
 }: {
   listRef: RefObject<LegendListRef | null>;
@@ -68,6 +76,8 @@ export function useBoundedAnswerFollow({
   responseRunning: boolean;
   suspended: boolean;
   composerInset: number;
+  /** A later prompt: follow its whole response to the end, not only its answer. */
+  followResponse?: boolean;
   /** Called once when the reveal for `promptMessageId` ends (revealed or cancelled). */
   onFinished?: (promptMessageId: string) => void;
 }) {
@@ -84,12 +94,10 @@ export function useBoundedAnswerFollow({
     );
     if (promptIndex < 0) return;
     let answerIndex = -1;
-    let responseIndex = promptIndex;
     for (let i = promptIndex + 1; i < rows.length; i++) {
       const row = rows[i];
-      if (row?.kind === "message" && row.message.role === "user") break;
-      responseIndex = i;
       if (row?.kind !== "message") continue;
+      if (row.message.role === "user") break;
       if (row.message.role === "assistant" && row.message.text.trim()) answerIndex = i;
     }
 
@@ -97,18 +105,19 @@ export function useBoundedAnswerFollow({
     const viewport = list?.getScrollableNode();
     const promptRow = rows[promptIndex]!;
     const answerRow = rows[answerIndex] ?? promptRow;
-    const responseRow = rows[responseIndex] ?? promptRow;
-    const answerSettled =
-      answerIndex >= 0 &&
-      !responseRunning &&
-      answerRow.kind === "message" &&
-      !answerRow.message.streaming;
+    // A followed response has settled once the thread is done, answer or not.
+    const answerSettled = followResponse
+      ? !responseRunning && (answerRow.kind !== "message" || !answerRow.message.streaming)
+      : answerIndex >= 0 &&
+        !responseRunning &&
+        answerRow.kind === "message" &&
+        !answerRow.message.streaming;
     if (!viewport || !list) return;
     const finish = () => {
       intent.current.stopped = true;
       onFinished?.(promptMessageId);
     };
-    const observed = new Set<Element>();
+    let observedAnswer: Element | null = null;
     let mountAttempts = 12;
     let frame: number | null = null;
     let previousFrameTime = performance.now();
@@ -149,17 +158,25 @@ export function useBoundedAnswerFollow({
         const top = viewportRect.top + position - measuredState.scroll;
         return { element: null, top, rect: { top, bottom: top + size } };
       };
+      // How far the conversation's real end is below its resting place above
+      // the composer, never past the scroll range (nor into reserved space).
+      const endBelow = () => {
+        const toMax = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop;
+        const last = rows.at(-1);
+        const endBox = last ? rowRect(last.id) : null;
+        const restingBottom = viewportRect.top + viewport.clientHeight - composerInset - END_GAP;
+        return endBox ? Math.min(toMax, endBox.rect.bottom - restingBottom) : toMax;
+      };
       const answerBox = rowRect(answerRow.id);
       if (!answerBox) {
         if (mountAttempts-- > 0) frame = requestAnimationFrame(tick);
         return;
       }
-      const responseBox = responseRow === answerRow ? answerBox : rowRect(responseRow.id);
-      for (const element of [answerBox.element, responseBox?.element]) {
-        if (element && !observed.has(element)) {
-          observer.observe(element);
-          observed.add(element);
-        }
+      const answer = answerBox.element;
+      if (answer && observedAnswer !== answer) {
+        if (observedAnswer) observer.unobserve(observedAnswer);
+        observer.observe(answer);
+        observedAnswer = answer;
       }
       const promptBox = rowRect(promptRow.id);
       const promptText =
@@ -172,9 +189,9 @@ export function useBoundedAnswerFollow({
         promptTextTop,
         answerTop: answerIndex >= 0 ? rect.top : null,
         answerBottom: rect.bottom,
-        responseBottom: responseBox?.rect.bottom ?? rect.bottom,
         viewportTop: viewportRect.top,
         viewportBottom: viewportRect.top + viewport.clientHeight - composerInset,
+        ...(followResponse ? { endBelow: endBelow() } : {}),
       });
       if (delta <= 0.5) {
         // Nothing to reveal now. Later messages may still arrive while the
@@ -193,10 +210,12 @@ export function useBoundedAnswerFollow({
         return;
       }
       // A bounded animation only while content actually needs revealing; never an idle loop.
-      const eased = delta * (1 - Math.exp(-elapsed / 90));
+      // A followed response moves at a calmer pace, so bursts of steps read as one drift.
+      const pace = followResponse ? FOLLOW_PACE : REVEAL_PACE;
+      const eased = delta * (1 - Math.exp(-elapsed / pace.easeMs));
       viewport.scrollTop += reducedMotion
         ? delta
-        : Math.min(delta, Math.max(0.5, Math.min(elapsed * 1.2, eased)));
+        : Math.min(delta, Math.max(0.5, Math.min(elapsed * pace.maxPxPerMs, eased)));
       revealTop = Math.max(revealTop, viewport.scrollTop);
       if (Math.abs(viewport.scrollTop - before) > 0.1) frame = requestAnimationFrame(tick);
     };
@@ -215,7 +234,11 @@ export function useBoundedAnswerFollow({
     // Any upward movement the reveal did not make (a touch drag, the
     // scrollbar, a key) is the reader scrolling back, which ends the reveal.
     const onScroll = () => {
-      if (viewport.scrollTop < revealTop - 2) cancel();
+      // At the very end, a lower position is the end itself moving up (a
+      // busy indicator or a collapsed row went away), not the reader.
+      const atEnd = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <= 1;
+      if (followResponse && atEnd) revealTop = viewport.scrollTop;
+      else if (viewport.scrollTop < revealTop - 2) cancel();
       else revealTop = Math.max(revealTop, viewport.scrollTop);
     };
     const onKey = (event: KeyboardEvent) => {
@@ -233,6 +256,9 @@ export function useBoundedAnswerFollow({
     viewport.ownerDocument.addEventListener("keydown", onKey);
     const observer = new ResizeObserver(schedule);
     observer.observe(viewport);
+    // A followed response can grow anywhere (a tool's output expanding in place).
+    const content = viewport.firstElementChild;
+    if (followResponse && content) observer.observe(content);
     schedule();
     return () => {
       if (frame !== null) cancelAnimationFrame(frame);
@@ -241,5 +267,14 @@ export function useBoundedAnswerFollow({
       viewport.removeEventListener("scroll", onScroll);
       viewport.ownerDocument.removeEventListener("keydown", onKey);
     };
-  }, [listRef, rows, promptMessageId, responseRunning, suspended, composerInset, onFinished]);
+  }, [
+    listRef,
+    rows,
+    promptMessageId,
+    responseRunning,
+    suspended,
+    composerInset,
+    followResponse,
+    onFinished,
+  ]);
 }

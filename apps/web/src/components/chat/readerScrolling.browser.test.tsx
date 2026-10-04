@@ -10,7 +10,6 @@ import { readerAtReadingEnd, withReadingEnd } from "./readerScrollPolicy";
 import { MessagesTimeline } from "./MessagesTimeline";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
-  partwayPromptOffset,
   readTimelinePosition,
   rememberTimelinePosition,
   withRealTimelineEnd,
@@ -391,11 +390,11 @@ it("keeps existing first-message framing and short-answer space through completi
 
 function failedTool(index: number) {
   return {
-    id: `follow-up-tool-${index}`,
+    id: `follow-tool-${index}`,
     kind: "work" as const,
     createdAt: date,
     entry: {
-      id: `follow-up-tool-${index}`,
+      id: `follow-tool-${index}`,
       createdAt: date,
       turnId: TurnId.make("turn-10"),
       label: `Run command ${index}`,
@@ -406,92 +405,97 @@ function failedTool(index: number) {
   };
 }
 
-it("places a later prompt partway, then follows its traces until it reaches the top", async () => {
+/** A thread at its end, then a later prompt sent there, as ChatView passes it. */
+async function sendLaterPrompt(key: string, followsResponse: boolean) {
   const answer = (index: number) => ({
     ...entry(index),
     message: { ...entry(index).message, role: "assistant" as const },
   });
   const history = Array.from({ length: 10 }, (_, i) => (i % 2 ? answer(i) : entry(i)));
-  render("geometry:follow-up", history);
-  await expect.poll(() => readTimelinePosition("geometry:follow-up")?.atEnd).toBe(true);
-  const node = listRef.current!.getScrollableNode()!;
-  const readingHeight = node.clientHeight - base.contentInsetEndAdjustment;
   const onIsAtEndChange = vi.fn();
-  let positioned = false;
+  render(key, history, { onIsAtEndChange });
+  await expect.poll(() => readTimelinePosition(key)?.atEnd).toBe(true);
+  const node = listRef.current!.getScrollableNode()!;
   const prompt = entry(10, "Short follow-up");
   const extra = {
     isWorking: true,
     runningTurnId: TurnId.make("turn-10"),
     readingFollowPromptId: prompt.message.id,
-    anchorMessageId: prompt.message.id,
-    // What ChatView does for a later prompt sent at the end.
-    onAnchorReady: (_id: MessageId, index: number) => {
-      if (positioned) return;
-      positioned = true;
-      const height = listRef.current!.getState().sizeAtIndex(index) ?? 0;
-      void listRef.current!.scrollToIndex({
-        index,
-        viewPosition: 0,
-        viewOffset: partwayPromptOffset(readingHeight, height),
-        animated: false,
-      });
-    },
+    readingFollowsResponse: followsResponse,
     onIsAtEndChange,
   };
-  // Placement holds the reveal back until it is done, as in ChatView.
-  render("geometry:follow-up", [...history, prompt], {
-    ...extra,
-    timelinePositioningPending: true,
-  });
-  await expect.poll(() => positioned).toBe(true);
-  await frames(12);
-  render("geometry:follow-up", [...history, prompt], extra);
-  await frames(4);
-  const promptBox = () => {
+  const promptTextTop = () => {
     const state = listRef.current!.getState();
-    const row = state.elementAtIndex(10)!;
-    const text = row.querySelector('[data-user-message-body="true"]')!.getBoundingClientRect();
-    const top = node.getBoundingClientRect().top;
-    // The text's top (only the bubble's padding may pass the margin), the row's bottom.
-    return { top: text.top - top, bottom: row.getBoundingClientRect().bottom - top };
+    const body = state.elementAtIndex(10)!.querySelector('[data-user-message-body="true"]')!;
+    return body.getBoundingClientRect().top - node.getBoundingClientRect().top;
   };
-  // Partway: its bottom at the middle of the reading area, the lower half free.
-  expect(Math.abs(promptBox().bottom - readingHeight / 2)).toBeLessThanOrEqual(2);
-  expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(true);
-  const rested = node.scrollTop;
-  // The first traces fill the free half without moving anything.
-  render("geometry:follow-up", [...history, prompt, failedTool(0)], extra);
-  await frames(8);
-  expect(Math.abs(node.scrollTop - rested)).toBeLessThanOrEqual(1);
-  // Then the view follows them, keeping the latest in view, up to the top margin.
-  const tools = [];
-  for (let i = 0; i < 24; i++) {
-    tools.push(failedTool(i));
-    render("geometry:follow-up", [...history, prompt, ...tools], extra);
-    // Settled: the latest trace is in view, unless the prompt reached the top.
-    await expect
-      .poll(() => {
-        const state = listRef.current!.getState();
-        const last = state.data.length - 1;
-        const bottom =
-          (state.elementAtIndex(last)?.getBoundingClientRect().bottom ?? Infinity) -
-          node.getBoundingClientRect().top;
-        return bottom <= readingHeight + 2 || promptBox().top <= CHAT_TIMELINE_ANCHOR_OFFSET + 1;
-      })
-      .toBe(true);
-    expect(promptBox().top).toBeGreaterThanOrEqual(CHAT_TIMELINE_ANCHOR_OFFSET - 1);
-  }
-  expect(node.scrollTop).toBeGreaterThan(rested);
-  await expect.poll(() => promptBox().top).toBeLessThanOrEqual(CHAT_TIMELINE_ANCHOR_OFFSET + 1);
-  // At the top it stops: more activity goes below the fold.
-  const stopped = node.scrollTop;
-  render(
-    "geometry:follow-up",
-    [...history, prompt, ...tools, failedTool(24), failedTool(25)],
-    extra,
+  const toEnd = () => node.scrollHeight - node.clientHeight - node.scrollTop;
+  const rows = (tools: number) => [
+    ...history,
+    prompt,
+    ...Array.from({ length: tools }, (_, i) => failedTool(i)),
+  ];
+  return { node, extra, onIsAtEndChange, promptTextTop, toEnd, rows };
+}
+
+it("follows a later prompt's whole response at the end until the prompt reaches the top", async () => {
+  const key = "geometry:follow-response";
+  const { node, extra, onIsAtEndChange, promptTextTop, toEnd, rows } = await sendLaterPrompt(
+    key,
+    true,
   );
-  await frames(10);
+  render(key, rows(0), extra);
+  // The prompt glides to the end, resting with the usual gap above the composer.
+  await expect.poll(toEnd).toBeLessThanOrEqual(1);
+  const start = node.scrollTop;
+  let tools = 0;
+  // Each new trace is followed, keeping the view at the end, never past the top margin.
+  while (promptTextTop() > CHAT_TIMELINE_ANCHOR_OFFSET + 1 && tools < 40) {
+    tools += 1;
+    render(key, rows(tools), extra);
+    await expect
+      .poll(() => toEnd() <= 1 || promptTextTop() <= CHAT_TIMELINE_ANCHOR_OFFSET + 1)
+      .toBe(true);
+    expect(promptTextTop()).toBeGreaterThanOrEqual(CHAT_TIMELINE_ANCHOR_OFFSET - 1);
+  }
+  expect(node.scrollTop).toBeGreaterThan(start);
+  expect(promptTextTop()).toBeLessThanOrEqual(CHAT_TIMELINE_ANCHOR_OFFSET + 1);
+  // At the top it stops: later steps go below, and the end control shows.
+  const stopped = node.scrollTop;
+  render(key, rows(tools + 3), extra);
+  await frames(12);
   expect(Math.abs(node.scrollTop - stopped)).toBeLessThanOrEqual(1);
+  expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(false);
+});
+
+it("keeps the reveal of a first prompt as it was: traces do not move it", async () => {
+  const key = "geometry:follow-first";
+  const { extra, toEnd, rows } = await sendLaterPrompt(key, false);
+  render(key, rows(0), extra);
+  for (let tools = 1; tools <= 8; tools++) {
+    render(key, rows(tools), extra);
+    await frames(6);
+  }
+  // Without whole-response following, the traces are left below the view.
+  expect(toEnd()).toBeGreaterThan(100);
+});
+
+it("stops following when the reader scrolls back up, and shows the end control", async () => {
+  const key = "geometry:follow-cancel";
+  const { node, extra, onIsAtEndChange, toEnd, rows } = await sendLaterPrompt(key, true);
+  render(key, rows(0), extra);
+  await expect.poll(toEnd).toBeLessThanOrEqual(1);
+  node.dispatchEvent(new WheelEvent("wheel", { deltaY: -120, bubbles: true }));
+  node.scrollTop -= 120;
+  node.dispatchEvent(new Event("scroll"));
+  await frames(4);
+  const left = node.scrollTop;
+  for (let tools = 1; tools <= 6; tools++) {
+    render(key, rows(tools), extra);
+    await frames(6);
+  }
+  expect(Math.abs(node.scrollTop - left)).toBeLessThanOrEqual(1);
+  await expect.poll(() => onIsAtEndChange.mock.lastCall?.[0]).toBe(false);
 });
 
 it("preserves the original near-bottom tolerance for lines hidden by the composer", async () => {

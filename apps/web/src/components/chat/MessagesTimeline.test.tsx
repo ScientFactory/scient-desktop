@@ -888,7 +888,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("h-28 w-52 max-w-full");
   });
 
-  it("anchors a follow-up prompt sent at the end, like the first", () => {
+  it("does not push follow-up messages to the top", () => {
     const onAnchorReady = vi.fn();
     const firstEntry = buildUserTimelineEntry("First prompt.");
     const secondEntry = {
@@ -908,10 +908,9 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain('data-anchor-index="1"');
-    expect(markup).toContain('data-anchor-offset="24"');
+    expect(markup).not.toContain("data-anchor-index=");
     expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
-    expect(onAnchorReady).toHaveBeenCalledWith(secondEntry.message.id, 1);
+    expect(onAnchorReady).not.toHaveBeenCalled();
   });
 
   it("gives browser documents separate preview and download controls", () => {
