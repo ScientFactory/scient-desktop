@@ -11,6 +11,8 @@ const FIRST_LINES_PX = 48;
 const ESTIMATED_ROW_SIZE = 90;
 /** How the reveal moves: a top speed and how gently it eases to a stop. */
 const REVEAL_PACE = { maxPxPerMs: 1.2, easeMs: 90 };
+/** How long after the reader's last scroll input the follow keeps yielding. */
+const READER_INPUT_GRACE_MS = 250;
 /** The gap the timeline keeps between its last row and the composer at the end. */
 const END_GAP = 16;
 /** A followed response's drift: a calm top speed, gentle acceleration and braking. */
@@ -90,11 +92,14 @@ export function useBoundedAnswerFollow({
     sawRunning: boolean;
     /** A followed response's motion, kept across updates so its speed never jumps. */
     motion: { velocity: number; position: number | null };
+    /** Until when the reader's own scrolling is in motion (the follow yields). */
+    readerInputUntil: number;
   }>({
     prompt: null,
     stopped: false,
     sawRunning: false,
     motion: { velocity: 0, position: null },
+    readerInputUntil: 0,
   });
   useLayoutEffect(() => {
     if (intent.current.prompt !== promptMessageId)
@@ -103,6 +108,7 @@ export function useBoundedAnswerFollow({
         stopped: false,
         sawRunning: false,
         motion: { velocity: 0, position: null },
+        readerInputUntil: 0,
       };
     if (responseRunning) intent.current.sawRunning = true;
     if (!promptMessageId || suspended || intent.current.stopped) return;
@@ -231,8 +237,16 @@ export function useBoundedAnswerFollow({
       // Far below (long runs of notes or tool output): skip all but the last
       // screen at once, then ease the rest, instead of a long slow glide.
       const screen = viewport.clientHeight;
-      if (!reducedMotion && delta > screen) {
+      if (!reducedMotion && delta > screen && now >= intent.current.readerInputUntil) {
         viewport.scrollTop += delta - screen;
+        revealTop = Math.max(revealTop, viewport.scrollTop);
+        frame = requestAnimationFrame(tick);
+        return;
+      }
+      if (followResponse && !reducedMotion && now < intent.current.readerInputUntil) {
+        // The reader is scrolling: never write over their scroll in motion. The
+        // follow picks up from wherever they end, from rest.
+        intent.current.motion = { velocity: 0, position: null };
         revealTop = Math.max(revealTop, viewport.scrollTop);
         frame = requestAnimationFrame(tick);
         return;
@@ -281,9 +295,29 @@ export function useBoundedAnswerFollow({
       frame = null;
       finish();
     };
+    // Scrolling toward the end keeps the follow, but it yields while that
+    // scroll is in motion (and a scrollbar drag lasts until release).
+    const yieldToReader = (forMs = READER_INPUT_GRACE_MS) => {
+      intent.current.readerInputUntil = Math.max(
+        intent.current.readerInputUntil,
+        performance.now() + forMs,
+      );
+      schedule();
+    };
     const onWheel = (event: WheelEvent) => {
-      if (event.deltaY < 0 && isTimelineScrollTarget(event.target, viewport, event.deltaY))
-        cancel();
+      if (!isTimelineScrollTarget(event.target, viewport, event.deltaY)) return;
+      if (event.deltaY < 0) cancel();
+      else yieldToReader();
+    };
+    const onTouchMove = () => yieldToReader();
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.target === viewport) yieldToReader(Number.POSITIVE_INFINITY);
+    };
+    const onPointerUp = () => {
+      if (intent.current.readerInputUntil === Number.POSITIVE_INFINITY) {
+        intent.current.readerInputUntil = 0;
+        yieldToReader();
+      }
     };
     // Any upward movement the reveal did not make (a touch drag, the
     // scrollbar, a key) is the reader scrolling back, which ends the reveal.
@@ -297,16 +331,18 @@ export function useBoundedAnswerFollow({
     };
     const onKey = (event: KeyboardEvent) => {
       if (
-        ["ArrowUp", "PageUp", "Home"].includes(event.key) &&
-        !(
-          event.target instanceof Element &&
-          event.target.closest("input, textarea, [contenteditable=true]")
-        )
+        event.target instanceof Element &&
+        event.target.closest("input, textarea, [contenteditable=true]")
       )
-        cancel();
+        return;
+      if (["ArrowUp", "PageUp", "Home"].includes(event.key)) cancel();
+      else if (["ArrowDown", "PageDown", "End", " "].includes(event.key)) yieldToReader();
     };
     viewport.addEventListener("wheel", onWheel, { passive: true });
     viewport.addEventListener("scroll", onScroll, { passive: true });
+    viewport.addEventListener("touchmove", onTouchMove, { passive: true });
+    viewport.addEventListener("pointerdown", onPointerDown);
+    viewport.ownerDocument.addEventListener("pointerup", onPointerUp);
     viewport.ownerDocument.addEventListener("keydown", onKey);
     const observer = new ResizeObserver(schedule);
     observer.observe(viewport);
@@ -319,6 +355,9 @@ export function useBoundedAnswerFollow({
       observer.disconnect();
       viewport.removeEventListener("wheel", onWheel);
       viewport.removeEventListener("scroll", onScroll);
+      viewport.removeEventListener("touchmove", onTouchMove);
+      viewport.removeEventListener("pointerdown", onPointerDown);
+      viewport.ownerDocument.removeEventListener("pointerup", onPointerUp);
       viewport.ownerDocument.removeEventListener("keydown", onKey);
     };
   }, [

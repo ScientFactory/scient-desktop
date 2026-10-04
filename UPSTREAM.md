@@ -40,7 +40,10 @@ message through `chat/useBoundedAnswerFollow.ts` (for a later prompt, `followRes
 follows the whole response's end, traces and tools included, at a calmer pace): capped at the prompt's first line
 reaching the top margin, past it only to show a message pushed below the fold, never
 past that message's top. Scrolling up by any means (wheel, keys, touch, scrollbar)
-cancels pending placement and bounded following; scrolling down, clicks and selection do not. `onIsAtEndChange` reacts to
+cancels pending placement and bounded following; scrolling down, clicks and selection do not.
+While the reader scrolls toward the end (wheel, keys, touch, scrollbar drag), the follow never
+writes the scroll position (a write cancels the browser's smooth scroll in motion); it resumes
+from rest 250ms after their input stops. `onIsAtEndChange` reacts to
 transitions only. The existing Scroll to end button is a one-shot action with an
 unread badge counting responses, not a follow toggle. Do not add a second navigation button.
 Reading positions resolve by message/turn identity, load up to two pages of missing

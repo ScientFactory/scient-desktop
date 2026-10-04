@@ -536,6 +536,52 @@ it("scrolls continuously with the line-by-line reveal, never ahead of it", async
   await expect.poll(toEnd, { timeout: 4000 }).toBeLessThanOrEqual(1);
 });
 
+it("yields to the reader scrolling down mid-follow, then finishes at the end", async () => {
+  const key = "geometry:follow-yield";
+  const { node, extra, toEnd, rows } = await sendLaterPrompt(key, true);
+  render(key, rows(0), extra);
+  await expect.poll(toEnd).toBeLessThanOrEqual(1);
+  // A long answer arriving, so the follow is busy for a while.
+  const answer = {
+    ...entry(11),
+    message: {
+      ...entry(11).message,
+      role: "assistant" as const,
+      streaming: true,
+      text: Array.from({ length: 6 }, () => "A paragraph that wraps. ".repeat(12)).join("\n\n"),
+    },
+  };
+  render(key, [...rows(0), answer], extra);
+  await new Promise((resolve) => setTimeout(resolve, 1300));
+  // Count the follow's own writes to the scroll position (a write cancels the
+  // browser's smooth scroll of the reader's wheel in motion: the "hesitation").
+  const setter = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop")!.set!;
+  let readerWriting = false;
+  let followWrites = 0;
+  Object.defineProperty(node, "scrollTop", {
+    configurable: true,
+    get: () => Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop")!.get!.call(node),
+    set: (value: number) => {
+      if (!readerWriting) followWrites += 1;
+      setter.call(node, value);
+    },
+  });
+  // The reader scrolls down themselves (the browser moving it a little each frame).
+  const started = performance.now();
+  while (performance.now() - started < 400) {
+    node.dispatchEvent(new WheelEvent("wheel", { deltaY: 40, bubbles: true }));
+    readerWriting = true;
+    node.scrollTop = Math.min(node.scrollTop + 6, node.scrollHeight - node.clientHeight);
+    readerWriting = false;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  }
+  // Their scroll is never written over while it is in motion…
+  expect(followWrites).toBe(0);
+  delete (node as { scrollTop?: number }).scrollTop;
+  // …and once it stops, the follow carries on to the end.
+  await expect.poll(toEnd, { timeout: 6000 }).toBeLessThanOrEqual(1);
+});
+
 it("keeps the reveal of a first prompt as it was: traces do not move it", async () => {
   const key = "geometry:follow-first";
   const { extra, toEnd, rows } = await sendLaterPrompt(key, false);
