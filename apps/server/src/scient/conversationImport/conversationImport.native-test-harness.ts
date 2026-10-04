@@ -173,7 +173,7 @@ export function nativeImportRuntimeTestLayer(
   registryLayer: Layer.Layer<ProviderAdapterRegistryV2>,
   options: Parameters<typeof makeOrchestratorV2ReplayLayerWithRegistry>[2] = {},
 ) {
-  const database = SqlitePersistence.SqlitePersistenceMemory;
+  const database = options.databaseLayer ?? SqlitePersistence.SqlitePersistenceMemory;
   const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
     { name: "scient-import-continuation" },
     registryLayer,

@@ -4,11 +4,14 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  EventId,
   MessageId,
   ProviderDriverKind,
   ThreadId,
   type ThreadForkCommand,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import { makeSqlitePersistenceLive } from "../../persistence/Layers/Sqlite.ts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -55,6 +58,7 @@ const registry = makeLayer([
 ]);
 function runtime(
   options: {
+    runtimeOptions?: Parameters<typeof nativeImportRuntimeTestLayer>[1];
     runEffectWorker?: boolean;
     beforeCopy?: (threadId: ThreadId) => Effect.Effect<void, ScientForkAttachmentCopyError>;
   } = {},
@@ -75,6 +79,7 @@ function runtime(
   return nativeImportRuntimeTestLayer(registry, {
     ...(options.runEffectWorker === undefined ? {} : { runEffectWorker: options.runEffectWorker }),
     forkAttachmentCopierLayer: copier,
+    ...options.runtimeOptions,
   }).pipe(Layer.provideMerge(NodeServices.layer));
 }
 const seed = Effect.gen(function* () {
@@ -369,3 +374,112 @@ it.live(
       }).pipe(Effect.provide(runtime({ runEffectWorker: false })), Effect.timeout("15 seconds")),
     ),
 );
+
+for (const claimedBeforeRestart of [false, true]) {
+  it.live(
+    `native startup recovers a frozen fork without its missed wakeup: interrupted-claim=${claimedBeforeRestart}`,
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const config = yield* ServerConfig;
+          const configLayer = Layer.succeed(ServerConfig, config);
+          const database = makeSqlitePersistenceLive(config.dbPath).pipe(
+            Layer.provide(NodeServices.layer),
+          );
+          const saved = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const { command } = yield* seed;
+              const { pending } = yield* acceptPending(command);
+              const outbox = yield* EffectOutboxV2;
+              if (claimedBeforeRestart) {
+                const claim = yield* outbox.claimNext({
+                  workerId: "interrupted-process",
+                  leaseDurationMs: 30000,
+                });
+                assert.ok(Option.isSome(claim));
+                assert.equal(claim.value.request.type, "scient-fork.provision");
+                assert.equal(claim.value.attemptCount, 1);
+              }
+              // The accepted history is frozen even when source content is replaced before setup.
+              const source = yield* (yield* ProjectionStoreV2).getThreadProjection(
+                command.originThreadId,
+              );
+              const answer = source.messages.find(
+                (message) => message.id === command.sourceAssistantMessageId,
+              );
+              assert.ok(answer);
+              const now = yield* DateTime.now;
+              yield* (yield* EventSinkV2).write({
+                events: [
+                  {
+                    id: EventId.make("replace-source-after-fork"),
+                    type: "message.updated",
+                    threadId: command.originThreadId,
+                    occurredAt: now,
+                    payload: {
+                      ...answer,
+                      text: "Source replaced after acceptance",
+                      updatedAt: now,
+                    },
+                  },
+                ],
+              });
+              return { command, pending };
+            }).pipe(
+              Effect.provide(
+                runtime({
+                  runEffectWorker: false,
+                  runtimeOptions: { serverConfigLayer: configLayer, databaseLayer: database },
+                }),
+              ),
+            ),
+          );
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const forks = yield* ConversationForkService;
+              const receipt = yield* forks.dispatch(saved.command);
+              const store = yield* ProjectionStoreV2;
+              const ready = yield* store.getThreadProjection(saved.command.newThreadId);
+              assert.equal(ready.thread.conversationFork?.status, "ready");
+              assert.deepEqual(ready.messages, saved.pending.messages);
+              assert.deepEqual(ready.turnItems, saved.pending.turnItems);
+              assert.notInclude(
+                ready.messages.map((message) => message.text),
+                "Source replaced after acceptance",
+              );
+              const rows = yield* settledJobs(saved.command.commandId);
+              assert.lengthOf(rows, 1);
+              assert.equal(rows[0]?.attemptCount, claimedBeforeRestart ? 2 : 1);
+              assert.equal((yield* forks.dispatch(saved.command)).sequence, receipt.sequence);
+              assert.deepEqual(
+                receipt.forkAttachmentIdMap,
+                Object.fromEntries(
+                  ready.thread.conversationFork!.attachmentCopies.map((copy) => [
+                    copy.source.id,
+                    copy.target.id,
+                  ]),
+                ),
+              );
+            }).pipe(
+              Effect.provide(
+                runtime({
+                  runtimeOptions: {
+                    serverConfigLayer: configLayer,
+                    databaseLayer: database,
+                    recoverOnStartup: true,
+                  },
+                }),
+              ),
+            ),
+          );
+        }).pipe(
+          Effect.provide(
+            ServerConfig.layerTest(process.cwd(), { prefix: "native-fork-restart-" }).pipe(
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ),
+          Effect.timeout("20 seconds"),
+        ),
+      ),
+  );
+}
