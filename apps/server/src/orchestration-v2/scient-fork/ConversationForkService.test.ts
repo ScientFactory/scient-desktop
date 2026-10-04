@@ -28,6 +28,7 @@ import { EventSinkV2 } from "../EventSink.ts";
 import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
 import { ServerConfig } from "../../config.ts";
+import { conversationSnapshotProjection } from "../../scient/conversationExport/conversationSnapshotProjection.ts";
 import { createDeterministicAttachmentId, resolveAttachmentPath } from "../../attachmentStore.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
@@ -315,6 +316,106 @@ it.effect(
       });
       assert.ok(page.items.every((row) => row.visibility === "inherited"));
       assert.equal((yield* forks.dispatch(command)).sequence, receipt.sequence);
+
+      // Native rollback hides only fork-local runs. The inherited prefix is
+      // owned by the fork and must survive returning to zero local turns.
+      const localRun = {
+        ...runs[0]!,
+        id: RunId.make("fork-local-run"),
+        threadId: command.newThreadId,
+        userMessageId: MessageId.make("fork-local-question"),
+      };
+      const localItem = {
+        ...base,
+        status: "completed" as const,
+        id: TurnItemId.make("fork-local-question"),
+        threadId: command.newThreadId,
+        runId: localRun.id,
+        ordinal: 100,
+        type: "user_message" as const,
+        messageId: localRun.userMessageId,
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        inputIntent: "turn_start" as const,
+        text: "Discard this fork-local follow-up",
+        attachments: [],
+      };
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("fork-local-created"),
+            threadId: command.newThreadId,
+            runId: localRun.id,
+            type: "run.created",
+            occurredAt: now,
+            payload: localRun,
+          },
+          {
+            id: EventId.make("fork-local-item"),
+            threadId: command.newThreadId,
+            runId: localRun.id,
+            type: "turn-item.updated",
+            occurredAt: now,
+            payload: localItem,
+          },
+          {
+            id: EventId.make("fork-local-message"),
+            threadId: command.newThreadId,
+            runId: localRun.id,
+            type: "message.updated",
+            occurredAt: now,
+            payload: {
+              id: localRun.userMessageId,
+              threadId: command.newThreadId,
+              runId: localRun.id,
+              nodeId: null,
+              role: "user",
+              text: localItem.text,
+              attachments: [],
+              streaming: false,
+              createdAt: now,
+              updatedAt: now,
+              createdBy: "user",
+              creationSource: "web",
+            },
+          },
+        ],
+      });
+      assert.include(
+        (yield* orchestrator.getThreadProjection(command.newThreadId)).messages.map(
+          (message) => message.text,
+        ),
+        localItem.text,
+      );
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("fork-local-rolled-back"),
+            threadId: command.newThreadId,
+            runId: localRun.id,
+            type: "run.updated",
+            occurredAt: now,
+            payload: { ...localRun, status: "rolled_back" },
+          },
+        ],
+      });
+      const reverted = yield* store.getThreadProjection(command.newThreadId);
+      assert.deepEqual(
+        conversationSnapshotProjection(reverted, cwd).messages,
+        conversationSnapshotProjection(target, cwd).messages,
+      );
+      assert.deepEqual(reverted.visibleTurnItems, target.visibleTurnItems);
+      assert.deepEqual(
+        (yield* store.getTimelinePage(command.newThreadId, { view: "activity", limit: 100 })).items,
+        page.items,
+      );
+      assert.deepEqual(reverted.thread.forkLineage, target.thread.forkLineage);
+      assert.deepEqual(
+        (yield* store.getShellSnapshot()).threads.find(
+          (thread) => thread.id === command.newThreadId,
+        )?.forkLineage,
+        target.thread.forkLineage,
+      );
 
       assert.equal(target.thread.title, "Conversation (2)");
       yield* orchestrator.dispatch({
