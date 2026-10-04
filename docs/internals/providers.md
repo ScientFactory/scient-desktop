@@ -131,8 +131,11 @@ Configuration and execution share the canonical instance registry:
   per-turn selected-skill scope, idle release and exact-instance teardown. Durable provider sessions
   and threads remain V2 facts even when an in-memory process has gone away.
 
-`ProviderTurnStartService` prepares canonical user context and legacy assistant citations, resolves
+`ProviderTurnStartService` projects typed composer context, applies selected Scient skills, resolves
 native or portable context transfers, and calls the session manager and `RunExecutionService`.
+Legacy composer/assistant-citation expansion is absent from this native execution path at this
+revision; preservation of that behavior is a runtime gap. The importer's historical citation repair
+is separate and does not expand citations in new user prompts.
 `ProviderTurnControlService` owns interrupt/restart/steer execution;
 `RuntimeRequestService` sends callback answers to the recorded session.
 `ProviderEventIngestor` persists adapter output with run/attempt/node attribution.
