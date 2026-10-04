@@ -204,6 +204,8 @@ export function runOrchestratorV2ProviderReplayScenario<
     /** Auth integration tests must supply the actual snapshot registry. */
     readonly providerRegistryLayer?: Layer.Layer<ProviderRegistry.ProviderRegistry>;
     readonly runtimePolicyLayer?: Layer.Layer<RuntimePolicy.RuntimePolicyV2>;
+    /** Inject an external Git process failure while retaining native checkpoint services. */
+    readonly vcsProcessLayer?: Layer.Layer<VcsProcess.VcsProcess>;
     // Start continuation runs for provider wake turns, as the live runtime does.
     // Off by default: most fixtures record no wake turn.
     readonly runContinuationWorker?: boolean;
@@ -319,6 +321,8 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     /** Auth integration tests must supply the actual snapshot registry. */
     readonly providerRegistryLayer?: Layer.Layer<ProviderRegistry.ProviderRegistry>;
     readonly runtimePolicyLayer?: Layer.Layer<RuntimePolicy.RuntimePolicyV2>;
+    /** Inject an external Git process failure while retaining native checkpoint services. */
+    readonly vcsProcessLayer?: Layer.Layer<VcsProcess.VcsProcess>;
     // Start continuation runs for provider wake turns, as the live runtime does.
     // Off by default: most fixtures record no wake turn.
     readonly runContinuationWorker?: boolean;
@@ -394,7 +398,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     Layer.provide(Layer.mergeAll(storesLayer, eventSinkProvided, IdAllocator.layer)),
   );
   const vcsDriverRegistryLayer = VcsDriverRegistry.layer.pipe(
-    Layer.provide(VcsProcess.layer),
+    Layer.provide(options.vcsProcessLayer ?? VcsProcess.layer),
     Layer.provide(serverConfigLayer),
     Layer.provide(NodeServices.layer),
   );

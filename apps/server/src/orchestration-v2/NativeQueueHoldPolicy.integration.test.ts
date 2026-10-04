@@ -12,6 +12,7 @@ import {
   ProviderInstanceId,
   RunAttemptId,
   ThreadId,
+  VcsProcessExitError,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -25,6 +26,9 @@ import type * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Logger from "effect/Logger";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { CheckpointStore } from "../checkpointing/CheckpointStore.ts";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as Scope from "effect/Scope";
@@ -44,6 +48,7 @@ import { makeLayer } from "./ProviderAdapterRegistry.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
 import { sourcePlanFingerprint } from "./SourcePlan.ts";
+import { checkpointRefForScopeOrdinal } from "./CheckpointService.ts";
 
 const instanceId = ProviderInstanceId.make("omp");
 const modelSelection = { instanceId, model: "queue-policy-model" };
@@ -83,6 +88,7 @@ const withNativeQueue = <A, E, R>(
     readonly ingestSyncAcceptance?: boolean;
     readonly holdPreparation?: boolean;
     readonly refusePreparation?: boolean;
+    readonly failCheckpointDiff?: boolean;
   } = {},
 ) =>
   Effect.scoped(
@@ -251,7 +257,33 @@ const withNativeQueue = <A, E, R>(
               ]
             : []),
         ]),
-        { configureMcp: false },
+        {
+          configureMcp: false,
+          ...(options.failCheckpointDiff
+            ? {
+                vcsProcessLayer: Layer.effect(
+                  VcsProcess.VcsProcess,
+                  Effect.gen(function* () {
+                    const real = yield* VcsProcess.VcsProcess;
+                    return {
+                      run: (input: VcsProcess.VcsProcessInput) =>
+                        input.operation === "GitVcsDriver.checkpoints.diffCheckpoints"
+                          ? Effect.fail(
+                              new VcsProcessExitError({
+                                operation: input.operation,
+                                command: input.command,
+                                cwd: input.cwd,
+                                exitCode: 1,
+                                detail: "Synthetic external Git diff failure",
+                              }),
+                            )
+                          : real.run(input),
+                    };
+                  }),
+                ).pipe(Layer.provide(VcsProcess.layer), Layer.provide(NodeServices.layer)),
+              }
+            : {}),
+        },
       );
       return yield* Effect.gen(function* () {
         const orchestrator = yield* OrchestratorV2;
@@ -1556,4 +1588,105 @@ it.live(
           assert.deepEqual(offers, ["foreground", "first", "later-recovery"]);
         }),
     ),
+);
+
+it.live("a real checkpoint capture failure settles the native answer and drains queued work", () =>
+  withNativeQueue(
+    "queue-native-checkpoint-failure",
+    ({ orchestrator, threadId, takeOffer, offers, waitFor }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* send(orchestrator, threadId, "foreground");
+        const foreground = yield* takeOffer;
+        yield* send(orchestrator, threadId, "first", true);
+        const running = yield* waitFor((projection) =>
+          projection.providerTurns.some(
+            (turn) => turn.runAttemptId === foreground.input.attemptId && turn.status === "running",
+          ),
+        );
+        const root = running.nodes.find(
+          (node) =>
+            node.id === running.runs.find((run) => run.id === foreground.input.runId)?.rootNodeId,
+        );
+        const scope = running.checkpointScopes.find(
+          (scope) => scope.id === root?.checkpointScopeId,
+        );
+        assert.ok(scope);
+        const ref = checkpointRefForScopeOrdinal({ scopeId: scope.id, ordinalWithinScope: 1 });
+        const lock = `${scope.cwd}/.git/${ref}.lock`;
+        yield* fs.writeFileString(lock, "Synthetic competing checkpoint writer\n");
+        yield* foreground.settle("completed");
+        const next = yield* takeOffer;
+        assert.equal(next.input.message.text, "first");
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        const checkpoint = after.checkpoints.find(
+          (checkpoint) => checkpoint.runId === foreground.input.runId,
+        );
+        assert.equal(
+          after.runs.find((run) => run.id === foreground.input.runId)?.status,
+          "completed",
+        );
+        assert.equal(checkpoint?.status, "error");
+        assert.isFalse(
+          after.turnItems.some(
+            (item) => item.runId === foreground.input.runId && item.type === "error",
+          ),
+        );
+        assert.equal(yield* fs.readFileString(lock), "Synthetic competing checkpoint writer\n");
+        yield* fs.remove(lock);
+        yield* next.settle("completed");
+        yield* waitFor((projection) => projection.runs.every((run) => run.status === "completed"));
+        assert.deepEqual(offers, ["foreground", "first"]);
+      }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live(
+  "native checkpoint comparison failure preserves the captured ref and reports its diagnostic",
+  () => {
+    const diagnostics: unknown[] = [];
+    return withNativeQueue(
+      "queue-native-checkpoint-diff-failure",
+      ({ orchestrator, threadId, takeOffer, waitFor }) =>
+        Effect.gen(function* () {
+          yield* send(orchestrator, threadId, "foreground");
+          const foreground = yield* takeOffer;
+          yield* foreground.settle("completed");
+          const after = yield* waitFor(
+            (projection) =>
+              projection.runs.find((run) => run.id === foreground.input.runId)?.status ===
+              "completed",
+          );
+          const checkpoint = after.checkpoints.find(
+            (checkpoint) => checkpoint.runId === foreground.input.runId,
+          );
+          assert.ok(checkpoint);
+          assert.equal(checkpoint.status, "ready");
+          assert.deepEqual(checkpoint.files, []);
+          const store = yield* CheckpointStore;
+          const scope = after.checkpointScopes.find((scope) => scope.id === checkpoint.scopeId);
+          assert.ok(scope);
+          assert.isTrue(
+            yield* store.hasCheckpointRef({ cwd: scope.cwd, checkpointRef: checkpoint.ref }),
+          );
+          assert.ok(
+            diagnostics.some((message) =>
+              String(message).includes("checkpoint diff summary failed"),
+            ),
+          );
+          assert.isFalse(
+            after.turnItems.some(
+              (item) => item.runId === foreground.input.runId && item.type === "error",
+            ),
+          );
+        }),
+      { failCheckpointDiff: true },
+    ).pipe(
+      Effect.withLogger(
+        Logger.make(({ message }) => {
+          diagnostics.push(message);
+        }),
+      ),
+    );
+  },
 );
