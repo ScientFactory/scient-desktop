@@ -2,6 +2,8 @@ import type { ProviderAdapterV2HistoricalContext } from "./ProviderAdapter.ts";
 import { assert, describe, it } from "@effect/vitest";
 import {
   ContextHandoffId,
+  MessageId,
+  NodeId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -9,6 +11,7 @@ import {
   RunId,
   ThreadId,
   TurnItemId,
+  TurnId,
   OrchestrationV2ContextHandoff,
   type OrchestrationV2HistoricalMessage,
   type OrchestrationV2ProviderThread,
@@ -146,6 +149,87 @@ describe("handoff budget", () => {
       }),
     );
     assert.equal(historyResponseItems([command!], "Activity")[1]?.type, "message");
+  });
+
+  it("carries explicitly imported reasoning and work logs while excluding live provider material", () => {
+    const base = {
+      id: TurnItemId.make("item:portable-history"),
+      threadId,
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "completed" as const,
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      historyTurnId: TurnId.make("imported-turn"),
+    };
+    const reasoning = {
+      ...base,
+      type: "reasoning" as const,
+      text: "Selected portable reasoning",
+      streaming: false,
+    };
+    assert.equal(historicalMessage(reasoning)?.text, "Selected portable reasoning");
+    assert.isNull(historicalMessage({ ...reasoning, historyTurnId: undefined }));
+    assert.isNull(historicalMessage({ ...reasoning, runId: RunId.make("live-run") }));
+    assert.isNull(
+      historicalMessage({
+        ...reasoning,
+        nativeItemRef: {
+          driver: ProviderDriverKind.make("codex"),
+          nativeId: "live-reasoning",
+          strength: "strong",
+        },
+      }),
+    );
+    const activity = {
+      ...base,
+      type: "dynamic_tool" as const,
+      toolName: "tool.completed",
+      input: {
+        kind: "tool.completed",
+        summary: "Check results",
+        tone: "tool",
+        payload: { output: "retained output", omittedLines: 4 },
+      },
+    };
+    assert.include(historicalMessage(activity)!.text, "Check results");
+    assert.include(historicalMessage(activity)!.text, "retained output");
+    assert.include(historicalMessage(activity)!.text, '"omittedLines":4');
+    assert.isNull(historicalMessage({ ...activity, runId: RunId.make("live-run") }));
+    assert.isNull(historicalMessage({ ...activity, historyTurnId: undefined }));
+    assert.isNull(historicalMessage({ ...activity, input: { command: "foreign tool call" } }));
+    const turnless = {
+      ...activity,
+      historyTurnId: undefined,
+      id: TurnItemId.make("server:conversation-import:owned:item:work-log"),
+    };
+    assert.include(historicalMessage(turnless)!.text, "retained output");
+    assert.isNull(historicalMessage({ ...turnless, nodeId: NodeId.make("live-node") }));
+    assert.isNull(
+      historicalMessage({
+        ...turnless,
+        nativeItemRef: {
+          driver: ProviderDriverKind.make("codex"),
+          nativeId: "live-tool",
+          strength: "strong",
+        },
+      }),
+    );
+    assert.equal(
+      historicalMessage({
+        ...reasoning,
+        historyTurnId: undefined,
+        id: TurnItemId.make("migration:v1:history:reasoning:owned"),
+      })?.text,
+      "Selected portable reasoning",
+    );
   });
 
   it("retains short conversations verbatim in role and order", () => {
@@ -413,6 +497,34 @@ describe("handoff budget", () => {
 });
 
 describe("handoff delivery", () => {
+  for (const native of [true, false]) {
+    it.effect(
+      `carries source omissions through ${native ? "native injection" : "inline fallback"} within the same history budget`,
+      () =>
+        Effect.gen(function* () {
+          let offered = "";
+          const result = yield* deliverContextHandoffs({
+            handoffs: [handoff],
+            providerThread,
+            budget: 8_000,
+            sourceOmissions: [{ _tag: "range-truncated", throughMessageN: 2 }],
+            alreadyDeliveredItemIds: new Set(),
+            inject: (value) =>
+              Effect.sync(() => {
+                offered = value.context;
+                return native;
+              }),
+            persist: () => Effect.void,
+          });
+          const context = native ? offered : result.context;
+          assert.include(context, "Known source omissions (unverified)");
+          assert.include(context, '"range-truncated"');
+          assert.include(context, '"throughMessageN":2');
+          assert.isAtMost(Buffer.byteLength(context), 8_000);
+        }),
+    );
+  }
+
   for (const native of [true, false]) {
     it.effect(
       `records omitted recovery coverage separately from ${native ? "injected" : "inline"} text`,
@@ -693,3 +805,172 @@ describe("handoff delivery", () => {
     }),
   );
 });
+
+describe("Scient native handoff token policy", () => {
+  const input = {
+    tokenCap: null,
+    bytesPerToken: 3,
+    byteCap: Infinity,
+    userText: "",
+    attachments: [],
+    providerThread,
+    nativeContextEstimate: 0,
+  };
+  it("uses the unknown 128k window and charges token reserves before selecting bytes", () => {
+    assert.equal(handoffBudget(input), 287_997);
+    assert.equal(handoffBudget({ ...input, tokenCap: 64_000 }), 192_000);
+    assert.equal(handoffBudget({ ...input, nativeContextEstimate: 100_000 }), 0);
+  });
+  it("bounds the preset by compaction, native occupancy and full current attachment allowances", () => {
+    const usage = { usedTokens: 140_000, maxTokens: 1_000_000, autoCompactThreshold: 200_000 };
+    const nearFull = { ...input, providerThread: { ...providerThread, contextUsage: usage } };
+    assert.equal(handoffBudget(nearFull), 29_997);
+    const image = {
+      type: "image" as const,
+      id: "image",
+      name: "figure.png",
+      mimeType: "image/png",
+      sizeBytes: 1,
+    };
+    assert.equal(
+      handoffBudget(nearFull) - handoffBudget({ ...nearFull, attachments: [image] }),
+      24_576,
+    );
+    assert.equal(handoffBudget({ ...nearFull, attachments: [image, image] }), 0);
+    assert.equal(
+      handoffBudget({
+        ...input,
+        tokenCap: 64_000,
+        providerThread: {
+          ...providerThread,
+          contextUsage: { usedTokens: 0, maxTokens: 1_000_000 },
+        },
+      }),
+      192_000,
+    );
+  });
+});
+
+const inertForkItem = {
+  id: TurnItemId.make("frozen-item"),
+  threadId,
+  runId: null,
+  nodeId: null,
+  providerThreadId: null,
+  providerTurnId: null,
+  nativeItemRef: null,
+  parentItemId: null,
+  ordinal: 1,
+  status: "interrupted" as const,
+  title: null,
+  startedAt: now,
+  completedAt: now,
+  updatedAt: now,
+  inheritedFrom: {
+    threadId: ThreadId.make("running-source"),
+    itemId: TurnItemId.make("source-partial"),
+    runId: RunId.make("source-run"),
+    status: "running" as const,
+  },
+};
+it("native history names captured-window images as references without replaying image bytes", () => {
+  const history = historicalMessage({
+    ...inertForkItem,
+    type: "user_message",
+    messageId: MessageId.make("frozen-user"),
+    createdBy: "user",
+    creationSource: "web",
+    inputIntent: "turn_start",
+    status: "completed",
+    text: "Look at this",
+    attachments: [
+      {
+        type: "image",
+        id: "snapshot-owned",
+        name: "window.png",
+        mimeType: "image/png",
+        sizeBytes: 10,
+        source: {
+          kind: "snap-shot",
+          capturedAt: "2026-09-26T10:00:00.000Z",
+          appName: "Synthetic capture",
+          windowTitle: "Test window",
+        },
+      },
+      { type: "image", id: "plain-owned", name: "plot.png", mimeType: "image/png", sizeBytes: 10 },
+    ],
+  });
+  assert.ok(history);
+  assert.include(history.text, "window.png");
+  assert.include(history.text, '"capturedWindow":true');
+  assert.include(history.text, '"contentReattached":false');
+  const wire = historyResponseItems([history], "History");
+  assert.isFalse(JSON.stringify(wire).includes('"type":"input_image"'));
+  assert.include(wire[1]!.content[0]!.text, "plot.png");
+});
+it("native selection keeps original constraints and latest thinking before oversized older work", () => {
+  const candidates = [
+    message("constraints", "user", "Keep source fidelity"),
+    message("old-work", "assistant", "old work".repeat(5000)),
+    message("latest-request", "user", "Fit the model"),
+    { ...message("latest-thinking", "assistant", "Trying a quadratic"), kind: "reasoning" },
+    message("latest-answer", "assistant", "Partial fit"),
+  ];
+  const selected = selectHistory({ messages: candidates, coverage: "History", budget: 1800 });
+  assert.deepEqual(
+    selected.messages.map((item) => item.itemId),
+    ["constraints", "latest-request", "latest-thinking", "latest-answer"],
+  );
+  assert.deepEqual(selected.omittedItemIds, ["old-work"]);
+  assert.isAtMost(historyCost(selected.messages, selected.context), 1800);
+});
+it.effect(
+  "native delivery labels a running fork's unfinished material and warns about its shared folder",
+  () =>
+    Effect.gen(function* () {
+      const thought = historicalMessage({
+        ...inertForkItem,
+        type: "reasoning",
+        text: "Trying a quadratic",
+        streaming: false,
+      });
+      const tool = historicalMessage({
+        ...inertForkItem,
+        id: TurnItemId.make("frozen-tool"),
+        type: "dynamic_tool",
+        toolName: "fit_model",
+        input: { file: "src/fit.py" },
+        output: "Still fitting",
+      });
+      const file = historicalMessage({
+        ...inertForkItem,
+        id: TurnItemId.make("frozen-file"),
+        type: "file_change",
+        fileName: "src/fit.py",
+      });
+      assert.ok(thought && tool && file);
+      const result = yield* deliverContextHandoffs({
+        handoffs: [
+          {
+            ...handoff,
+            history: {
+              messages: [thought, tool, file],
+              coverage: "Frozen native fork",
+              omittedItems: 0,
+            },
+          },
+        ],
+        providerThread,
+        budget: 10000,
+        alreadyDeliveredItemIds: new Set(),
+        sharedForkWorkspace: true,
+        persist: () => Effect.void,
+      });
+      assert.include(result.context, "partial");
+      assert.include(result.context, "unfinished");
+      assert.include(result.context, "still be running in this same folder");
+      assert.include(result.context, "src/fit.py");
+      assert.include(result.context, "status=interrupted");
+      assert.notInclude(result.context, '"type":"tool_call"');
+    }),
+);

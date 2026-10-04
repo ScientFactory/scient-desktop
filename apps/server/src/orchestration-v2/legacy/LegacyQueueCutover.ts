@@ -7,7 +7,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { persistChatAttachments } from "../../AttachmentPersistence.ts";
 import { ServerConfig } from "../../config.ts";
-import { QueueError, readQueue, writeQueue } from "../../scient/threadQueue/Ledger.ts";
+import { QueueError, readQueue, writeQueue } from "./LegacyQueueLedger.ts";
 import { importLegacyQueue } from "../../scient/threadQueue/migration.ts";
 import { discoverLegacyQueueThreads } from "../../scient/threadQueue/Store.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";

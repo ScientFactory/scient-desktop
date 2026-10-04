@@ -10,6 +10,16 @@ import type {
 } from "@t3tools/contracts";
 
 import * as Config from "effect/Config";
+import * as Schema from "effect/Schema";
+
+const isImportedActivity = Schema.is(
+  Schema.Struct({
+    kind: Schema.String,
+    summary: Schema.String,
+    tone: Schema.String,
+    payload: Schema.Unknown,
+  }),
+);
 
 export const DEFAULT_HANDOFF_TOKEN_CAP = 16_000;
 const HANDOFF_BYTE_CAP = 64_000;
@@ -109,7 +119,9 @@ export function attachmentTokenAllowance(attachments: ReadonlyArray<ChatAttachme
 // custom models. Unknown windows use a 128k allowance, reserving a quarter for
 // tools, instructions and subsequent work. Current input is never truncated.
 export function handoffBudget(input: {
-  readonly tokenCap: number;
+  readonly tokenCap: number | null;
+  readonly bytesPerToken?: number;
+  readonly byteCap?: number;
   readonly userText: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly providerThread: OrchestrationV2ProviderThread;
@@ -123,17 +135,38 @@ export function handoffBudget(input: {
     usage?.autoCompactThreshold ?? Infinity,
   );
   const native = usage?.usedTokens ?? input.nativeContextEstimate;
+  const bytesPerToken = input.bytesPerToken ?? 1;
   const current =
-    Buffer.byteLength(JSON.stringify(input.userText)) + attachmentTokenAllowance(input.attachments);
+    Math.ceil(Buffer.byteLength(JSON.stringify(input.userText)) / bytesPerToken) +
+    attachmentTokenAllowance(input.attachments);
   return Math.max(
     0,
     Math.min(
-      input.tokenCap,
-      // Cap only imported history. Attachment transport limits belong to adapters;
-      // they may send binary/base64 data separately from the history request.
-      HANDOFF_BYTE_CAP,
-      window - native - current - Math.max(16_000, Math.ceil(window / 4)),
+      input.byteCap ?? HANDOFF_BYTE_CAP,
+      // The selector consumes bytes; provider capacity and preset caps consume tokens.
+      (input.tokenCap ?? Infinity) * bytesPerToken,
+      (window - native - current - Math.max(16_000, Math.ceil(window / 4))) * bytesPerToken,
     ),
+  );
+}
+
+/** Grouping is optional; importer identities and exact frozen copies own inert text. */
+function hasPortableArtifactOwner(item: OrchestrationV2TurnItem): boolean {
+  return (
+    item.historyTurnId !== undefined ||
+    item.inheritedFrom !== undefined ||
+    item.id.startsWith("migration:v1:history:") ||
+    (item.id.startsWith("server:conversation-import:") && item.id.includes(":item:"))
+  );
+}
+
+function hasArtifactExecutionAuthority(item: OrchestrationV2TurnItem): boolean {
+  return (
+    item.runId !== null ||
+    item.nodeId !== null ||
+    item.providerThreadId !== null ||
+    item.providerTurnId !== null ||
+    item.nativeItemRef !== null
   );
 }
 
@@ -145,6 +178,37 @@ export function historicalMessage(
     case "user_message":
     case "assistant_message":
       text = item.text;
+      if ((item.attachments?.length ?? 0) > 0) {
+        const references = item.attachments!.map((attachment) => ({
+          id: attachment.id,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          contentReattached: false,
+          ...(attachment.type === "image" &&
+          "source" in attachment &&
+          attachment.source?.kind === "snap-shot"
+            ? { capturedWindow: true }
+            : {}),
+        }));
+        text += `\nAttachment references (bytes not replayed): ${JSON.stringify(references)}`;
+      }
+      break;
+    case "reasoning":
+      // Imports and exact forks freeze visible text without retaining execution authority.
+      if (hasArtifactExecutionAuthority(item) || !hasPortableArtifactOwner(item)) return null;
+      text = item.text;
+      break;
+    case "dynamic_tool":
+      if (hasArtifactExecutionAuthority(item)) return null;
+      if (hasPortableArtifactOwner(item) && isImportedActivity(item.input)) {
+        text = `${item.input.summary}\n${JSON.stringify(item.input.payload)}`;
+      } else if (item.inheritedFrom?.runId != null) {
+        text = [
+          `Tool: ${item.toolName}`,
+          `Input: ${JSON.stringify(item.input)}`,
+          `Output: ${typeof item.output === "string" ? item.output : JSON.stringify(item.output)}`,
+        ].join("\n");
+      } else return null;
       break;
     case "command_execution":
       text = [
@@ -198,6 +262,12 @@ export function historicalMessage(
     default:
       return null;
   }
+  if (
+    item.runId === null &&
+    item.inheritedFrom?.status === "running" &&
+    item.type !== "user_message"
+  )
+    text = `Partial snapshot of unfinished activity at the fork boundary; this is not a completed result.\n${text}`;
   return {
     role: item.type === "user_message" || item.type === "user_input_request" ? "user" : "assistant",
     text,

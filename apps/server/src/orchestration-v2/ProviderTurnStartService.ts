@@ -1,3 +1,7 @@
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { ServerSettingsService } from "../serverSettings.ts";
+import { resolveNativeModelContextWindow } from "./scient-fork/NativeModelContextWindow.ts";
+import { makeScientContextHandoffPolicy } from "./ScientContextHandoffPolicy.ts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
@@ -32,8 +36,6 @@ import { ScientSkillSessionPlanner } from "../scient/skills/ScientSkillSession.t
 import * as EventSink from "./EventSink.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import {
-  DEFAULT_HANDOFF_TOKEN_CAP,
-  handoffTokenCapConfig,
   handoffBudget,
   attachmentTokenAllowance,
   contextUsageForHandoff,
@@ -105,6 +107,9 @@ export const layer: Layer.Layer<
 > = Layer.effect(
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
+    const handoffPolicy = yield* makeScientContextHandoffPolicy();
+    const modelWindowSql = yield* Effect.serviceOption(SqlClient.SqlClient);
+    const modelWindowSettings = yield* Effect.serviceOption(ServerSettingsService);
     const eventSink = yield* EventSink.EventSinkV2;
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -614,7 +619,13 @@ export const layer: Layer.Layer<
           const history = yield* Effect.result(
             projectionStore.getTurnStartHistory(input.threadId, runIds),
           );
-          if (history._tag === "Success") return history.success;
+          if (history._tag === "Success")
+            return history.success.filter(
+              (item) =>
+                !projection.runs.some(
+                  (source) => source.id === item.runId && source.status === "rolled_back",
+                ),
+            );
           if (input.willRetry === true) return yield* history.failure;
           yield* settleStartFailure({
             signal: "provider-history-preparation-failure",
@@ -822,15 +833,25 @@ export const layer: Layer.Layer<
             handoff.delivery?.nativeThreadId === providerThread.nativeThreadRef?.nativeId &&
             handoff.delivery?.status === "pending",
         );
+        const removedDelivery = projection.contextHandoffs.some(
+          (handoff) =>
+            handoff.toProviderThreadId === providerThread.id &&
+            handoff.delivery?.nativeThreadId === providerThread.nativeThreadRef?.nativeId &&
+            projection.runs.some(
+              (source) => source.id === handoff.targetRunId && source.status === "rolled_back",
+            ),
+        );
         const resumed = yield* Effect.result(
-          uncertainDelivery
+          uncertainDelivery || removedDelivery
             ? Effect.fail(
                 new ProviderAdapterTurnStartError({
                   driver: session.driver,
                   threadId: projection.thread.id,
                   providerThreadId: providerThread.id,
                   runId,
-                  cause: "Uncertain native history injection",
+                  cause: removedDelivery
+                    ? "Carrying history run was rolled back"
+                    : "Uncertain native history injection",
                 }),
               )
             : session.resumeThread({
@@ -848,7 +869,11 @@ export const layer: Layer.Layer<
           driver: session.driver,
           providerThreadId: providerThread.id,
           runId,
-          reason: uncertainDelivery ? "uncertain_history_delivery" : "resume_failed",
+          reason: removedDelivery
+            ? "history_delivery_rolled_back"
+            : uncertainDelivery
+              ? "uncertain_history_delivery"
+              : "resume_failed",
           errorTag: resumed.failure._tag,
         });
         const replacement = yield* loadFromProvider(
@@ -964,10 +989,19 @@ export const layer: Layer.Layer<
         sameSelection ||
         (previousSelection !== undefined &&
           session.canReuseContextUsage?.(previousSelection, run.modelSelection) === true);
-      const knownModelWindow = session.getModelContextWindow?.(
+      const reportedModelWindow = session.getModelContextWindow?.(
         run.modelSelection,
         resolvedRuntimePolicy.cwd,
       );
+      const knownModelWindow =
+        Option.isSome(modelWindowSql) && Option.isSome(modelWindowSettings)
+          ? yield* resolveNativeModelContextWindow({
+              sql: modelWindowSql.value,
+              settings: yield* modelWindowSettings.value.getSettings,
+              modelSelection: run.modelSelection,
+              reported: reportedModelWindow,
+            })
+          : reportedModelWindow;
       // Persist before delivery. Keep this native transcript's measured
       // occupancy. A different model drops compaction telemetry and uses the
       // new window when that window is known.
@@ -1099,7 +1133,12 @@ export const layer: Layer.Layer<
       // receipts may have delivered and must not duplicate native history.
       const deliveredAttemptIds = new Set(
         projection.providerTurns
-          .filter((turn) => turn.acceptedAt !== undefined || turn.nativeAcceptance !== "pending")
+          .filter(
+            (turn) =>
+              turn.acceptedAt !== undefined ||
+              (turn.nativeAcceptance !== "pending" &&
+                (turn.nativeAcceptance !== undefined || turn.nativeTurnRef !== null)),
+          )
           .map((turn) => turn.runAttemptId),
       );
       const missedRuns = projection.runs.filter(
@@ -1179,14 +1218,14 @@ export const layer: Layer.Layer<
         restartCancelledWork.length === 0
           ? ""
           : restartCancelledBackgroundWorkNote(restartCancelledWork);
-      const tokenCap = yield* handoffTokenCapConfig.pipe(
-        Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
-      );
       const settledHandoffs = projection.contextHandoffs.filter(
         (handoff) =>
           handoff.toProviderThreadId === providerThread.id &&
           handoff.delivery?.nativeThreadId === runningProviderThread.nativeThreadRef?.nativeId &&
-          handoff.delivery?.status !== "pending",
+          handoff.delivery?.status !== "pending" &&
+          !projection.runs.some(
+            (source) => source.id === handoff.targetRunId && source.status === "rolled_back",
+          ),
       );
       const deliveredItemIds = new Set(
         settledHandoffs.flatMap((handoff) => handoff.delivery?.itemIds ?? []),
@@ -1231,36 +1270,42 @@ export const layer: Layer.Layer<
       // Use saved text and actual native attachments when telemetry is absent.
       // Legacy attempts lack native identity; exclude their explicitly recovered
       // history, whose attachments were not replayed into the replacement thread.
-      const nativeContextEstimate = Effect.gen(function* () {
-        return sameNativeThread
-          ? (yield* projectionStore.getTurnStartHistory(input.threadId)).reduce((sum, item) => {
-              if (
-                item.runId === run.id ||
-                (item.runId !== null &&
-                  missedRunIds.has(item.runId) &&
-                  !deliveredItemIds.has(item.id)) ||
-                (item.providerThreadId !== providerThread.id && !deliveredItemIds.has(item.id))
-              )
-                return sum;
-              const historical = historicalMessage(item);
-              const nativeAttachments =
-                item.type === "user_message" &&
-                item.providerThreadId === providerThread.id &&
-                item.runId !== null &&
-                (nativeInputRunIds.has(item.runId) ||
-                  (legacyInputRunIds.has(item.runId) &&
-                    !coveredItemIds.has(item.id) &&
-                    !legacyRecoveredRunIds.has(item.runId)))
-                  ? attachmentTokenAllowance(item.attachments)
-                  : 0;
-              return (
-                sum +
-                (historical === null ? 0 : Buffer.byteLength(historical.text)) +
-                nativeAttachments
-              );
-            }, 0)
-          : 0;
-      });
+      const nativeContextEstimate = (bytesPerToken: number) =>
+        Effect.gen(function* () {
+          return sameNativeThread
+            ? (yield* projectionStore.getTurnStartHistory(input.threadId)).reduce((sum, item) => {
+                if (
+                  item.runId === run.id ||
+                  projection.runs.some(
+                    (source) => source.id === item.runId && source.status === "rolled_back",
+                  ) ||
+                  (item.runId !== null &&
+                    missedRunIds.has(item.runId) &&
+                    !deliveredItemIds.has(item.id)) ||
+                  (item.providerThreadId !== providerThread.id && !deliveredItemIds.has(item.id))
+                )
+                  return sum;
+                const historical = historicalMessage(item);
+                const nativeAttachments =
+                  item.type === "user_message" &&
+                  item.providerThreadId === providerThread.id &&
+                  item.runId !== null &&
+                  (nativeInputRunIds.has(item.runId) ||
+                    (legacyInputRunIds.has(item.runId) &&
+                      !coveredItemIds.has(item.id) &&
+                      !legacyRecoveredRunIds.has(item.runId)))
+                    ? attachmentTokenAllowance(item.attachments)
+                    : 0;
+                return (
+                  sum +
+                  (historical === null
+                    ? 0
+                    : Math.ceil(Buffer.byteLength(historical.text) / bytesPerToken)) +
+                  nativeAttachments
+                );
+              }, 0)
+            : 0;
+        });
       const modelContextWindow =
         knownModelWindow ??
         (handoffUsage !== null || reuseTelemetry ? previousUsage?.maxTokens : undefined);
@@ -1304,8 +1349,9 @@ export const layer: Layer.Layer<
             deferInline: compact,
             providerThread: runningProviderThread,
             budget: Effect.gen(function* () {
+              const policy = yield* handoffPolicy;
               return handoffBudget({
-                tokenCap,
+                ...policy,
                 modelContextWindow,
                 // The note is sent with the user text, so it spends the same allowance.
                 userText: restartNote === "" ? userText : `${restartNote}\n\n${userText}`,
@@ -1313,11 +1359,27 @@ export const layer: Layer.Layer<
                 providerThread: budgetProviderThread,
                 nativeContextEstimate:
                   budgetProviderThread.contextUsage?.usedTokens === undefined
-                    ? yield* nativeContextEstimate
+                    ? yield* nativeContextEstimate(policy.bytesPerToken)
                     : 0,
               });
             }),
             alreadyDeliveredItemIds: deliveredItemIds,
+            sharedForkWorkspace: projection.thread.conversationFork?.workspaceMode === "local",
+            sourceOmissions:
+              (projection.thread.conversationImport ?? projection.thread.forkLineage?.sourceImport)
+                ?.omissions ?? [],
+            ...((projection.thread.conversationImport ??
+              projection.thread.forkLineage?.sourceImport) == null
+              ? {}
+              : {
+                  importedMaterial:
+                    (
+                      projection.thread.conversationImport ??
+                      projection.thread.forkLineage?.sourceImport
+                    )?.sourceFormat === "scient-markdown-document"
+                      ? ("document" as const)
+                      : ("conversation" as const),
+                }),
             ...(session.injectHistory === undefined
               ? {}
               : {

@@ -311,6 +311,19 @@ it.effect(
         limit: 100,
       });
       assert.deepEqual(page.items, target.visibleTurnItems);
+      const oldActivity = target.turnItems.find((item) => item.type === "command_execution");
+      assert.ok(oldActivity);
+      const anchored = yield* store.getTimelinePage(command.newThreadId, {
+        itemId: oldActivity.id,
+        view: "activity",
+        limit: 1,
+      });
+      assert.deepEqual(
+        anchored.items.map((row) => row.item),
+        [oldActivity],
+      );
+      assert.equal(anchored.items[0]?.visibility, "inherited");
+
       assert.equal((yield* forks.dispatch(command)).sequence, receipt.sequence);
 
       assert.equal(target.thread.title, "Conversation (2)");
@@ -375,6 +388,30 @@ it.effect(
         sourceAssistantMessageId: inheritedAssistant.messageId,
       });
       assert.equal((yield* orchestrator.getThreadProjection(descendant)).turnItems.length, 4);
+      yield* orchestrator.dispatch({
+        type: "thread.section.set",
+        commandId: CommandId.make("unsectioned-fork-source"),
+        threadId: userTarget,
+        sectionId: null,
+      });
+      const unsectionedSource = yield* orchestrator.getThreadProjection(userTarget);
+      const unsectionedAnswer = unsectionedSource.turnItems.find(
+        (item) => item.type === "assistant_message",
+      );
+      assert.ok(unsectionedAnswer?.type === "assistant_message");
+      const unsectionedTarget = ThreadId.make("thread:unsectioned-fork");
+      yield* forks.dispatch({
+        ...command,
+        originThreadId: userTarget,
+        newThreadId: unsectionedTarget,
+        commandId: CommandId.make("unsectioned-fork-command"),
+        sourceAssistantMessageId: unsectionedAnswer.messageId,
+      });
+      assert.isNull((yield* orchestrator.getThreadProjection(unsectionedTarget)).thread.sectionId);
+      const sourceAfterFork = yield* orchestrator.getThreadProjection(userTarget);
+      assert.deepEqual(sourceAfterFork.thread, unsectionedSource.thread);
+      assert.deepEqual(sourceAfterFork.messages, unsectionedSource.messages);
+      assert.deepEqual(sourceAfterFork.turnItems, unsectionedSource.turnItems);
       yield* orchestrator.dispatch({
         type: "thread.delete",
         commandId: CommandId.make("delete-fork-source"),

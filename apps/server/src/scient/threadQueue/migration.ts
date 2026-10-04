@@ -2,7 +2,12 @@ import { type ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { ServerConfig } from "../../config.ts";
-import { QueueError, readQueue, writeQueue, type QueueDocument } from "./Ledger.ts";
+import {
+  QueueError,
+  readQueue,
+  writeQueue,
+  type QueueDocument,
+} from "../../orchestration-v2/legacy/LegacyQueueLedger.ts";
 import { listScientThreadQueue } from "./Store.ts";
 
 export const importLegacyQueue = Effect.fn("ScientQueue.importLegacy")(function* (

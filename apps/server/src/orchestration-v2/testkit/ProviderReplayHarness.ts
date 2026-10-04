@@ -1,3 +1,4 @@
+import type { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -211,6 +212,8 @@ export function runOrchestratorV2ProviderReplayScenario<
     // as server startup does after a crash or restart.
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
+    /** Existing conservative byte-policy fixtures can opt out of Scient preset budgets. */
+    readonly contextHandoffPolicy?: "scient" | "byte";
   } = {},
 ): Effect.Effect<
   OrchestratorV2ScenarioResult,
@@ -267,6 +270,8 @@ export function makeOrchestratorV2ProviderReplayLayer<
     // as server startup does after a crash or restart.
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
+    /** Existing conservative byte-policy fixtures can opt out of Scient preset budgets. */
+    readonly contextHandoffPolicy?: "scient" | "byte";
     readonly replayGate?: ProviderReplayGate;
   } = {},
 ): Layer.Layer<
@@ -283,7 +288,8 @@ export function makeOrchestratorV2ProviderReplayLayer<
   | LegacyV1ThreadImporter.LegacyV1ThreadImporter
   | ProjectionStore.ProjectionStoreV2
   | ProjectStore.ProjectStoreV2
-  | ServerConfig.ServerConfig,
+  | ServerConfig.ServerConfig
+  | ServerSettings.ServerSettingsService,
   | Error
   | MigrationError
   | PlatformError.PlatformError
@@ -313,6 +319,20 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
       | V2DatabaseImportError
     >;
     readonly runEffectWorker?: boolean;
+    /** Inject a fault around the production copier without replacing native provisioning. */
+    readonly forkAttachmentCopierLayer?: typeof ScientForkAttachmentCopierLive;
+    /** Run actual attachment cleanup on isolated test profiles. */
+    readonly resourceCleanupLayer?: Layer.Layer<
+      never,
+      never,
+      ServerConfig.ServerConfig | FileSystem.FileSystem
+    >;
+    /** Exercise native fork checkout with the production Git workflow. */
+    readonly forkGitWorkflowLayer?: Layer.Layer<
+      GitWorkflowService,
+      never,
+      ServerConfig.ServerConfig
+    >;
     /** Exercise production session credential issuance; disabled for recorded transports. */
     readonly configureMcp?: boolean;
     readonly mcpSessionRegistryLayer?: Layer.Layer<McpSessionRegistry.McpSessionRegistry>;
@@ -326,6 +346,8 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     // as server startup does after a crash or restart.
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
+    /** Existing conservative byte-policy fixtures can opt out of Scient preset budgets. */
+    readonly contextHandoffPolicy?: "scient" | "byte";
   } = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
@@ -342,7 +364,8 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   | LegacyV1ThreadImporter.LegacyV1ThreadImporter
   | ProjectionStore.ProjectionStoreV2
   | ProjectStore.ProjectStoreV2
-  | ServerConfig.ServerConfig,
+  | ServerConfig.ServerConfig
+  | ServerSettings.ServerSettingsService,
   | Error
   | MigrationError
   | PlatformError.PlatformError
@@ -375,6 +398,8 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
       ? {}
       : { continueThreadsAfterServerUpdate: options.continueThreadsAfterServerUpdate }),
   }).pipe(Layer.orDie);
+  const handoffSettingsLayer =
+    options.contextHandoffPolicy === "byte" ? Layer.empty : serverSettingsLayer;
   const storesLayer = Layer.mergeAll(
     EventStore.layer,
     ProjectionStore.layer,
@@ -406,7 +431,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     Layer.provide(Layer.mergeAll(checkpointStoreLayer, IdAllocator.layer)),
   );
   const contextHandoffServiceProvided = ContextHandoffService.layer.pipe(
-    Layer.provide(IdAllocator.layer),
+    Layer.provide(Layer.mergeAll(IdAllocator.layer, handoffSettingsLayer)),
   );
   const persistenceLayer = Layer.mergeAll(
     storesLayer,
@@ -457,6 +482,8 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     Layer.provide(
       Layer.mergeAll(
         contextHandoffServiceProvided,
+        handoffSettingsLayer,
+        databaseLayer,
         eventSinkProvided,
         IdAllocator.layer,
         storesLayer,
@@ -546,7 +573,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
         threadCommandExecutorLayer,
         legacyImporterProvided,
         ScientForkCheckpointBaselineLive,
-        ScientForkAttachmentCopierLive,
+        options.forkAttachmentCopierLayer ?? ScientForkAttachmentCopierLive,
       ),
     ),
     Layer.provide(Layer.mergeAll(checkpointStoreLayer, serverConfigLayer, VcsProcess.layer)),
@@ -554,6 +581,9 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   const effectExecutorProvided = EffectWorker.executorLayer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        options.resourceCleanupLayer?.pipe(
+          Layer.provide(Layer.merge(serverConfigLayer, NodeServices.layer)),
+        ) ?? Layer.empty,
         runFinalizationServiceProvided,
         checkpointRollbackServiceProvided,
         providerSessionManagerProvided,
@@ -571,6 +601,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     Layer.provide(Layer.merge(storesLayer, effectExecutorProvided)),
   );
   const replayRuntime = Layer.mergeAll(
+    serverSettingsLayer,
     commandReceiptStoreProvided,
     checkpointServiceProvided,
     checkpointStoreLayer,
@@ -584,7 +615,15 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     effectWorkerProvided,
     eventSinkProvided,
     continuationWorkerProvided,
-  ).pipe(Layer.provide(worktreeRepairDependenciesTestLayer), Layer.provide(NodeServices.layer));
+  ).pipe(
+    Layer.provide(
+      Layer.merge(
+        worktreeRepairDependenciesTestLayer,
+        (options.forkGitWorkflowLayer ?? Layer.empty).pipe(Layer.provide(serverConfigLayer)),
+      ),
+    ),
+    Layer.provide(NodeServices.layer),
+  );
 
   // Build the daemon from the exact worker instance exposed alongside the
   // orchestrator. Keeping this acquisition in the replay layer makes the

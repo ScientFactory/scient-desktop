@@ -1,4 +1,3 @@
-import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { videoMimeType } from "@t3tools/shared/video";
 import {
@@ -229,13 +228,10 @@ export function reidentifyComposerContext(
   };
 }
 
-/** Keep queued records canonical; choose the wire format against the host at dispatch time. */
+/** Keep inline references and their records together when dispatching queued messages. */
 export function serializeComposerMessageForServer(
   text: string,
   context: OrchestrationMessageContext | undefined,
-  supportsInlineMessageContext: boolean,
 ): { text: string; context?: OrchestrationMessageContext } {
-  return supportsInlineMessageContext
-    ? { text, ...(context ? { context } : {}) }
-    : { text: serializeLegacyContextMessage({ text, records: context?.records ?? [] }) };
+  return { text, ...(context ? { context } : {}) };
 }

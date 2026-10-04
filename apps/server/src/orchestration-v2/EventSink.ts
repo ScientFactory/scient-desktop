@@ -37,6 +37,10 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import { sourcePlanFingerprint } from "./SourcePlan.ts";
+import {
+  readLegacyCitationRepairSource,
+  readLegacyQuestionInsertionOwner,
+} from "./legacy/LegacyHistoryRepairOwnership.ts";
 
 const decodeSourcePlanRun = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2RunJson),
@@ -403,11 +407,7 @@ const baseLayer: Layer.Layer<
               ? event.payload.messageId
               : undefined;
         if (messageId === undefined) continue;
-        const [source] = yield* sql<{ text: string }>`
-            SELECT text FROM projection_thread_messages
-            WHERE thread_id = ${event.threadId} AND message_id = ${messageId} AND role = 'assistant'
-              AND EXISTS (SELECT 1 FROM orchestration_v2_legacy_imports
-                WHERE thread_id = ${event.threadId})`;
+        const [source] = yield* readLegacyCitationRepairSource(sql, event.threadId, messageId);
         if (source === undefined) continue;
         // Entity compaction can remove the original message event. The
         // retained import ledger and exact inert item identity survive it.
@@ -493,13 +493,12 @@ const baseLayer: Layer.Layer<
           }
           const item = event.payload;
           const activityId = item.id.slice(prefix.length);
-          const owner = yield* sql<{ turn_id: string | null; ordinal: number }>`
-          SELECT activity.turn_id, position.ordinal FROM projection_thread_activities AS activity
-          JOIN orchestration_v2_legacy_imports AS imported ON imported.thread_id = activity.thread_id
-          JOIN orchestration_v2_turn_item_positions AS position
-            ON position.thread_id = activity.thread_id AND position.turn_item_id = ${item.id}
-          WHERE activity.thread_id = ${event.threadId} AND activity.activity_id = ${activityId}
-            AND activity.kind = 'user-input.answer-submitted'`;
+          const owner = yield* readLegacyQuestionInsertionOwner(
+            sql,
+            event.threadId,
+            item.id,
+            activityId,
+          );
           const source = owner[0];
           if (
             source === undefined ||

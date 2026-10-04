@@ -1,5 +1,4 @@
 import { resolvePlanFollowUpSubmission } from "../../proposedPlan";
-import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
 import {
   ProjectId,
   PullRequestAction,
@@ -1143,14 +1142,10 @@ describe("asking about a change rather than working on it", () => {
       selectedScientSkillNames: [],
     });
     expect(context?.records[0]).toMatchObject({ pullRequest: base });
-    const legacyText = serializeLegacyContextMessage({
-      text: submission.text,
-      records: context!.records,
-    });
-    expect(legacyText).toContain(base.url);
-    expect(legacyText).toContain(prose);
-    expect(legacyText).not.toContain("PLEASE IMPLEMENT THIS PLAN");
-    expect(legacyText).not.toContain("t3-context://");
+    expect(context!.records[0]).toMatchObject({ text: expect.stringContaining(base.url) });
+    expect(submission.text).toContain(prose);
+    expect(submission.text).not.toContain("PLEASE IMPLEMENT THIS PLAN");
+    expect(submission.text).toContain("t3-context://");
   });
 
   it("builds a neutral composer reference without prescribing an action", () => {

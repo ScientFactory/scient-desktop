@@ -29,17 +29,23 @@ import {
   MessageId,
   ThreadId,
   TurnId,
-  type ChatAttachment,
+  ChatAttachment,
+  IsoDateTime,
+  OrchestrationMessageRole,
+  OrchestrationProposedPlan,
+  OrchestrationThreadActivity,
+  OrchestrationConversationImport,
+  ModelSelection,
+  ProjectId,
+  ProviderInteractionMode,
+  RuntimeMode,
+  TrimmedNonEmptyString,
   type ConversationAttachment,
   type ConversationImportDestination,
   type ConversationQuestionAnswer,
   type ConversationWorkLogEntry,
-  type OrchestrationCommand,
   type OrchestrationConversationImportNotice,
   type OrchestrationConversationImportOmission,
-  type OrchestrationProposedPlan,
-  type OrchestrationThreadActivity,
-  type ThreadConversationImportTurn,
 } from "@t3tools/contracts";
 import { importedMessageMarkdown, importedWorkLogOmissions } from "@scientfactory/conversation";
 import * as Crypto from "effect/Crypto";
@@ -54,10 +60,44 @@ import {
   type ValidatedConversationImport,
 } from "./ConversationImporter.ts";
 
-export type ThreadConversationImportCommand = Extract<
-  OrchestrationCommand,
-  { type: "thread.conversation.import" }
->;
+/** Frozen historical content committed locally; this is never a client execution command. */
+export const PortableConversationImportTurn = Schema.Struct({
+  turnId: TurnId,
+  userMessageId: Schema.NullOr(MessageId),
+  assistantMessageId: Schema.NullOr(MessageId),
+  requestedAt: IsoDateTime,
+  completedAt: IsoDateTime,
+});
+export type PortableConversationImportTurn = typeof PortableConversationImportTurn.Type;
+
+export const PortableConversationImportPlan = Schema.Struct({
+  type: Schema.Literal("thread.conversation.import"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  modelSelection: ModelSelection,
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
+  messages: Schema.Array(
+    Schema.Struct({
+      messageId: MessageId,
+      role: OrchestrationMessageRole,
+      text: Schema.String,
+      attachments: Schema.optional(Schema.Array(ChatAttachment)),
+      turnId: Schema.NullOr(TurnId),
+      createdAt: IsoDateTime,
+      updatedAt: IsoDateTime,
+    }),
+  ),
+  proposedPlans: Schema.Array(OrchestrationProposedPlan),
+  activities: Schema.Array(OrchestrationThreadActivity),
+  inheritedTurnIds: Schema.Array(TurnId),
+  turns: Schema.Array(PortableConversationImportTurn),
+  origin: OrchestrationConversationImport,
+  createdAt: IsoDateTime,
+});
+export type PortableConversationImportPlan = typeof PortableConversationImportPlan.Type;
 
 /** The local id of every record an attempt writes, keyed by the external record it replaces. */
 export const ConversationImportIds = Schema.Struct({
@@ -805,7 +845,7 @@ export function buildConversationImportCommand(input: {
   readonly destination: ConversationImportDestination;
   /** When the attempt began; recorded in the journal and reused on retry. */
   readonly importedAt: string;
-}): ThreadConversationImportCommand {
+}): PortableConversationImportPlan {
   const { ids, destination, importedAt } = input;
   const timesShiftedMs = futureSkewMs(input.validated.snapshot, importedAt);
   const validated: ValidatedConversationImport = {
@@ -834,7 +874,7 @@ export function buildConversationImportCommand(input: {
       return published === undefined ? [] : [published];
     });
 
-  const messages: ThreadConversationImportCommand["messages"] = transcriptOrder(validated).map(
+  const messages: PortableConversationImportPlan["messages"] = transcriptOrder(validated).map(
     (record) => {
       if (record.kind === "reasoning") {
         const { reasoning } = record;
@@ -948,7 +988,7 @@ export function buildConversationImportCommand(input: {
     if (message.updatedAt > record.completedAt) record.completedAt = message.updatedAt;
     turnRecords.set(message.turnId, record);
   }
-  const turns: ThreadConversationImportTurn[] = [...turnRecords]
+  const turns: PortableConversationImportTurn[] = [...turnRecords]
     .filter(([, record]) => record.assistant !== null)
     .map(([turnId, record]) => ({
       turnId,

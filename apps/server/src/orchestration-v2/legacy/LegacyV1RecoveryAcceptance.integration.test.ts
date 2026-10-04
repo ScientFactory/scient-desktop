@@ -28,7 +28,7 @@ import { deriveServerPaths, ServerConfig } from "../../config.ts";
 import { layerConfig } from "../../persistence/Layers/Sqlite.ts";
 import { runMigrations } from "../../persistence/Migrations.ts";
 import { legacyQueueFilePath } from "../../scient/threadQueue/Store.ts";
-import { readQueue } from "../../scient/threadQueue/Ledger.ts";
+import { readQueue } from "./LegacyQueueLedger.ts";
 import { runOrderedV2StartupPhases } from "../../serverRuntimeStartup.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { AcpProviderCapabilitiesV2 } from "../Adapters/AcpAdapterV2.ts";
@@ -361,7 +361,7 @@ it.live(
                 (yield* sql<{ history_repair_version: number }>`SELECT history_repair_version
                 FROM orchestration_v2_legacy_imports WHERE thread_id = ${threadId}`)[0]
                   ?.history_repair_version,
-                2,
+                3,
               );
               const first = held.messages.find(
                 (message) => message.text === "Recovered first work",
