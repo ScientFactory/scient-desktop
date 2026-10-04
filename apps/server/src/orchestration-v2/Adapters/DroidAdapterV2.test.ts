@@ -20,12 +20,16 @@ import {
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import type * as Duration from "effect/Duration";
+import { TestClock } from "effect/testing";
+import { scriptedDroid } from "../../provider/testUtils/scriptedDroid.ts";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
@@ -36,6 +40,7 @@ import { makeDroidAcpRuntime } from "../../provider/acp/DroidAcpSupport.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import * as ProviderAdapter from "../ProviderAdapter.ts";
 import { makeDroidAdapterV2 } from "./DroidAdapterV2.ts";
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeDroidSettings = Schema.decodeEffect(DroidSettings);
 const decodeRequest = Schema.decodeUnknownSync(
   Schema.fromJsonString(
@@ -61,6 +66,11 @@ const harness = Effect.fnUntraced(function* (
   truncated = false,
   approveSpec = false,
   capabilities?: ReadonlySet<McpCapability>,
+  scenario?: {
+    readonly body: string;
+    readonly idleMillis?: number;
+    readonly blockPromptWrite?: boolean;
+  },
 ) {
   const fs = yield* FileSystem.FileSystem;
   const crypto = yield* Crypto.Crypto;
@@ -75,9 +85,17 @@ const harness = Effect.fnUntraced(function* (
     name: "droid",
     source: execScriptSource({ scriptPath: mockAgentPath, argvLogPath }),
   });
+  const controlPath = NodePath.join(config.stateDir, "activity-control");
+  const pidsPath = NodePath.join(config.stateDir, "owned-pids");
+  const scripted = scenario
+    ? yield* scriptedDroid(
+        `fs.appendFileSync(${encodeJson(pidsPath)}, String(process.pid) + "\\n");\n` +
+          scenario.body.replaceAll("__CONTROL_PATH__", encodeJson(controlPath)),
+      )
+    : undefined;
   const instanceId = ProviderInstanceId.make("droid-v2-test");
   const threadId = ThreadId.make("droid-v2-thread");
-  const modelSelection = { instanceId, model: "default" };
+  const modelSelection = { instanceId, model: scripted ? "droid-native" : "default" };
   const runtimePolicy = {
     cwd: config.stateDir,
     runtimeMode: "approval-required" as const,
@@ -97,9 +115,15 @@ const harness = Effect.fnUntraced(function* (
       Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
     );
   }
+  const writeBlocked = yield* Deferred.make<void>();
+  const releaseWrite = yield* Deferred.make<void>();
   const adapter = makeDroidAdapterV2({
     instanceId,
-    settings: yield* decodeDroidSettings({ enabled: true, binaryPath: binary }),
+    ...(scenario?.idleMillis === undefined ? {} : { turnIdleTimeoutMillis: scenario.idleMillis }),
+    settings: yield* decodeDroidSettings({
+      enabled: true,
+      binaryPath: scripted?.binaryPath ?? binary,
+    }),
     environment: {
       PATH: process.env.PATH,
       T3_ACP_DROID_AUTONOMY: "normal",
@@ -113,9 +137,28 @@ const harness = Effect.fnUntraced(function* (
     },
     sensitiveEnvironmentValues: [],
     makeRuntime: (input) =>
-      makeDroidAcpRuntime(input).pipe(
-        Effect.map((runtime) =>
-          truncated
+      makeDroidAcpRuntime({
+        ...input,
+        ...(scenario?.blockPromptWrite
+          ? {
+              requestLogger: (event) =>
+                event.method === "session/prompt" && event.status === "started"
+                  ? Deferred.succeed(writeBlocked, undefined).pipe(
+                      Effect.andThen(Deferred.await(releaseWrite)),
+                    )
+                  : (input.requestLogger?.(event) ?? Effect.void),
+            }
+          : {}),
+      }).pipe(
+        Effect.map((native) => {
+          const runtime =
+            scenario && native.terminateProcessGroup
+              ? {
+                  ...native,
+                  terminateProcessGroup: TestClock.withLive(native.terminateProcessGroup),
+                }
+              : native;
+          return truncated
             ? {
                 ...runtime,
                 prompt: (request, dispatch) =>
@@ -123,8 +166,8 @@ const harness = Effect.fnUntraced(function* (
                     .prompt(request, dispatch)
                     .pipe(Effect.as({ stopReason: "max_tokens" as const })),
               }
-            : runtime,
-        ),
+            : runtime;
+        }),
       ),
     childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
     crypto,
@@ -166,15 +209,19 @@ const harness = Effect.fnUntraced(function* (
     lastVisitedAt: null,
     deletedAt: null,
   };
+  const recorded: ProviderAdapter.ProviderAdapterV2Event[] = [];
   const queue = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
   yield* runtime.events.pipe(
-    Stream.runForEach((event) => Queue.offer(queue, event)),
+    Stream.runForEach((event) =>
+      Effect.sync(() => recorded.push(event)).pipe(Effect.andThen(Queue.offer(queue, event))),
+    ),
     Effect.forkScoped,
   );
   const send = (
     ordinal: number,
     mode: ProviderAdapter.ProviderAdapterV2RuntimePolicy["runtimeMode"],
     interactionMode: "default" | "plan" = "default",
+    text = "Say hello",
   ) =>
     runtime.startTurn({
       appThread,
@@ -189,7 +236,7 @@ const harness = Effect.fnUntraced(function* (
       rootNodeId: NodeId.make(`droid-root-${ordinal}`),
       message: {
         messageId: MessageId.make(`droid-message-${ordinal}`),
-        text: "Say hello",
+        text,
         attachments: [],
         createdBy: "user",
         creationSource: "web",
@@ -198,15 +245,12 @@ const harness = Effect.fnUntraced(function* (
   const terminal = Effect.gen(function* () {
     while (true) {
       const event = yield* Queue.take(queue);
-      recorded.push(event);
       if (event.type === "turn.terminal") return event;
     }
   });
-  const recorded: ProviderAdapter.ProviderAdapterV2Event[] = [];
   const approval = Effect.gen(function* () {
     while (true) {
       const event = yield* Queue.take(queue);
-      recorded.push(event);
       if (event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending")
         return event.runtimeRequest;
       if (event.type === "turn.terminal")
@@ -226,6 +270,12 @@ const harness = Effect.fnUntraced(function* (
     recorded,
     approval,
     runtime,
+    readLog: scripted?.readLog,
+    ownedPids: () => NodeFS.readFileSync(pidsPath, "utf8").trim().split("\n").map(Number),
+    providerThread,
+    writeBlocked,
+    releaseWrite,
+    signal: (value: string) => fs.writeFileString(controlPath, value),
   };
 });
 
@@ -322,5 +372,417 @@ it.layer(testLayer, { excludeTestServices: true })("DroidAdapterV2", (it) => {
         assert.isFalse(h.requests().some((request) => request.method === "session/prompt"));
       }),
     ),
+  );
+});
+
+const livePause = (millis = 10) => TestClock.withLive(Effect.sleep(millis));
+const untilRecorded = (
+  h: Effect.Success<ReturnType<typeof harness>>,
+  predicate: (event: ProviderAdapter.ProviderAdapterV2Event) => boolean,
+) =>
+  Effect.gen(function* () {
+    while (!h.recorded.some(predicate)) yield* livePause();
+  });
+const terminals = (h: Effect.Success<ReturnType<typeof harness>>) =>
+  h.recorded.filter((event) => event.type === "turn.terminal");
+const announced = (event: ProviderAdapter.ProviderAdapterV2Event) =>
+  event.type === "turn_item.updated" ||
+  (event.type === "message.updated" &&
+    event.message.role === "assistant" &&
+    event.message.text.length > 0);
+const silentBody = `function onPrompt(message) {
+  if (message.params.prompt.some(block => block.text?.includes("recover"))) return reply(message, { stopReason: "end_turn" });
+  update({ sessionUpdate: "tool_call", toolCallId: "read", title: "Read file", kind: "read", status: "in_progress", rawInput: { path: "file.txt" }, rawOutput: { text: "Partial tool output." } });
+  update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Partial work." } });
+}`;
+
+it.layer(testLayer)("Droid native inactivity supervision", (it) => {
+  it.effect(
+    "fails a silent live peer once, retains partial output and recovers the next prompt",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness(false, false, false, undefined, {
+            body: silentBody,
+            idleMillis: 300,
+          });
+          yield* h.send(1, "full-access");
+          yield* untilRecorded(
+            h,
+            (event) => event.type === "message.updated" && event.message.text === "Partial work.",
+          );
+          yield* livePause(50);
+          yield* TestClock.adjust(350);
+          const failed = yield* h.terminal;
+          assert.equal(failed.status, "failed");
+          assert.include(failed.failure?.message ?? "", "idle timeout (300ms)");
+          assert.throws(() => process.kill(h.ownedPids()[0]!, 0), /ESRCH/);
+          assert.isTrue(
+            h.recorded.some(
+              (event) => event.type === "message.updated" && event.message.text === "Partial work.",
+            ),
+          );
+          const tool = h.recorded.findLast(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.nativeItemRef?.nativeId === "read",
+          );
+          assert.equal(
+            tool?.type === "turn_item.updated" ? tool.turnItem.status : undefined,
+            "failed",
+          );
+          yield* h.send(2, "full-access", "default", "recover");
+          assert.equal((yield* h.terminal).status, "completed");
+          yield* TestClock.adjust("2 hours");
+          yield* livePause(50);
+          assert.deepEqual(
+            terminals(h).map((event) => event.status),
+            ["failed", "completed"],
+          );
+          assert.equal(
+            (yield* h.readLog!()).filter((message) => message.method === "session/prompt").length,
+            2,
+          );
+        }),
+      ),
+  );
+  it.effect(
+    "active native updates reset the deadline and idle time before a new prompt does not count",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness(false, false, false, undefined, {
+            body: `function onPrompt() {
+          let previous = "";
+          setInterval(() => {
+            if (!fs.existsSync(__CONTROL_PATH__)) return;
+            const next = fs.readFileSync(__CONTROL_PATH__, "utf8");
+            if (next === previous) return;
+            previous = next;
+            update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: next } });
+          }, 5);
+        }`,
+            idleMillis: 300,
+          });
+          yield* TestClock.adjust("2 hours");
+          yield* h.send(1, "full-access");
+          for (const pulse of ["one", "two", "three", "four", "five"]) {
+            yield* h.signal(pulse);
+            yield* untilRecorded(
+              h,
+              (event) => event.type === "message.updated" && event.message.text.endsWith(pulse),
+            );
+            yield* TestClock.adjust(250);
+            assert.lengthOf(terminals(h), 0);
+          }
+          yield* TestClock.adjust(100);
+          assert.equal((yield* h.terminal).status, "failed");
+          assert.lengthOf(terminals(h), 1);
+        }),
+      ),
+  );
+  for (const kind of ["approval", "question"] as const) {
+    it.effect(`pauses for a native ${kind} and gives a full window after the answer`, () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const body =
+            kind === "approval"
+              ? `async function onPrompt() { await request("session/request_permission", {
+              toolCall: { toolCallId: "edit", title: "Edit file", kind: "edit", status: "pending" },
+              options: [{ optionId: "yes", name: "Allow", kind: "allow_once" }],
+            }); update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Answered." } }); }`
+              : `async function onPrompt() { await request("session/elicitation", {
+              mode: "form", message: "Choose", requestedSchema: { type: "object", properties: { answer: { type: "string" } }, required: ["answer"] },
+            }); update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Answered." } }); }`;
+          const h = yield* harness(false, false, false, undefined, { body, idleMillis: 300 });
+          yield* h.send(1, "approval-required");
+          const request = yield* h.approval;
+          yield* TestClock.adjust("2 hours");
+          assert.lengthOf(terminals(h), 0);
+          yield* h.runtime.respondToRuntimeRequest({
+            requestId: request.id,
+            ...(kind === "approval"
+              ? { decision: "accept" as const }
+              : { answers: { answer: "yes" } }),
+          });
+          yield* untilRecorded(
+            h,
+            (event) => event.type === "message.updated" && event.message.text === "Answered.",
+          );
+          yield* TestClock.adjust(250);
+          assert.lengthOf(terminals(h), 0);
+          yield* TestClock.adjust(100);
+          assert.equal((yield* h.terminal).status, "failed");
+          assert.lengthOf(terminals(h), 1);
+        }),
+      ),
+    );
+  }
+  for (const scenario of [
+    {
+      name: "nested Task",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "task",
+        title: "Task",
+        kind: "other",
+        status: "pending",
+        rawInput: { subagent_type: "worker" },
+      },
+      quiet: "11 minutes",
+      failAfter: "50 minutes",
+      window: "60m",
+    },
+    {
+      name: "Task named only by title",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "task",
+        title: "Task",
+        kind: "other",
+        status: "pending",
+      },
+      quiet: "11 minutes",
+      failAfter: "50 minutes",
+      window: "60m",
+    },
+    {
+      name: "Task named only by input",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "task",
+        title: "Anything",
+        kind: "other",
+        status: "pending",
+        rawInput: { subagent_type: "worker" },
+      },
+      quiet: "11 minutes",
+      failAfter: "50 minutes",
+      window: "60m",
+    },
+    {
+      name: "ordinary Read call",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "read",
+        title: "Read file",
+        kind: "read",
+        status: "pending",
+        rawInput: {},
+      },
+      quiet: "570 seconds",
+      failAfter: "1 minute",
+      window: "10m",
+    },
+    {
+      name: "untitled call",
+      update: { sessionUpdate: "tool_call", toolCallId: "other", kind: "other", status: "pending" },
+      quiet: "570 seconds",
+      failAfter: "1 minute",
+      window: "10m",
+    },
+    {
+      name: "silent ordinary turn",
+      update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "On it." } },
+      quiet: "570 seconds",
+      failAfter: "1 minute",
+      window: "10m",
+    },
+    {
+      name: "announced wait",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "wait",
+        title: "TaskOutput",
+        kind: "other",
+        status: "pending",
+        rawInput: { task_id: "earlier", block: true, timeout: 600000 },
+      },
+      quiet: "630 seconds",
+      failAfter: "1 minute",
+      window: "11m",
+    },
+    {
+      name: "unbounded announced wait",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "wait",
+        title: "TaskOutput",
+        kind: "other",
+        status: "pending",
+        rawInput: { task_id: "earlier", block: true },
+      },
+      quiet: "11 minutes",
+      failAfter: "50 minutes",
+      window: "60m",
+    },
+  ]) {
+    it.effect(`allows a finite window for ${scenario.name}`, () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness(false, false, false, undefined, {
+            body: `function onPrompt() { update(${encodeJson(scenario.update)}); }`,
+          });
+          yield* h.send(1, "full-access");
+          yield* untilRecorded(h, announced);
+          yield* TestClock.adjust(scenario.quiet as Duration.Input);
+          assert.lengthOf(terminals(h), 0);
+          yield* TestClock.adjust(scenario.failAfter as Duration.Input);
+          const failed = yield* h.terminal;
+          assert.equal(failed.status, "failed");
+          assert.include(failed.failure?.message ?? "", `idle timeout (${scenario.window})`);
+          assert.lengthOf(terminals(h), 1);
+        }),
+      ),
+    );
+  }
+  it.effect("keeps a launched background Task's allowance until TaskOutput reports its end", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, {
+          body: `function onPrompt() {
+          update({ sessionUpdate: "tool_call", toolCallId: "task", title: "Task", kind: "other", status: "pending", rawInput: { subagent_type: "worker" } });
+          update({ sessionUpdate: "tool_call_update", toolCallId: "task", status: "completed", rawOutput: { text: "Task launched in background.\\ntask_id: native-task" } });
+          const timer = setInterval(() => {
+            if (!fs.existsSync(__CONTROL_PATH__)) return;
+            clearInterval(timer);
+            update({ sessionUpdate: "tool_call", toolCallId: "result", title: "TaskOutput", kind: "other", status: "completed", rawInput: { task_id: "native-task", block: false }, rawOutput: { text: "Status: completed" } });
+            update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Background finished." } });
+          }, 5);
+        }`,
+        });
+        yield* h.send(1, "full-access");
+        yield* untilRecorded(
+          h,
+          (event) => event.type === "turn_item.updated" && event.turnItem.status === "completed",
+        );
+        yield* TestClock.adjust("11 minutes");
+        assert.lengthOf(terminals(h), 0);
+        yield* h.signal("finished");
+        yield* untilRecorded(
+          h,
+          (event) =>
+            event.type === "message.updated" && event.message.text === "Background finished.",
+        );
+        yield* TestClock.adjust("570 seconds");
+        assert.lengthOf(terminals(h), 0);
+        yield* TestClock.adjust("1 minute");
+        const failed = yield* h.terminal;
+        assert.equal(failed.status, "failed");
+        assert.include(failed.failure?.message ?? "", "idle timeout (10m)");
+        assert.notInclude(failed.failure?.message ?? "", "subagent");
+        assert.lengthOf(terminals(h), 1);
+      }),
+    ),
+  );
+  it.effect(
+    "forgets unfinished Tasks after completion and uses the configured next-turn window",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness(false, false, false, undefined, {
+            idleMillis: 300,
+            body: `function onPrompt(message) {
+          if (state.prompts === 1) {
+            update({ sessionUpdate: "tool_call", toolCallId: "task", title: "Task", kind: "other", status: "pending", rawInput: { subagent_type: "worker" } });
+            return reply(message, { stopReason: "end_turn" });
+          }
+          update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Second turn." } });
+        }`,
+          });
+          yield* h.send(1, "full-access");
+          assert.equal((yield* h.terminal).status, "completed");
+          yield* h.send(2, "full-access");
+          yield* untilRecorded(
+            h,
+            (event) => event.type === "message.updated" && event.message.text === "Second turn.",
+          );
+          yield* TestClock.adjust(350);
+          const failed = yield* h.terminal;
+          assert.equal(failed.status, "failed");
+          assert.include(failed.failure?.message ?? "", "idle timeout (300ms)");
+          assert.notInclude(failed.failure?.message ?? "", "subagent");
+          assert.deepEqual(
+            terminals(h).map((event) => event.status),
+            ["completed", "failed"],
+          );
+        }),
+      ),
+  );
+  for (const stopped of [false, true]) {
+    it.effect(
+      stopped
+        ? "Stop never writes a prompt blocked before dispatch"
+        : "reports why inactivity ended a prompt blocked before dispatch",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const h = yield* harness(false, false, false, undefined, {
+              body: silentBody,
+              idleMillis: 300,
+              blockPromptWrite: true,
+            });
+            yield* h.send(1, "full-access");
+            yield* Deferred.await(h.writeBlocked);
+            if (stopped) {
+              const turn = h.recorded.find(
+                (event) =>
+                  event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+              );
+              if (turn?.type !== "provider_turn.updated")
+                return yield* Effect.die("Missing accepted turn");
+              yield* h.runtime.interruptTurn({
+                providerThread: h.providerThread,
+                providerTurnId: turn.providerTurn.id,
+                requestRuntimeRestart: true,
+              });
+            } else yield* TestClock.adjust(350);
+            const outcome = yield* h.terminal;
+            assert.equal(outcome.status, stopped ? "interrupted" : "failed");
+            if (!stopped) assert.include(outcome.failure?.message ?? "", "idle timeout (300ms)");
+            yield* Deferred.succeed(h.releaseWrite, undefined);
+            yield* livePause(50);
+            assert.isFalse(
+              (yield* h.readLog!()).some((message) => message.method === "session/prompt"),
+            );
+            assert.lengthOf(terminals(h), 1);
+          }),
+        ),
+    );
+  }
+  it.effect(
+    "Stop wins a pending watchdog and the next prompt recovers without a late terminal",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness(false, false, false, undefined, {
+            body: silentBody,
+            idleMillis: 300,
+          });
+          yield* h.send(1, "full-access");
+          yield* untilRecorded(h, announced);
+          const turn = h.recorded.find(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+          );
+          if (turn?.type !== "provider_turn.updated")
+            return yield* Effect.die("No running native turn");
+          yield* h.runtime.interruptTurn({
+            providerThread: h.providerThread,
+            providerTurnId: turn.providerTurn.id,
+            requestRuntimeRestart: true,
+          });
+          assert.equal((yield* h.terminal).status, "interrupted");
+          assert.throws(() => process.kill(h.ownedPids()[0]!, 0), /ESRCH/);
+          yield* h.send(2, "full-access", "default", "recover");
+          assert.equal((yield* h.terminal).status, "completed");
+          yield* TestClock.adjust("2 hours");
+          yield* livePause(50);
+          assert.deepEqual(
+            terminals(h).map((event) => event.status),
+            ["interrupted", "completed"],
+          );
+        }),
+      ),
   );
 });

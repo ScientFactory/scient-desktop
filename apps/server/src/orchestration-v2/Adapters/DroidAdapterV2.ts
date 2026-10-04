@@ -26,6 +26,8 @@ import {
 } from "./AcpAdapterV2.ts";
 
 export interface DroidAdapterV2Options extends Omit<AcpAdapterV2Options, "flavor"> {
+  /** Injectable silence window; production also honors SCIENT_DROID_TURN_IDLE_TIMEOUT_MS. */
+  readonly turnIdleTimeoutMillis?: number;
   readonly settings: DroidSettings;
   readonly environment: NodeJS.ProcessEnv;
   readonly sensitiveEnvironmentValues: ReadonlyArray<string>;
@@ -33,9 +35,16 @@ export interface DroidAdapterV2Options extends Omit<AcpAdapterV2Options, "flavor
   readonly childProcessSpawner: Parameters<DroidAcpRuntimeFactory>[0]["childProcessSpawner"];
   readonly onAuthenticationRejected: (message: string) => Effect.Effect<void>;
 }
+import { makeDroidInactivity } from "./DroidInactivity.ts";
+
 const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
 
 export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
+  const configuredIdle = Number(
+    options.turnIdleTimeoutMillis ?? process.env.SCIENT_DROID_TURN_IDLE_TIMEOUT_MS,
+  );
+  const idleMillis =
+    Number.isFinite(configuredIdle) && configuredIdle > 0 ? configuredIdle : 600_000;
   const runtimes = new WeakMap<object, DroidAcpRuntime>();
   const redact = makeDroidCredentialRedactor({
     environment: options.environment,
@@ -55,6 +64,8 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
     },
     supportsImagePrompts: true,
     supportsCompaction: true,
+    terminalizeRunOwnedItemsOnFailure: true,
+    terminateRuntimeProcessGroupOnInterrupt: true,
     applyRuntimePolicy: (runtime, policy) =>
       confirmDroidAutonomy(
         runtime,
@@ -88,8 +99,25 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
           ownDescendantProcessGroups: platform === "linux",
           processGroupPlatform: platform,
         });
+        let activity: Effect.Success<ReturnType<typeof makeDroidInactivity>> | undefined;
         const wrapped: DroidAcpRuntime = {
           ...runtime,
+          handleSessionUpdate: (handler) =>
+            runtime.handleSessionUpdate((notification) =>
+              (activity?.observe(notification) ?? Effect.void).pipe(
+                Effect.andThen(handler(notification)),
+              ),
+            ),
+          handleRequestPermission: (handler) =>
+            runtime.handleRequestPermission(
+              (request, context) =>
+                activity?.waitingForUser(handler(request, context)) ?? handler(request, context),
+            ),
+          handleElicitation: (handler) =>
+            runtime.handleElicitation(
+              (request, context) =>
+                activity?.waitingForUser(handler(request, context)) ?? handler(request, context),
+            ),
           start: () =>
             runtime
               .start()
@@ -104,27 +132,62 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
               ),
           prompt: (request, dispatch) =>
             Effect.gen(function* () {
-              if (runtime.checkConfiguration) yield* runtime.checkConfiguration();
-              yield* validateDroidReasoningState(runtime);
-              const model = findSelectDroidConfigOption(yield* runtime.getConfigOptions, {
-                category: "model",
-                id: "model",
-              })?.currentValue;
-              if (
-                typeof model === "string" &&
-                runtime.getImageSupport?.(model) === false &&
-                request.prompt.some((block) => block.type === "image")
-              )
-                return yield* new EffectAcpErrors.AcpRequestError({
-                  code: -32602,
-                  errorMessage: "The selected Droid model does not support image prompts.",
-                });
-              const result = yield* runtime.prompt(request, dispatch);
-              if (result.stopReason === "refusal")
-                return yield* new EffectAcpErrors.AcpRequestError({
-                  code: -32603,
-                  errorMessage: "Droid ended the turn because its agent reported an error.",
-                });
+              const supervision = yield* makeDroidInactivity(idleMillis);
+              activity = supervision;
+              const result = yield* Effect.gen(function* () {
+                if (runtime.checkConfiguration) yield* runtime.checkConfiguration();
+                yield* validateDroidReasoningState(runtime);
+                const model = findSelectDroidConfigOption(yield* runtime.getConfigOptions, {
+                  category: "model",
+                  id: "model",
+                })?.currentValue;
+                if (
+                  typeof model === "string" &&
+                  runtime.getImageSupport?.(model) === false &&
+                  request.prompt.some((block) => block.type === "image")
+                )
+                  return yield* new EffectAcpErrors.AcpRequestError({
+                    code: -32602,
+                    errorMessage: "The selected Droid model does not support image prompts.",
+                  });
+                const result = yield* runtime.prompt(request, dispatch);
+                if (result.stopReason === "refusal")
+                  return yield* new EffectAcpErrors.AcpRequestError({
+                    code: -32603,
+                    errorMessage: "Droid ended the turn because its agent reported an error.",
+                  });
+                return result;
+              }).pipe(
+                Effect.raceFirst(supervision.awaitExpiry),
+                Effect.tapError((error) =>
+                  supervision.isExpiry(error)
+                    ? input.onTermination(error).pipe(
+                        Effect.andThen(
+                          runtime.terminateProcessGroup?.pipe(
+                            Effect.mapError(
+                              (cause) =>
+                                new EffectAcpErrors.AcpTransportError({
+                                  detail:
+                                    "Droid inactivity teardown could not contain its process.",
+                                  cause,
+                                }),
+                            ),
+                          ) ??
+                            new EffectAcpErrors.AcpTransportError({
+                              detail:
+                                "Droid inactivity teardown requires owned process-group containment.",
+                              cause: undefined,
+                            }),
+                        ),
+                      )
+                    : Effect.void,
+                ),
+                Effect.ensuring(
+                  Effect.sync(() => {
+                    if (activity === supervision) activity = undefined;
+                  }),
+                ),
+              );
               return result;
             }).pipe(
               Effect.tapError((error) =>

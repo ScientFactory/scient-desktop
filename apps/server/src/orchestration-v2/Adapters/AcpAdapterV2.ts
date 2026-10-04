@@ -317,6 +317,8 @@ export interface AcpAdapterV2Flavor {
   ) => Effect.Effect<void>;
   /** Batch launches without child completion signals become idle when the root turn ends. */
   readonly subagentsIdleOnTurnCompletion?: boolean;
+  /** A failed native prompt ended this runtime's work; close its remaining visible items. */
+  readonly terminalizeRunOwnedItemsOnFailure?: boolean;
   readonly supportsCompaction?: boolean;
   readonly runtimeHarness?: string;
   readonly registerExtensions?: (
@@ -6382,12 +6384,15 @@ export function makeAcpAdapterV2(
 
         const terminalizeOpenRunOwnedItems = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
-          options: { readonly terminalizeSubagents: boolean },
+          options: {
+            readonly terminalizeSubagents: boolean;
+            readonly status?: "failed" | "interrupted";
+          },
         ) {
           for (const tool of context.tools.values()) {
             const status = toolStatus(tool.status);
             if (status === "pending" || status === "running" || status === "waiting") {
-              yield* emitTool(context, tool, "interrupted");
+              yield* emitTool(context, tool, options.status ?? "interrupted");
             }
           }
           if (!options.terminalizeSubagents) return;
@@ -6400,7 +6405,7 @@ export function makeAcpAdapterV2(
               prompt: subagent.task.prompt,
               title: subagent.task.title,
               model: subagent.task.model,
-              status: "interrupted",
+              status: options.status ?? "interrupted",
               childSessionId: subagent.childSessionId,
               result: subagent.task.result,
               suppressNormalTool: true,
@@ -6464,6 +6469,14 @@ export function makeAcpAdapterV2(
             // keeps live subagent lineages for in-process replacement carryover.
             yield* terminalizeOpenRunOwnedItems(context, {
               terminalizeSubagents: directStopQuarantine,
+            });
+          } else if (
+            settledStatus === "failed" &&
+            flavor.terminalizeRunOwnedItemsOnFailure === true
+          ) {
+            yield* terminalizeOpenRunOwnedItems(context, {
+              terminalizeSubagents: true,
+              status: "failed",
             });
           }
           yield* closeTextStreams(context);
