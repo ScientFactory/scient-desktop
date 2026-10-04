@@ -34,7 +34,6 @@ import {
   resolveSidebarThreadStatus,
   resolveSidebarV2TopStatus,
   resolveThreadLastVisitedAt,
-  resolveThreadRowClassName,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   searchSidebarThreads,
@@ -49,7 +48,6 @@ import {
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
   sortSidebarV2ProjectGroups,
-  shouldCreateNewThreadInCurrentProject,
   shouldNavigateAfterThreadPark,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
   type SidebarListItem,
@@ -58,8 +56,15 @@ import {
   resolveSidebarDropVerb,
 } from "./Sidebar.logic";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
-import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  RunId,
+  ThreadId,
+  MessageId,
+  TurnId,
+} from "@t3tools/contracts";
 
 import {
   DEFAULT_INTERACTION_MODE,
@@ -2218,5 +2223,35 @@ describe("Working shelf (beta)", () => {
         unsnooze: false,
       });
     });
+  });
+});
+
+describe("canonical completed-answer sidebar watermark", () => {
+  const base = {
+    hasActionableProposedPlan: false,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    interactionMode: "default" as const,
+    runtime: null,
+    latestRun: makeLatestRun({ completedAt: "2026-03-09T12:00:00.000Z" }),
+    lastVisitedAt: "2026-03-09T10:04:00.000Z",
+  };
+  it("treats explicit null as authoritative despite a newer completed run", () => {
+    expect(hasUnseenCompletion({ ...base, latestCompletedAnswer: null })).toBe(false);
+  });
+  it("uses the retained earlier answer rather than the latest run time", () => {
+    const answer = {
+      turnId: TurnId.make("earlier-run"),
+      messageId: MessageId.make("earlier-answer"),
+      completedAt: "2026-03-09T10:05:00.000Z",
+    };
+    expect(hasUnseenCompletion({ ...base, latestCompletedAnswer: answer })).toBe(true);
+    expect(
+      hasUnseenCompletion({
+        ...base,
+        latestCompletedAnswer: answer,
+        lastVisitedAt: "2026-03-09T11:00:00.000Z",
+      }),
+    ).toBe(false);
   });
 });

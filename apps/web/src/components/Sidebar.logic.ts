@@ -1,4 +1,4 @@
-import { hasUnreadAnswer } from "../scient/answerAttention/completion";
+import { hasUnreadCompletedAnswer } from "@t3tools/shared/orchestrationV2ThreadShell";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
@@ -749,20 +749,7 @@ export function resolveThreadLastVisitedAt(
 }
 
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
-  // SCIENT-FORK:START — the fork's answer-attention tracking owns the unread
-  // dot (it records the answering message id, not just a timestamp).
-  if (hasUnreadAnswer(thread, thread.lastVisitedAt ?? undefined)) return true;
-  // SCIENT-FORK:END
-  // Upstream's run-completion check still applies for turns recorded before
-  // answer attention existed, or on servers that only report latestRun.
-  if (!thread.latestRun?.completedAt) return false;
-  const completedAt = Date.parse(thread.latestRun.completedAt);
-  if (Number.isNaN(completedAt)) return false;
-  if (!thread.lastVisitedAt) return false;
-
-  const lastVisitedAt = Date.parse(thread.lastVisitedAt);
-  if (Number.isNaN(lastVisitedAt)) return true;
-  return completedAt > lastVisitedAt;
+  return hasUnreadCompletedAnswer(thread, thread.lastVisitedAt);
 }
 
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {

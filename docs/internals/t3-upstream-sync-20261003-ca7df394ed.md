@@ -690,8 +690,17 @@ asserted behavior. The new controlled OMP subprocess fixture is classified by
 its exact path; final composed seam/provenance gates remain required. Evidence:
 `root-server-gate-repairs-*-round3.txt`; earlier failed rounds remain retained.
 
-Answer-attention Addendum 7 remains open during isolated repair: one canonical
-completed-answer selector, SQL/in-memory text and ID ordering parity, and actual
-web/mobile read watermarks based on loaded foreground answers. Final acceptance
-also covers navigation, explicit mark-unread, failed visit retry and authoritative
-null metadata. No historical passing hook test is substituted for these consumers.
+Answer-attention Addendum 7 now uses one canonical completed-answer selector
+for web acknowledgment, SQL/in-memory Unicode whitespace and binary ID-ordering
+parity, and web/mobile read watermarks based on the exact loaded foreground
+answer. General thread activity no longer publishes an answer-read watermark.
+Explicit null stays authoritative; successful legacy fallback requires absent
+canonical metadata. Same-conversation mark-unread remains sticky, changing
+conversation resets dedupe, and failed visits retry only on a later foreground
+signal with exact-dispatch fencing. Seven complete files pass312 cases; shared,
+server, web and mobile compilers and scoped formatting/lint pass. The104 retained
+lint warnings are at unchanged declaration sites. Independent final source review
+matches all sixteen integrated blobs and finds no remaining bounded defect
+(`addendum7-answer-attention-qualified-handoff.md`,
+`addendum7-answer-attention-final-independent-integration-review.md`). Whole
+candidate and actual foreground/reload/second-window acceptance remain open.
