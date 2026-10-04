@@ -66,3 +66,25 @@ describe("manuscriptTreeProblem", () => {
     });
   });
 });
+
+describe("Unicode path identity", () => {
+  it.each([
+    ["caf\u00e9.tex", "cafe\u0301.tex"],
+    ["caf\u00e9/a.tex", "cafe\u0301/b.tex"],
+    ["caf\u00e9", "cafe\u0301/intro.tex"],
+    ["caf\u00e9/intro.tex", "cafe\u0301"],
+    ["caf\u00e9/sub/a.tex", "cafe\u0301/sub/b.tex"],
+  ])("rejects canonical aliases %s and %s", (first, second) => {
+    expect(manuscriptTreeProblem([first, second])?.kind).toBe("normalization-collision");
+    expect(manuscriptTreeProblem([second, first])?.kind).toBe("normalization-collision");
+  });
+  it("compares normalization together with letter case", () => {
+    expect(manuscriptTreeProblem(["CAF\u00c9.tex", "cafe\u0301.tex"])?.kind).toBe("case-collision");
+  });
+  it("accepts either spelling on its own and preserves the caller's names", () => {
+    const paths = ["cafe\u0301/intro.tex", "cafe\u0301/methods.tex"];
+    expect(manuscriptTreeProblem(paths)).toBeNull();
+    expect(paths).toEqual(["cafe\u0301/intro.tex", "cafe\u0301/methods.tex"]);
+    expect(manuscriptTreeProblem(["caf\u00e9.tex", "cafe.tex"])).toBeNull();
+  });
+});

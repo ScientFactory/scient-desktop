@@ -86,15 +86,21 @@ export function guardedPaths(input: {
 
 /**
  * The conflicts of one plan as decisions: Git's records, the planner guard and
- * any group left interrupted by an earlier apply, each widened to the files'
- * rename counterparts, and joined wherever they share a path. Without the
- * widening, choosing a side for a renamed file removed the other side's file.
+ * any group left interrupted by an earlier apply, widened to rename counterparts
+ * and structural counterparts in all four trees. A file/folder choice includes
+ * the folder's contents so restoring the file cannot leave children beneath it.
  */
 export function conflictGroups(input: {
   readonly merge: ReadonlyArray<{ readonly type: string; readonly paths: ReadonlyArray<string> }>;
   readonly guarded: ReadonlyArray<string>;
   readonly interrupted: ReadonlyArray<ReadonlyArray<string>>;
   readonly renames: ReadonlyArray<Rename>;
+  readonly trees: {
+    readonly base: FileTree;
+    readonly local: FileTree;
+    readonly remote: FileTree;
+    readonly merged: FileTree;
+  };
 }): ReadonlyArray<ConflictGroup> {
   interface Draft {
     paths: Set<string>;
@@ -118,9 +124,43 @@ export function conflictGroups(input: {
       origin: "interrupted" as const,
     })),
   ];
+  const knownPaths = new Set([
+    ...Object.values(input.trees).flatMap((tree) => [...tree.keys()]),
+    ...seeds.flatMap((seed) => seed.paths),
+    ...input.renames.flatMap((rename) => [rename.from, rename.to]),
+  ]);
+  const neighbors = new Map<string, Set<string>>();
+  const link = (left: string, right: string) => {
+    for (const [from, to] of [
+      [left, right],
+      [right, left],
+    ] as const) {
+      const adjacent = neighbors.get(from) ?? new Set<string>();
+      adjacent.add(to);
+      neighbors.set(from, adjacent);
+    }
+  };
+  for (const rename of input.renames) link(rename.from, rename.to);
+  for (const path of knownPaths) {
+    for (
+      let separator = path.indexOf("/");
+      separator !== -1;
+      separator = path.indexOf("/", separator + 1)
+    ) {
+      const parent = path.slice(0, separator);
+      if (knownPaths.has(parent)) link(parent, path);
+    }
+  }
+  const closeOverPaths = (paths: ReadonlyArray<string>) => {
+    const closed = new Set(paths);
+    for (const path of closed) {
+      for (const adjacent of neighbors.get(path) ?? []) closed.add(adjacent);
+    }
+    return [...closed];
+  };
   const groups: Draft[] = [];
   for (const seed of seeds) {
-    const paths = closeOverRenames(seed.paths, input.renames);
+    const paths = closeOverPaths(seed.paths);
     const touching = groups.filter((group) => paths.some((path) => group.paths.has(path)));
     const target = touching[0] ?? { paths: new Set(), types: new Set(), origins: new Set() };
     if (touching.length === 0) groups.push(target);
@@ -317,10 +357,22 @@ export function classifyEarlierPublish(input: {
     : "not-established";
 }
 
-const LOCAL_MARKER = /^<<<<<<< /mu;
-const REMOTE_MARKER = /^>>>>>>> /mu;
+const CONFLICT_MARKER =
+  /^(?:<{7,}(?:[ \t].*)?|>{7,}(?:[ \t].*)?|\|{7,}(?:[ \t].*)?|={7,}[ \t]*)\r?$/mu;
 
-/** Whether text still contains a conflict left for the user to resolve. */
-export function hasConflictMarkers(text: string): boolean {
-  return LOCAL_MARKER.test(text) && REMOTE_MARKER.test(text);
+/**
+ * Conservative publication guard: even a lone marker or separator needs attention.
+ * The bare adapter emits standard markers; callers importing shorter configured
+ * markers must supply that size as well. Longer markers are always detected.
+ */
+export function hasConflictMarkers(text: string, markerSize = 7): boolean {
+  if (!Number.isSafeInteger(markerSize) || markerSize < 1) {
+    throw new RangeError("A conflict marker size must be a positive integer.");
+  }
+  if (markerSize >= 7) return CONFLICT_MARKER.test(text);
+  const remaining = new RegExp(
+    `^(?:<{${markerSize},}(?:[ \\t].*)?|>{${markerSize},}(?:[ \\t].*)?|\\|{${markerSize},}(?:[ \\t].*)?|={${markerSize},}[ \\t]*)\\r?$`,
+    "mu",
+  );
+  return remaining.test(text);
 }

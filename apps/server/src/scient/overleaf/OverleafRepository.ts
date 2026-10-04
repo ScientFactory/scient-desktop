@@ -87,7 +87,8 @@ function describeTreeProblem(problem: ManuscriptTreeProblem): string {
     case "file-and-folder":
       return `"${problem.file}" is a file, but "${problem.inside}" needs it to be a folder.`;
     case "case-collision":
-      return `"${problem.first}" and "${problem.second}" differ only by letter case.`;
+    case "normalization-collision":
+      return `"${problem.first}" and "${problem.second}" cannot be synchronized as different paths.`;
   }
 }
 

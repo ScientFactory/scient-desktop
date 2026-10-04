@@ -15,6 +15,8 @@ import {
   parseRemoteBranchAdvertisement,
 } from "./OverleafRepository.ts";
 
+import { applyChoices, applyUnits, conflictGroups, hasConflictMarkers } from "./syncRules.ts";
+
 const bytes = (value: string) => new TextEncoder().encode(value);
 const text = (value: Uint8Array) => new TextDecoder().decode(value);
 const TOKEN = bytes("unused-for-local-remote");
@@ -438,6 +440,186 @@ describe("OverleafRepository transport", () => {
         expect(yield* h.read(repo, tree)).toEqual({ "main.tex": "x\n" });
         const url = yield* h.git.execute({ cwd: repo, args: ["remote", "get-url", "origin"] });
         expect(text(url.stdout).trim()).toBe("https://git.overleaf.com/bbbbbbbbbbbbbbbbbbbbbbbb");
+      }),
+    ),
+  );
+});
+
+describe("OverleafRepository structural conflict decisions", () => {
+  for (const reverse of [false, true]) {
+    for (const choice of ["mine", "theirs"] as const) {
+      it.effect(
+        `chooses ${choice} for a ${reverse ? "remote" : "local"} file against a folder`,
+        () =>
+          withHarness((h) =>
+            Effect.gen(function* () {
+              const repo = yield* h.repo("structure");
+              const base = yield* h.tree(repo, {});
+              const file = { section: "file", "section2.tex": "unrelated" };
+              const folder = {
+                "section/intro.tex": "intro",
+                "section/nested/methods.tex": "methods",
+                "section2.tex": "unrelated",
+              };
+              const local = yield* h.tree(repo, reverse ? folder : file);
+              const remote = yield* h.tree(repo, reverse ? file : folder);
+              const merged = yield* h.repos.merge({ repo, base, local, remote });
+              const asMap = (entries: ReadonlyArray<OverleafRepository.TreeEntry>) =>
+                new Map(entries.map((e) => [e.path, e.oid]));
+              const trees = {
+                base: asMap(yield* h.repos.readTree({ repo, tree: base })),
+                local: asMap(yield* h.repos.readTree({ repo, tree: local })),
+                remote: asMap(yield* h.repos.readTree({ repo, tree: remote })),
+                merged: asMap(yield* h.repos.readTree({ repo, tree: merged.tree })),
+              };
+              const groups = conflictGroups({
+                trees,
+                merge: merged.conflicts,
+                guarded: [],
+                interrupted: [],
+                renames: [],
+              });
+              expect(groups).toHaveLength(1);
+              expect(groups[0]?.paths).toContain("section/intro.tex");
+              expect(groups[0]?.paths).toContain("section/nested/methods.tex");
+              expect(groups[0]?.paths).not.toContain("section2.tex");
+              const chosen = applyChoices({
+                merged: trees.merged,
+                local: trees.local,
+                remote: trees.remote,
+                conflicts: groups,
+                choices: [choice],
+              });
+              const chosenTree = yield* h.repos.writeTree({
+                repo,
+                entries: [...chosen].map(([path, oid]) => ({ path, oid })),
+              });
+              expect(yield* h.read(repo, chosenTree)).toEqual(
+                choice === "mine" ? (reverse ? folder : file) : reverse ? file : folder,
+              );
+              const changes = yield* h.repos.diff({ repo, from: local, to: chosenTree });
+              if (changes.length)
+                expect(applyUnits({ changes, renames: [], conflicts: groups })).toEqual([
+                  changes.map((_, i) => i),
+                ]);
+            }),
+          ),
+      );
+    }
+  }
+
+  it.effect("includes a child renamed on Overleaf in the same structural decision", () =>
+    withHarness((h) =>
+      Effect.gen(function* () {
+        const repo = yield* h.repo("renamed-child");
+        const body = paragraphs("one", "two", "three");
+        const base = yield* h.tree(repo, { "section/old.tex": body, "untouched.tex": "unrelated" });
+        const local = yield* h.tree(repo, {
+          section: "replacement file",
+          "untouched.tex": "unrelated",
+        });
+        const remote = yield* h.tree(repo, {
+          "section/new.tex": body,
+          "section/nested/added.tex": "new child",
+          "untouched.tex": "unrelated",
+        });
+        const merged = yield* h.repos.merge({ repo, base, local, remote });
+        const asMap = (entries: ReadonlyArray<OverleafRepository.TreeEntry>) =>
+          new Map(entries.map((e) => [e.path, e.oid]));
+        const trees = {
+          base: asMap(yield* h.repos.readTree({ repo, tree: base })),
+          local: asMap(yield* h.repos.readTree({ repo, tree: local })),
+          remote: asMap(yield* h.repos.readTree({ repo, tree: remote })),
+          merged: asMap(yield* h.repos.readTree({ repo, tree: merged.tree })),
+        };
+        const renames = (yield* h.repos.diff({ repo, from: base, to: remote })).flatMap((change) =>
+          change.kind === "renamed" ? [{ from: change.from, to: change.to }] : [],
+        );
+        expect(renames).toContainEqual({ from: "section/old.tex", to: "section/new.tex" });
+        const groups = conflictGroups({
+          trees,
+          merge: merged.conflicts,
+          guarded: [],
+          interrupted: [],
+          renames,
+        });
+        expect(groups).toHaveLength(1);
+        for (const path of [
+          "section",
+          "section/old.tex",
+          "section/new.tex",
+          "section/nested/added.tex",
+        ])
+          expect(groups[0]?.paths).toContain(path);
+        for (const choice of ["mine", "theirs"] as const) {
+          const chosen = applyChoices({
+            merged: trees.merged,
+            local: trees.local,
+            remote: trees.remote,
+            conflicts: groups,
+            choices: [choice],
+          });
+          const chosenTree = yield* h.repos.writeTree({
+            repo,
+            entries: [...chosen].map(([path, oid]) => ({ path, oid })),
+          });
+          expect(yield* h.read(repo, chosenTree)).toEqual(
+            yield* h.read(repo, choice === "mine" ? local : remote),
+          );
+        }
+      }),
+    ),
+  );
+
+  it.effect("detects markers when either end of a real merged conflict is removed", () =>
+    withHarness((h) =>
+      Effect.gen(function* () {
+        const repo = yield* h.repo("partial-conflict");
+        const base = yield* h.tree(repo, { "main.tex": "original\n" });
+        const local = yield* h.tree(repo, { "main.tex": "mine\n" });
+        const remote = yield* h.tree(repo, { "main.tex": "theirs\n" });
+        const merged = yield* h.repos.merge({ repo, base, local, remote });
+        const body = (yield* h.read(repo, merged.tree))["main.tex"]!;
+        expect(hasConflictMarkers(body.replace(/^<<<<<<<.*\n/mu, ""))).toBe(true);
+        expect(hasConflictMarkers(body.replace(/^>>>>>>>.*\n/mu, ""))).toBe(true);
+        expect(hasConflictMarkers(body.replace(/^(?:<<<<<<<|>>>>>>>).*\n/gmu, ""))).toBe(true);
+      }),
+    ),
+  );
+});
+
+describe("OverleafRepository Unicode path collisions", () => {
+  it.effect("rejects aliases both when constructing a tree and reading a fetched tree", () =>
+    withHarness((h) =>
+      Effect.gen(function* () {
+        const repo = yield* h.repo("aliases");
+        const first = "caf\u00e9.tex",
+          second = "cafe\u0301.tex";
+        const error = yield* h
+          .tree(repo, { [first]: "first", [second]: "second" })
+          .pipe(Effect.flip);
+        expect(error.reason).toBe("invalid-tree");
+        const one = yield* h.repos.writeBlob({ repo, bytes: bytes("first") });
+        const two = yield* h.repos.writeBlob({ repo, bytes: bytes("second") });
+        const raw = yield* h.git.execute({
+          cwd: repo,
+          args: ["mktree", "-z"],
+          stdin: bytes(`100644 blob ${one}\t${first}\0` + `100644 blob ${two}\t${second}\0`),
+        });
+        const incomingError = yield* h.repos
+          .readTree({ repo, tree: text(raw.stdout).trim() })
+          .pipe(Effect.flip);
+        expect(incomingError.reason).toBe("invalid-tree");
+      }),
+    ),
+  );
+  it.effect("retains a valid decomposed filename exactly as supplied", () =>
+    withHarness((h) =>
+      Effect.gen(function* () {
+        const repo = yield* h.repo("decomposed");
+        const files = { "cafe\u0301/intro.tex": "original bytes" };
+        const tree = yield* h.tree(repo, files);
+        expect(yield* h.read(repo, tree)).toEqual(files);
       }),
     ),
   );

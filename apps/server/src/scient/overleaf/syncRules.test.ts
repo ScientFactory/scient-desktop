@@ -17,6 +17,7 @@ import {
 } from "./syncRules.ts";
 
 const tree = (entries: Record<string, string>) => new Map(Object.entries(entries));
+const emptyTrees = { base: tree({}), local: tree({}), remote: tree({}), merged: tree({}) };
 const plain = (map: ReadonlyMap<string, string>) => Object.fromEntries([...map].sort());
 
 describe("closeOverRenames", () => {
@@ -63,6 +64,7 @@ describe("guardedPaths", () => {
 describe("conflictGroups", () => {
   it("widens a conflict to the file's paths on both sides", () => {
     const groups = conflictGroups({
+      trees: emptyTrees,
       merge: [{ type: "CONFLICT (contents)", paths: ["c.tex"] }],
       guarded: [],
       interrupted: [],
@@ -75,6 +77,7 @@ describe("conflictGroups", () => {
 
   it("joins records that share a path into one decision", () => {
     const groups = conflictGroups({
+      trees: emptyTrees,
       merge: [
         { type: "CONFLICT (rename/rename)", paths: ["old.tex", "mine.tex", "theirs.tex"] },
         { type: "CONFLICT (contents)", paths: ["mine.tex"] },
@@ -280,11 +283,158 @@ describe("classifyEarlierPublish", () => {
 });
 
 describe("hasConflictMarkers", () => {
-  it("needs both ends of a conflict", () => {
+  it("detects a complete conflict", () => {
     expect(hasConflictMarkers("a\n<<<<<<< Scient\nx\n=======\ny\n>>>>>>> Overleaf\nb\n")).toBe(
       true,
     );
-    expect(hasConflictMarkers("a\n=======\nb\n")).toBe(false);
+    expect(hasConflictMarkers("a\n=======\nb\n")).toBe(true);
     expect(hasConflictMarkers("text <<<<<<< inline\n")).toBe(false);
+  });
+});
+
+describe("structural conflict groups", () => {
+  it("includes descendants from all trees and keeps unrelated paths outside the choice", () => {
+    const trees = {
+      base: tree({ "section/removed.tex": "old" }),
+      local: tree({ section: "mine", "section2.tex": "unrelated" }),
+      remote: tree({ "section/intro.tex": "theirs", "section/nested/methods.tex": "methods" }),
+      merged: tree({
+        "section~Scient": "mine",
+        "section/intro.tex": "theirs",
+        "section/nested/methods.tex": "methods",
+        "section2.tex": "unrelated",
+      }),
+    };
+    const groups = conflictGroups({
+      trees,
+      merge: [{ type: "CONFLICT (file/directory)", paths: ["section~Scient", "section"] }],
+      guarded: [],
+      interrupted: [],
+      renames: [],
+    });
+    expect(groups[0]?.paths).toEqual([
+      "section",
+      "section/intro.tex",
+      "section/nested/methods.tex",
+      "section/removed.tex",
+      "section~Scient",
+    ]);
+    expect(
+      plain(
+        applyChoices({
+          merged: trees.merged,
+          local: trees.local,
+          remote: trees.remote,
+          conflicts: groups,
+          choices: ["mine"],
+        }),
+      ),
+    ).toEqual({ section: "mine", "section2.tex": "unrelated" });
+    expect(
+      plain(
+        applyChoices({
+          merged: trees.merged,
+          local: trees.local,
+          remote: trees.remote,
+          conflicts: groups,
+          choices: ["theirs"],
+        }),
+      ),
+    ).toEqual({
+      "section/intro.tex": "theirs",
+      "section/nested/methods.tex": "methods",
+      "section2.tex": "unrelated",
+    });
+    const changes: FileChange[] = [
+      { kind: "added", path: "section" },
+      { kind: "deleted", path: "section/intro.tex" },
+      { kind: "deleted", path: "section/nested/methods.tex" },
+      { kind: "modified", path: "section2.tex" },
+    ];
+    expect(applyUnits({ changes, renames: [], conflicts: groups })).toEqual([[0, 1, 2], [3]]);
+  });
+
+  it("closes over a subtree, a renamed child and another subtree until every decision is joined", () => {
+    const trees = {
+      base: tree({ "section/child.tex": "old", "appendix/moved.tex": "old" }),
+      local: tree({ section: "file", appendix: "file" }),
+      remote: tree({ "section/child.tex": "remote", "appendix/moved.tex": "remote" }),
+      merged: tree({ "section/child.tex": "remote", "appendix/moved.tex": "remote" }),
+    };
+    const groups = conflictGroups({
+      trees,
+      merge: [
+        { type: "CONFLICT (file/directory)", paths: ["section"] },
+        { type: "CONFLICT (file/directory)", paths: ["appendix"] },
+      ],
+      guarded: [],
+      interrupted: [],
+      renames: [{ from: "section/child.tex", to: "appendix/moved.tex" }],
+    });
+    expect(groups.map((g) => g.paths)).toEqual([
+      ["appendix", "appendix/moved.tex", "section", "section/child.tex"],
+    ]);
+  });
+
+  it("does not join siblings merely because they share a directory", () => {
+    const groups = conflictGroups({
+      trees: { ...emptyTrees, local: tree({ "section/a.tex": "a", "section/b.tex": "b" }) },
+      merge: [
+        { type: "CONFLICT (contents)", paths: ["section/a.tex"] },
+        { type: "CONFLICT (contents)", paths: ["section/b.tex"] },
+      ],
+      guarded: [],
+      interrupted: [],
+      renames: [],
+    });
+    expect(groups.map((g) => g.paths)).toEqual([["section/a.tex"], ["section/b.tex"]]);
+  });
+});
+
+describe("remaining conflict fragments", () => {
+  it.each([1, 3, 12])("detects fragments for a configured marker size of %i", (size) => {
+    for (const marker of [
+      "<".repeat(size) + " Scient",
+      ">".repeat(size) + " Overleaf",
+      "|".repeat(size) + " Base",
+      "=".repeat(size),
+    ]) {
+      expect(hasConflictMarkers(`${marker}\n`, size)).toBe(true);
+    }
+  });
+  it.each([0, -1, 1.5, NaN, Infinity])("rejects an invalid configured size of %s", (size) => {
+    expect(() => hasConflictMarkers("text", size)).toThrow(RangeError);
+  });
+  it.each([
+    "<<<<<<< Scient",
+    ">>>>>>> Overleaf",
+    "||||||| Base",
+    "=======",
+    "<<<<<<<",
+    ">>>>>>>",
+    "|||||||",
+    "<<<<<<<<<<<< Scient",
+    ">>>>>>>>>>>> Overleaf",
+    "|||||||||||| Base",
+    "============",
+  ])("blocks the standalone marker %s", (marker) => {
+    expect(hasConflictMarkers(`before\n${marker}\nafter\n`)).toBe(true);
+    expect(hasConflictMarkers(`before\r\n${marker}\r\nafter\r\n`)).toBe(true);
+  });
+  it("keeps blocking after either end of an actual block is removed", () => {
+    const conflicted = "<<<<<<< Scient\nmine\n=======\ntheirs\n>>>>>>> Overleaf\n";
+    expect(hasConflictMarkers(conflicted.replace(/^<<<<<<<.*\n/mu, ""))).toBe(true);
+    expect(hasConflictMarkers(conflicted.replace(/^>>>>>>>.*\n/mu, ""))).toBe(true);
+    expect(hasConflictMarkers(conflicted.replace(/^(?:<<<<<<<|>>>>>>>).*\n/gmu, ""))).toBe(true);
+    expect(hasConflictMarkers("mine and theirs\n")).toBe(false);
+  });
+  it.each([
+    "text <<<<<<< inline",
+    "% <<<<<<< Scient",
+    "======= heading",
+    "<<<<<< short",
+    "\\section{=======}",
+  ])("leaves ordinary manuscript text alone: %s", (line) => {
+    expect(hasConflictMarkers(`${line}\n`)).toBe(false);
   });
 });

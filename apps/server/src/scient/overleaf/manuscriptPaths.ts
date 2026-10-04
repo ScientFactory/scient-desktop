@@ -46,11 +46,12 @@ export type ManuscriptTreeProblem =
   | { readonly kind: "path"; readonly path: string; readonly problem: ManuscriptPathProblem }
   | { readonly kind: "duplicate"; readonly path: string }
   | { readonly kind: "file-and-folder"; readonly file: string; readonly inside: string }
-  | { readonly kind: "case-collision"; readonly first: string; readonly second: string };
+  | { readonly kind: "case-collision"; readonly first: string; readonly second: string }
+  | { readonly kind: "normalization-collision"; readonly first: string; readonly second: string };
 
 /**
  * A set of file paths is a tree only if no path is both a file and a folder
- * and no two paths differ only by letter case. Git's index plumbing drops an
+ * and no two paths alias by letter case or canonical Unicode spelling. Git's index plumbing drops an
  * entry silently in the first case, so this is checked before Git sees it.
  */
 export function manuscriptTreeProblem(paths: ReadonlyArray<string>): ManuscriptTreeProblem | null {
@@ -72,10 +73,16 @@ export function manuscriptTreeProblem(paths: ReadonlyArray<string>): ManuscriptT
     if (inside !== undefined) return { kind: "file-and-folder", file: path, inside };
   }
   for (const name of [...files, ...folders.keys()]) {
-    const key = name.toLocaleLowerCase("en-US");
+    const normalized = name.normalize("NFC");
+    const key = normalized.toLocaleLowerCase("en-US").normalize("NFC");
     const earlier = folded.get(key);
     if (earlier !== undefined && earlier !== name) {
-      return { kind: "case-collision", first: earlier, second: name };
+      return {
+        kind:
+          earlier.normalize("NFC") === normalized ? "normalization-collision" : "case-collision",
+        first: earlier,
+        second: name,
+      };
     }
     folded.set(key, name);
   }
