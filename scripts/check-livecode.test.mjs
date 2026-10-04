@@ -588,6 +588,53 @@ describe("production subject reachability", () => {
     );
   });
 
+  it("rejects duplicate allowlist entries instead of silently overriding review reasons", () => {
+    const f = fixture();
+    f.write("apps/server/src/dead.ts", "export const dead = true;");
+    f.write("apps/server/src/dead.test.ts", "import './dead';");
+    const entry = { test: "apps/server/src/dead.test.ts", reason: "Reviewed offline tool" };
+    f.write("allowlist.json", [entry, { ...entry, reason: "Second reason" }]);
+    const result = runLivecode(
+      ["--strict", "--format", "json", "--allowlist", "allowlist.json"],
+      f.options,
+    );
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.output).error).toContain("duplicate");
+  });
+
+  it("provides CLI help and actionable strict/configuration failure guidance", () => {
+    const f = fixture();
+    const help = runLivecode(["--strict", "--help"], { root: "unused" });
+    expect(help.exitCode).toBe(0);
+    expect(help.output).toContain("Usage: node scripts/check-livecode.mjs");
+    expect(help.output).toContain('"reason": "reviewed rationale"');
+    f.write("apps/server/src/dead.ts", "export const dead = true;");
+    f.write("apps/server/src/dead.test.ts", "import './dead';");
+    const failure = runLivecode(["--strict"], f.options);
+    expect(failure.exitCode).toBe(1);
+    expect(failure.output).toContain("Repair guidance:");
+    expect(failure.output).toContain("MIXED and NO-SUBJECT");
+    expect(failure.output).toContain("Do not add dummy imports");
+    expect(runLivecode([], f.options).output).not.toContain("Repair guidance:");
+    f.write("apps/server/src/main.ts", "import './missing';");
+    expect(runLivecode(["--strict"], f.options).output).toContain(
+      "Repair unresolved runtime imports",
+    );
+    const config = runLivecode(
+      ["--strict", "--format", "json", "--allowlist", "missing.json"],
+      f.options,
+    );
+    expect(config.exitCode).toBe(1);
+    expect(JSON.parse(config.output)).toMatchObject({
+      error: expect.any(String),
+      guidance: expect.any(Array),
+      usage: expect.any(String),
+    });
+    expect(runLivecode(["--allowlist", "missing.json"], f.options).output).toContain(
+      "Repair guidance:",
+    );
+  });
+
   it("renders readable and JSON reports, failing only when strict was requested", () => {
     const f = fixture();
     f.write("apps/server/src/dead.ts", "export const dead = true;");

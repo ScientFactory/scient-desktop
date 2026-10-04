@@ -889,10 +889,25 @@ export function formatReport(report) {
   return lines.join("\n");
 }
 
+export const REPAIR_GUIDANCE = [
+  "Verify production entry points and import resolution before treating a DEAD result as obsolete code.",
+  "Port or delete obsolete tests, or reconnect code genuinely intended for production. Do not add dummy imports to pass the check.",
+  'For reviewed standalone tooling, use an allowlist JSON array: [{ "test": "repo/relative/path.test.ts", "reason": "reviewed rationale" }].',
+  "Repair unresolved runtime imports and configuration errors; allowlists do not suppress graph errors.",
+  "MIXED and NO-SUBJECT findings are advisory and do not block strict; computed-import warnings also remain advisory.",
+];
+const usage = `Usage: node scripts/check-livecode.mjs [--strict] [--format text|json] [--allowlist path] [--help]
+Default: readable report, advisory exit status. --strict fails on unallowlisted DEAD tests or graph/configuration errors.
+--format json emits the report or a structured configuration error with repair guidance.
+--allowlist reads exact test paths and nonblank reviewed reasons; it does not make subjects live.`;
+const repairFooter = () =>
+  `Repair guidance:\n${REPAIR_GUIDANCE.map((line) => `  ${line}`).join("\n")}`;
+
 export function runLivecode(argv, options = {}) {
   let strict = false;
   let format = "text";
   let allowlist;
+  if (argv.includes("--help")) return { output: `${usage}\n\n${repairFooter()}`, exitCode: 0 };
   try {
     for (let index = 0; index < argv.length; index += 1) {
       const flag = argv[index];
@@ -906,22 +921,24 @@ export function runLivecode(argv, options = {}) {
     }
     if (!["text", "json"].includes(format)) throw new Error("--format must be text or json");
     const report = inspectLivecode({ ...options, allowlist });
+    const failed =
+      strict &&
+      (report.summary.dead > 0 ||
+        report.diagnostics.some((diagnostic) => diagnostic.kind === "error"));
     return {
       report,
-      output: format === "json" ? JSON.stringify(report, null, 2) : formatReport(report),
-      exitCode:
-        strict &&
-        (report.summary.dead > 0 ||
-          report.diagnostics.some((diagnostic) => diagnostic.kind === "error"))
-          ? 1
-          : 0,
+      output:
+        format === "json"
+          ? JSON.stringify(report, null, 2)
+          : `${formatReport(report)}${failed ? `\n\n${repairFooter()}` : ""}`,
+      exitCode: failed ? 1 : 0,
     };
   } catch (error) {
     return {
       output:
         format === "json"
-          ? JSON.stringify({ error: error.message })
-          : `Live-code check unavailable: ${error.message}`,
+          ? JSON.stringify({ error: error.message, guidance: REPAIR_GUIDANCE, usage })
+          : `Live-code check unavailable: ${error.message}\n\n${usage}\n\n${repairFooter()}`,
       exitCode: argv.includes("--strict") ? 1 : 0,
     };
   }
