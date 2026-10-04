@@ -95,6 +95,7 @@ const adapter = {
 } as ProviderAdapterV2Shape;
 
 interface HarnessOptions {
+  readonly serverConfigLayer?: Layer.Layer<ServerConfig.ServerConfig>;
   readonly managedFolders?: Layer.Layer<ManagedProjectFolders.ManagedProjectFolders>;
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
   readonly fetchRemote?: GitWorkflow.GitWorkflowService["Service"]["fetchRemote"];
@@ -112,7 +113,13 @@ function makeHarness(options: HarnessOptions = {}) {
   const orchestrator = makeOrchestratorV2ReplayLayerWithRegistry(
     { name: "thread-launch" },
     registry,
-    { databaseLayer: database, runEffectWorker: false },
+    {
+      databaseLayer: database,
+      runEffectWorker: false,
+      ...(options.serverConfigLayer === undefined
+        ? {}
+        : { serverConfigLayer: options.serverConfigLayer }),
+    },
   );
   const threadManagement = ThreadManagement.layer.pipe(Layer.provide(orchestrator));
   const receipts = CommandReceiptStore.layer.pipe(Layer.provide(database));
@@ -532,7 +539,7 @@ it.effect("enqueues provider work only after setup has been initiated", () =>
 );
 
 it.effect(
-  "queues follow-up messages behind preparation and checkpoints them in the final workspace",
+  "holds follow-up messages after preparation failure and checkpoints them in the final workspace on Resume",
   () =>
     Effect.gen(function* () {
       const setupEntered = yield* Deferred.make<void>();
@@ -579,15 +586,27 @@ it.effect(
 
         yield* Deferred.succeed(failSetup, undefined);
         yield* waitUntil(() =>
-          threads
-            .getThreadProjection(launched.threadId)
-            .pipe(
-              Effect.map(
-                (projection) =>
-                  projection.runs.find((run) => run.id === followUp.run.id)?.status === "starting",
-              ),
-            ),
+          threads.getThreadProjection(launched.threadId).pipe(
+            Effect.map((projection) => {
+              const queued = projection.runs.find((run) => run.id === followUp.run.id);
+              return queued?.status === "queued" && queued.queueHeld === true;
+            }),
+          ),
         );
+        const held = yield* threads.getThreadProjection(launched.threadId);
+        assert.isTrue(held.runs.some((run) => run.status === "failed"));
+        assert.equal(
+          held.nodes.find((node) => node.runId === followUp.run.id && node.kind === "root_turn")
+            ?.checkpointScopeId,
+          null,
+        );
+        yield* threads.dispatch({
+          type: "queue.resume",
+          commandId: CommandId.make("command:launch:queued-follow-up:resume"),
+          threadId: launched.threadId,
+        });
+        const resumed = yield* threads.getThreadProjection(launched.threadId);
+        assert.equal(resumed.runs.find((run) => run.id === followUp.run.id)?.status, "starting");
 
         const projection = yield* threads.getThreadProjection(launched.threadId);
         const rootNode = projection.nodes.find(
@@ -1740,10 +1759,11 @@ it.effect("creates a strong provider-thread mapping for an imported native sessi
 });
 
 it.effect("shared intake preserves durable attachment bytes after a lost launch result", () => {
-  const harness = makeHarness();
   const files = ServerConfig.layerTest(process.cwd(), { prefix: "t3-message-intake-" }).pipe(
-    Layer.provideMerge(NodeServices.layer),
+    Layer.provide(NodeServices.layer),
+    Layer.orDie,
   );
+  const harness = makeHarness({ serverConfigLayer: files });
   return Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const fs = yield* FileSystem.FileSystem;
@@ -1956,7 +1976,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
       assert.isNotNull(path);
       assert.deepEqual(yield* fs.readFile(path), new Uint8Array([1, 2, 3, 4]));
     }
-  }).pipe(Effect.provide(Layer.mergeAll(harness.layer, files)));
+  }).pipe(Effect.provide(Layer.mergeAll(harness.layer, files, NodeServices.layer)));
 });
 
 it.effect("cancels tracked setup before provider work is released", () =>

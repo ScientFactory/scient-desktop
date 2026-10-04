@@ -3,6 +3,7 @@ import type {
   OrchestrationV2ThreadShell,
   ProviderInstanceId,
   ThreadId,
+  ScientCompletedAnswer,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { TurnId } from "@t3tools/contracts";
@@ -160,8 +161,60 @@ export function threadShellFromProjection(
   };
 }
 
+/** ECMAScript String.trim whitespace, supplied explicitly to SQLite trim. */
+export const COMPLETED_ANSWER_TRIM_CHARACTERS =
+  "\u0009\u000a\u000b\u000c\u000d\u0020\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
+
+// SQLite's binary UTF-8 ordering is scalar ordering, independent of locale.
+function compareAnswerMessageIds(left: string, right: string): number {
+  const leftPoints = Array.from(left, (character) => character.codePointAt(0) ?? 0);
+  const rightPoints = Array.from(right, (character) => character.codePointAt(0) ?? 0);
+  for (let index = 0; index < Math.min(leftPoints.length, rightPoints.length); index += 1) {
+    const leftPoint = leftPoints[index];
+    const rightPoint = rightPoints[index];
+    if (leftPoint === undefined || rightPoint === undefined) break;
+    const difference = leftPoint - rightPoint;
+    if (difference !== 0) return difference;
+  }
+  return leftPoints.length - rightPoints.length;
+}
+
+export interface CompletedAnswerSource {
+  readonly latestCompletedAnswer?: ScientCompletedAnswer | null | undefined;
+  readonly latestRun?:
+    | {
+        readonly status: string;
+        readonly completedAt: string | null;
+      }
+    | null
+    | undefined;
+}
+
+/** Explicit null is authoritative; only older servers use run-time fallback. */
+export function completedAnswerTimestamp(
+  source: CompletedAnswerSource | null | undefined,
+): string | null {
+  if (!source) return null;
+  if (source.latestCompletedAnswer !== undefined)
+    return source.latestCompletedAnswer?.completedAt ?? null;
+  return source.latestRun?.status === "completed" ? source.latestRun.completedAt : null;
+}
+
+export function hasUnreadCompletedAnswer(
+  source: CompletedAnswerSource,
+  visitedAt: string | null | undefined,
+): boolean {
+  const completedAt = completedAnswerTimestamp(source);
+  if (!completedAt || !visitedAt) return false;
+  const completed = Date.parse(completedAt);
+  const visited = Date.parse(visitedAt);
+  return Number.isFinite(completed) && (!Number.isFinite(visited) || completed > visited);
+}
+
 /** A newer unfinished run does not replace the last successful root answer. */
-function latestCompletedAnswerFromProjection(projection: OrchestrationV2ThreadProjection) {
+export function latestCompletedAnswerFromProjection(
+  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages" | "nodes">,
+) {
   const nodes = new Map(projection.nodes.map((node) => [node.id, node]));
   const completedRuns = projection.runs
     .filter((run) => run.status === "completed" && run.completedAt !== null)
@@ -182,7 +235,7 @@ function latestCompletedAnswerFromProjection(projection: OrchestrationV2ThreadPr
       .sort(
         (left, right) =>
           DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt) ||
-          right.id.localeCompare(left.id),
+          compareAnswerMessageIds(right.id, left.id),
       )[0];
     if (answer && run.completedAt !== null) {
       return {

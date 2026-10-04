@@ -4,6 +4,7 @@ import {
   isActivityRunForShell,
   providerInstanceHistoryForShell,
   threadShellFromProjection,
+  COMPLETED_ANSWER_TRIM_CHARACTERS,
 } from "@t3tools/shared/orchestrationV2ThreadShell";
 import type {
   OrchestrationV2AppThread,
@@ -4642,7 +4643,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     )
                   )
                   AND m.streaming = 0
-                  AND length(trim(json_extract(m.payload_json, '$.text'))) > 0
+                  AND trim(json_extract(m.payload_json, '$.text'), ${COMPLETED_ANSWER_TRIM_CHARACTERS}) <> ''
                 ORDER BY r.ordinal DESC, m.created_at DESC, m.message_id DESC
                 LIMIT 1
               ) AS latest_completed_answer_json,
