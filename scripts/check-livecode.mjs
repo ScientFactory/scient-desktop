@@ -81,6 +81,9 @@ export const REVIEWED_TEST_SUPPORT = {
 // imports, but must not make unused internals live just by existing in a barrel.
 // apps/mobile/eas.json submit.production ships these native targets.
 export const MOBILE_PLATFORMS = ["ios", "android"];
+// Expo 58.0.6 getDefaultConfig -> @expo/config 58.0.1 getBareExtensions
+// (TS/React/modern), then cjs. apps/mobile/metro.config.js keeps sourceExts.
+export const NATIVE_SOURCE_EXTENSIONS = [".ts", ".tsx", ".mjs", ".js", ".jsx", ".json", ".cjs"];
 const sourcePattern = /(?:\.[cm]?[jt]sx?|\.astro)$/u;
 const declarationPattern = /\.d\.[cm]?ts$/u;
 const assetPattern =
@@ -499,20 +502,22 @@ function resolver(root, files, manifests) {
   function candidates(path, platform) {
     const normalized = slash(NodePath.normalize(path));
     const extension = normalized.match(sourcePattern)?.[0];
-    // Vite/TS source substitution for emitted JS imports; an explicit source
-    // extension otherwise names that file. Metro tries platform/native/generic
-    // for each extension, selecting one winner per shipped platform.
-    const extensions = extension
-      ? ({
-          ".js": [".ts", ".tsx", ".js", ".jsx"],
-          ".mjs": [".mts", ".mjs"],
-          ".cjs": [".cts", ".cjs", ".ts"],
-        }[extension] ?? [extension])
-      : [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".astro"];
+    // Native contexts follow Metro's exact-file lookup and then its sourceExts;
+    // emitted-JS source substitution belongs only to the non-native audit.
+    const extensions = platform
+      ? NATIVE_SOURCE_EXTENSIONS
+      : extension
+        ? ({
+            ".js": [".ts", ".tsx", ".js", ".jsx"],
+            ".mjs": [".mts", ".mjs"],
+            ".cjs": [".cts", ".cjs", ".ts"],
+          }[extension] ?? [extension])
+        : [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".astro"];
     if (files.has(normalized)) return [normalized];
-    const bases = extension
-      ? [normalized.slice(0, -extension.length)]
-      : [normalized, `${normalized}/index`];
+    const bases =
+      extension && !platform
+        ? [normalized.slice(0, -extension.length)]
+        : [normalized, `${normalized}/index`];
     for (const base of bases)
       for (const ext of extensions)
         for (const variant of platform && !/\.(?:ios|android|native)$/u.test(base)
@@ -520,6 +525,14 @@ function resolver(root, files, manifests) {
           : [""]) {
           const candidate = `${base}${variant}${ext}`;
           if (files.has(candidate)) return [candidate];
+          // JSON is data but still wins before cjs in native resolution. Do not
+          // let an untracked data winner expose a shadowed source fallback.
+          if (
+            ext === ".json" &&
+            NodeFS.existsSync(NodePath.join(root, candidate)) &&
+            NodeFS.statSync(NodePath.join(root, candidate)).isFile()
+          )
+            return [candidate];
         }
     return [];
   }
@@ -594,7 +607,17 @@ function resolver(root, files, manifests) {
     );
     return { targets, local: alias };
   }
-  return { resolve, candidates, options };
+  return {
+    resolve(file, original, platform) {
+      const result = resolve(file, original, platform);
+      return {
+        targets: result.targets.filter(isSource),
+        local: result.local && result.targets.every(isSource),
+      };
+    },
+    candidates,
+    options,
+  };
 }
 
 function readAllowlist(root, path, tests) {
@@ -753,7 +776,7 @@ export function inspectLivecode({
             (file) => file.startsWith(path.split("*")[0]) && file.endsWith(path.split("*")[1]),
           )
         : candidates(path, null);
-      for (const match of matches) productionEntries.add(match);
+      for (const match of matches.filter(isSource)) productionEntries.add(match);
       if (!matches.length && isSource(path))
         diagnostics.push({
           kind: "error",

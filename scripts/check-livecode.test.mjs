@@ -1,4 +1,5 @@
 import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
@@ -6,6 +7,7 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 import {
   discoverProductionInputs,
   PRODUCTION_ENTRIES,
+  NATIVE_SOURCE_EXTENSIONS,
   formatReport,
   inspectLivecode,
   runLivecode,
@@ -433,6 +435,94 @@ describe("production subject reachability", () => {
     expect(f.test("published").status).toBe("live");
     expect(f.inspect().productionEntries).toContain("packages/public/src/cjs.cts");
     expect(f.inspect().reachableFiles).not.toContain("packages/public/src/types.ts");
+  });
+
+  it("matches the pinned Expo native extensions and Metro winners without loading config", () => {
+    const mobileRequire = NodeModule.createRequire(
+      NodePath.resolve(import.meta.dirname, "../apps/mobile/package.json"),
+    );
+    const expoRequire = NodeModule.createRequire(mobileRequire.resolve("expo/metro-config"));
+    const metroRequire = NodeModule.createRequire(expoRequire.resolve("@expo/metro-config"));
+    const configDirectory = NodePath.dirname(metroRequire.resolve("@expo/config/package.json"));
+    const { getBareExtensions } = metroRequire(
+      NodePath.join(configDirectory, "build/paths/extensions.js"),
+    );
+    const sourceExts = [
+      ...getBareExtensions([], { isTS: true, isReact: true, isModern: true }),
+      "cjs",
+    ];
+    expect(NATIVE_SOURCE_EXTENSIONS).toEqual(sourceExts.map((extension) => `.${extension}`));
+    const configSource = NodeFS.readFileSync(
+      NodePath.resolve(import.meta.dirname, "../apps/mobile/metro.config.js"),
+      "utf8",
+    );
+    expect(configSource).not.toMatch(/\bsourceExts\s*:/u);
+    const { resolve } = metroRequire("metro-resolver");
+    const cases = [
+      { files: ["widget.mjs", "widget.js"], expected: ["widget.mjs"] },
+      { files: ["widget.mts", "widget.cts", "widget.astro", "widget.js"], expected: ["widget.js"] },
+      { files: ["widget.ts", "widget.tsx", "widget.mjs"], expected: ["widget.ts"] },
+      {
+        files: [
+          "widget.ios.mjs",
+          "widget.android.mjs",
+          "widget.native.mjs",
+          "widget.mjs",
+          "widget.js",
+        ],
+        expected: ["widget.android.mjs", "widget.ios.mjs"],
+      },
+      { files: ["widget.mjs", "widget/index.ts"], expected: ["widget.mjs"] },
+      { files: ["widget.json", "widget.cjs"], expected: [] },
+    ];
+    for (const { files, expected } of cases) {
+      const f = fixture();
+      f.write("apps/mobile/index.ts", "import './src/widget';");
+      for (const file of files)
+        f.write(
+          `apps/mobile/src/${file}`,
+          file.endsWith(".json") ? "{}" : "export const value = true;",
+        );
+      const winners = new Set();
+      for (const platform of ["ios", "android"]) {
+        const winner = resolve(
+          {
+            originModulePath: NodePath.join(f.root, "apps/mobile/index.ts"),
+            sourceExts,
+            preferNativePlatform: true,
+            assetExts: new Set(),
+            getPackageForModule: () => null,
+            fileSystemLookup(path) {
+              if (!NodeFS.existsSync(path)) return { exists: false };
+              return {
+                exists: true,
+                type: NodeFS.statSync(path).isDirectory() ? "d" : "f",
+                realPath: path,
+              };
+            },
+          },
+          "./src/widget",
+          platform,
+        ).filePath;
+        if (!winner.endsWith(".json"))
+          winners.add(NodePath.relative(NodePath.join(f.root, "apps/mobile/src"), winner));
+      }
+      expect([...winners].sort()).toEqual(expected);
+      const result = inspectLivecode({ root: f.root, entries: ["apps/mobile/index.ts"] });
+      expect(
+        result.reachableFiles
+          .filter((path) => path.includes("/widget"))
+          .map((path) => path.slice("apps/mobile/src/".length)),
+      ).toEqual(expected);
+      expect(result.diagnostics).toEqual([]);
+      if (expected.includes("widget.mjs") && files.includes("widget.js")) {
+        f.write("apps/mobile/src/winner.test.ts", "import './widget.mjs';");
+        f.write("apps/mobile/src/shadowed.test.ts", "import './widget.js';");
+        const tests = inspectLivecode({ root: f.root, entries: ["apps/mobile/index.ts"] }).tests;
+        expect(tests.find((test) => test.test.endsWith("/winner.test.ts")).status).toBe("live");
+        expect(tests.find((test) => test.test.endsWith("/shadowed.test.ts")).status).toBe("dead");
+      }
+    }
   });
 
   it("unions mobile native platforms rather than dropping platform-only subjects", () => {
