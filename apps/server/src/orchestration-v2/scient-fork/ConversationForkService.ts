@@ -448,13 +448,17 @@ const make = Effect.gen(function* () {
           type: "thread.created",
           payload: thread,
         },
-        {
-          id: EventId.make(`scient-fork:${command.commandId}:transfer`),
-          threadId: thread.id,
-          occurredAt: now,
-          type: "context-transfer.created",
-          payload: transfer,
-        },
+        ...(plan.items.length === 0
+          ? []
+          : [
+              {
+                id: EventId.make(`scient-fork:${command.commandId}:transfer`),
+                threadId: thread.id,
+                occurredAt: now,
+                type: "context-transfer.created",
+                payload: transfer,
+              } satisfies OrchestrationV2DomainEvent,
+            ]),
         ...plan.messages.map((payload, index): OrchestrationV2DomainEvent => ({
           id: EventId.make(`scient-fork:${command.commandId}:message:${index}`),
           threadId: thread.id,

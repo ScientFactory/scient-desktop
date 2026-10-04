@@ -29,11 +29,16 @@ import { ConversationForkService } from "../../orchestration-v2/scient-fork/Conv
 import { makeLayer } from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "../../orchestration-v2/IdAllocator.ts";
 import { AcpProviderCapabilitiesV2 } from "../../orchestration-v2/Adapters/AcpAdapterV2.ts";
-import { makeNativeSessionAdapterV2 } from "../../orchestration-v2/Adapters/NativeSessionAdapterV2.ts";
+import {
+  makeNativeSessionAdapterV2,
+  NativeSessionOperationError,
+} from "../../orchestration-v2/Adapters/NativeSessionAdapterV2.ts";
 import * as Option from "effect/Option";
 import * as Clock from "effect/Clock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Schema from "effect/Schema";
+import * as Deferred from "effect/Deferred";
+import { makeSqlitePersistenceLive } from "../../persistence/Layers/Sqlite.ts";
 import { LegacyV1ThreadImporter } from "../../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 
 import { ServerConfig } from "../../config.ts";
@@ -118,11 +123,17 @@ const withImporter = <A, E, R>(
   options: {
     readonly modelContextWindow?: (model: string) => number;
     readonly sourceTraces?: boolean;
+    readonly initialTime?: number;
+    readonly runtimeOptions?: Parameters<typeof nativeImportRuntimeTestLayer>[1];
+    readonly nativeIdFactory?: () => string;
+    readonly beforeFresh?: () => Effect.Effect<void, NativeSessionOperationError>;
+    readonly beforeSend?: () => Effect.Effect<void, NativeSessionOperationError>;
+    readonly onResume?: (nativeId: string) => Effect.Effect<void, NativeSessionOperationError>;
   } = {},
 ) =>
   Effect.gen(function* () {
     const prompts: string[] = [];
-    let time = Date.parse("2026-09-28T09:30:00.000Z");
+    let time = options.initialTime ?? Date.parse("2026-09-28T09:30:00.000Z");
     const liveClock = yield* Clock.Clock;
     const clock: Clock.Clock = {
       currentTimeMillisUnsafe: () => time,
@@ -155,57 +166,73 @@ const withImporter = <A, E, R>(
         defaultCwd: cwd,
         continuations: { offer: () => Effect.die("Unexpected native continuation wake") },
         open: (input, publish) =>
-          Effect.succeed({
-            nativeId: `import-peer:${input.providerSessionId}`,
-            nativeThreadKnown: true,
-            resume: () => Effect.void,
-            respond: () => Effect.die("Imported answers cannot be executable requests"),
-            interrupt: publish({ type: "terminal", status: "cancelled" }),
-            send: (turn) =>
-              Effect.gen(function* () {
-                prompts.push(turn.message.text);
-                if (options.sourceTraces && turn.message.text === "Trace source") {
-                  yield* publish({
-                    type: "text",
-                    id: "source-thinking",
-                    delta: "Visible retained reasoning",
-                    reasoning: true,
-                  });
-                  yield* publish({ type: "text-completed", id: "source-thinking" });
-                  yield* publish({
-                    type: "tool",
-                    id: "source-tool",
-                    name: "read_file",
-                    input: { path: "data.csv" },
-                    output: "Superseded partial result",
-                    status: "running",
-                  });
-                  yield* publish({
-                    type: "tool",
-                    id: "source-tool",
-                    name: "read_file",
-                    input: { path: "data.csv" },
-                    output: `Retained native result ${"o".repeat(40_000)}`,
-                    status: "completed",
-                  });
-                  yield* publish({ type: "text", id: "source-answer", delta: "Source answer" });
-                  yield* publish({ type: "text-completed", id: "source-answer" });
-                }
-                if (
-                  turn.message.text.trimEnd().endsWith("Continue") ||
-                  turn.message.text.trimEnd().endsWith("Temporary follow-up")
-                ) {
-                  yield* publish({
-                    type: "text",
-                    id: "continued-answer",
-                    delta: turn.message.text.trimEnd().endsWith("Continue")
-                      ? "Continued"
-                      : "Temporary answer",
-                  });
-                  yield* publish({ type: "text-completed", id: "continued-answer" });
-                }
-                yield* publish({ type: "terminal", status: "completed" });
-              }),
+          Effect.sync(() => {
+            let nativeId = options.nativeIdFactory?.() ?? `import-peer:${input.providerSessionId}`;
+            return {
+              get nativeId() {
+                return nativeId;
+              },
+              nativeThreadKnown: true,
+              resume: (id) => options.onResume?.(id) ?? Effect.void,
+              ...(options.nativeIdFactory === undefined
+                ? {}
+                : {
+                    ensureFresh: () =>
+                      Effect.gen(function* () {
+                        yield* options.beforeFresh?.() ?? Effect.void;
+                        nativeId = options.nativeIdFactory!();
+                        yield* publish({ type: "native-thread", id: nativeId });
+                      }),
+                  }),
+              respond: () => Effect.die("Imported answers cannot be executable requests"),
+              interrupt: publish({ type: "terminal", status: "cancelled" }),
+              send: (turn) =>
+                Effect.gen(function* () {
+                  prompts.push(turn.message.text);
+                  yield* options.beforeSend?.() ?? Effect.void;
+                  if (options.sourceTraces && turn.message.text === "Trace source") {
+                    yield* publish({
+                      type: "text",
+                      id: "source-thinking",
+                      delta: "Visible retained reasoning",
+                      reasoning: true,
+                    });
+                    yield* publish({ type: "text-completed", id: "source-thinking" });
+                    yield* publish({
+                      type: "tool",
+                      id: "source-tool",
+                      name: "read_file",
+                      input: { path: "data.csv" },
+                      output: "Superseded partial result",
+                      status: "running",
+                    });
+                    yield* publish({
+                      type: "tool",
+                      id: "source-tool",
+                      name: "read_file",
+                      input: { path: "data.csv" },
+                      output: `Retained native result ${"o".repeat(40_000)}`,
+                      status: "completed",
+                    });
+                    yield* publish({ type: "text", id: "source-answer", delta: "Source answer" });
+                    yield* publish({ type: "text-completed", id: "source-answer" });
+                  }
+                  if (
+                    turn.message.text.trimEnd().endsWith("Continue") ||
+                    turn.message.text.trimEnd().endsWith("Temporary follow-up")
+                  ) {
+                    yield* publish({
+                      type: "text",
+                      id: "continued-answer",
+                      delta: turn.message.text.trimEnd().endsWith("Continue")
+                        ? "Continued"
+                        : "Temporary answer",
+                    });
+                    yield* publish({ type: "text-completed", id: "continued-answer" });
+                  }
+                  yield* publish({ type: "terminal", status: "completed" });
+                }),
+            };
           }),
       });
       return {
@@ -241,7 +268,7 @@ const withImporter = <A, E, R>(
             time = value;
           }),
       }),
-      Effect.provide(nativeImportRuntimeTestLayer(makeLayer(adapters))),
+      Effect.provide(nativeImportRuntimeTestLayer(makeLayer(adapters), options.runtimeOptions)),
       Effect.provideService(Clock.Clock, clock),
     );
   }).pipe(Effect.provide(Layer.mergeAll(idAllocatorLayer, NodeServices.layer)), Effect.scoped);
@@ -293,6 +320,92 @@ const importOnce = (lease: ConversationImportLease, request = importRequest()) =
 
 const journalOf = (directory: string) =>
   readConversationImportJournal(directory).pipe(Effect.map(Option.getOrThrow));
+
+const rollbackToBaseline = Effect.fn("test.nativeFork.rollbackToBaseline")(function* (
+  threadId: ThreadId,
+  suffix: string,
+  retainedRunOrdinal = 0,
+) {
+  const store = yield* ProjectionStoreV2;
+  const projection = yield* store.getThreadProjection(threadId);
+  const nodeId = projection.runs.at(-1)?.rootNodeId ?? NodeId.make(`${suffix}-baseline-node`);
+  const scopeId = CheckpointScopeId.make(`${suffix}-baseline-scope`);
+  const checkpointId = CheckpointId.make(`${suffix}-baseline-checkpoint`);
+  const now = yield* DateTime.now;
+  yield* (yield* EventSinkV2).write({
+    events: [
+      {
+        id: EventId.make(`${suffix}-baseline-scope`),
+        threadId: threadId,
+        type: "checkpoint-scope.created",
+        occurredAt: now,
+        payload: {
+          id: scopeId,
+          threadId: threadId,
+          runId: null,
+          nodeId,
+          parentScopeId: null,
+          providerThreadId: projection.thread.activeProviderThreadId,
+          kind: "manual",
+          ordinalWithinParent: 0,
+          advancesAppRunCount: false,
+          cwd: "/tmp/import-project",
+          createdAt: now,
+        },
+      },
+      {
+        id: EventId.make(`${suffix}-baseline-checkpoint`),
+        threadId: threadId,
+        type: "checkpoint.captured",
+        occurredAt: now,
+        payload: {
+          id: checkpointId,
+          threadId: threadId,
+          scopeId,
+          runId: null,
+          nodeId,
+          parentCheckpointId: null,
+          ordinalWithinScope: 0,
+          appRunOrdinal: retainedRunOrdinal === 0 ? null : retainedRunOrdinal,
+          ref: CheckpointRef.make("refs/scient/import-baseline"),
+          status: "ready",
+          files: [],
+          capturedAt: now,
+        },
+      },
+    ],
+  });
+  const rollbackId = CommandId.make(`rollback-native-${suffix}`);
+  const orchestrator = yield* OrchestratorV2;
+  const cursor = yield* orchestrator.getThreadEventSequence(threadId);
+  const pull = yield* Stream.toPull(
+    orchestrator.streamStoredEventsFrom({
+      threadId: threadId,
+      afterSequence: cursor,
+    }),
+  );
+  yield* orchestrator.dispatch({
+    type: "checkpoint.rollback",
+    commandId: rollbackId,
+    threadId: threadId,
+    scopeId,
+    checkpointId,
+    restoreFiles: false,
+  });
+  const initial = yield* store.getThreadProjection(threadId);
+  const rolledBack = yield* Stream.concat(
+    Stream.succeed(initial),
+    Stream.fromPull(Effect.succeed(pull)).pipe(
+      Stream.mapEffect(() => store.getThreadProjection(threadId)),
+    ),
+  ).pipe(
+    Stream.filter((projection) => projection.thread.rollbackCompletedRequestId === rollbackId),
+    Stream.runHead,
+    Effect.timeout("15 seconds"),
+  );
+  assert.isTrue(Option.isSome(rolledBack));
+  return Option.getOrThrow(rolledBack);
+});
 
 describe("native import continuation and forks", () => {
   it.live("keeps the file's own notices on the imported thread, its forks, and re-export", () =>
@@ -969,86 +1082,9 @@ describe("native import continuation and forks", () => {
           );
           const projection = yield* store.getThreadProjection(result.threadId);
           const postRun = projection.runs.at(-1)!;
-          const nodeId = postRun.rootNodeId ?? NodeId.make("import-baseline-node");
-          const scopeId = CheckpointScopeId.make("import-baseline-scope");
-          const checkpointId = CheckpointId.make("import-baseline-checkpoint");
-          const now = yield* DateTime.now;
-          yield* (yield* EventSinkV2).write({
-            events: [
-              {
-                id: EventId.make("import-baseline-scope"),
-                threadId: result.threadId,
-                type: "checkpoint-scope.created",
-                occurredAt: now,
-                payload: {
-                  id: scopeId,
-                  threadId: result.threadId,
-                  runId: null,
-                  nodeId,
-                  parentScopeId: null,
-                  providerThreadId: projection.thread.activeProviderThreadId,
-                  kind: "manual",
-                  ordinalWithinParent: 0,
-                  advancesAppRunCount: false,
-                  cwd: "/tmp/import-project",
-                  createdAt: now,
-                },
-              },
-              {
-                id: EventId.make("import-baseline-checkpoint"),
-                threadId: result.threadId,
-                type: "checkpoint.captured",
-                occurredAt: now,
-                payload: {
-                  id: checkpointId,
-                  threadId: result.threadId,
-                  scopeId,
-                  runId: null,
-                  nodeId,
-                  parentCheckpointId: null,
-                  ordinalWithinScope: 0,
-                  appRunOrdinal: null,
-                  ref: CheckpointRef.make("refs/scient/import-baseline"),
-                  status: "ready",
-                  files: [],
-                  capturedAt: now,
-                },
-              },
-            ],
-          });
-          const rollbackId = CommandId.make("rollback-native-import");
-          const orchestrator = yield* OrchestratorV2;
-          const cursor = yield* orchestrator.getThreadEventSequence(result.threadId);
-          const pull = yield* Stream.toPull(
-            orchestrator.streamStoredEventsFrom({
-              threadId: result.threadId,
-              afterSequence: cursor,
-            }),
-          );
-          yield* orchestrator.dispatch({
-            type: "checkpoint.rollback",
-            commandId: rollbackId,
-            threadId: result.threadId,
-            scopeId,
-            checkpointId,
-            restoreFiles: false,
-          });
-          const initial = yield* store.getThreadProjection(result.threadId);
-          const rolledBack = yield* Stream.concat(
-            Stream.succeed(initial),
-            Stream.fromPull(Effect.succeed(pull)).pipe(
-              Stream.mapEffect(() => store.getThreadProjection(result.threadId)),
-            ),
-          ).pipe(
-            Stream.filter(
-              (projection) => projection.thread.rollbackCompletedRequestId === rollbackId,
-            ),
-            Stream.runHead,
-            Effect.timeout("15 seconds"),
-          );
-          assert.isTrue(Option.isSome(rolledBack));
+          const rolledBack = yield* rollbackToBaseline(result.threadId, "import");
           assert.strictEqual(
-            Option.getOrThrow(rolledBack).runs.find((run) => run.id === postRun.id)?.status,
+            rolledBack.runs.find((run) => run.id === postRun.id)?.status,
             "rolled_back",
           );
           const reverted = (yield* readThread(result.threadId))!;
@@ -1646,5 +1682,330 @@ it.live.each(["portable import", "legacy SQL"] as const)(
           );
         }
       }),
+    ),
+);
+
+it.live("native rollback of a carrying run restores frozen history from durable projection", () => {
+  let generation = 0;
+  return withImporter(
+    Effect.gen(function* () {
+      const fixture = importFixture({ turns: 3, reasoning: true, workLog: true });
+      const { lease } = yield* leaseFor(fixture);
+      const { result } = yield* importOnce(lease);
+      const store = yield* ProjectionStoreV2;
+      const source = yield* store.getThreadProjection(result.threadId);
+      const answer = source.messages.find((message) => message.text === "Answer 3")!;
+      const childId = ThreadId.make("rollback-carried-fork");
+      yield* (yield* ConversationForkService).dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("rollback-carried-fork"),
+        originThreadId: result.threadId,
+        newThreadId: childId,
+        sourceAssistantMessageId: answer.id,
+        workspaceMode: "local",
+      });
+      const frozen = yield* store.getThreadProjection(childId);
+      const frozenSnapshot = yield* readThread(childId);
+      yield* continueImport(
+        childId,
+        MessageId.make("before-carrying-revert"),
+        "Temporary follow-up",
+      );
+      const carried = yield* store.getThreadProjection(childId);
+      assert.include((yield* ImportPeer).prompts.at(-1)!, "Question 1");
+      assert.isTrue(
+        carried.contextHandoffs.some((handoff) => handoff.delivery?.status === "inline"),
+      );
+      const reverted = yield* rollbackToBaseline(childId, "carrying-fork");
+      assert.deepEqual(
+        (yield* readThread(childId)).messages.map((message) => message.text),
+        frozenSnapshot.messages.map((message) => message.text),
+      );
+      assert.deepEqual(
+        reverted.turnItems.filter((item) => item.inheritedFrom !== undefined),
+        frozen.turnItems.filter((item) => item.inheritedFrom !== undefined),
+      );
+      assert.isTrue(reverted.runs.every((run) => run.status === "rolled_back"));
+      // No V1 reactor or non-durable revert notification participates in the native next send.
+      yield* continueImport(childId, MessageId.make("after-carrying-revert"), "Continue");
+      const restored = (yield* ImportPeer).prompts.at(-1)!;
+      assert.include(restored, "Question 1");
+      assert.include(restored, "Answer 3");
+      assert.include(restored, "Thinking about 2");
+      assert.notInclude(restored, "Temporary answer");
+      yield* continueImport(childId, MessageId.make("after-carrying-revert-next"), "Continue");
+      assert.notInclude((yield* ImportPeer).prompts.at(-1)!, "Question 1");
+    }),
+    { nativeIdFactory: () => `carrying-native-${generation++}` },
+  );
+});
+
+it.live("native empty-prefix forks send only the new request without a history handoff", () =>
+  withImporter(
+    Effect.gen(function* () {
+      const { lease } = yield* leaseFor(importFixture({ turns: 2 }));
+      const { result } = yield* importOnce(lease);
+      const store = yield* ProjectionStoreV2;
+      const source = yield* store.getThreadProjection(result.threadId);
+      const first = source.messages.find((message) => message.text === "Question 1")!;
+      const childId = ThreadId.make("empty-prefix-native-send");
+      yield* (yield* ConversationForkService).dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("empty-prefix-native-send"),
+        originThreadId: result.threadId,
+        newThreadId: childId,
+        sourceUserMessageId: first.id,
+        workspaceMode: "local",
+      });
+      const empty = yield* store.getThreadProjection(childId);
+      assert.deepEqual(empty.messages, []);
+      assert.deepEqual(
+        empty.turnItems.map((item) => item.type),
+        ["fork"],
+      );
+      yield* continueImport(childId, MessageId.make("empty-prefix-continue"), "Continue");
+      const prompt = (yield* ImportPeer).prompts.at(-1)!;
+      assert.equal(prompt, "Continue");
+      const completed = yield* store.getThreadProjection(childId);
+      assert.deepEqual(completed.contextHandoffs, []);
+      assert.isTrue(completed.contextTransfers.every((transfer) => transfer.status === "consumed"));
+      assert.deepEqual(
+        (yield* store.getThreadProjection(result.threadId)).messages,
+        source.messages,
+      );
+    }),
+  ),
+);
+
+it.live(
+  "native retained revert delivers frozen history to an unrelated replacement session",
+  () => {
+    let generation = 0;
+    let failResume = false;
+    return withImporter(
+      Effect.gen(function* () {
+        const { lease } = yield* leaseFor(importFixture({ turns: 2 }));
+        const sourceId = (yield* importOnce(lease)).result.threadId;
+        const store = yield* ProjectionStoreV2;
+        const source = yield* store.getThreadProjection(sourceId);
+        const childId = ThreadId.make("retained-revert-replacement");
+        yield* (yield* ConversationForkService).dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make("retained-revert-replacement"),
+          originThreadId: sourceId,
+          newThreadId: childId,
+          sourceAssistantMessageId: source.messages.find((message) => message.text === "Answer 2")!
+            .id,
+          workspaceMode: "local",
+        });
+        yield* continueImport(childId, MessageId.make("retained-delivery"), "Continue");
+        const carrying = yield* store.getThreadProjection(childId);
+        const carrier = carrying.runs.at(-1)!;
+        const owner = carrying.providerThreads.find(
+          (thread) => thread.id === carrying.thread.activeProviderThreadId,
+        )!;
+        assert.isTrue(
+          carrying.contextHandoffs.some(
+            (handoff) =>
+              handoff.targetRunId === carrier.id &&
+              handoff.delivery?.nativeThreadId === owner.nativeThreadRef?.nativeId &&
+              handoff.delivery?.status === "inline",
+          ),
+        );
+        yield* continueImport(childId, MessageId.make("remove-later-turn"), "Temporary follow-up");
+        const reverted = yield* rollbackToBaseline(childId, "retained-carrier", carrier.ordinal);
+        assert.equal(reverted.runs.find((run) => run.id === carrier.id)?.status, "completed");
+        assert.equal(reverted.runs.at(-1)?.status, "rolled_back");
+        assert.equal(
+          reverted.providerThreads.find((thread) => thread.id === owner.id)?.nativeThreadRef
+            ?.nativeId,
+          owner.nativeThreadRef?.nativeId,
+        );
+        const visible = yield* readThread(childId);
+        assert.isTrue(visible.messages.some((message) => message.text === "Continued"));
+        assert.isFalse(visible.messages.some((message) => message.text === "Temporary answer"));
+        yield* (yield* OrchestratorV2).dispatch({
+          type: "provider-session.detach",
+          commandId: CommandId.make("lose-retained-native-session"),
+          threadId: childId,
+          providerSessionId: owner.providerSessionId!,
+        });
+        failResume = true;
+        yield* continueImport(childId, MessageId.make("fresh-after-retained-revert"), "Continue");
+        const replacement = yield* store.getThreadProjection(childId);
+        const fresh = replacement.providerThreads.find(
+          (thread) => thread.id === replacement.thread.activeProviderThreadId,
+        )!;
+        assert.notEqual(fresh.nativeThreadRef?.nativeId, owner.nativeThreadRef?.nativeId);
+        const prompt = (yield* ImportPeer).prompts.at(-1)!;
+        assert.equal(prompt.split("Question 1").length - 1, 1);
+        assert.equal(prompt.split("Answer 2").length - 1, 1);
+        assert.notInclude(prompt, "Temporary answer");
+        assert.isTrue(
+          replacement.contextHandoffs.some(
+            (handoff) =>
+              handoff.delivery?.nativeThreadId === fresh.nativeThreadRef?.nativeId &&
+              handoff.delivery?.status === "inline",
+          ),
+        );
+      }),
+      {
+        nativeIdFactory: () => `retained-native-${generation++}`,
+        onResume: () =>
+          failResume
+            ? Effect.fail(new NativeSessionOperationError({ detail: "Retained session was lost" }))
+            : Effect.void,
+      },
+    );
+  },
+);
+
+it.live(
+  "native interrupted replacement recovery retains pending history across SQLite reopen",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const directory = yield* fs.makeTempDirectoryScoped({
+          prefix: "native-pending-handoff-restart-",
+        });
+        const database = makeSqlitePersistenceLive(NodePath.join(directory, "history.sqlite")).pipe(
+          Layer.provide(NodeServices.layer),
+        );
+        const config = yield* ServerConfig;
+        const runtimeOptions = {
+          databaseLayer: database,
+          serverConfigLayer: Layer.succeed(ServerConfig, config),
+        };
+        const replacing = yield* Deferred.make<void>();
+        let pauseReplacement = false;
+        let failSend = true;
+        let generation = 0;
+        const resumed: string[] = [];
+        const options = {
+          runtimeOptions,
+          nativeIdFactory: () => `uncertain-native-${generation++}`,
+          beforeFresh: () =>
+            pauseReplacement
+              ? Deferred.succeed(replacing, undefined).pipe(Effect.andThen(Effect.never))
+              : Effect.void,
+          beforeSend: () => {
+            if (!failSend) return Effect.void;
+            failSend = false;
+            return Effect.fail(
+              new NativeSessionOperationError({
+                detail: "Transport dropped after receiving inline history",
+              }),
+            );
+          },
+          onResume: (nativeId: string) =>
+            Effect.sync(() => {
+              resumed.push(nativeId);
+            }),
+        };
+        const uncertain = yield* withImporter(
+          Effect.gen(function* () {
+            const { lease } = yield* leaseFor(importFixture({ turns: 2 }));
+            const threadId = (yield* importOnce(lease)).result.threadId;
+            assert.equal(
+              (yield* Effect.exit(
+                continueImport(threadId, MessageId.make("uncertain-original"), "Continue"),
+              ))._tag,
+              "Failure",
+            );
+            const store = yield* ProjectionStoreV2;
+            const failed = yield* store.getThreadProjection(threadId);
+            const pending = failed.contextHandoffs.find(
+              (handoff) => handoff.delivery?.status === "pending",
+            )!;
+            assert.ok(pending);
+            assert.equal(failed.runs.at(-1)?.status, "failed");
+            pauseReplacement = true;
+            yield* (yield* OrchestratorV2).dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("prepare-uncertain-replacement"),
+              threadId,
+              messageId: MessageId.make("uncertain-replacement-request"),
+              text: "Continue",
+              dispatchMode: { type: "start_immediately" },
+              attachments: [],
+              createdBy: "user",
+              creationSource: "web",
+            });
+            yield* Deferred.await(replacing).pipe(Effect.timeout("10 seconds"));
+            const interrupted = yield* store.getThreadProjection(threadId);
+            assert.isTrue(
+              interrupted.contextHandoffs.some(
+                (handoff) =>
+                  handoff.id === pending.id &&
+                  handoff.delivery?.status === "pending" &&
+                  handoff.delivery.nativeThreadId === pending.delivery?.nativeThreadId,
+              ),
+            );
+            assert.equal(
+              interrupted.providerThreads.find(
+                (thread) => thread.id === interrupted.thread.activeProviderThreadId,
+              )?.nativeThreadRef?.nativeId,
+              pending.delivery?.nativeThreadId,
+            );
+            assert.deepEqual(resumed, []);
+            return { threadId, nativeId: pending.delivery!.nativeThreadId, handoffId: pending.id };
+          }),
+          options,
+        );
+        // Closing the runtime interrupts the provider call before replacement ownership commits.
+        pauseReplacement = false;
+        yield* withImporter(
+          Effect.gen(function* () {
+            const store = yield* ProjectionStoreV2;
+            const before = yield* store.getThreadProjection(uncertain.threadId);
+            assert.isTrue(
+              before.contextHandoffs.some(
+                (handoff) =>
+                  handoff.id === uncertain.handoffId && handoff.delivery?.status === "pending",
+              ),
+            );
+            yield* continueImport(
+              uncertain.threadId,
+              MessageId.make("retry-after-replacement-crash"),
+              "Continue",
+            );
+            const recovered = yield* store.getThreadProjection(uncertain.threadId);
+            const fresh = recovered.providerThreads.find(
+              (thread) => thread.id === recovered.thread.activeProviderThreadId,
+            )!;
+            assert.notEqual(fresh.nativeThreadRef?.nativeId, uncertain.nativeId);
+            const prompt = (yield* ImportPeer).prompts.at(-1)!;
+            assert.equal(prompt.split("Question 1").length - 1, 1);
+            assert.equal(prompt.split("Answer 2").length - 1, 1);
+            assert.notInclude(resumed, uncertain.nativeId);
+            assert.isTrue(
+              recovered.contextHandoffs.some(
+                (handoff) =>
+                  handoff.delivery?.nativeThreadId === fresh.nativeThreadRef?.nativeId &&
+                  handoff.delivery?.status === "inline",
+              ),
+            );
+            yield* continueImport(
+              uncertain.threadId,
+              MessageId.make("after-recovered-delivery"),
+              "Continue",
+            );
+            assert.notInclude((yield* ImportPeer).prompts.at(-1)!, "Question 1");
+          }),
+          {
+            ...options,
+            runtimeOptions: { ...runtimeOptions, recoverOnStartup: true },
+            initialTime: Date.parse("2026-09-28T09:32:00.000Z"),
+          },
+        );
+      }).pipe(
+        Effect.provide(
+          ServerConfig.layerTest(process.cwd(), { prefix: "native-handoff-review-" }).pipe(
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+        Effect.timeout("40 seconds"),
+      ),
     ),
 );

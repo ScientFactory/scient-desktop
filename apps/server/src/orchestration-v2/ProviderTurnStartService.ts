@@ -614,7 +614,13 @@ export const layer: Layer.Layer<
           const history = yield* Effect.result(
             projectionStore.getTurnStartHistory(input.threadId, runIds),
           );
-          if (history._tag === "Success") return history.success;
+          if (history._tag === "Success")
+            return history.success.filter(
+              (item) =>
+                !projection.runs.some(
+                  (source) => source.id === item.runId && source.status === "rolled_back",
+                ),
+            );
           if (input.willRetry === true) return yield* history.failure;
           yield* settleStartFailure({
             signal: "provider-history-preparation-failure",
@@ -822,15 +828,25 @@ export const layer: Layer.Layer<
             handoff.delivery?.nativeThreadId === providerThread.nativeThreadRef?.nativeId &&
             handoff.delivery?.status === "pending",
         );
+        const removedDelivery = projection.contextHandoffs.some(
+          (handoff) =>
+            handoff.toProviderThreadId === providerThread.id &&
+            handoff.delivery?.nativeThreadId === providerThread.nativeThreadRef?.nativeId &&
+            projection.runs.some(
+              (source) => source.id === handoff.targetRunId && source.status === "rolled_back",
+            ),
+        );
         const resumed = yield* Effect.result(
-          uncertainDelivery
+          uncertainDelivery || removedDelivery
             ? Effect.fail(
                 new ProviderAdapterTurnStartError({
                   driver: session.driver,
                   threadId: projection.thread.id,
                   providerThreadId: providerThread.id,
                   runId,
-                  cause: "Uncertain native history injection",
+                  cause: removedDelivery
+                    ? "Carrying history run was rolled back"
+                    : "Uncertain native history injection",
                 }),
               )
             : session.resumeThread({
@@ -848,7 +864,11 @@ export const layer: Layer.Layer<
           driver: session.driver,
           providerThreadId: providerThread.id,
           runId,
-          reason: uncertainDelivery ? "uncertain_history_delivery" : "resume_failed",
+          reason: removedDelivery
+            ? "history_delivery_rolled_back"
+            : uncertainDelivery
+              ? "uncertain_history_delivery"
+              : "resume_failed",
           errorTag: resumed.failure._tag,
         });
         const replacement = yield* loadFromProvider(
@@ -1188,7 +1208,10 @@ export const layer: Layer.Layer<
         (handoff) =>
           handoff.toProviderThreadId === providerThread.id &&
           handoff.delivery?.nativeThreadId === runningProviderThread.nativeThreadRef?.nativeId &&
-          handoff.delivery?.status !== "pending",
+          handoff.delivery?.status !== "pending" &&
+          !projection.runs.some(
+            (source) => source.id === handoff.targetRunId && source.status === "rolled_back",
+          ),
       );
       const deliveredItemIds = new Set(
         settledHandoffs.flatMap((handoff) => handoff.delivery?.itemIds ?? []),
@@ -1239,6 +1262,9 @@ export const layer: Layer.Layer<
             ? (yield* projectionStore.getTurnStartHistory(input.threadId)).reduce((sum, item) => {
                 if (
                   item.runId === run.id ||
+                  projection.runs.some(
+                    (source) => source.id === item.runId && source.status === "rolled_back",
+                  ) ||
                   (item.runId !== null &&
                     missedRunIds.has(item.runId) &&
                     !deliveredItemIds.has(item.id)) ||

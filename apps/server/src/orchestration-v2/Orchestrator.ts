@@ -50,6 +50,7 @@ import {
   derivePendingBackgroundWork,
   pendingBackgroundTurnItems,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { historicalMessage } from "./ContextHandoffBudget.ts";
 import * as Context from "effect/Context";
 import { OrchestrationThreadSettleBlockedError } from "./Errors.ts";
 import * as DateTime from "effect/DateTime";
@@ -1469,7 +1470,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.thread.historyOrigin === "v1_import" ||
         projection.thread.historyOrigin === "scient_fork" ||
         projection.thread.historyOrigin === "conversation_import"
-          ? yield* readHandoffItems(threadId, [null])
+          ? yield* readHandoffItems(threadId, [null]).pipe(
+              Effect.map((items) =>
+                items.some((item) => historicalMessage(item) !== null) ? items : [],
+              ),
+            )
           : [];
       const handoffStrategy = needsFullContext
         ? ("full_thread_summary" as const)
@@ -5244,7 +5249,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.thread.historyOrigin === "v1_import" ||
         projection.thread.historyOrigin === "scient_fork" ||
         projection.thread.historyOrigin === "conversation_import"
-          ? yield* readHandoffItems(command.threadId, [null])
+          ? yield* readHandoffItems(command.threadId, [null]).pipe(
+              Effect.map((items) =>
+                items.some((item) => historicalMessage(item) !== null) ? items : [],
+              ),
+            )
           : [];
       const isProviderSwitch =
         activeProviderThread !== undefined &&
