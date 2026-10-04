@@ -123,8 +123,9 @@ trailing `<terminal_context>` form is parsed only when reading messages sent by 
 The composer sends `message.text` as canonical prose with reference links and
 `message.context.records` built from the draft (`buildMessageContext` in
 `apps/web/src/lib/composerContextRecords.ts`). Expired terminal excerpts are dropped from both.
-The server projects provider text at turn start (`ProviderCommandReactor`), so the persisted
-message stays readable and the provider receives markers plus one envelope.
+V2 `ProviderTurnStartService` projects provider text at turn start with
+`projectComposerContextForProvider`, so the persisted message stays readable and the provider
+receives markers plus one envelope. Immediate and queued runs use the same native service.
 
 Review comments and preview annotations enter the draft through store mutators. A mounted composer
 registers a context insertion handler so panel-originated references land at its current or
