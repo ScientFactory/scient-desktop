@@ -210,6 +210,17 @@ export interface AcpAdapterV2ExtensionContext {
   readonly lastProposedPlanMarkdown: Effect.Effect<string | undefined>;
 }
 
+export interface AcpAdapterV2ToolPresentation {
+  readonly observe: (toolCall: AcpToolCallState) => {
+    readonly subagents: ReadonlyArray<AcpAdapterV2SubagentUpdate>;
+    /** Undefined suppresses the ordinary tool row. */
+    readonly tool: AcpToolCallState | undefined;
+  };
+  readonly finish: (
+    status: "completed" | "interrupted" | "failed" | "cancelled",
+  ) => ReadonlyArray<AcpAdapterV2SubagentUpdate>;
+}
+
 export interface AcpAdapterV2Flavor {
   /** Interprets provider-specific prompt errors before they cross into orchestration. */
   readonly promptFailure?: (cause: unknown) => OrchestrationV2ProviderFailure;
@@ -324,6 +335,10 @@ export interface AcpAdapterV2Flavor {
   readonly registerExtensions?: (
     context: AcpAdapterV2ExtensionContext,
   ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+  /** Stateful protocol presentation belongs to one native turn. */
+  readonly createToolPresentation?: (
+    input: ProviderAdapter.ProviderAdapterV2TurnInput,
+  ) => AcpAdapterV2ToolPresentation;
   readonly extractSubagentUpdate?: (
     toolCall: AcpToolCallState,
   ) => AcpAdapterV2SubagentUpdate | undefined;
@@ -1112,6 +1127,7 @@ interface AcpNativeBuildConfiguration {
 }
 
 interface ActiveAcpTurn {
+  readonly toolPresentation: AcpAdapterV2ToolPresentation | undefined;
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly nativeThreadId: string;
@@ -3038,8 +3054,17 @@ export function makeAcpAdapterV2(
           yield* closeTextStream(context, "user");
           const previous = context.tools.get(incoming.toolCallId);
           const merged = mergeToolCallState(previous, incoming);
-          const toolCall = flavor.normalizeToolCall?.(merged) ?? merged;
+          const presentation = context.toolPresentation?.observe(merged);
+          const presentedTool = presentation?.tool ?? merged;
+          const toolCall = flavor.normalizeToolCall?.(presentedTool) ?? presentedTool;
           context.tools.set(toolCall.toolCallId, toolCall);
+          if (presentation !== undefined) {
+            for (const subagent of presentation.subagents) yield* emitSubagent(context, subagent);
+            if (presentation.tool === undefined) {
+              yield* rearmDeferredFinalize(context);
+              return;
+            }
+          }
           const backgroundTaskId = flavor.extractBackgroundTaskId?.(toolCall);
           if (backgroundTaskId !== undefined) {
             context.toolCallIdsByBackgroundTaskId.set(backgroundTaskId, toolCall.toolCallId);
@@ -6449,6 +6474,8 @@ export function makeAcpAdapterV2(
           const settledStatus = context.interrupted ? "interrupted" : status;
           context.finalizedStatus = settledStatus;
           context.finalized = true;
+          for (const subagent of context.toolPresentation?.finish(settledStatus) ?? [])
+            yield* emitSubagent(context, subagent);
           const directStopQuarantine = yield* Ref.get(stoppedRunQuarantine);
           if (flavor.subagentsIdleOnTurnCompletion === true) {
             for (const subagent of context.subagents.values()) {
@@ -6884,6 +6911,7 @@ export function makeAcpAdapterV2(
               );
             }
             const context: ActiveAcpTurn = {
+              toolPresentation: flavor.createToolPresentation?.(turnInput),
               input: turnInput,
               providerTurnId,
               nativeThreadId: requestedSessionId,

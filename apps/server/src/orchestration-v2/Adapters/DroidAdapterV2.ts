@@ -36,6 +36,7 @@ export interface DroidAdapterV2Options extends Omit<AcpAdapterV2Options, "flavor
   readonly onAuthenticationRejected: (message: string) => Effect.Effect<void>;
 }
 import { makeDroidInactivity } from "./DroidInactivity.ts";
+import { makeDroidToolPresentation } from "./DroidToolPresentation.ts";
 
 const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
 const isAcpProcessExitedError = Schema.is(EffectAcpErrors.AcpProcessExitedError);
@@ -62,6 +63,11 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
         supportsRuntimeModeSwitchInSession: true,
       },
       tools: { ...AcpProviderCapabilitiesV2.tools, supportsMcpTools: true },
+      subagents: {
+        ...AcpProviderCapabilitiesV2.subagents,
+        supportsSubagents: true,
+        emitsSubagentLifecycle: true,
+      },
     },
     normalizeSessionUpdate: (notification) => {
       const update = notification.update;
@@ -76,6 +82,7 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
         };
       return notification;
     },
+    createToolPresentation: makeDroidToolPresentation,
     supportsImagePrompts: true,
     supportsCompaction: true,
     terminalizeRunOwnedItemsOnFailure: true,

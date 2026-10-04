@@ -276,6 +276,7 @@ const harness = Effect.fnUntraced(function* (
       .split("\n")
       .map((line) => decodeRequest(line));
   return {
+    adapter,
     rejectedAuthentication,
     arguments: () => NodeFS.readFileSync(argvLogPath, "utf8").trimEnd().split("\t"),
     send,
@@ -404,6 +405,21 @@ const announced = (event: ProviderAdapter.ProviderAdapterV2Event) =>
   (event.type === "message.updated" &&
     event.message.role === "assistant" &&
     event.message.text.length > 0);
+
+const nativeTasks = (h: Effect.Success<ReturnType<typeof harness>>) =>
+  h.recorded.flatMap((event) => (event.type === "subagent.updated" ? [event.subagent] : []));
+const nativeTools = (h: Effect.Success<ReturnType<typeof harness>>) =>
+  h.recorded.flatMap((event) =>
+    event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+      ? [event.turnItem]
+      : [],
+  );
+const taskPeerHelpers = `
+const task = (id, description) => update({ sessionUpdate: "tool_call", toolCallId: id, title: "Task", kind: "other", status: "pending", rawInput: { subagent_type: "explorer", description, prompt: "Audit it.", await: true } });
+const result = (id, status, text) => update({ sessionUpdate: "tool_call_update", toolCallId: id, status, rawOutput: { text }, content: [{ type: "content", content: { type: "text", text } }] });
+const wait = (id, taskId, block, timeout) => update({ sessionUpdate: "tool_call", toolCallId: id, title: "TaskOutput", kind: "other", status: "pending", rawInput: { task_id: taskId, block, ...(timeout === undefined ? {} : { timeout }) } });
+`;
+
 const silentBody = `function onPrompt(message) {
   if (message.params.prompt.some(block => block.text?.includes("recover"))) return reply(message, { stopReason: "end_turn" });
   update({ sessionUpdate: "tool_call", toolCallId: "read", title: "Read file", kind: "read", status: "in_progress", rawInput: { path: "file.txt" }, rawOutput: { text: "Partial tool output." } });
@@ -668,7 +684,10 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
         yield* h.send(1, "full-access");
         yield* untilRecorded(
           h,
-          (event) => event.type === "turn_item.updated" && event.turnItem.status === "completed",
+          (event) =>
+            event.type === "subagent.updated" &&
+            event.subagent.status === "running" &&
+            event.subagent.result?.startsWith("Running in the background.") === true,
         );
         yield* TestClock.adjust("11 minutes");
         assert.lengthOf(terminals(h), 0);
@@ -1064,4 +1083,307 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
       }),
     ),
   );
+  it.effect(
+    "projects each foreground Droid Task once with its role, prompt and native result",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness(false, false, false, undefined, {
+            body:
+              taskPeerHelpers +
+              `function onPrompt(message) {
+      if (state.prompts === 1) {
+        task("task-code", "Audit code"); task("task-ci", "Audit pipeline");
+        result("task-ci", "completed", "The pipeline is sound.");
+        result("task-code", "completed", "The code is sound.");
+      } else {
+        task("task-failed", "Audit context"); result("task-failed", "failed", "Error: context exceeded");
+      }
+      reply(message, { stopReason: "end_turn" });
+    }`,
+          });
+          const capabilities = yield* h.adapter.getCapabilities();
+          assert.isTrue(capabilities.subagents.supportsSubagents);
+          assert.isTrue(capabilities.subagents.emitsSubagentLifecycle);
+          assert.isFalse(capabilities.subagents.exposesSubagentThreadIds);
+          yield* h.send(1, "full-access");
+          assert.equal((yield* h.terminal).status, "completed");
+          yield* h.send(2, "full-access");
+          assert.equal((yield* h.terminal).status, "completed");
+          const tasks = nativeTasks(h);
+          assert.equal(new Set(tasks.map((task) => task.id)).size, 3);
+          assert.deepEqual(
+            tasks
+              .filter((task) => task.completedAt !== null)
+              .map((task) => [
+                task.nativeTaskRef?.nativeId,
+                task.title,
+                task.prompt,
+                task.status,
+                task.result,
+              ]),
+            [
+              [
+                "task-ci",
+                "Audit pipeline [explorer]",
+                "Audit it.",
+                "completed",
+                "The pipeline is sound.",
+              ],
+              [
+                "task-code",
+                "Audit code [explorer]",
+                "Audit it.",
+                "completed",
+                "The code is sound.",
+              ],
+              [
+                "task-failed",
+                "Audit context [explorer]",
+                "Audit it.",
+                "failed",
+                "context exceeded",
+              ],
+            ],
+          );
+          assert.isTrue(
+            tasks.some(
+              (task) => task.result === "Droid reports a sub-agent's steps only when it finishes.",
+            ),
+          );
+          assert.isTrue(
+            tasks.every(
+              (task) =>
+                task.runId ===
+                RunId.make(
+                  task.nativeTaskRef?.nativeId === "task-failed" ? "droid-run-2" : "droid-run-1",
+                ),
+            ),
+          );
+          assert.lengthOf(terminals(h), 2);
+          assert.lengthOf(nativeTools(h), 0);
+        }),
+      ),
+  );
+
+  it.effect(
+    "preserves native subagent cancellation words and ignores reannounced terminal Tasks",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness(false, false, false, undefined, {
+            body:
+              taskPeerHelpers +
+              `function onPrompt(message) {
+      task("cancelled", "Audit code"); result("cancelled", "failed", "Error: Tool execution cancelled by user");
+      update({ sessionUpdate: "tool_call", toolCallId: "cancelled", title: "Tool call", kind: "other", status: "pending", rawInput: {} });
+      result("cancelled", "failed", "Error: Tool execution cancelled by user");
+      update({ sessionUpdate: "tool_call", toolCallId: "read", title: "Read file", kind: "read", status: "completed", rawInput: { path: "/a" }, rawOutput: { text: "ordinary" } });
+      reply(message, { stopReason: "end_turn" });
+    }`,
+          });
+          yield* h.send(1, "full-access");
+          yield* h.terminal;
+          const ended = nativeTasks(h).filter((task) => task.completedAt !== null);
+          assert.lengthOf(ended, 1);
+          assert.equal(ended[0]?.status, "cancelled");
+          assert.equal(ended[0]?.result, "Tool execution cancelled by user");
+          assert.equal(new Set(nativeTasks(h).map((task) => task.id)).size, 1);
+          assert.isFalse(
+            nativeTools(h).some((tool) => tool.nativeItemRef?.nativeId === "cancelled"),
+          );
+          assert.isTrue(
+            nativeTools(h).some(
+              (tool) =>
+                tool.status === "completed" &&
+                tool.toolName === "Read" &&
+                encodeJson(tool.input) === encodeJson({ path: "/a" }) &&
+                encodeJson(tool.output) === encodeJson({ text: "ordinary" }),
+            ),
+          );
+        }),
+      ),
+  );
+
+  it.effect("follows a background Droid Task through named checks, waits and its own result", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, {
+          body:
+            taskPeerHelpers +
+            `function onPrompt(message) {
+      task("background", "Review host"); result("background", "completed", "Task launched in background.\\ntask_id: droid-1");
+      wait("peek", "droid-1", false); result("peek", "completed", "Description: Review host\\nStatus: running\\nLatest progress: Read two files.");
+      wait("wait", "droid-1", true, 600000); result("wait", "completed", "Description: Review host\\nStatus: completed\\n\\nAll good.");
+      task("unknown", "Review tests"); result("unknown", "completed", "Task launched in background.\\ntask_id: droid-2");
+      reply(message, { stopReason: "end_turn" });
+    }`,
+        });
+        yield* h.send(1, "full-access");
+        yield* h.terminal;
+        const tasks = nativeTasks(h);
+        assert.equal(new Set(tasks.map((task) => task.id)).size, 2);
+        assert.isTrue(
+          tasks.some((task) => task.result === "Read two files." && task.status === "running"),
+        );
+        assert.isTrue(
+          tasks.some((task) => task.result === "All good." && task.status === "completed"),
+        );
+        assert.isTrue(
+          tasks.some(
+            (task) =>
+              task.status === "idle" &&
+              task.result === "The turn ended. Droid has not reported this sub-agent's result.",
+          ),
+        );
+        const titles = nativeTools(h).map((tool) => tool.title);
+        assert.includeMembers(titles, [
+          "Checking sub-agent · Review host",
+          "Checked sub-agent · Review host",
+          "Waiting for sub-agent · Review host (up to 10 min)",
+          "Waited for sub-agent · Review host",
+        ]);
+        assert.isFalse(
+          nativeTools(h).some(
+            (tool) =>
+              tool.nativeItemRef?.nativeId === "background" ||
+              tool.nativeItemRef?.nativeId === "unknown",
+          ),
+        );
+      }),
+    ),
+  );
+
+  for (const [reported, expected] of [
+    ["completed", "completed"],
+    ["failed", "failed"],
+    ["cancelled", "cancelled"],
+    ["rescheduled", "idle"],
+  ] as const) {
+    it.effect(`reads native background TaskOutput ${reported} without inventing a result`, () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness(false, false, false, undefined, {
+            body:
+              taskPeerHelpers +
+              `function onPrompt(message) {
+        task("background", "Review host"); result("background", "completed", "Task launched in background.\\ntask_id: droid-1");
+        wait("wait", "droid-1", true, 90000); result("wait", "completed", "Description: Review host\\nStatus: ${reported}\\n\\nAll good.");
+        reply(message, { stopReason: "end_turn" });
+      }`,
+          });
+          yield* h.send(1, "full-access");
+          yield* h.terminal;
+          const last = nativeTasks(h).at(-1);
+          assert.equal(last?.status, expected);
+          assert.equal(
+            last?.result,
+            reported === "rescheduled"
+              ? "The turn ended. Droid has not reported this sub-agent's result."
+              : "All good.",
+          );
+          assert.equal(new Set(nativeTasks(h).map((task) => task.id)).size, 1);
+          assert.isTrue(
+            nativeTools(h).some((tool) => tool.title === "Waited for sub-agent · Review host"),
+          );
+        }),
+      ),
+    );
+  }
+
+  it.effect(
+    "labels unobserved native waits and retains their failed lookup text without a phantom subagent",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness(false, false, false, undefined, {
+            body:
+              taskPeerHelpers +
+              `function onPrompt(message) {
+      wait("missing", "earlier", true, 90000); result("missing", "failed", "Error: No task with that id.");
+      wait("old", "old-task", false); result("old", "completed", "Description: Earlier audit\\nStatus: completed\\n\\nAll good.");
+      reply(message, { stopReason: "end_turn" });
+    }`,
+          });
+          yield* h.send(1, "full-access");
+          yield* h.terminal;
+          assert.lengthOf(nativeTasks(h), 0);
+          const tools = nativeTools(h);
+          assert.isTrue(
+            tools.some(
+              (tool) =>
+                tool.status === "failed" &&
+                tool.title === "Waiting for a sub-agent (up to 90 s)" &&
+                encodeJson(tool.output) === encodeJson({ text: "Error: No task with that id." }),
+            ),
+          );
+          assert.isTrue(tools.some((tool) => tool.title === "Checked sub-agent · Earlier audit"));
+        }),
+      ),
+  );
+
+  for (const reason of ["completion", "Stop", "failure"] as const) {
+    it.effect(`explains open native subagent outcomes after ${reason}`, () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness(false, false, false, undefined, {
+            body:
+              taskPeerHelpers +
+              `function onPrompt(message) {
+        task("foreground", "Foreground"); task("background", "Background");
+        result("background", "completed", "Task launched in background.\\ntask_id: droid-bg");
+        update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Both running." } });
+        ${reason === "completion" ? 'reply(message, { stopReason: "end_turn" });' : reason === "failure" ? 'fail(message, { code: -32603, message: "peer failed" });' : ""}
+      }`,
+          });
+          yield* h.send(1, "full-access");
+          if (reason === "Stop") {
+            yield* untilRecorded(
+              h,
+              (event) => event.type === "message.updated" && event.message.text === "Both running.",
+            );
+            const running = h.recorded.find(
+              (event) =>
+                event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+            );
+            if (!running || running.type !== "provider_turn.updated")
+              return yield* Effect.die("Missing native turn");
+            yield* h.runtime.interruptTurn({
+              providerThread: h.providerThread,
+              providerTurnId: running.providerTurn.id,
+              requestRuntimeRestart: true,
+            });
+          }
+          const terminal = yield* h.terminal;
+          assert.equal(
+            terminal.status,
+            reason === "completion" ? "completed" : reason === "Stop" ? "interrupted" : "failed",
+          );
+          const byId = new Map(nativeTasks(h).map((task) => [task.nativeTaskRef?.nativeId, task]));
+          assert.deepEqual(
+            [...byId.values()].map((task) => [task.status, task.result]),
+            reason === "completion"
+              ? [
+                  ["interrupted", "The turn ended before Droid reported this sub-agent's result."],
+                  ["idle", "The turn ended. Droid has not reported this sub-agent's result."],
+                ]
+              : reason === "Stop"
+                ? [
+                    ["cancelled", "Cancelled when you stopped the turn."],
+                    [
+                      "interrupted",
+                      "Scient closed this Droid session and can no longer follow this sub-agent.",
+                    ],
+                  ]
+                : [
+                    ["interrupted", "The Droid session ended."],
+                    ["interrupted", "The Droid session ended."],
+                  ],
+          );
+          assert.lengthOf(terminals(h), 1);
+          assert.lengthOf(nativeTools(h), 0);
+        }),
+      ),
+    );
+  }
 });
