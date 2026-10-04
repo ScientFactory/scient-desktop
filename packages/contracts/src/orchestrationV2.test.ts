@@ -16,6 +16,7 @@ import {
   ProviderInstanceId,
   ProviderReplayTranscript,
   ProviderThreadId,
+  ProviderSessionId,
   RunId,
   ThreadId,
   TrimmedNonEmptyString,
@@ -1260,7 +1261,18 @@ describe("limit recovery choice updates", () => {
 
 it("preserves provider-initiated work identity without admitting an internal command from a client", () => {
   const notification = {
-    source: { kind: "provider_work", workId: "extension-work-1" },
+    source: {
+      kind: "provider_work",
+      workId: "extension-work-1",
+      providerThreadId: ProviderThreadId.make("native-thread:work"),
+      providerSessionId: ProviderSessionId.make("session:work"),
+      modelSelection: { instanceId: ProviderInstanceId.make("pi"), model: "fixture-model" },
+      runtimePolicy: {
+        runtimeMode: "approval-required",
+        interactionMode: "plan",
+        cwd: "/synthetic/project",
+      },
+    },
     outcome: "updated",
     summary: "Provider started work",
   } as const;
@@ -1278,6 +1290,8 @@ it("preserves provider-initiated work identity without admitting an internal com
       providerInstanceId: "pi",
       driver: "pi",
       workId: "extension-work-1",
+      modelSelection: notification.source.modelSelection,
+      runtimePolicy: notification.source.runtimePolicy,
       detail: "Provider started work",
     }),
   ).toBe(false);

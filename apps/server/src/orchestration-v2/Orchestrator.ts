@@ -4488,7 +4488,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
-    providerInitiated = false,
+    providerInitiated?: Extract<OrchestrationV2ServerCommand, { type: "provider-work.admit" }>,
   ) =>
     Effect.gen(function* () {
       let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
@@ -5164,25 +5164,36 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const pendingForkTransfer = pendingForkTransferForThread(projection);
       // Classify against the native owner and the current project workspace,
       // even when the app's selection has already been updated.
-      const startPlan = yield* providerSwitchService
-        .plan({
-          projection: {
-            ...projection,
-            thread: {
-              ...projection.thread,
-              modelSelection: {
-                ...projection.thread.modelSelection,
-                instanceId: activeProviderThread?.providerInstanceId ?? modelSelection.instanceId,
-              },
-            },
-          },
-          targetModelSelection: modelSelection,
-          targetThread: executionThread,
-        })
-        .pipe(mapDispatchError(command));
+      const startPlan =
+        providerInitiated !== undefined
+          ? {
+              instanceChanged: false,
+              modelChanged: false,
+              targetProviderThreadId: providerInitiated.providerThreadId,
+              releaseProviderSessionIds: [],
+              transition: { type: "reuse" as const },
+            }
+          : yield* providerSwitchService
+              .plan({
+                projection: {
+                  ...projection,
+                  thread: {
+                    ...projection.thread,
+                    modelSelection: {
+                      ...projection.thread.modelSelection,
+                      instanceId:
+                        activeProviderThread?.providerInstanceId ?? modelSelection.instanceId,
+                    },
+                  },
+                },
+                targetModelSelection: modelSelection,
+                targetThread: executionThread,
+              })
+              .pipe(mapDispatchError(command));
       if (
-        executionThread.runtimeMode !== projection.thread.runtimeMode ||
-        executionThread.interactionMode !== projection.thread.interactionMode
+        providerInitiated === undefined &&
+        (executionThread.runtimeMode !== projection.thread.runtimeMode ||
+          executionThread.interactionMode !== projection.thread.interactionMode)
       ) {
         yield* emit(
           events,
@@ -5212,8 +5223,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       const now = yield* DateTime.now;
       if (
-        !modelSelectionsEqual(projection.thread.modelSelection, modelSelection) ||
-        projection.thread.providerInstanceId !== modelSelection.instanceId
+        providerInitiated === undefined &&
+        (!modelSelectionsEqual(projection.thread.modelSelection, modelSelection) ||
+          projection.thread.providerInstanceId !== modelSelection.instanceId)
       ) {
         yield* emit(
           events,
@@ -5761,9 +5773,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const existingProviderSession = projection.providerSessions.find(
         (candidate) => candidate.id === providerSessionId,
       );
-      const resolvedRuntimePolicy = yield* runtimePolicy
-        .resolve({ thread: projection.thread, modelSelection })
-        .pipe(
+      const resolvedRuntimePolicy =
+        providerInitiated?.runtimePolicy ??
+        (yield* runtimePolicy.resolve({ thread: projection.thread, modelSelection }).pipe(
           Effect.mapError(
             (cause) =>
               new OrchestratorDispatchError({
@@ -5772,7 +5784,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 cause,
               }),
           ),
-        );
+        ));
 
       const capabilities = yield* adapter.getCapabilities().pipe(
         Effect.mapError(
@@ -9816,6 +9828,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           Option.isNone(session) ||
           session.value.driver !== command.driver ||
           session.value.instanceId !== command.providerInstanceId ||
+          command.modelSelection.instanceId !== command.providerInstanceId ||
+          session.value.providerSession.cwd !== command.runtimePolicy.cwd ||
+          !projection.providerSessions.some(
+            (row) =>
+              row.id === command.providerSessionId &&
+              ["ready", "running", "waiting"].includes(row.status),
+          ) ||
           projection.runs.some((run) =>
             ["queued", "starting", "running", "waiting"].includes(run.status),
           )
@@ -9832,19 +9851,29 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             threadId: command.threadId,
             messageId: command.messageId,
             text: command.detail,
+            modelSelection: command.modelSelection,
+            runtimeMode: command.runtimePolicy.runtimeMode,
+            interactionMode: command.runtimePolicy.interactionMode,
             attachments: [],
             createdBy: "agent",
             creationSource: "provider",
             dispatchMode: { type: "start_immediately" },
             notification: {
-              source: { kind: "provider_work", workId: command.workId },
+              source: {
+                kind: "provider_work",
+                workId: command.workId,
+                providerThreadId: command.providerThreadId,
+                providerSessionId: command.providerSessionId,
+                modelSelection: command.modelSelection,
+                runtimePolicy: command.runtimePolicy,
+              },
               outcome: "updated",
               summary: "Provider started work",
             },
           },
           events,
           effects,
-          true,
+          command,
         );
         break;
       }

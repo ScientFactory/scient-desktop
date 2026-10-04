@@ -1,5 +1,7 @@
 import {
   type OrchestrationV2Notification,
+  type OrchestrationV2ProviderRuntimePolicy,
+  type ModelSelection,
   MessageId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -29,6 +31,9 @@ export interface ProviderContinuationRequest {
     readonly providerInstanceId: ProviderInstanceId;
     readonly providerSessionId: ProviderSessionId;
     readonly workId: string;
+    /** Capture the applied native settings when work begins, never app defaults at offer time. */
+    readonly modelSelection: ModelSelection;
+    readonly runtimePolicy: OrchestrationV2ProviderRuntimePolicy;
   };
   readonly notification?: OrchestrationV2Notification;
   /**

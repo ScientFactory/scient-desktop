@@ -3,6 +3,8 @@ import {
   NodeId,
   MessageId,
   ProviderInstanceId,
+  ProviderThreadId,
+  ProviderSessionId,
   RunId,
   ThreadId,
   type OrchestrationV2ExecutionNode,
@@ -526,6 +528,13 @@ describe("presentPendingBackgroundWork", () => {
 
 it("keeps a provider-initiated notification on its own thread", () => {
   expect(
-    notificationChildThreadId({ kind: "provider_work", workId: "extension-work-1" }),
+    notificationChildThreadId({
+      kind: "provider_work",
+      workId: "extension-work-1",
+      providerThreadId: ProviderThreadId.make("native-thread:work"),
+      providerSessionId: ProviderSessionId.make("session:work"),
+      modelSelection: { instanceId: ProviderInstanceId.make("pi"), model: "fixture-model" },
+      runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+    }),
   ).toBeUndefined();
 });

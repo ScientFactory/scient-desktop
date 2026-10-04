@@ -10,6 +10,7 @@ import {
   ProviderTurnId,
   ThreadId,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ProviderRuntimePolicy,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -20,6 +21,7 @@ import * as Stream from "effect/Stream";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { OrchestratorV2, type OrchestratorV2Error } from "./Orchestrator.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
+import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import {
   ProviderContinuationRequests,
   type ProviderContinuationRequest,
@@ -40,23 +42,30 @@ const selection = { instanceId, model: "fixture-model" };
 const threadId = ThreadId.make("thread:provider-initiated");
 const projectId = ProjectId.make("project:provider-initiated");
 
+type WorkOverrides = Omit<Partial<ProviderContinuationRequest>, "initiated"> & {
+  initiated?: Partial<NonNullable<ProviderContinuationRequest["initiated"]>>;
+};
+
 type Offer = { input: ProviderAdapterV2TurnInput; finish: Effect.Effect<void> };
 const withInitiatedWork = <A, E, R>(
   run: (h: {
     orchestrator: OrchestratorV2["Service"];
-    emitWork: (
-      workId: string,
-      overrides?: Partial<ProviderContinuationRequest>,
-    ) => Effect.Effect<void>;
+    emitWork: (workId: string, overrides?: WorkOverrides) => Effect.Effect<void>;
     takeOffer: Effect.Effect<Offer, Cause.TimeoutError>;
     prompts: ReadonlyArray<string>;
     adopted: ReadonlyArray<string>;
     dropped: () => number;
     closes: () => number;
+    loads: () => number;
+    markNativeRunning: Effect.Effect<void>;
+    resolvePolicy: Effect.Effect<
+      Option.Option<Pick<OrchestrationV2ProviderRuntimePolicy, "runtimeMode" | "interactionMode">>
+    >;
     waitFor: (
       predicate: (p: OrchestrationV2ThreadProjection) => boolean,
     ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error>;
   }) => Effect.Effect<A, E, R>,
+  options: { manualWorker?: boolean; restricted?: boolean } = {},
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -68,10 +77,10 @@ const withInitiatedWork = <A, E, R>(
       const adopted: string[] = [];
       let closed = 0;
       let dropped = 0;
-      let emitWork: (
-        workId: string,
-        overrides?: Partial<ProviderContinuationRequest>,
-      ) => Effect.Effect<void> = () => Effect.die("Native session must be open");
+      let loads = 0;
+      let markNativeRunning: Effect.Effect<void> = Effect.die("Native session must be open");
+      let emitWork: (workId: string, overrides?: WorkOverrides) => Effect.Effect<void> = () =>
+        Effect.die("Native session must be open");
       const unused = () =>
         Effect.fail(
           new ProviderAdapterProtocolError({ driver, detail: "Unused initiated-work operation" }),
@@ -82,6 +91,7 @@ const withInitiatedWork = <A, E, R>(
           const adapter: ProviderAdapterV2Shape = {
             instanceId,
             driver,
+            mcpSessionInjection: true,
             getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
             planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
             openSession: (input) =>
@@ -108,6 +118,33 @@ const withInitiatedWork = <A, E, R>(
                   createdAt: now,
                   updatedAt: now,
                 };
+                const nativeSession = {
+                  id: input.providerSessionId,
+                  driver,
+                  providerInstanceId: instanceId,
+                  status: "ready" as const,
+                  cwd,
+                  model: selection.model,
+                  capabilities: CodexProviderCapabilitiesV2,
+                  createdAt: now,
+                  updatedAt: now,
+                  lastError: null,
+                };
+                markNativeRunning = Effect.gen(function* () {
+                  yield* Queue.offer(events, {
+                    type: "provider_session.updated",
+                    driver,
+                    providerSession: {
+                      ...nativeSession,
+                      status: "running",
+                      updatedAt: yield* DateTime.now,
+                    },
+                  });
+                });
+                let applied = {
+                  modelSelection: input.modelSelection,
+                  runtimePolicy: input.runtimePolicy,
+                };
                 emitWork = (workId, overrides = {}) =>
                   Effect.gen(function* () {
                     if (!adopted.includes(workId))
@@ -118,17 +155,19 @@ const withInitiatedWork = <A, E, R>(
                       driver,
                       detail: `Extension work ${workId}`,
                       dispatchIfCurrent: (dispatch) => dispatch.pipe(Effect.asSome),
+                      ...overrides,
                       initiated: {
                         providerInstanceId: instanceId,
                         providerSessionId: input.providerSessionId,
                         workId,
+                        ...applied,
+                        ...overrides.initiated,
                       },
                       clearIfCurrent: () =>
                         Effect.sync(() => {
                           buffered.delete(workId);
                           dropped++;
                         }),
-                      ...overrides,
                     });
                   });
                 yield* Effect.addFinalizer(() =>
@@ -140,28 +179,23 @@ const withInitiatedWork = <A, E, R>(
                   instanceId,
                   driver,
                   providerSessionId: input.providerSessionId,
-                  providerSession: {
-                    id: input.providerSessionId,
-                    driver,
-                    providerInstanceId: instanceId,
-                    status: "ready" as const,
-                    cwd,
-                    model: selection.model,
-                    capabilities: CodexProviderCapabilitiesV2,
-                    createdAt: now,
-                    updatedAt: now,
-                    lastError: null,
-                  },
+                  mcpSessionInjection: true,
+                  providerSession: nativeSession,
                   events: Stream.fromQueue(events),
                   ensureThread: (thread) =>
                     Effect.sync(() => {
+                      loads++;
                       nativeThread = {
                         ...nativeThread,
                         id: thread.existingProviderThread?.id ?? nativeThread.id,
                       };
                       return nativeThread;
                     }),
-                  resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
+                  resumeThread: ({ providerThread }) =>
+                    Effect.sync(() => {
+                      loads++;
+                      return providerThread;
+                    }),
                   startTurn: (turn) =>
                     Effect.gen(function* () {
                       const source = turn.message.notification?.source;
@@ -172,7 +206,15 @@ const withInitiatedWork = <A, E, R>(
                         answer = owned;
                         buffered.delete(source.workId);
                         adopted.push(source.workId);
-                      } else prompts.push(turn.message.text);
+                        assert.deepEqual(turn.modelSelection, applied.modelSelection);
+                        assert.deepEqual(turn.runtimePolicy, applied.runtimePolicy);
+                      } else {
+                        prompts.push(turn.message.text);
+                        applied = {
+                          modelSelection: turn.modelSelection,
+                          runtimePolicy: turn.runtimePolicy,
+                        };
+                      }
                       const stamp = yield* DateTime.now;
                       const providerTurnId = ProviderTurnId.make(`native-turn:${turn.attemptId}`);
                       yield* Queue.offer(events, {
@@ -242,7 +284,7 @@ const withInitiatedWork = <A, E, R>(
       const layer = makeOrchestratorV2ReplayLayerWithRegistry(
         { name: "provider-initiated-work", runtimePolicyOverride: { cwd } },
         registry,
-        { runContinuationWorker: true, configureMcp: false },
+        { runContinuationWorker: true, configureMcp: true, runEffectWorker: !options.manualWorker },
       );
       return yield* Effect.gen(function* () {
         const orchestrator = yield* OrchestratorV2;
@@ -253,8 +295,8 @@ const withInitiatedWork = <A, E, R>(
           projectId,
           title: "Native work",
           modelSelection: selection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
+          runtimeMode: options.restricted ? "approval-required" : "full-access",
+          interactionMode: options.restricted ? "plan" : "default",
           branch: null,
           worktreePath: null,
           createdBy: "user",
@@ -280,8 +322,14 @@ const withInitiatedWork = <A, E, R>(
           createdBy: "user",
           creationSource: "web",
         });
+        const worker = yield* OrchestrationEffectWorkerV2;
+        if (options.manualWorker) yield* worker.drain(12);
         const first = yield* Queue.take(offers).pipe(Effect.timeout("10 seconds"));
         yield* first.finish;
+        if (options.manualWorker) {
+          yield* waitFor((p) => p.runs[0]?.status === "waiting");
+          yield* worker.drain(12);
+        }
         yield* waitFor((p) => p.runs[0]?.status === "completed");
         return yield* run({
           orchestrator,
@@ -290,6 +338,15 @@ const withInitiatedWork = <A, E, R>(
           prompts,
           adopted,
           closes: () => closed,
+          loads: () => loads,
+          markNativeRunning: Effect.suspend(() => markNativeRunning),
+          resolvePolicy: (yield* ProviderSessionManagerV2)
+            .resolveMcpInvocationPolicy({
+              threadId,
+              providerInstanceId: instanceId,
+              providerSessionId: `mcp-test:${threadId}`,
+            })
+            .pipe(Effect.orDie),
           dropped: () => dropped,
           waitFor,
         });
@@ -306,10 +363,9 @@ it.live(
         const background = yield* takeOffer;
         assert.equal(background.input.message.createdBy, "agent");
         assert.equal(background.input.message.creationSource, "provider");
-        assert.deepEqual(background.input.message.notification?.source, {
-          kind: "provider_work",
-          workId: "extension-work-1",
-        });
+        assert.equal(background.input.message.notification?.source.kind, "provider_work");
+        const source = background.input.message.notification!.source;
+        assert.isTrue(source.kind === "provider_work" && source.workId === "extension-work-1");
         assert.deepEqual(prompts, ["First user message"]);
         assert.deepEqual(adopted, ["extension-work-1"]);
         yield* background.finish;
@@ -394,7 +450,7 @@ it.live.each([
           commandId: CommandId.make("archive:initiated"),
           threadId,
         });
-      const overrides: Partial<ProviderContinuationRequest> =
+      const overrides: WorkOverrides =
         scenario === "foreign-driver"
           ? { driver: ProviderDriverKind.make("foreign") }
           : scenario === "foreign-thread"
@@ -439,5 +495,133 @@ it.live.each([
       );
       if (active !== undefined) yield* active.finish;
     }),
+  ),
+);
+
+it.live(
+  "adopts captured native settings after defaults change before offer and before execution",
+  () =>
+    withInitiatedWork(
+      ({
+        orchestrator,
+        emitWork,
+        takeOffer,
+        prompts,
+        adopted,
+        closes,
+        loads,
+        resolvePolicy,
+        markNativeRunning,
+        waitFor,
+      }) =>
+        Effect.gen(function* () {
+          const original = yield* orchestrator.getThreadProjection(threadId);
+          const nativeOwner = original.providerThreads.find(
+            (row) => row.id === original.thread.activeProviderThreadId,
+          )!;
+          const initialLoads = loads();
+          const nextSelection = { ...selection, model: "next-user-model" };
+          yield* orchestrator.dispatch({
+            type: "thread.model-selection.set",
+            commandId: CommandId.make("defaults:model"),
+            threadId,
+            modelSelection: nextSelection,
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.interaction-mode.set",
+            commandId: CommandId.make("defaults:interaction"),
+            threadId,
+            interactionMode: "default",
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.runtime-mode.set",
+            commandId: CommandId.make("defaults:runtime"),
+            threadId,
+            runtimeMode: "full-access",
+          });
+          yield* markNativeRunning;
+          yield* waitFor((p) =>
+            p.providerSessions.some(
+              (row) => row.id === nativeOwner.providerSessionId && row.status === "running",
+            ),
+          );
+          yield* emitWork("captured-generation");
+          const admitted = yield* waitFor((p) => p.runs.length === 2);
+          const run = admitted.runs[1]!;
+          assert.equal(run.status, "starting");
+          assert.deepEqual(run.modelSelection, selection);
+          assert.equal(run.runtimeMode, "approval-required");
+          assert.equal(run.interactionMode, "plan");
+          assert.equal(run.providerThreadId, nativeOwner.id);
+          assert.deepEqual(admitted.thread.modelSelection, nextSelection);
+          assert.equal(admitted.thread.runtimeMode, "full-access");
+          assert.equal(admitted.thread.interactionMode, "default");
+          const laterSelection = { ...selection, model: "later-user-model" };
+          yield* orchestrator.dispatch({
+            type: "thread.model-selection.set",
+            commandId: CommandId.make("defaults:later-model"),
+            threadId,
+            modelSelection: laterSelection,
+          });
+          const worker = yield* OrchestrationEffectWorkerV2;
+          yield* worker.drain(12);
+          const adoptedWork = yield* takeOffer;
+          assert.deepEqual(adoptedWork.input.modelSelection, selection);
+          assert.equal(adoptedWork.input.runtimePolicy.runtimeMode, "approval-required");
+          assert.equal(adoptedWork.input.runtimePolicy.interactionMode, "plan");
+          assert.equal(
+            adoptedWork.input.runtimePolicy.cwd,
+            original.providerSessions.find((row) => row.id === nativeOwner.providerSessionId)!.cwd,
+          );
+          assert.equal(adoptedWork.input.providerThread.id, nativeOwner.id);
+          assert.equal(
+            adoptedWork.input.providerThread.providerSessionId,
+            nativeOwner.providerSessionId,
+          );
+          assert.deepEqual(
+            yield* resolvePolicy,
+            Option.some({ runtimeMode: "approval-required", interactionMode: "plan" }),
+          );
+          const executing = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(executing.thread.modelSelection, laterSelection);
+          assert.deepEqual(prompts, ["First user message"]);
+          assert.deepEqual(adopted, ["captured-generation"]);
+          assert.equal(loads(), initialLoads);
+          assert.equal(closes(), 0);
+          yield* adoptedWork.finish;
+          yield* waitFor((p) => p.runs[1]?.status === "waiting");
+          yield* worker.drain(12);
+          yield* waitFor((p) => p.runs[1]?.status === "completed");
+        }),
+      { manualWorker: true, restricted: true },
+    ),
+);
+
+it.live("refuses to reopen the captured native owner when it closes before buffered adoption", () =>
+  withInitiatedWork(
+    ({ orchestrator, emitWork, prompts, adopted, closes, loads, waitFor }) =>
+      Effect.gen(function* () {
+        const original = yield* orchestrator.getThreadProjection(threadId);
+        const nativeOwner = original.providerThreads.find(
+          (row) => row.id === original.thread.activeProviderThreadId,
+        )!;
+        const initialLoads = loads();
+        yield* emitWork("closed-generation");
+        yield* waitFor((p) => p.runs.length === 2 && p.runs[1]?.status === "starting");
+        yield* (yield* ProviderSessionManagerV2).close(nativeOwner.providerSessionId!);
+        yield* (yield* OrchestrationEffectWorkerV2).drain(12);
+        const failed = yield* waitFor((p) => p.runs[1]?.status === "failed");
+        assert.deepEqual(adopted, []);
+        assert.deepEqual(prompts, ["First user message"]);
+        assert.equal(loads(), initialLoads);
+        assert.equal(closes(), 1);
+        assert.equal(failed.runs[1]!.providerThreadId, nativeOwner.id);
+        assert.isTrue(
+          failed.attempts
+            .filter((a) => a.runId === failed.runs[1]!.id)
+            .every((a) => a.status === "failed"),
+        );
+      }),
+    { manualWorker: true },
   ),
 );

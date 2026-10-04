@@ -1080,6 +1080,17 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
 });
 export type OrchestrationV2RuntimeRequest = typeof OrchestrationV2RuntimeRequest.Type;
 
+/** The immutable execution settings of an already-started native generation. */
+export const OrchestrationV2ProviderRuntimePolicy = Schema.Struct({
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
+  cwd: Schema.NullOr(Schema.String),
+  approvalPolicy: Schema.optional(Schema.Unknown),
+  sandboxPolicy: Schema.optional(Schema.Unknown),
+  reasoningEffort: Schema.optional(Schema.String),
+});
+export type OrchestrationV2ProviderRuntimePolicy = typeof OrchestrationV2ProviderRuntimePolicy.Type;
+
 const SubagentNotificationSource = Schema.Struct({
   kind: Schema.Literal("subagent"),
   /** The subagent's own thread, when the notification reports one subagent. */
@@ -1129,7 +1140,14 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
     CommandNotificationSource,
     Schema.Struct({ kind: Schema.Literal("monitor") }),
     Schema.Struct({ kind: Schema.Literal("background_task") }),
-    Schema.Struct({ kind: Schema.Literal("provider_work"), workId: TrimmedNonEmptyString }),
+    Schema.Struct({
+      kind: Schema.Literal("provider_work"),
+      workId: TrimmedNonEmptyString,
+      providerThreadId: ProviderThreadId,
+      providerSessionId: ProviderSessionId,
+      modelSelection: ModelSelection,
+      runtimePolicy: OrchestrationV2ProviderRuntimePolicy,
+    }),
     // SCIENT-FORK: a persisted, successful-but-cut-short provider response.
     Schema.Struct({
       kind: Schema.Literal("output_truncated"),
@@ -3061,6 +3079,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
     providerInstanceId: ProviderInstanceId,
     driver: ProviderDriverKind,
     workId: TrimmedNonEmptyString,
+    modelSelection: ModelSelection,
+    runtimePolicy: OrchestrationV2ProviderRuntimePolicy,
     detail: Schema.String,
   }),
   Schema.Struct({

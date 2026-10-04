@@ -905,11 +905,17 @@ Provider output comes back as internal commands such as `thread.message.assistan
 ### Provider-initiated native work
 
 A native extension can start work after the previous Scient run settles. Its adapter buffers the
-new frames and offers `ProviderInitiatedWorkRequest` through the shared continuation queue. The
+new frames and offers `ProviderContinuationRequest.initiated` through the shared continuation queue. The
 server admits an independent run only while that exact provider instance, live session and native
 thread still own an idle application thread. The request has a stable work ID, a generation guard
 invalidated by Stop, and a callback that disposes a dropped buffer. Duplicate offers replay the
 same command receipt; archived, replaced or busy owners cannot acquire another run.
+
+The adapter captures the applied model, runtime policy and workspace when that native generation
+begins. Admission records this immutable configuration with its exact native owner; adoption does
+not apply later thread defaults, reopen a disposed session or reload its conversation. Changing
+next-turn defaults cannot relabel existing work or widen its run-scoped MCP authority. A captured
+owner that is lost before adoption fails the run rather than recreating the buffered generation.
 
 Admission records an agent-authored system notification rather than a user message. The adapter's
 `startTurn` receives `message.notification.source.kind = "provider_work"` and its `workId`: it

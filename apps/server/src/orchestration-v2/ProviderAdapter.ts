@@ -19,7 +19,7 @@ import {
   OrchestrationV2Subagent,
   OrchestrationV2TurnItem,
   ProviderApprovalDecision,
-  ProviderInteractionMode,
+  OrchestrationV2ProviderRuntimePolicy,
   ProviderDriverKind,
   ProviderInstanceId,
   PositiveInt,
@@ -27,7 +27,6 @@ import {
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
-  RuntimeMode,
   RuntimeRequestId,
   RunAttemptId,
   RunId,
@@ -44,14 +43,7 @@ import type {
   ProviderSelectionTransitionPlan,
 } from "./ProviderSelectionTransition.ts";
 
-export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
-  runtimeMode: RuntimeMode,
-  interactionMode: ProviderInteractionMode,
-  cwd: Schema.NullOr(Schema.String),
-  approvalPolicy: Schema.optional(Schema.Unknown),
-  sandboxPolicy: Schema.optional(Schema.Unknown),
-  reasoningEffort: Schema.optional(Schema.String),
-});
+export const ProviderAdapterV2RuntimePolicy = OrchestrationV2ProviderRuntimePolicy;
 export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePolicy.Type;
 
 export const ProviderAdapterV2TurnMessage = Schema.Struct({
