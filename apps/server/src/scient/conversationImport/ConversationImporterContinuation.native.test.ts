@@ -27,6 +27,7 @@ import { EventSinkV2 } from "../../orchestration-v2/EventSink.ts";
 import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
 import { ConversationForkService } from "../../orchestration-v2/scient-fork/ConversationForkService.ts";
 import { makeLayer } from "../../orchestration-v2/ProviderAdapterRegistry.ts";
+import type { ProviderAdapterV2TurnInput } from "../../orchestration-v2/ProviderAdapter.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "../../orchestration-v2/IdAllocator.ts";
 import { AcpProviderCapabilitiesV2 } from "../../orchestration-v2/Adapters/AcpAdapterV2.ts";
 import {
@@ -93,6 +94,18 @@ import {
 import { conversationSnapshotProjection } from "../conversationExport/conversationSnapshotProjection.ts";
 
 const encodeHistoryFixtureJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const encodeQuestionFileReferences = Schema.encodeEffect(
+  Schema.fromJsonString(
+    Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        name: Schema.String,
+        mimeType: Schema.String,
+        contentReattached: Schema.Literal(false),
+      }),
+    ),
+  ),
+);
 
 const attemptDirectory = (name = "attempt") =>
   Effect.map(ServerConfig, (config) =>
@@ -131,7 +144,11 @@ const leaseFor = (
  */
 class ImportPeer extends Context.Service<
   ImportPeer,
-  { readonly prompts: string[]; readonly setTime: (time: number) => Effect.Effect<void> }
+  {
+    readonly prompts: string[];
+    readonly sends: ProviderAdapterV2TurnInput[];
+    readonly setTime: (time: number) => Effect.Effect<void>;
+  }
 >()("t3/scient/conversationImport/ConversationImporterContinuation.native.test/ImportPeer") {}
 
 const withImporter = <A, E, R>(
@@ -151,6 +168,7 @@ const withImporter = <A, E, R>(
 ) =>
   Effect.gen(function* () {
     const prompts: string[] = [];
+    const sends: ProviderAdapterV2TurnInput[] = [];
     let time = options.initialTime ?? Date.parse("2026-09-28T09:30:00.000Z");
     const liveClock = yield* Clock.Clock;
     const clock: Clock.Clock = {
@@ -218,6 +236,7 @@ const withImporter = <A, E, R>(
               send: (turn, nativeTurnId) =>
                 Effect.gen(function* () {
                   prompts.push(turn.message.text);
+                  sends.push(turn);
                   if (options.onSteer !== undefined)
                     yield* publish({ type: "accepted", nativeTurnId });
                   yield* options.beforeSend?.() ?? Effect.void;
@@ -298,6 +317,7 @@ const withImporter = <A, E, R>(
       Effect.andThen(effect),
       Effect.provideService(ImportPeer, {
         prompts,
+        sends,
         setTime: (value) =>
           Effect.sync(() => {
             time = value;
@@ -2337,6 +2357,33 @@ it.live(
           Object.values(reforkQuestion.questionAnswer.attachmentsByQuestionId).flat().length,
           questionFiles.length,
         );
+        const reforkQuestionFiles = Object.values(
+          reforkQuestion.questionAnswer.attachmentsByQuestionId,
+        ).flat();
+        const questionCopies = questionFiles.map((file) => {
+          const matches = refork.thread.conversationFork!.attachmentCopies.filter(
+            (copy) => copy.source.id === file.id,
+          );
+          assert.lengthOf(matches, 1);
+          assert.deepEqual(matches[0]!.source, file);
+          return matches[0]!;
+        });
+        assert.deepEqual(
+          reforkQuestionFiles,
+          questionCopies.map((copy) => copy.target),
+        );
+        for (const [index, file] of reforkQuestionFiles.entries()) {
+          assert.notEqual(file.id, questionFiles[index]!.id);
+          assert.deepEqual(
+            yield* fs.readFile(
+              resolveAttachmentPath({
+                attachmentsDir: config.attachmentsDir,
+                attachment: file,
+              })!,
+            ),
+            bytes.get(questionCopies[index]!.source.id),
+          );
+        }
         for (const copy of refork.thread.conversationFork!.attachmentCopies) {
           assert.isTrue(bytes.has(copy.source.id));
           assert.notEqual(copy.source.id, copy.target.id);
@@ -2356,6 +2403,25 @@ it.live(
         assert.include(prompt, "Thinking about 2");
         assert.include(prompt, "Which figure?");
         assert.notInclude(prompt, "Temporary answer");
+        const sent = (yield* ImportPeer).sends.at(-1)!;
+        assert.equal(sent.threadId, reforkId);
+        assert.equal(sent.message.text, prompt);
+        assert.deepEqual(sent.message.attachments, []);
+        const references = reforkQuestionFiles.map((file) => ({
+          id: file.id,
+          name: file.name,
+          mimeType: file.mimeType,
+          contentReattached: false as const,
+        }));
+        const encodedReferences = yield* encodeQuestionFileReferences(references);
+        const suppliedAnswer = `Question: Which figure?\nAnswer: This one\nAttachment references (bytes not replayed): ${encodedReferences}`;
+        assert.equal(sent.message.text.split(suppliedAnswer).length - 1, 1);
+        for (const file of questionFiles) assert.notInclude(sent.message.text, file.id);
+        const delivered = (yield* store.getThreadProjection(reforkId)).contextHandoffs.at(
+          -1,
+        )!.delivery!;
+        assert.include(delivered.itemIds, reforkQuestion.id);
+        assert.notInclude(delivered.omittedItemIds ?? [], reforkQuestion.id);
       }),
       {
         runtimeOptions: {
