@@ -756,3 +756,42 @@ required. Independent review matches the exact final test and production blobs
 (`d3-ws-protocol-qualified-handoff-round2.md`,
 `d3-ws-protocol-independent-review-round2.md`). Installed-client upgrade and
 remote/mobile acceptance remain separate from this controlled endpoint proof.
+
+### Reviewed architecture and boundary composition
+
+The coordinator composition retains 37 independently reviewed maintainer Markdown
+paths, the owned OpenCode acknowledgement fix and canonical loaded-answer attention
+across server/web/mobile. The architecture documentation explicitly distinguishes
+live V2 execution from old-data readers; inherited test origin is determined from
+Scient-added assertions and fixture/parameter conditions, not title or filename.
+The branch keeps every upstream and owned parent. The skills-release mount repair
+classifies the actual Scient catalog and inherited workspace-manifest fixture,
+without weakening any seam checker or changing runtime behavior.
+
+The composed boundary qualification passes 463 focused cases across server, shared,
+web and mobile, all 32 compiler tasks and scoped formatting/lint. The separate OC2
+owned acknowledgement group passes 100 cases plus its compiler/style checks. Web
+logs retain existing React warnings. The current full seam suite passes after the
+previous two unclassified skills-release references were classified. The final
+provenance/WebSocket composition passes 18 provenance and 242 actual server-route
+cases, scripts/server compilers, scoped formatting/lint and whitespace. Independent
+frozen source reviews accept both incoming patches and the exact resolved tree
+`c6e81605ca603ac82e03099d142cd98c15583b5c`. These are bounded local evidence, not
+whole-candidate, vendor/platform or manual acceptance.
+
+Exact reviewed owned merge edges are recorded below and in upstream-state.json.
+Only their complete ordered vectors are admitted; nested ancestry remains audited.
+The original owned base, official target, integration cursor, historical exceptions
+and trusted workflow flags are unchanged. No runtime qualification is inferred
+from a provenance receipt.
+
+| Merge                                      | First parent                               | Second parent                              |
+| ------------------------------------------ | ------------------------------------------ | ------------------------------------------ |
+| `6dc7de1d74a288c404b9481874c6a77b1986e580` | `7ef738fb31cf7595142254dc8fe6dfd47523aa35` | `b180c89867f74fa67ef4cd008fd913c2292cb5e5` |
+| `649a9caa1e0a7eba51942bf84e475c3d9931a71e` | `6dc7de1d74a288c404b9481874c6a77b1986e580` | `2a672bd865b89e20768476643925b3e85fc2d90f` |
+| `7992b26bef3b9636e2a547c28d1393c8bc4749ac` | `649a9caa1e0a7eba51942bf84e475c3d9931a71e` | `238eb3d822faefa29aef40b1ef70193111b00f16` |
+| `a61371f826c605c8202267cee8a15cc3c7ecce83` | `3911b36ee87de0c827465a1886e0685aad495a74` | `d3bc827adf4fb19ca916355e9f07c6fab86dfac7` |
+
+V1 removal and remaining provider/context/queue preservation fixes still require
+reviewed composition. Final complete checks/build/smoke/package, independent full
+review, current documentation refresh and actual app/manual acceptance remain open.
