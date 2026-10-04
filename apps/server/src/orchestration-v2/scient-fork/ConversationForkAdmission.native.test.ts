@@ -80,6 +80,62 @@ const withSource = <A, E, R>(test: (command: ThreadForkCommand) => Effect.Effect
   );
 
 it.live(
+  "uses persisted history and titles despite caller-supplied boundary and transcript fields",
+  () =>
+    withSource((command) =>
+      Effect.gen(function* () {
+        const forks = yield* ConversationForkService;
+        const store = yield* ProjectionStoreV2;
+        const source = yield* store.getThreadProjection(command.originThreadId);
+        const callerShaped = {
+          ...command,
+          conversationForkBoundaries: [],
+          retainedPrefix: [],
+          turnCount: 0,
+          checkpointCount: 99,
+          title: "Injected title",
+          sourceImport: { exportId: "injected provenance" },
+        };
+        yield* forks.dispatch(callerShaped);
+        const fork = yield* store.getThreadProjection(command.newThreadId);
+        assert.equal(fork.thread.title, "Origin conversation (2)");
+        assert.deepEqual(
+          fork.messages.map((message) => message.text),
+          ["Question 1", "Answer 1", "Question 2", "Answer 2"],
+        );
+        assert.equal(
+          fork.thread.forkLineage?.sourceImport?.exportId,
+          source.thread.conversationImport?.exportId,
+        );
+        assert.isNull(fork.thread.conversationFork?.checkpointRef);
+        const rejected = {
+          ...callerShaped,
+          commandId: CommandId.make("injected-missing-boundary"),
+          newThreadId: ThreadId.make("injected-missing-boundary"),
+          sourceAssistantMessageId: MessageId.make("invented-answer"),
+          conversationForkBoundaries: [{ assistantMessageId: "invented-answer" }],
+          retainedPrefix: [{ role: "assistant", text: "Invented answer" }],
+        };
+        const sink = yield* EventSinkV2;
+        const sequence = yield* sink.latestSequence({});
+        assert.equal((yield* Effect.result(forks.dispatch(rejected)))._tag, "Failure");
+        assert.equal(yield* sink.latestSequence({}), sequence);
+        assert.ok(
+          Option.isNone(yield* (yield* CommandReceiptStoreV2).getByCommandId(rejected.commandId)),
+        );
+        assert.equal(
+          (yield* Effect.result(store.getThreadProjection(rejected.newThreadId)))._tag,
+          "Failure",
+        );
+        const sourceAfter = yield* store.getThreadProjection(command.originThreadId);
+        assert.deepEqual(sourceAfter.thread, source.thread);
+        assert.deepEqual(sourceAfter.messages, source.messages);
+        assert.deepEqual(sourceAfter.turnItems, source.turnItems);
+      }),
+    ),
+);
+
+it.live(
   "numbers sibling forks and reforks from persisted lineage while explicit titles preserve the same boundary",
   () =>
     withSource((command) =>
