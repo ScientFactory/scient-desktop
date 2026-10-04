@@ -24,7 +24,7 @@ import * as CliError from "effect/unstable/cli/CliError";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/unstable/cli";
 
-import { cli, makeCli } from "./bin.ts";
+import { cli, makeCli } from "./binCli.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
@@ -509,7 +509,24 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       const { output } = yield* captureStdout(runCli(["--help"], noConnectCli));
 
       assert.notInclude(output, "Manage the Scient background service.");
-      assert.notInclude(output, "__service-preflight");
+      for (const command of [
+        "service",
+        "__service-preflight",
+        "update",
+        "uninstall",
+        "__service-launcher",
+      ]) {
+        assert.isFalse(
+          noConnectCli.subcommands
+            .flatMap((group) => group.commands)
+            .some((candidate) => candidate.name === command),
+          command,
+        );
+        // The root accepts a positional cwd, so an unknown name alone is a
+        // directory argument. --help exercises parsing without starting a server.
+        const help = yield* captureStdout(runCli([command, "--help"], noConnectCli));
+        assert.include(help.output, "Run the Scient server.", command);
+      }
     }),
   );
 

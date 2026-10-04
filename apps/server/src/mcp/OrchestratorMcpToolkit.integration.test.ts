@@ -1419,6 +1419,95 @@ describe("orchestrator MCP toolkit", () => {
               tasks: [{ scheduledTaskId, boundThreadId: parentThreadId }],
             });
 
+            // Ceilings are checked at the real MCP entry using V2 thread modes,
+            // before any scheduled-task write, including rebind and unbind.
+            for (const [suffix, runtimeMode, interactionMode, expectedCode] of [
+              ["supervised", "approval-required", "default", "runtime_mode_escalation_denied"],
+              ["plan", "full-access", "plan", "interaction_mode_escalation_denied"],
+            ] as const) {
+              const callerThreadId = ThreadId.make(`thread:mcp-scheduled-${suffix}`);
+              yield* orchestrator.dispatch({
+                type: "thread.create",
+                createdBy: "user",
+                creationSource: "web",
+                commandId: CommandId.make(`command:mcp-scheduled-${suffix}:create`),
+                threadId: callerThreadId,
+                projectId,
+                title: "Scheduled task caller",
+                modelSelection: codexSelection,
+                runtimeMode,
+                interactionMode,
+                branch: null,
+                worktreePath: cwd,
+              });
+              const callerScope = { ...invocation, threadId: callerThreadId };
+              for (const binding of [undefined, false, true]) {
+                const before = yield* Ref.get(scheduledStore);
+                const denied = yield* invokeAs(callerScope, "update_scheduled_task", {
+                  scheduledTaskId,
+                  prompt: "replacement instructions",
+                  ...(binding === undefined ? {} : { bindToCurrentThread: binding }),
+                });
+                // Declared tool failures are returned as structured MCP content.
+                expect(denied.isError).toBe(false);
+                expect(denied.structuredContent).toMatchObject({ code: expectedCode });
+                expect(yield* Ref.get(scheduledStore)).toEqual(before);
+              }
+              for (const bindToCurrentThread of [true, false]) {
+                const created = yield* invokeAs(callerScope, "schedule_task", {
+                  prompt: "work within the caller ceiling",
+                  schedule: { type: "interval", everyMs: 60_000 },
+                  bindToCurrentThread,
+                  clientRequestId: `ceiling-${suffix}-${bindToCurrentThread}`,
+                });
+                expect(created.isError).toBe(false);
+                const inherited = (yield* Ref.get(scheduledStore)).find(
+                  (task) => task.id !== scheduledTaskId,
+                );
+                expect(inherited).toMatchObject({ runtimeMode, interactionMode });
+                expect(inherited?.threadId).toBe(bindToCurrentThread ? callerThreadId : null);
+                if (inherited !== undefined) {
+                  yield* invokeAs(callerScope, "delete_scheduled_task", {
+                    scheduledTaskId: inherited.id,
+                  });
+                }
+              }
+              // A task's copied modes can be weaker than its bound thread.
+              // Bound execution uses the thread, so checking the copy alone fails.
+              const originalTasks = yield* Ref.get(scheduledStore);
+              yield* Ref.set(
+                scheduledStore,
+                originalTasks.map((task) => ({
+                  ...task,
+                  runtimeMode,
+                  interactionMode,
+                })),
+              );
+              const boundDenied = yield* invokeAs(callerScope, "update_scheduled_task", {
+                scheduledTaskId,
+                prompt: "replacement for a stronger bound thread",
+                bindToCurrentThread: false,
+              });
+              expect(boundDenied.isError).toBe(false);
+              expect(boundDenied.structuredContent).toMatchObject({ code: expectedCode });
+              expect((yield* Ref.get(scheduledStore))[0]?.prompt).toBe(originalTasks[0]?.prompt);
+              yield* Ref.set(scheduledStore, originalTasks);
+            }
+
+            // A caller within the ceiling can edit and unbind normally.
+            const unbound = yield* invoke("update_scheduled_task", {
+              scheduledTaskId,
+              prompt: "updated safe scheduled instructions",
+              bindToCurrentThread: false,
+            });
+            expect(unbound.isError).toBe(false);
+            expect((yield* Ref.get(scheduledStore))[0]).toMatchObject({
+              prompt: "updated safe scheduled instructions",
+              threadId: null,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+            });
+
             // update_scheduled_task pauses without deleting.
             const scheduledUpdateCall = yield* invoke("update_scheduled_task", {
               scheduledTaskId,

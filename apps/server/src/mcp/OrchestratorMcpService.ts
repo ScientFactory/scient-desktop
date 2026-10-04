@@ -1253,6 +1253,19 @@ const make = Effect.gen(function* () {
           parent.thread.projectId,
           input.scheduledTaskId,
         );
+        // Editing or unbinding a task changes future executable instructions.
+        // The saved launch modes and an existing bound thread both set a ceiling:
+        // bound runs execute with that thread's current modes, not the task copy.
+        yield* resolveRuntimeMode(parent.thread.runtimeMode, existing.runtimeMode);
+        yield* resolveInteractionMode(parent.thread.interactionMode, existing.interactionMode);
+        if (existing.threadId !== null) {
+          const bound = yield* loadProjection(existing.threadId);
+          yield* resolveRuntimeMode(parent.thread.runtimeMode, bound.thread.runtimeMode);
+          yield* resolveInteractionMode(
+            parent.thread.interactionMode,
+            bound.thread.interactionMode,
+          );
+        }
         const threadId =
           input.bindToCurrentThread === undefined
             ? existing.threadId
