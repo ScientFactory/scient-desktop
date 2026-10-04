@@ -16,6 +16,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { EventSinkV2Shape } from "../EventSink.ts";
+import { readInheritedTurnIds } from "./LegacyConversationOriginReader.ts";
 
 interface HistoryRow {
   readonly item_id: string;
@@ -85,7 +86,7 @@ export const prepareLegacyHistory = Effect.fn("LegacyScientHistory.prepare")(fun
   includeArtifactDetails = false,
 ) {
   const includeDetails = includeArtifactDetails ? 1 : 0;
-  const rows = yield* sql<HistoryRow>`
+  const chronologicalRows = yield* sql<HistoryRow>`
     WITH history AS (
       SELECT 'migration:v1:turn-item:' || message_id AS item_id, turn_id, 'message' AS source,
         created_at, updated_at, 0 AS source_order, 0 AS ordering, '{}' AS record_json
@@ -132,6 +133,23 @@ export const prepareLegacyHistory = Effect.fn("LegacyScientHistory.prepare")(fun
       ROW_NUMBER() OVER (ORDER BY created_at, source_order, ordering, item_id) AS ordinal
     FROM history ORDER BY ordinal
   `;
+  // Copied turns have a durable order even when copied message timestamps tie.
+  // Keep the entire inherited prefix ahead of later local history; a refork must
+  // never borrow an unanswered request from after its selected answer.
+  const inheritedOrder = new Map(
+    [...(yield* readInheritedTurnIds(sql, threadId))].map((turnId, index) => [turnId, index]),
+  );
+  const rows = chronologicalRows
+    .toSorted((left, right) => {
+      const leftTurn = inheritedOrder.get(left.turn_id ?? "");
+      const rightTurn = inheritedOrder.get(right.turn_id ?? "");
+      if (leftTurn !== undefined || rightTurn !== undefined) {
+        const difference = (leftTurn ?? Infinity) - (rightTurn ?? Infinity);
+        if (difference !== 0) return difference;
+      }
+      return left.ordinal - right.ordinal;
+    })
+    .map((row, index) => ({ ...row, ordinal: index + 1 }));
   // Reassign only the legacy prefix atomically: old message-only positions can
   // occupy the new artifact slots, and the ordinal index is unique per thread.
   yield* sql`DELETE FROM orchestration_v2_turn_item_positions WHERE thread_id = ${threadId}
