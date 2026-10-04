@@ -252,10 +252,13 @@ it("keeps legacy hydration and admission imports at explicit boundaries", () => 
     "orchestration-v2/Orchestrator.ts",
     "orchestration-v2/ThreadManagementService.ts",
     "orchestration-v2/runtimeLayer.ts",
+    // Pure historical-system decoding; no native execution authority.
     "orchestration-v2/scient-fork/ConversationForkPlan.ts",
+    // Hydrates a historical source before selecting its immutable fork boundary.
     "orchestration-v2/scient-fork/ConversationForkService.ts",
     "orchestration-v2/scient-fork/ForkBoundaryReadModel.ts",
     "orchestration-v2/scient-fork/importRepository.ts",
+    // Supplies the real historical importer to the composed replay fixture.
     "orchestration-v2/testkit/ProviderReplayHarness.ts",
     "project/ProjectService.ts",
     "scient/conversationExport/ConversationSnapshotService.ts",

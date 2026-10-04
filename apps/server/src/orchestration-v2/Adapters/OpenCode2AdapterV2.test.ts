@@ -321,6 +321,7 @@ const resumed = (
     readonly external?: boolean;
     readonly supervised?: boolean;
     readonly instructions?: string;
+    readonly beforeResponse?: (operation: string) => Promise<void>;
   },
 ) =>
   Effect.gen(function* () {
@@ -343,7 +344,14 @@ const resumed = (
         ],
         options?.instructions,
       ),
-      options?.external === undefined ? undefined : { external: options.external },
+      options === undefined
+        ? undefined
+        : {
+            ...(options.external === undefined ? {} : { external: options.external }),
+            ...(options.beforeResponse === undefined
+              ? {}
+              : { beforeResponse: options.beforeResponse }),
+          },
     );
     const thread = yield* runtime.resumeThread({
       providerThread: providerThread(yield* DateTime.now),
@@ -409,6 +417,220 @@ const history = {
 };
 
 describe("OpenCode2 adapter", () => {
+  for (const proof of [
+    "confirmed",
+    "foreign-id",
+    "foreign-session",
+    "missing-id",
+    "terminal-first",
+    "native-start-foreign-id",
+  ] as const) {
+    it.effect(`confirms only native-owned prompt boundaries: ${proof}`, () =>
+      Effect.gen(function* () {
+        let releaseTerminal: (() => void) | undefined;
+        const nativeTerminalObserved = new Promise<void>((resolve) => {
+          releaseTerminal = resolve;
+        });
+        const body: Record<string, unknown> = {
+          id:
+            proof === "foreign-id" || proof === "native-start-foreign-id"
+              ? "msg_foreign_boundary"
+              : PROMPT_ID,
+          sessionID: proof === "foreign-session" ? "ses_foreign_boundary" : SESSION,
+          time: { created: 1790656601410 },
+          type: "user",
+          payload: { text: "hi" },
+          delivery: "steer",
+        };
+        if (proof === "missing-id") delete body.id;
+        const terminalFrame = event("session.execution.succeeded", { sessionID: SESSION });
+        const { runtime, thread } = yield* resumed(
+          [
+            out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+            ...(proof === "terminal-first"
+              ? [terminalFrame]
+              : proof === "native-start-foreign-id"
+                ? [event("session.execution.started", { sessionID: SESSION })]
+                : []),
+            replyData("session.prompt", body),
+            ...(proof === "terminal-first" || proof === "missing-id" ? [] : [terminalFrame]),
+          ],
+          proof === "terminal-first" || proof === "native-start-foreign-id"
+            ? {
+                beforeResponse: (operation) =>
+                  operation === "session.prompt" ? nativeTerminalObserved : Promise.resolve(),
+              }
+            : undefined,
+        );
+        const seen: ProviderAdapterV2Event[] = [];
+        const terminal = yield* Deferred.make<void>();
+        const confirmed = yield* Deferred.make<void>();
+        yield* runtime.events.pipe(
+          Stream.runForEach((entry) =>
+            Effect.gen(function* () {
+              seen.push(entry);
+              if (
+                proof === "native-start-foreign-id" &&
+                entry.type === "provider_turn.updated" &&
+                entry.providerTurn.nativeAcceptance === "accepted"
+              )
+                releaseTerminal?.();
+              if (entry.type === "turn.terminal") {
+                releaseTerminal?.();
+                yield* Deferred.succeed(terminal, undefined);
+              }
+              if (
+                entry.type === "provider_turn.updated" &&
+                entry.providerTurn.nativeTurnRef?.strength === "strong"
+              ) {
+                yield* Deferred.succeed(confirmed, undefined);
+              }
+            }),
+          ),
+          Effect.forkScoped,
+        );
+        const started = yield* runtime.startTurn(turnInput(thread)).pipe(Effect.exit);
+        assert.equal(Exit.isSuccess(started), proof !== "missing-id");
+        yield* Deferred.await(terminal);
+        const expectedStrong = proof === "confirmed" || proof === "terminal-first";
+        if (expectedStrong) yield* Deferred.await(confirmed);
+        const receipts = seen.flatMap((entry) =>
+          entry.type === "provider_turn.updated" ? [entry.providerTurn] : [],
+        );
+        const latest = receipts.at(-1);
+        assert.ok(latest);
+        assert.equal(latest.nativeTurnRef?.strength, expectedStrong ? "strong" : "weak");
+        assert.equal(latest.status, proof === "missing-id" ? "failed" : "completed");
+        assert.equal(latest.runAttemptId, turnInput(thread).attemptId);
+        assert.equal(latest.providerThreadId, thread.id);
+        if (expectedStrong) {
+          assert.equal(
+            latest.nativeTurnRef?.nativeId,
+            `msg_t3_turn_${SESSION}:attempt:opencode2-adapter`,
+          );
+          assert.ok(latest.acceptedAt);
+          assert.equal(latest.nativeAcceptance, "accepted");
+        }
+        if (expectedStrong || proof === "native-start-foreign-id") {
+          assert.equal(latest.nativeAcceptance, "accepted");
+          assert.ok(latest.acceptedAt);
+        }
+        if (proof === "native-start-foreign-id") {
+          assert.isTrue(
+            seen.some(
+              (entry) =>
+                entry.type === "provider_turn.updated" &&
+                entry.providerTurn.status === "running" &&
+                entry.providerTurn.nativeAcceptance === "accepted" &&
+                entry.providerTurn.nativeTurnRef?.strength === "weak",
+            ),
+          );
+        }
+        if (proof === "terminal-first") {
+          const terminalIndex = seen.findIndex((entry) => entry.type === "turn.terminal");
+          const confirmedIndex = seen.findIndex(
+            (entry) =>
+              entry.type === "provider_turn.updated" &&
+              entry.providerTurn.nativeTurnRef?.strength === "strong",
+          );
+          assert.isAbove(confirmedIndex, terminalIndex);
+          assert.ok(latest.completedAt);
+        }
+      }).pipe(Effect.scoped),
+    );
+  }
+
+  for (const boundary of [
+    "appended",
+    "last",
+    "absent",
+    "duplicate",
+    "weak",
+    "foreign-thread",
+  ] as const) {
+    it.effect(`cuts frozen native forks at an inclusive confirmed boundary: ${boundary}`, () =>
+      Effect.gen(function* () {
+        const FORK = "ses_f1484db83ffeLGtrRCFimo1H0e";
+        const selectedMessage = {
+          id: PROMPT_ID,
+          time: { created: 1 },
+          text: "hi",
+          type: "user",
+        };
+        const appended = { ...selectedMessage, id: "msg_appended", time: { created: 2 } };
+        const shouldFork = boundary === "appended" || boundary === "last";
+        const shouldRead = boundary !== "weak" && boundary !== "foreign-thread";
+        const { runtime, thread } = yield* resumed([
+          out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          ...(shouldRead
+            ? [
+                out("message.list", { sessionID: SESSION, order: "desc", limit: "100" }),
+                reply("message.list", {
+                  data:
+                    boundary === "absent"
+                      ? [appended]
+                      : boundary === "duplicate"
+                        ? [selectedMessage, selectedMessage]
+                        : boundary === "appended"
+                          ? [appended, selectedMessage]
+                          : [selectedMessage],
+                  cursor: {},
+                }),
+              ]
+            : []),
+          ...(shouldFork
+            ? [
+                out("session.fork", {
+                  sessionID: SESSION,
+                  ...(boundary === "appended" ? { before: "msg_appended" } : {}),
+                }),
+                replyData("session.fork", sessionInfo({ id: FORK })),
+                out("session.update", { sessionID: FORK, permissions: "<any>" }),
+                reply("session.update", null),
+              ]
+            : []),
+        ]);
+        const receipts: OrchestrationV2ProviderTurn[] = [];
+        const terminal = yield* Deferred.make<void>();
+        yield* runtime.events.pipe(
+          Stream.runForEach((entry) =>
+            Effect.gen(function* () {
+              if (entry.type === "provider_turn.updated") receipts.push(entry.providerTurn);
+              if (entry.type === "turn.terminal") yield* Deferred.succeed(terminal, undefined);
+            }),
+          ),
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(turnInput(thread));
+        yield* Deferred.await(terminal);
+        const confirmed = receipts.at(-1);
+        assert.ok(confirmed);
+        assert.equal(confirmed.nativeTurnRef?.strength, "strong");
+        assert.ok(confirmed.nativeTurnRef);
+        const selected: OrchestrationV2ProviderTurn =
+          boundary === "weak"
+            ? { ...confirmed, nativeTurnRef: { ...confirmed.nativeTurnRef, strength: "weak" } }
+            : boundary === "foreign-thread"
+              ? { ...confirmed, providerThreadId: ProviderThreadId.make("foreign-provider-thread") }
+              : confirmed;
+        // Admission retained this turn only; native history may already contain a later prompt.
+        const forked = yield* runtime
+          .forkThread({
+            sourceProviderThread: thread,
+            sourceProviderTurns: [selected],
+            providerTurnId: selected.id,
+            targetThreadId: ThreadId.make("thread:opencode2-adapter:fork"),
+          })
+          .pipe(Effect.result);
+        assert.equal(forked._tag, shouldFork ? "Success" : "Failure");
+        if (forked._tag === "Success") assert.equal(forked.success.nativeThreadRef?.nativeId, FORK);
+        else assert.equal(forked.failure._tag, "ProviderAdapterProtocolError");
+      }).pipe(Effect.scoped),
+    );
+  }
+
   for (const external of [false, true]) {
     it.effect(
       `writes exact Scient awareness through native OpenCode2 instructions with external ${external}`,
@@ -659,7 +881,7 @@ describe("OpenCode2 adapter", () => {
     const call = "call-background";
     const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: call };
     return [
-      out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+      out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
       promptAccepted,
       event("session.execution.started", { sessionID: SESSION }),
       event("session.tool.input.started", { ...tool, name: "subagent" }),
@@ -1518,7 +1740,7 @@ describe("OpenCode2 adapter", () => {
           body: { _tag: "InvalidRequestError", message: "bad prompt" },
         }),
         // A clear refusal: nothing runs, so the next turn prompts directly.
-        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
         promptAccepted,
         event("session.execution.succeeded", { sessionID: SESSION }),
       ]);
@@ -2041,18 +2263,34 @@ describe("OpenCode2 adapter", () => {
         ],
         { supervised: true },
       );
-      const requested = yield* requestOf(runtime).pipe(Effect.forkScoped);
-      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      const requested =
+        yield* Deferred.make<
+          Extract<ProviderAdapterV2Event, { type: "runtime_request.updated" }>["runtimeRequest"]
+        >();
+      const terminal =
+        yield* Deferred.make<Extract<ProviderAdapterV2Event, { type: "turn.terminal" }>>();
+      // Runtime events are a unicast queue. One reader must route both facts:
+      // competing request/terminal streams can consume each other's events.
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) =>
+          event.type === "runtime_request.updated"
+            ? Deferred.succeed(requested, event.runtimeRequest).pipe(Effect.asVoid)
+            : event.type === "turn.terminal"
+              ? Deferred.succeed(terminal, event).pipe(Effect.asVoid)
+              : Effect.void,
+        ),
+        Effect.forkScoped,
+      );
       yield* runtime.startTurn({
         ...withLineage(thread),
         runtimePolicy: policy("approval-required"),
       });
-      const request = yield* Fiber.join(requested);
+      const request = yield* Deferred.await(requested);
       yield* runtime.respondToRuntimeRequest({
-        requestId: request!.id,
+        requestId: request.id,
         decision: "acceptForSession",
       });
-      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+      assert.equal((yield* Deferred.await(terminal)).status, "completed");
     }).pipe(Effect.scoped),
   );
 
@@ -3871,12 +4109,11 @@ describe("OpenCode2 adapter", () => {
       const [first, second] = turns;
       return { runtime, thread, first: first!, second: second! };
     });
-  const CONTINUED_PROMPT = `msg_t3_turn_${SESSION}:attempt:attempt:opencode2-adapter`;
   const CONTINUED_REPORT = `<subagent sessionID="${CHILD}" state="completed" description="Sleep">\nCHILD_OK\n</subagent>`;
   const continuedHistory = {
     data: [
       { id: "msg_report", time: { created: 2 }, text: CONTINUED_REPORT, type: "synthetic" },
-      { id: CONTINUED_PROMPT, time: { created: 1 }, text: "hi", type: "user" },
+      { id: PROMPT_ID, time: { created: 1 }, text: "hi", type: "user" },
     ],
     cursor: {},
   };

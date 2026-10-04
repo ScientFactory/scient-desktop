@@ -145,6 +145,7 @@ const operationOf = (
 const replayHttpClient = (
   controller: OpenCodeReplayController,
   replayGate: ProviderReplayGate | undefined,
+  beforeResponse?: (operation: string) => Promise<void>,
 ) => {
   // OpenCode's global SSE endpoint broadcasts to every live runtime. One
   // transcript cursor feeds all subscribers, including pooled predecessors.
@@ -236,6 +237,7 @@ const replayHttpClient = (
         // Recorded responses are the raw HTTP bodies; `null` is an empty 204.
         // `{ status, body }` replays an error status and `"<hang>"` never answers.
         const body = await controller.response(operation.type);
+        await beforeResponse?.(operation.type);
         if (body === "<hang>") return new Promise<Response>(() => {});
         if (typeof body === "object" && body !== null && "status" in body && "body" in body) {
           return new Response(encodeJson(body.body), {
@@ -277,6 +279,7 @@ export const replayServer = (
   options?: {
     readonly external?: boolean;
     readonly replayGate?: ProviderReplayGate;
+    readonly beforeResponse?: (operation: string) => Promise<void>;
     /** Counts the connections currently lent out, as the server owner's borrowers. */
     readonly borrowers?: { current: number };
   },
@@ -289,7 +292,7 @@ export const replayServer = (
         controller.assertComplete();
       }),
     );
-    const replay = replayHttpClient(controller, options?.replayGate);
+    const replay = replayHttpClient(controller, options?.replayGate, options?.beforeResponse);
     yield* Effect.addFinalizer(() => Effect.sync(replay.close));
     const opencode = yield* OpenCode2Client.make.pipe(
       Effect.provideService(HttpClient.HttpClient, replay.client),
@@ -324,6 +327,7 @@ const makeReplayAdapter = (
   options?: {
     readonly external?: boolean;
     readonly replayGate?: ProviderReplayGate;
+    readonly beforeResponse?: (operation: string) => Promise<void>;
     /** Counts the connections currently lent out, as the server owner's borrowers. */
     readonly borrowers?: { current: number };
   },
@@ -357,7 +361,11 @@ function makeRegistryLayer(
  */
 export const openCode2ReplayRuntime = (
   entries: ReadonlyArray<ProviderReplayEntry>,
-  options?: { readonly external?: boolean; readonly borrowers?: { current: number } },
+  options?: {
+    readonly external?: boolean;
+    readonly borrowers?: { current: number };
+    readonly beforeResponse?: (operation: string) => Promise<void>;
+  },
 ) =>
   Effect.gen(function* () {
     const adapter = yield* makeReplayAdapter(

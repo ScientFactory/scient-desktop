@@ -30,7 +30,9 @@ export function isManagedRuntimeActionDurablySettled(
   action: ProviderManagedRuntimeAction,
   runtime: ProviderRuntimeSummary,
 ): boolean {
-  if (action === "install") return runtime.source === "scient_managed";
-  if (action === "remove") return runtime.source !== "scient_managed";
+  if (action === "install")
+    return runtime.source === "scient_managed" || runtime.source === "registry";
+  if (action === "remove")
+    return runtime.source !== "scient_managed" && runtime.source !== "registry";
   return false;
 }

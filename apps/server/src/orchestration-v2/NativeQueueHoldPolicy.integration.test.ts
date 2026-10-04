@@ -26,8 +26,10 @@ import * as Clock from "effect/Clock";
 import { EventSinkV2 } from "./EventSink.ts";
 import { EffectOutboxV2 } from "./EffectOutbox.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
+import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
 import type * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Logger from "effect/Logger";
@@ -51,10 +53,17 @@ import {
   type ProviderAdapterV2Event,
 } from "./ProviderAdapter.ts";
 import { makeLayer } from "./ProviderAdapterRegistry.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
+import {
+  makeOrchestratorV2ReplayLayerWithRegistry,
+  makeReplayServerConfig,
+} from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
 import { sourcePlanFingerprint } from "./SourcePlan.ts";
 import { checkpointRefForScopeOrdinal } from "./CheckpointService.ts";
+import {
+  ThreadCommandExecutor,
+  layer as threadCommandExecutorLayer,
+} from "./ThreadCommandExecutor.ts";
 
 const instanceId = ProviderInstanceId.make("omp");
 const modelSelection = { instanceId, model: "queue-policy-model" };
@@ -79,6 +88,14 @@ const withNativeQueue = <A, E, R>(
     readonly interruptEntered: Effect.Effect<void>;
     readonly releaseInterrupt: Effect.Effect<void>;
     readonly takeOffer: Effect.Effect<NativeOffer, Cause.TimeoutError>;
+    readonly waitForThread: (
+      threadId: ThreadId,
+      predicate: (projection: OrchestrationV2ThreadProjection) => boolean,
+    ) => Effect.Effect<
+      OrchestrationV2ThreadProjection,
+      OrchestratorV2Error | Cause.TimeoutError,
+      Scope.Scope
+    >;
     readonly waitFor: (
       predicate: (projection: OrchestrationV2ThreadProjection) => boolean,
     ) => Effect.Effect<
@@ -88,6 +105,15 @@ const withNativeQueue = <A, E, R>(
     >;
   }) => Effect.Effect<A, E, R>,
   options: {
+    readonly cwd?: string;
+    readonly existingThread?: boolean;
+    readonly databaseLayer?: NonNullable<
+      Parameters<typeof makeOrchestratorV2ReplayLayerWithRegistry>[2]
+    >["databaseLayer"];
+    readonly serverConfigLayer?: NonNullable<
+      Parameters<typeof makeOrchestratorV2ReplayLayerWithRegistry>[2]
+    >["serverConfigLayer"];
+    readonly runEffectWorker?: boolean;
     readonly holdFirstSend?: boolean;
     readonly holdSendOrdinal?: number;
     readonly refuseSend?: number;
@@ -105,7 +131,7 @@ const withNativeQueue = <A, E, R>(
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const cwd = yield* checkpointWorkspace(name);
+      const cwd = options.cwd ?? (yield* checkpointWorkspace(name));
       const allocator = yield* IdAllocatorV2;
       const scope = yield* Scope.Scope;
       const offered = yield* Queue.unbounded<NativeOffer>();
@@ -308,26 +334,35 @@ const withNativeQueue = <A, E, R>(
                 ).pipe(Layer.provide(VcsProcess.layer), Layer.provide(NodeServices.layer)),
               }
             : {}),
+          ...(options.databaseLayer === undefined ? {} : { databaseLayer: options.databaseLayer }),
+          ...(options.serverConfigLayer === undefined
+            ? {}
+            : { serverConfigLayer: options.serverConfigLayer }),
+          ...(options.runEffectWorker === undefined
+            ? {}
+            : { runEffectWorker: options.runEffectWorker }),
         },
       );
       return yield* Effect.gen(function* () {
         const orchestrator = yield* OrchestratorV2;
         const threadId = ThreadId.make(`thread:${name}`);
-        yield* orchestrator.dispatch({
-          type: "thread.create",
-          commandId: CommandId.make(`${name}:create`),
-          threadId,
-          projectId: ProjectId.make(`project:${name}`),
-          title: name,
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: null,
-          createdBy: "user",
-          creationSource: "web",
-        });
-        const waitFor = Effect.fnUntraced(function* (
+        if (!options.existingThread)
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`${name}:create`),
+            threadId,
+            projectId: ProjectId.make(`project:${name}`),
+            title: name,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdBy: "user",
+            creationSource: "web",
+          });
+        const waitForThread = Effect.fnUntraced(function* (
+          threadId: ThreadId,
           predicate: (projection: OrchestrationV2ThreadProjection) => boolean,
         ) {
           // Subscribe at the durable cursor before the first SQL read. Both existing
@@ -360,12 +395,13 @@ const withNativeQueue = <A, E, R>(
           releasePreparation: Deferred.succeed(preparationReleased, undefined).pipe(Effect.asVoid),
           preparationAttempts: () => preparationAttempts,
           takeOffer,
-          waitFor,
+          waitForThread,
+          waitFor: (predicate) => waitForThread(threadId, predicate),
           nativeInterruptions: () => nativeInterruptions,
           interruptEntered: Deferred.await(interruptEntered),
           releaseInterrupt: Deferred.succeed(interruptReleased, undefined).pipe(Effect.asVoid),
         });
-      }).pipe(Effect.provide(layer));
+      }).pipe(Effect.provide(layer.pipe(Layer.provideMerge(threadCommandExecutorLayer))));
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, idAllocatorLayer))),
   );
 
@@ -1234,6 +1270,257 @@ it.live("non-user native interruption holds ordinary queued work without a holdQ
         );
         assert.deepEqual(offers, ["foreground", "queued"]);
       }),
+  ),
+);
+
+for (const release of ["whole", "head", "newer-failure", "new-admission"] as const) {
+  it.live(`delayed interrupted child checkpoint cannot supersede ${release} queue release`, () =>
+    withNativeQueue(
+      `queue-policy-terminal-echo:${release}`,
+      ({ orchestrator, threadId, takeOffer, waitFor, waitForThread, offers }) =>
+        Effect.gen(function* () {
+          let stage = "parent offer";
+          const locks = yield* ThreadCommandExecutor;
+          yield* send(orchestrator, threadId, "parent");
+          const parent = yield* takeOffer;
+          yield* waitFor((projection) =>
+            projection.providerTurns.some((turn) => turn.runAttemptId === parent.input.attemptId),
+          );
+          yield* orchestrator.dispatch({
+            type: "delegated_task.request",
+            commandId: CommandId.make(`${threadId}:child`),
+            parentThreadId: threadId,
+            parentRunId: parent.input.runId,
+            parentNodeId: parent.input.rootNodeId,
+            task: "child-foreground",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            completionWake: "settled_only",
+            createdBy: "user",
+            creationSource: "web",
+          });
+          stage = "child offer";
+          const child = yield* takeOffer;
+          const childThreadId = child.input.threadId;
+          assert.notEqual(childThreadId, threadId);
+          yield* waitForThread(childThreadId, (projection) =>
+            projection.providerTurns.some((turn) => turn.runAttemptId === child.input.attemptId),
+          );
+          yield* send(orchestrator, childThreadId, "first", true);
+          yield* send(orchestrator, childThreadId, "second", true);
+          const before = yield* orchestrator.getThreadProjection(childThreadId);
+          const first = before.runs.find((run) => run.ordinal === 2);
+          const second = before.runs.find((run) => run.ordinal === 3);
+          assert.ok(first);
+          assert.ok(second);
+          const entered = yield* Deferred.make<void>();
+          const unlock = yield* Deferred.make<void>();
+          const parentLock = yield* locks
+            .withLock(
+              threadId,
+              Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(unlock))),
+            )
+            .pipe(Effect.forkScoped);
+          yield* Deferred.await(entered);
+          yield* Effect.gen(function* () {
+            // The terminal reactor must finalize this real app-owned child under
+            // its parent's lock before it can react to the child's queue.
+            yield* orchestrator.dispatch({
+              type: "run.interrupt",
+              threadId: childThreadId,
+              runId: child.input.runId,
+              holdQueue: true,
+              commandId: CommandId.make(`${childThreadId}:stop`),
+            });
+            stage = "child interrupted checkpoint";
+            const stopped = yield* waitForThread(childThreadId, (projection) =>
+              projection.runs.some(
+                (run) =>
+                  run.id === child.input.runId &&
+                  run.status === "interrupted" &&
+                  run.checkpointId !== null,
+              ),
+            );
+            assert.isTrue(
+              stopped.runs.filter((run) => run.status === "queued").every((run) => run.queueHeld),
+            );
+            const resume = {
+              type: "queue.resume" as const,
+              threadId: childThreadId,
+              commandId: CommandId.make(`${childThreadId}:resume`),
+              ...(release === "head" ? { runId: first.id } : {}),
+            };
+            yield* orchestrator.dispatch(resume);
+            stage = "resumed head offer";
+            const resumed = yield* takeOffer;
+            assert.equal(resumed.input.runId, first.id);
+            // The original accepted command remains the release boundary on retry.
+            yield* orchestrator.dispatch(resume);
+            if (release === "new-admission")
+              yield* send(orchestrator, childThreadId, "third", true);
+            const released = yield* orchestrator.getThreadProjection(childThreadId);
+            assert.equal(
+              released.runs.find((run) => run.id === second.id)?.queueHeld,
+              release === "head",
+            );
+            yield* Deferred.succeed(unlock, undefined);
+            yield* Fiber.join(parentLock);
+            yield* resumed.settle(release === "newer-failure" ? "failed" : "completed");
+            stage = "resumed head terminal";
+            const completed = yield* waitForThread(childThreadId, (projection) =>
+              projection.runs.some(
+                (run) =>
+                  run.id === first.id &&
+                  run.status === (release === "newer-failure" ? "failed" : "completed"),
+              ),
+            );
+            assert.equal(
+              completed.runs.find((run) => run.id === child.input.runId)?.status,
+              "interrupted",
+            );
+            if (release === "head" || release === "newer-failure") {
+              yield* waitForThread(childThreadId, (projection) =>
+                projection.runs.some(
+                  (run) =>
+                    run.id === second.id && run.status === "queued" && run.queueHeld === true,
+                ),
+              );
+              assert.deepEqual(offers, ["parent", "child-foreground", "first"]);
+              yield* orchestrator.dispatch({
+                type: "queue.resume",
+                threadId: childThreadId,
+                commandId: CommandId.make(`${childThreadId}:resume-rest`),
+              });
+            }
+            stage = "tail offer";
+            const tail = yield* takeOffer;
+            assert.equal(tail.input.runId, second.id);
+            yield* tail.settle("completed");
+            yield* waitForThread(childThreadId, (projection) =>
+              projection.runs.some((run) => run.id === second.id && run.status === "completed"),
+            );
+            if (release === "new-admission") {
+              const third = yield* takeOffer;
+              assert.equal(third.input.message.text, "third");
+              yield* third.settle("completed");
+              yield* waitForThread(childThreadId, (projection) =>
+                projection.runs.some(
+                  (run) => run.id === third.input.runId && run.status === "completed",
+                ),
+              );
+            }
+            assert.deepEqual(offers, [
+              "parent",
+              "child-foreground",
+              "first",
+              "second",
+              ...(release === "new-admission" ? ["third"] : []),
+            ]);
+          }).pipe(
+            Effect.tapError(() =>
+              orchestrator.getThreadProjection(childThreadId).pipe(
+                Effect.flatMap((projection) =>
+                  Effect.logError("Terminal ordering regression stage", {
+                    stage,
+                    runs: projection.runs.map((run) => ({
+                      ordinal: run.ordinal,
+                      status: run.status,
+                      held: run.queueHeld,
+                      checkpoint: run.checkpointId !== null,
+                    })),
+                  }),
+                ),
+              ),
+            ),
+            Effect.ensuring(Deferred.succeed(unlock, undefined)),
+          );
+        }),
+    ),
+  );
+}
+
+it.live("restarted queue reactor preserves durable Resume across an older pending checkpoint", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const name = "queue-policy-restart-checkpoint";
+      const cwd = yield* checkpointWorkspace(name);
+      const fs = yield* FileSystem.FileSystem;
+      const profile = yield* Effect.acquireRelease(fs.makeTempDirectory({ prefix: name }), (path) =>
+        fs.remove(path, { recursive: true }).pipe(Effect.orDie),
+      );
+      const databaseLayer = makeSqlitePersistenceLive(`${profile}/state.sqlite`).pipe(
+        Layer.provide(NodeServices.layer),
+      );
+      const config = yield* makeReplayServerConfig(name);
+      const serverConfigLayer = Layer.succeed(ServerConfig, config);
+      const options = { databaseLayer, serverConfigLayer, cwd };
+      yield* withNativeQueue(
+        name,
+        ({ orchestrator, threadId, takeOffer, waitFor }) =>
+          Effect.gen(function* () {
+            const worker = yield* OrchestrationEffectWorkerV2;
+            yield* send(orchestrator, threadId, "foreground");
+            yield* worker.drain();
+            const foreground = yield* takeOffer;
+            yield* waitFor((projection) =>
+              projection.providerTurns.some(
+                (turn) => turn.runAttemptId === foreground.input.attemptId,
+              ),
+            );
+            yield* send(orchestrator, threadId, "first", true);
+            yield* send(orchestrator, threadId, "second", true);
+            yield* orchestrator.dispatch({
+              type: "run.interrupt",
+              threadId,
+              runId: foreground.input.runId,
+              holdQueue: true,
+              commandId: CommandId.make(`${threadId}:stop`),
+            });
+            yield* worker.drain(1);
+            const interrupted = yield* waitFor((projection) =>
+              projection.runs.some(
+                (run) => run.id === foreground.input.runId && run.status === "interrupted",
+              ),
+            );
+            assert.equal(interrupted.runs[0]?.checkpointId, null);
+            yield* orchestrator.dispatch({
+              type: "queue.resume",
+              threadId,
+              commandId: CommandId.make(`${threadId}:resume`),
+            });
+            const accepted = yield* orchestrator.getThreadProjection(threadId);
+            assert.isTrue(
+              accepted.runs.filter((run) => run.ordinal > 1).every((run) => run.queueHeld !== true),
+            );
+            assert.equal(accepted.runs[0]?.checkpointId, null);
+          }),
+        { ...options, runEffectWorker: false },
+      );
+      // Construct a fresh runtime with the same disposable SQL/profile. Neither
+      // the accepted Resume nor native interruption is reissued after restart.
+      yield* withNativeQueue(
+        name,
+        ({ takeOffer, waitFor, offers }) =>
+          Effect.gen(function* () {
+            const first = yield* takeOffer;
+            assert.equal(first.input.message.text, "first");
+            yield* waitFor((projection) => projection.runs[0]?.checkpointId !== null);
+            yield* first.settle("completed");
+            const second = yield* takeOffer;
+            assert.equal(second.input.message.text, "second");
+            yield* second.settle("completed");
+            const final = yield* waitFor((projection) =>
+              projection.runs.every((run) =>
+                run.ordinal === 1 ? run.status === "interrupted" : run.status === "completed",
+              ),
+            );
+            assert.isTrue(final.runs.every((run) => run.queueHeld !== true));
+            assert.deepEqual(offers, ["first", "second"]);
+          }),
+        { ...options, existingThread: true },
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
   ),
 );
 

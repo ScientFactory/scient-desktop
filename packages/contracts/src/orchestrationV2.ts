@@ -1434,7 +1434,83 @@ export const OrchestrationV2WebSearchResult = Schema.Struct({
 });
 export type OrchestrationV2WebSearchResult = typeof OrchestrationV2WebSearchResult.Type;
 
+const MessageForkSource = Schema.Struct({
+  type: Schema.Literal("message"),
+  threadId: ThreadId,
+  messageId: MessageId,
+  position: Schema.Literals(["before", "after"]),
+});
+const MessageForkItemFields = {
+  ...OrchestrationV2TurnItemBaseFields,
+  type: Schema.Literal("fork"),
+  source: MessageForkSource,
+  targetThreadId: ThreadId,
+  providerThreadId: Schema.optional(ProviderThreadId),
+} as const;
+const MessageForkItemShape = Schema.Struct(MessageForkItemFields);
+const messageForkOwnership = Schema.makeFilter(
+  (item: typeof MessageForkItemShape.Type) =>
+    (item.runId === null &&
+      item.nodeId === null &&
+      item.providerThreadId === undefined &&
+      item.providerTurnId === null &&
+      item.nativeItemRef === null) ||
+    "A message fork boundary cannot carry execution authority.",
+);
+const MessageForkItem = MessageForkItemShape.check(messageForkOwnership);
+// Older clients reject an unfamiliar fork source. Send an inert notice they
+// already decode; current clients retain the exact portable message boundary.
+const MessageForkNotice = Schema.Struct({
+  ...OrchestrationV2TurnItemBaseFields,
+  runId: Schema.Null,
+  nodeId: Schema.Null,
+  providerThreadId: Schema.Null,
+  providerTurnId: Schema.Null,
+  nativeItemRef: Schema.Null,
+  type: Schema.Literal("system_notice"),
+  message: Schema.String,
+  forkBoundary: Schema.Struct({ source: MessageForkSource, targetThreadId: ThreadId }),
+});
+const decodeMessageForkNotice = SchemaGetter.transform(
+  ({
+    type: _type,
+    message: _message,
+    forkBoundary,
+    providerThreadId: _providerThreadId,
+    ...fields
+  }: typeof MessageForkNotice.Type): typeof MessageForkItem.Type => ({
+    ...fields,
+    type: "fork",
+    ...forkBoundary,
+  }),
+);
+const encodeMessageForkNotice = SchemaGetter.transform(
+  ({
+    type: _type,
+    source,
+    targetThreadId,
+    providerThreadId: _providerThreadId,
+    ...fields
+  }: typeof MessageForkItem.Type): typeof MessageForkNotice.Type => ({
+    ...fields,
+    type: "system_notice",
+    message: "Conversation forked here",
+    runId: null,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    forkBoundary: { source, targetThreadId },
+  }),
+);
+
 export const OrchestrationV2TurnItem = Schema.Union([
+  MessageForkNotice.pipe(
+    Schema.decodeTo(Schema.toType(MessageForkItem), {
+      decode: decodeMessageForkNotice,
+      encode: encodeMessageForkNotice,
+    }),
+  ),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("notification"),
@@ -1603,6 +1679,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     targetThreadId: ThreadId,
     providerThreadId: Schema.optional(ProviderThreadId),
   }),
+  MessageForkItem,
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("thread_created"),
@@ -2178,6 +2255,17 @@ const OrchestrationV2TurnItemJsonBaseFields = {
 } as const;
 
 export const OrchestrationV2TurnItemJson = Schema.Union([
+  MessageForkNotice.mapFields((fields) => ({
+    ...fields,
+    startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+    completedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+    updatedAt: Schema.DateTimeUtcFromString,
+  })).pipe(
+    Schema.decodeTo(Schema.toType(MessageForkItem), {
+      decode: decodeMessageForkNotice,
+      encode: encodeMessageForkNotice,
+    }),
+  ),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("notification"),
@@ -2343,6 +2431,12 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     targetThreadId: ThreadId,
     providerThreadId: Schema.optional(ProviderThreadId),
   }),
+  MessageForkItem.mapFields((fields) => ({
+    ...fields,
+    startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+    completedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+    updatedAt: Schema.DateTimeUtcFromString,
+  })).check(messageForkOwnership),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("thread_created"),

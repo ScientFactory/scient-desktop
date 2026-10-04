@@ -1,5 +1,7 @@
 import type {
   OrchestrationV2Run,
+  OrchestrationV2ContextTransfer,
+  OrchestrationV2ProjectedTurnItem,
   OrchestrationV2TurnItem,
   ProviderInstanceId,
 } from "@t3tools/contracts";
@@ -61,4 +63,29 @@ function latestRunModelBefore(
     if (latest === undefined || run.ordinal > latest.ordinal) latest = run;
   }
   return latest?.modelSelection.model;
+}
+
+/** Fork initialization is already represented by the destination's fork boundary. */
+export function isForkInitializationHandoff(
+  row: OrchestrationV2ProjectedTurnItem,
+  transfers: ReadonlyArray<OrchestrationV2ContextTransfer> | undefined,
+): boolean {
+  const item = row.item;
+  if (
+    row.visibility !== "local" ||
+    item.type !== "handoff" ||
+    item.runId === null ||
+    item.inheritedFrom !== undefined
+  )
+    return false;
+  return (
+    transfers?.some(
+      (transfer) =>
+        transfer.type === "fork" &&
+        transfer.targetThreadId === item.threadId &&
+        transfer.targetRunId === item.runId &&
+        transfer.resolution?.strategy === "portable_context" &&
+        transfer.resolution.contextHandoffId === item.contextHandoffId,
+    ) ?? false
+  );
 }

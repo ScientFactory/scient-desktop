@@ -51,7 +51,7 @@ import * as ServerSettings from "../serverSettings.ts";
 
 const isDomainEvent = Schema.is(OrchestrationV2DomainEvent);
 
-it("does not commit running state while retrying an inherited background routing read failure", async () => {
+it("keeps inherited background routing failure retryable without committing running state", async () => {
   const threadId = ThreadId.make("thread_provider_turn_start_projection_failure");
   const runId = RunId.make("run_provider_turn_start_projection_failure");
   const attemptId = RunAttemptId.make("attempt_provider_turn_start_projection_failure");

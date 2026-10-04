@@ -356,6 +356,35 @@ describe("acpRegistrySnapshotReadiness", () => {
     });
   });
 
+  for (const distribution of ["npx", "uvx", "binary"] as const) {
+    it.effect(`does not probe or install an unprepared ${distribution} agent during refresh`, () =>
+      Effect.gen(function* () {
+        const snapshot = yield* checkAcpRegistryProviderStatus(
+          {
+            ...identity,
+            settings: decodeSettings({ agentId: "test-agent" }),
+            cwd: "/workspace",
+            environment: { PATH: "/provider/bin" },
+          },
+          () =>
+            Effect.die("An unprepared refresh must not start a native probe or resolve/install"),
+        ).pipe(
+          Effect.provideService(
+            AcpRegistrySupport.AcpRegistryCatalog,
+            catalogWithInspection({
+              status: "unprepared",
+              agentId: "test-agent",
+              version: "1.0.0",
+              distribution,
+            }),
+          ),
+        );
+        expect(snapshot.installed).toBe(false);
+        expect(snapshot.status).toBe("warning");
+      }),
+    );
+  }
+
   it.effect("runs the disposable probe only after local inspection is ready", () =>
     Effect.gen(function* () {
       const settings = decodeSettings({ agentId: "test-agent" });

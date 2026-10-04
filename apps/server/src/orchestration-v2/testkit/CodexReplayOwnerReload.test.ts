@@ -135,3 +135,85 @@ it("refuses a declared reload without recorded native ownership or an existing t
     ),
   ).toThrow("no owned native thread metadata");
 });
+
+it("reloads a recorded clone before history injection without replaying its fork boundary", () => {
+  const clone = {
+    ...transcript,
+    entries: [
+      ...transcript.entries.slice(0, 7),
+      {
+        type: "expect_outbound",
+        frame: {
+          id: 4,
+          method: "thread/fork",
+          params: {
+            threadId: "owned-native",
+            lastTurnId: "first-native-turn",
+            model: "selected-model",
+            cwd: "<workspace>",
+            config: { "tools.update_plan.enabled": true },
+          },
+        },
+      },
+      {
+        type: "emit_inbound",
+        frame: { id: 4, result: { thread: { id: "owned-clone", updatedAt: 2, turns: [] } } },
+      },
+      {
+        type: "expect_outbound",
+        label: "rejected-turn-history",
+        frame: {
+          id: 5,
+          method: "thread/inject_items",
+          params: { threadId: "owned-clone", items: [{ type: "text", text: "Rejected turn" }] },
+        },
+      },
+      { type: "emit_inbound", frame: { id: 5, result: {} } },
+      {
+        type: "expect_outbound",
+        frame: {
+          id: 6,
+          method: "turn/start",
+          params: { threadId: "owned-clone", input: [{ type: "text", text: "Retry" }] },
+        },
+      },
+      { type: "emit_inbound", frame: { id: 6, result: { turn: { id: "retry-turn" } } } },
+    ],
+  } satisfies ProviderReplayTranscript;
+  const original = structuredClone(clone);
+  const result = materializeCodexOwnerReload(clone, 2, {
+    beforeEntryLabel: "rejected-turn-history",
+  });
+  expect(result.entries[9]).toEqual({
+    type: "expect_outbound",
+    label: "canonical-owner.thread/resume",
+    frame: {
+      id: 5,
+      method: "thread/resume",
+      params: {
+        threadId: "owned-clone",
+        excludeTurns: true,
+        model: "selected-model",
+        cwd: "<workspace>",
+        config: { "tools.update_plan.enabled": true },
+      },
+    },
+  });
+  expect(result.entries[11]).toEqual({
+    ...clone.entries[9],
+    frame: { ...clone.entries[9]?.frame, id: 6 },
+  });
+  expect(result.entries[13]).toEqual({
+    ...clone.entries[11],
+    frame: { ...clone.entries[11]?.frame, id: 7 },
+  });
+  expect(clone).toEqual(original);
+});
+
+it("refuses a declared pre-turn boundary outside the owned creation and turn", () => {
+  expect(() =>
+    materializeCodexOwnerReload(transcript, 2, {
+      beforeEntryLabel: "missing-history-boundary",
+    }),
+  ).toThrow("no recorded insertion boundary");
+});

@@ -1,5 +1,7 @@
 # T3 upstream alignment through 408ff8ae9b
 
+Historical record; implementation paths and checks describe its dated snapshot, not current V2 architecture.
+
 Status: the history-preserving alignment merge is committed and the automated/source
 review gates passed. This receipt records the delivery candidate; it does not claim
 release publication, cloud activation, or any new publication authority.

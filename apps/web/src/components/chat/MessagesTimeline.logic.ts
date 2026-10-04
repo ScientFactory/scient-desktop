@@ -1,3 +1,4 @@
+import { isForkInitializationHandoff } from "@t3tools/client-runtime/handoff";
 import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-presentation";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 export { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
@@ -40,6 +41,7 @@ import {
   type MessageId,
   type WorktreeSetupSnapshot,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2ContextTransfer,
   type RunAttemptId,
   RunId,
 } from "@t3tools/contracts";
@@ -1283,6 +1285,7 @@ function settleSupersededReasoning(entries: ReadonlyArray<TimelineEntry>) {
 
 export function deriveMessagesTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
+  contextTransfers?: ReadonlyArray<OrchestrationV2ContextTransfer> | undefined;
   latestRun?: TimelineLatestRun | null;
   runningRunId?: RunId | null;
   expandedRunIds?: ReadonlySet<RunId>;
@@ -1307,6 +1310,10 @@ export function deriveMessagesTimelineRows(input: {
 }): MessagesTimelineRow[] {
   const timelineEntries = withoutSubagentDelegationRows(
     settleSupersededReasoning(input.timelineEntries),
+  ).filter(
+    (entry) =>
+      entry.kind !== "event" ||
+      !isForkInitializationHandoff(entry.projectedItem, input.contextTransfers),
   );
   const turnDiffSummaryByAssistantMessageId = new Map<MessageId, TurnDiffSummary>();
   const turnDiffSummaryByRunId = new Map<RunId, TurnDiffSummary>();
@@ -1533,7 +1540,8 @@ export function deriveMessagesTimelineRows(input: {
       timelineEntry.kind === "event" &&
       timelineEntry.projectedItem.visibility === "local" &&
       timelineEntry.projectedItem.item.type === "fork" &&
-      timelineEntry.projectedItem.item.source.type === "run" &&
+      (timelineEntry.projectedItem.item.source.type === "run" ||
+        timelineEntry.projectedItem.item.source.type === "message") &&
       timelineEntry.projectedItem.item.targetThreadId === timelineEntry.projectedItem.item.threadId
     ) {
       continue;

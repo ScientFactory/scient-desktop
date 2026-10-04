@@ -7,6 +7,7 @@ import {
   MessageId,
   NodeId,
   OrchestrationV2TurnItemJson,
+  OrchestrationV2ContextTransfer,
   RunId,
   ThreadId,
   TurnId,
@@ -37,6 +38,7 @@ import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
 import { useComposerFocusState } from "./useComposerFocusState";
 
 const decodeNativeWorkflowItem = Schema.decodeUnknownSync(OrchestrationV2TurnItemJson);
+const decodeTimelineTransfer = Schema.decodeUnknownSync(OrchestrationV2ContextTransfer);
 
 const activityTestState = vi.hoisted(() => ({
   expanded: false,
@@ -583,6 +585,79 @@ describe("MessagesTimeline", () => {
       } finally {
         await act(() => renderer?.unmount());
       }
+    },
+  );
+
+  it.each(["fork", "provider_handoff", "merge_back", "missing", "later-run", "inherited"] as const)(
+    "renders one fork boundary while preserving %s handoff semantics",
+    (kind) => {
+      const item = decodeNativeWorkflowItem({
+        id: "fork-init-context-row",
+        threadId: "thread-1",
+        runId: "fork-first-run",
+        nodeId: "first-root",
+        providerThreadId: "provider-1",
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 2,
+        status: "completed",
+        title: "Fork context",
+        startedAt: MESSAGE_CREATED_AT,
+        completedAt: MESSAGE_CREATED_AT,
+        updatedAt: MESSAGE_CREATED_AT,
+        type: "handoff",
+        contextHandoffId: "context-1",
+        fromProviderThreadIds: [],
+        toProviderThreadId: "provider-1",
+        fromProviderInstanceIds: [],
+        toProviderInstanceId: "codex",
+        strategy: "full_thread_summary",
+      });
+      const now = DateTime.makeUnsafe(MESSAGE_CREATED_AT);
+      const transfer = decodeTimelineTransfer({
+        id: "transfer-1",
+        type: kind === "provider_handoff" || kind === "merge_back" ? kind : "fork",
+        sourceThreadId: "source",
+        targetThreadId: "thread-1",
+        sourcePoint: { threadId: "source" },
+        basePoint: null,
+        sourceProviderInstanceId: "codex",
+        targetProviderInstanceId: "codex",
+        targetRunId: kind === "later-run" ? "later-run" : "fork-first-run",
+        status: "consumed",
+        resolution: { strategy: "portable_context", contextHandoffId: "context-1" },
+        createdBy: "user",
+        error: null,
+        createdAt: now,
+        updatedAt: now,
+        consumedAt: now,
+      });
+      const markup = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          hasForkBaseline
+          forkBaselineAssistantMessageId={null}
+          contextTransfers={kind === "missing" ? undefined : [transfer]}
+          timelineEntries={[
+            {
+              kind: "event",
+              id: item.id,
+              createdAt: MESSAGE_CREATED_AT,
+              projectedItem: {
+                item,
+                position: 2,
+                visibility: kind === "inherited" ? "inherited" : "local",
+                sourceThreadId: ThreadId.make("thread-1"),
+                sourceItemId: item.id,
+              },
+            },
+          ]}
+        />,
+      );
+      expect(markup.match(/Conversation forked here/g)).toHaveLength(1);
+      if (kind === "fork") expect(markup).not.toContain("Context handoff");
+      else expect(markup).toContain("Context handoff");
     },
   );
 

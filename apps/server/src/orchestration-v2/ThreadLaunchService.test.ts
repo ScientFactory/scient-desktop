@@ -539,7 +539,7 @@ it.effect("enqueues provider work only after setup has been initiated", () =>
 );
 
 it.effect(
-  "queues follow-up messages behind preparation and checkpoints them in the final workspace",
+  "holds follow-up messages after preparation failure and checkpoints them in the final workspace on Resume",
   () =>
     Effect.gen(function* () {
       const setupEntered = yield* Deferred.make<void>();
@@ -586,39 +586,32 @@ it.effect(
 
         yield* Deferred.succeed(failSetup, undefined);
         yield* waitUntil(() =>
-          threads
-            .getThreadProjection(launched.threadId)
-            .pipe(
-              Effect.map((projection) =>
-                projection.runs.some(
-                  (run) =>
-                    run.id === followUp.run.id && run.status === "queued" && run.queueHeld === true,
-                ),
-              ),
-            ),
+          threads.getThreadProjection(launched.threadId).pipe(
+            Effect.map((projection) => {
+              const queued = projection.runs.find((run) => run.id === followUp.run.id);
+              return queued?.status === "queued" && queued.queueHeld === true;
+            }),
+          ),
         );
         const held = yield* threads.getThreadProjection(launched.threadId);
+        assert.isTrue(held.runs.some((run) => run.status === "failed"));
         assert.equal(held.runs[0]?.status, "failed");
         assert.equal(
           held.messages.find((message) => message.id === followUp.run.userMessageId)?.text,
           "Run after preparation",
         );
+        assert.equal(
+          held.nodes.find((node) => node.runId === followUp.run.id && node.kind === "root_turn")
+            ?.checkpointScopeId,
+          null,
+        );
         yield* threads.dispatch({
           type: "queue.resume",
-          commandId: CommandId.make("command:launch:resume-queued-follow-up"),
+          commandId: CommandId.make("command:launch:queued-follow-up:resume"),
           threadId: launched.threadId,
-          runId: followUp.run.id,
         });
-        yield* waitUntil(() =>
-          threads
-            .getThreadProjection(launched.threadId)
-            .pipe(
-              Effect.map(
-                (projection) =>
-                  projection.runs.find((run) => run.id === followUp.run.id)?.status === "starting",
-              ),
-            ),
-        );
+        const resumed = yield* threads.getThreadProjection(launched.threadId);
+        assert.equal(resumed.runs.find((run) => run.id === followUp.run.id)?.status, "starting");
 
         const projection = yield* threads.getThreadProjection(launched.threadId);
         const rootNode = projection.nodes.find(
@@ -1988,7 +1981,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
       assert.isNotNull(path);
       assert.deepEqual(yield* fs.readFile(path), new Uint8Array([1, 2, 3, 4]));
     }
-  }).pipe(Effect.provide(Layer.mergeAll(harness.layer, files)));
+  }).pipe(Effect.provide(Layer.mergeAll(harness.layer, files, NodeServices.layer)));
 });
 
 it.effect("cancels tracked setup before provider work is released", () =>

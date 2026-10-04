@@ -1,5 +1,7 @@
 # Feature Lifecycles
 
+Historical V2 design reference; [the maintained architecture](../internals/overview.md) describes the live engine and compatibility boundaries.
+
 This document describes how core user-facing features should work in V2. These flows describe target behavior, not current implementation constraints.
 
 ## Creating Threads

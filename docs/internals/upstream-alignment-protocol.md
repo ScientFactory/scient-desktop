@@ -145,6 +145,11 @@ Do not resolve a substantial conflict by taking one whole side without checking 
 their callers. Preserve immutable migration order; an upstream migration number that collides with a
 shipped Scient migration must be renumbered, never reused.
 
+When upstream replaces a subsystem, remove Scient's copy of the old subsystem in the same
+alignment. Never keep superseded execution code compiling beside its replacement: green tests
+of dead code hide lost behavior. Preserve required immutable formats/migrations through bounded
+readers, and port Scient behavior into the live replacement.
+
 ### Extend an existing alignment PR
 
 Continue in its current branch and worktree; do **not** use `alignment:start` or create another
@@ -205,6 +210,11 @@ While composing, run focused tests for every touched contract and protected seam
 entire staged diff for conflict markers, duplicated branches, stale product copy, accidental package
 changes, and silently reintroduced upstream authority. Regenerate generated artifacts and lockfiles
 from the composed sources; do not hand-edit generated conflict blocks.
+
+Before deleting superseded code, list Scient behaviors proved only by its tests. Drop rows from
+upstream's own tests: upstream already chose which to delete or retain. Group the remaining rows
+by feature; mark a behavior **covered** when a live replacement test already asserts it, and port
+only real gaps. Test counts or matching filenames do not establish equivalent behavior.
 
 ### 5.1 Read an error count only when the syntax gate is open
 

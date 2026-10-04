@@ -36,6 +36,7 @@ import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { conversationSnapshotProjection } from "../../scient/conversationExport/conversationSnapshotProjection.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
+import { materializeCodexOwnerReload } from "../testkit/CodexReplayOwnerReload.ts";
 import {
   materializeReplayTranscriptWorkspace,
   readProviderReplayTranscript,
@@ -308,43 +309,8 @@ for (const scenario of [
             );
             assert.ok(sourceStart?.type === "emit_inbound");
             entries.splice(forkIndex, entries.length - forkIndex, ...laterTurn, ...forkAndTarget);
-            // A subsequent native use resumes the persisted source binding before
-            // its next prompt. Keep that RPC in the strict recorded transport.
-            const resumedFrames = entries.slice(forkIndex).map((entry) => {
-              if (entry.type !== "expect_outbound" && entry.type !== "emit_inbound") return entry;
-              const frame = entry.frame;
-              return typeof frame === "object" &&
-                frame !== null &&
-                "id" in frame &&
-                typeof frame.id === "number"
-                ? { ...entry, frame: { ...frame, id: frame.id + 1 } }
-                : entry;
-            });
-            entries.splice(
-              forkIndex,
-              entries.length - forkIndex,
-              {
-                type: "expect_outbound",
-                label: "thread/resume/source-next-turn",
-                frame: {
-                  id: 4,
-                  method: "thread/resume",
-                  params: {
-                    threadId: "native-source-thread",
-                    excludeTurns: true,
-                    cwd,
-                    model: "gpt-5.4",
-                    config: { "tools.update_plan.enabled": true },
-                  },
-                },
-              },
-              {
-                type: "emit_inbound",
-                label: "thread/resume/source-next-turn",
-                frame: decodeFrame(encodeFrame(sourceStart.frame).replace('"id":2', '"id":4')),
-              },
-              ...resumedFrames,
-            );
+            const resumed = materializeCodexOwnerReload(replayTranscript, 2);
+            entries.splice(0, entries.length, ...resumed.entries);
             yield* orchestrator.dispatch({
               type: "message.dispatch",
               commandId: CommandId.make("append-source-after-freeze"),
@@ -750,6 +716,33 @@ for (const scenario of [
               );
             }
           }
+          if (scenario === "changed-instance") {
+            const localHandoffs = target.visibleTurnItems.filter(
+              (row) => row.visibility === "local" && row.item.type === "handoff",
+            );
+            assert.lengthOf(localHandoffs, 1);
+            const handoff = localHandoffs[0]?.item;
+            assert.ok(handoff?.type === "handoff");
+            const transfer = target.contextTransfers.find((candidate) => candidate.type === "fork");
+            assert.ok(transfer?.resolution?.strategy === "portable_context");
+            assert.equal(transfer.targetThreadId, handoff.threadId);
+            assert.equal(transfer.targetRunId, handoff.runId);
+            assert.equal(transfer.resolution.contextHandoffId, handoff.contextHandoffId);
+            const reloaded = yield* orchestrator.getThreadProjection(targetId);
+            assert.deepEqual(
+              reloaded.turnItems.find((item) => item.id === handoff.id),
+              handoff,
+            );
+            assert.deepEqual(
+              reloaded.contextTransfers.find((candidate) => candidate.id === transfer.id),
+              transfer,
+            );
+            assert.equal(
+              reloaded.contextHandoffs.find((context) => context.id === handoff.contextHandoffId)
+                ?.delivery?.status,
+              "injected",
+            );
+          }
           assert.include(target.messages.at(-1)?.text ?? "", "fork native ok");
           const repeated = yield* forks.dispatch(forkCommand);
           assert.equal(repeated.sequence, receipt.sequence);
@@ -940,7 +933,7 @@ it.live("a failed first turn retries the persisted clone instead of forking agai
         );
         const retryFrames = entries.slice(forkIndex + 2).map((entry) => {
           if (entry.type !== "expect_outbound" && entry.type !== "emit_inbound") return entry;
-          const frame: unknown = decodeFrame(encodeFrame(entry.frame).replace('"id":5', '"id":8'));
+          const frame: unknown = decodeFrame(encodeFrame(entry.frame).replace('"id":5', '"id":7'));
           return { ...entry, frame };
         });
         const forkResponse = entries[forkIndex + 1];
@@ -950,7 +943,7 @@ it.live("a failed first turn retries the persisted clone instead of forking agai
         entries.splice(forkIndex + 3, entries.length - forkIndex - 3, {
           type: "emit_inbound",
           label: "turn/start/fork/rejected",
-          frame: { id: 5, error: { code: -32000, message: "first turn rejected" } },
+          frame: { id: 5, error: { code: -32602, message: "first turn rejected" } },
         });
         yield* orchestrator.dispatch({
           type: "message.dispatch",
@@ -965,6 +958,14 @@ it.live("a failed first turn retries the persisted clone instead of forking agai
           creationSource: "web",
         });
         const failed = yield* waitCompleted(targetId, "failed");
+        assert.isFalse(
+          failed.providerTurns.some((turn) => turn.acceptedAt !== undefined),
+          "A rejected native request creates no accepted history delivery receipt",
+        );
+        assert.isTrue(
+          failed.providerTurns.every((turn) => turn.nativeAcceptance === "pending"),
+          "The native request rejection is definite, not an uncertain transport failure",
+        );
         assert.equal(failed.contextTransfers[0]?.status, "consumed");
         assert.equal(failed.contextTransfers[0]?.resolution?.strategy, "native_fork");
         assert.equal(failed.providerThreads[0]?.nativeThreadRef?.nativeId, "native-fork-thread");
@@ -991,29 +992,9 @@ it.live("a failed first turn retries the persisted clone instead of forking agai
         entries.push(
           {
             type: "expect_outbound",
-            label: "thread/resume/fork-retry",
-            frame: {
-              id: 6,
-              method: "thread/resume",
-              params: {
-                threadId: "native-fork-thread",
-                excludeTurns: true,
-                cwd,
-                model: "gpt-5.4",
-                config: { "tools.update_plan.enabled": true },
-              },
-            },
-          },
-          {
-            type: "emit_inbound",
-            label: "thread/resume/fork-retry",
-            frame: decodeFrame(encodeFrame(forkResponse.frame).replace('"id":4', '"id":6')),
-          },
-          {
-            type: "expect_outbound",
             label: "thread/inject_items/rejected-turn",
             frame: {
-              id: 7,
+              id: 6,
               method: "thread/inject_items",
               params: {
                 threadId: "native-fork-thread",
@@ -1024,10 +1005,14 @@ it.live("a failed first turn retries the persisted clone instead of forking agai
           {
             type: "emit_inbound",
             label: "thread/inject_items/rejected-turn",
-            frame: { id: 7, result: {} },
+            frame: { id: 6, result: {} },
           },
           ...retryFrames,
         );
+        const resumed = materializeCodexOwnerReload(transcript, 3, {
+          beforeEntryLabel: "thread/inject_items/rejected-turn",
+        });
+        entries.splice(0, entries.length, ...resumed.entries);
         yield* orchestrator.dispatch({
           type: "message.dispatch",
           commandId: CommandId.make("first-turn-retry"),

@@ -1,3 +1,4 @@
+import { isForkInitializationHandoff } from "@t3tools/client-runtime/handoff";
 import type {
   ThreadPendingApproval,
   ThreadPendingUserInput,
@@ -38,6 +39,7 @@ import type {
   OrchestrationMessageContext,
   OrchestrationV2ProjectedTurnItem,
   OrchestrationV2RunAttempt,
+  OrchestrationV2ContextTransfer,
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItem,
   OrchestrationV2UserMessageInputIntent,
@@ -1638,6 +1640,7 @@ export function buildThreadFeed(
   visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
   options?: {
     readonly anchoredMessages?: ReadonlyArray<LocalThreadMessage>;
+    readonly contextTransfers?: ReadonlyArray<OrchestrationV2ContextTransfer> | undefined;
     readonly attempts?: ReadonlyArray<OrchestrationV2RunAttempt>;
     readonly nodes?: ReadonlyArray<OrchestrationV2ExecutionNode>;
   },
@@ -1672,6 +1675,7 @@ export function buildThreadFeed(
     }),
   );
   for (const row of visibleTurnItems) {
+    if (isForkInitializationHandoff(row, options?.contextTransfers)) continue;
     const item = row.item;
     if (turnItemIsWorkspacePreparation(item)) continue;
     if (item.type === "todo_list" || item.type === "checkpoint") continue;
