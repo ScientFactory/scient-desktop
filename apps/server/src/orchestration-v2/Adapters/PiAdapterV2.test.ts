@@ -543,6 +543,109 @@ const expectModelFailure = (errorMessage: string, expectedMessage = errorMessage
   }).pipe(Effect.scoped, Effect.provide(testLayer));
 
 describe("PiAdapterV2", () => {
+  for (const failedEdit of [false, true]) {
+    it.effect(
+      `preserves native built-in tool details and identity, failed edit=${failedEdit}`,
+      () =>
+        Effect.gen(function* () {
+          const fake = yield* makeFakePi;
+          const { runtime, takeEvent, observed } = yield* openRuntime(fake);
+          const providerThread = yield* runtime.ensureThread({
+            threadId: THREAD_ID,
+            modelSelection: modelSelection("default"),
+            runtimePolicy,
+          });
+          yield* startTurn(runtime, providerThread);
+          yield* fake.takeRequest("prompt");
+          yield* fake.emit({ type: "response", command: "prompt", success: true });
+          yield* fake.emit({ type: "agent_start" });
+          const command = "git status --short";
+          const output = " M src/app.ts";
+          for (const event of [
+            {
+              type: "tool_execution_start",
+              toolCallId: "bash-1",
+              toolName: "bash",
+              args: { command },
+            },
+            {
+              type: "tool_execution_update",
+              toolCallId: "bash-1",
+              toolName: "bash",
+              partialResult: { content: [{ type: "text", text: output }] },
+            },
+            {
+              type: "tool_execution_end",
+              toolCallId: "bash-1",
+              toolName: "bash",
+              result: { content: [{ type: "text", text: output }], details: { exitCode: 0 } },
+              isError: false,
+            },
+            {
+              type: "tool_execution_start",
+              toolCallId: "edit-1",
+              toolName: "edit",
+              args: { path: "src/app.ts", oldText: "old", newText: "new" },
+            },
+            {
+              type: "tool_execution_update",
+              toolCallId: "edit-1",
+              toolName: "edit",
+              partialResult: { content: [{ type: "text", text: "Editing src/app.ts" }] },
+            },
+            {
+              type: "tool_execution_end",
+              toolCallId: "edit-1",
+              toolName: "edit",
+              result: {
+                content: [
+                  { type: "text", text: failedEdit ? "Edit refused" : "Edited src/app.ts" },
+                ],
+                details: failedEdit ? {} : { diff: "-old\n+new" },
+              },
+              isError: failedEdit,
+            },
+          ])
+            yield* fake.emit(event);
+          yield* fake.emit({ type: "agent_settled" });
+          const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+          assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
+          const commands = observed.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "command_execution"
+              ? [event.turnItem]
+              : [],
+          );
+          const edits = observed.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "file_change"
+              ? [event.turnItem]
+              : [],
+          );
+          assert.lengthOf(commands, 3);
+          assert.lengthOf(edits, 3);
+          for (const items of [commands, edits]) {
+            assert.equal(new Set(items.map((item) => item.id)).size, 1);
+            assert.equal(new Set(items.map((item) => item.ordinal)).size, 1);
+            assert.deepEqual(
+              items.map((item) => item.status),
+              ["running", "running", items === edits && failedEdit ? "failed" : "completed"],
+            );
+          }
+          assert.isTrue(commands.every((item) => item.input === command));
+          assert.equal(commands[1]?.output, output);
+          assert.equal(commands[2]?.output, output);
+          assert.equal(commands[2]?.exitCode, 0);
+          assert.isTrue(edits.every((item) => item.fileName === "src/app.ts"));
+          assert.isTrue(edits.every((item) => item.oldStr === "old" && item.newStr === "new"));
+          assert.deepEqual(edits[2]?.changes, [{ operation: "edit", path: "src/app.ts" }]);
+          assert.equal(edits[2]?.diffStr, failedEdit ? undefined : "-old\n+new");
+          assert.lengthOf(
+            observed.filter((event) => event.type === "turn.terminal"),
+            1,
+          );
+        }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+  }
+
   it.effect(
     "retains the exact uncertain offer when a native stdin write fails before its receipt is emitted",
     () =>

@@ -1046,6 +1046,9 @@ export function makePiAdapterV2(
         if (toolName === "edit" || toolName === "write") {
           const fileName = recordString(args, "path") ?? recordString(args, "file_path");
           if (fileName !== undefined) {
+            const diffStr = recordString(recordField(resultRecord, "details"), "diff");
+            const oldStr = recordString(args, "oldText");
+            const newStr = recordString(args, "newText") ?? recordString(args, "content");
             yield* emit({
               type: "turn_item.updated",
               driver: PI_PROVIDER,
@@ -1054,6 +1057,10 @@ export function makePiAdapterV2(
                 title: toolName,
                 type: "file_change",
                 fileName,
+                ...(diffStr === undefined ? {} : { diffStr }),
+                ...(oldStr === undefined ? {} : { oldStr }),
+                ...(newStr === undefined ? {} : { newStr }),
+                changes: [{ operation: toolName, path: fileName }],
               },
             });
             return;
