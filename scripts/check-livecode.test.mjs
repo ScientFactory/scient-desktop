@@ -236,6 +236,64 @@ describe("production subject reachability", () => {
     expect(f.inspect().diagnostics).toEqual([]);
   });
 
+  it("keeps real static subjects under non-hoisted doMock, including strict decisions", () => {
+    const f = fixture();
+    f.write("apps/server/src/main.ts", "import './live';");
+    f.write("apps/server/src/live.ts", "export const calculate = () => 1;");
+    f.write("apps/server/src/dead.ts", "export const calculate = () => 1;");
+    f.write("apps/server/src/deadFixture.ts", "export const fixture = true;");
+    f.write("apps/server/src/test-fixtures.ts", "import './deadFixture';");
+    f.write(
+      "apps/server/src/staticMixed.test.ts",
+      "import { calculate } from './live'; import './test-fixtures'; vi.doMock('./live', () => ({ calculate: () => 0 })); calculate();",
+    );
+    expect(f.test("staticMixed")).toMatchObject({
+      status: "mixed",
+      liveSubjects: ["apps/server/src/live.ts"],
+      deadSubjects: ["apps/server/src/deadFixture.ts"],
+    });
+    expect(runLivecode(["--strict"], f.options).exitCode).toBe(0);
+    f.write(
+      "apps/server/src/staticDead.test.ts",
+      "import { calculate } from './dead'; vi.doMock('./dead', () => ({ calculate: () => 0 })); calculate();",
+    );
+    expect(f.test("staticDead").status).toBe("dead");
+    expect(runLivecode(["--strict"], f.options).exitCode).toBe(1);
+    expect(f.inspect().diagnostics).toEqual([]);
+  });
+
+  it("retains possible real dynamic loads across doMock and doUnmock ordering", () => {
+    const f = fixture();
+    f.write("apps/server/src/real.ts", "export const calculate = () => 1;");
+    const cases = {
+      before: "await import('./real'); vi.doMock('./real', () => ({}));",
+      unmock: "vi.mock('./real', () => ({})); vi.doUnmock('./real'); await import('./real');",
+      after: "vi.doMock('./real', () => ({})); await import('./real');",
+      uncertain:
+        "vi.mock('./real', () => ({})); if (condition) vi.doUnmock('./real'); await import('./real');",
+      acrossFunctions:
+        "vi.mock('./real', () => ({})); const load = () => import('./real'); function reset() { vi.doUnmock('./real'); }",
+      full: "vi.mock('./real', () => ({})); await import('./real');",
+      partial: "vi.mock('./real', async (original) => ({ ...(await original()) }));",
+    };
+    for (const [name, code] of Object.entries(cases))
+      f.write(`apps/server/src/${name}.test.ts`, code);
+    for (const name of ["before", "unmock", "after", "uncertain", "acrossFunctions"]) {
+      expect(f.test(name).subjects).toEqual(["apps/server/src/real.ts"]);
+      expect(
+        f
+          .inspect()
+          .diagnostics.some(
+            (entry) =>
+              entry.file.endsWith(`/${name}.test.ts`) &&
+              entry.message.includes("Possible real dynamic import retained"),
+          ),
+      ).toBe(true);
+    }
+    expect(f.test("full").status).toBe("no-subject");
+    expect(f.test("partial").subjects).toEqual(["apps/server/src/real.ts"]);
+  });
+
   it("honors actual production imports of test support and exposes that unusual edge", () => {
     const f = fixture();
     f.write("apps/server/src/main.ts", "import './dead.test';");

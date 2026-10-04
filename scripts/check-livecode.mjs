@@ -278,6 +278,9 @@ export function runtimeImports(path, text) {
   );
   const imports = [];
   const mocked = [];
+  // doMock/doUnmock run at runtime and affect subsequent dynamic imports.
+  // Keep possible real loads rather than inferring test execution order.
+  const nonHoisted = [];
   const viNames = new Set(["vi", "vitest"]);
   for (const statement of source.statements) {
     if (
@@ -392,7 +395,7 @@ export function runtimeImports(path, text) {
     }
     if (ts.isCallExpression(node)) {
       const method = viMethod(node);
-      if (method === "mock" || method === "doMock") {
+      if (method === "mock" || method === "doMock" || method === "doUnmock") {
         const argument = node.arguments[0];
         const target =
           argument &&
@@ -400,9 +403,10 @@ export function runtimeImports(path, text) {
           argument.expression.kind === ts.SyntaxKind.ImportKeyword
             ? argument.arguments[0]
             : argument;
-        if (target && ts.isStringLiteralLike(target)) mocked.push(target.text);
+        if (target && ts.isStringLiteralLike(target))
+          (method === "mock" ? mocked : nonHoisted).push(target.text);
         else add(node, target, "mock");
-        const factory = node.arguments[1];
+        const factory = method === "doUnmock" ? undefined : node.arguments[1];
         if (factory && (ts.isArrowFunction(factory) || ts.isFunctionExpression(factory))) {
           const callback = factory.parameters[0]?.name;
           const scope = new Map(originals);
@@ -432,7 +436,11 @@ export function runtimeImports(path, text) {
       (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
         (ts.isIdentifier(node.expression) && node.expression.text === "require"))
     )
-      add(node, node.arguments[0]);
+      add(
+        node,
+        node.arguments[0],
+        node.expression.kind === ts.SyntaxKind.ImportKeyword ? "dynamic" : "import",
+      );
     // Bundler worker URLs are execution edges even without import syntax.
     if (
       ts.isNewExpression(node) &&
@@ -447,7 +455,7 @@ export function runtimeImports(path, text) {
     ts.forEachChild(node, (child) => visit(child, originals));
   }
   visit(source);
-  return { imports, mocked, diagnostics };
+  return { imports, mocked, nonHoisted, diagnostics };
 }
 
 function resolver(root, files, manifests) {
@@ -695,11 +703,24 @@ export function inspectLivecode({
       const mockTargets = new Set(
         parsed.mocked.flatMap((specifier) => resolve(file, specifier, platform).targets),
       );
+      const nonHoistedTargets = new Set(
+        parsed.nonHoisted.flatMap((specifier) => resolve(file, specifier, platform).targets),
+      );
       for (const imported of parsed.imports) {
         if (imported.kind === "mock") continue;
         const resolved = resolve(file, imported.specifier, platform);
+        const ambiguous =
+          imported.kind === "dynamic" &&
+          resolved.targets.some((target) => nonHoistedTargets.has(target));
+        if (ambiguous)
+          diagnostics.push({
+            kind: "warning",
+            file,
+            line: imported.line,
+            message: `Possible real dynamic import retained around non-hoisted Vitest mock/unmock operations: ${imported.specifier}`,
+          });
         for (const target of resolved.targets) {
-          if (imported.kind !== "actual" && mockTargets.has(target)) continue;
+          if (imported.kind !== "actual" && !ambiguous && mockTargets.has(target)) continue;
           targets.add(target);
           if (imported.kind !== "url") subjectTargets.add(target);
         }
