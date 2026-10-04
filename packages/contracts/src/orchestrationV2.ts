@@ -546,6 +546,9 @@ export const OrchestrationV2Run = Schema.Struct({
   modelSelection: ModelSelection,
   providerThreadId: Schema.NullOr(ProviderThreadId),
   userMessageId: MessageId,
+  /** Execution settings captured at admission; older runs use the thread settings. */
+  runtimeMode: Schema.optional(RuntimeMode),
+  interactionMode: Schema.optional(ProviderInteractionMode),
   rootNodeId: Schema.NullOr(NodeId),
   activeAttemptId: Schema.NullOr(RunAttemptId),
   status: OrchestrationV2RunStatus,
@@ -2765,6 +2768,9 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("message.dispatch"),
+    /** Omitted by older clients; resolved and persisted at admission. */
+    runtimeMode: Schema.optional(RuntimeMode),
+    interactionMode: Schema.optional(ProviderInteractionMode),
     notification: Schema.optional(OrchestrationV2Notification),
     ...OrchestrationV2CreationFields,
     scheduledTaskId: Schema.optional(ScheduledTaskId),

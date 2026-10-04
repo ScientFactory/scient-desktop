@@ -1329,12 +1329,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               titleRegeneration: { requestId: commandId, startedAt: now },
             }
           : {}),
-        ...(queuedRun.legacyQueue?.runtimeMode === undefined
-          ? {}
-          : { runtimeMode: queuedRun.legacyQueue.runtimeMode }),
-        ...(queuedRun.legacyQueue?.interactionMode === undefined
-          ? {}
-          : { interactionMode: queuedRun.legacyQueue.interactionMode }),
+        runtimeMode:
+          queuedRun.runtimeMode ??
+          queuedRun.legacyQueue?.runtimeMode ??
+          projection.thread.runtimeMode,
+        interactionMode:
+          queuedRun.interactionMode ??
+          queuedRun.legacyQueue?.interactionMode ??
+          projection.thread.interactionMode,
       };
       const modesChanged =
         capturedThread.runtimeMode !== projection.thread.runtimeMode ||
@@ -3633,6 +3635,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // SCIENT-FORK:END
     readonly delegatedCompletion?: OrchestrationV2ConversationMessage["delegatedCompletion"];
     readonly forceRestart: boolean;
+    readonly runtimeMode?: OrchestrationV2Run["runtimeMode"];
+    readonly interactionMode?: OrchestrationV2Run["interactionMode"];
   }) =>
     Effect.gen(function* () {
       const targetRun = input.projection.runs.find(
@@ -3726,6 +3730,34 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const session = sessionOption.value;
       const now = yield* DateTime.now;
       const emitEvent = emit(input.events, input.command);
+      const executionThread = {
+        ...input.projection.thread,
+        runtimeMode:
+          input.runtimeMode ??
+          (input.delegatedCompletion === undefined ? undefined : targetRun.runtimeMode) ??
+          input.projection.thread.runtimeMode,
+        interactionMode:
+          input.interactionMode ??
+          (input.delegatedCompletion === undefined ? undefined : targetRun.interactionMode) ??
+          input.projection.thread.interactionMode,
+      };
+      const executionModesChanged =
+        // An older active run has no captured policy to prove that a steer can
+        // honor explicitly submitted modes. Restart rather than inherit it.
+        (input.runtimeMode !== undefined &&
+          targetRun.runtimeMode === undefined &&
+          targetRun.legacyQueue?.runtimeMode === undefined) ||
+        (input.interactionMode !== undefined &&
+          targetRun.interactionMode === undefined &&
+          targetRun.legacyQueue?.interactionMode === undefined) ||
+        executionThread.runtimeMode !==
+          (targetRun.runtimeMode ??
+            targetRun.legacyQueue?.runtimeMode ??
+            input.projection.thread.runtimeMode) ||
+        executionThread.interactionMode !==
+          (targetRun.interactionMode ??
+            targetRun.legacyQueue?.interactionMode ??
+            input.projection.thread.interactionMode);
       const selectionChanged = !modelSelectionsEqual(
         targetRun.modelSelection,
         input.modelSelection,
@@ -3861,6 +3893,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           capabilities: session.providerSession.capabilities,
           forceRestart:
             input.forceRestart ||
+            executionModesChanged ||
             selectionMustApplyNow ||
             (selectionChanged &&
               turnCapabilities.supportsInterrupt &&
@@ -3965,7 +3998,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (providerInstanceChanged && !canResumeAcrossInstances) ||
         selectionTransition?.type === "create_with_handoff";
       const requiresProviderSessionRestart =
-        canResumeAcrossInstances || selectionTransition?.type === "restart_session";
+        executionModesChanged ||
+        canResumeAcrossInstances ||
+        selectionTransition?.type === "restart_session";
       if (requiresProviderThreadHandoff) {
         const targetAdapter = yield* providerAdapters.get(input.modelSelection.instanceId).pipe(
           Effect.mapError(
@@ -4108,7 +4143,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         };
       }
       const resolvedRuntimePolicy = yield* runtimePolicy
-        .resolve({ thread: input.projection.thread, modelSelection: input.modelSelection })
+        .resolve({ thread: executionThread, modelSelection: input.modelSelection })
         .pipe(
           Effect.mapError(
             (cause) =>
@@ -4153,6 +4188,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       const restartedRun: OrchestrationV2Run = {
         ...targetRun,
+        runtimeMode: executionThread.runtimeMode,
+        interactionMode: executionThread.interactionMode,
         providerInstanceId: input.modelSelection.instanceId,
         modelSelection: input.modelSelection,
         providerThreadId: restartProviderThread.id,
@@ -4214,16 +4251,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           payload: { ...currentRootNode, status: "interrupted", completedAt: now },
         });
       }
-      if (selectionChanged) {
+      if (
+        selectionChanged ||
+        executionThread.runtimeMode !== input.projection.thread.runtimeMode ||
+        executionThread.interactionMode !== input.projection.thread.interactionMode
+      ) {
         yield* emitEvent({
           type: providerInstanceChanged
             ? "thread.provider-switched"
-            : "thread.model-selection-updated",
+            : selectionChanged
+              ? "thread.model-selection-updated"
+              : "thread.metadata-updated",
           threadId: input.command.threadId,
           providerInstanceId: input.modelSelection.instanceId,
           occurredAt: now,
           payload: {
-            ...input.projection.thread,
+            ...executionThread,
             providerInstanceId: input.modelSelection.instanceId,
             modelSelection: input.modelSelection,
             updatedAt: now,
@@ -4511,6 +4554,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection = yield* getProjectionWithPendingEvents(command.threadId, events);
       }
       const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
+      const executionThread = {
+        ...projection.thread,
+        runtimeMode: command.runtimeMode ?? projection.thread.runtimeMode,
+        interactionMode: command.interactionMode ?? projection.thread.interactionMode,
+      };
       let dispatchMode = resolveMessageDispatchIntent(
         projection,
         command.dispatchMode,
@@ -4710,6 +4758,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             : { selectedScientSkillNames: command.selectedScientSkillNames }),
           // SCIENT-FORK:END
           forceRestart: dispatchMode.type === "restart_active",
+          runtimeMode: command.runtimeMode,
+          interactionMode: command.interactionMode,
         });
         return;
       }
@@ -4797,7 +4847,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const checkpointScope =
           activeRun.status === "preparing"
             ? null
-            : yield* runtimePolicy.resolve({ thread: projection.thread, modelSelection }).pipe(
+            : yield* runtimePolicy.resolve({ thread: executionThread, modelSelection }).pipe(
                 Effect.flatMap((resolvedRuntimePolicy) =>
                   checkpointService.prepareRootRunScope({
                     threadId: command.threadId,
@@ -4832,6 +4882,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           rootNodeId,
           activeAttemptId: attemptId,
           status: "queued",
+          runtimeMode: executionThread.runtimeMode,
+          interactionMode: executionThread.interactionMode,
           ...(projection.runs.some(
             (candidate) => candidate.status === "queued" && candidate.queueHeld === true,
           )
@@ -5007,6 +5059,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
       const pendingForkTransfer = pendingForkTransferForThread(projection);
+      if (
+        executionThread.runtimeMode !== projection.thread.runtimeMode ||
+        executionThread.interactionMode !== projection.thread.interactionMode
+      ) {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          providerInstanceId: projection.thread.providerInstanceId,
+          occurredAt: yield* DateTime.now,
+          payload: { ...executionThread, updatedAt: yield* DateTime.now },
+        });
+        projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+      }
       const pendingMergeBackSourceThreadIds = new Set(
         pendingMergeBackTransfers.map((transfer) => transfer.sourceThreadId),
       );
@@ -5212,6 +5280,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           rootNodeId,
           activeAttemptId: attemptId,
           status: dispatchMode.type === "defer_start" ? "preparing" : "starting",
+          runtimeMode: executionThread.runtimeMode,
+          interactionMode: executionThread.interactionMode,
           queuePosition: null,
           requestedAt: now,
           startedAt: null,
@@ -5941,6 +6011,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         activeAttemptId: attemptId,
         status: "starting",
         queuePosition: null,
+        runtimeMode: executionThread.runtimeMode,
+        interactionMode: executionThread.interactionMode,
         requestedAt: now,
         startedAt: null,
         completedAt: null,
@@ -7317,6 +7389,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : { selectedScientSkillNames: queuedMessage.selectedScientSkillNames }),
         // SCIENT-FORK:END
         forceRestart: false,
+        runtimeMode: queuedRun.runtimeMode ?? queuedRun.legacyQueue?.runtimeMode,
+        interactionMode: queuedRun.interactionMode ?? queuedRun.legacyQueue?.interactionMode,
       });
     });
 

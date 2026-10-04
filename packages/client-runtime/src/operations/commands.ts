@@ -760,6 +760,8 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
     return yield* dispatch({
       type: "message.dispatch",
       commandId,
+      runtimeMode: input.runtimeMode,
+      interactionMode: input.interactionMode,
       createdBy: "user",
       creationSource: input.creationSource ?? "web",
       threadId: input.threadId,
@@ -829,6 +831,8 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
   return yield* dispatch({
     type: "message.dispatch",
     commandId,
+    runtimeMode: input.runtimeMode,
+    interactionMode: input.interactionMode,
     createdBy: "user",
     creationSource: input.creationSource ?? "web",
     threadId: input.threadId,

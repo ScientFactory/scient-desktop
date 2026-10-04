@@ -15,6 +15,7 @@ import {
   ThreadId,
   TurnItemId,
   WS_METHODS,
+  WsRpcGroup,
   type OrchestrationV2Command,
   type OrchestrationV2ThreadLaunchInput,
   type OrchestrationV2ThreadProjection,
@@ -25,6 +26,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import {
@@ -148,6 +150,45 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
 });
 
 describe("V2 environment commands", () => {
+  for (const advertiseServerResolvedCommandContext of [true, false]) {
+    for (const dispatchMode of ["auto", "queue", "steer", "restart", "start"] as const) {
+      it.effect(
+        `preserves captured modes through the registered RPC for ${dispatchMode} (server context ${advertiseServerResolvedCommandContext})`,
+        () =>
+          Effect.gen(function* () {
+            const commands: OrchestrationV2Command[] = [];
+            const supervisor = yield* makeSupervisor({
+              commands,
+              projects: [],
+              advertiseServerResolvedCommandContext,
+            });
+            yield* startThreadTurn({
+              commandId: CommandId.make(`captured-modes-${dispatchMode}`),
+              threadId: v2ThreadId,
+              message: {
+                messageId: MessageId.make(`captured-modes-message-${dispatchMode}`),
+                role: "user",
+                text: "Work within the selected permission and planning modes.",
+                attachments: [],
+              },
+              runtimeMode: "approval-required",
+              interactionMode: "plan",
+              dispatchMode,
+            }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+            expect(commands).toHaveLength(1);
+            const rpc = WsRpcGroup.requests.get(ORCHESTRATION_V2_WS_METHODS.dispatchCommand);
+            if (rpc === undefined) return yield* Effect.die("Missing registered dispatch RPC");
+            const transported = yield* Schema.decodeUnknownEffect(rpc.payloadSchema)(commands[0]);
+            expect(transported).toMatchObject({
+              type: "message.dispatch",
+              runtimeMode: "approval-required",
+              interactionMode: "plan",
+            });
+          }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+      );
+    }
+  }
+
   it.effect("routes projects through the event-sourced project transport", () =>
     Effect.gen(function* () {
       const projects: ProjectMutation[] = [];

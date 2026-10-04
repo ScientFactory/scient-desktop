@@ -521,7 +521,15 @@ export const layer: Layer.Layer<
       const { isCurrentAttemptInStatus } = runControls;
 
       const resolvedRuntimePolicy = yield* runtimePolicy.resolve({
-        thread: projection.thread,
+        thread: {
+          ...projection.thread,
+          runtimeMode:
+            run.runtimeMode ?? run.legacyQueue?.runtimeMode ?? projection.thread.runtimeMode,
+          interactionMode:
+            run.interactionMode ??
+            run.legacyQueue?.interactionMode ??
+            projection.thread.interactionMode,
+        },
         modelSelection: run.modelSelection,
       });
       const existingSessionProjection = projection.providerSessions.find(
