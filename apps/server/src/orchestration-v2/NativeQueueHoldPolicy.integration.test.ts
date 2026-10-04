@@ -71,6 +71,7 @@ const modelSelection = { instanceId, model: "queue-policy-model" };
 interface NativeOffer {
   readonly input: ProviderAdapterV2TurnInput;
   readonly releaseSend: Effect.Effect<void>;
+  readonly answer: (text: string) => Effect.Effect<void>;
   readonly settle: (status: "completed" | "failed") => Effect.Effect<void>;
 }
 
@@ -88,6 +89,11 @@ const withNativeQueue = <A, E, R>(
     readonly interruptEntered: Effect.Effect<void>;
     readonly releaseInterrupt: Effect.Effect<void>;
     readonly takeOffer: Effect.Effect<NativeOffer, Cause.TimeoutError>;
+    readonly captureEntered: Effect.Effect<void>;
+    readonly releaseCapture: Effect.Effect<void>;
+    readonly beforeOffer: (
+      check: (input: ProviderAdapterV2TurnInput) => Effect.Effect<void>,
+    ) => void;
     readonly waitForThread: (
       threadId: ThreadId,
       predicate: (projection: OrchestrationV2ThreadProjection) => boolean,
@@ -125,6 +131,7 @@ const withNativeQueue = <A, E, R>(
     readonly holdPreparation?: boolean;
     readonly refusePreparation?: boolean;
     readonly failCheckpointDiff?: boolean;
+    readonly holdCheckpointCapture?: boolean;
     readonly injectEvents?: boolean;
     readonly holdInterrupt?: boolean;
   } = {},
@@ -141,6 +148,11 @@ const withNativeQueue = <A, E, R>(
       const interruptReleased = yield* Deferred.make<void>();
       const preparationReady = yield* Deferred.make<void>();
       const preparationReleased = yield* Deferred.make<void>();
+      const captureEntered = yield* Deferred.make<void>();
+      const captureReleased = yield* Deferred.make<void>();
+      let heldCapture = false;
+      let beforeOffer: (input: ProviderAdapterV2TurnInput) => Effect.Effect<void> = () =>
+        Effect.void;
       const heldSendOrdinal = options.holdSendOrdinal ?? (options.holdFirstSend ? 1 : undefined);
       let preparationAttempts = 0;
       const offers: string[] = [];
@@ -158,6 +170,8 @@ const withNativeQueue = <A, E, R>(
             nativeThreadKnown: true,
             send: (turn, nativeTurnId) =>
               Effect.gen(function* () {
+                // Observe the real send boundary before recording/offering the prompt.
+                yield* beforeOffer(turn);
                 offers.push(turn.message.text);
                 const nativeAccepted = yield* Deferred.make<void>();
                 const released =
@@ -167,6 +181,10 @@ const withNativeQueue = <A, E, R>(
                 yield* Queue.offer(offered, {
                   input: turn,
                   releaseSend: Deferred.succeed(released, undefined).pipe(Effect.asVoid),
+                  answer: (text) =>
+                    Deferred.await(nativeAccepted).pipe(
+                      Effect.andThen(publish({ type: "text", id: "native-answer", delta: text })),
+                    ),
                   settle: (status) =>
                     Deferred.await(nativeAccepted).pipe(
                       Effect.andThen(
@@ -310,7 +328,7 @@ const withNativeQueue = <A, E, R>(
         ]),
         {
           configureMcp: false,
-          ...(options.failCheckpointDiff
+          ...(options.failCheckpointDiff || options.holdCheckpointCapture
             ? {
                 vcsProcessLayer: Layer.effect(
                   VcsProcess.VcsProcess,
@@ -318,17 +336,33 @@ const withNativeQueue = <A, E, R>(
                     const real = yield* VcsProcess.VcsProcess;
                     return {
                       run: (input: VcsProcess.VcsProcessInput) =>
-                        input.operation === "GitVcsDriver.checkpoints.diffCheckpoints"
-                          ? Effect.fail(
-                              new VcsProcessExitError({
-                                operation: input.operation,
-                                command: input.command,
-                                cwd: input.cwd,
-                                exitCode: 1,
-                                detail: "Synthetic external Git diff failure",
-                              }),
-                            )
-                          : real.run(input),
+                        Effect.gen(function* () {
+                          if (
+                            options.failCheckpointDiff &&
+                            input.operation === "GitVcsDriver.checkpoints.diffCheckpoints"
+                          )
+                            return yield* new VcsProcessExitError({
+                              operation: input.operation,
+                              command: input.command,
+                              cwd: input.cwd,
+                              exitCode: 1,
+                              detail: "Synthetic external Git diff failure",
+                            });
+                          // Park the first real completion capture immediately before
+                          // Git imports its ref, after the actual tree/commit are built.
+                          if (
+                            options.holdCheckpointCapture &&
+                            !heldCapture &&
+                            input.operation === VcsProcess.CHECKPOINT_CAPTURE_OPERATION &&
+                            input.args.includes("fetch") &&
+                            input.args.some((arg) => arg.endsWith("/ordinal/1"))
+                          ) {
+                            heldCapture = true;
+                            yield* Deferred.succeed(captureEntered, undefined);
+                            yield* Deferred.await(captureReleased);
+                          }
+                          return yield* real.run(input);
+                        }),
                     };
                   }),
                 ).pipe(Layer.provide(VcsProcess.layer), Layer.provide(NodeServices.layer)),
@@ -395,6 +429,11 @@ const withNativeQueue = <A, E, R>(
           releasePreparation: Deferred.succeed(preparationReleased, undefined).pipe(Effect.asVoid),
           preparationAttempts: () => preparationAttempts,
           takeOffer,
+          captureEntered: Deferred.await(captureEntered),
+          releaseCapture: Deferred.succeed(captureReleased, undefined).pipe(Effect.asVoid),
+          beforeOffer: (check) => {
+            beforeOffer = check;
+          },
           waitForThread,
           waitFor: (predicate) => waitForThread(threadId, predicate),
           nativeInterruptions: () => nativeInterruptions,
@@ -1024,17 +1063,86 @@ it.live(
 it.live("normal native completion automatically drains queued messages in FIFO order", () =>
   withNativeQueue(
     "queue-policy-auto-drain",
-    ({ orchestrator, threadId, takeOffer, offers, waitFor }) =>
+    ({
+      orchestrator,
+      threadId,
+      takeOffer,
+      offers,
+      waitFor,
+      captureEntered,
+      releaseCapture,
+      beforeOffer,
+    }) =>
       Effect.gen(function* () {
+        const store = yield* CheckpointStore;
         yield* send(orchestrator, threadId, "foreground");
         const foreground = yield* takeOffer;
+        let guardedOffers = 0;
+        beforeOffer((input) =>
+          Effect.gen(function* () {
+            const atDelivery = yield* orchestrator.getThreadProjection(threadId);
+            const predecessor = atDelivery.runs.find(
+              (run) => run.ordinal === input.runOrdinal - 1,
+            )!;
+            assert.equal(predecessor.status, "completed");
+            const checkpoint = atDelivery.checkpoints.find(
+              (row) => row.id === predecessor.checkpointId,
+            )!;
+            assert.equal(checkpoint.status, "ready");
+            const scope = atDelivery.checkpointScopes.find((row) => row.id === checkpoint.scopeId)!;
+            assert.isTrue(
+              yield* store.hasCheckpointRef({ cwd: scope.cwd, checkpointRef: checkpoint.ref }),
+            );
+            if (input.message.text === "first") {
+              const answer = atDelivery.messages.find(
+                (row) => row.runId === foreground.input.runId && row.role === "assistant",
+              )!;
+              assert.equal(answer.text, "Persisted native foreground answer");
+              assert.isFalse(answer.streaming);
+            }
+            guardedOffers++;
+          }).pipe(Effect.orDie),
+        );
         yield* send(orchestrator, threadId, "first", true);
         yield* send(orchestrator, threadId, "second", true);
         const admitted = yield* orchestrator.getThreadProjection(threadId);
         const queued = admitted.runs.filter((run) => run.status === "queued");
         assert.equal(queued.length, 2);
         assert.isTrue(queued.every((run) => run.queueHeld !== true));
+        yield* foreground.answer("Persisted native foreground answer");
         yield* foreground.settle("completed");
+        yield* captureEntered.pipe(Effect.timeout("15 seconds"));
+        const parked = yield* orchestrator.getThreadProjection(threadId);
+        const answer = parked.messages.find(
+          (row) => row.runId === foreground.input.runId && row.role === "assistant",
+        )!;
+        assert.equal(answer.text, "Persisted native foreground answer");
+        assert.isFalse(answer.streaming);
+        assert.equal(
+          parked.runs.find((run) => run.id === foreground.input.runId)!.status,
+          "waiting",
+        );
+        const root = parked.nodes.find((node) => node.id === foreground.input.rootNodeId)!;
+        const scope = parked.checkpointScopes.find((row) => row.id === root.checkpointScopeId)!;
+        assert.isFalse(
+          yield* store.hasCheckpointRef({
+            cwd: scope.cwd,
+            checkpointRef: checkpointRefForScopeOrdinal({
+              scopeId: scope.id,
+              ordinalWithinScope: 1,
+            }),
+          }),
+        );
+        // Drain other claimable effects while the real capture still owns its lease.
+        yield* (yield* OrchestrationEffectWorkerV2).drain(12);
+        assert.deepEqual(offers, ["foreground"]);
+        assert.equal(guardedOffers, 0);
+        assert.isTrue(
+          (yield* orchestrator.getThreadProjection(threadId)).runs
+            .filter((run) => queued.some((row) => row.id === run.id))
+            .every((run) => run.status === "queued"),
+        );
+        yield* releaseCapture;
         const first = yield* takeOffer;
         assert.equal(first.input.message.text, "first");
         yield* first.settle("completed");
@@ -1047,7 +1155,9 @@ it.live("normal native completion automatically drains queued messages in FIFO o
         assert.equal(settled.runs.length, 3);
         assert.deepEqual(offers, ["foreground", "first", "second"]);
         assert.equal(settled.providerTurns.filter((turn) => turn.status === "completed").length, 3);
+        assert.equal(guardedOffers, 2);
       }),
+    { holdCheckpointCapture: true },
   ),
 );
 
