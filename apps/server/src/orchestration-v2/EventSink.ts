@@ -561,6 +561,8 @@ const baseLayer: Layer.Layer<
           if (event.type !== "provider-turn.updated") continue;
           const turn = event.payload;
           if (
+            turn.acceptedAt === undefined ||
+            turn.nativeAcceptance !== "accepted" ||
             turn.runAttemptId === null ||
             turn.nativeTurnRef === null ||
             turn.startedAt === null ||

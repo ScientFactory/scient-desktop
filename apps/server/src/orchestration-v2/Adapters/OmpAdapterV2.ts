@@ -717,7 +717,11 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                 });
               yield* runtime.begin(nativeTurnId);
               fresh = false;
+              yield* onUpdate({ type: "offered", nativeTurnId });
               yield* client.prompt({ ...prompt, streamingBehavior: "steer" }).pipe(
+                // send() only writes/schedules the command. The correlated native
+                // reply, rather than that local return, owns prompt acceptance.
+                Effect.tap(() => onUpdate({ type: "accepted", nativeTurnId })),
                 Effect.flatMap((result) =>
                   runtime.accepted(
                     result.id ?? nativeTurnId,

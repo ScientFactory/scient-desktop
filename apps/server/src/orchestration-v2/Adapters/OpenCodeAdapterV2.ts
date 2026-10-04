@@ -85,6 +85,8 @@ export { openCodeToolProjectionKind } from "./OpenCodeToolItems.ts";
 export const OPENCODE_PROVIDER = ProviderDriverKind.make("opencode");
 export const OPENCODE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(OPENCODE_PROVIDER);
 export const OPENCODE_SDK_PROTOCOL = "opencode-sdk.sse" as const;
+const isNativeStartReceiptError = Schema.is(ProviderAdapter.ProviderAdapterTurnStartError);
+
 const DEFAULT_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettingsSchema)({});
 
 let openCodeMessageIdEpochMillis = -1;
@@ -286,7 +288,7 @@ interface ActiveOpenCodeTurn {
   readonly parts: Map<string, Exclude<OpenCodePart, ToolPart>>;
   readonly partIdsByMessage: Map<string, Set<string>>;
   readonly toolNamesByCallId: Map<string, string>;
-  readonly providerTurn: OrchestrationV2ProviderTurn;
+  providerTurn: OrchestrationV2ProviderTurn;
   nextItemOrdinal: number;
   nativeUserMessageId: string | null;
   admissionMessageId: string | null;
@@ -1198,6 +1200,25 @@ export function makeOpenCodeAdapterV2(
             providerTurn,
           });
         };
+
+        const markTurnAccepted = Effect.fnUntraced(function* (
+          state: OpenCodeThreadState,
+          turn: ActiveOpenCodeTurn,
+        ) {
+          if (
+            !turn.isRoot ||
+            state.activeTurn !== turn ||
+            turn.finalized ||
+            turn.providerTurn.acceptedAt !== undefined
+          )
+            return;
+          turn.providerTurn = {
+            ...turn.providerTurn,
+            nativeAcceptance: "accepted",
+            acceptedAt: yield* DateTime.now,
+          };
+          yield* emitProviderTurn(state, turn, "running", null);
+        });
 
         const emitTextPart = Effect.fnUntraced(function* (
           state: OpenCodeThreadState,
@@ -2417,6 +2438,7 @@ export function makeOpenCodeAdapterV2(
           if (turn !== null && matchesAdmission) turn.usage.promptMessageIds.add(message.id);
           if (turn !== null && matchesAdmission && turn.nativeUserMessageId === null) {
             turn.nativeUserMessageId = message.id;
+            if (turn.admissionMessageId === message.id) yield* markTurnAccepted(state, turn);
             yield* emitProviderTurn(state, turn, "running", null);
           }
           if (turn !== null && matchesAdmission && turn.admissionPending) {
@@ -2927,11 +2949,16 @@ export function makeOpenCodeAdapterV2(
               )).find((entry) => entry.name === match[1])
             : undefined;
           if (!command) {
+            turn.providerTurn = { ...turn.providerTurn, nativeAcceptance: "unknown" };
+            yield* emitProviderTurn(state, turn, "running", null);
             return yield* sdkCall("session.promptAsync", payload, (signal) =>
               client.session.promptAsync(payload, {
                 signal: AbortSignal.any([signal, abortController.signal]),
               }),
-            ).pipe(Effect.asVoid);
+            ).pipe(
+              Effect.tap(() => markTurnAccepted(state, turn)),
+              Effect.asVoid,
+            );
           }
           const receipt = Deferred.makeUnsafe<void>();
           commandReceipts.set(payload.messageID, receipt);
@@ -2952,11 +2979,14 @@ export function makeOpenCodeAdapterV2(
             ...(payload.variant ? { variant: payload.variant } : {}),
             parts: payload.parts?.filter((part) => part.type === "file") ?? [],
           };
+          turn.providerTurn = { ...turn.providerTurn, nativeAcceptance: "unknown" };
+          yield* emitProviderTurn(state, turn, "running", null);
           const request = yield* sdkCall("session.command", commandPayload, (signal) =>
             client.session.command(commandPayload, {
               signal: AbortSignal.any([signal, abortController.signal]),
             }),
           ).pipe(
+            Effect.tap(() => markTurnAccepted(state, turn)),
             Effect.asVoid,
             Effect.tapError((cause) =>
               abortController.signal.aborted ||
@@ -3156,6 +3186,7 @@ export function makeOpenCodeAdapterV2(
                 nativeTurnRef: providerRef(syntheticNativeTurnId, "weak"),
                 ordinal: turnInput.providerTurnOrdinal,
                 status: "running",
+                nativeAcceptance: "pending",
                 startedAt,
                 completedAt: null,
               };
@@ -3223,6 +3254,8 @@ export function makeOpenCodeAdapterV2(
               });
               yield* updateProviderSession("running", null);
               if (isCompaction) {
+                turn.providerTurn = { ...turn.providerTurn, nativeAcceptance: "unknown" };
+                yield* emitProviderTurn(state, turn, "running", null);
                 yield* sdkCall(
                   "session.summarize",
                   { sessionID: sessionId, ...parsedModel, auto: false },
@@ -3232,6 +3265,7 @@ export function makeOpenCodeAdapterV2(
                       { signal: AbortSignal.any([signal, admissionAbortController!.signal]) },
                     ),
                 ).pipe(
+                  Effect.tap(() => markTurnAccepted(state, turn)),
                   Effect.tap(() =>
                     turn.interrupted || turn.finalized || nativeStreamFailure !== null
                       ? Effect.void
@@ -3246,6 +3280,17 @@ export function makeOpenCodeAdapterV2(
                     }),
                   ),
                   Effect.ensuring(Deferred.succeed(admissionSettled, undefined)),
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderAdapter.ProviderAdapterTurnStartError({
+                        driver: OPENCODE_PROVIDER,
+                        threadId: turnInput.threadId,
+                        providerThreadId: turnInput.providerThread.id,
+                        runId: turnInput.runId,
+                        providerTurn: turn.providerTurn,
+                        cause,
+                      }),
+                  ),
                 );
                 return;
               }
@@ -3290,6 +3335,17 @@ export function makeOpenCodeAdapterV2(
                 Effect.catch((cause) =>
                   admissionAbortController!.signal.aborted ? Effect.void : Effect.fail(cause),
                 ),
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterTurnStartError({
+                      driver: OPENCODE_PROVIDER,
+                      threadId: turnInput.threadId,
+                      providerThreadId: turnInput.providerThread.id,
+                      runId: turnInput.runId,
+                      providerTurn: turn.providerTurn,
+                      cause,
+                    }),
+                ),
                 Effect.ensuring(
                   Effect.all([
                     Deferred.succeed(admissionSettled, undefined).pipe(Effect.ignore),
@@ -3309,15 +3365,16 @@ export function makeOpenCodeAdapterV2(
               }
             }).pipe(
               turnStartPermit.withPermit,
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterTurnStartError({
-                    driver: OPENCODE_PROVIDER,
-                    threadId: turnInput.threadId,
-                    providerThreadId: turnInput.providerThread.id,
-                    runId: turnInput.runId,
-                    cause,
-                  }),
+              Effect.mapError((cause) =>
+                isNativeStartReceiptError(cause)
+                  ? cause
+                  : new ProviderAdapter.ProviderAdapterTurnStartError({
+                      driver: OPENCODE_PROVIDER,
+                      threadId: turnInput.threadId,
+                      providerThreadId: turnInput.providerThread.id,
+                      runId: turnInput.runId,
+                      cause,
+                    }),
               ),
             ),
           steerTurn: (steerInput) =>

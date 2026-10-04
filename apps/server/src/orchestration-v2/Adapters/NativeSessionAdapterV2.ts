@@ -33,6 +33,9 @@ import { makeProviderFailure } from "../ProviderFailure.ts";
 
 /** Native process events, before either orchestration version's presentation mapping. */
 export type NativeSessionUpdate =
+  | { readonly type: "accepted"; readonly nativeTurnId: string }
+  | { readonly type: "offered"; readonly nativeTurnId: string }
+  | { readonly type: "rejected"; readonly nativeTurnId: string }
   | {
       readonly type: "text";
       readonly id: string;
@@ -87,6 +90,8 @@ export class NativeSessionOperationError extends Schema.TaggedError<NativeSessio
     return this.detail;
   }
 }
+
+const isNativeStartReceiptError = Schema.is(ProviderAdapter.ProviderAdapterTurnStartError);
 
 const isNativeSessionOperationError = Schema.is(NativeSessionOperationError);
 export const nativeSessionFailure = (cause: unknown): NativeSessionOperationError =>
@@ -426,6 +431,38 @@ export function makeNativeSessionAdapterV2(
         const onUpdate = (update: NativeSessionUpdate): Effect.Effect<void> =>
           eventPermit.withPermit(
             Effect.gen(function* () {
+              if (
+                update.type === "accepted" ||
+                update.type === "offered" ||
+                update.type === "rejected"
+              ) {
+                const running = active;
+                if (
+                  running === undefined ||
+                  running.turn.nativeTurnRef?.nativeId !== update.nativeTurnId ||
+                  running.turn.acceptedAt !== undefined
+                )
+                  return;
+                running.turn =
+                  update.type === "accepted"
+                    ? {
+                        ...running.turn,
+                        nativeAcceptance: "accepted",
+                        acceptedAt: yield* DateTime.now,
+                      }
+                    : {
+                        ...running.turn,
+                        nativeAcceptance: update.type === "rejected" ? "pending" : "unknown",
+                      };
+                turns.set(running.turn.id, running.turn);
+                yield* emit({
+                  type: "provider_turn.updated",
+                  driver,
+                  threadId: running.input.threadId,
+                  providerTurn: running.turn,
+                });
+                return;
+              }
               if (update.type === "model") {
                 providerSession = { ...providerSession, model: update.model };
                 yield* updateSession(providerSession.status);
@@ -497,6 +534,22 @@ export function makeNativeSessionAdapterV2(
                   });
                 }
                 return;
+              }
+              if (
+                running.turn.nativeAcceptance === "pending" &&
+                (update.type === "text" ||
+                  update.type === "tool" ||
+                  update.type === "subagent" ||
+                  update.type === "question")
+              ) {
+                running.turn = { ...running.turn, nativeAcceptance: "unknown" };
+                turns.set(running.turn.id, running.turn);
+                yield* emit({
+                  type: "provider_turn.updated",
+                  driver,
+                  threadId: running.input.threadId,
+                  providerTurn: running.turn,
+                });
               }
               if (update.type === "terminal") {
                 yield* finish(update);
@@ -949,6 +1002,7 @@ export function makeNativeSessionAdapterV2(
                 nativeTurnRef: { ...ref(nativeTurnId), strength: "weak" },
                 ordinal: request.providerTurnOrdinal,
                 status: "running",
+                nativeAcceptance: "pending",
                 startedAt,
                 completedAt: null,
               };
@@ -977,28 +1031,45 @@ export function makeNativeSessionAdapterV2(
                   yield* finish({ type: "terminal", status: "completed" });
               } else {
                 yield* native.send(request, nativeTurnId).pipe(
-                  Effect.tapError((cause) =>
-                    eventPermit.withPermit(
-                      finish({
-                        type: "terminal",
-                        status: "failed",
-                        detail: cause.message,
-                        broken: true,
-                      }),
-                    ),
-                  ),
+                  Effect.catch((cause) => {
+                    const providerTurn = active?.turn ?? turn;
+                    return eventPermit
+                      .withPermit(
+                        finish({
+                          type: "terminal",
+                          status: "failed",
+                          detail: cause.message,
+                          broken: true,
+                        }),
+                      )
+                      .pipe(
+                        Effect.andThen(
+                          Effect.fail(
+                            new ProviderAdapter.ProviderAdapterTurnStartError({
+                              driver,
+                              threadId: request.threadId,
+                              runId: request.runId,
+                              providerThreadId: request.providerThread.id,
+                              providerTurn,
+                              cause,
+                            }),
+                          ),
+                        ),
+                      );
+                  }),
                 );
               }
             }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterTurnStartError({
-                    driver,
-                    threadId: request.threadId,
-                    providerThreadId: request.providerThread.id,
-                    runId: request.runId,
-                    cause,
-                  }),
+              Effect.mapError((cause) =>
+                isNativeStartReceiptError(cause)
+                  ? cause
+                  : new ProviderAdapter.ProviderAdapterTurnStartError({
+                      driver,
+                      threadId: request.threadId,
+                      providerThreadId: request.providerThread.id,
+                      runId: request.runId,
+                      cause,
+                    }),
               ),
             ),
           steerTurn: (request) =>

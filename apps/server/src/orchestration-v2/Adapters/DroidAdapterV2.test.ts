@@ -410,7 +410,7 @@ it.layer(testLayer)("DroidAdapterV2 idle supervision", (it) => {
       after: "50 minutes",
       failure: "(60m) while waiting for a sub-agent.",
     },
-  ]) {
+  ] as const) {
     it.effect(`fails ${scenario.name} only after its supervised allowance`, () =>
       Effect.scoped(
         Effect.gen(function* () {

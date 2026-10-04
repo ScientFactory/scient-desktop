@@ -69,7 +69,7 @@ it.layer(layer)("Droid native idle supervision persistence", (it) => {
             crypto,
             serverConfig: config,
             idAllocator: allocator,
-            selfInvocation: resolveSelfInvocation({ mode: "built" }),
+            selfInvocation: yield* resolveSelfInvocation(),
             onAuthenticationRejected: () =>
               Effect.die("No authentication in controlled Droid peer"),
           });

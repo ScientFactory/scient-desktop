@@ -593,7 +593,7 @@ export const OrchestrationV2Run = Schema.Struct({
       planId: PlanId,
     }),
   ),
-  /** Exact proposed-plan content selected by a queued run before native acceptance. */
+  /** Exact proposed-plan content selected by a run before native acceptance. */
   sourcePlanFingerprint: Schema.optional(Schema.String),
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
 });
@@ -1020,6 +1020,10 @@ export const OrchestrationV2ProviderTurn = Schema.Struct({
     "failed",
     "cancelled",
   ]),
+  /** Native prompt acknowledgement or owned native execution output, never local installation. */
+  acceptedAt: Schema.optional(Schema.DateTimeUtc),
+  /** Absent on old records whose delivery is unknown; pending is safe to retry after refusal. */
+  nativeAcceptance: Schema.optional(Schema.Literals(["pending", "unknown", "accepted"])),
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
   tokenUsage: Schema.optional(OrchestrationV2ProviderTurnTokenUsage),
@@ -1224,7 +1228,7 @@ export const OrchestrationV2PlanArtifact = Schema.Union([
     ...OrchestrationV2PlanArtifactBaseFields,
     kind: Schema.Literal("proposed_plan"),
     markdown: Schema.String,
-    /** Native acceptance consumes a queued source plan exactly once for this owner. */
+    /** Native acceptance consumes a source plan exactly once for this owner. */
     consumedBy: Schema.optional(
       Schema.Struct({
         threadId: ThreadId,
@@ -2110,6 +2114,7 @@ export type OrchestrationV2ContextTransferJson = typeof OrchestrationV2ContextTr
 
 export const OrchestrationV2ProviderTurnJson = OrchestrationV2ProviderTurn.mapFields((fields) => ({
   ...fields,
+  acceptedAt: Schema.optional(Schema.DateTimeUtcFromString),
   startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   completedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
 }));

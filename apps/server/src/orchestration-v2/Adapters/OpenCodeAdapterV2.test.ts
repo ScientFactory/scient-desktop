@@ -276,6 +276,65 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
+  for (const accepted of [true, false]) {
+    it.effect(
+      `records native prompt ${accepted ? "acceptance" : "uncertainty after transport failure"}`,
+      () =>
+        Effect.gen(function* () {
+          const nativeEvents = asyncEventStream();
+          const harness = yield* makeOpenCodeRuntimeHarness(
+            `native-receipt-${accepted}`,
+            "receipt-session",
+            {
+              event: {
+                subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+                  options.signal?.addEventListener("abort", () => nativeEvents.close(), {
+                    once: true,
+                  });
+                  return { stream: nativeEvents.stream };
+                },
+              },
+              session: {
+                ...nativePermissionPeer(),
+                create: async () => ({
+                  data: { id: "receipt-session", time: { created: 1, updated: 1 } },
+                }),
+                promptAsync: async () => {
+                  if (!accepted) throw new Error("native response lost");
+                  return { data: true };
+                },
+              },
+            },
+          );
+          const result = yield* Effect.result(harness.startTurn());
+          assert.equal(result._tag, accepted ? "Success" : "Failure");
+          const received = Array.from(
+            yield* harness.runtime.events.pipe(
+              Stream.takeUntil((event) =>
+                accepted
+                  ? event.type === "provider_turn.updated" &&
+                    event.providerTurn.nativeAcceptance === "accepted"
+                  : event.type === "turn.terminal",
+              ),
+              Stream.runCollect,
+            ),
+          );
+          const turns = received
+            .filter((event) => event.type === "provider_turn.updated")
+            .map((event) => event.providerTurn);
+          assert.equal(turns[0]?.nativeAcceptance, "pending");
+          assert.isUndefined(turns[0]?.acceptedAt);
+          assert.isTrue(turns.some((turn) => turn.nativeAcceptance === "unknown"));
+          if (accepted) {
+            assert.equal(turns.at(-1)?.nativeAcceptance, "accepted");
+            assert.isDefined(turns.at(-1)?.acceptedAt);
+          } else {
+            assert.isTrue(turns.every((turn) => turn.acceptedAt === undefined));
+            assert.equal(turns.at(-1)?.nativeAcceptance, "unknown");
+          }
+        }).pipe(Effect.provide(IdAllocator.layer)),
+    );
+  }
   for (const previousMode of ["full-access", "approval-required"] as const) {
     for (const reopen of [false, true]) {
       it.effect(

@@ -98,6 +98,8 @@ function isSettledSubagentStatus(status: OrchestrationV2Subagent["status"]): boo
 // commands, monitors/dynamic tools, subagent rows). Ingestion must not stop
 // while one of these is still non-terminal, or the late completion event is
 // dropped and the item spins forever in the projection.
+const isNativeStartReceiptError = Schema.is(ProviderAdapterTurnStartError);
+
 const backgroundCapableTurnItemTypes: ReadonlySet<OrchestrationV2TurnItem["type"]> = new Set([
   "command_execution",
   "dynamic_tool",
@@ -669,6 +671,7 @@ export const layer: Layer.Layer<
       readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
       readonly openRunOwnedSubagents?: OpenRunOwnedSubagentProjection;
       readonly terminal: ProviderTerminalEvent;
+      readonly failedStartReceipt?: OrchestrationV2ProviderTurn;
       readonly failureItemPersisted: boolean;
       readonly refreshAfterTurn: Effect.Effect<void>;
       readonly writeIfRunCurrent?: {
@@ -790,6 +793,24 @@ export const layer: Layer.Layer<
                 ]
               : [],
           events: [
+            ...(input.failedStartReceipt === undefined
+              ? []
+              : [
+                  {
+                    id: yield* allocateEventId(),
+                    type: "provider-turn.updated" as const,
+                    threadId: input.run.threadId,
+                    runId: input.run.id,
+                    nodeId: input.rootNode.id,
+                    providerInstanceId: input.run.providerInstanceId,
+                    occurredAt: completedAt,
+                    payload: {
+                      ...input.failedStartReceipt,
+                      status: "failed" as const,
+                      completedAt,
+                    },
+                  },
+                ]),
             // Terminalize open run-owned subagent rows before the root run
             // settles so projections never keep a forever-running subagent card.
             ...cascadedSubagentEvents,
@@ -1574,57 +1595,76 @@ export const layer: Layer.Layer<
             : input.session.startTurn(turnInput);
           yield* startTurn.pipe(
             Effect.catchCause((cause) =>
-              Effect.logError("orchestration V2 provider turn start failed", {
-                runId: input.run.id,
-                cause,
-              }).pipe(
-                Effect.andThen(Fiber.interrupt(providerEventFiber)),
-                Effect.andThen(Ref.get(latestProviderThread)),
-                Effect.flatMap((providerThread) =>
-                  Ref.get(latestTurnItemOrdinal).pipe(
-                    Effect.flatMap((latestItemOrdinal) =>
-                      Ref.get(openRunOwnedSubagents).pipe(
-                        Effect.flatMap((openSubagents) =>
-                          writeFinalRunEvents({
-                            run: input.run,
-                            rootNode: input.rootNode,
-                            checkpointScope: input.checkpointScope,
-                            providerThread,
-                            attempt: input.attempt,
-                            ...(input.shouldFinalizeRun === undefined
-                              ? {}
-                              : { shouldFinalizeRun: input.shouldFinalizeRun }),
-                            ...(input.hasUnpairedRunInterruptRequest === undefined
-                              ? {}
-                              : {
-                                  hasUnpairedRunInterruptRequest:
-                                    input.hasUnpairedRunInterruptRequest,
+              Effect.gen(function* () {
+                const error = Cause.squash(cause);
+                const receipt =
+                  isNativeStartReceiptError(error) &&
+                  error.threadId === input.run.threadId &&
+                  error.runId === input.run.id &&
+                  error.providerThreadId === input.providerThread.id &&
+                  error.driver === input.session.driver &&
+                  error.providerTurn?.nodeId === input.rootNode.id &&
+                  error.providerTurn.runAttemptId === input.attemptId &&
+                  error.providerTurn.providerThreadId === input.providerThread.id
+                    ? error.providerTurn
+                    : undefined;
+                return yield* Effect.logError("orchestration V2 provider turn start failed", {
+                  runId: input.run.id,
+                  cause,
+                }).pipe(
+                  Effect.andThen(Fiber.interrupt(providerEventFiber)),
+                  Effect.andThen(Ref.get(latestProviderThread)),
+                  Effect.flatMap((providerThread) =>
+                    Ref.get(latestTurnItemOrdinal).pipe(
+                      Effect.flatMap((latestItemOrdinal) =>
+                        Ref.get(openRunOwnedSubagents).pipe(
+                          Effect.flatMap((openSubagents) =>
+                            writeFinalRunEvents({
+                              run: input.run,
+                              rootNode: input.rootNode,
+                              checkpointScope: input.checkpointScope,
+                              providerThread,
+                              attempt: input.attempt,
+                              ...(receipt === undefined ? {} : { failedStartReceipt: receipt }),
+                              writeIfRunCurrent: {
+                                activeAttemptId: input.attemptId,
+                                expectedStatus: "running",
+                              },
+                              ...(input.shouldFinalizeRun === undefined
+                                ? {}
+                                : { shouldFinalizeRun: input.shouldFinalizeRun }),
+                              ...(input.hasUnpairedRunInterruptRequest === undefined
+                                ? {}
+                                : {
+                                    hasUnpairedRunInterruptRequest:
+                                      input.hasUnpairedRunInterruptRequest,
+                                  }),
+                              openRunOwnedSubagents: openSubagents,
+                              terminal: makeFailedTerminalEvent(
+                                makeProviderFailure({
+                                  cause: Cause.squash(cause),
+                                  class: "provider_error",
                                 }),
-                            openRunOwnedSubagents: openSubagents,
-                            terminal: makeFailedTerminalEvent(
-                              makeProviderFailure({
-                                cause: Cause.squash(cause),
-                                class: "provider_error",
-                              }),
-                              latestItemOrdinal + 1,
-                            ),
-                            failureItemPersisted: false,
-                            refreshAfterTurn,
-                          }),
+                                latestItemOrdinal + 1,
+                              ),
+                              failureItemPersisted: false,
+                              refreshAfterTurn,
+                            }),
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-                Effect.mapError(
-                  (writeCause) =>
-                    new RunExecutionStartError({
-                      commandId: input.commandId,
-                      runId: input.run.id,
-                      cause: { start: cause, write: writeCause },
-                    }),
-                ),
-              ),
+                  Effect.mapError(
+                    (writeCause) =>
+                      new RunExecutionStartError({
+                        commandId: input.commandId,
+                        runId: input.run.id,
+                        cause: { start: cause, write: writeCause },
+                      }),
+                  ),
+                );
+              }),
             ),
           );
         }),

@@ -604,6 +604,82 @@ function makeTurnInput(input: {
 }
 
 describe("AcpAdapterV2", () => {
+  for (const fails of [false, true]) {
+    it.live(
+      `distinguishes local installation from the actual ACP prompt ${fails ? "failure" : "response"}`,
+      () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const instanceId = ProviderInstanceId.make(`acp-native-acceptance-${fails}`);
+          const threadId = ThreadId.make(`acp-native-acceptance:${fails}`);
+          const adapter = makeAcpAdapterV2({
+            crypto: yield* Crypto.Crypto,
+            instanceId,
+            fileSystem: yield* FileSystem.FileSystem,
+            idAllocator: yield* IdAllocator.IdAllocatorV2,
+            serverConfig: yield* ServerConfig.ServerConfig,
+            selfInvocation: yield* resolveSelfInvocation(),
+            flavor: {
+              driver: ACP_TEST_DRIVER,
+              capabilities: AcpProviderCapabilitiesV2,
+              makeRuntime: makeMockRuntime({
+                childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+                mockAgentPath: yield* path.fromFileUrl(
+                  new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+                ),
+                environment: fails ? { T3_ACP_FAIL_PROMPT: "1" } : {},
+              }),
+            },
+          });
+          const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: process.cwd(),
+          });
+          const modelSelection = { instanceId, model: "default" };
+          const runtime = yield* adapter.openSession({
+            threadId,
+            providerSessionId: ProviderSessionId.make(`${threadId}:session`),
+            modelSelection,
+            runtimePolicy,
+          });
+          const providerThread = yield* runtime.ensureThread({
+            threadId,
+            modelSelection,
+            runtimePolicy,
+          });
+          yield* runtime.startTurn(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy,
+              now: yield* DateTime.now,
+            }),
+          );
+          const events = yield* runtime.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runCollect,
+            Effect.timeout("15 seconds"),
+          );
+          const turns = events.flatMap((event) =>
+            event.type === "provider_turn.updated" ? [event.providerTurn] : [],
+          );
+          assert.equal(turns[0]?.nativeAcceptance, "pending");
+          assert.equal(turns[0]?.acceptedAt, undefined);
+          if (fails) {
+            assert.isTrue(turns.every((turn) => turn.acceptedAt === undefined));
+            // An internal error after the native write is ambiguous, not a definite refusal.
+            assert.equal(turns.at(-1)?.nativeAcceptance, "unknown");
+            assert.equal(turns.at(-1)?.status, "failed");
+          } else {
+            assert.ok(turns.at(-1)?.acceptedAt);
+            assert.equal(turns.at(-1)?.nativeAcceptance, "accepted");
+            assert.equal(turns.at(-1)?.status, "completed");
+          }
+        }).pipe(Effect.provide(testLayer), Effect.scoped),
+    );
+  }
   for (const outcome of ["failed", "recovered", "completed", "cancelled"] as const) {
     it.live(`projects Mistral retry notices and their ${outcome} outcome`, () =>
       Effect.gen(function* () {
@@ -13024,9 +13100,18 @@ describe("AcpAdapterV2", () => {
       assert.isDefined(replacementHandlers.elicitation);
       assert.isDefined(replacementHandlers.requestUserInput);
       assert.lengthOf(runtimeInputs, 2);
-      while (Option.isSome(yield* Queue.poll(adapterEvents))) {
-        // Discard generation 1 terminal and generation 2 startup projection.
-      }
+      // The native writer log precedes its onSend hook. Wait for the actual
+      // replacement offer receipt before quarantining the old callbacks.
+      yield* Stream.fromQueue(adapterEvents).pipe(
+        Stream.takeUntil(
+          (event) =>
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.ordinal === 2 &&
+            event.providerTurn.nativeAcceptance === "unknown",
+        ),
+        Stream.runDrain,
+        Effect.timeout("15 seconds"),
+      );
 
       yield* oldHandlers.sessionUpdate!({
         sessionId: "mock-session-1",

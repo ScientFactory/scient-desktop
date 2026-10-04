@@ -1522,11 +1522,31 @@ describe("OpenCode2 adapter", () => {
         promptAccepted,
         event("session.execution.succeeded", { sessionID: SESSION }),
       ]);
-      const ended = yield* terminals(runtime, 2);
+      let terminalCount = 0;
+      const observed = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => {
+          if (event.type === "turn.terminal") terminalCount += 1;
+          return terminalCount === 2;
+        }),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
       yield* runtime.startTurn(turnInput(thread)).pipe(Effect.ignore);
       yield* runtime.startTurn(secondTurn(thread));
-      const [first, second] = yield* Fiber.join(ended);
+      const events = yield* Fiber.join(observed);
+      const turns = events.flatMap((event) =>
+        event.type === "provider_turn.updated" ? [event.providerTurn] : [],
+      );
+      const [first, second] = events.filter((event) => event.type === "turn.terminal");
       assert.deepEqual([first?.status, second?.status], ["failed", "completed"]);
+      const refused = turns.filter((turn) => turn.id === first?.providerTurnId);
+      assert.isTrue(refused.length > 0);
+      assert.isTrue(refused.every((turn) => turn.acceptedAt === undefined));
+      assert.equal(refused.at(-1)?.nativeAcceptance, "pending");
+      const accepted = turns.find(
+        (turn) => turn.id === second?.providerTurnId && turn.nativeAcceptance === "accepted",
+      );
+      assert.ok(accepted?.acceptedAt);
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
@@ -1672,29 +1692,65 @@ describe("OpenCode2 adapter", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect("breaks the thread and forgets it when the session was deleted outside T3", () =>
-    Effect.gen(function* () {
-      const { runtime, thread } = yield* resumed([
-        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-        reply("session.prompt", {
-          status: 404,
-          body: {
-            _tag: "SessionNotFoundError",
-            sessionID: SESSION,
-            message: `Session not found: ${SESSION}`,
-          },
-        }),
-      ]);
-      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
-      yield* runtime.startTurn(turnInput(thread)).pipe(Effect.ignore);
-      const ended = yield* Fiber.join(terminal);
-      assert.equal(ended?.status, "failed");
-      assert.equal(ended?.threadDisposition, "broken");
-      // The next turn must resume (and fail into a handoff), not reuse the dead session.
-      const again = yield* runtime.startTurn(turnInput(thread)).pipe(Effect.flip);
-      assert.equal(again._tag, "ProviderAdapterProtocolError");
-      assert.include(again.message, "not registered");
-    }).pipe(Effect.scoped),
+  it.effect.each([false, true])(
+    "retains definite session deletion versus prior native acceptance: %s",
+    (acceptedBeforeDeletion) =>
+      Effect.gen(function* () {
+        const accepted = yield* Deferred.make<void>();
+        const { runtime, thread } = yield* resumed([
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          ...(acceptedBeforeDeletion
+            ? [
+                event("session.execution.started", { sessionID: SESSION }),
+                // A real history request releases the error only after the adapter's
+                // owned native-start event has been observed, rather than after SSE delivery.
+                out("message.list", { sessionID: SESSION, order: "asc", limit: "100" }),
+                reply("message.list", { data: [], cursor: {} }),
+              ]
+            : []),
+          reply("session.prompt", {
+            status: 404,
+            body: {
+              _tag: "SessionNotFoundError",
+              sessionID: SESSION,
+              message: `Session not found: ${SESSION}`,
+            },
+          }),
+        ]);
+        const collected = yield* runtime.events.pipe(
+          Stream.tap((event) =>
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.nativeAcceptance === "accepted"
+              ? Deferred.succeed(accepted, undefined)
+              : Effect.void,
+          ),
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        const starting = yield* runtime
+          .startTurn(turnInput(thread))
+          .pipe(Effect.ignore, Effect.forkScoped);
+        if (acceptedBeforeDeletion) {
+          yield* Deferred.await(accepted);
+          assert.ok(runtime.readThreadSnapshot);
+          yield* runtime.readThreadSnapshot({ providerThread: thread });
+        }
+        yield* Fiber.join(starting);
+        const events = yield* Fiber.join(collected);
+        const ended = events.find((event) => event.type === "turn.terminal");
+        assert.equal(ended?.status, "failed");
+        assert.equal(ended?.threadDisposition, "broken");
+        const receipt = events
+          .flatMap((event) => (event.type === "provider_turn.updated" ? [event.providerTurn] : []))
+          .at(-1);
+        assert.equal(receipt?.nativeAcceptance, acceptedBeforeDeletion ? "accepted" : "pending");
+        assert.equal(receipt?.acceptedAt !== undefined, acceptedBeforeDeletion);
+        // The next turn must resume (and fail into a handoff), not reuse the dead session.
+        const again = yield* runtime.startTurn(turnInput(thread)).pipe(Effect.flip);
+        assert.equal(again._tag, "ProviderAdapterProtocolError");
+        assert.include(again.message, "not registered");
+      }).pipe(Effect.scoped),
   );
 
   it.effect("refuses a model slug that is not provider/model before creating a session", () =>

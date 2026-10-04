@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -23,6 +24,8 @@ import {
   type NativeSession,
   type NativeSessionAdapterV2Options,
 } from "./NativeSessionAdapterV2.ts";
+
+const encodeNativeOutput = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 export interface LegacyAntigravityAdapterV2Options extends Pick<
   NativeSessionAdapterV2Options,
@@ -102,7 +105,7 @@ export function makeLegacyAntigravityAdapterV2(options: LegacyAntigravityAdapter
           nativeId: conversationId ?? `${input.threadId}:agy:${input.providerSessionId}`,
           nativeThreadKnown: conversationId !== undefined,
           interruptBreaksSession: true,
-          send: (turnInput) =>
+          send: (turnInput, nativeTurnId) =>
             Effect.gen(function* () {
               const attachmentLines: string[] = [];
               for (const attachment of turnInput.message.attachments) {
@@ -137,42 +140,55 @@ export function makeLegacyAntigravityAdapterV2(options: LegacyAntigravityAdapter
                 attachmentLines.push(`[Attachment saved at ${real}]`);
               }
               const text = `${turnInput.message.text}\n\n${ANTIGRAVITY_WORKSPACE_TOOL_INSTRUCTIONS}\n${attachmentLines.join("\n")}`;
+              yield* onUpdate({ type: "offered", nativeTurnId });
               yield* session
                 .prompt({
                   text,
-                  onEvent: (event) => {
-                    switch (event._tag) {
-                      case "AssistantText":
-                        return onUpdate({ type: "text", id: "assistant", delta: event.text });
-                      case "ToolCall":
-                        return onUpdate({
-                          type: "tool",
-                          id: event.id,
-                          name: event.name,
-                          status: "running",
-                          input: event.input,
-                        });
-                      case "ToolCallUpdate":
-                        return onUpdate({
-                          type: "tool",
-                          id: event.id,
-                          name: event.name,
-                          status: event.status,
-                          ...(event.output === undefined
-                            ? {}
-                            : {
-                                output:
-                                  typeof event.output === "string"
-                                    ? event.output
-                                    : JSON.stringify(event.output),
-                              }),
-                        });
-                    }
-                  },
+                  onEvent: (event) =>
+                    onUpdate({ type: "accepted", nativeTurnId }).pipe(
+                      Effect.andThen(
+                        Effect.suspend(() => {
+                          switch (event._tag) {
+                            case "AssistantText":
+                              return onUpdate({ type: "text", id: "assistant", delta: event.text });
+                            case "ToolCall":
+                              return onUpdate({
+                                type: "tool",
+                                id: event.id,
+                                name: event.name,
+                                status: "running",
+                                input: event.input,
+                              });
+                            case "ToolCallUpdate":
+                              return Effect.gen(function* () {
+                                const output =
+                                  event.output === undefined
+                                    ? undefined
+                                    : typeof event.output === "string"
+                                      ? event.output
+                                      : yield* encodeNativeOutput(event.output).pipe(Effect.orDie);
+                                yield* onUpdate({
+                                  type: "tool",
+                                  id: event.id,
+                                  name: event.name,
+                                  status: event.status,
+                                  ...(output === undefined
+                                    ? {}
+                                    : {
+                                        output,
+                                      }),
+                                });
+                              });
+                          }
+                        }),
+                      ),
+                    ),
                 })
                 .pipe(
                   Effect.flatMap((result) =>
                     Effect.gen(function* () {
+                      if (result.status === "success")
+                        yield* onUpdate({ type: "accepted", nativeTurnId });
                       conversationId = result.conversationId;
                       yield* onUpdate({ type: "native-thread", id: result.conversationId });
                       yield* onUpdate({
