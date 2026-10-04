@@ -12,6 +12,7 @@ import {
   ThreadId,
   TurnItemId,
   type OrchestrationV2ConversationMessage,
+  type OrchestrationV2ExecutionNode,
   type OrchestrationV2Run,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
@@ -139,6 +140,7 @@ function makeProjection() {
       ...itemBase,
       id: TurnItemId.make("answer-one"),
       runId: completed,
+      nodeId: runs[0]!.rootNodeId,
       ordinal: 2,
       status: "completed",
       type: "assistant_message",
@@ -175,6 +177,7 @@ function makeProjection() {
       ...itemBase,
       id: TurnItemId.make("partial-answer"),
       runId: running,
+      nodeId: runs[1]!.rootNodeId,
       ordinal: 5,
       status: "running",
       type: "assistant_message",
@@ -221,6 +224,23 @@ function makeProjection() {
   return {
     ...base,
     runs,
+    nodes: runs.map((run): OrchestrationV2ExecutionNode => ({
+      id: run.rootNodeId!,
+      threadId,
+      runId: run.id,
+      parentNodeId: null,
+      rootNodeId: run.rootNodeId!,
+      kind: "root_turn",
+      status: run.status === "completed" ? "completed" : "running",
+      countsForRun: true,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      runtimeRequestId: null,
+      checkpointScopeId: null,
+      startedAt: now,
+      completedAt: run.completedAt,
+    })),
     turnItems,
     messages,
     visibleTurnItems: turnItems.map((item, position) => ({
@@ -401,5 +421,78 @@ it.effect("rejects missing, streaming, and nested response boundaries", () =>
       ))._tag,
       "Failure",
     );
+  }),
+);
+
+it.effect("accepts a direct assistant-message child owned by the response's run", () =>
+  Effect.gen(function* () {
+    const projection = makeProjection();
+    const root = projection.nodes[0]!;
+    const child = {
+      ...root,
+      id: NodeId.make("ordinary-answer-node"),
+      parentNodeId: root.id,
+      kind: "assistant_message" as const,
+      countsForRun: false,
+    };
+    projection.nodes.push(child);
+    projection.visibleTurnItems[2] = {
+      ...projection.visibleTurnItems[2]!,
+      item: { ...projection.turnItems[2]!, nodeId: child.id },
+    };
+    projection.messages = projection.messages.map((message) =>
+      message.id === "answer-one" ? { ...message, nodeId: child.id } : message,
+    );
+    const plan = yield* planConversationFork({
+      projection,
+      targetThreadId,
+      source: { kind: "assistant-response", messageId: MessageId.make("answer-one") },
+    });
+    assert.equal(plan.boundaryRunId, completed);
+    assert.equal(plan.messages.at(-1)?.text, "First answer");
+    assert.ok(plan.items.every((item) => item.runId === null && item.nodeId === null));
+  }),
+);
+
+it.effect("rejects nested, unknown, and mismatched assistant-node ownership", () =>
+  Effect.gen(function* () {
+    for (const mismatch of ["nested", "unknown", "run", "thread", "root", "kind"] as const) {
+      const projection = makeProjection();
+      const root = projection.nodes[0]!;
+      const child = {
+        ...root,
+        id: NodeId.make("untrusted-answer-node"),
+        parentNodeId: mismatch === "nested" ? NodeId.make("subagent-parent") : root.id,
+        rootNodeId: mismatch === "root" ? NodeId.make("foreign-root") : root.id,
+        runId: mismatch === "run" ? running : root.runId,
+        threadId: mismatch === "thread" ? targetThreadId : threadId,
+        kind: mismatch === "kind" ? ("subagent" as const) : ("assistant_message" as const),
+        countsForRun: false,
+      };
+      if (mismatch === "nested") {
+        projection.nodes.push({
+          ...root,
+          id: child.parentNodeId,
+          parentNodeId: root.id,
+          kind: "subagent",
+        });
+      }
+      if (mismatch !== "unknown") projection.nodes.push(child);
+      projection.visibleTurnItems[2] = {
+        ...projection.visibleTurnItems[2]!,
+        item: { ...projection.turnItems[2]!, nodeId: child.id },
+      };
+      const result = yield* Effect.result(
+        planConversationFork({
+          projection,
+          targetThreadId,
+          source: { kind: "assistant-response", messageId: MessageId.make("answer-one") },
+        }),
+      );
+      assert.equal(result._tag, "Failure", mismatch);
+      if (result._tag === "Failure") {
+        assert.include(result.failure.message, "not a nested task");
+      }
+    }
   }),
 );

@@ -110,11 +110,19 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
       }
       const run =
         item.runId === null ? undefined : projection.runs.find((run) => run.id === item.runId);
+      const node = projection.nodes.find((node) => node.id === item.nodeId);
       if (
         run &&
         run.rootNodeId !== null &&
         item.nodeId !== null &&
-        item.nodeId !== run.rootNodeId
+        item.nodeId !== run.rootNodeId &&
+        !(
+          node?.kind === "assistant_message" &&
+          node.threadId === projection.thread.id &&
+          node.runId === run.id &&
+          node.parentNodeId === run.rootNodeId &&
+          node.rootNodeId === run.rootNodeId
+        )
       ) {
         return yield* reject("Choose a response from the conversation, not a nested task.");
       }
