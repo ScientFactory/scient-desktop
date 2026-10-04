@@ -58,7 +58,7 @@ import {
   type OmpSessionUpdate,
 } from "../../provider/omp/OmpSessionRuntime.ts";
 import type { OmpProcessFactory } from "../../provider/Layers/OmpProvider.ts";
-import { planOmpImages } from "../../provider/omp/OmpImagePrompt.ts";
+import { formatOmpBytes, planOmpImages } from "../../provider/omp/OmpImagePrompt.ts";
 import type * as ProviderAdapter from "../ProviderAdapter.ts";
 import { AcpProviderCapabilitiesV2 } from "./AcpAdapterV2.ts";
 import {
@@ -545,14 +545,16 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                 attachment.type === "image"
                   ? PROVIDER_SEND_TURN_MAX_IMAGE_BYTES
                   : PROVIDER_SEND_TURN_MAX_FILE_BYTES;
-              if (
-                !sessionFileInsideRoot(root, real) ||
-                info.type !== "File" ||
-                Number(info.size) > limit
-              )
+              if (!sessionFileInsideRoot(root, real) || info.type !== "File")
                 return yield* Effect.fail(
                   new NativeSessionOperationError({
-                    detail: `${target.name} attachment escaped its directory or exceeded its size limit.`,
+                    detail: `${target.name} attachment escaped its directory or is not a file.`,
+                  }),
+                );
+              if (Number(info.size) > limit)
+                return yield* Effect.fail(
+                  new NativeSessionOperationError({
+                    detail: `${target.name} ${attachment.type} attachment exceeds the ${formatOmpBytes(limit)} limit.`,
                   }),
                 );
               if (attachment.type === "image")

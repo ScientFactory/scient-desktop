@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   OmpSettings,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   MessageId,
   NodeId,
   ProviderInstanceId,
@@ -31,6 +32,7 @@ import * as ServerConfig from "../../config.ts";
 import { makeOmpRedaction, type OmpRpcProcess } from "../../provider/omp/OmpRpcProcess.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { makeOmpAdapterV2 } from "./OmpAdapterV2.ts";
+import { scriptedOmpRpc } from "../../provider/testUtils/scriptedOmpRpc.ts";
 import { ompTarget, type OmpTarget } from "../../provider/omp/OmpTarget.ts";
 import {
   scientAgentTarget,
@@ -61,6 +63,7 @@ const harness = Effect.fnUntraced(function* (
     readonly ignoreFreshWrite?: boolean;
     readonly misreportResume?: boolean;
     readonly target?: OmpTarget;
+    readonly makeProcess?: Parameters<typeof makeOmpAdapterV2>[0]["makeProcess"];
   },
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -107,98 +110,100 @@ const harness = Effect.fnUntraced(function* (
     serverConfig: config,
     idAllocator: yield* IdAllocator.IdAllocatorV2,
     continuations: { offer: () => Effect.void },
-    makeProcess: (options) =>
-      Effect.gen(function* () {
-        processTarget = options.target;
-        processStateRoot = options.env?.SCIENT_AGENT_ROOT;
-        processSessionDir = options.sessionDir;
-        const sessionDir = options.sessionDir;
-        if (!sessionDir) return yield* Effect.die("Missing owned session directory");
-        let sessionFile = path.join(sessionDir, "session.jsonl");
-        let sessionId = "session";
-        const sessions = new Map([[sessionFile, sessionId]]);
-        yield* fs.writeFileString(sessionFile, "{}\n").pipe(Effect.orDie);
+    makeProcess:
+      behavior?.makeProcess ??
+      ((options) =>
+        Effect.gen(function* () {
+          processTarget = options.target;
+          processStateRoot = options.env?.SCIENT_AGENT_ROOT;
+          processSessionDir = options.sessionDir;
+          const sessionDir = options.sessionDir;
+          if (!sessionDir) return yield* Effect.die("Missing owned session directory");
+          let sessionFile = path.join(sessionDir, "session.jsonl");
+          let sessionId = "session";
+          const sessions = new Map([[sessionFile, sessionId]]);
+          yield* fs.writeFileString(sessionFile, "{}\n").pipe(Effect.orDie);
 
-        const client: OmpRpcProcess = {
-          version: scientific ? "0.1.0" : "18.3.1",
-          runtimeVersion: scientific ? "18.4.8" : "18.3.1",
-          redaction: makeOmpRedaction({}, []),
-          shutdown: Effect.succeed({ code: 0, forced: false, stderrTail: "" }),
-          ready: Effect.succeed({
-            type: "ready",
-            protocolVersion: 2,
-            supportedProtocolVersions: [2],
-            maxFrameBytes: 1_048_576,
-            maxReassembledFrameBytes: 67_108_864,
-          }),
-          events: Stream.fromQueue(notifications),
-          flushEvents: () => Queue.offer(notifications, { _tag: "Drain" }).pipe(Effect.asVoid),
-          command: (body) =>
-            Effect.gen(function* () {
-              if (body.type === "new_session" && !behavior?.ignoreFreshWrite) {
-                freshSessions += 1;
-                sessionId = `fresh-${freshSessions}`;
-                sessionFile = path.join(sessionDir, `${sessionId}.jsonl`);
-                sessions.set(sessionFile, sessionId);
-                yield* fs.writeFileString(sessionFile, "{}\n").pipe(Effect.orDie);
-              }
-              return success(body.type);
+          const client: OmpRpcProcess = {
+            version: scientific ? "0.1.0" : "18.3.1",
+            runtimeVersion: scientific ? "18.4.8" : "18.3.1",
+            redaction: makeOmpRedaction({}, []),
+            shutdown: Effect.succeed({ code: 0, forced: false, stderrTail: "" }),
+            ready: Effect.succeed({
+              type: "ready",
+              protocolVersion: 2,
+              supportedProtocolVersions: [2],
+              maxFrameBytes: 1_048_576,
+              maxReassembledFrameBytes: 67_108_864,
             }),
-          prompt: () =>
-            Effect.gen(function* () {
-              prompts += 1;
-              yield* Deferred.succeed(promptDelivered, undefined);
-              return success("prompt");
+            events: Stream.fromQueue(notifications),
+            flushEvents: () => Queue.offer(notifications, { _tag: "Drain" }).pipe(Effect.asVoid),
+            command: (body) =>
+              Effect.gen(function* () {
+                if (body.type === "new_session" && !behavior?.ignoreFreshWrite) {
+                  freshSessions += 1;
+                  sessionId = `fresh-${freshSessions}`;
+                  sessionFile = path.join(sessionDir, `${sessionId}.jsonl`);
+                  sessions.set(sessionFile, sessionId);
+                  yield* fs.writeFileString(sessionFile, "{}\n").pipe(Effect.orDie);
+                }
+                return success(body.type);
+              }),
+            prompt: () =>
+              Effect.gen(function* () {
+                prompts += 1;
+                yield* Deferred.succeed(promptDelivered, undefined);
+                return success("prompt");
+              }),
+            steer: () => Effect.succeed(success("steer")),
+            followUp: () => Effect.succeed(success("follow_up")),
+            abort: () => Effect.succeed(success("abort")),
+            getState: () =>
+              Effect.sync(() => ({
+                sessionFile,
+                sessionId,
+                model,
+                isStreaming: false,
+                isCompacting: false,
+              })),
+            getModels: () => Effect.succeed({ models: [] }),
+            getCommands: () => Effect.succeed({ commands: [] }),
+            setModel: (provider, id) =>
+              Effect.sync(() => {
+                if (!ignoreModelWrite) model = { provider, id };
+                return success("set_model");
+              }),
+            setThinkingLevel: () => Effect.succeed(success("set_thinking_level")),
+            compact: () => Effect.succeed(success("compact")),
+            switchSession: (requested) =>
+              Effect.sync(() => {
+                switches += 1;
+                if (!behavior?.misreportResume) {
+                  sessionFile = requested;
+                  sessionId = sessions.get(requested) ?? "unrecognized";
+                }
+                return { cancelled: false };
+              }),
+            setSubagentSubscription: () => Effect.succeed(success("set_subagent_subscription")),
+            setEventFilter: (filter) =>
+              Effect.sync(() => {
+                eventFilterWrites += 1;
+                return { events: filter === null ? null : [...filter] };
+              }),
+            limits: Effect.succeed({
+              maxFrameBytes: 1_048_576,
+              maxReassembledFrameBytes: 67_108_864,
             }),
-          steer: () => Effect.succeed(success("steer")),
-          followUp: () => Effect.succeed(success("follow_up")),
-          abort: () => Effect.succeed(success("abort")),
-          getState: () =>
-            Effect.sync(() => ({
-              sessionFile,
-              sessionId,
-              model,
-              isStreaming: false,
-              isCompacting: false,
-            })),
-          getModels: () => Effect.succeed({ models: [] }),
-          getCommands: () => Effect.succeed({ commands: [] }),
-          setModel: (provider, id) =>
-            Effect.sync(() => {
-              if (!ignoreModelWrite) model = { provider, id };
-              return success("set_model");
-            }),
-          setThinkingLevel: () => Effect.succeed(success("set_thinking_level")),
-          compact: () => Effect.succeed(success("compact")),
-          switchSession: (requested) =>
-            Effect.sync(() => {
-              switches += 1;
-              if (!behavior?.misreportResume) {
-                sessionFile = requested;
-                sessionId = sessions.get(requested) ?? "unrecognized";
-              }
-              return { cancelled: false };
-            }),
-          setSubagentSubscription: () => Effect.succeed(success("set_subagent_subscription")),
-          setEventFilter: (filter) =>
-            Effect.sync(() => {
-              eventFilterWrites += 1;
-              return { events: filter === null ? null : [...filter] };
-            }),
-          limits: Effect.succeed({
-            maxFrameBytes: 1_048_576,
-            maxReassembledFrameBytes: 67_108_864,
-          }),
-          setHostTools: () => Effect.succeed(success("set_host_tools")),
-          setHostUriSchemes: () => Effect.succeed(success("set_host_uri_schemes")),
-          extensionUiResponse: () => Effect.void,
-          hostToolUpdate: () => Effect.void,
-          hostToolResult: () => Effect.void,
-          hostUriResult: () => Effect.void,
-          close: () => Effect.void,
-        };
-        return client;
-      }),
+            setHostTools: () => Effect.succeed(success("set_host_tools")),
+            setHostUriSchemes: () => Effect.succeed(success("set_host_uri_schemes")),
+            extensionUiResponse: () => Effect.void,
+            hostToolUpdate: () => Effect.void,
+            hostToolResult: () => Effect.void,
+            hostUriResult: () => Effect.void,
+            close: () => Effect.void,
+          };
+          return client;
+        })),
   });
   const runtime = yield* adapter.openSession({
     threadId,
@@ -271,6 +276,9 @@ const harness = Effect.fnUntraced(function* (
   return {
     runtime,
     input,
+    fs,
+    path,
+    config,
     ownedHome,
     processTarget,
     processStateRoot,
@@ -286,7 +294,169 @@ const harness = Effect.fnUntraced(function* (
   };
 });
 
+const imageHarness = Effect.fnUntraced(function* (maxFrameBytes = 1_048_576) {
+  const peer = scriptedOmpRpc({
+    models: [{ provider: "test", id: "selected", input: ["text", "image"], contextWindow: null }],
+    initial: { provider: "test", id: "selected" },
+    maxFrameBytes,
+  });
+  const h = yield* harness(false, { makeProcess: peer.makeProcess });
+  yield* h.fs.makeDirectory(h.config.attachmentsDir, { recursive: true });
+  const image = Effect.fnUntraced(function* (id: string, size: number) {
+    const stored = h.path.join(h.config.attachmentsDir, `${id}.png`);
+    yield* h.fs.writeFile(stored, new Uint8Array(size).fill(7));
+    return {
+      type: "image" as const,
+      id,
+      name: `${id}.png`,
+      mimeType: "image/png",
+      sizeBytes: size,
+    };
+  });
+  const send = Effect.fnUntraced(function* (
+    ordinal: number,
+    text: string,
+    attachments: ReadonlyArray<Effect.Success<ReturnType<typeof image>>>,
+  ) {
+    yield* h.runtime.startTurn({
+      ...h.input,
+      runId: RunId.make(`image-run-${ordinal}`),
+      runOrdinal: ordinal,
+      providerTurnOrdinal: ordinal,
+      attemptId: RunAttemptId.make(`image-attempt-${ordinal}`),
+      rootNodeId: NodeId.make(`image-root-${ordinal}`),
+      message: {
+        ...h.input.message,
+        messageId: MessageId.make(`image-message-${ordinal}`),
+        text,
+        attachments,
+      },
+    });
+    yield* peer.finish();
+    const terminal = yield* h.takeUntil((event) => event.type === "turn.terminal");
+    if (terminal.type !== "turn.terminal") return yield* Effect.die("Missing image terminal");
+    assert.equal(terminal.status, "completed");
+    return peer.state.prompts.at(-1)!;
+  });
+  return { ...h, peer, image, send };
+});
+const decodeImagePath = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.String));
+const attachedImagePaths = (message: string | undefined) =>
+  (message ?? "")
+    .split("\n")
+    .filter((line) => line.startsWith('"') && line.includes("attachments"))
+    .map((value) => decodeImagePath(value));
+
 it.layer(TestLayer)("OmpAdapterV2", (it) => {
+  it.effect(
+    "delivers native OMP images inline or through read according to actual RPC frame bytes",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* imageHarness();
+          const small = yield* h.send(1, "small", [yield* h.image("small", 600 * 1024)]);
+          assert.lengthOf(small.frame.images ?? [], 1);
+          assert.equal(small.frame.message, "small");
+          assert.isAtMost(small.bytes, 1_048_576);
+          assert.equal(Buffer.from(small.frame.images![0]!.data, "base64").length, 600 * 1024);
+          for (const [ordinal, size] of [
+            [2, 900 * 1024],
+            [3, 3 * 1024 * 1024],
+          ] as const) {
+            const large = yield* h.send(ordinal, "large", [
+              yield* h.image(`large-${ordinal}`, size),
+            ]);
+            assert.lengthOf(large.frame.images ?? [], 0);
+            assert.include(large.frame.message ?? "", "read tool");
+            const paths = attachedImagePaths(large.frame.message);
+            assert.deepEqual(paths, [
+              yield* h.fs.realPath(h.path.join(h.config.attachmentsDir, `large-${ordinal}.png`)),
+            ]);
+            assert.equal(Number((yield* h.fs.stat(paths[0]!)).size), size);
+            assert.isAtMost(large.bytes, 1_048_576);
+          }
+          assert.lengthOf(
+            h.recorded.filter((event) => event.type === "turn.terminal"),
+            3,
+          );
+        }),
+      ),
+  );
+  it.effect("budgets several native OMP images together against one serialized frame", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* imageHarness();
+        const sent = yield* h.send(1, "two", [
+          yield* h.image("first", 500 * 1024),
+          yield* h.image("second", 500 * 1024),
+        ]);
+        assert.lengthOf(sent.frame.images ?? [], 1);
+        assert.deepEqual(attachedImagePaths(sent.frame.message), [
+          yield* h.fs.realPath(h.path.join(h.config.attachmentsDir, "second.png")),
+        ]);
+        assert.isAtMost(sent.bytes, 1_048_576);
+      }),
+    ),
+  );
+  it.effect("uses the native OMP peer's advertised physical frame limit", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* imageHarness(2 * 1024 * 1024);
+        const sent = yield* h.send(1, "inline", [yield* h.image("wide", 900 * 1024)]);
+        assert.lengthOf(sent.frame.images ?? [], 1);
+        assert.equal(sent.frame.message, "inline");
+        assert.lengthOf(attachedImagePaths(sent.frame.message), 0);
+        assert.isAtMost(sent.bytes, 2 * 1024 * 1024);
+        assert.isAbove(sent.bytes, 1_048_576);
+      }),
+    ),
+  );
+  it.effect(
+    "refuses native OMP oversized attachments with an honest limit before prompt delivery",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* imageHarness();
+          const oversized = yield* h.image("oversize", PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1);
+          const failure = yield* Effect.result(
+            h.runtime.startTurn({
+              ...h.input,
+              message: { ...h.input.message, attachments: [oversized] },
+            }),
+          );
+          assert.equal(failure._tag, "Failure");
+          if (failure._tag !== "Failure") return yield* Effect.die("Oversized image reached OMP");
+          assert.include(Cause.pretty(Cause.fail(failure.failure)), "10 MB");
+          assert.lengthOf(h.peer.state.prompts, 0);
+        }),
+      ),
+  );
+
+  it.effect("reports the native OMP frame limit when even a file reference cannot fit", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* imageHarness(1024);
+        const failure = yield* Effect.result(
+          h.runtime.startTurn({
+            ...h.input,
+            message: {
+              ...h.input.message,
+              text: "Long request".repeat(1000),
+              attachments: yield* Effect.forEach(
+                Array.from({ length: 8 }, (_, i) => i),
+                (i) => h.image(`frame-${i}`, 8192),
+              ),
+            },
+          }),
+        );
+        assert.equal(failure._tag, "Failure");
+        if (failure._tag !== "Failure") return yield* Effect.die("Oversized frame reached OMP");
+        assert.include(Cause.pretty(Cause.fail(failure.failure)), "1024-byte frame limit");
+        assert.lengthOf(h.peer.state.prompts, 0);
+      }),
+    ),
+  );
+
   it.effect("runs Scient Agent through its independent native target and runtime version", () =>
     Effect.scoped(
       Effect.gen(function* () {
