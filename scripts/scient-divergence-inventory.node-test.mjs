@@ -7,7 +7,7 @@ import * as NodeTest from "node:test";
 import * as NodeURL from "node:url";
 import { commentIntervals, inspectScientDivergence } from "./scient-divergence-inventory.mjs";
 
-function fixture(t, files) {
+function fixture(t, files, symlinks = {}) {
   const cwd = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-divergence-"));
   t.after(() => NodeFS.rmSync(cwd, { recursive: true, force: true }));
   const git = (...args) => NodeChildProcess.execFileSync("git", args, { cwd, encoding: "utf8" });
@@ -19,6 +19,10 @@ function fixture(t, files) {
     NodeFS.writeFileSync(NodePath.join(cwd, path), content);
   };
   for (const [path, content] of Object.entries(files)) write(path, content);
+  for (const [path, target] of Object.entries(symlinks)) {
+    NodeFS.mkdirSync(NodePath.dirname(NodePath.join(cwd, path)), { recursive: true });
+    NodeFS.symlinkSync(target, NodePath.join(cwd, path));
+  }
   const commit = () => {
     git("add", "-A");
     git("-c", "core.hooksPath=/dev/null", "commit", "-qm", "fixture");
@@ -433,4 +437,125 @@ NodeTest.test("ordinary imports stay silent and entry-resolution errors fail una
   NodeAssert.equal(failure?.status, 2);
   NodeAssert.match(failure.stderr, /Unable to resolve CLI entry identity/);
   NodeAssert.equal(failure.stdout, "");
+});
+
+function removeFixtureBlob(f, oid) {
+  const object = NodePath.join(
+    f.git("rev-parse", "--absolute-git-dir").trim(),
+    "objects",
+    oid.slice(0, 2),
+    oid.slice(2),
+  );
+  NodeAssert.equal(f.git("cat-file", "-t", oid).trim(), "blob");
+  NodeAssert.ok(NodeFS.existsSync(object));
+  NodeFS.unlinkSync(object);
+}
+
+function reviewedFixture(f, candidate, upstream = f.upstream) {
+  const inspect = (extra = {}) =>
+    inspectScientDivergence({ cwd: f.cwd, upstream, candidate, ...extra });
+  const initial = inspect();
+  NodeAssert.equal(initial.status, "advisory");
+  const options = { baseline: baselineFor(initial), asOf: "2026-10-05" };
+  const accepted = inspect(options);
+  NodeAssert.equal(accepted.ratchet, "no-new-debt-within-declared-scope");
+  NodeAssert.equal(accepted.counts["reviewed-historical-debt"], 1);
+  NodeAssert.deepEqual(
+    all(accepted).map((item) => item.fingerprint),
+    all(initial).map((item) => item.fingerprint),
+  );
+  return { inspect: () => inspect(options), options };
+}
+
+NodeTest.test("reviewed tombstone fails closed when only its original blob is missing", (t) => {
+  const f = fixture(t, { "a.ts": "const removedOriginal = 731;\n", "docs/review.md": "Review\n" });
+  const blob = f.git("rev-parse", `${f.upstream}:a.ts`).trim();
+  NodeFS.unlinkSync(NodePath.join(f.cwd, "a.ts"));
+  const candidate = f.commit();
+  const reviewed = reviewedFixture(f, candidate);
+  removeFixtureBlob(f, blob);
+  NodeAssert.equal(f.git("cat-file", "-t", f.upstream).trim(), "commit");
+  NodeAssert.equal(f.git("cat-file", "-t", candidate).trim(), "commit");
+  NodeAssert.match(f.git("ls-tree", "-r", f.upstream), new RegExp(blob));
+  NodeAssert.equal(f.git("show", `${candidate}:docs/review.md`), "Review\n");
+  const missing = reviewed.inspect();
+  NodeAssert.equal(missing.status, "unavailable");
+  NodeAssert.equal(missing.ratchet, "unavailable");
+  NodeAssert.deepEqual(missing.files, []);
+  const baselinePath = NodePath.join(f.cwd, "reviewed-debt.json");
+  NodeFS.writeFileSync(baselinePath, JSON.stringify(reviewed.options.baseline));
+  const cli = NodeChildProcess.spawnSync(
+    process.execPath,
+    [
+      NodeURL.fileURLToPath(new URL("./scient-divergence-inventory.mjs", import.meta.url)),
+      "--upstream",
+      f.upstream,
+      "--candidate",
+      candidate,
+      "--baseline",
+      baselinePath,
+      "--as-of",
+      reviewed.options.asOf,
+      "--ratchet",
+    ],
+    { cwd: f.cwd, encoding: "utf8" },
+  );
+  NodeAssert.equal(cli.status, 2);
+  NodeAssert.equal(JSON.parse(cli.stdout).ratchet, "unavailable");
+});
+
+NodeTest.test("reviewed mode-only debt requires its unchanged blob to remain available", (t) => {
+  const f = fixture(t, { "a.ts": "const modeOriginal = 947;\n", "docs/review.md": "Review\n" });
+  f.git("update-index", "--chmod=+x", "a.ts");
+  f.git("-c", "core.hooksPath=/dev/null", "commit", "-qm", "mode-only");
+  const candidate = f.git("rev-parse", "HEAD").trim();
+  const original = f.git("rev-parse", `${f.upstream}:a.ts`).trim();
+  NodeAssert.equal(f.git("rev-parse", `${candidate}:a.ts`).trim(), original);
+  const reviewed = reviewedFixture(f, candidate);
+  removeFixtureBlob(f, original);
+  const missing = reviewed.inspect();
+  NodeAssert.equal(missing.status, "unavailable");
+  NodeAssert.equal(missing.ratchet, "unavailable");
+  NodeAssert.deepEqual(missing.files, []);
+});
+
+for (const side of ["upstream", "candidate"])
+  NodeTest.test(`reviewed changed symlink requires its ${side} blob`, (t) => {
+    const f = fixture(
+      t,
+      { "docs/review.md": "Review\n" },
+      { "link.ts": "original-symlink-target" },
+    );
+    NodeFS.unlinkSync(NodePath.join(f.cwd, "link.ts"));
+    NodeFS.symlinkSync("changed-symlink-target", NodePath.join(f.cwd, "link.ts"));
+    const candidate = f.commit();
+    const reviewed = reviewedFixture(f, candidate);
+    removeFixtureBlob(
+      f,
+      f.git("rev-parse", `${side === "upstream" ? f.upstream : candidate}:link.ts`).trim(),
+    );
+    const missing = reviewed.inspect();
+    NodeAssert.equal(missing.status, "unavailable");
+    NodeAssert.equal(missing.ratchet, "unavailable");
+    NodeAssert.deepEqual(missing.files, []);
+  });
+
+NodeTest.test("changed Git links remain metadata debt without fetching external commits", (t) => {
+  const f = fixture(t, { "docs/review.md": "Review\n" });
+  const originalCommit = "1234567890abcdef1234567890abcdef12345678";
+  const changedCommit = "abcdef1234567890abcdef1234567890abcdef12";
+  f.git("update-index", "--add", "--cacheinfo", `160000,${originalCommit},external`);
+  f.git("-c", "core.hooksPath=/dev/null", "commit", "-qm", "original gitlink");
+  const upstream = f.git("rev-parse", "HEAD").trim();
+  f.git("update-index", "--cacheinfo", `160000,${changedCommit},external`);
+  f.git("-c", "core.hooksPath=/dev/null", "commit", "-qm", "changed gitlink");
+  const candidate = f.git("rev-parse", "HEAD").trim();
+  for (const oid of [originalCommit, changedCommit])
+    NodeAssert.equal(
+      NodeChildProcess.spawnSync("git", ["cat-file", "-e", oid], { cwd: f.cwd }).status,
+      1,
+    );
+  const reviewed = reviewedFixture(f, candidate, upstream);
+  NodeAssert.equal(all(reviewed.inspect())[0].kind, "non-regular-content");
+  NodeAssert.equal(reviewed.inspect().status, "advisory");
 });

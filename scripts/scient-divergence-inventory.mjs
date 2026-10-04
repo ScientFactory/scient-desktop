@@ -221,14 +221,31 @@ export function inspectScientDivergence({
     report.candidateTree = candidateTree;
     const original = entries(cwd, upstreamTree),
       current = entries(cwd, candidateTree);
+    const changed = [...original.keys()].sort(order).filter((path) => {
+      const before = original.get(path),
+        after = current.get(path);
+      return !after || before.blob !== after.blob || before.mode !== after.mode;
+    });
+    // Tree entries alone do not establish local object availability. Validate
+    // both blob sides before metadata-only findings can receive review credit.
+    const verified = new Set();
+    for (const path of changed) {
+      for (const entry of [original.get(path), current.get(path)]) {
+        // Git links name external commits; only their metadata is in scope.
+        if (!entry || entry.type !== "blob" || verified.has(entry.blob)) continue;
+        if (utf8(git(cwd, ["cat-file", "-t", entry.blob])).trim() !== "blob")
+          throw new Error(`Required source object is not a blob: ${entry.blob}`);
+        git(cwd, ["cat-file", "blob", entry.blob]);
+        verified.add(entry.blob);
+      }
+    }
     const reviewed = validateBaseline(baseline, upstream, asOf, current, cwd);
     const matched = new Set();
     for (const path of [...current.keys()].filter((path) => !original.has(path)).sort(order))
       report.candidateOnly.push(path);
-    for (const path of [...original.keys()].sort(order)) {
+    for (const path of changed) {
       const before = original.get(path),
         after = current.get(path);
-      if (after && before.blob === after.blob && before.mode === after.mode) continue;
       const file = {
         path,
         upstreamBlob: before.blob,
