@@ -13,7 +13,7 @@ latest read-only inventory (it was independently refreshed after `6030c9fcf9`);
 its owning status now reports stopped, and its previously recorded processes
 are gone. A later independently launched review app is running directly from
 the alignment checkout; its owning status was verified and it is preserved.
-This pass has not changed or restarted either review runtime. The earlier complete compiler and migration/recovery checkpoints pass; the new startup, steering, plan-consumption and picker corrections pass the final combined compiler, while complete test gates and acceptance remain in progress. Scient Browser is available again. DEV-001, DEV-002 and queue/edit
+Those earlier runtimes were preserved. A separate clean detached candidate at `802e278c28` and a separate MAIN reference at `33ab8e307a` now run with independent synthetic profiles. Native PDF Export/Cancel/Retry/Save and restored provider-row visibility pass in that candidate; remaining dev-app acceptance and the subsequent native-acceptance corrections are still in progress. Scient Browser is available again. DEV-001, DEV-002 and queue/edit
 flows still require retesting in a repaired isolated app before manual review
 readiness can be claimed. No publication or user acceptance is claimed.
 
@@ -270,14 +270,19 @@ Two subsequent owner-observed regressions were also confirmed:
   output rejection (`final-pdf-scheduled-rebind-round1.txt`). The existing
   hashed bundle separately reproduced the owner's exact error, while the
   corrected resolver with that bundle's actual worker accepted a valid PDF
-  and rejected malformed bytes (`pdf-bundled-worker-red-green.txt`). A fresh
-  rebuilt-app export remains required.
+  and rejected malformed bytes (`pdf-bundled-worker-red-green.txt`). Actual
+  rebuilt desktop `802e278c28` now passes Export → native Cancel → Retry → Save.
+  The saved one-page PDF contains both messages and was rendered/inspected
+  (`final-native-pdf-provider-acceptance-round1.md`, external evidence directory).
 - Provider settings hid untouched disabled slots. Supported default settings
   rows are visible again, preserving their enabled state and exact environment
   instance ownership. All 26 component routing cases pass, including selecting
   and enabling a formerly hidden default instance without changing other settings
   (`final-provider-settings-roster-round2.txt`). Scoped formatting/lint pass with
-  three existing warnings. Rebuilt-app qualification remains required.
+  three existing warnings. The actual rebuilt desktop `802e278c28` shows every
+  supported built-in row, including untouched disabled OpenCode, Droid, Pi,
+  Oh My Pi, Cursor and Grok. Their existing disabled state remains visible;
+  no vendor login, install or physical session was exercised.
 
 - Current-candidate uncached typechecking passes all 32 packages with no hard
   errors or Effect warnings (`final-candidate-typecheck-round1.txt`), before
@@ -551,4 +556,12 @@ The provider-switch suite now explicitly awaits the failure hold before Resume a
 
 The clean detached review worktree at `802e278c28` passes the uncached whole build and desktop smoke (`final-clean-candidate-build-round3.txt`, `final-clean-candidate-desktop-smoke-round2.txt`). Its private profile and workspace contain synthetic data only. Unsigned macOS ARM64 artifact packaging also passes (`final-clean-candidate-artifact-round3.txt`). The exact packaged Electron 44.4.2 executable loads the real validation worker and PDF.js closure from `app.asar`, accepting a valid one-page fixture and rejecting malformed bytes (`final-packaged-pdf-worker-round1.json`). This is separate from native Export/Save acceptance. Complete test suites and repaired-app acceptance remain open.
 
-The independent immutable Sol review of `1082cdbd48` reports four source-proven conditional defects (`final-sol-review-round3.md`). Current runtime source is unchanged through `802e278c28`, so they require confirmation, correction and real-path regression proof: immediate/deferred source-plan consumption before delivery; synthetic running-turn events mistaken for native acceptance; exhausted recovery-projection reads leaving starting ownership unsettled; and missing finite Droid silence supervision. These are open. Passing compilers, build and smoke do not close them.
+The independent immutable Sol review of `1082cdbd48` reports four source-proven conditional defects (`final-sol-review-round3.md`). Immediate/deferred source-plan consumption and synthetic running-turn events mistaken for native acceptance remain under repair, including synchronous native-send failures before event ingestion persists. Exhausted recovery-projection reads are repaired with current-owner terminal fencing: five actual SQL cases pass (`final-sol-recovery-projection-handoff.md`). Native Droid finite idle supervision is repaired: sixteen real stdio/SQL cases pass, including actual owned-process retirement and a held undelivered queue (`final-droid-watchdog-handoff.md`). Parent source review has inspected both frozen repairs; combined compiler, complete suites, fresh immutable review and app qualification remain open. Passing historical compilers, build and smoke do not close them.
+
+### Actual native desktop acceptance and edit-journal correction
+
+The clean detached `802e278c28` review app passes native PDF Export → Cancel → Retry → Save, producing a one-page PDF with both synthetic messages. The actual file parses, extracts and renders correctly; its SHA256 is `e9870c806ff0df8bfd66f123685cd880813d12161bf5af0e2ec80f51fadeb9b6`. The same app visibly lists Scient, Codex, Claude, Antigravity, OpenCode, Droid, Pi, Oh My Pi, Cursor and Grok plus the controlled fixture. Existing disabled/enabled provider preferences remain intact. Evidence and boundaries: `final-native-pdf-provider-acceptance-round1.md`. This does not qualify vendor sign-in/live models or every export option.
+
+Normal unheld queue FIFO also passes through the native composer: after the foreground completes, q1/q2/q3 start and complete in order without Resume. Canonical `orchestration_events` sequences are foreground completion88, then queued completions113/138/163; the corresponding projected native run facts agree. A transient stale accessibility/screenshot frame later converged; no stream loss was confirmed. This is separate from Stop/edit/reload acceptance (`desktop-queue-readonly-disposition-802e.md`).
+
+That Stop/edit/reload test confirmed an additional **open dev-app regression**: extracting q2 correctly stashed the ordinary draft, but reloading lost text typed after extraction. The journal subscription compared methods from old/new Zustand snapshots; both methods close over the live store, so their returned draft references always matched. The repair compares immutable draft entries at the exact key installed by extraction/recovery. A real IndexedDB regression fails before repair with the original queued text, then passes without an explicit flush, preserving rapid typing, permission selection, attachment bytes and the ordinary stash. Both complete journal/recovery files pass21 cases; scoped formatting/lint pass with two existing spread warnings (`queue-edit-autosave-red-round2.txt`, `queue-edit-autosave-green-round1.txt`, `queue-edit-autosave-lint-round1.txt`). Native repaired-app reload, Stop and second-window acceptance remain required before closing this item. No existing test was weakened.

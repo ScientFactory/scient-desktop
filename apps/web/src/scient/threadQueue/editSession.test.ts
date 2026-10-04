@@ -662,6 +662,57 @@ describe("queue extraction into an ordinary draft", () => {
 });
 
 describe("native run extraction journal", () => {
+  it("automatically journals typing and attachment changes after native extraction without an explicit flush", async () => {
+    useComposerDraftStore.getState().setPrompt(target, "ordinary draft survives reload");
+    vi.mocked(extractNativeQueuedRun).mockResolvedValue({ sequence: 1 });
+    await beginQueueEdit(
+      target,
+      { ...item, queueItemId: "native-autosave-run" },
+      {
+        runId: RunId.make("native-autosave-run"),
+        messageId: MessageId.make("native-autosave-message"),
+        expectedUpdatedAt: item.updatedAt,
+      },
+    );
+    const session = useQueueEditSessions.getState().sessions[composerTargetKey(target)]!;
+    const write = vi.spyOn(editJournal, "writeQueueEditJournal");
+    useComposerDraftStore.getState().setPrompt(other, "an unrelated thread");
+    expect(write).not.toHaveBeenCalled();
+    useComposerDraftStore.getState().setPrompt(target, "first keystrokes");
+    useComposerDraftStore.getState().setPrompt(target, "edited after extraction");
+    useComposerDraftStore.getState().setRuntimeMode(target, "approval-required");
+    const file = new File(["edited file bytes"], "edited.txt", { type: "text/plain" });
+    useComposerDraftStore.getState().addFiles(
+      target,
+      [
+        {
+          type: "file",
+          id: "edited-local-file",
+          name: file.name,
+          mimeType: file.type,
+          sizeBytes: file.size,
+          file,
+        },
+      ],
+      { appendReference: false },
+    );
+    // Wait for actual IndexedDB persistence, as reload recovery does. No explicit
+    // flush may conceal a broken composer-store subscription.
+    await vi.waitFor(async () => {
+      const saved = await readQueueEditJournal(session.journalKey);
+      expect(saved?.edited.prompt).toBe("edited after extraction");
+      expect(saved?.edited.runtimeMode).toBe("approval-required");
+      expect(await saved?.edited.files[0]?.file?.text()).toBe("edited file bytes");
+      expect(saved?.ordinary.prompt).toBe("ordinary draft survives reload");
+    });
+    expect(vi.mocked(extractNativeQueuedRun)).toHaveBeenCalledTimes(1);
+    expect(
+      usePromptStashStore
+        .getState()
+        .entries.some((entry) => entry.prompt === "ordinary draft survives reload"),
+    ).toBe(true);
+  });
+
   it("stashes the ordinary draft, installs captured native bytes only after cancellation, and retries one revision/token", async () => {
     const nativeRun = {
       runId: RunId.make("native-queued-run"),
