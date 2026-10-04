@@ -119,7 +119,9 @@ export function attachmentTokenAllowance(attachments: ReadonlyArray<ChatAttachme
 // custom models. Unknown windows use a 128k allowance, reserving a quarter for
 // tools, instructions and subsequent work. Current input is never truncated.
 export function handoffBudget(input: {
-  readonly tokenCap: number;
+  readonly tokenCap: number | null;
+  readonly bytesPerToken?: number;
+  readonly byteCap?: number;
   readonly userText: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly providerThread: OrchestrationV2ProviderThread;
@@ -133,16 +135,17 @@ export function handoffBudget(input: {
     usage?.autoCompactThreshold ?? Infinity,
   );
   const native = usage?.usedTokens ?? input.nativeContextEstimate;
+  const bytesPerToken = input.bytesPerToken ?? 1;
   const current =
-    Buffer.byteLength(JSON.stringify(input.userText)) + attachmentTokenAllowance(input.attachments);
+    Math.ceil(Buffer.byteLength(JSON.stringify(input.userText)) / bytesPerToken) +
+    attachmentTokenAllowance(input.attachments);
   return Math.max(
     0,
     Math.min(
-      input.tokenCap,
-      // Cap only imported history. Attachment transport limits belong to adapters;
-      // they may send binary/base64 data separately from the history request.
-      HANDOFF_BYTE_CAP,
-      window - native - current - Math.max(16_000, Math.ceil(window / 4)),
+      input.byteCap ?? HANDOFF_BYTE_CAP,
+      // The selector consumes bytes; provider capacity and preset caps consume tokens.
+      (input.tokenCap ?? Infinity) * bytesPerToken,
+      (window - native - current - Math.max(16_000, Math.ceil(window / 4))) * bytesPerToken,
     ),
   );
 }

@@ -778,3 +778,48 @@ describe("handoff delivery", () => {
     }),
   );
 });
+
+describe("Scient native handoff token policy", () => {
+  const input = {
+    tokenCap: null,
+    bytesPerToken: 3,
+    byteCap: Infinity,
+    userText: "",
+    attachments: [],
+    providerThread,
+    nativeContextEstimate: 0,
+  };
+  it("uses the unknown 128k window and charges token reserves before selecting bytes", () => {
+    assert.equal(handoffBudget(input), 287_997);
+    assert.equal(handoffBudget({ ...input, tokenCap: 64_000 }), 192_000);
+    assert.equal(handoffBudget({ ...input, nativeContextEstimate: 100_000 }), 0);
+  });
+  it("bounds the preset by compaction, native occupancy and full current attachment allowances", () => {
+    const usage = { usedTokens: 140_000, maxTokens: 1_000_000, autoCompactThreshold: 200_000 };
+    const nearFull = { ...input, providerThread: { ...providerThread, contextUsage: usage } };
+    assert.equal(handoffBudget(nearFull), 29_997);
+    const image = {
+      type: "image" as const,
+      id: "image",
+      name: "figure.png",
+      mimeType: "image/png",
+      sizeBytes: 1,
+    };
+    assert.equal(
+      handoffBudget(nearFull) - handoffBudget({ ...nearFull, attachments: [image] }),
+      24_576,
+    );
+    assert.equal(handoffBudget({ ...nearFull, attachments: [image, image] }), 0);
+    assert.equal(
+      handoffBudget({
+        ...input,
+        tokenCap: 64_000,
+        providerThread: {
+          ...providerThread,
+          contextUsage: { usedTokens: 0, maxTokens: 1_000_000 },
+        },
+      }),
+      192_000,
+    );
+  });
+});

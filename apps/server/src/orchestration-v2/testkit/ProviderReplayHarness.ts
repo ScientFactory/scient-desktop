@@ -283,7 +283,8 @@ export function makeOrchestratorV2ProviderReplayLayer<
   | LegacyV1ThreadImporter.LegacyV1ThreadImporter
   | ProjectionStore.ProjectionStoreV2
   | ProjectStore.ProjectStoreV2
-  | ServerConfig.ServerConfig,
+  | ServerConfig.ServerConfig
+  | ServerSettings.ServerSettingsService,
   | Error
   | MigrationError
   | PlatformError.PlatformError
@@ -342,7 +343,8 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   | LegacyV1ThreadImporter.LegacyV1ThreadImporter
   | ProjectionStore.ProjectionStoreV2
   | ProjectStore.ProjectStoreV2
-  | ServerConfig.ServerConfig,
+  | ServerConfig.ServerConfig
+  | ServerSettings.ServerSettingsService,
   | Error
   | MigrationError
   | PlatformError.PlatformError
@@ -406,7 +408,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     Layer.provide(Layer.mergeAll(checkpointStoreLayer, IdAllocator.layer)),
   );
   const contextHandoffServiceProvided = ContextHandoffService.layer.pipe(
-    Layer.provide(IdAllocator.layer),
+    Layer.provide(Layer.mergeAll(IdAllocator.layer, serverSettingsLayer)),
   );
   const persistenceLayer = Layer.mergeAll(
     storesLayer,
@@ -457,6 +459,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     Layer.provide(
       Layer.mergeAll(
         contextHandoffServiceProvided,
+        serverSettingsLayer,
         eventSinkProvided,
         IdAllocator.layer,
         storesLayer,
@@ -571,6 +574,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     Layer.provide(Layer.merge(storesLayer, effectExecutorProvided)),
   );
   const replayRuntime = Layer.mergeAll(
+    serverSettingsLayer,
     commandReceiptStoreProvided,
     checkpointServiceProvided,
     checkpointStoreLayer,

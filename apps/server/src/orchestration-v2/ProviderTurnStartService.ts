@@ -1,3 +1,4 @@
+import { makeScientContextHandoffPolicy } from "./ScientContextHandoffPolicy.ts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
@@ -32,8 +33,6 @@ import { ScientSkillSessionPlanner } from "../scient/skills/ScientSkillSession.t
 import * as EventSink from "./EventSink.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import {
-  DEFAULT_HANDOFF_TOKEN_CAP,
-  handoffTokenCapConfig,
   handoffBudget,
   attachmentTokenAllowance,
   contextUsageForHandoff,
@@ -105,6 +104,7 @@ export const layer: Layer.Layer<
 > = Layer.effect(
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
+    const handoffPolicy = yield* makeScientContextHandoffPolicy();
     const eventSink = yield* EventSink.EventSinkV2;
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -1175,9 +1175,6 @@ export const layer: Layer.Layer<
         restartCancelledWork.length === 0
           ? ""
           : restartCancelledBackgroundWorkNote(restartCancelledWork);
-      const tokenCap = yield* handoffTokenCapConfig.pipe(
-        Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
-      );
       const settledHandoffs = projection.contextHandoffs.filter(
         (handoff) =>
           handoff.toProviderThreadId === providerThread.id &&
@@ -1227,36 +1224,39 @@ export const layer: Layer.Layer<
       // Use saved text and actual native attachments when telemetry is absent.
       // Legacy attempts lack native identity; exclude their explicitly recovered
       // history, whose attachments were not replayed into the replacement thread.
-      const nativeContextEstimate = Effect.gen(function* () {
-        return sameNativeThread
-          ? (yield* projectionStore.getTurnStartHistory(input.threadId)).reduce((sum, item) => {
-              if (
-                item.runId === run.id ||
-                (item.runId !== null &&
-                  missedRunIds.has(item.runId) &&
-                  !deliveredItemIds.has(item.id)) ||
-                (item.providerThreadId !== providerThread.id && !deliveredItemIds.has(item.id))
-              )
-                return sum;
-              const historical = historicalMessage(item);
-              const nativeAttachments =
-                item.type === "user_message" &&
-                item.providerThreadId === providerThread.id &&
-                item.runId !== null &&
-                (nativeInputRunIds.has(item.runId) ||
-                  (legacyInputRunIds.has(item.runId) &&
-                    !coveredItemIds.has(item.id) &&
-                    !legacyRecoveredRunIds.has(item.runId)))
-                  ? attachmentTokenAllowance(item.attachments)
-                  : 0;
-              return (
-                sum +
-                (historical === null ? 0 : Buffer.byteLength(historical.text)) +
-                nativeAttachments
-              );
-            }, 0)
-          : 0;
-      });
+      const nativeContextEstimate = (bytesPerToken: number) =>
+        Effect.gen(function* () {
+          return sameNativeThread
+            ? (yield* projectionStore.getTurnStartHistory(input.threadId)).reduce((sum, item) => {
+                if (
+                  item.runId === run.id ||
+                  (item.runId !== null &&
+                    missedRunIds.has(item.runId) &&
+                    !deliveredItemIds.has(item.id)) ||
+                  (item.providerThreadId !== providerThread.id && !deliveredItemIds.has(item.id))
+                )
+                  return sum;
+                const historical = historicalMessage(item);
+                const nativeAttachments =
+                  item.type === "user_message" &&
+                  item.providerThreadId === providerThread.id &&
+                  item.runId !== null &&
+                  (nativeInputRunIds.has(item.runId) ||
+                    (legacyInputRunIds.has(item.runId) &&
+                      !coveredItemIds.has(item.id) &&
+                      !legacyRecoveredRunIds.has(item.runId)))
+                    ? attachmentTokenAllowance(item.attachments)
+                    : 0;
+                return (
+                  sum +
+                  (historical === null
+                    ? 0
+                    : Math.ceil(Buffer.byteLength(historical.text) / bytesPerToken)) +
+                  nativeAttachments
+                );
+              }, 0)
+            : 0;
+        });
       const modelContextWindow =
         knownModelWindow ??
         (handoffUsage !== null || reuseTelemetry ? previousUsage?.maxTokens : undefined);
@@ -1300,8 +1300,9 @@ export const layer: Layer.Layer<
             deferInline: compact,
             providerThread: runningProviderThread,
             budget: Effect.gen(function* () {
+              const policy = yield* handoffPolicy;
               return handoffBudget({
-                tokenCap,
+                ...policy,
                 modelContextWindow,
                 // The note is sent with the user text, so it spends the same allowance.
                 userText: restartNote === "" ? userText : `${restartNote}\n\n${userText}`,
@@ -1309,7 +1310,7 @@ export const layer: Layer.Layer<
                 providerThread: budgetProviderThread,
                 nativeContextEstimate:
                   budgetProviderThread.contextUsage?.usedTokens === undefined
-                    ? yield* nativeContextEstimate
+                    ? yield* nativeContextEstimate(policy.bytesPerToken)
                     : 0,
               });
             }),

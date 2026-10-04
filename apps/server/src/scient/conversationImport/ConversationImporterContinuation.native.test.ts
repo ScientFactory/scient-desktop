@@ -17,6 +17,8 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
+import * as ConfigProvider from "effect/ConfigProvider";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as FileSystem from "effect/FileSystem";
@@ -100,7 +102,10 @@ class ImportPeer extends Context.Service<
   { readonly prompts: string[]; readonly setTime: (time: number) => Effect.Effect<void> }
 >()("t3/scient/conversationImport/ConversationImporterContinuation.native.test/ImportPeer") {}
 
-const withImporter = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+const withImporter = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  options: { readonly modelContextWindow?: (model: string) => number } = {},
+) =>
   Effect.gen(function* () {
     const prompts: string[] = [];
     let time = Date.parse("2026-09-28T09:30:00.000Z");
@@ -168,6 +173,13 @@ const withImporter = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
           adapter.openSession(input).pipe(
             Effect.map((session) => ({
               ...session,
+              ...(options.modelContextWindow === undefined
+                ? {}
+                : {
+                    getModelContextWindow: (
+                      selection: import("@t3tools/contracts").ModelSelection,
+                    ) => options.modelContextWindow!(selection.model),
+                  }),
               rollbackThread: (request: Parameters<typeof session.rollbackThread>[0]) =>
                 Effect.succeed({
                   providerThread: request.providerThread,
@@ -1140,3 +1152,150 @@ describe("native import continuation and forks", () => {
       ),
   );
 });
+
+it.live(
+  "native fork delivery reads changed Scient presets and the selected destination model capacity",
+  () =>
+    withImporter(
+      Effect.gen(function* () {
+        const fixture = importFixture({ turns: 28 });
+        const expanded = {
+          ...fixture,
+          input: {
+            ...fixture.input,
+            snapshot: {
+              ...fixture.input.snapshot,
+              messages: fixture.input.snapshot.messages.map((message) => ({
+                ...message,
+                text: `${message.text} ${"x".repeat(8_000)}`,
+              })),
+            },
+          },
+        };
+        const { lease } = yield* leaseFor(expanded);
+        const { result } = yield* importOnce(lease);
+        const store = yield* ProjectionStoreV2;
+        const source = yield* store.getThreadProjection(result.threadId);
+        const answer = source.messages.at(-1);
+        assert.ok(answer?.role === "assistant");
+        const settings = yield* ServerSettingsService;
+        const counts: number[] = [];
+        for (const contextHandoffSize of ["compact", "standard", "large", "maximum"] as const) {
+          yield* settings.updateSettings({ scientFork: { contextHandoffSize } });
+          const target = ThreadId.make(`preset-fork:${contextHandoffSize}`);
+          yield* (yield* ConversationForkService).dispatch({
+            type: "thread.fork",
+            commandId: CommandId.make(target),
+            originThreadId: result.threadId,
+            newThreadId: target,
+            sourceAssistantMessageId: answer.id,
+            workspaceMode: "local",
+          });
+          yield* continueImport(
+            target,
+            MessageId.make(`preset-input:${contextHandoffSize}`),
+            "Continue",
+          );
+          const projection = yield* store.getThreadProjection(target);
+          const handoff = projection.contextHandoffs.at(-1);
+          assert.ok(handoff?.history && handoff.delivery);
+          counts.push(handoff.delivery.itemIds.length);
+          const prompt = (yield* ImportPeer).prompts.at(-1)!;
+          assert.include(prompt, "User message:");
+          assert.isTrue(prompt.trimEnd().endsWith("Continue"));
+          assert.equal(projection.runs.at(-1)?.status, "completed");
+          assert.equal(projection.contextTransfers[0]?.status, "consumed");
+          if (contextHandoffSize === "compact") assert.isAtMost(Buffer.byteLength(prompt), 49_000);
+          if (contextHandoffSize === "standard") assert.isAbove(Buffer.byteLength(prompt), 64_000);
+        }
+        assert.isAbove(counts[0]!, 0);
+        assert.isBelow(counts[0]!, counts[1]!);
+        assert.isBelow(counts[1]!, counts[2]!);
+        assert.isBelow(counts[2]!, counts[3]!);
+        assert.equal(counts[3], source.turnItems.length);
+        const small = ThreadId.make("preset-fork:small-model");
+        yield* (yield* ConversationForkService).dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make(small),
+          originThreadId: result.threadId,
+          newThreadId: small,
+          sourceAssistantMessageId: answer.id,
+          workspaceMode: "local",
+        });
+        yield* continueImport(small, MessageId.make("small-model-input"), "Continue", {
+          instanceId: PROVIDER_ID,
+          model: "small",
+        });
+        const bounded = yield* store.getThreadProjection(small);
+        const smallHandoff = bounded.contextHandoffs.at(-1);
+        assert.ok(smallHandoff?.history && smallHandoff.delivery);
+        const smallDelivered = new Set(smallHandoff.delivery.itemIds);
+        assert.equal(
+          smallHandoff.history.messages.filter(
+            (message) =>
+              smallDelivered.has(message.itemId) &&
+              (message.kind === "user_message" || message.kind === "assistant_message"),
+          ).length,
+          1,
+        );
+        assert.isBelow(Buffer.byteLength((yield* ImportPeer).prompts.at(-1)!), 13_000);
+        assert.deepEqual(
+          (yield* store.getThreadProjection(result.threadId)).messages,
+          source.messages,
+        );
+      }),
+      { modelContextWindow: (model) => (model === "small" ? 20_000 : 800_000) },
+    ),
+);
+
+it.live("the environment cap overrides the maximum preset on actual native fork delivery", () =>
+  withImporter(
+    Effect.gen(function* () {
+      const fixture = importFixture({ turns: 12 });
+      const expanded = {
+        ...fixture,
+        input: {
+          ...fixture.input,
+          snapshot: {
+            ...fixture.input.snapshot,
+            messages: fixture.input.snapshot.messages.map((message) => ({
+              ...message,
+              text: `${message.text} ${"y".repeat(4_000)}`,
+            })),
+          },
+        },
+      };
+      const { lease } = yield* leaseFor(expanded);
+      const { result } = yield* importOnce(lease);
+      const source = yield* (yield* ProjectionStoreV2).getThreadProjection(result.threadId);
+      const answer = source.messages.at(-1);
+      assert.ok(answer?.role === "assistant");
+      yield* (yield* ServerSettingsService).updateSettings({
+        scientFork: { contextHandoffSize: "maximum" },
+      });
+      const target = ThreadId.make("environment-capped-fork");
+      yield* (yield* ConversationForkService).dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make(target),
+        originThreadId: result.threadId,
+        newThreadId: target,
+        sourceAssistantMessageId: answer.id,
+        workspaceMode: "local",
+      });
+      yield* continueImport(target, MessageId.make("environment-capped-input"), "Continue");
+      const projection = yield* (yield* ProjectionStoreV2).getThreadProjection(target);
+      const handoff = projection.contextHandoffs.at(-1);
+      assert.ok(handoff?.delivery);
+      assert.isAbove(handoff.delivery.itemIds.length, 0);
+      assert.isBelow(handoff.delivery.itemIds.length, source.messages.length);
+      assert.isAtMost(Buffer.byteLength((yield* ImportPeer).prompts.at(-1)!), 16_000);
+      assert.equal(projection.runs.at(-1)?.status, "completed");
+    }),
+    { modelContextWindow: () => 800_000 },
+  ).pipe(
+    Effect.provideService(
+      ConfigProvider.ConfigProvider,
+      ConfigProvider.fromUnknown({ T3CODE_CONTEXT_HANDOFF_TOKEN_CAP: "5000" }),
+    ),
+  ),
+);
