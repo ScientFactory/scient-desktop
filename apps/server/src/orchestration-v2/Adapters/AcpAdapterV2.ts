@@ -6133,6 +6133,7 @@ export function makeAcpAdapterV2(
           return activated;
         });
 
+        let appliedSessionModel = input.modelSelection.model;
         const configureSession = Effect.fnUntraced(function* (
           startResult: AcpSessionRuntime.AcpSessionRuntimeStartResult,
           modelSelection: ModelSelection,
@@ -6244,6 +6245,7 @@ export function makeAcpAdapterV2(
               }),
             );
           }
+          appliedSessionModel = appliedModel ?? modelSelection.model;
           if (flavor.applyRuntimePolicy !== undefined) {
             yield* flavor.applyRuntimePolicy(runtime, runtimePolicy);
             yield* (
@@ -6355,7 +6357,7 @@ export function makeAcpAdapterV2(
           providerInstanceId: options.instanceId,
           status: "ready",
           cwd: input.runtimePolicy.cwd ?? process.cwd(),
-          model: input.modelSelection.model,
+          model: appliedSessionModel,
           capabilities,
           createdAt,
           updatedAt: createdAt,
@@ -7228,7 +7230,9 @@ export function makeAcpAdapterV2(
           instanceId: options.instanceId,
           driver,
           providerSessionId: input.providerSessionId,
-          providerSession,
+          get providerSession() {
+            return { ...providerSession, model: appliedSessionModel };
+          },
           events: Stream.fromEffectRepeat(Queue.take(events)),
           ...(postSettleContinuationEnabled
             ? {

@@ -38,6 +38,7 @@ export interface DroidAdapterV2Options extends Omit<AcpAdapterV2Options, "flavor
 import { makeDroidInactivity } from "./DroidInactivity.ts";
 
 const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
+const isAcpProcessExitedError = Schema.is(EffectAcpErrors.AcpProcessExitedError);
 
 export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
   const configuredIdle = Number(
@@ -61,6 +62,19 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
         supportsRuntimeModeSwitchInSession: true,
       },
       tools: { ...AcpProviderCapabilitiesV2.tools, supportsMcpTools: true },
+    },
+    normalizeSessionUpdate: (notification) => {
+      const update = notification.update;
+      if (
+        (update.sessionUpdate === "agent_message_chunk" ||
+          update.sessionUpdate === "agent_thought_chunk") &&
+        update.content.type === "text"
+      )
+        return {
+          ...notification,
+          update: { ...update, content: { ...update.content, text: redact(update.content.text) } },
+        };
+      return notification;
     },
     supportsImagePrompts: true,
     supportsCompaction: true,
@@ -134,6 +148,7 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
             Effect.gen(function* () {
               const supervision = yield* makeDroidInactivity(idleMillis);
               activity = supervision;
+              let executingModel: string | undefined;
               const result = yield* Effect.gen(function* () {
                 if (runtime.checkConfiguration) yield* runtime.checkConfiguration();
                 yield* validateDroidReasoningState(runtime);
@@ -141,6 +156,7 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
                   category: "model",
                   id: "model",
                 })?.currentValue;
+                executingModel = typeof model === "string" ? model : undefined;
                 if (
                   typeof model === "string" &&
                   runtime.getImageSupport?.(model) === false &&
@@ -182,6 +198,38 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
                       )
                     : Effect.void,
                 ),
+                Effect.mapError((error) => {
+                  if (isAcpRequestError(error))
+                    return new EffectAcpErrors.AcpRequestError({
+                      ...error,
+                      errorMessage: redact(error.errorMessage),
+                      data: typeof error.data === "string" ? redact(error.data) : undefined,
+                      cause: undefined,
+                    });
+                  if (isAcpProcessExitedError(error))
+                    return new EffectAcpErrors.AcpProcessExitedError({
+                      ...error,
+                      ...(error.stderr === undefined ? {} : { stderr: redact(error.stderr) }),
+                      cause: undefined,
+                    });
+                  return error;
+                }),
+                Effect.tapError((error) =>
+                  Effect.gen(function* () {
+                    const model = executingModel;
+                    const detail =
+                      isAcpRequestError(error) && typeof error.data === "string"
+                        ? error.data.trim()
+                        : error.message;
+                    if (
+                      typeof model === "string" &&
+                      model.trim() &&
+                      !model.startsWith("custom:") &&
+                      (/^401\b/.test(detail) || /\bauthentication required\b/i.test(detail))
+                    )
+                      yield* options.onAuthenticationRejected(redact(detail));
+                  }),
+                ),
                 Effect.ensuring(
                   Effect.sync(() => {
                     if (activity === supervision) activity = undefined;
@@ -189,27 +237,7 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
                 ),
               );
               return result;
-            }).pipe(
-              Effect.tapError((error) =>
-                Effect.gen(function* () {
-                  const model = findSelectDroidConfigOption(yield* runtime.getConfigOptions, {
-                    category: "model",
-                    id: "model",
-                  })?.currentValue;
-                  const detail =
-                    isAcpRequestError(error) && typeof error.data === "string"
-                      ? error.data.trim()
-                      : error.message;
-                  if (
-                    typeof model === "string" &&
-                    model.trim() &&
-                    !model.startsWith("custom:") &&
-                    (/^401\b/.test(detail) || /\bauthentication required\b/i.test(detail))
-                  )
-                    yield* options.onAuthenticationRejected(redact(detail));
-                }),
-              ),
-            ),
+            }),
         };
         runtimes.set(wrapped, runtime);
         return wrapped;
@@ -235,7 +263,7 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
         const droid = runtimes.get(runtime) ?? runtime;
         yield* applyDroidModelAndEffort({
           runtime: droid,
-          requestedModel: modelSelection.model,
+          requestedModel: modelSelection.model === "default" ? undefined : modelSelection.model,
           requestedEffort: getModelSelectionStringOptionValue(modelSelection, "reasoningEffort"),
         });
         const model = findSelectDroidConfigOption(yield* runtime.getConfigOptions, {
@@ -248,8 +276,10 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
       makeProviderFailure({
         cause,
         message: redact(
-          isAcpRequestError(cause) && typeof cause.data === "string" && cause.data.trim()
-            ? cause.data.trim()
+          isAcpRequestError(cause)
+            ? typeof cause.data === "string" && cause.data.trim()
+              ? cause.data.trim()
+              : cause.message
             : String(cause),
         ),
         class: "provider_error",

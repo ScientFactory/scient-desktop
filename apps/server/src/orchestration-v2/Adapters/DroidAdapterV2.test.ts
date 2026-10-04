@@ -70,6 +70,9 @@ const harness = Effect.fnUntraced(function* (
     readonly body: string;
     readonly idleMillis?: number;
     readonly blockPromptWrite?: boolean;
+    readonly environment?: Record<string, string>;
+    readonly model?: string;
+    readonly sensitiveValues?: ReadonlyArray<string>;
   },
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -85,17 +88,22 @@ const harness = Effect.fnUntraced(function* (
     name: "droid",
     source: execScriptSource({ scriptPath: mockAgentPath, argvLogPath }),
   });
-  const controlPath = NodePath.join(config.stateDir, "activity-control");
-  const pidsPath = NodePath.join(config.stateDir, "owned-pids");
+  const scenarioId = yield* crypto.randomUUIDv4;
+  const controlPath = NodePath.join(config.stateDir, `activity-control-${scenarioId}`);
+  const pidsPath = NodePath.join(config.stateDir, `owned-pids-${scenarioId}`);
   const scripted = scenario
     ? yield* scriptedDroid(
         `fs.appendFileSync(${encodeJson(pidsPath)}, String(process.pid) + "\\n");\n` +
           scenario.body.replaceAll("__CONTROL_PATH__", encodeJson(controlPath)),
+        scenario.environment,
       )
     : undefined;
   const instanceId = ProviderInstanceId.make("droid-v2-test");
   const threadId = ThreadId.make("droid-v2-thread");
-  const modelSelection = { instanceId, model: scripted ? "droid-native" : "default" };
+  const modelSelection = {
+    instanceId,
+    model: scenario?.model ?? (scripted ? "droid-native" : "default"),
+  };
   const runtimePolicy = {
     cwd: config.stateDir,
     runtimeMode: "approval-required" as const,
@@ -117,6 +125,7 @@ const harness = Effect.fnUntraced(function* (
   }
   const writeBlocked = yield* Deferred.make<void>();
   const releaseWrite = yield* Deferred.make<void>();
+  const rejectedAuthentication: string[] = [];
   const adapter = makeDroidAdapterV2({
     instanceId,
     ...(scenario?.idleMillis === undefined ? {} : { turnIdleTimeoutMillis: scenario.idleMillis }),
@@ -130,12 +139,13 @@ const harness = Effect.fnUntraced(function* (
       T3_ACP_DROID_EMPTY_CONFIG_RESPONSE: "1",
       T3_ACP_DROID_ASYNC_CONFIG_REFRESH: "1",
       T3_ACP_REQUEST_LOG_PATH: requestsPath,
+      ...scenario?.environment,
       ...(approveSpec
         ? { T3_ACP_EMIT_TOOL_CALLS: "1", T3_ACP_PERMISSION_TITLE: "Approve Spec" }
         : {}),
       ...(locked ? { T3_ACP_DROID_AUTONOMY_LOCKED: "1" } : {}),
     },
-    sensitiveEnvironmentValues: [],
+    sensitiveEnvironmentValues: scenario?.sensitiveValues ?? [],
     makeRuntime: (input) =>
       makeDroidAcpRuntime({
         ...input,
@@ -175,8 +185,10 @@ const harness = Effect.fnUntraced(function* (
     serverConfig: config,
     idAllocator: yield* IdAllocator.IdAllocatorV2,
     selfInvocation: yield* resolveSelfInvocation(),
-    onAuthenticationRejected: () =>
-      Effect.die("A fixture must never authenticate against a real account"),
+    onAuthenticationRejected: (message) =>
+      Effect.sync(() => {
+        rejectedAuthentication.push(message);
+      }),
   });
   const runtime = yield* adapter.openSession({
     threadId,
@@ -222,12 +234,13 @@ const harness = Effect.fnUntraced(function* (
     mode: ProviderAdapter.ProviderAdapterV2RuntimePolicy["runtimeMode"],
     interactionMode: "default" | "plan" = "default",
     text = "Say hello",
+    model = modelSelection.model,
   ) =>
     runtime.startTurn({
       appThread,
       threadId,
       providerThread,
-      modelSelection,
+      modelSelection: { ...modelSelection, model },
       runtimePolicy: { ...runtimePolicy, runtimeMode: mode, interactionMode },
       runId: RunId.make(`droid-run-${ordinal}`),
       runOrdinal: ordinal,
@@ -263,6 +276,7 @@ const harness = Effect.fnUntraced(function* (
       .split("\n")
       .map((line) => decodeRequest(line));
   return {
+    rejectedAuthentication,
     arguments: () => NodeFS.readFileSync(argvLogPath, "utf8").trimEnd().split("\t"),
     send,
     terminal,
@@ -784,5 +798,270 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
           );
         }),
       ),
+  );
+  for (const partial of ["", "Preserved partial answer"]) {
+    it.effect(
+      `settles native token truncation with ${partial ? "partial text" : "empty text"} and recovers on one peer`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const h = yield* harness(false, false, false, undefined, {
+              body: `function onPrompt(message) {
+        const text = state.prompts === 1 ? ${encodeJson(partial)} : "Recovered.";
+        if (text) update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text } });
+        reply(message, { stopReason: state.prompts === 1 ? "max_tokens" : "end_turn" });
+      }`,
+            });
+            for (const ordinal of [1, 2]) {
+              yield* h.send(ordinal, "approval-required");
+              const terminal = yield* h.terminal;
+              assert.equal(terminal.status, "completed");
+              assert.equal(terminal.threadDisposition, "reusable");
+              const messages = h.recorded.flatMap((event) =>
+                event.type === "message.updated" &&
+                event.message.runId === RunId.make(`droid-run-${ordinal}`)
+                  ? [event.message]
+                  : [],
+              );
+              assert.equal(messages.at(-1)?.text ?? "", ordinal === 1 ? partial : "Recovered.");
+              const notices = h.recorded.filter(
+                (event) =>
+                  event.type === "turn_item.updated" &&
+                  event.turnItem.runId === RunId.make(`droid-run-${ordinal}`) &&
+                  event.turnItem.type === "notification" &&
+                  event.turnItem.source.kind === "output_truncated",
+              );
+              assert.equal(notices.length > 0, ordinal === 1);
+              assert.equal(h.runtime.providerSession.status, "ready");
+            }
+            assert.lengthOf(terminals(h), 2);
+            assert.lengthOf(h.ownedPids(), 1);
+            assert.deepEqual(h.rejectedAuthentication, []);
+          }),
+        ),
+    );
+  }
+
+  for (const [name, response, expected] of [
+    [
+      "upstream agent error",
+      'fail(message, { code: -32603, message: "Internal error: Agent error", data: "429 Too many requests, retry later" });',
+      "429 Too many requests, retry later",
+    ],
+    [
+      "refusal stop",
+      'reply(message, { stopReason: "refusal" });',
+      "Droid ended the turn because its agent reported an error.",
+    ],
+  ] as const) {
+    it.effect(
+      `fails one accepted native turn for ${name} and recovers without a send failure`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const h = yield* harness(false, false, false, undefined, {
+              body: `function onPrompt(message) { if (state.prompts === 1) { ${response} } else reply(message, { stopReason: "end_turn" }); }`,
+            });
+            yield* h.send(1, "full-access");
+            const failure = yield* h.terminal;
+            assert.equal(failure.status, "failed");
+            if (failure.status === "failed") assert.equal(failure.failure.message, expected);
+            yield* h.send(2, "full-access");
+            assert.equal((yield* h.terminal).status, "completed");
+            assert.lengthOf(terminals(h), 2);
+            assert.deepEqual(h.rejectedAuthentication, []);
+          }),
+        ),
+    );
+  }
+
+  it.effect(
+    "attributes native and custom-model authentication failures to the executing model",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness(false, false, false, undefined, {
+            body: `function onPrompt(message) { fail(message, { code: -32603, message: "Internal error: Agent error", data: "401 Invalid API key" }); }`,
+          });
+          yield* h.send(1, "full-access");
+          assert.equal((yield* h.terminal).status, "failed");
+          yield* h.send(2, "full-access", "default", "custom", "custom:scient-fixture");
+          assert.equal((yield* h.terminal).status, "failed");
+          assert.deepEqual(h.rejectedAuthentication, ["401 Invalid API key"]);
+        }),
+      ),
+  );
+
+  it.effect("does not blame Factory for a custom model selected as Droid's native default", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, {
+          model: "default",
+          environment: { MODEL: "custom:scient-fixture" },
+          body: `function onPrompt(message) { fail(message, { code: -32603, message: "Internal error: Agent error", data: "401 Incorrect API key" }); }`,
+        });
+        yield* h.send(1, "full-access");
+        assert.equal((yield* h.terminal).status, "failed");
+        assert.deepEqual(h.rejectedAuthentication, []);
+      }),
+    ),
+  );
+
+  for (const [running, changed, blameFactory] of [
+    ["custom:scient-fixture", "droid-native", false],
+    ["droid-native", "custom:scient-fixture", true],
+  ] as const) {
+    it.effect(
+      `attributes a native 401 to executing ${running} when reported configuration changes to ${changed}`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const h = yield* harness(false, false, false, undefined, {
+              model: running,
+              environment: { MODEL: running },
+              body: `function onPrompt(message) {
+        state.model = ${encodeJson(changed)}; publish();
+        setTimeout(() => fail(message, { code: -32603, message: "Internal error: Agent error", data: "401 Unauthorized" }), 30);
+      }`,
+            });
+            yield* h.send(1, "full-access");
+            assert.equal((yield* h.terminal).status, "failed");
+            assert.deepEqual(h.rejectedAuthentication, blameFactory ? ["401 Unauthorized"] : []);
+          }),
+        ),
+    );
+  }
+
+  it.effect(
+    "redacts instance credentials in native reasoning, text, failures and authentication status",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const key = "synthetic-factory-key-0123456789";
+          const token = "synthetic-gateway-token-0123456789";
+          const h = yield* harness(false, false, false, undefined, {
+            environment: { FACTORY_API_KEY: key },
+            sensitiveValues: [token],
+            body: `function onPrompt(message) {
+      if (state.prompts === 1) {
+        update({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "The key ${key} was refused." } });
+        update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Error: 401 Invalid API key Bearer ${key}" } });
+        return fail(message, { code: -32603, message: "Internal error: Agent error", data: "401 Invalid API key ${key} (proxy ${token})" });
+      }
+      process.stderr.write("fatal: could not refresh ${key}\\n");
+      process.exit(3);
+    }`,
+          });
+          yield* h.send(1, "full-access");
+          const failure = yield* h.terminal;
+          assert.equal(failure.status, "failed");
+          if (failure.status === "failed")
+            assert.equal(
+              failure.failure.message,
+              "401 Invalid API key [redacted] (proxy [redacted])",
+            );
+          const text = h.recorded.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            (event.turnItem.type === "reasoning" || event.turnItem.type === "assistant_message") &&
+            event.turnItem.status === "completed"
+              ? [event.turnItem.text]
+              : [],
+          );
+          assert.deepEqual(text, [
+            "The key [redacted] was refused.",
+            "Error: 401 Invalid API key Bearer [redacted]",
+          ]);
+          assert.deepEqual(h.rejectedAuthentication, [
+            "401 Invalid API key [redacted] (proxy [redacted])",
+          ]);
+          yield* h.send(2, "full-access");
+          const exited = yield* h.terminal;
+          assert.equal(exited.status, "failed");
+          const serialized = encodeJson({ events: h.recorded, auth: h.rejectedAuthentication });
+          assert.notInclude(serialized, key);
+          assert.notInclude(serialized, token);
+          assert.lengthOf(terminals(h), 2);
+        }),
+      ),
+  );
+
+  it.effect(
+    "keeps reasoning separate and closes each assistant segment before the next thought",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness(false, false, false, undefined, {
+            body: `function onPrompt(message) {
+      const text = value => update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: value } });
+      const thought = value => update({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: value } });
+      text("I'll go straight to verification."); thought("The user asks what is going on.");
+      text("I was running two parallel deep-dive audits."); thought("Now the second audit.");
+      reply(message, { stopReason: "end_turn" });
+    }`,
+          });
+          yield* h.send(1, "full-access");
+          assert.equal((yield* h.terminal).status, "completed");
+          const completed = h.recorded.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            (event.turnItem.type === "reasoning" || event.turnItem.type === "assistant_message") &&
+            event.turnItem.status === "completed"
+              ? [event.turnItem]
+              : [],
+          );
+          assert.deepEqual(
+            completed.map((item) => [item.type, item.text]),
+            [
+              ["assistant_message", "I'll go straight to verification."],
+              ["reasoning", "The user asks what is going on."],
+              ["assistant_message", "I was running two parallel deep-dive audits."],
+              ["reasoning", "Now the second audit."],
+            ],
+          );
+          assert.equal(new Set(completed.map((item) => item.id)).size, 4);
+        }),
+      ),
+  );
+  it.effect("settles native startup and confirms each changed model before prompt delivery", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, {
+          body: `function onPrompt(message) {
+      update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "using:" + state.model } });
+      reply(message, { stopReason: "end_turn" });
+    }`,
+        });
+        assert.equal(h.runtime.providerSession.status, "ready");
+        assert.equal(h.providerThread.nativeThreadRef?.nativeId, "scripted");
+        for (const [ordinal, model] of [
+          [1, "droid-native"],
+          [2, "droid-other"],
+        ] as const) {
+          yield* h.send(ordinal, "full-access", "default", "go", model);
+          assert.equal((yield* h.terminal).status, "completed");
+          assert.equal(h.runtime.providerSession.model, model);
+          const response = h.recorded
+            .flatMap((event) =>
+              event.type === "message.updated" &&
+              event.message.runId === RunId.make(`droid-run-${ordinal}`)
+                ? [event.message.text]
+                : [],
+            )
+            .at(-1);
+          assert.equal(response, `using:${model}`);
+        }
+        const log = yield* h.readLog!();
+        const applied = log.findIndex(
+          (message) =>
+            message.method === "session/set_config_option" &&
+            message.params?.configId === "model" &&
+            message.params?.value === "droid-other",
+        );
+        const lastPrompt = log.findLastIndex((message) => message.method === "session/prompt");
+        assert.isAtLeast(applied, 0);
+        assert.isBelow(applied, lastPrompt);
+        assert.lengthOf(terminals(h), 2);
+        assert.lengthOf(h.ownedPids(), 1);
+      }),
+    ),
   );
 });
