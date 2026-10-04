@@ -95,25 +95,22 @@ function jsonSchemaToTypebox(schema: Record<string, unknown> | undefined) {
   return Type.Object({}, { additionalProperties: true });
 }
 
-function formatMcpContent(result: unknown): string {
-  if (result === null || result === undefined) return "";
-  if (typeof result !== "object") return String(result);
+function mcpContent(result: unknown): Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }> {
+  if (result === null || result === undefined) return [];
+  if (typeof result !== "object") return [{ type: "text", text: String(result) }];
   const record = result as {
-    readonly content?: ReadonlyArray<{ readonly type?: string; readonly text?: string }>;
+    readonly content?: ReadonlyArray<{ readonly type?: string; readonly text?: string; readonly data?: string; readonly mimeType?: string }>;
     readonly structuredContent?: unknown;
-    readonly isError?: boolean;
   };
-  const texts: string[] = [];
-  if (Array.isArray(record.content)) {
-    for (const part of record.content) {
-      if (part?.type === "text" && typeof part.text === "string") texts.push(part.text);
-    }
+  const content: ReturnType<typeof mcpContent> = [];
+  for (const part of record.content ?? []) {
+    if (part.type === "text" && typeof part.text === "string") content.push({ type: "text", text: part.text });
+    else if (part.type === "image" && typeof part.data === "string" && typeof part.mimeType === "string")
+      content.push({ type: "image", data: part.data, mimeType: part.mimeType });
   }
-  if (record.structuredContent !== undefined) {
-    texts.push(JSON.stringify(record.structuredContent));
-  }
-  if (texts.length > 0) return texts.join("\\n");
-  return JSON.stringify(result);
+  if (content.length === 0 && record.structuredContent !== undefined)
+    content.push({ type: "text", text: JSON.stringify(record.structuredContent) });
+  return content;
 }
 
 function isMcpToolError(result: unknown): boolean {
@@ -242,6 +239,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     if (mode === "auto-accept-edits" && FILE_CHANGE_TOOLS.has(event.toolName)) {
       return;
     }
+    if (!ctx.hasUI) return { block: true, reason: "Scient permission confirmation is unavailable." };
     const approved = await ctx.ui.confirm(
       \`Allow \${event.toolName}?\`,
       toolInputSummary(event.input),
@@ -296,10 +294,9 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
               (params ?? {}) as Record<string, unknown>,
               signal,
             );
-            const text = formatMcpContent(result);
             return {
-              content: [{ type: "text", text }],
-              details: { server: "t3-code", tool: name },
+              content: mcpContent(result),
+              details: { server: "t3-code", tool: name, result },
               ...(isMcpToolError(result) ? { isError: true } : {}),
             };
           },
