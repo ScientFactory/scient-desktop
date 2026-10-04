@@ -1455,6 +1455,33 @@ export function makePiAdapterV2(
         });
       });
 
+      const emitSteeringError = Effect.fnUntraced(function* (
+        turn: ActivePiTurn,
+        event: PiRpcRecord,
+      ) {
+        if (turn.interrupted) return;
+        const emittedAt = yield* DateTime.now;
+        const nativeItemId = `steering-error:${turn.nextItemOrdinal}`;
+        yield* emitItemNode(turn, nativeItemId, "system", "failed", emittedAt, emittedAt);
+        yield* emit({
+          type: "turn_item.updated",
+          driver: PI_PROVIDER,
+          turnItem: {
+            ...baseItemFields(turn, nativeItemId, emittedAt, emittedAt),
+            status: "failed",
+            title: "Pi refused the steering message",
+            completedAt: emittedAt,
+            type: "error",
+            failure: makeProviderFailure({
+              message:
+                recordString(event, "error")?.slice(0, 2_000) ?? "Pi refused the steering message.",
+              class: "provider_error",
+              retryable: false,
+            }),
+          },
+        });
+      });
+
       // ── turn lifecycle ────────────────────────────────────
 
       /**
@@ -2044,6 +2071,7 @@ export function makePiAdapterV2(
                 yield* Effect.logWarning("Pi rejected a compact steer.", {
                   errorLength: recordString(event, "error")?.length,
                 });
+                yield* emitSteeringError(compactTurn, event);
                 return;
               }
               if (!compactTurn.sawCompaction) {
@@ -2097,6 +2125,7 @@ export function makePiAdapterV2(
               yield* Effect.logWarning("Pi rejected a steer message.", {
                 errorLength: recordString(event, "error")?.length,
               });
+              if (responseTurn !== null) yield* emitSteeringError(responseTurn, event);
               return;
             }
             const failedTurn =
@@ -2756,76 +2785,84 @@ export function makePiAdapterV2(
             ),
           ),
         steerTurn: (steerInput: ProviderAdapter.ProviderAdapterV2SteerInput) =>
-          Effect.gen(function* () {
+          Effect.suspend(() => {
             const turn = threadState?.activeTurn ?? null;
-            if (turn === null || turn.providerTurn.id !== steerInput.providerTurnId) {
-              return yield* protocolError(`Pi turn ${steerInput.providerTurnId} is not active`);
-            }
-            if (
-              steerInput.threadId !== boundThreadId ||
-              steerInput.providerThread.id !== turn.providerTurn.providerThreadId ||
-              steerInput.providerThread.providerInstanceId !== options.instanceId
-            )
-              return yield* protocolError("Pi steer belongs to another runtime owner");
-            const steerState = yield* request({ type: "get_state" });
-            yield* assertSessionIdentity(steerState);
-            const compactCommand = parsePiCompactCommand(steerInput.message.text);
-            if (compactCommand !== null && steerInput.message.attachments.length > 0)
-              return yield* protocolError("Pi native commands do not support attachments.");
-            const payload =
-              compactCommand === null
-                ? yield* resolvePromptPayload(
-                    steerInput.message.text,
-                    steerInput.message.attachments,
-                    steerState,
-                  )
-                : null;
-            // Prompt with streamingBehavior steer is atomic on Pi's side: it
-            // queues during an active run and starts a new run if settlement
-            // won the race. A direct `steer` sent after Pi became idle would
-            // remain queued forever. Send fire-and-forget under the session
-            // permit so a slash-command dialog cannot block the turn, and so
-            // settlement cannot overtake the active-turn check.
-            // /compact is not a prompt: Pi's compact RPC aborts the agent first.
-            yield* sessionEventPermit.withPermits(1)(
-              Effect.gen(function* () {
-                if (threadState?.activeTurn !== turn) {
-                  return yield* protocolError(`Pi turn ${steerInput.providerTurnId} is not active`);
-                }
-                if (compactCommand !== null) {
-                  turn.manualCompactInFlight = true;
-                  yield* connection.send(compactRpcRecord(compactCommand));
-                  pendingCompactResponses.push({
-                    providerTurnId: turn.providerTurn.id,
-                    kind: "steer",
-                  });
-                } else if (payload !== null) {
-                  yield* connection.send({
-                    type: "prompt",
-                    message: payload.message,
-                    streamingBehavior: "steer",
-                    ...(payload.images.length === 0 ? {} : { images: payload.images }),
-                  });
-                  pendingPromptResponses.push({
-                    providerTurnId: turn.providerTurn.id,
-                    kind: "steer",
-                  });
-                }
-                turn.settleProbeGeneration += 1;
-                turn.pendingSteerCount += 1;
-              }),
-            );
-          }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProviderAdapter.ProviderAdapterSteerRunError({
-                  driver: PI_PROVIDER,
-                  providerThreadId: steerInput.providerThread.id,
-                  providerTurnId: steerInput.providerTurnId,
-                  cause,
+            return Effect.gen(function* () {
+              if (turn === null || turn.providerTurn.id !== steerInput.providerTurnId) {
+                return yield* protocolError(`Pi turn ${steerInput.providerTurnId} is not active`);
+              }
+              if (
+                steerInput.threadId !== boundThreadId ||
+                steerInput.providerThread.id !== turn.providerTurn.providerThreadId ||
+                steerInput.providerThread.providerInstanceId !== options.instanceId
+              )
+                return yield* protocolError("Pi steer belongs to another runtime owner");
+              const steerState = yield* request({ type: "get_state" });
+              yield* assertSessionIdentity(steerState);
+              const compactCommand = parsePiCompactCommand(steerInput.message.text);
+              if (compactCommand !== null && steerInput.message.attachments.length > 0)
+                return yield* protocolError("Pi native commands do not support attachments.");
+              const payload =
+                compactCommand === null
+                  ? yield* resolvePromptPayload(
+                      steerInput.message.text,
+                      steerInput.message.attachments,
+                      steerState,
+                    )
+                  : null;
+              // Prompt with streamingBehavior steer is atomic on Pi's side: it
+              // queues during an active run and starts a new run if settlement
+              // won the race. A direct `steer` sent after Pi became idle would
+              // remain queued forever. Send fire-and-forget under the session
+              // permit so a slash-command dialog cannot block the turn, and so
+              // settlement cannot overtake the active-turn check.
+              // /compact is not a prompt: Pi's compact RPC aborts the agent first.
+              yield* sessionEventPermit.withPermits(1)(
+                Effect.gen(function* () {
+                  if (turn.interrupted) return yield* Effect.interrupt;
+                  if (threadState?.activeTurn !== turn) {
+                    return yield* protocolError(
+                      `Pi turn ${steerInput.providerTurnId} is not active`,
+                    );
+                  }
+                  if (compactCommand !== null) {
+                    turn.manualCompactInFlight = true;
+                    yield* connection.send(compactRpcRecord(compactCommand));
+                    pendingCompactResponses.push({
+                      providerTurnId: turn.providerTurn.id,
+                      kind: "steer",
+                    });
+                  } else if (payload !== null) {
+                    yield* connection.send({
+                      type: "prompt",
+                      message: payload.message,
+                      streamingBehavior: "steer",
+                      ...(payload.images.length === 0 ? {} : { images: payload.images }),
+                    });
+                    pendingPromptResponses.push({
+                      providerTurnId: turn.providerTurn.id,
+                      kind: "steer",
+                    });
+                  }
+                  turn.settleProbeGeneration += 1;
+                  turn.pendingSteerCount += 1;
                 }),
-            ),
-          ),
+              );
+            }).pipe(
+              Effect.catchCause((cause) =>
+                turn?.interrupted === true ? Effect.interrupt : Effect.failCause(cause),
+              ),
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterSteerRunError({
+                    driver: PI_PROVIDER,
+                    providerThreadId: steerInput.providerThread.id,
+                    providerTurnId: steerInput.providerTurnId,
+                    cause,
+                  }),
+              ),
+            );
+          }),
         interruptTurn: (interruptInput) =>
           Effect.gen(function* () {
             const turn = threadState?.activeTurn ?? null;
