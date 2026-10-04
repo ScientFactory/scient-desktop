@@ -231,6 +231,9 @@ export interface AcpAdapterV2ToolPresentation {
 export interface AcpAdapterV2Flavor {
   /** Interprets provider-specific prompt errors before they cross into orchestration. */
   readonly promptFailure?: (cause: unknown) => OrchestrationV2ProviderFailure;
+  readonly outputTruncationMessage?: (
+    runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+  ) => string | undefined;
   readonly beforeRuntimeReuse?: (
     runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
   ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
@@ -269,10 +272,11 @@ export interface AcpAdapterV2Flavor {
     EffectAcpErrors.AcpError,
     Crypto.Crypto | Scope.Scope
   >;
-  /** Runs once for a new orchestration turn, never for an in-turn steer. */
+  /** Prepares a native attempt using its authoritative Scient run owner. */
   readonly beforeTurnStart?: (
     runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
     policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+    input: ProviderAdapter.ProviderAdapterV2TurnInput,
   ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   readonly applyRuntimePolicy?: (
     runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
@@ -6992,7 +6996,7 @@ export function makeAcpAdapterV2(
               }),
             );
             if (!isContinuationTurn && flavor.beforeTurnStart)
-              yield* flavor.beforeTurnStart(runtime, turnInput.runtimePolicy);
+              yield* flavor.beforeTurnStart(runtime, turnInput.runtimePolicy, turnInput);
             const promptParts = isContinuationTurn
               ? null
               : yield* resolvePromptParts(turnInput, requestedSessionId);
@@ -7263,7 +7267,9 @@ export function makeAcpAdapterV2(
                             title: null,
                             source: { kind: "output_truncated", stopReason: result.stopReason },
                             outcome: "completed",
-                            summary: MODEL_TOKEN_LIMIT_MESSAGE,
+                            summary:
+                              flavor.outputTruncationMessage?.(runtime) ??
+                              MODEL_TOKEN_LIMIT_MESSAGE,
                           },
                         });
                       }

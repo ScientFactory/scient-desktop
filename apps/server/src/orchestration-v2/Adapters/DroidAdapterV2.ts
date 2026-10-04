@@ -154,7 +154,13 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
           });
         }
       }),
-    isRuntimeCurrent: (runtime) => runtimes.get(runtime)?.isConfigurationCurrent?.() ?? true,
+    isRuntimeCurrent: (runtime) => {
+      const droid = runtimes.get(runtime);
+      return (
+        (droid?.isConfigurationCurrent?.() ?? true) && droid?.requestLimitBreach?.() === undefined
+      );
+    },
+    outputTruncationMessage: (runtime) => runtimes.get(runtime)?.requestLimitBreach?.()?.message,
     terminalizeRunOwnedItemsOnFailure: true,
     terminateRuntimeProcessGroupOnInterrupt: true,
     applyRuntimePolicy: (runtime, policy) =>
@@ -293,64 +299,79 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
                 deadline: (yield* Clock.currentTimeMillis) + idleMillis,
               };
               currentWatch = watch;
-              const result = yield* Effect.gen(function* () {
-                const outcome = yield* Effect.raceFirst(
-                  runtime
-                    .prompt(request, {
-                      ...dispatch,
-                      onSend: (dispatch?.onSend ?? Effect.void).pipe(
-                        Effect.andThen(
-                          Effect.suspend(() => {
-                            const notice = effortNotices.get(wrapped);
-                            const message = notice?.pending;
-                            if (
-                              notice === undefined ||
-                              message === undefined ||
-                              message === notice.notified
-                            )
-                              return Effect.void;
-                            notice.pending = undefined;
-                            notice.notified = message;
-                            return notice.emit({ id: "droid-effort", message });
-                          }),
-                        ),
+              const result = yield* Effect.scoped(
+                Effect.gen(function* () {
+                  if (runtime.upstreamRetrying)
+                    yield* runtime.upstreamRetrying.pipe(
+                      Effect.flatMap(
+                        (status) =>
+                          input.onProviderNotice?.({
+                            id: "droid-upstream-retry",
+                            message: `The model endpoint answered HTTP ${status}${status === 429 ? " (rate limited)" : ""}. Droid is retrying it, which can take a few minutes.`,
+                          }) ?? Effect.void,
                       ),
-                    })
-                    .pipe(
-                      Effect.map((response) => ({
-                        _tag: "Completed" as const,
-                        response,
-                      })),
-                    ),
-                  Effect.gen(function* () {
-                    while (true) {
-                      yield* Effect.sleep(tickMillis);
-                      if (currentWatch !== watch) return yield* Effect.never;
-                      const now = yield* Clock.currentTimeMillis;
-                      if (watch.decisions > 0) {
-                        watch.deadline = now + idleCap(watch, idleMillis);
-                        continue;
+                      Effect.forkScoped,
+                    );
+                  const outcome = yield* Effect.raceFirst(
+                    runtime
+                      .prompt(request, {
+                        ...dispatch,
+                        onSend: (dispatch?.onSend ?? Effect.void).pipe(
+                          Effect.andThen(
+                            Effect.suspend(() => {
+                              const notice = effortNotices.get(wrapped);
+                              const message = notice?.pending;
+                              if (
+                                notice === undefined ||
+                                message === undefined ||
+                                message === notice.notified
+                              )
+                                return Effect.void;
+                              notice.pending = undefined;
+                              notice.notified = message;
+                              return notice.emit({ id: "droid-effort", message });
+                            }),
+                          ),
+                        ),
+                      })
+                      .pipe(
+                        Effect.map((response) => ({
+                          _tag: "Completed" as const,
+                          response,
+                        })),
+                      ),
+                    Effect.gen(function* () {
+                      while (true) {
+                        yield* Effect.sleep(tickMillis);
+                        if (currentWatch !== watch) return yield* Effect.never;
+                        const now = yield* Clock.currentTimeMillis;
+                        if (watch.decisions > 0) {
+                          watch.deadline = now + idleCap(watch, idleMillis);
+                          continue;
+                        }
+                        if (now >= watch.deadline)
+                          return { _tag: "Idle" as const, message: idleMessage(watch, idleMillis) };
                       }
-                      if (now >= watch.deadline)
-                        return { _tag: "Idle" as const, message: idleMessage(watch, idleMillis) };
-                    }
-                  }),
-                );
-                if (outcome._tag === "Completed") return outcome.response;
-                // The race retires the exact prompt first. Flush cancellation, then
-                // terminate its owned native process group; sibling instances are untouched.
-                return yield* Effect.uninterruptible(
-                  Effect.gen(function* () {
-                    yield* runtime.cancelAndAwaitPrompt("2 seconds");
-                    if (runtime.terminateProcessGroup)
-                      yield* runtime.terminateProcessGroup.pipe(Effect.ignoreCause({ log: true }));
-                    return yield* new EffectAcpErrors.AcpRequestError({
-                      code: -32603,
-                      errorMessage: outcome.message,
-                    });
-                  }),
-                );
-              }).pipe(
+                    }),
+                  );
+                  if (outcome._tag === "Completed") return outcome.response;
+                  // The race retires the exact prompt first. Flush cancellation, then
+                  // terminate its owned native process group; sibling instances are untouched.
+                  return yield* Effect.uninterruptible(
+                    Effect.gen(function* () {
+                      yield* runtime.cancelAndAwaitPrompt("2 seconds");
+                      if (runtime.terminateProcessGroup)
+                        yield* runtime.terminateProcessGroup.pipe(
+                          Effect.ignoreCause({ log: true }),
+                        );
+                      return yield* new EffectAcpErrors.AcpRequestError({
+                        code: -32603,
+                        errorMessage: outcome.message,
+                      });
+                    }),
+                  );
+                }),
+              ).pipe(
                 Effect.ensuring(
                   Effect.sync(() => {
                     if (currentWatch === watch) {
@@ -375,6 +396,8 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
                 );
                 return { stopReason: "cancelled" as const };
               }
+              if (runtime.requestLimitBreach?.() !== undefined && runtime.terminateProcessGroup)
+                yield* runtime.terminateProcessGroup.pipe(Effect.ignoreCause({ log: true }));
               return result;
             }).pipe(
               Effect.catchCause((cause) => {
@@ -429,7 +452,7 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
         effortNotices.set(wrapped, { emit: input.onProviderNotice ?? (() => Effect.void) });
         return wrapped;
       }),
-    beforeTurnStart: (runtime, policy) =>
+    beforeTurnStart: (runtime, policy, turnInput) =>
       Effect.gen(function* () {
         const droid = runtimes.get(runtime);
         if (droid?.checkConfiguration) yield* droid.checkConfiguration();
@@ -443,7 +466,8 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
                   : "approval-required",
               ),
         );
-        if (droid?.beginTurn) yield* droid.beginTurn;
+        if (droid?.beginRunBudget) yield* droid.beginRunBudget(turnInput.threadId, turnInput.runId);
+        else if (droid?.beginTurn) yield* droid.beginTurn;
       }),
     applyModelSelection: ({ runtime, modelSelection }) =>
       Effect.gen(function* () {

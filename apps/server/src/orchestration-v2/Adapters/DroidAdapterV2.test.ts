@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
+import * as NodeHttp from "node:http";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -265,6 +266,7 @@ const harness = Effect.fnUntraced(function* (
     model = modelSelection.model,
     attachments: ReadonlyArray<ChatAttachment> = [],
     options: ModelSelection["options"] = undefined,
+    authoritativeRunId = RunId.make(`droid-run-${ordinal}`),
   ) =>
     runtime.startTurn({
       appThread,
@@ -272,7 +274,7 @@ const harness = Effect.fnUntraced(function* (
       providerThread,
       modelSelection: { instanceId, model, ...(options === undefined ? {} : { options }) },
       runtimePolicy: { ...runtimePolicy, runtimeMode: mode, interactionMode },
-      runId: RunId.make(`droid-run-${ordinal}`),
+      runId: authoritativeRunId,
       runOrdinal: ordinal,
       providerTurnOrdinal: ordinal,
       attemptId: RunAttemptId.make(`droid-attempt-${ordinal}`),
@@ -1901,6 +1903,7 @@ it.layer(testLayer, { excludeTestServices: true })("Droid native lifecycle", (it
 
 const customModelFixture = Effect.fnUntraced(function* (
   defaultReasoningLevel: "high" | "minimal" = "high",
+  origin = "http://127.0.0.1:9/v1",
 ) {
   const instanceId = ProviderInstanceId.make("droid-v2-test");
   let connections: ReadonlyArray<
@@ -1913,7 +1916,7 @@ const customModelFixture = Effect.fnUntraced(function* (
       id: "fixture",
       name: "Fixture",
       protocol: "openai-completions",
-      baseUrl: "http://127.0.0.1:9/v1",
+      baseUrl: origin,
       credentialId: "synthetic-key-id",
       apiKey: Redacted.make("synthetic-native-custom-model-key"),
       models: [
@@ -2311,6 +2314,242 @@ it.layer(testLayer, { excludeTestServices: true })(
             assert.equal(new Set(h.ownedPids()).size, 2);
           }),
         ),
+      );
+    }
+  },
+);
+
+const nativeModelApi = Effect.fnUntraced(function* (mode: "length" | "retry") {
+  let requests = 0;
+  let finish = "length";
+  const server = NodeHttp.createServer(async (request, response) => {
+    for await (const _chunk of request);
+    requests++;
+    if (mode === "retry" && requests % 3 !== 0) {
+      response.writeHead(429);
+      response.end("Synthetic rate limit");
+      return;
+    }
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.end(
+      `data: ${encodeJson({ choices: [{ index: 0, delta: { content: "partial" }, finish_reason: mode === "retry" ? "stop" : finish }] })}\n\ndata: [DONE]\n\n`,
+    );
+  });
+  yield* Effect.acquireRelease(
+    Effect.promise(() => new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))),
+    () =>
+      Effect.promise(
+        () =>
+          new Promise<void>((resolve) => {
+            server.closeAllConnections();
+            server.close(() => resolve());
+          }),
+      ),
+  );
+  const address = server.address();
+  if (address === null || typeof address === "string")
+    return yield* Effect.die("Missing synthetic native model endpoint");
+  return {
+    origin: `http://127.0.0.1:${address.port}/v1`,
+    requests: () => requests,
+    recover: () => {
+      finish = "stop";
+    },
+  };
+});
+const nativeModelPrompt = `
+  onCancel = () => {state.cancelled = true;};
+  onPrompt = async message => {
+    state.cancelled = false;
+    const selected = models.find(model => model.id === state.model);
+    for (let index = 0; index < Number(process.env.MODEL_REQUESTS); index++) {
+      if (state.cancelled) break;
+      const response = await fetch(selected.baseUrl + "/chat/completions", {method: "POST", headers: {authorization: "Bearer " + selected.apiKey}, body: JSON.stringify({model: selected.model, stream: true})});
+      const text = await response.text();
+      if (response.status === 200 && text.includes('"finish_reason":"stop"')) break;
+      if (response.status === 200) update({sessionUpdate: "agent_message_chunk", content: {type: "text", text: "Partial model output."}});
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    if (process.env.HOLD_FIRST_MODEL_LEG === "1" && !fs.existsSync(__CONTROL_PATH__)) {
+      fs.writeFileSync(__CONTROL_PATH__, "held");
+      update({sessionUpdate: "agent_message_chunk", content: {type: "text", text: "Held model leg."}});
+      while (!state.cancelled) await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    reply(message, {stopReason: state.cancelled ? "cancelled" : "end_turn"});
+  };
+`;
+it.layer(testLayer, { excludeTestServices: true })(
+  "Droid native model endpoint supervision",
+  (it) => {
+    it.effect("reports actual endpoint retries once per owned native turn", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const api = yield* nativeModelApi("retry");
+          const f = yield* customModelFixture("high", api.origin);
+          const h = yield* harness(false, false, false, undefined, {
+            liveClock: true,
+            body: f.body + nativeModelPrompt,
+            model: f.model,
+            makeRuntime: f.factory,
+            environment: { MODEL_REQUESTS: "8" },
+          });
+          for (const ordinal of [1, 2]) {
+            yield* h.send(ordinal, "full-access", "default", "retry", f.model);
+            assert.equal((yield* h.terminal).status, "completed");
+          }
+          assert.deepEqual(
+            notices(h).map((item) => [item.runId, item.summary]),
+            [1, 2].map((ordinal) => [
+              RunId.make(`droid-run-${ordinal}`),
+              "The model endpoint answered HTTP 429 (rate limited). Droid is retrying it, which can take a few minutes.",
+            ]),
+          );
+          assert.equal(api.requests(), 6);
+          assert.lengthOf(h.ownedPids(), 1);
+        }),
+      ),
+    );
+    it.effect("starts a fresh broker budget for each native turn on the same process", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const api = yield* nativeModelApi("length");
+          const f = yield* customModelFixture("high", api.origin);
+          const h = yield* harness(false, false, false, undefined, {
+            liveClock: true,
+            body: f.body + nativeModelPrompt,
+            model: f.model,
+            makeRuntime: f.factory,
+            environment: { MODEL_REQUESTS: "3" },
+          });
+          for (const ordinal of [1, 2]) {
+            yield* h.send(ordinal, "full-access", "default", "three requests", f.model);
+            assert.equal((yield* h.terminal).status, "completed");
+          }
+          assert.equal(api.requests(), 6);
+          assert.lengthOf(notices(h), 0);
+          assert.lengthOf(h.ownedPids(), 1);
+          assert.lengthOf(terminals(h), 2);
+        }),
+      ),
+    );
+    it.effect(
+      "ends the broker request loop truthfully once and replaces the native process for recovery",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const api = yield* nativeModelApi("length");
+            const f = yield* customModelFixture("high", api.origin);
+            const h = yield* harness(false, false, false, undefined, {
+              liveClock: true,
+              body: f.body + nativeModelPrompt,
+              model: f.model,
+              makeRuntime: f.factory,
+              environment: { MODEL_REQUESTS: "8" },
+            });
+            yield* h.send(1, "full-access", "default", "loop", f.model);
+            const limited = yield* h.terminal;
+            assert.equal(limited.status, "completed");
+            const truncation = h.recorded.find(
+              (event) =>
+                event.type === "turn_item.updated" && event.turnItem.type === "notification",
+            );
+            if (
+              truncation?.type !== "turn_item.updated" ||
+              truncation.turnItem.type !== "notification"
+            )
+              return yield* Effect.die("Missing broker limit outcome");
+            assert.deepEqual(truncation.turnItem.source, {
+              kind: "output_truncated",
+              stopReason: "max_tokens",
+            });
+            const retiredPid = h.ownedPids()[0]!;
+            const alive = yield* Effect.sync(() => {
+              try {
+                process.kill(retiredPid, 0);
+                return true;
+              } catch {
+                return false;
+              }
+            });
+            assert.isFalse(alive);
+
+            assert.equal(api.requests(), 5);
+            assert.deepEqual(
+              notices(h).map((item) => item.summary),
+              [
+                "The model stopped at its output limit 5 times in a row and Droid kept asking it to continue. Scient ended the turn to stop the request loop.",
+              ],
+            );
+            assert.isTrue(
+              h.recorded.some(
+                (event) =>
+                  event.type === "message.updated" &&
+                  event.message.text.includes("Partial model output."),
+              ),
+            );
+            api.recover();
+            yield* h.send(2, "full-access", "default", "recovery", f.model);
+            assert.equal((yield* h.terminal).status, "completed");
+            assert.equal(api.requests(), 6);
+            assert.equal(new Set(h.ownedPids()).size, 2);
+            assert.lengthOf(terminals(h), 2);
+            assert.lengthOf(notices(h), 1);
+          }),
+        ),
+    );
+    for (const replace of [false, true]) {
+      it.effect(
+        `preserves the Scient run budget across a replacement attempt, new process=${replace}`,
+        () =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const api = yield* nativeModelApi("length");
+              const f = yield* customModelFixture("high", api.origin);
+              const h = yield* harness(false, false, false, undefined, {
+                liveClock: true,
+                body: f.body + nativeModelPrompt,
+                model: f.model,
+                makeRuntime: f.factory,
+                environment: { MODEL_REQUESTS: "3", HOLD_FIRST_MODEL_LEG: replace ? "1" : "0" },
+              });
+              const runId = RunId.make("droid-run-1");
+              yield* h.send(1, "full-access", "default", "first leg", f.model);
+              if (replace) {
+                yield* h.waitForMessage("Held model leg.");
+                assert.lengthOf(terminals(h), 0);
+              } else assert.equal((yield* h.terminal).status, "completed");
+              assert.equal(api.requests(), 3);
+              if (replace) {
+                yield* h.runtime.interruptTurn({
+                  providerThread: h.providerThread,
+                  providerTurnId: nativeTurn(h, 1).id,
+                  requestRuntimeRestart: true,
+                });
+                assert.equal((yield* h.terminal).status, "interrupted");
+              }
+              yield* h.send(
+                2,
+                "full-access",
+                "default",
+                "replacement leg",
+                f.model,
+                [],
+                undefined,
+                runId,
+              );
+              assert.equal((yield* h.terminal).status, "completed");
+              assert.equal(api.requests(), 5);
+              assert.lengthOf(notices(h), 1);
+              assert.equal(notices(h)[0]?.runId, runId);
+              assert.equal(new Set(h.ownedPids()).size, replace ? 2 : 1);
+              api.recover();
+              yield* h.send(3, "full-access", "default", "new run", f.model);
+              assert.equal((yield* h.terminal).status, "completed");
+              assert.equal(api.requests(), 6);
+              assert.lengthOf(terminals(h), 3);
+              assert.lengthOf(notices(h), 1);
+            }),
+          ),
       );
     }
   },

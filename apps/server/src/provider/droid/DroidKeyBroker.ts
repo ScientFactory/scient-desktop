@@ -268,6 +268,28 @@ interface TurnBudget {
   readonly retrying: Deferred.Deferred<number>;
 }
 
+const newBudget = (): TurnBudget => ({
+  requests: 0,
+  consecutiveTruncated: 0,
+  breach: undefined,
+  breached: Deferred.makeUnsafe<DroidRequestLimitBreach>(),
+  retrying: Deferred.makeUnsafe<number>(),
+});
+
+/** Keeps one current Scient run budget per thread across native process replacement. */
+export const makeDroidRunBudgetStore = () => {
+  const threads = new Map<string, { readonly runId: string; readonly budget: TurnBudget }>();
+  return {
+    forRun: (threadId: string, runId: string) => {
+      const current = threads.get(threadId);
+      if (current?.runId === runId) return current.budget;
+      const budget = newBudget();
+      threads.set(threadId, { runId, budget });
+      return budget;
+    },
+  };
+};
+
 /**
  * Droid retries these itself, silently: 429 about 6 times over 20 s and 5xx
  * about 21 times over 200 s before the turn fails (verified against Droid
@@ -349,6 +371,7 @@ export interface DroidKeyBroker {
   ) => { readonly baseUrl: string; readonly apiKey: string } | undefined;
   /** Starts a fresh request budget for the next turn. */
   readonly beginTurn: Effect.Effect<void>;
+  readonly beginRunBudget: (threadId: string, runId: string) => Effect.Effect<void>;
   /** Completes when the current turn's request budget is exhausted. */
   readonly turnBreached: Effect.Effect<DroidRequestLimitBreach>;
   readonly currentBreach: () => DroidRequestLimitBreach | undefined;
@@ -396,6 +419,7 @@ export const makeDroidKeyBroker = Effect.fn("DroidKeyBroker.make")(function* (in
    * CA files are trusted as Droid trusted them.
    */
   readonly environment?: NodeJS.ProcessEnv;
+  readonly runBudgetStore?: ReturnType<typeof makeDroidRunBudgetStore>;
   readonly limits?: {
     readonly consecutiveTruncatedResponses: number;
     readonly upstreamRequests: number;
@@ -429,6 +453,7 @@ export const makeDroidKeyBroker = Effect.fn("DroidKeyBroker.make")(function* (in
     return {
       route: () => undefined,
       beginTurn: Effect.void,
+      beginRunBudget: () => Effect.void,
       turnBreached: Effect.never,
       currentBreach: () => undefined,
       turnRetrying: Effect.never,
@@ -469,13 +494,7 @@ export const makeDroidKeyBroker = Effect.fn("DroidKeyBroker.make")(function* (in
     MAX_ERROR_BODY_BYTES +
     ERROR_BODY_SECRET_MARGIN * Math.max(0, ...secrets.map((secret) => Buffer.byteLength(secret)));
 
-  const newBudget = (): TurnBudget => ({
-    requests: 0,
-    consecutiveTruncated: 0,
-    breach: undefined,
-    breached: Deferred.makeUnsafe<DroidRequestLimitBreach>(),
-    retrying: Deferred.makeUnsafe<number>(),
-  });
+  const runBudgets = input.runBudgetStore ?? makeDroidRunBudgetStore();
   let budget = newBudget();
   const breach = (current: TurnBudget, next: DroidRequestLimitBreach) => {
     if (current.breach) return;
@@ -858,6 +877,10 @@ export const makeDroidKeyBroker = Effect.fn("DroidKeyBroker.make")(function* (in
     beginTurn: Effect.sync(() => {
       budget = newBudget();
     }),
+    beginRunBudget: (threadId, runId) =>
+      Effect.sync(() => {
+        budget = runBudgets.forRun(threadId, runId);
+      }),
     turnBreached: Effect.suspend(() => Deferred.await(budget.breached)),
     currentBreach: () => budget.breach,
     turnRetrying: Effect.suspend(() => Deferred.await(budget.retrying)),
