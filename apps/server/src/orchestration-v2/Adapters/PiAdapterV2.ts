@@ -71,6 +71,7 @@ import {
   type PiCompactCommand,
 } from "../../provider/PiCommands.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
+import { piContextErrorMessage } from "../../provider/pi/PiContextError.ts";
 import { encodePiModelSlug } from "../../provider/pi/PiModel.ts";
 import { applyPiModelSelection } from "../../provider/pi/PiModelSelection.ts";
 import { PiRpcProtocolError } from "../../provider/pi/PiRpcClient.ts";
@@ -321,6 +322,8 @@ interface ActivePiTurn {
   readonly toolStartedAt: Map<string, DateTime.Utc>;
   interrupted: boolean;
   outputTruncated: boolean;
+  modelFailure: OrchestrationV2ProviderFailure | null;
+  contextRecoveryPending: boolean;
   /**
    * Whether any agent run activity was observed. Command-only prompts (pure
    * extension slash commands) never start an agent run and never emit
@@ -1220,6 +1223,17 @@ export function makePiAdapterV2(
           const turn = state?.activeTurn ?? null;
           const message = recordString(event, "message") ?? "";
           if (turn === null || message.length === 0) return;
+          if (message.startsWith("scient:context-recovery:")) turn.contextRecoveryPending = true;
+          if (message.startsWith("scient:context-limit:")) {
+            turn.contextRecoveryPending = false;
+            turn.failure = makeProviderFailure({
+              message: piContextErrorMessage("context limit"),
+              class: "provider_error",
+              retryable: false,
+            });
+            if (state !== null) yield* finalizeTurn(state);
+            return;
+          }
           const emittedAt = yield* DateTime.now;
           const nativeItemId = `notify:${turn.nextItemOrdinal}`;
           yield* emitItemNode(turn, nativeItemId, "system", "completed", emittedAt, emittedAt);
@@ -1379,6 +1393,16 @@ export function makePiAdapterV2(
           class: "provider_error",
           retryable: false,
         });
+        if (turn.contextRecoveryPending && extensionEvent === "send_message") {
+          turn.contextRecoveryPending = false;
+          turn.failure = makeProviderFailure({
+            message: `${piContextErrorMessage("context limit")}\n\n${message}`,
+            class: "provider_error",
+            retryable: false,
+          });
+          if (state !== null) yield* finalizeTurn(state);
+          return;
+        }
         yield* emitItemNode(turn, nativeItemId, "system", "failed", emittedAt, emittedAt);
         yield* emit({
           type: "turn_item.updated",
@@ -1628,6 +1652,7 @@ export function makePiAdapterV2(
             }
             yield* markTurnAccepted(turn);
             turn.sawAgentActivity = true;
+            turn.contextRecoveryPending = false;
             turn.settleProbeGeneration += 1;
             return;
           }
@@ -1675,12 +1700,37 @@ export function makePiAdapterV2(
             const message = event["message"];
             if (recordString(message, "role") !== "assistant") return;
             turn.outputTruncated = recordString(message, "stopReason") === "length";
+            const content = recordField(message, "content");
+            if (Array.isArray(content)) {
+              for (const [index, block] of content.entries()) {
+                const kind = recordString(block, "type");
+                if (kind !== "text" && kind !== "thinking") continue;
+                const text = recordString(block, kind === "text" ? "text" : "thinking");
+                if (text === undefined || text.length === 0) continue;
+                const item = yield* streamItemFor(
+                  turn,
+                  kind === "text" ? "assistant_message" : "reasoning",
+                  index,
+                );
+                yield* completeStreamItem(turn, item, text);
+              }
+            }
             yield* completeOpenStreamItems(turn);
+            if (
+              recordString(message, "stopReason") === "stop" &&
+              turn.failure === turn.modelFailure
+            ) {
+              turn.failure = null;
+              turn.modelFailure = null;
+            }
             if (recordString(message, "stopReason") === "error" && turn.failure === null) {
               turn.failure = makeProviderFailure({
-                message: recordString(message, "errorMessage") ?? "Pi reported a model error.",
+                message: piContextErrorMessage(
+                  recordString(message, "errorMessage") ?? "Pi reported a model error.",
+                ),
                 class: "provider_error",
               });
+              turn.modelFailure = turn.failure;
             }
             return;
           }
@@ -1975,7 +2025,8 @@ export function makePiAdapterV2(
               turn.providerTurn.id !== event["providerTurnId"] ||
               turn.settleProbeGeneration !== event["settleProbeGeneration"] ||
               (!settleAfterAgentActivity && turn.sawAgentActivity) ||
-              turn.activeCompaction !== null
+              turn.activeCompaction !== null ||
+              turn.contextRecoveryPending
             ) {
               return;
             }
@@ -2476,6 +2527,8 @@ export function makePiAdapterV2(
               toolStartedAt: new Map(),
               interrupted: false,
               outputTruncated: false,
+              modelFailure: null,
+              contextRecoveryPending: false,
               sawAgentActivity: false,
               promptMayBeCommandOnly:
                 compactCommand !== null || (payload?.message.trimStart().startsWith("/") ?? false),
