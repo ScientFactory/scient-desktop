@@ -51,7 +51,7 @@ import * as ServerSettings from "../serverSettings.ts";
 
 const isDomainEvent = Schema.is(OrchestrationV2DomainEvent);
 
-it("does not commit running state when inherited background routing cannot be read", async () => {
+it("does not commit running state while retrying an inherited background routing read failure", async () => {
   const threadId = ThreadId.make("thread_provider_turn_start_projection_failure");
   const runId = RunId.make("run_provider_turn_start_projection_failure");
   const attemptId = RunAttemptId.make("attempt_provider_turn_start_projection_failure");
@@ -148,7 +148,7 @@ it("does not commit running state when inherited background routing cannot be re
 
   await Effect.gen(function* () {
     const error = yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2)
-      .start({ threadId, runId })
+      .start({ threadId, runId, willRetry: true })
       .pipe(Effect.flip);
 
     expect(error._tag).toBe("ProviderTurnStartError");

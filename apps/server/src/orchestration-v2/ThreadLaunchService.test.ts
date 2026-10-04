@@ -95,6 +95,7 @@ const adapter = {
 } as ProviderAdapterV2Shape;
 
 interface HarnessOptions {
+  readonly serverConfigLayer?: Layer.Layer<ServerConfig.ServerConfig>;
   readonly managedFolders?: Layer.Layer<ManagedProjectFolders.ManagedProjectFolders>;
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
   readonly fetchRemote?: GitWorkflow.GitWorkflowService["Service"]["fetchRemote"];
@@ -112,7 +113,13 @@ function makeHarness(options: HarnessOptions = {}) {
   const orchestrator = makeOrchestratorV2ReplayLayerWithRegistry(
     { name: "thread-launch" },
     registry,
-    { databaseLayer: database, runEffectWorker: false },
+    {
+      databaseLayer: database,
+      runEffectWorker: false,
+      ...(options.serverConfigLayer === undefined
+        ? {}
+        : { serverConfigLayer: options.serverConfigLayer }),
+    },
   );
   const threadManagement = ThreadManagement.layer.pipe(Layer.provide(orchestrator));
   const receipts = CommandReceiptStore.layer.pipe(Layer.provide(database));
@@ -578,6 +585,30 @@ it.effect(
         );
 
         yield* Deferred.succeed(failSetup, undefined);
+        yield* waitUntil(() =>
+          threads
+            .getThreadProjection(launched.threadId)
+            .pipe(
+              Effect.map((projection) =>
+                projection.runs.some(
+                  (run) =>
+                    run.id === followUp.run.id && run.status === "queued" && run.queueHeld === true,
+                ),
+              ),
+            ),
+        );
+        const held = yield* threads.getThreadProjection(launched.threadId);
+        assert.equal(held.runs[0]?.status, "failed");
+        assert.equal(
+          held.messages.find((message) => message.id === followUp.run.userMessageId)?.text,
+          "Run after preparation",
+        );
+        yield* threads.dispatch({
+          type: "queue.resume",
+          commandId: CommandId.make("command:launch:resume-queued-follow-up"),
+          threadId: launched.threadId,
+          runId: followUp.run.id,
+        });
         yield* waitUntil(() =>
           threads
             .getThreadProjection(launched.threadId)
@@ -1740,10 +1771,11 @@ it.effect("creates a strong provider-thread mapping for an imported native sessi
 });
 
 it.effect("shared intake preserves durable attachment bytes after a lost launch result", () => {
-  const harness = makeHarness();
   const files = ServerConfig.layerTest(process.cwd(), { prefix: "t3-message-intake-" }).pipe(
     Layer.provideMerge(NodeServices.layer),
+    Layer.orDie,
   );
+  const harness = makeHarness({ serverConfigLayer: files });
   return Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const fs = yield* FileSystem.FileSystem;
