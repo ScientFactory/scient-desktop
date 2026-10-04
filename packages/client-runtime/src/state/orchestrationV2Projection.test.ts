@@ -12,6 +12,7 @@ import {
   ProviderTurnId,
   RunId,
   ThreadId,
+  ThreadSectionId,
   TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -143,6 +144,30 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.providerTurns[0]?.status).toBe("completed");
     expect(next?.providerTurns[0]?.tokenUsage).toEqual(running.tokenUsage);
   });
+
+  it.each([ThreadSectionId.make("research"), null])(
+    "files the native thread into section %s without activity and retains it on rename",
+    (sectionId) => {
+      const filed = applyOrchestrationV2ProjectionEvent(emptyProjection, {
+        id: "native-section",
+        type: "thread.metadata-updated",
+        threadId,
+        occurredAt: DateTime.add(now, { hours: 1 }),
+        payload: { ...emptyProjection.thread, sectionId },
+      } as OrchestrationV2DomainEvent);
+      expect(filed?.thread.sectionId).toBe(sectionId);
+      expect(filed?.thread.updatedAt).toEqual(emptyProjection.thread.updatedAt);
+      const renamed = applyOrchestrationV2ProjectionEvent(filed!, {
+        id: "native-rename",
+        type: "thread.metadata-updated",
+        threadId,
+        occurredAt: DateTime.add(now, { hours: 2 }),
+        payload: { ...filed!.thread, title: "Renamed", updatedAt: DateTime.add(now, { hours: 2 }) },
+      } as OrchestrationV2DomainEvent);
+      expect(renamed?.thread.sectionId).toBe(sectionId);
+      expect(renamed?.thread.title).toBe("Renamed");
+    },
+  );
 
   it("applies thread lifecycle payloads instead of leaving stale metadata", () => {
     const archivedAt = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");

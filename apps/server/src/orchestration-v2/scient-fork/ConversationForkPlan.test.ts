@@ -430,6 +430,24 @@ it.effect("rejects missing, streaming, and nested response boundaries", () =>
   }),
 );
 
+it.effect("refuses a running-turn fork after its durable run has settled", () =>
+  Effect.gen(function* () {
+    for (const status of ["completed", "failed", "interrupted", "cancelled"] as const) {
+      const projection = makeProjection();
+      projection.runs[1] = { ...projection.runs[1]!, status, completedAt: now };
+      const result = yield* Effect.result(
+        planConversationFork({
+          projection,
+          targetThreadId,
+          source: { kind: "running-turn", runId: running },
+        }),
+      );
+      assert.equal(result._tag, "Failure", status);
+      if (result._tag === "Failure") assert.include(result.failure.message, "no longer active");
+    }
+  }),
+);
+
 it.effect("accepts a direct assistant-message child owned by the response's run", () =>
   Effect.gen(function* () {
     const projection = makeProjection();

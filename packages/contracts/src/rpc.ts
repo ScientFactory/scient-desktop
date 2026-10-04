@@ -168,13 +168,12 @@ import {
 } from "./review.ts";
 import { KeybindingsConfigError } from "./keybindings.ts";
 import {
-  ClientOrchestrationCommand,
-  ORCHESTRATION_WS_METHODS,
-  OrchestrationRpcSchemas,
+  ThreadForkCommand,
   GetForkOptionsInput,
   ForkOptions,
   OrchestrationGetSnapshotError,
-} from "./orchestration.ts";
+  ScientConversationDispatchResult,
+} from "./scientConversationFork.ts";
 import {
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetTurnDiffInput,
@@ -2052,13 +2051,10 @@ const WsSubscribeDeviceStateRpc = Rpc.make(WS_METHODS.subscribeDeviceState, {
   stream: true,
 });
 
-// Both command generations share one wire method and therefore one registration.
+// Native run commands and Scient conversation-boundary forks share one registration.
 const WsOrchestrationV2DispatchCommandRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, {
-  payload: Schema.Union([
-    OrchestrationV2RpcSchemas.dispatchCommand.input,
-    ClientOrchestrationCommand,
-  ]),
-  success: OrchestrationRpcSchemas.dispatchCommand.output,
+  payload: Schema.Union([OrchestrationV2RpcSchemas.dispatchCommand.input, ThreadForkCommand]),
+  success: ScientConversationDispatchResult,
   error: Schema.Union([
     OrchestrationV2DispatchCommandError,
     OrchestrationDispatchCommandError,
@@ -2066,7 +2062,7 @@ const WsOrchestrationV2DispatchCommandRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS
   ]),
 });
 
-const WsOrchestrationGetForkOptionsRpc = Rpc.make(ORCHESTRATION_WS_METHODS.getForkOptions, {
+const WsOrchestrationGetForkOptionsRpc = Rpc.make("orchestration.getForkOptions", {
   payload: GetForkOptionsInput,
   success: ForkOptions,
   error: Schema.Union([OrchestrationGetSnapshotError, EnvironmentAuthorizationError]),

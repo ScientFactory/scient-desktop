@@ -33,7 +33,7 @@ import {
 } from "./ProviderAdapterRegistry.ts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { cutOverLegacyQueue, cutOverLegacyQueues } from "./legacy/LegacyQueueCutover.ts";
-import { readQueue, writeQueue } from "../scient/threadQueue/Ledger.ts";
+import { readQueue, writeQueue } from "./legacy/LegacyQueueLedger.ts";
 import { layer as legacyImporterLayer } from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";

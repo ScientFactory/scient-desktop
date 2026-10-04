@@ -31,7 +31,7 @@ import { ServerConfig } from "../config.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import { SourceControlRepositoryService } from "../sourceControl/SourceControlRepositoryService.ts";
-import { readQueue, writeQueue } from "../scient/threadQueue/Ledger.ts";
+import { readQueue, writeQueue } from "./legacy/LegacyQueueLedger.ts";
 import {
   CodexOrchestratorReplayHarness,
   makeCodexProviderAdapterRegistryReplayLayer,

@@ -15,8 +15,6 @@ const legacyReaders = [
   "persistence/Migrations/",
 ] as const;
 const legacyReaderFiles: Record<string, string> = {
-  "orchestration-v2/EventSink.ts":
-    "transactional inert citation and submitted-answer repairs fenced by the legacy import ledger and null native ownership",
   "persistence/reconcileV2PreviewMigration.ts":
     "transactional legacy preview-ledger schema reconciliation",
   "serverSettings.ts": "one-time provider history for settings migration",
@@ -250,6 +248,7 @@ it("keeps legacy hydration and admission imports at explicit boundaries", () => 
   assert.deepEqual(importers, [
     "mcp/toolkits/threads/handlers.ts",
     "mcp/toolkits/threads/tools.ts",
+    "orchestration-v2/EventSink.ts",
     "orchestration-v2/Orchestrator.ts",
     "orchestration-v2/ThreadManagementService.ts",
     "orchestration-v2/runtimeLayer.ts",
@@ -257,12 +256,17 @@ it("keeps legacy hydration and admission imports at explicit boundaries", () => 
     "orchestration-v2/scient-fork/ConversationForkPlan.ts",
     // Hydrates a historical source before selecting its immutable fork boundary.
     "orchestration-v2/scient-fork/ConversationForkService.ts",
+    "orchestration-v2/scient-fork/ForkBoundaryReadModel.ts",
+    "orchestration-v2/scient-fork/importRepository.ts",
     // Supplies the real historical importer to the composed replay fixture.
     "orchestration-v2/testkit/ProviderReplayHarness.ts",
     "project/ProjectService.ts",
     "scient/conversationExport/ConversationSnapshotService.ts",
     "scient/conversationExport/conversationSnapshotProjection.ts",
+    "scient/threadQueue/Ledger.ts",
+    "scient/threadQueue/admission.ts",
     "scient/threadQueue/http.ts",
+    "scient/threadQueue/migration.ts",
     "serverRuntimeStartup.ts",
   ]);
 });

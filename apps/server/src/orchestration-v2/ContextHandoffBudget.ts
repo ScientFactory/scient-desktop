@@ -10,6 +10,16 @@ import type {
 } from "@t3tools/contracts";
 
 import * as Config from "effect/Config";
+import * as Schema from "effect/Schema";
+
+const isImportedActivity = Schema.is(
+  Schema.Struct({
+    kind: Schema.String,
+    summary: Schema.String,
+    tone: Schema.String,
+    payload: Schema.Unknown,
+  }),
+);
 
 export const DEFAULT_HANDOFF_TOKEN_CAP = 16_000;
 const HANDOFF_BYTE_CAP = 64_000;
@@ -145,6 +155,23 @@ export function historicalMessage(
     case "user_message":
     case "assistant_message":
       text = item.text;
+      break;
+    case "reasoning":
+      // Portable files explicitly selected this text; native reasoning stays excluded.
+      if (item.runId !== null || item.historyTurnId === undefined || item.nativeItemRef !== null)
+        return null;
+      text = item.text;
+      break;
+    case "dynamic_tool":
+      // Import stores validated work-log records as inert historical activities.
+      if (
+        item.runId !== null ||
+        item.historyTurnId === undefined ||
+        item.nativeItemRef !== null ||
+        !isImportedActivity(item.input)
+      )
+        return null;
+      text = `${item.input.summary}\n${JSON.stringify(item.input.payload)}`;
       break;
     case "command_execution":
       text = [

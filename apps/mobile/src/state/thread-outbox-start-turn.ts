@@ -11,7 +11,6 @@ export function buildExistingThreadOutboxStartTurnInput(input: {
   readonly message: QueuedThreadMessage;
   readonly settings: ThreadSettingsSnapshot;
   readonly attachments: ReadonlyArray<UploadedMobileAttachment>;
-  readonly inlineMessageContext: boolean;
   readonly itemCount: number;
 }): StartThreadTurnInput {
   const { message, settings, attachments } = input;
@@ -29,7 +28,6 @@ export function buildExistingThreadOutboxStartTurnInput(input: {
       ...serializeComposerMessageForServer(
         message.text,
         uploadedComposerContext(message.context, message.attachments, attachments),
-        input.inlineMessageContext,
       ),
       attachments,
     },

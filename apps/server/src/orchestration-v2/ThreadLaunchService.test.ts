@@ -595,6 +595,11 @@ it.effect(
         );
         const held = yield* threads.getThreadProjection(launched.threadId);
         assert.isTrue(held.runs.some((run) => run.status === "failed"));
+        assert.equal(held.runs[0]?.status, "failed");
+        assert.equal(
+          held.messages.find((message) => message.id === followUp.run.userMessageId)?.text,
+          "Run after preparation",
+        );
         assert.equal(
           held.nodes.find((node) => node.runId === followUp.run.id && node.kind === "root_turn")
             ?.checkpointScopeId,
@@ -1760,7 +1765,7 @@ it.effect("creates a strong provider-thread mapping for an imported native sessi
 
 it.effect("shared intake preserves durable attachment bytes after a lost launch result", () => {
   const files = ServerConfig.layerTest(process.cwd(), { prefix: "t3-message-intake-" }).pipe(
-    Layer.provide(NodeServices.layer),
+    Layer.provideMerge(NodeServices.layer),
     Layer.orDie,
   );
   const harness = makeHarness({ serverConfigLayer: files });

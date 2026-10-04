@@ -772,3 +772,36 @@ it.effect("applies the image budget across all questions before dispatch", () =>
     expect(captured).toEqual([]);
   }).pipe(Effect.provide(intakeTestLayer)),
 );
+
+it.effect(
+  "rejects historical thread files as question uploads without dispatching or deleting them",
+  () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const id = ChatAttachmentId.make("other-thread-00000000-0000-4000-8000-000000000001-txt");
+      const attachment = {
+        type: "file" as const,
+        id,
+        name: "report.txt",
+        mimeType: "text/plain",
+        sizeBytes: 6,
+      };
+      const path = resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment });
+      expect(path).not.toBeNull();
+      NodeFS.writeFileSync(path!, "report");
+      const captured: OrchestrationV2ServerCommand[] = [];
+      const result = yield* Effect.result(
+        dispatchCommand({
+          type: "runtime-request.respond",
+          commandId: CommandId.make("historical-question-upload"),
+          threadId: ThreadId.make("question-thread"),
+          requestId: RuntimeRequestId.make("question"),
+          answers: { q: "" },
+          attachmentsByQuestionId: { q: [attachment] },
+        }).pipe(Effect.provide(failingDispatch(captured))),
+      );
+      expect(result._tag).toBe("Failure");
+      expect(captured).toEqual([]);
+      expect(NodeFS.readFileSync(path!, "utf8")).toBe("report");
+    }).pipe(Effect.provide(intakeTestLayer)),
+);

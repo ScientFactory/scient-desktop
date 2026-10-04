@@ -24,6 +24,7 @@ import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
  * Terminal-only decoration such as status, widget, title, and editor-text
  * updates has no matching T3 surface and is ignored.
  */
+import * as NodePath from "@effect/platform-node/NodePath";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import {
   getModelSelectionStringOptionValue,
@@ -57,6 +58,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
 import * as Path from "effect/Path";
+import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -244,7 +246,7 @@ export interface PiAdapterV2Options {
   readonly environment: NodeJS.ProcessEnv;
   readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly fileSystem: FileSystem.FileSystem;
-  readonly path: Path.Path;
+  readonly path?: Path.Path;
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly serverConfig: ServerConfig.ServerConfig["Service"];
   readonly makeConnection?: typeof makePiRpcConnection;
@@ -472,7 +474,9 @@ export function makePiAdapterV2(
             ),
           ),
           Effect.map((fresh) => fresh.sessionFile),
-          Effect.provideService(Path.Path, options.path),
+          Effect.provide(
+            options.path === undefined ? NodePath.layer : Layer.succeed(Path.Path, options.path),
+          ),
           Effect.provideService(FileSystem.FileSystem, options.fileSystem),
           Effect.mapError(
             (cause) =>

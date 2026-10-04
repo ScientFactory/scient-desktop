@@ -5,6 +5,8 @@ import {
   ChatAttachmentId,
   ChatFileAttachment,
   CommandId,
+  ContextHandoffId,
+  type OrchestrationV2ContextHandoff,
   EventId,
   MessageId,
   NodeId,
@@ -41,6 +43,7 @@ import * as Stream from "effect/Stream";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CheckpointService from "./CheckpointService.ts";
+import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
@@ -1036,7 +1039,14 @@ it.effect("starts the provider when checkpoint baseline capture fails", () =>
   }),
 );
 
-for (const scenario of ["failure", "interruption", "stale-attempt", "start-guard"] as const) {
+for (const scenario of [
+  "failure",
+  "interruption",
+  "stale-attempt",
+  "start-guard",
+  "handoff-interruption-after-record",
+  "handoff-interruption-before-agent",
+] as const) {
   it.effect(`handles ${scenario} before the provider turn starts`, () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("thread:run-execution-settings-failure");
@@ -1051,6 +1061,8 @@ for (const scenario of ["failure", "interruption", "stale-attempt", "start-guard
       const checkpointScope = {
         id: CheckpointScopeId.make("checkpoint-scope:run-execution-settings-failure"),
       } as OrchestrationV2CheckpointScope;
+      const handoffInterruption = scenario.startsWith("handoff-interruption");
+      const pendingHandoffs = yield* Ref.make<ReadonlyArray<OrchestrationV2ContextHandoff>>([]);
       const providerStarts = yield* Ref.make(0);
       const refreshes = yield* Ref.make(0);
       const guardedWrites = yield* Ref.make(0);
@@ -1060,7 +1072,9 @@ for (const scenario of ["failure", "interruption", "stale-attempt", "start-guard
           Layer.mergeAll(
             Layer.mock(CheckpointService.CheckpointServiceV2)({
               captureBaseline: () =>
-                scenario === "start-guard" ? Effect.void : Effect.die("not reached"),
+                scenario === "start-guard" || handoffInterruption
+                  ? Effect.void
+                  : Effect.die("not reached"),
             }),
             Layer.mock(EventSink.EventSinkV2)({
               writeIfRunCurrent: (input) =>
@@ -1081,7 +1095,7 @@ for (const scenario of ["failure", "interruption", "stale-attempt", "start-guard
             Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
               ingestNormalized: () => Effect.succeed([]),
             }),
-            scenario === "start-guard"
+            scenario === "start-guard" || handoffInterruption
               ? ServerSettings.layerTest()
               : Layer.mock(ServerSettings.ServerSettingsService)({
                   committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
@@ -1112,7 +1126,47 @@ for (const scenario of ["failure", "interruption", "stale-attempt", "start-guard
           providerSessionId,
           session: {
             events: Stream.never,
-            startTurn: () => Ref.update(providerStarts, (count) => count + 1),
+            startTurn: () =>
+              handoffInterruption
+                ? deliverContextHandoffs({
+                    handoffs: [
+                      {
+                        id: ContextHandoffId.make("handoff:interrupted-native-start"),
+                        threadId,
+                        targetRunId: runId,
+                        fromProviderThreadIds: [],
+                        toProviderThreadId: providerThreadId,
+                        coveredRunOrdinals: { from: 1, to: 1 },
+                        strategy: "full_thread_summary",
+                        status: "ready",
+                        summaryMessageId: null,
+                        summaryText: "Preserve inherited scientific context.",
+                        createdByProviderInstanceId: null,
+                        createdAt: DateTime.makeUnsafe("2026-10-04T00:00:00Z"),
+                        updatedAt: DateTime.makeUnsafe("2026-10-04T00:00:00Z"),
+                      },
+                    ],
+                    providerThread: {
+                      id: providerThreadId,
+                      nativeThreadRef: {
+                        driver,
+                        strength: "strong",
+                        nativeId: "native:interrupted-context",
+                      },
+                    } as OrchestrationV2ProviderThread,
+                    budget: 16_000,
+                    alreadyDeliveredItemIds: new Set(),
+                    persist: (handoff) =>
+                      Ref.update(pendingHandoffs, (all) => [...all, handoff]).pipe(
+                        Effect.andThen(
+                          scenario === "handoff-interruption-after-record"
+                            ? Effect.interrupt
+                            : Effect.void,
+                        ),
+                      ),
+                    inject: () => Effect.interrupt,
+                  }).pipe(Effect.andThen(Ref.update(providerStarts, (count) => count + 1)))
+                : Ref.update(providerStarts, (count) => count + 1),
           } as unknown as ProviderAdapterV2SessionRuntime,
           run: {
             id: runId,
@@ -1162,7 +1216,13 @@ for (const scenario of ["failure", "interruption", "stale-attempt", "start-guard
 
       assert.equal(yield* Ref.get(providerStarts), 0);
       const events = (yield* Ref.get(writes)).flat();
-      if (scenario === "interruption") {
+      if (scenario === "interruption" || handoffInterruption) {
+        if (handoffInterruption) {
+          const receipts = yield* Ref.get(pendingHandoffs);
+          assert.lengthOf(receipts, 1);
+          assert.equal(receipts[0]?.delivery?.status, "pending");
+          assert.equal(receipts[0]?.delivery?.nativeThreadId, "native:interrupted-context");
+        }
         assert.isTrue(Exit.isFailure(result));
         if (Exit.isFailure(result)) assert.isTrue(Cause.hasInterruptsOnly(result.cause));
         assert.equal(yield* Ref.get(guardedWrites), 0);

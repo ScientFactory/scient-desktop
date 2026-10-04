@@ -8,18 +8,16 @@ import {
   RunId,
   MessageId,
   PlanId,
-  ScientThreadQueueOperationError,
   type ScientThreadQueueItem,
-  type ScientThreadQueueSnapshot,
 } from "@t3tools/contracts";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   composerTargetKey,
   createEmptyThreadDraft,
   useComposerDraftStore,
 } from "../../composerDraftStore";
 import {
-  beginQueueEdit,
+  beginQueueEdit as beginNativeQueueEdit,
   finishQueueEdit,
   flushQueueEdit,
   loadQueueEdits,
@@ -77,6 +75,16 @@ const target = {
   environmentId: EnvironmentId.make("environment-a"),
   threadId: ThreadId.make("thread-a"),
 };
+const beginQueueEdit: typeof beginNativeQueueEdit = (target, item, nativeRun) =>
+  beginNativeQueueEdit(
+    target,
+    item,
+    nativeRun ?? {
+      runId: RunId.make(item.queueItemId),
+      messageId: MessageId.make(`message:${item.queueItemId}`),
+      expectedUpdatedAt: item.updatedAt,
+    },
+  );
 const other = {
   environmentId: EnvironmentId.make("environment-b"),
   threadId: ThreadId.make("thread-b"),
@@ -112,6 +120,10 @@ beforeEach(async () => {
   }));
   vi.mocked(readQueuedAttachmentFile).mockReset();
   vi.mocked(extractNativeQueuedRun).mockReset();
+  vi.mocked(extractNativeQueuedRun).mockResolvedValue({ sequence: 1 });
+});
+afterEach(() => {
+  expect(vi.mocked(controlThreadQueue)).not.toHaveBeenCalled();
 });
 describe("queue extraction into an ordinary draft", () => {
   it.each([false, true])(
@@ -149,12 +161,21 @@ describe("queue extraction into an ordinary draft", () => {
       expect(recovered.extractedItem?.sourceProposedPlan?.planId).toBe(
         activeEdit ? "target-plan" : undefined,
       );
-      expect(recovered.nativeRun).toBeUndefined();
+      const targetNativeRun = activeEdit
+        ? {
+            runId: RunId.make(item.queueItemId),
+            messageId: MessageId.make(`message:${item.queueItemId}`),
+            expectedUpdatedAt: item.updatedAt,
+          }
+        : undefined;
+      expect(recovered.nativeRun).toEqual(targetNativeRun);
+      expect(recovered.nativeRun?.runId).not.toBe(sourceRun.runId);
       const persisted = (await readQueueEditJournal(recovered.journalKey))!;
       expect(persisted.extractedItem?.sourceProposedPlan).toEqual(
         activeEdit ? { threadId: other.threadId, planId: "target-plan" } : undefined,
       );
-      expect(persisted.nativeRun).toBeUndefined();
+      expect(persisted.nativeRun).toEqual(targetNativeRun);
+      expect(persisted.nativeRun?.runId).not.toBe(sourceRun.runId);
     },
   );
   it.each([
@@ -283,11 +304,7 @@ describe("queue extraction into an ordinary draft", () => {
     vi.mocked(readQueuedAttachmentFile)
       .mockResolvedValueOnce(new File(["hello"], "notes.txt", { type: "text/plain" }))
       .mockRejectedValue(new Error("download unavailable"));
-    vi.mocked(controlThreadQueue).mockImplementation(async (_environment, request) => ({
-      ...request,
-      items: [],
-      revision: 1,
-    }));
+    vi.mocked(extractNativeQueuedRun).mockResolvedValue({ sequence: 1 });
     await beginQueueEdit(target, queued);
     const session = useQueueEditSessions.getState().sessions[composerTargetKey(target)]!;
     expect(
@@ -448,11 +465,7 @@ describe("queue extraction into an ordinary draft", () => {
       async (_environmentId, value) =>
         new File([value.type === "image" ? "plot" : "hello"], value.name, { type: value.mimeType }),
     );
-    vi.mocked(controlThreadQueue).mockImplementation(async (_environmentId, request) => ({
-      ...request,
-      items: [],
-      revision: 1,
-    }));
+    vi.mocked(extractNativeQueuedRun).mockResolvedValue({ sequence: 1 });
     await beginQueueEdit(target, queued);
     const session = useQueueEditSessions.getState().sessions[composerTargetKey(target)]!;
     const draft = useComposerDraftStore.getState().getComposerDraft(target)!;
@@ -504,26 +517,26 @@ describe("queue extraction into an ordinary draft", () => {
   });
   it("does not expose an ambiguously extracted item as sendable and retries its same durable token", async () => {
     useComposerDraftStore.getState().setPrompt(target, "ordinary draft");
-    vi.mocked(controlThreadQueue).mockRejectedValueOnce(new Error("connection interrupted"));
+    vi.mocked(extractNativeQueuedRun).mockRejectedValueOnce(new Error("connection interrupted"));
     await expect(beginQueueEdit(target, item)).rejects.toThrow("connection interrupted");
     const session = useQueueEditSessions.getState().sessions[composerTargetKey(target)]!;
     expect(session.transferred).not.toBe(true);
     expect(useComposerDraftStore.getState().getComposerDraft(target)?.prompt).toBe(
       "ordinary draft",
     );
-    const token = vi.mocked(controlThreadQueue).mock.calls[0]?.[1].editToken;
+    const token = vi.mocked(extractNativeQueuedRun).mock.calls[0]?.[1].editToken;
     expect((await readQueueEditJournal(session.journalKey))?.editToken).toBe(token);
     const reconciled = await flushQueueEdit(session);
     expect(reconciled.transferred).toBe(true);
     expect(reconciled.queueItemId).toBe(session.queueItemId);
-    expect(vi.mocked(controlThreadQueue).mock.lastCall?.[1].editToken).toBe(token);
+    expect(vi.mocked(extractNativeQueuedRun).mock.lastCall?.[1].editToken).toBe(token);
     expect(useComposerDraftStore.getState().getComposerDraft(target)?.prompt).toBe("queued text");
     expect(useQueueEditSessions.getState().sessions[session.key]?.transferred).toBe(true);
   });
   it("preserves typing in the previous draft while extraction is in flight and never overwrites another thread", async () => {
-    const extraction = deferred<ScientThreadQueueSnapshot>();
+    const extraction = deferred<{ sequence: number }>();
     const entered = deferred<void>();
-    vi.mocked(controlThreadQueue).mockImplementationOnce(() => {
+    vi.mocked(extractNativeQueuedRun).mockImplementationOnce(() => {
       entered.resolve();
       return extraction.promise;
     });
@@ -533,7 +546,7 @@ describe("queue extraction into an ordinary draft", () => {
     await entered.promise;
     useComposerDraftStore.getState().setPrompt(target, "ordinary with late transcript");
     useComposerDraftStore.getState().setPrompt(other, "continued elsewhere");
-    extraction.resolve({ threadId: target.threadId, items: [], revision: 1 });
+    extraction.resolve({ sequence: 1 });
     await editing;
     const session = useQueueEditSessions.getState().sessions[composerTargetKey(target)]!;
     expect((await readQueueEditJournal(session.journalKey))?.ordinary.prompt).toBe(
@@ -545,8 +558,16 @@ describe("queue extraction into an ordinary draft", () => {
   });
   it("keeps the ordinary draft when extraction definitely loses to delivery", async () => {
     useComposerDraftStore.getState().setPrompt(target, "ordinary");
-    vi.mocked(controlThreadQueue).mockRejectedValueOnce(
-      new ScientThreadQueueOperationError({ message: "Already started" }),
+    vi.mocked(extractNativeQueuedRun).mockRejectedValueOnce(
+      nativeQueueExtractionError(
+        new OrchestrationV2DispatchCommandError({
+          commandId: CommandId.make("client:queue-extract:refused"),
+          commandType: "queued-run.cancel",
+          commandDisposition: "rejected",
+          message: "Already started",
+        }),
+        CommandId.make("client:queue-extract:refused"),
+      ),
     );
     await expect(beginQueueEdit(target, item)).rejects.toThrow("Already started");
     expect(useQueueEditSessions.getState().sessions[composerTargetKey(target)]).toBeUndefined();
@@ -598,11 +619,7 @@ describe("queue extraction into an ordinary draft", () => {
       selectedScientSkillNames: ["requested"],
       context: buildMessageContext(composer),
     };
-    vi.mocked(controlThreadQueue).mockImplementation(async (_environmentId, request) => ({
-      ...request,
-      items: [],
-      revision: 1,
-    }));
+    vi.mocked(extractNativeQueuedRun).mockResolvedValue({ sequence: 1 });
     await beginQueueEdit(target, queued);
     const restored = useComposerDraftStore.getState().getComposerDraft(target)!;
     expect(collectSelectedScientSkillNames(restored.prompt)).toEqual(["requested"]);
@@ -672,11 +689,7 @@ describe("queue extraction into an ordinary draft", () => {
       async (_environmentId, value) =>
         new File([value.type === "image" ? "plot" : "hello"], value.name, { type: value.mimeType }),
     );
-    vi.mocked(controlThreadQueue).mockImplementation(async (_environmentId, request) => ({
-      ...request,
-      items: [],
-      revision: 1,
-    }));
+    vi.mocked(extractNativeQueuedRun).mockResolvedValue({ sequence: 1 });
     await beginQueueEdit(target, queued);
     const session = useQueueEditSessions.getState().sessions[composerTargetKey(target)]!;
     const extracted = useComposerDraftStore.getState().getComposerDraft(target)!;

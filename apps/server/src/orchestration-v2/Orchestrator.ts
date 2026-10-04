@@ -359,6 +359,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.interaction-mode.set":
     case "thread.model-selection.set":
     case "provider-session.detach":
+    case "provider-work.admit":
     case "message.dispatch":
     case "legacy-queue.import":
     case "legacy-queue.reorder":
@@ -828,7 +829,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           "checkpointScopes",
           "contextTransfers",
         ],
-        { turnItemTypes: ["user_message", "error"], messageRoles: ["user"] },
+        { turnItemTypes: ["user_message", "error"], messageRoles: ["user", "system"] },
       )
       .pipe(
         Effect.map((records): OrchestrationV2ThreadProjection => ({
@@ -931,7 +932,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const projection = yield* projectionStore.getThreadRecords(
         threadId,
         ["runs", "messages", "providerTurns", "providerThreads"],
-        { messageRoles: ["user"] },
+        { messageRoles: ["user", "system"] },
       );
       const parentRun = projection.runs.find((candidate) => candidate.id === parentRunId);
       const cohort = parentRun?.delegatedCompletion;
@@ -1055,7 +1056,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const projection = yield* projectionStore.getThreadRecords(
         threadId,
         ["runs", "nodes", "attempts", "providerThreads", "turnItems", "messages"],
-        { turnItemTypes: [], messageRoles: ["user"] },
+        { turnItemTypes: [], messageRoles: ["user", "system"] },
       );
       const queuedRun = nextQueuedRun(projection);
       if (queuedRun === undefined) return;
@@ -2021,7 +2022,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .getThreadRecords(
           command.parentThreadId,
           ["subagents", "runs", "messages", "nodes", "attempts", "turnItems"],
-          { turnItemTypes: [], messageRoles: ["user"] },
+          { turnItemTypes: [], messageRoles: ["user", "system"] },
         )
         .pipe(
           Effect.mapError(
@@ -2526,6 +2527,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.type === "thread.unpin" ||
         command.type === "thread.pin.reorder" ||
         command.type === "thread.active.reorder" ||
+        command.type === "thread.section.set" ||
         command.type === "thread.pull-request.sync") &&
       thread.archivedAt !== null
     ) {
@@ -2594,7 +2596,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const projection = yield* loadProjectionForCommand(
         command,
         ["runs", "runtimeRequests", "messages"],
-        { turnItemTypes: [], messageRoles: ["user"] },
+        { turnItemTypes: [], messageRoles: ["user", "system"] },
       );
       // Queued notification and delegated-completion runs only wake the agent.
       // They are not user messages and are hidden from the queue UI, so they
@@ -2677,6 +2679,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           )
           .pipe(mapDispatchError(command))
       : null;
+    const settingNativeOwner =
+      command.type === "thread.model-selection.set" ||
+      command.type === "provider.switch" ||
+      command.type === "thread.runtime-mode.set"
+        ? yield* loadProjectionForCommand(command, ["runs", "messages"], {
+            messageRoles: ["system"],
+            turnItemTypes: [],
+          }).pipe(
+            Effect.map((projection) => {
+              const run = projection.runs.find((run) =>
+                ["starting", "running", "waiting"].includes(run.status),
+              );
+              const source = projection.messages.find(
+                (message) => message.id === run?.userMessageId,
+              )?.notification?.source;
+              return source?.kind === "provider_work" &&
+                source.providerThreadId === thread.activeProviderThreadId
+                ? source
+                : undefined;
+            }),
+          )
+        : undefined;
     const providerSwitchPlan =
       command.type === "thread.model-selection.set" || command.type === "provider.switch"
         ? yield* Effect.gen(function* () {
@@ -2690,6 +2714,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   }),
               ),
             );
+            // Defaults describe the next user turn. Do not replace the owner of
+            // a generation already admitted under its captured workspace.
+            if (
+              settingNativeOwner !== undefined &&
+              command.modelSelection.instanceId === thread.providerInstanceId
+            )
+              return {
+                instanceChanged: false,
+                modelChanged: !modelSelectionsEqual(thread.modelSelection, command.modelSelection),
+                targetProviderThreadId: settingNativeOwner.providerThreadId,
+                releaseProviderSessionIds: [],
+                transition: { type: "reuse" as const },
+              };
             return yield* providerSwitchService
               .plan({
                 projection: providerContext!,
@@ -3209,7 +3246,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const projection = yield* loadProjectionForCommand(
         command,
         ["runs", "attempts", "nodes", "subagents", "messages"],
-        { turnItemTypes: [], messageRoles: ["user"] },
+        { turnItemTypes: [], messageRoles: ["user", "system"] },
       );
       const emitEvent = emit(events, command);
       const activeRunIds = new Set(
@@ -3289,6 +3326,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 .map((session) => session.id)
             : (providerSwitchPlan?.releaseProviderSessionIds ?? []),
     );
+    if (command.type === "thread.runtime-mode.set" && settingNativeOwner !== undefined)
+      detachSessionIds.delete(settingNativeOwner.providerSessionId);
     if (detachSessionIds.size > 0) {
       const liveSessions = (providerContext?.providerSessions ?? []).filter(
         (session) =>
@@ -4494,6 +4533,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    providerInitiated?: Extract<OrchestrationV2ServerCommand, { type: "provider-work.admit" }>,
   ) =>
     Effect.gen(function* () {
       let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
@@ -4703,7 +4743,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.notification !== undefined &&
         (command.createdBy !== "agent" ||
           (command.creationSource !== "server" && command.creationSource !== "provider") ||
-          dispatchMode.type !== "queue_after_active")
+          (providerInitiated
+            ? command.notification.source.kind !== "provider_work" ||
+              dispatchMode.type !== "start_immediately"
+            : command.notification.source.kind === "provider_work" ||
+              dispatchMode.type !== "queue_after_active"))
       ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -5053,7 +5097,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId: command.threadId,
           runId,
           nodeId: rootNodeId,
-          role: "user",
+          role: command.notification?.source.kind === "provider_work" ? "system" : "user",
           text: dispatchText,
           ...(command.context ? { context: command.context } : {}),
           attachments: command.attachments,
@@ -5165,25 +5209,36 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const pendingForkTransfer = pendingForkTransferForThread(projection);
       // Classify against the native owner and the current project workspace,
       // even when the app's selection has already been updated.
-      const startPlan = yield* providerSwitchService
-        .plan({
-          projection: {
-            ...projection,
-            thread: {
-              ...projection.thread,
-              modelSelection: {
-                ...projection.thread.modelSelection,
-                instanceId: activeProviderThread?.providerInstanceId ?? modelSelection.instanceId,
-              },
-            },
-          },
-          targetModelSelection: modelSelection,
-          targetThread: executionThread,
-        })
-        .pipe(mapDispatchError(command));
+      const startPlan =
+        providerInitiated !== undefined
+          ? {
+              instanceChanged: false,
+              modelChanged: false,
+              targetProviderThreadId: providerInitiated.providerThreadId,
+              releaseProviderSessionIds: [],
+              transition: { type: "reuse" as const },
+            }
+          : yield* providerSwitchService
+              .plan({
+                projection: {
+                  ...projection,
+                  thread: {
+                    ...projection.thread,
+                    modelSelection: {
+                      ...projection.thread.modelSelection,
+                      instanceId:
+                        activeProviderThread?.providerInstanceId ?? modelSelection.instanceId,
+                    },
+                  },
+                },
+                targetModelSelection: modelSelection,
+                targetThread: executionThread,
+              })
+              .pipe(mapDispatchError(command));
       if (
-        executionThread.runtimeMode !== projection.thread.runtimeMode ||
-        executionThread.interactionMode !== projection.thread.interactionMode
+        providerInitiated === undefined &&
+        (executionThread.runtimeMode !== projection.thread.runtimeMode ||
+          executionThread.interactionMode !== projection.thread.interactionMode)
       ) {
         yield* emit(
           events,
@@ -5213,8 +5268,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       const now = yield* DateTime.now;
       if (
-        !modelSelectionsEqual(projection.thread.modelSelection, modelSelection) ||
-        projection.thread.providerInstanceId !== modelSelection.instanceId
+        providerInitiated === undefined &&
+        (!modelSelectionsEqual(projection.thread.modelSelection, modelSelection) ||
+          projection.thread.providerInstanceId !== modelSelection.instanceId)
       ) {
         yield* emit(
           events,
@@ -5385,28 +5441,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const checkpointScope =
           dispatchMode.type === "defer_start"
             ? null
-            : yield* runtimePolicy
-                .resolve({
-                  thread: projection.thread,
-                  modelSelection,
-                })
-                .pipe(
-                  mapDispatchError(command),
-                  Effect.flatMap((resolvedRuntimePolicy) =>
-                    checkpointService.prepareRootRunScope({
-                      threadId: command.threadId,
-                      runId,
-                      rootNodeId,
-                      providerThreadId,
-                      cwd:
-                        resolvedRuntimePolicy.cwd ??
-                        projection.thread.worktreePath ??
-                        process.cwd(),
-                      createdAt: now,
-                    }),
-                  ),
-                  mapDispatchError(command),
-                );
+            : yield* (
+                providerInitiated === undefined
+                  ? runtimePolicy.resolve({ thread: projection.thread, modelSelection })
+                  : Effect.succeed(providerInitiated.runtimePolicy)
+              ).pipe(
+                mapDispatchError(command),
+                Effect.flatMap((resolvedRuntimePolicy) =>
+                  checkpointService.prepareRootRunScope({
+                    threadId: command.threadId,
+                    runId,
+                    rootNodeId,
+                    providerThreadId,
+                    cwd:
+                      resolvedRuntimePolicy.cwd ?? projection.thread.worktreePath ?? process.cwd(),
+                    createdAt: now,
+                  }),
+                ),
+                mapDispatchError(command),
+              );
         const run: OrchestrationV2Run = {
           id: runId,
           threadId: command.threadId,
@@ -5477,7 +5530,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId: command.threadId,
           runId,
           nodeId: rootNodeId,
-          role: "user",
+          role: command.notification?.source.kind === "provider_work" ? "system" : "user",
           text: dispatchText,
           ...(command.context ? { context: command.context } : {}),
           attachments: command.attachments,
@@ -5762,9 +5815,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const existingProviderSession = projection.providerSessions.find(
         (candidate) => candidate.id === providerSessionId,
       );
-      const resolvedRuntimePolicy = yield* runtimePolicy
-        .resolve({ thread: projection.thread, modelSelection })
-        .pipe(
+      const resolvedRuntimePolicy =
+        providerInitiated?.runtimePolicy ??
+        (yield* runtimePolicy.resolve({ thread: projection.thread, modelSelection }).pipe(
           Effect.mapError(
             (cause) =>
               new OrchestratorDispatchError({
@@ -5773,7 +5826,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 cause,
               }),
           ),
-        );
+        ));
 
       const capabilities = yield* adapter.getCapabilities().pipe(
         Effect.mapError(
@@ -6247,7 +6300,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         threadId: command.threadId,
         runId,
         nodeId: rootNodeId,
-        role: "user",
+        role: command.notification?.source.kind === "provider_work" ? "system" : "user",
         text: dispatchText,
         ...(command.context ? { context: command.context } : {}),
         attachments: command.attachments,
@@ -7061,7 +7114,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .getThreadRecords(
           command.parentThreadId,
           ["runs", "nodes", "turnItems", "attempts", "providerTurns"],
-          { turnItemTypes: [], messageRoles: ["user"] },
+          { turnItemTypes: [], messageRoles: ["user", "system"] },
         )
         .pipe(
           Effect.mapError(
@@ -7076,7 +7129,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .getThreadRecords(
           command.targetThreadId,
           ["runs", "nodes", "turnItems", "attempts", "providerTurns"],
-          { turnItemTypes: [], messageRoles: ["user"] },
+          { turnItemTypes: [], messageRoles: ["user", "system"] },
         )
         .pipe(
           Effect.mapError(
@@ -7450,7 +7503,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             "runtimeRequests",
             "subagents",
           ],
-          { turnItemTypes: [], messageRoles: ["user"] },
+          { turnItemTypes: [], messageRoles: ["user", "system"] },
         )
         .pipe(
           Effect.mapError(() => new OrchestratorProjectionError({ threadId: command.threadId })),
@@ -7583,7 +7636,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) =>
     Effect.gen(function* () {
       const projection = yield* projectionStore
-        .getThreadRecords(command.threadId, ["runs", "messages"], { messageRoles: ["user"] })
+        .getThreadRecords(command.threadId, ["runs", "messages"], {
+          messageRoles: ["user", "system"],
+        })
         .pipe(
           Effect.mapError(() => new OrchestratorProjectionError({ threadId: command.threadId })),
         );
@@ -7677,7 +7732,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .getThreadRecords(
           command.threadId,
           ["runs", "messages", "nodes", "attempts", "subagents", "turnItems"],
-          { turnItemTypes: [], messageRoles: ["user"] },
+          { turnItemTypes: [], messageRoles: ["user", "system"] },
         )
         .pipe(
           Effect.mapError(() => new OrchestratorProjectionError({ threadId: command.threadId })),
@@ -7789,7 +7844,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const projection = yield* projectionStore
         .getThreadRecords(command.threadId, ["runs", "messages", "turnItems", "providerTurns"], {
           turnItemTypes: ["user_message"],
-          messageRoles: ["user"],
+          messageRoles: ["user", "system"],
         })
         .pipe(
           Effect.mapError(() => new OrchestratorProjectionError({ threadId: command.threadId })),
@@ -7828,6 +7883,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
 
       const now = yield* DateTime.now;
+      // Clients capture updatedAt to extract this exact payload. Each accepted
+      // edit must invalidate that token even within one clock millisecond.
+      const updatedAt = DateTime.makeUnsafe(
+        Math.max(DateTime.toEpochMillis(now), DateTime.toEpochMillis(queuedMessage.updatedAt) + 1),
+      );
       const emitEvent = emit(events, command);
       const editedAttachments =
         command.attachments === undefined ? {} : { attachments: command.attachments };
@@ -7838,7 +7898,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.selectedScientSkillNames === undefined
           ? {}
           : { selectedScientSkillNames: command.selectedScientSkillNames }),
-        updatedAt: now,
+        updatedAt,
       };
       if (command.context === null) delete editedMessage.context;
       else if (command.context !== undefined) editedMessage.context = command.context;
@@ -7860,7 +7920,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...queuedTurnItem,
           text: command.text,
           ...editedAttachments,
-          updatedAt: now,
+          updatedAt,
         };
         if (command.context === null) delete editedItem.context;
         else if (command.context !== undefined) editedItem.context = command.context;
@@ -8677,7 +8737,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const projection = yield* loadProjectionForCommand(
         command,
         ["providerThreads", "checkpoints", "checkpointScopes", "runs", "providerTurns", "attempts"],
-        { turnItemTypes: [], messageRoles: ["user"] },
+        { turnItemTypes: [], messageRoles: ["user", "system"] },
       );
       const providerThread = projection.providerThreads.find(
         (candidate) => candidate.id === projection.thread.activeProviderThreadId,
@@ -9144,7 +9204,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const childControls = yield* projectionStore.getThreadRecords(
         childThreadId,
         ["runs", "messages", "subagents", "providerThreads", "providerTurns", "attempts"],
-        { messageRoles: ["user"] },
+        { messageRoles: ["user", "system"] },
       );
       const forkedFrom = childControls.thread.forkedFrom;
       if (
@@ -9191,7 +9251,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           "turnItems",
           "contextTransfers",
         ],
-        { turnItemTypes: ["subagent"], messageRoles: ["user"] },
+        { turnItemTypes: ["subagent"], messageRoles: ["user", "system"] },
       );
       const task = parentProjection.subagents.find(
         (candidate) =>
@@ -9428,7 +9488,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const projection = yield* projectionStore.getThreadRecords(
         threadId,
         ["runs", "messages", "subagents"],
-        { messageRoles: ["user"] },
+        { messageRoles: ["user", "system"] },
       );
       const deliveryRun = projection.runs.find((candidate) => candidate.id === runId);
       const deliveryMessage =
@@ -9790,6 +9850,83 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "provider-session.detach":
         yield* dispatchProviderSessionDetach(command, events, effects);
         break;
+      case "provider-work.admit": {
+        const projection = yield* readCommandProjection(command.threadId);
+        const nativeThread = projection.providerThreads.find(
+          (row) => row.id === command.providerThreadId,
+        );
+        const session = yield* providerSessions
+          .get(command.providerSessionId)
+          .pipe(mapDispatchError(command));
+        // A checkpoint needs the generation's actual directory, never a newer
+        // project default substituted for unknown native workspace ownership.
+        if (command.runtimePolicy.cwd === null || !path.isAbsolute(command.runtimePolicy.cwd))
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Provider-initiated work requires a known absolute execution directory.",
+          });
+        if (
+          projection.thread.archivedAt !== null ||
+          projection.thread.deletedAt !== null ||
+          projection.thread.activeProviderThreadId !== command.providerThreadId ||
+          projection.thread.providerInstanceId !== command.providerInstanceId ||
+          nativeThread?.appThreadId !== command.threadId ||
+          nativeThread.providerSessionId !== command.providerSessionId ||
+          nativeThread.providerInstanceId !== command.providerInstanceId ||
+          nativeThread.driver !== command.driver ||
+          Option.isNone(session) ||
+          session.value.driver !== command.driver ||
+          session.value.instanceId !== command.providerInstanceId ||
+          command.modelSelection.instanceId !== command.providerInstanceId ||
+          session.value.providerSession.cwd !== command.runtimePolicy.cwd ||
+          !projection.providerSessions.some(
+            (row) =>
+              row.id === command.providerSessionId &&
+              ["ready", "running", "waiting"].includes(row.status),
+          ) ||
+          projection.runs.some((run) =>
+            ["queued", "starting", "running", "waiting"].includes(run.status),
+          )
+        )
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Provider-initiated work no longer owns an idle native thread.",
+          });
+        yield* dispatchMessage(
+          {
+            type: "message.dispatch",
+            commandId: command.commandId,
+            threadId: command.threadId,
+            messageId: command.messageId,
+            text: command.detail,
+            modelSelection: command.modelSelection,
+            runtimeMode: command.runtimePolicy.runtimeMode,
+            interactionMode: command.runtimePolicy.interactionMode,
+            attachments: [],
+            createdBy: "agent",
+            creationSource: "provider",
+            dispatchMode: { type: "start_immediately" },
+            notification: {
+              source: {
+                kind: "provider_work",
+                workId: command.workId,
+                providerThreadId: command.providerThreadId,
+                providerSessionId: command.providerSessionId,
+                modelSelection: command.modelSelection,
+                runtimePolicy: command.runtimePolicy,
+              },
+              outcome: "updated",
+              summary: "Provider started work",
+            },
+          },
+          events,
+          effects,
+          command,
+        );
+        break;
+      }
       case "message.dispatch": {
         // The provider owns a native subagent's conversation, so a sent
         // message has nowhere to go. Answers to a subagent's questions never
@@ -10277,7 +10414,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const projection = yield* projectionStore.getThreadRecords(
       threadId,
       ["runs", "messages", "nodes", "attempts", "providerTurns", "turnItems"],
-      { messageRoles: ["user"], turnItemRunIds: [terminal.id] },
+      { messageRoles: ["user", "system"], turnItemRunIds: [terminal.id] },
     );
     const run = projection.runs.find((candidate) => candidate.id === terminal.id);
     if (
@@ -10573,7 +10710,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   terminalDeliveryRunIds.length === 0
                     ? projection
                     : yield* projectionStore.getThreadRecords(threadId, ["runs", "messages"], {
-                        messageRoles: ["user"],
+                        messageRoles: ["user", "system"],
                       });
                 for (const run of refreshed.runs) {
                   if (

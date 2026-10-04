@@ -1,12 +1,15 @@
-import { CommandId, type OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import { CommandId, MessageId, type OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProviderContinuationRequests from "./ProviderContinuationRequests.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
+
+const encodeWorkIdentity = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 
 const CONTINUATION_MESSAGE_TEXT = "Background task completed.";
 
@@ -112,6 +115,30 @@ export const workerLive = Layer.effectDiscard(
           }
           return;
         }
+        if (request.initiated !== undefined) {
+          if (request.dispatchIfCurrent === undefined || request.clearIfCurrent === undefined) {
+            if (request.clearIfCurrent !== undefined) yield* request.clearIfCurrent();
+            return;
+          }
+          const identity = encodeWorkIdentity([
+            request.initiated.providerInstanceId,
+            request.initiated.providerSessionId,
+            request.providerThreadId,
+            request.initiated.workId,
+          ]);
+          const dispatch = threads.dispatch({
+            type: "provider-work.admit",
+            commandId: CommandId.make(`provider-work:${identity}`),
+            messageId: MessageId.make(`provider-work:${identity}`),
+            threadId: request.threadId,
+            providerThreadId: request.providerThreadId,
+            driver: request.driver,
+            ...request.initiated,
+            detail: request.detail ?? "Provider started background work.",
+          });
+          yield* request.dispatchIfCurrent(dispatch);
+          return;
+        }
         if (request.delegatedCompletion !== undefined) {
           const retryKey = delegatedCompletionRetryKey(request, request.delegatedCompletion);
           const delivery = currentDelegatedCompletionDelivery(
@@ -190,6 +217,9 @@ export const workerLive = Layer.effectDiscard(
                 providerThreadId: request.providerThreadId,
                 cause,
               });
+              if (request.initiated !== undefined) {
+                if (request.clearIfCurrent !== undefined) yield* request.clearIfCurrent();
+              }
               if (request.delegatedCompletion !== undefined) {
                 const completion = request.delegatedCompletion;
                 const retryKey = delegatedCompletionRetryKey(request, completion);

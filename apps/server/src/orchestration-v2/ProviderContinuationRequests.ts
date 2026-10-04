@@ -1,7 +1,11 @@
 import {
   type OrchestrationV2Notification,
+  type OrchestrationV2ProviderRuntimePolicy,
+  type ModelSelection,
   MessageId,
   ProviderDriverKind,
+  ProviderInstanceId,
+  ProviderSessionId,
   ProviderThreadId,
   RunId,
   ThreadId,
@@ -17,6 +21,20 @@ export interface ProviderContinuationRequest {
   readonly providerThreadId: ProviderThreadId;
   readonly driver: ProviderDriverKind;
   readonly detail: string | null;
+  /**
+   * Unsolicited work buffered by an idle native thread. The stable work ID
+   * deduplicates admission; startTurn adopts the buffer when its message has
+   * notification.source.kind=provider_work, without writing a native prompt.
+   * Stop invalidates dispatchIfCurrent and clears the buffer via clearIfCurrent.
+   */
+  readonly initiated?: {
+    readonly providerInstanceId: ProviderInstanceId;
+    readonly providerSessionId: ProviderSessionId;
+    readonly workId: string;
+    /** Capture the applied native settings when work begins, never app defaults at offer time. */
+    readonly modelSelection: ModelSelection;
+    readonly runtimePolicy: OrchestrationV2ProviderRuntimePolicy;
+  };
   readonly notification?: OrchestrationV2Notification;
   /**
    * Durable ownership for an app-owned delegated-task completion delivery.
@@ -47,6 +65,13 @@ export interface ProviderContinuationRequest {
   /** Clears a pending offer that the continuation worker intentionally drops. */
   readonly clearIfCurrent?: () => Effect.Effect<void>;
 }
+
+/** A native generation must be fenced against Stop and support explicit buffer disposal. */
+export type ProviderInitiatedWorkRequest = ProviderContinuationRequest & {
+  readonly initiated: NonNullable<ProviderContinuationRequest["initiated"]>;
+  readonly dispatchIfCurrent: NonNullable<ProviderContinuationRequest["dispatchIfCurrent"]>;
+  readonly clearIfCurrent: NonNullable<ProviderContinuationRequest["clearIfCurrent"]>;
+};
 
 /**
  * Adapters offer a continuation request when provider-native work completes

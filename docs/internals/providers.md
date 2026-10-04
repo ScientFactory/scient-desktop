@@ -480,6 +480,13 @@ history when that proof is unavailable. Provider switches use the shared whole-i
 The native adapter advertises supported permission modes through its permission hook; do not retain
 the V1 claim that Pi is always Full access or that rollback and thread forks are unsupported.
 
+Pi's session manager leases each known native session file before opening a
+replacement process. It resolves symlinks to one server-side path, admits a
+single live writer across provider instances, and retains the lease until the
+owning process scope closes successfully. Failed cleanup retains the lease. A cancelled startup releases both unpublished and
+published ownership; a later start can then acquire the file. Repeated opens of
+the same provider session share its runtime and spawn one process.
+
 Passive model/catalog discovery remains `provider/Layers/PiProvider.ts`;
 `provider/pi/PiCustomModels.ts` and `textGeneration/PiTextGeneration.ts` retain custom-model and
 headless-generation ownership. Managed installation is owned by the driver lifecycle actions and
@@ -857,6 +864,33 @@ projection and outbox effects through `EventSink`. `EffectWorker` performs the p
 the owning V2 service. Adapters emit `ProviderAdapterV2Event` records; `ProviderEventIngestor`
 normalizes and persists them. Clients read bounded shell and thread streams, not V1 internal
 commands or an authoritative client-side queue. See [the overview](./overview.md).
+
+### Provider-initiated native work
+
+A native extension can start work after the previous Scient run settles. Its adapter buffers the
+new frames and offers `ProviderContinuationRequest.initiated` through the shared continuation queue. The
+server admits an independent run only while that exact provider instance, live session and native
+thread still own an idle application thread. The request has a stable work ID, a generation guard
+invalidated by Stop, and a callback that disposes a dropped buffer. Duplicate offers replay the
+same command receipt; archived, replaced or busy owners cannot acquire another run.
+
+The adapter captures the applied model, runtime policy and workspace when that native generation
+begins. Admission records this immutable configuration with its exact native owner; adoption does
+not apply later thread defaults, reopen a disposed session or reload its conversation. Changing
+next-turn defaults cannot relabel existing work or widen its run-scoped MCP authority. A captured
+owner that is lost before adoption fails the run rather than recreating the buffered generation.
+
+The captured cwd must be a known absolute execution directory. Both ordinary and pending-transfer
+admission persist checkpoint ownership in that directory, even if the project's workspace is
+relocated before admission or adoption. Startup refuses a checkpoint scope that differs from the
+captured native cwd. Unknown native cwd is refused rather than replaced with current project
+ownership; the producer must supply its actual applied directory.
+
+Admission records an agent-authored system notification rather than a user message. The adapter's
+`startTurn` receives `message.notification.source.kind = "provider_work"` and its `workId`: it
+adopts the buffered native work under the admitted run/attempt identities and sends no prompt.
+Normal event ingestion, terminal settlement and Stop then use that run's ownership. Adapters must
+not project unowned frames or treat the notification text as instructions for another native turn.
 
 ### Stop ownership and confirmation
 
