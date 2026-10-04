@@ -14,7 +14,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { makeAgySession } from "../../provider/antigravity/AgySession.ts";
 import type { ServerConfig } from "../../config.ts";
-import { ANTIGRAVITY_WORKSPACE_TOOL_INSTRUCTIONS } from "../../provider/Layers/LegacyAntigravityAdapter.ts";
+import { ANTIGRAVITY_WORKSPACE_TOOL_INSTRUCTIONS } from "../../provider/antigravity/WorkspaceInstructions.ts";
 import { AcpProviderCapabilitiesV2 } from "./AcpAdapterV2.ts";
 import {
   makeNativeSessionAdapterV2,
