@@ -1304,6 +1304,9 @@ export const layer: Layer.Layer<
               });
             }),
             alreadyDeliveredItemIds: deliveredItemIds,
+            sourceOmissions:
+              (projection.thread.conversationImport ?? projection.thread.forkLineage?.sourceImport)
+                ?.omissions ?? [],
             ...(session.injectHistory === undefined
               ? {}
               : {

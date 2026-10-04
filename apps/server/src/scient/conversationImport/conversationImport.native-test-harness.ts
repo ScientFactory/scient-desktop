@@ -12,6 +12,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as FileSystem from "effect/FileSystem";
+import { makeOrchestratorV2ReplayLayerWithRegistry } from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
+import type { ProviderAdapterRegistryV2 } from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 
 import { ServerConfig } from "../../config.ts";
 import * as EventStore from "../../orchestration-v2/EventStore.ts";
@@ -109,6 +112,9 @@ export function nativeImportTestLayer(controls: NativeImportTestControls = {}) {
 export const createNativeProjects = Effect.gen(function* () {
   const sink = yield* EventSink.EventSinkV2;
   const now = yield* DateTime.now;
+  const workspaceRoot = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
+    prefix: "scient-native-import-workspace-",
+  });
   for (const projectId of [PROJECT_ID, OTHER_PROJECT_ID]) {
     yield* sink.commitProjectCommand({
       commandId: CommandId.make(`native-create-${projectId}`),
@@ -128,7 +134,7 @@ export const createNativeProjects = Effect.gen(function* () {
         payload: {
           projectId,
           title: projectId,
-          workspaceRoot: `/tmp/${projectId}`,
+          workspaceRoot,
           defaultModelSelection: null,
           scripts: [],
           createdAt: DateTime.formatIso(now),
@@ -161,3 +167,38 @@ export const deleteNativeProject = Effect.gen(function* () {
     },
   });
 }).pipe(Effect.orDie, Effect.asVoid);
+
+/** Full native runtime for import continuation and fork tests; transports remain synthetic. */
+export function nativeImportRuntimeTestLayer(
+  registryLayer: Layer.Layer<ProviderAdapterRegistryV2>,
+) {
+  const database = SqlitePersistence.SqlitePersistenceMemory;
+  const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
+    { name: "scient-import-continuation" },
+    registryLayer,
+    { databaseLayer: database, configureMcp: false },
+  ).pipe(
+    Layer.provideMerge(database),
+    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(Executor.layer),
+  );
+  const provider: ServerProvider = {
+    instanceId: PROVIDER_ID,
+    driver: ProviderDriverKind.make("codex"),
+    enabled: true,
+    installed: true,
+    version: null,
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-10-04T00:00:00.000Z",
+    models: [],
+    slashCommands: [],
+    skills: [],
+  };
+  return ImporterLive.layer.pipe(
+    Layer.provideMerge(Commit.layer),
+    Layer.provide(Layer.mock(ProviderRegistry, { getProviders: Effect.succeed([provider]) })),
+    Layer.provide(Layer.mock(ProjectCloneTracker, { get: () => Effect.succeed(null) })),
+    Layer.provideMerge(runtime),
+  );
+}

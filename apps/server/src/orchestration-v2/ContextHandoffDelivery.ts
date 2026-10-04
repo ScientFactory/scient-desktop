@@ -5,7 +5,13 @@ import type {
 import type { ProviderAdapterV2HistoricalContext } from "./ProviderAdapter.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { OrchestrationConversationImportOmission } from "@t3tools/contracts";
+
 import { historyCost, renderHistory, selectHistory } from "./ContextHandoffBudget.ts";
+
+const encodeSourceOmissions = Schema.encodeEffect(
+  Schema.fromJsonString(Schema.Array(OrchestrationConversationImportOmission)),
+);
 
 /** Persist before/after injection: an ambiguous pending delivery requires a fresh native thread. */
 export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextHandoffs")(
@@ -15,6 +21,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     readonly budget: number | Effect.Effect<number, BudgetError>;
     readonly deferInline?: boolean;
     readonly alreadyDeliveredItemIds: ReadonlySet<string>;
+    readonly sourceOmissions?: ReadonlyArray<OrchestrationConversationImportOmission>;
     readonly inject?: (
       history: ProviderAdapterV2HistoricalContext,
     ) => Effect.Effect<boolean, InjectError>;
@@ -45,6 +52,9 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     if (historyCost([], coverage) > Math.min(4_000, budget / 2)) {
       const strategies = Array.from(new Set(pending.map((handoff) => handoff.strategy)));
       coverage = `Context handoff (${strategies.join(", ")}). ${pending.length} handoff records; detailed coverage references omitted. Recover history with scient_thread_read({threadId:"${input.providerThread.appThreadId ?? pending[0]!.threadId}",view:"activity",limit:20,maxCharsPerItem:4000}); paginate with afterPosition=nextPosition. Follow fork/handoff source references in activity. For long items use itemId and textOffset=nextTextOffset until null.`;
+    }
+    if (input.sourceOmissions !== undefined && input.sourceOmissions.length > 0) {
+      coverage += `\nKnown source omissions (unverified): ${yield* encodeSourceOmissions(input.sourceOmissions).pipe(Effect.orDie)}. Do not assume missing source history was retained.`;
     }
     const seen = new Set(input.alreadyDeliveredItemIds);
     const messages = pending

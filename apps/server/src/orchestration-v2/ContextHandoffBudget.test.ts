@@ -9,6 +9,7 @@ import {
   RunId,
   ThreadId,
   TurnItemId,
+  TurnId,
   OrchestrationV2ContextHandoff,
   type OrchestrationV2HistoricalMessage,
   type OrchestrationV2ProviderThread,
@@ -146,6 +147,62 @@ describe("handoff budget", () => {
       }),
     );
     assert.equal(historyResponseItems([command!], "Activity")[1]?.type, "message");
+  });
+
+  it("carries explicitly imported reasoning and work logs while excluding live provider material", () => {
+    const base = {
+      id: TurnItemId.make("item:portable-history"),
+      threadId,
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "completed" as const,
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      historyTurnId: TurnId.make("imported-turn"),
+    };
+    const reasoning = {
+      ...base,
+      type: "reasoning" as const,
+      text: "Selected portable reasoning",
+      streaming: false,
+    };
+    assert.equal(historicalMessage(reasoning)?.text, "Selected portable reasoning");
+    assert.isNull(historicalMessage({ ...reasoning, historyTurnId: undefined }));
+    assert.isNull(historicalMessage({ ...reasoning, runId: RunId.make("live-run") }));
+    assert.isNull(
+      historicalMessage({
+        ...reasoning,
+        nativeItemRef: {
+          driver: ProviderDriverKind.make("codex"),
+          nativeId: "live-reasoning",
+          strength: "strong",
+        },
+      }),
+    );
+    const activity = {
+      ...base,
+      type: "dynamic_tool" as const,
+      toolName: "tool.completed",
+      input: {
+        kind: "tool.completed",
+        summary: "Check results",
+        tone: "tool",
+        payload: { output: "retained output", omittedLines: 4 },
+      },
+    };
+    assert.include(historicalMessage(activity)!.text, "Check results");
+    assert.include(historicalMessage(activity)!.text, "retained output");
+    assert.include(historicalMessage(activity)!.text, '"omittedLines":4');
+    assert.isNull(historicalMessage({ ...activity, runId: RunId.make("live-run") }));
+    assert.isNull(historicalMessage({ ...activity, historyTurnId: undefined }));
+    assert.isNull(historicalMessage({ ...activity, input: { command: "foreign tool call" } }));
   });
 
   it("retains short conversations verbatim in role and order", () => {
@@ -413,6 +470,34 @@ describe("handoff budget", () => {
 });
 
 describe("handoff delivery", () => {
+  for (const native of [true, false]) {
+    it.effect(
+      `carries source omissions through ${native ? "native injection" : "inline fallback"} within the same history budget`,
+      () =>
+        Effect.gen(function* () {
+          let offered = "";
+          const result = yield* deliverContextHandoffs({
+            handoffs: [handoff],
+            providerThread,
+            budget: 8_000,
+            sourceOmissions: [{ _tag: "range-truncated", throughMessageN: 2 }],
+            alreadyDeliveredItemIds: new Set(),
+            inject: (value) =>
+              Effect.sync(() => {
+                offered = value.context;
+                return native;
+              }),
+            persist: () => Effect.void,
+          });
+          const context = native ? offered : result.context;
+          assert.include(context, "Known source omissions (unverified)");
+          assert.include(context, '"range-truncated"');
+          assert.include(context, '"throughMessageN":2');
+          assert.isAtMost(Buffer.byteLength(context), 8_000);
+        }),
+    );
+  }
+
   for (const native of [true, false]) {
     it.effect(
       `records omitted recovery coverage separately from ${native ? "injected" : "inline"} text`,
