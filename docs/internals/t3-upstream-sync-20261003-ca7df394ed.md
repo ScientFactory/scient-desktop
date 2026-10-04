@@ -829,3 +829,17 @@ synchronization edge already in the reviewed architecture ancestry. Record only
 `c4aad71535abbd98c38659711b2cc47b1ab2fe5d`. Its non-documentation blobs
 match that retained alignment parent; nested history remains audited. The failed
 actual gate is retained as evidence, and must pass again on the final composition.
+
+The reviewed smoke/documentation composition retains both parents at
+`c1d9a5ea1d498403b5dc257286bf24f85c838353`, ordered
+`fbbfdd58c28fbc6988aee22d842452c94026d2fe` and
+`736d7c02183a978102b5a0bd2af92537be2b9ff8`. Exact resolved tree
+`8c6831d6cabbeed1ac36a70ce2fd6170f9c6ed28` passes eleven real controlled
+smoke-gate cases, scoped formatting/lint/whitespace and the complete seam path
+classification against frozen upstream `ca7df394ed8151fa77f856beefa90bc60a785d60`.
+The first seam invocation used the old stored cursor and refused V2 mount
+classification; the corrected explicit target/index check passes without changing
+any manifest or checker. Independent frozen composition review preserves all
+rich V2 migration/fork rules and matches both smoke script blobs. Actual final
+ancestry qualification, built-app/packaged smoke and manual acceptance are
+separate gates; none is inferred from this merge receipt.
