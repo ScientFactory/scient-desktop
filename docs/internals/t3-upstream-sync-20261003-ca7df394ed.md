@@ -680,9 +680,15 @@ The startup-failure observer also discarded guarded writes in its mock; producti
 already commits failure before refreshing pull requests. Historical boundary
 declarations must name the existing inert migration guards and hydration readers.
 These corrections retain attachment bytes, checkpoint workspace, native ownership,
-permission argv and ordering assertions. Their focused requalification is pending.
-The new controlled OMP subprocess fixture also needs exact seam classification;
-earlier static checks stopped there before provenance qualification.
+permission argv and ordering assertions. The corrected seven complete files pass
+151 cases, and the canonical server TypeScript/Effect check passes with no hard
+diagnostics or warnings. Scoped formatting/lint/diff checks pass. Qualification
+also removed the obsolete V1-reader exemption for the now-native workspace
+authority service and verified the exact twenty-entry Scient migration ledger.
+Two fixture typing errors found by the compiler were repaired without changing
+asserted behavior. The new controlled OMP subprocess fixture is classified by
+its exact path; final composed seam/provenance gates remain required. Evidence:
+`root-server-gate-repairs-*-round3.txt`; earlier failed rounds remain retained.
 
 Answer-attention Addendum 7 remains open during isolated repair: one canonical
 completed-answer selector, SQL/in-memory text and ID ordering parity, and actual

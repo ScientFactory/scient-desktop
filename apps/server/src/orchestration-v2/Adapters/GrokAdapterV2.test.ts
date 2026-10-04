@@ -353,7 +353,14 @@ describe("Grok launch permission mode", () => {
           runtimePolicy,
         })
         .pipe(Effect.scoped, Effect.ignore);
-      return launches;
+      return launches.map((args) => {
+        assert.equal(args[0], "--rules");
+        assert.include(
+          args[1] ?? "",
+          "You are in Scient, a project workspace for code and science.",
+        );
+        return args.slice(2);
+      });
     }).pipe(
       // Keep the launch argv unwrapped by the Linux cgroup shim.
       Effect.provideService(HostProcessPlatform, "darwin"),
@@ -378,7 +385,7 @@ describe("Grok launch permission mode", () => {
   ] as const) {
     it.effect(`launches ${runtimeMode} threads with ${args.join(" ")}`, () =>
       Effect.gen(function* () {
-        assert.deepEqual(yield* launchArgs(policy(runtimeMode)), [args]);
+        assert.deepEqual(yield* launchArgs(policy(runtimeMode)), [[...args]]);
       }),
     );
   }
