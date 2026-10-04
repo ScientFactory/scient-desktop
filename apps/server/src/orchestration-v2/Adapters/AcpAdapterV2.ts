@@ -3023,7 +3023,10 @@ export function makeAcpAdapterV2(
             if (status === "pending" || status === "running") return true;
           }
           for (const subagent of context.subagents.values()) {
-            if (acpSubagentStatusBlocksTurnSettlement(subagent.task.status)) {
+            if (
+              flavor.subagentsIdleOnTurnCompletion !== true &&
+              acpSubagentStatusBlocksTurnSettlement(subagent.task.status)
+            ) {
               return true;
             }
           }
