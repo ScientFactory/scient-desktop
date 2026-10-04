@@ -205,6 +205,17 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
     return true;
   };
   for (const [index, { item }] of retained.entries()) {
+    if (
+      item.type === "user_input_request" &&
+      item.questionAnswer !== undefined &&
+      item.status === "completed" &&
+      item.runId === null &&
+      item.historyTurnId === undefined &&
+      item.inheritedFrom?.runId == null
+    )
+      return yield* reject(
+        "A retained submitted question answer has no authoritative turn boundary.",
+      );
     itemIds.set(item.id, TurnItemId.make(`scient-fork:${targetThreadId}:item:${index}`));
     if (item.type === "user_message" || item.type === "assistant_message") {
       if (!messageIds.has(item.messageId))
