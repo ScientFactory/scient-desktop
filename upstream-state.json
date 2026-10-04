@@ -100,6 +100,15 @@
         "d3bc827adf4fb19ca916355e9f07c6fab86dfac7"
       ],
       "reviewRecord": "docs/internals/t3-upstream-sync-20261003-ca7df394ed.md"
+    },
+    {
+      "id": "scient-v2-reviewed-docs-alignment-sync",
+      "merge": "df7866c8d98f1d9bee15b17f033fa8ed1406d848",
+      "parents": [
+        "fde2233486a4f03ad5577e89a858bcb38cbf88fd",
+        "c4aad71535abbd98c38659711b2cc47b1ab2fe5d"
+      ],
+      "reviewRecord": "docs/internals/t3-upstream-sync-20261003-ca7df394ed.md"
     }
   ]
 }

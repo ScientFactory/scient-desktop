@@ -795,3 +795,37 @@ from a provenance receipt.
 V1 removal and remaining provider/context/queue preservation fixes still require
 reviewed composition. Final complete checks/build/smoke/package, independent full
 review, current documentation refresh and actual app/manual acceptance remain open.
+
+The broader maintainer review also confirms two stale explanations already in
+this candidate. Accepted fork navigation uses dialog-subtree removal followed
+by a layout commit, preserving source-leaving and retry guards even if an
+animation callback never arrives. Current V2 conversation export is supported;
+offline recovery of the untouched original V1 database is a separate procedure.
+The two paragraphs now match those boundaries. Independent source review:
+`docs-boundaries-independent-integration-review-3911b36.md`. The reviewed architecture-documentation batch is composed here; remaining
+migration guidance still needs a final refresh after core ports and deletion.
+These paragraph corrections do not qualify the whole guide or runtime acceptance.
+
+The desktop smoke gate previously reported success after its launched process
+exited early with code7 and no fatal text. The actual CLI reproduces that false
+pass. The repaired gate requires survival until requested shutdown, accepts only
+the intended graceful exit, rejects forced termination, and evaluates output
+after stream closure. Incomplete inherited pipes cause a bounded failure. The
+original eight-second survival and two-second grace limits are unchanged.
+Eleven real controlled subprocess cases pass, including early exits, launch
+failure, late fatal output and exact descendant cleanup; scoped lint and
+formatting pass without warnings. Independent review matches both integrated
+blobs (`desktop-smoke-gate-qualified-handoff.md`,
+`desktop-smoke-gate-independent-frozen-review.md`). Desktop compilation passes
+but excludes these standalone JavaScript files; actual execution and lint
+qualify them. This proves gate honesty on macOS controlled children, not
+Electron/backend/renderer readiness or Windows execution. Fresh built-app and
+packaged smoke remain required.
+
+The actual original-base provenance gate exposed one additional owned docs-lane
+synchronization edge already in the reviewed architecture ancestry. Record only
+`df7866c8d98f1d9bee15b17f033fa8ed1406d848`, ordered parents
+`fde2233486a4f03ad5577e89a858bcb38cbf88fd` and
+`c4aad71535abbd98c38659711b2cc47b1ab2fe5d`. Its non-documentation blobs
+match that retained alignment parent; nested history remains audited. The failed
+actual gate is retained as evidence, and must pass again on the final composition.
