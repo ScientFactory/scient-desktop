@@ -21,6 +21,7 @@ import { ClaudeOrchestratorReplayHarness } from "../Adapters/ClaudeAdapterV2.tes
 import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testkit.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
+import { materializeCodexOwnerReload } from "./CodexReplayOwnerReload.ts";
 import {
   CODEX_MODEL_SELECTION,
   THREAD_MERGE_BACK_FORK_PROMPT,
@@ -411,7 +412,10 @@ describe("orchestration V2 merge-back provider replay", () => {
                 {
                   ...scenario,
                   transcript: yield* CodexOrchestratorReplayHarness.decodeTranscript(
-                    materializeReplayTranscriptWorkspace(parameterizedTranscript, cwd),
+                    materializeReplayTranscriptWorkspace(
+                      materializeCodexOwnerReload(parameterizedTranscript, 3),
+                      cwd,
+                    ),
                   ),
                 },
                 CodexHistoryReplayHarness,
@@ -669,7 +673,10 @@ describe("orchestration V2 merge-back provider replay", () => {
                 {
                   ...scenario,
                   transcript: yield* CodexOrchestratorReplayHarness.decodeTranscript(
-                    materializeReplayTranscriptWorkspace(transcript, cwd),
+                    materializeReplayTranscriptWorkspace(
+                      materializeCodexOwnerReload(transcript, 4),
+                      cwd,
+                    ),
                   ),
                 },
                 CodexHistoryReplayHarness,

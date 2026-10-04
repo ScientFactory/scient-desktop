@@ -8,6 +8,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   ThreadSectionId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -165,7 +166,9 @@ it.live("forks an ordinary native ACP answer through its persisted direct-child 
         assert.equal(target.thread.conversationFork?.status, "ready");
         assert.equal(target.thread.sectionId, sectionId);
         assert.deepEqual(
-          target.turnItems.map((item) => item.type),
+          target.turnItems
+            .filter((item) => item.inheritedFrom?.threadId === threadId)
+            .map((item) => item.type),
           source.turnItems.map((item) => item.type),
         );
         assert.deepEqual(
@@ -177,11 +180,25 @@ it.live("forks an ordinary native ACP answer through its persisted direct-child 
             (item) =>
               item.runId === null &&
               item.nodeId === null &&
-              item.providerThreadId === null &&
+              (item.type === "fork"
+                ? item.providerThreadId === undefined
+                : item.providerThreadId === null) &&
               item.providerTurnId === null &&
               item.nativeItemRef === null,
           ),
         );
+        const boundaries = target.turnItems.filter((item) => item.inheritedFrom === undefined);
+        assert.lengthOf(boundaries, 1);
+        if (boundaries[0]?.type !== "fork")
+          return assert.fail("Expected exact native answer boundary");
+        assert.equal(boundaries[0].id, TurnItemId.make(`turn-item:fork:${command.newThreadId}`));
+        assert.equal(
+          boundaries[0].ordinal,
+          target.turnItems.findLast((item) => item.inheritedFrom?.threadId === threadId)!.ordinal +
+            1,
+        );
+        assert.equal(boundaries[0].targetThreadId, command.newThreadId);
+        assert.deepEqual(boundaries[0].source, { type: "run", threadId, runId: run.id });
         assert.equal(target.runs.length, 0);
         assert.equal(target.providerThreads.length, 0);
         assert.equal(target.runtimeRequests.length, 0);

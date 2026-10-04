@@ -3493,7 +3493,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         modelSelection: sourceRun.modelSelection,
       })
       .pipe(mapDispatchError(command));
-    const { targetThread, transfer, history } = yield* threadForkService
+    const { targetThread, transfer, history, boundaryItem } = yield* threadForkService
       .plan({
         sourceProjection,
         commandId: command.commandId,
@@ -3537,6 +3537,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload,
       });
+    yield* emitEvent({
+      type: "turn-item.updated",
+      threadId: targetThread.id,
+      occurredAt: now,
+      payload: boundaryItem,
+    });
     for (const payload of history.nodes)
       yield* emitEvent({
         type: "node.updated",

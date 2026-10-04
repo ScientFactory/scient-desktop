@@ -156,12 +156,13 @@ export function V2LifecycleRow(props: {
     );
   }
   if (item.type === "fork") {
-    const relatedThreadId = item.source.type === "run" ? item.source.threadId : item.targetThreadId;
+    const incoming = item.source.type === "run" || item.source.type === "message";
+    const relatedThreadId = incoming ? item.source.threadId : item.targetThreadId;
     return (
       <TimelineSystemDivider
-        label={item.source.type === "run" ? "Forked from conversation" : "Conversation fork"}
+        label={incoming ? "Forked from conversation" : "Conversation fork"}
         icon={GitForkIcon}
-        actionLabel={item.source.type === "run" ? "Open source conversation" : "Open fork"}
+        actionLabel={incoming ? "Open source conversation" : "Open fork"}
         onAction={() => props.onOpenThread(relatedThreadId)}
       />
     );

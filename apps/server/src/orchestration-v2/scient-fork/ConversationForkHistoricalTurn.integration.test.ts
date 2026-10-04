@@ -110,7 +110,25 @@ it.live(
         };
         const receipt = yield* forks.dispatch(command);
         const child = yield* store.getThreadProjection(command.newThreadId);
-        assert.equal(child.turnItems.length, 11);
+        assert.equal(child.turnItems.length, 12);
+        const boundary = child.visibleTurnItems.at(-1);
+        assert.ok(boundary?.item.type === "fork");
+        assert.equal(boundary.visibility, "local");
+        assert.deepEqual(boundary.item.source, {
+          type: "message",
+          threadId: source,
+          messageId: command.sourceAssistantMessageId,
+          position: "after",
+        });
+        assert.isNull(boundary.item.runId);
+        assert.isNull(boundary.item.nodeId);
+        assert.isNull(boundary.item.providerTurnId);
+        assert.isUndefined(boundary.item.providerThreadId);
+        const storedBoundary = yield* store.getTimelinePage(command.newThreadId, {
+          itemId: boundary.item.id,
+          limit: 1,
+        });
+        assert.deepEqual(storedBoundary.items, [boundary]);
         const roster = historicalSubagentsToRuntime(child.turnItems);
         assert.equal(roster.length, 2);
         assert.isTrue(roster.every((agent) => agent.historical === true));
@@ -165,10 +183,18 @@ it.live(
             sourceUserMessageId: MessageId.make(sourceUserMessageId),
           });
           const beforeTurn = yield* store.getThreadProjection(newThreadId);
-          assert.equal(beforeTurn.turnItems.length, 1);
+          assert.equal(beforeTurn.turnItems.length, 2);
           assert.equal(beforeTurn.turnItems[0]?.type, "assistant_message");
           if (beforeTurn.turnItems[0]?.type === "assistant_message")
             assert.equal(beforeTurn.turnItems[0].text, "Prior answer");
+          const userBoundary = beforeTurn.turnItems[1];
+          assert.ok(userBoundary?.type === "fork");
+          assert.deepEqual(userBoundary.source, {
+            type: "message",
+            threadId: source,
+            messageId: MessageId.make(sourceUserMessageId),
+            position: "before",
+          });
         }
       }).pipe(Effect.provide(testLayer), Effect.timeout("15 seconds")),
     ),
