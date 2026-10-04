@@ -81,6 +81,19 @@ import {
   type NativeSessionAdapterV2Options,
 } from "./NativeSessionAdapterV2.ts";
 
+/** Persist only HTTP origins and paths; OAuth queries, fragments and user info are transient. */
+const externalHttpUrl = (value: string | undefined): string | undefined => {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:"
+      ? `${url.origin}${url.pathname}`
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 export interface OmpAdapterV2Options extends Pick<
   NativeSessionAdapterV2Options,
   "instanceId" | "idAllocator" | "continuations"
@@ -645,14 +658,24 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                   name: "Conversation compacted",
                   status: "completed",
                 });
-              case "open-url":
+              case "open-url": {
+                const url = externalHttpUrl(update.url);
+                const launchUrl = externalHttpUrl(update.launchUrl);
                 return onUpdate({
                   type: "tool",
-                  id: "open-url",
-                  name: `${target.name} requests a URL`,
+                  id: `open-url-${++nextWarningOrdinal}`,
+                  name: url ? `${target.name} requests a URL` : `${target.name} warning`,
                   status: "completed",
-                  output: client.redaction.text(update.instructions ?? update.url),
+                  ...(url
+                    ? { input: { kind: "open-url", url, ...(launchUrl ? { launchUrl } : {}) } }
+                    : {}),
+                  output: url
+                    ? client.redaction.text(
+                        update.instructions ?? `${target.name} requested a browser action.`,
+                      )
+                    : `${target.name} requested an invalid browser URL.`,
                 });
+              }
               case "assistant-started":
                 return Effect.void;
               case "turn-started":

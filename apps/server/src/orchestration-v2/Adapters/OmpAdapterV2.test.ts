@@ -2763,6 +2763,78 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
   );
 
   it.effect(
+    "sanitizes native OMP browser URLs and refuses unsafe schemes without answering them",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* imageHarness(1_048_576);
+          yield* h.runtime.startTurn(h.input);
+          yield* h.peer.promptDelivered();
+          yield* h.peer.emit([
+            { type: "agent_start" },
+            {
+              type: "extension_ui_request",
+              method: "open_url",
+              url: "https://user:pass@example.com/authorize?client_id=c&state=oauth-state#frag",
+              launchUrl: "http://127.0.0.1:43199/launch?token=one-time#private",
+            },
+          ]);
+          const action = yield* h.takeUntil(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "dynamic_tool" &&
+              event.turnItem.title === "Oh My Pi requests a URL",
+          );
+          if (action.type !== "turn_item.updated" || action.turnItem.type !== "dynamic_tool")
+            return yield* Effect.die("Missing native browser action");
+          assert.deepEqual(action.turnItem.input, {
+            kind: "open-url",
+            url: "https://example.com/authorize",
+            launchUrl: "http://127.0.0.1:43199/launch",
+          });
+          assert.equal(action.turnItem.output, "Oh My Pi requested a browser action.");
+          for (const url of [
+            "javascript:alert(1)",
+            "file:///etc/passwd",
+            "data:text/html,unsafe",
+            "relative-path",
+            "https://[",
+          ]) {
+            yield* h.peer.emit([{ type: "extension_ui_request", method: "open_url", url }]);
+            const warning = yield* h.takeUntil(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "dynamic_tool" &&
+                event.turnItem.output === "Oh My Pi requested an invalid browser URL.",
+            );
+            if (warning.type !== "turn_item.updated" || warning.turnItem.type !== "dynamic_tool")
+              return yield* Effect.die("Missing invalid URL warning");
+            assert.deepEqual(warning.turnItem.input, {});
+          }
+          assert.equal(
+            h.peer.state.frames.some((frame) => frame.type === "extension_ui_response"),
+            false,
+          );
+          const encoded = encodeDiagnostic(h.recorded);
+          for (const secret of [
+            "user:pass",
+            "oauth-state",
+            "client_id",
+            "one-time",
+            "#private",
+            "#frag",
+          ])
+            assert.equal(encoded.includes(secret), false);
+          yield* h.peer.finish();
+          assert.equal(
+            (yield* h.takeUntil((event) => event.type === "turn.terminal")).type,
+            "turn.terminal",
+          );
+        }),
+      ),
+  );
+
+  it.effect(
     "projects native subagent lineage and readable results with the spawning run owner",
     () =>
       Effect.scoped(
