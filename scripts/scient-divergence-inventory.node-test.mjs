@@ -4,6 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeTest from "node:test";
+import * as NodeURL from "node:url";
 import { commentIntervals, inspectScientDivergence } from "./scient-divergence-inventory.mjs";
 
 function fixture(t, files) {
@@ -369,4 +370,67 @@ NodeTest.test("balanced nested genuine pairs preserve outer and inner intervals"
   const broken = commentIntervals("a.ts", text.replace(/SCIENT-FORK:END/, "ordinary comment"));
   NodeAssert.equal(broken.status, "malformed-markers");
   NodeAssert.deepEqual(broken.intervals, []);
+});
+
+NodeTest.test("symlinked CLI executes advisory, ratchet and invalid-input paths", (t) => {
+  const f = fixture(t, { "a.ts": "const a = 1;\n" });
+  f.write("a.ts", "const a = 2;\n");
+  const candidate = f.commit();
+  const script = NodeURL.fileURLToPath(
+    new URL("./scient-divergence-inventory.mjs", import.meta.url),
+  );
+  const alias = NodePath.join(f.cwd, "inventory alias.mjs");
+  NodeFS.symlinkSync(script, alias);
+  const run = (extra = []) => {
+    try {
+      return {
+        status: 0,
+        stdout: NodeChildProcess.execFileSync(
+          process.execPath,
+          [alias, "--upstream", f.upstream, "--candidate", candidate, ...extra],
+          { cwd: f.cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        ),
+      };
+    } catch (error) {
+      return { status: error.status, stdout: error.stdout };
+    }
+  };
+  const advisory = run();
+  NodeAssert.equal(advisory.status, 0);
+  NodeAssert.equal(JSON.parse(advisory.stdout).counts["new-debt"], 1);
+  const ratchet = run(["--ratchet"]);
+  NodeAssert.equal(ratchet.status, 1);
+  NodeAssert.equal(JSON.parse(ratchet.stdout).ratchet, "needs-review");
+  const invalid = run(["--candidate", "missing-object"]);
+  NodeAssert.equal(invalid.status, 2);
+  NodeAssert.equal(JSON.parse(invalid.stdout).status, "unavailable");
+});
+
+NodeTest.test("ordinary imports stay silent and entry-resolution errors fail unavailable", (t) => {
+  const f = fixture(t, { "a.ts": "const a = 1;\n" });
+  const url = new URL("./scient-divergence-inventory.mjs", import.meta.url).href;
+  const load = `await import(${JSON.stringify(url)});`;
+  const imported = NodeChildProcess.execFileSync(
+    process.execPath,
+    ["--input-type=module", "-e", load],
+    { cwd: f.cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  );
+  NodeAssert.equal(imported, "");
+  let failure;
+  try {
+    NodeChildProcess.execFileSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `process.argv[1] = ${JSON.stringify(NodePath.join(f.cwd, "missing-entry"))}; ${load}`,
+      ],
+      { cwd: f.cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    );
+  } catch (error) {
+    failure = error;
+  }
+  NodeAssert.equal(failure?.status, 2);
+  NodeAssert.match(failure.stderr, /Unable to resolve CLI entry identity/);
+  NodeAssert.equal(failure.stdout, "");
 });

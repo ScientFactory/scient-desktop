@@ -10,7 +10,7 @@ node scripts/scient-divergence-inventory.mjs \
   --candidate FULL_40_CHARACTER_COMMIT_OR_TREE_ID > divergence.json
 ```
 
-The upstream object must resolve to a commit; the candidate may be a commit or tree. Moving refs and abbreviated hashes are rejected. Local replacement refs are ignored, and lazy object fetching is disabled. Required objects must already exist locally, and Git must support `--no-lazy-fetch`; older Git versions fail unavailable. The comparison includes every changed upstream path, without feature, test, documentation, generated-file, or deleted-file exclusions. Candidate-only paths are listed separately; membership does not establish their authorship. Paths come from NUL-delimited Git trees, including spaces, tabs, newlines, and UTF-8 names. Undecodable paths or blobs remain unavailable or unresolved.
+The upstream object must resolve to a commit; the candidate may be a commit or tree. Moving refs and abbreviated hashes are rejected. Executable aliases resolve to the actual script before CLI entry detection; resolution failures exit unavailable instead of silently skipping work. Local replacement refs are ignored, and lazy object fetching is disabled. Required objects must already exist locally, and Git must support `--no-lazy-fetch`; older Git versions fail unavailable. The comparison includes every changed upstream path, without feature, test, documentation, generated-file, or deleted-file exclusions. Candidate-only paths are listed separately; membership does not establish their authorship. Paths come from NUL-delimited Git trees, including spaces, tabs, newlines, and UTF-8 names. Undecodable paths or blobs remain unavailable or unresolved.
 
 ## What markers establish
 

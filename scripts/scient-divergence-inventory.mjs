@@ -367,7 +367,18 @@ export function inspectScientDivergence({
   return report;
 }
 
-if (process.argv[1] && NodeURL.fileURLToPath(import.meta.url) === process.argv[1]) {
+let invokedAsMain = false;
+try {
+  if (process.argv[1])
+    invokedAsMain =
+      NodeFS.realpathSync(NodeURL.fileURLToPath(import.meta.url)) ===
+      NodeFS.realpathSync(process.argv[1]);
+} catch (error) {
+  process.stderr.write(`Unable to resolve CLI entry identity: ${error.message}\n`);
+  process.exitCode = 2;
+}
+
+if (invokedAsMain) {
   try {
     const options = {},
       args = process.argv.slice(2);
