@@ -112,20 +112,16 @@ export function commentIntervals(path, text) {
       markers.push({ type: match[1], line: source.getLineAndCharacterOfPosition(offset).line + 1 });
     }
   }
-  let start;
-  const intervals = [],
+  const stack = [],
+    intervals = [],
     errors = [];
   for (const marker of markers) {
-    if (marker.type === "START") {
-      if (start !== undefined) errors.push(`Nested START at line ${marker.line}`);
-      else start = marker.line;
-    } else if (start === undefined) errors.push(`Orphan END at line ${marker.line}`);
-    else {
-      intervals.push({ start, end: marker.line });
-      start = undefined;
-    }
+    if (marker.type === "START") stack.push(marker.line);
+    else if (!stack.length) errors.push(`Orphan END at line ${marker.line}`);
+    else intervals.push({ start: stack.pop(), end: marker.line });
   }
-  if (start !== undefined) errors.push(`Unclosed START at line ${start}`);
+  for (const start of stack) errors.push(`Unclosed START at line ${start}`);
+  intervals.sort((a, b) => a.start - b.start || b.end - a.end);
   // A malformed file cannot certify any hunk, even if some pairs happened to match.
   return {
     status: errors.length ? "malformed-markers" : "parsed",

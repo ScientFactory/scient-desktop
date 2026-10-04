@@ -22,7 +22,7 @@ mountScientPanel();
 // SCIENT-FORK:END
 ```
 
-Pairs must be ordered and nonnested. Malformed pairs and parser errors leave the whole file unresolved. The tool checks zero-context Git hunks:
+Pairs must be ordered and balanced. Nested genuine pairs are supported and each interval remains visible. Malformed pairs and parser errors leave the whole file unresolved. The tool checks zero-context Git hunks:
 
 - Every added or replaced candidate line must lie inside a valid interval, including its delimiter lines.
 - A deletion-only hunk records a gap after candidate line `n`. That gap must be after START and before END; a gap before START or after END is unmarked.

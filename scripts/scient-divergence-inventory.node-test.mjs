@@ -356,3 +356,17 @@ NodeTest.test("immutable comparisons ignore local replacement refs", (t) => {
   NodeAssert.equal(report.counts["new-debt"], 1);
   NodeAssert.equal(f.git("show-ref"), refs);
 });
+
+NodeTest.test("balanced nested genuine pairs preserve outer and inner intervals", () => {
+  const text =
+    "// SCIENT-FORK:START\n// SCIENT-FORK:START\nconst x = true;\n// SCIENT-FORK:END\n// SCIENT-FORK:END\n";
+  const parsed = commentIntervals("a.ts", text);
+  NodeAssert.equal(parsed.status, "parsed");
+  NodeAssert.deepEqual(parsed.intervals, [
+    { start: 1, end: 5 },
+    { start: 2, end: 4 },
+  ]);
+  const broken = commentIntervals("a.ts", text.replace(/SCIENT-FORK:END/, "ordinary comment"));
+  NodeAssert.equal(broken.status, "malformed-markers");
+  NodeAssert.deepEqual(broken.intervals, []);
+});
