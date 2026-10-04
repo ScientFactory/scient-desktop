@@ -880,6 +880,12 @@ not apply later thread defaults, reopen a disposed session or reload its convers
 next-turn defaults cannot relabel existing work or widen its run-scoped MCP authority. A captured
 owner that is lost before adoption fails the run rather than recreating the buffered generation.
 
+The captured cwd must be a known absolute execution directory. Both ordinary and pending-transfer
+admission persist checkpoint ownership in that directory, even if the project's workspace is
+relocated before admission or adoption. Startup refuses a checkpoint scope that differs from the
+captured native cwd. Unknown native cwd is refused rather than replaced with current project
+ownership; the producer must supply its actual applied directory.
+
 Admission records an agent-authored system notification rather than a user message. The adapter's
 `startTurn` receives `message.notification.source.kind = "provider_work"` and its `workId`: it
 adopts the buffered native work under the admitted run/attempt identities and sends no prompt.

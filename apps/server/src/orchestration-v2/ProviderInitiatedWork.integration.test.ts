@@ -1,6 +1,9 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
+  ContextTransferId,
+  EventId,
   MessageId,
   ProjectId,
   ProviderDriverKind,
@@ -15,6 +18,15 @@ import {
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as ProviderInstances from "../provider/Services/ProviderInstanceRegistry.ts";
+import { CheckpointStore } from "../checkpointing/CheckpointStore.ts";
+import * as ProjectStore from "./ProjectStore.ts";
+import * as RuntimePolicy from "./RuntimePolicy.ts";
+import { EventSinkV2 } from "./EventSink.ts";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -50,6 +62,9 @@ type Offer = { input: ProviderAdapterV2TurnInput; finish: Effect.Effect<void> };
 const withInitiatedWork = <A, E, R>(
   run: (h: {
     orchestrator: OrchestratorV2["Service"];
+    workspaceA: string;
+    workspaceB: string;
+    relocateProject: (cwd: string) => Effect.Effect<void, ProjectStore.ProjectStoreV2Error>;
     emitWork: (workId: string, overrides?: WorkOverrides) => Effect.Effect<void>;
     takeOffer: Effect.Effect<Offer, Cause.TimeoutError>;
     prompts: ReadonlyArray<string>;
@@ -65,11 +80,28 @@ const withInitiatedWork = <A, E, R>(
       predicate: (p: OrchestrationV2ThreadProjection) => boolean,
     ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error>;
   }) => Effect.Effect<A, E, R>,
-  options: { manualWorker?: boolean; restricted?: boolean } = {},
+  options: { manualWorker?: boolean; restricted?: boolean; unknownNativeCwd?: boolean } = {},
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const cwd = yield* checkpointWorkspace("provider-initiated-work");
+      const cwd = yield* checkpointWorkspace("provider-initiated-work", {
+        "native-answer.txt": "Initial A\n",
+      });
+      const workspaceB = yield* checkpointWorkspace("provider-initiated-other", {
+        "native-answer.txt": "Initial B\n",
+      });
+      const database = SqlitePersistenceMemory;
+      const projectsLayer = ProjectStore.layer.pipe(Layer.provide(database));
+      const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            projectsLayer,
+            Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
+              getInstance: () => Effect.succeed(undefined),
+            }),
+          ),
+        ),
+      );
       const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
       const offers = yield* Queue.unbounded<Offer>();
       const buffered = new Map<string, string>();
@@ -161,6 +193,9 @@ const withInitiatedWork = <A, E, R>(
                         providerSessionId: input.providerSessionId,
                         workId,
                         ...applied,
+                        ...(options.unknownNativeCwd
+                          ? { runtimePolicy: { ...applied.runtimePolicy, cwd: null } }
+                          : {}),
                         ...overrides.initiated,
                       },
                       clearIfCurrent: () =>
@@ -281,13 +316,58 @@ const withInitiatedWork = <A, E, R>(
           return [adapter];
         }),
       );
+      const runtimePolicyLayer = policyLayer.pipe(Layer.orDie);
       const layer = makeOrchestratorV2ReplayLayerWithRegistry(
-        { name: "provider-initiated-work", runtimePolicyOverride: { cwd } },
+        { name: "provider-initiated-work" },
         registry,
-        { runContinuationWorker: true, configureMcp: true, runEffectWorker: !options.manualWorker },
+        {
+          databaseLayer: database,
+          runtimePolicyLayer,
+          runContinuationWorker: true,
+          configureMcp: true,
+          runEffectWorker: !options.manualWorker,
+        },
       );
       return yield* Effect.gen(function* () {
         const orchestrator = yield* OrchestratorV2;
+        const projects = yield* ProjectStore.ProjectStoreV2;
+        const now = DateTime.formatIso(yield* DateTime.now);
+        let projectSequence = 1;
+        yield* projects.apply({
+          sequence: projectSequence,
+          eventId: EventId.make("initiated-project:1"),
+          aggregateKind: "project",
+          aggregateId: projectId,
+          occurredAt: now,
+          commandId: null,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          type: "project.created",
+          payload: {
+            projectId,
+            title: "Native project",
+            workspaceRoot: cwd,
+            defaultModelSelection: selection,
+            scripts: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        const relocateProject = (workspaceRoot: string) =>
+          projects.apply({
+            sequence: ++projectSequence,
+            eventId: EventId.make(`initiated-project:${projectSequence}`),
+            aggregateKind: "project",
+            aggregateId: projectId,
+            occurredAt: now,
+            commandId: null,
+            causationEventId: null,
+            correlationId: null,
+            metadata: {},
+            type: "project.meta-updated",
+            payload: { projectId, workspaceRoot, updatedAt: now },
+          });
         yield* orchestrator.dispatch({
           type: "thread.create",
           commandId: CommandId.make("create:initiated"),
@@ -309,7 +389,10 @@ const withInitiatedWork = <A, E, R>(
               if (predicate(p)) return p;
               yield* Effect.sleep("5 millis");
             }
-            return yield* Effect.die("Missing durable initiated-work receipt");
+            const last = yield* orchestrator.getThreadProjection(threadId);
+            return yield* Effect.die(
+              `Missing durable initiated-work receipt: runs ${last.runs.map((run) => `${run.ordinal}:${run.status}`).join(",")}; sessions ${last.providerSessions.map((session) => session.status).join(",")}; closes ${closed}`,
+            );
           });
         yield* orchestrator.dispatch({
           type: "message.dispatch",
@@ -333,6 +416,9 @@ const withInitiatedWork = <A, E, R>(
         yield* waitFor((p) => p.runs[0]?.status === "completed");
         return yield* run({
           orchestrator,
+          workspaceA: cwd,
+          workspaceB,
+          relocateProject,
           emitWork: (id, override) => emitWork(id, override),
           takeOffer: Queue.take(offers).pipe(Effect.timeout("10 seconds")),
           prompts,
@@ -350,8 +436,8 @@ const withInitiatedWork = <A, E, R>(
           dropped: () => dropped,
           waitFor,
         });
-      }).pipe(Effect.provide(layer));
-    }),
+      }).pipe(Effect.provide(layer.pipe(Layer.provideMerge(runtimePolicyLayer))));
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
 it.live(
@@ -513,6 +599,9 @@ it.live(
         resolvePolicy,
         markNativeRunning,
         waitFor,
+        workspaceA,
+        workspaceB,
+        relocateProject,
       }) =>
         Effect.gen(function* () {
           const original = yield* orchestrator.getThreadProjection(threadId);
@@ -520,6 +609,13 @@ it.live(
             (row) => row.id === original.thread.activeProviderThreadId,
           )!;
           const initialLoads = loads();
+          const fs = yield* FileSystem.FileSystem;
+          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const git = (cwd: string, args: ReadonlyArray<string>) =>
+            spawner.string(ChildProcess.make("git", args, { cwd }));
+          const otherRefs = yield* git(workspaceB, ["for-each-ref"]);
+          const otherObjects = yield* git(workspaceB, ["count-objects", "-v"]);
+          const otherIndex = yield* fs.readFile(`${workspaceB}/.git/index`);
           const nextSelection = { ...selection, model: "next-user-model" };
           yield* orchestrator.dispatch({
             type: "thread.model-selection.set",
@@ -545,10 +641,25 @@ it.live(
               (row) => row.id === nativeOwner.providerSessionId && row.status === "running",
             ),
           );
+          yield* relocateProject(workspaceB);
+          assert.equal(
+            (yield* (yield* RuntimePolicy.RuntimePolicyV2).resolve({
+              thread: original.thread,
+              modelSelection: selection,
+            })).cwd,
+            workspaceB,
+          );
           yield* emitWork("captured-generation");
           const admitted = yield* waitFor((p) => p.runs.length === 2);
           const run = admitted.runs[1]!;
           assert.equal(run.status, "starting");
+          const scope = admitted.checkpointScopes.find(
+            (scope) =>
+              scope.id ===
+              admitted.nodes.find((node) => node.id === run.rootNodeId)?.checkpointScopeId,
+          )!;
+          assert.equal(scope.cwd, workspaceA);
+          assert.equal(admitted.thread.worktreePath, null);
           assert.deepEqual(run.modelSelection, selection);
           assert.equal(run.runtimeMode, "approval-required");
           assert.equal(run.interactionMode, "plan");
@@ -563,6 +674,14 @@ it.live(
             threadId,
             modelSelection: laterSelection,
           });
+          // Relocate again while the durable start effect is parked; execution
+          // must follow the captured scope even when current authority ends at B.
+          yield* relocateProject(workspaceA);
+          yield* relocateProject(workspaceB);
+          yield* fs.writeFileString(
+            `${workspaceA}/native-answer.txt`,
+            "Captured native work in A\n",
+          );
           const worker = yield* OrchestrationEffectWorkerV2;
           yield* worker.drain(12);
           const adoptedWork = yield* takeOffer;
@@ -591,7 +710,35 @@ it.live(
           yield* adoptedWork.finish;
           yield* waitFor((p) => p.runs[1]?.status === "waiting");
           yield* worker.drain(12);
-          yield* waitFor((p) => p.runs[1]?.status === "completed");
+          const completed = yield* waitFor((p) => p.runs[1]?.status === "completed");
+          const checkpoint = completed.checkpoints.find(
+            (row) => row.id === completed.runs[1]!.checkpointId,
+          )!;
+          assert.equal(checkpoint.status, "ready");
+          assert.equal(checkpoint.scopeId, scope.id);
+          assert.equal(
+            completed.checkpointScopes.find((row) => row.id === scope.id)!.cwd,
+            workspaceA,
+          );
+          const store = yield* CheckpointStore;
+          assert.isTrue(
+            yield* store.hasCheckpointRef({ cwd: workspaceA, checkpointRef: checkpoint.ref }),
+          );
+          assert.isFalse(
+            yield* store.hasCheckpointRef({ cwd: workspaceB, checkpointRef: checkpoint.ref }),
+          );
+          assert.equal(
+            yield* git(workspaceA, ["show", `${checkpoint.ref}:native-answer.txt`]),
+            "Captured native work in A\n",
+          );
+          assert.equal(yield* fs.readFileString(`${workspaceB}/native-answer.txt`), "Initial B\n");
+          assert.equal(yield* git(workspaceB, ["for-each-ref"]), otherRefs);
+          assert.equal(yield* git(workspaceB, ["count-objects", "-v"]), otherObjects);
+          assert.deepEqual(yield* fs.readFile(`${workspaceB}/.git/index`), otherIndex);
+          assert.equal(yield* git(workspaceB, ["status", "--porcelain"]), "");
+          assert.deepEqual(prompts, ["First user message"]);
+          assert.equal(loads(), initialLoads);
+          assert.equal(closes(), 0);
         }),
       { manualWorker: true, restricted: true },
     ),
@@ -624,4 +771,124 @@ it.live("refuses to reopen the captured native owner when it closes before buffe
       }),
     { manualWorker: true },
   ),
+);
+
+it.live("refuses unknown captured cwd without assigning the relocated project workspace", () =>
+  withInitiatedWork(
+    ({
+      orchestrator,
+      emitWork,
+      adopted,
+      dropped,
+      prompts,
+      relocateProject,
+      workspaceB,
+      loads,
+      closes,
+      waitFor,
+    }) =>
+      Effect.gen(function* () {
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const initialLoads = loads();
+        yield* relocateProject(workspaceB);
+        const observed = yield* Queue.unbounded<void>();
+        const refusals: string[] = [];
+        yield* emitWork("unknown-workspace", {
+          dispatchIfCurrent: (dispatch) =>
+            dispatch.pipe(
+              Effect.tapCause((cause) =>
+                Effect.sync(() => {
+                  refusals.push(Cause.pretty(cause));
+                }),
+              ),
+              Effect.asSome,
+              Effect.ensuring(Queue.offer(observed, undefined)),
+            ),
+        });
+        yield* Queue.take(observed).pipe(Effect.timeout("10 seconds"));
+        const after = yield* waitFor(() => dropped() === 1);
+        assert.lengthOf(after.runs, 1);
+        assert.deepEqual(after.checkpointScopes, before.checkpointScopes);
+        assert.deepEqual(adopted, []);
+        assert.deepEqual(prompts, ["First user message"]);
+        assert.equal(dropped(), 1);
+        assert.lengthOf(refusals, 1);
+        assert.include(refusals[0]!, "known absolute execution directory");
+        assert.equal(loads(), initialLoads);
+        assert.equal(closes(), 0);
+      }),
+    { unknownNativeCwd: true },
+  ),
+);
+
+it.live.each(["fork", "merge_back"] as const)(
+  "retains captured workspace during pending %s transfer admission",
+  (type) =>
+    withInitiatedWork(
+      ({
+        orchestrator,
+        emitWork,
+        waitFor,
+        workspaceA,
+        workspaceB,
+        relocateProject,
+        prompts,
+        adopted,
+        loads,
+      }) =>
+        Effect.gen(function* () {
+          const before = yield* orchestrator.getThreadProjection(threadId);
+          const sourceRun = before.runs[0]!;
+          const now = yield* DateTime.now;
+          const initialLoads = loads();
+          yield* (yield* EventSinkV2).write({
+            events: [
+              {
+                id: EventId.make(`pending-transfer:${type}`),
+                type: "context-transfer.created",
+                threadId,
+                occurredAt: now,
+                payload: {
+                  id: ContextTransferId.make(`pending-transfer:${type}`),
+                  type,
+                  sourceThreadId: threadId,
+                  targetThreadId: threadId,
+                  sourcePoint: { threadId, runId: sourceRun.id },
+                  basePoint: null,
+                  sourceProviderInstanceId: instanceId,
+                  targetProviderInstanceId: instanceId,
+                  targetRunId: null,
+                  status: "pending",
+                  resolution: null,
+                  createdBy: "system",
+                  error: null,
+                  createdAt: now,
+                  updatedAt: now,
+                  consumedAt: null,
+                },
+              },
+            ],
+          });
+          yield* relocateProject(workspaceB);
+          yield* emitWork(`captured-transfer:${type}`);
+          const admitted = yield* waitFor((p) => p.runs.length === 2);
+          const root = admitted.nodes.find((node) => node.id === admitted.runs[1]!.rootNodeId)!;
+          assert.equal(
+            admitted.checkpointScopes.find((scope) => scope.id === root.checkpointScopeId)!.cwd,
+            workspaceA,
+          );
+          assert.deepEqual(admitted.runs[1]!.modelSelection, selection);
+          assert.isTrue(
+            admitted.contextTransfers.some(
+              (row) =>
+                row.id === ContextTransferId.make(`pending-transfer:${type}`) &&
+                row.targetRunId === admitted.runs[1]!.id,
+            ),
+          );
+          assert.deepEqual(prompts, ["First user message"]);
+          assert.deepEqual(adopted, []);
+          assert.equal(loads(), initialLoads);
+        }),
+      { manualWorker: true },
+    ),
 );

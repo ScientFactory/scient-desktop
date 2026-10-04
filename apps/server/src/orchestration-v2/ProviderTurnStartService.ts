@@ -630,6 +630,7 @@ export const layer: Layer.Layer<
                 projection.thread.activeProviderThreadId !== providerThread.id ||
                 owned.value.instanceId !== run.providerInstanceId ||
                 owned.value.providerSession.cwd !== resolvedRuntimePolicy.cwd ||
+                checkpointScope.cwd !== resolvedRuntimePolicy.cwd ||
                 existingSessionProjection === undefined ||
                 !["ready", "running", "waiting"].includes(existingSessionProjection.status) ||
                 !modelSelectionsEqual(providerWork.modelSelection, run.modelSelection) ||

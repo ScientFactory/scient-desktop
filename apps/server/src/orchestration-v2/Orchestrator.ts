@@ -2679,6 +2679,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           )
           .pipe(mapDispatchError(command))
       : null;
+    const settingNativeOwner =
+      command.type === "thread.model-selection.set" ||
+      command.type === "provider.switch" ||
+      command.type === "thread.runtime-mode.set"
+        ? yield* loadProjectionForCommand(command, ["runs", "messages"], {
+            messageRoles: ["system"],
+            turnItemTypes: [],
+          }).pipe(
+            Effect.map((projection) => {
+              const run = projection.runs.find((run) =>
+                ["starting", "running", "waiting"].includes(run.status),
+              );
+              const source = projection.messages.find(
+                (message) => message.id === run?.userMessageId,
+              )?.notification?.source;
+              return source?.kind === "provider_work" &&
+                source.providerThreadId === thread.activeProviderThreadId
+                ? source
+                : undefined;
+            }),
+          )
+        : undefined;
     const providerSwitchPlan =
       command.type === "thread.model-selection.set" || command.type === "provider.switch"
         ? yield* Effect.gen(function* () {
@@ -2692,6 +2714,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   }),
               ),
             );
+            // Defaults describe the next user turn. Do not replace the owner of
+            // a generation already admitted under its captured workspace.
+            if (
+              settingNativeOwner !== undefined &&
+              command.modelSelection.instanceId === thread.providerInstanceId
+            )
+              return {
+                instanceChanged: false,
+                modelChanged: !modelSelectionsEqual(thread.modelSelection, command.modelSelection),
+                targetProviderThreadId: settingNativeOwner.providerThreadId,
+                releaseProviderSessionIds: [],
+                transition: { type: "reuse" as const },
+              };
             return yield* providerSwitchService
               .plan({
                 projection: providerContext!,
@@ -3291,6 +3326,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 .map((session) => session.id)
             : (providerSwitchPlan?.releaseProviderSessionIds ?? []),
     );
+    if (command.type === "thread.runtime-mode.set" && settingNativeOwner !== undefined)
+      detachSessionIds.delete(settingNativeOwner.providerSessionId);
     if (detachSessionIds.size > 0) {
       const liveSessions = (providerContext?.providerSessions ?? []).filter(
         (session) =>
@@ -5404,28 +5441,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const checkpointScope =
           dispatchMode.type === "defer_start"
             ? null
-            : yield* runtimePolicy
-                .resolve({
-                  thread: projection.thread,
-                  modelSelection,
-                })
-                .pipe(
-                  mapDispatchError(command),
-                  Effect.flatMap((resolvedRuntimePolicy) =>
-                    checkpointService.prepareRootRunScope({
-                      threadId: command.threadId,
-                      runId,
-                      rootNodeId,
-                      providerThreadId,
-                      cwd:
-                        resolvedRuntimePolicy.cwd ??
-                        projection.thread.worktreePath ??
-                        process.cwd(),
-                      createdAt: now,
-                    }),
-                  ),
-                  mapDispatchError(command),
-                );
+            : yield* (
+                providerInitiated === undefined
+                  ? runtimePolicy.resolve({ thread: projection.thread, modelSelection })
+                  : Effect.succeed(providerInitiated.runtimePolicy)
+              ).pipe(
+                mapDispatchError(command),
+                Effect.flatMap((resolvedRuntimePolicy) =>
+                  checkpointService.prepareRootRunScope({
+                    threadId: command.threadId,
+                    runId,
+                    rootNodeId,
+                    providerThreadId,
+                    cwd:
+                      resolvedRuntimePolicy.cwd ?? projection.thread.worktreePath ?? process.cwd(),
+                    createdAt: now,
+                  }),
+                ),
+                mapDispatchError(command),
+              );
         const run: OrchestrationV2Run = {
           id: runId,
           threadId: command.threadId,
@@ -9824,6 +9858,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const session = yield* providerSessions
           .get(command.providerSessionId)
           .pipe(mapDispatchError(command));
+        // A checkpoint needs the generation's actual directory, never a newer
+        // project default substituted for unknown native workspace ownership.
+        if (command.runtimePolicy.cwd === null || !path.isAbsolute(command.runtimePolicy.cwd))
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Provider-initiated work requires a known absolute execution directory.",
+          });
         if (
           projection.thread.archivedAt !== null ||
           projection.thread.deletedAt !== null ||
