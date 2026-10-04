@@ -19,6 +19,7 @@ import {
   ProviderInstanceId,
   RunId,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -27,6 +28,7 @@ import { makeThreadShellFixture } from "../../test-fixtures";
 import { threadJumpTarget } from "../keyboard/threadKeyboardShortcuts";
 import {
   buildThreadListV2Items,
+  threadHasUnseenCompletion,
   buildThreadListV2ListItems,
   getThreadListV2OrderedSection,
   isThreadListV2ListItem,
@@ -1931,6 +1933,11 @@ describe("thread list v2 minute tick invalidation", () => {
     const unread = makeThread({
       id: ThreadId.make("tick-unread"),
       title: "Unread completion",
+      latestCompletedAnswer: {
+        turnId: TurnId.make("tick-unread-run"),
+        messageId: MessageId.make("tick-unread-answer"),
+        completedAt: isoAt(BASE_MS - 5 * MINUTE_MS),
+      },
       lastVisitedAt: isoAt(BASE_MS - 10 * MINUTE_MS),
       latestRun: {
         runId: RunId.make("tick-unread-run"),
@@ -2133,5 +2140,60 @@ describe("buildThreadListV2ListItems row-state stamps", () => {
     expect(shelfLoading.type === "v2-settled-shelf" && shelfLoading.disabled).toBe(true);
     expect(shelfLoaded.type === "v2-settled-shelf" && shelfLoaded.disabled).toBe(false);
     expect(threadListV2ListItemsAreEqual(shelfLoading, shelfLoaded)).toBe(false);
+  });
+});
+
+describe("mobile canonical completed-answer prominence", () => {
+  const completedAt = "2026-10-04T10:00:00.000Z";
+  const latestRun = {
+    runId: RunId.make("new-run"),
+    status: "completed" as const,
+    requestedAt: null,
+    startedAt: null,
+    completedAt: "2026-10-04T12:00:00.000Z",
+    assistantMessageId: null,
+  };
+  it("retains an earlier unread answer while a newer run is answerless", () => {
+    expect(
+      threadHasUnseenCompletion(
+        makeThread({
+          id: ThreadId.make("answer"),
+          title: "Answer",
+          lastVisitedAt: "2026-10-04T09:00:00.000Z",
+          latestRun,
+          latestCompletedAnswer: {
+            turnId: TurnId.make("old-run"),
+            messageId: MessageId.make("old-answer"),
+            completedAt,
+          },
+        }),
+      ),
+    ).toBe(true);
+  });
+  it("does not mark an answerless, failed or rolled-back completion unread", () => {
+    expect(
+      threadHasUnseenCompletion(
+        makeThread({
+          id: ThreadId.make("answerless"),
+          title: "No answer",
+          lastVisitedAt: "2026-10-04T09:00:00.000Z",
+          latestRun,
+          latestCompletedAnswer: null,
+        }),
+      ),
+    ).toBe(false);
+  });
+  it("keeps legacy completion fallback only for an absent canonical field", () => {
+    expect(
+      threadHasUnseenCompletion(
+        makeThread({
+          id: ThreadId.make("legacy"),
+          title: "Legacy",
+          lastVisitedAt: "2026-10-04T09:00:00.000Z",
+          latestRun,
+          latestCompletedAnswer: undefined,
+        }),
+      ),
+    ).toBe(true);
   });
 });

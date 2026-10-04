@@ -251,9 +251,13 @@ for (const detached of [false, true]) {
             "ready",
           );
           assert.equal(projection.thread.title, "Authored title");
+          const firstAttempt = projection.attempts.find(
+            (candidate) => candidate.id === firstRun.activeAttemptId,
+          );
+          assert.ok(firstAttempt);
           const effects = yield* outbox.listByCommandId(
             mode === "held"
-              ? CommandId.make(`command:system:start-queued:${firstRun.id}`)
+              ? CommandId.make(`command:system:start-queued:${firstRun.id}:${firstAttempt.id}`)
               : commandId,
           );
           assert.deepEqual(

@@ -479,6 +479,110 @@ const completedAnswerSurvivesNewRuns = Effect.gen(function* () {
   assert.isNull((yield* store.getThreadShell(threadId))?.latestCompletedAnswer);
 });
 
+const completedAnswerWhitespaceAndOrder = Effect.gen(function* () {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const threadId = yield* addRolledBackRecoveryCandidate("answer-whitespace-order");
+  const initial = (yield* store.getThreadProjection(threadId)).runs[0];
+  assert.isDefined(initial);
+  if (!initial) return;
+  const now = yield* DateTime.now;
+  const run = { ...initial, status: "completed" as const, completedAt: now };
+  yield* store.apply({
+    id: EventId.make("answer-order-run"),
+    type: "run.updated",
+    threadId,
+    runId: run.id,
+    occurredAt: now,
+    payload: run,
+  });
+  const texts = [
+    " ",
+    "\t\r\n",
+    "\u00a0",
+    "\ufeff",
+    "\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000",
+    "\u200b",
+    "\u0000",
+    "\u0000Answer",
+    "Answer\u0000",
+  ];
+  for (const [index, text] of texts.entries()) {
+    const message = {
+      createdBy: "agent" as const,
+      creationSource: "provider" as const,
+      id: MessageId.make("answer-whitespace"),
+      threadId,
+      runId: run.id,
+      nodeId: run.rootNodeId,
+      role: "assistant" as const,
+      text,
+      attachments: [],
+      streaming: false,
+      createdAt: now,
+      updatedAt: now,
+    };
+    yield* store.apply({
+      id: EventId.make(`answer-whitespace:${index}`),
+      type: "message.updated",
+      threadId,
+      runId: run.id,
+      occurredAt: now,
+      payload: message,
+    });
+    const expected = text.trim()
+      ? { turnId: TurnId.make(run.id), messageId: message.id, completedAt: DateTime.formatIso(now) }
+      : null;
+    assert.deepEqual((yield* store.getThreadShell(threadId))?.latestCompletedAnswer, expected);
+    assert.deepEqual(
+      threadShellFromProjection(yield* store.getThreadProjection(threadId)).latestCompletedAnswer,
+      expected,
+    );
+  }
+  // Case and supplementary characters intentionally exercise binary rather than locale ordering.
+  const ids = ["z", "a", "A", "\ue000", "\u{10000}"];
+  for (const id of ids) {
+    yield* store.apply({
+      id: EventId.make(`answer-order:${id}`),
+      type: "message.updated",
+      threadId,
+      runId: run.id,
+      occurredAt: now,
+      payload: {
+        createdBy: "agent",
+        creationSource: "provider",
+        id: MessageId.make(id),
+        threadId,
+        runId: run.id,
+        nodeId: run.rootNodeId,
+        role: "assistant",
+        text: "Answer",
+        attachments: [],
+        streaming: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    const expected = {
+      turnId: TurnId.make(run.id),
+      messageId: MessageId.make(id === "A" ? "z" : id === "a" ? "z" : id),
+      completedAt: DateTime.formatIso(now),
+    };
+    assert.deepEqual((yield* store.getThreadShell(threadId))?.latestCompletedAnswer, expected);
+    assert.deepEqual(
+      (yield* store.getShellSnapshot()).threads.find((row) => row.id === threadId)
+        ?.latestCompletedAnswer,
+      expected,
+    );
+    assert.deepEqual(
+      threadShellFromProjection(yield* store.getThreadProjection(threadId)).latestCompletedAnswer,
+      expected,
+    );
+  }
+});
+it.effect("memory completed answers use ECMAScript whitespace and deterministic ID ties", () =>
+  completedAnswerWhitespaceAndOrder.pipe(Effect.provide(ProjectionStore.layerMemory)),
+);
+
 const completedQuestionsInRecoveryHistory = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const threadId = yield* addRolledBackRecoveryCandidate("question-recovery-history");
@@ -534,6 +638,11 @@ it.effect("memory shell preserves the completed answer until it is rolled back",
 );
 
 it.layer(TestLayer)("ProjectionStoreV2", (it) => {
+  it.effect(
+    "SQL completed answers match memory whitespace and deterministic ID ties",
+    () => completedAnswerWhitespaceAndOrder,
+  );
+
   it.effect(
     "SQL recovery history retains only completed submitted native questions",
     () => completedQuestionsInRecoveryHistory,

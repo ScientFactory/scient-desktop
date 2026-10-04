@@ -286,6 +286,11 @@
       "path": "apps/server/src/orchestration-v2/EffectWorker.ts",
       "anchor": "selectedScientSkillNames: message.selectedScientSkillNames",
       "purpose": "Retain the persisted selection when completed-before-steer delivery becomes a new native run; nonempty, empty and omitted cases use the actual SQL/worker path (SteeringCompletionSkills.integration.test.ts)."
+    },
+    {
+      "path": "scripts/release-smoke.ts",
+      "anchor": "\"packages/scient-skills/package.json\"",
+      "purpose": "Include the Scient Skills workspace manifest in the isolated release-smoke fixture used to validate release version updates and lockfile regeneration; release tooling owns this check."
     }
   ],
   "scientMounts": [
@@ -333,6 +338,11 @@
       "path": "apps/web/src/scient/threadQueue/nativeQueueEditItem.ts",
       "anchor": "selectedScientSkillNames: message.selectedScientSkillNames",
       "purpose": "Extract a native held message into an ordinary draft with its captured selection, including explicit empty clearing; qualify via useThreadQueue.edit.browser.test.tsx."
+    },
+    {
+      "path": "apps/web/src/scient/releaseNotes/catalog.ts",
+      "anchor": "id: \"scient-skills\"",
+      "purpose": "Retain versioned Scient Skills release copy in the release-owned catalog; this is presentation history, not execution authority."
     }
   ]
 }

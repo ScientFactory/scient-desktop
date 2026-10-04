@@ -15,6 +15,8 @@ const legacyReaders = [
   "persistence/Migrations/",
 ] as const;
 const legacyReaderFiles: Record<string, string> = {
+  "orchestration-v2/EventSink.ts":
+    "transactional inert citation and submitted-answer repairs fenced by the legacy import ledger and null native ownership",
   "persistence/reconcileV2PreviewMigration.ts":
     "transactional legacy preview-ledger schema reconciliation",
   "serverSettings.ts": "one-time provider history for settings migration",
@@ -39,7 +41,6 @@ const legacyReaderFiles: Record<string, string> = {
   "persistence/RetiredThreadAttachmentCleanup.ts": "retired legacy attachment cleanup",
   "scient/answerAttention/completedAnswerSql.ts":
     "retained V1 completed-answer query; native shells produce their own metadata",
-  "scient/projectScope/WorkspaceAuthorityProjection.ts": "legacy workspace authority projection",
   "scient/threadQueue/Ledger.ts": "legacy admission journal checks its bootstrap handoff message",
 };
 
@@ -252,8 +253,15 @@ it("keeps legacy hydration and admission imports at explicit boundaries", () => 
     "orchestration-v2/Orchestrator.ts",
     "orchestration-v2/ThreadManagementService.ts",
     "orchestration-v2/runtimeLayer.ts",
+    // Pure historical-system decoding; no native execution authority.
+    "orchestration-v2/scient-fork/ConversationForkPlan.ts",
+    // Hydrates a historical source before selecting its immutable fork boundary.
+    "orchestration-v2/scient-fork/ConversationForkService.ts",
+    // Supplies the real historical importer to the composed replay fixture.
+    "orchestration-v2/testkit/ProviderReplayHarness.ts",
     "project/ProjectService.ts",
     "scient/conversationExport/ConversationSnapshotService.ts",
+    "scient/conversationExport/conversationSnapshotProjection.ts",
     "scient/threadQueue/http.ts",
     "serverRuntimeStartup.ts",
   ]);

@@ -354,7 +354,14 @@ describe("Grok launch permission mode", () => {
           runtimePolicy,
         })
         .pipe(Effect.scoped, Effect.ignore);
-      return launches;
+      return launches.map((args) => {
+        assert.equal(args[0], "--rules");
+        assert.include(
+          args[1] ?? "",
+          "You are in Scient, a project workspace for code and science.",
+        );
+        return args;
+      });
     }).pipe(
       // Keep the launch argv unwrapped by the Linux cgroup shim.
       Effect.provideService(HostProcessPlatform, "darwin"),

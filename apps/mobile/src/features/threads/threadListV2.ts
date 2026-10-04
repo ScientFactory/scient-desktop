@@ -1,3 +1,4 @@
+import { hasUnreadCompletedAnswer } from "@t3tools/shared/orchestrationV2ThreadShell";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import {
   canSnooze,
@@ -158,16 +159,9 @@ export const THREAD_LIST_V2_SETTLED_PAGE_COUNT = 25;
  * report unread.
  */
 export function threadHasUnseenCompletion(
-  thread: Pick<EnvironmentThreadShell, "latestRun" | "lastVisitedAt">,
+  thread: Pick<EnvironmentThreadShell, "latestCompletedAnswer" | "latestRun" | "lastVisitedAt">,
 ): boolean {
-  const completedAt = thread.latestRun?.completedAt;
-  if (!completedAt) return false;
-  const completedAtMs = Date.parse(completedAt);
-  if (Number.isNaN(completedAtMs)) return false;
-  if (!thread.lastVisitedAt) return false;
-  const lastVisitedAtMs = Date.parse(thread.lastVisitedAt);
-  if (Number.isNaN(lastVisitedAtMs)) return true;
-  return completedAtMs > lastVisitedAtMs;
+  return hasUnreadCompletedAnswer(thread, thread.lastVisitedAt);
 }
 
 export function resolveThreadListV2Status(

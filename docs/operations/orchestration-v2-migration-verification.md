@@ -1,5 +1,7 @@
 # Orchestration V2 migration verification — 2026-10-03
 
+Historical record; implementation paths and checks describe its dated snapshot, not current V2 architecture.
+
 ## Status: preservation verified; final cutover qualification pending
 
 Worktree: `/Users/yaacov/REPOs/ScientFactory-worktrees/scient-t3-sync-ca7df394ed-20261003`.
