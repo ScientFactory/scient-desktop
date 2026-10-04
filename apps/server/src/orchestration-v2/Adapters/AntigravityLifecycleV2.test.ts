@@ -466,6 +466,84 @@ it.layer(layer, { excludeTestServices: true })("Antigravity native lifecycle", (
       ),
   );
   it.effect(
+    "keeps unrequested MCP absent while restoring the exact native model and mode on resume",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness();
+          const firstScope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(firstScope, Exit.void));
+          const first = yield* h.open().pipe(Scope.provide(firstScope));
+          const original = yield* first.ensureThread({
+            threadId: h.threadId,
+            modelSelection: h.modelSelection,
+            runtimePolicy: h.policy,
+          });
+          assert.isDefined(original.nativeThreadRef?.nativeId);
+          yield* Scope.close(firstScope, Exit.void);
+          const resumed = yield* h.open(original.nativeThreadRef?.nativeId ?? undefined);
+          const restored = yield* resumed.resumeThread({
+            providerThread: original,
+            threadId: h.threadId,
+            modelSelection: h.modelSelection,
+            runtimePolicy: h.policy,
+          });
+          assert.equal(restored.nativeThreadRef?.nativeId, original.nativeThreadRef?.nativeId);
+          const c = yield* collect(resumed);
+          yield* h.send(resumed, restored);
+          yield* c.wait((event) => event.type === "turn.terminal");
+          const requests = h.readLog();
+          const launches = requests.filter(
+            (request) => request.method === "session/new" || request.method === "session/resume",
+          );
+          assert.deepEqual(
+            launches.map((request) => request.method),
+            ["session/new", "session/resume"],
+          );
+          assert.deepEqual(
+            launches.map((request) => request.params?.mcpServers),
+            [[], []],
+          );
+          assert.isFalse(requests.some((request) => request.method === "session/load"));
+          assert.deepEqual(
+            requests
+              .filter((request) => request.method === "session/set_config_option")
+              .map((request) => request.params),
+            [
+              {
+                sessionId: original.nativeThreadRef?.nativeId,
+                type: "id",
+                configId: "model",
+                value: "gemini-test-high",
+              },
+              {
+                sessionId: original.nativeThreadRef?.nativeId,
+                type: "id",
+                configId: "mode",
+                value: "auto_edit",
+              },
+              {
+                sessionId: original.nativeThreadRef?.nativeId,
+                type: "id",
+                configId: "model",
+                value: "gemini-test-high",
+              },
+              {
+                sessionId: original.nativeThreadRef?.nativeId,
+                type: "id",
+                configId: "mode",
+                value: "auto_edit",
+              },
+            ],
+          );
+          assert.deepEqual(h.commands, ["plan", "logout", "plan", "logout"]);
+          const terminals = c.events.filter((event) => event.type === "turn.terminal");
+          assert.lengthOf(terminals, 1);
+          assert.equal(terminals[0]?.status, "completed");
+        }),
+      ),
+  );
+  it.effect(
     "Stop contains a native prompt blocked before dispatch and the next turn recovers",
     () =>
       Effect.scoped(
