@@ -741,6 +741,9 @@ Codex, Claude, Cursor, Antigravity, Grok, and Droid optionally expose assisted r
 capabilities on their existing provider instances. OpenCode keeps its inherited multi-provider setup.
 Pi, Oh My Pi, and Scient Agent expose assisted runtime management, but leave model-specific credentials to the
 agent rather than inventing a single account login or logout flow.
+ACP Registry agents expose supported install/remove actions for app-owned registry runtimes and use
+the configured agent's authentication capabilities. Their recorded installation owner is separate
+from generic managed-runtime catalog qualification; executable overrides remain external.
 The lifecycle extension does not create another provider registry, session router, model catalog,
 credential store, or updater.
 
