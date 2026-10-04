@@ -128,7 +128,16 @@ describe("production subject reachability", () => {
     f.write("apps/server/src/support.ts", "export const support = true;");
     f.write("apps/server/src/Dead.ts", "import './support'; export interface Dead {}");
     f.write("apps/server/src/Dead.regression.test.ts", "import './Dead'; import './support';");
-    const result = f.inspect().tests[0];
+    expect(f.inspect().tests[0].status).toBe("mixed");
+    const result = inspectLivecode({
+      ...f.options,
+      supportMetadata: {
+        "apps/server/src/Dead.regression.test.ts": {
+          reason: "Fixture construction only",
+          modules: ["apps/server/src/support.ts"],
+        },
+      },
+    }).tests[0];
     expect(result.status).toBe("dead");
     expect(result.subjects).toEqual(["apps/server/src/Dead.ts"]);
     expect(result.imports).toEqual(["apps/server/src/Dead.ts", "apps/server/src/support.ts"]);
@@ -214,14 +223,32 @@ describe("production subject reachability", () => {
     f.write("apps/server/src/used.test.ts", "import './used'; import './old-engine';");
     expect(f.test("used")).toMatchObject({
       status: "mixed",
-      subjects: ["apps/server/src/used.ts"],
-      deadSubjects: [],
+      subjects: ["apps/server/src/old-engine.ts", "apps/server/src/used.ts"],
+      deadSubjects: ["apps/server/src/old-engine.ts"],
       deadImports: ["apps/server/src/old-engine.ts"],
     });
     expect(runLivecode(["--strict"], f.options).exitCode).toBe(0);
     expect(formatReport(f.inspect())).toContain(
-      "unreachable supporting import: apps/server/src/old-engine.ts",
+      "unreachable subject: apps/server/src/old-engine.ts",
     );
+  });
+
+  it("retains directly asserted live modules alongside a named offline corpus builder", () => {
+    const f = fixture();
+    f.write("apps/server/src/main.ts", "import './contract'; import './wireContract';");
+    f.write("apps/server/src/conformance.ts", "export const buildCorpus = () => []; ");
+    f.write("apps/server/src/contract.ts", "export const normalize = () => true;");
+    f.write("apps/server/src/wireContract.ts", "export const validate = () => true;");
+    f.write(
+      "apps/server/src/conformance.test.ts",
+      "import { buildCorpus } from './conformance'; import { normalize } from './contract'; import { validate } from './wireContract'; import { expect } from 'vite-plus/test'; expect(normalize()).toBe(true); expect(validate()).toBe(true); expect(buildCorpus()).toEqual([]);",
+    );
+    expect(f.test("conformance")).toMatchObject({
+      status: "mixed",
+      liveSubjects: ["apps/server/src/contract.ts", "apps/server/src/wireContract.ts"],
+      deadSubjects: ["apps/server/src/conformance.ts"],
+    });
+    expect(runLivecode(["--strict"], f.options).exitCode).toBe(0);
   });
 
   it("resolves inherited tsconfig path aliases and ignores data and external dependencies", () => {

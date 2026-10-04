@@ -50,6 +50,32 @@ export const PRODUCTION_ENTRIES = [
   "infra/relay/src/worker.ts",
 ];
 
+// Explicit support attribution is limited to reviewed suites. Other imports
+// remain possible subjects even when one happens to match the test basename.
+export const REVIEWED_TEST_SUPPORT = {
+  "apps/server/src/orchestration/Layers/OrchestrationEngine.test.ts": {
+    reason:
+      "Identifiers, persistence and workspace setup supply engine fixtures and observations; the assertions exercise the old engine and its reactors.",
+    modules: [
+      "apps/server/src/config.ts",
+      "apps/server/src/persistence/Errors.ts",
+      "apps/server/src/persistence/Layers/OrchestrationCommandReceipts.ts",
+      "apps/server/src/persistence/Layers/OrchestrationEventStore.ts",
+      "apps/server/src/persistence/Layers/Sqlite.ts",
+      "apps/server/src/persistence/Services/OrchestrationCommandReceipts.ts",
+      "apps/server/src/persistence/Services/OrchestrationEventStore.ts",
+      "apps/server/src/project/RepositoryIdentityResolver.ts",
+      "apps/server/src/scient/threadQueue/Ledger.ts",
+      "packages/contracts/src/index.ts",
+    ],
+  },
+  "apps/server/src/orchestration/projector.test.ts": {
+    reason:
+      "Branded identifiers and event constructors build projector inputs; assertions exercise the projector's state transitions.",
+    modules: ["packages/contracts/src/index.ts"],
+  },
+};
+
 // Published packages' runtime exports are added from package.json below. At the
 // initial revision every packages/* workspace is private: its exports resolve
 // imports, but must not make unused internals live just by existing in a barrel.
@@ -438,7 +464,7 @@ function readAllowlist(root, path, tests) {
 }
 
 /** Follow helpers to the first subject boundary; subjects' dependencies are support. */
-function subjectsOf(test, graph, helpers) {
+function subjectsOf(test, graph, helpers, supportMetadata) {
   const subjects = new Set();
   const seen = new Set([test]);
   const pending = [test];
@@ -451,21 +477,27 @@ function subjectsOf(test, graph, helpers) {
     }
   }
   const imports = [...subjects].sort();
-  // Foo.test.ts and Foo.variant.test.ts conventionally test imported Foo.ts.
-  // Keep other imports as support so live schemas/SQL utilities cannot mask a
-  // dead Foo. Tests without a named subject use the whole import frontier.
-  const stem = NodePath.basename(test).replace(testPattern, "");
-  const named = imports.filter((file) => {
-    const name = NodePath.basename(file).replace(sourcePattern, "");
-    return stem === name || stem.startsWith(`${name}.`);
-  });
-  return { imports, subjects: named.length ? named : imports };
+  const support = supportMetadata[test];
+  if (
+    support &&
+    (typeof support.reason !== "string" ||
+      !support.reason.trim() ||
+      !Array.isArray(support.modules) ||
+      new Set(support.modules).size !== support.modules.length ||
+      support.modules.some((module) => !imports.includes(module)))
+  )
+    throw new Error(`Invalid reviewed support metadata for ${test}`);
+  const selected = imports.filter((file) => !support?.modules.includes(file));
+  if (support && !selected.length)
+    throw new Error(`Support metadata removes every subject of ${test}`);
+  return { imports, subjects: selected, ...(support ? { supportReason: support.reason } : {}) };
 }
 
 export function inspectLivecode({
   root = NodePath.resolve(import.meta.dirname, ".."),
   entries = PRODUCTION_ENTRIES,
   allowlist,
+  supportMetadata = REVIEWED_TEST_SUPPORT,
 } = {}) {
   root = NodePath.resolve(root);
   const { files, manifests } = inventory(root);
@@ -553,7 +585,12 @@ export function inspectLivecode({
   const testFiles = new Set([...files].filter((file) => testPattern.test(file)));
   const allowed = readAllowlist(root, allowlist, testFiles);
   const tests = [...testFiles].sort().map((test) => {
-    const { subjects, imports } = subjectsOf(test, subjectGraph, helpers);
+    const { subjects, imports, supportReason } = subjectsOf(
+      test,
+      subjectGraph,
+      helpers,
+      supportMetadata,
+    );
     const deadSubjects = subjects.filter((subject) => !reachable.has(subject));
     const liveSubjects = subjects.filter((subject) => reachable.has(subject));
     const deadImports = imports.filter((subject) => !reachable.has(subject));
@@ -572,6 +609,7 @@ export function inspectLivecode({
       deadSubjects,
       liveSubjects,
       deadImports,
+      ...(supportReason ? { supportReason } : {}),
       ...(allowed.has(test) ? { allowlistReason: allowed.get(test) } : {}),
     };
   });
