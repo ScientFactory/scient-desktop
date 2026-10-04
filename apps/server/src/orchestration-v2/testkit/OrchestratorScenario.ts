@@ -309,6 +309,26 @@ export function runOrchestratorV2Scenario(
           if (request !== undefined) {
             return request;
           }
+          // A strict replay failure can settle the latest run before its
+          // recorded request arrives. Retain legitimate background request
+          // delivery, and preserve the replay failure during scope cleanup.
+          const latestRun = projection.runs.toSorted(
+            (left, right) => right.ordinal - left.ordinal,
+          )[0];
+          if (
+            !hasActiveRun(projection) &&
+            latestRun !== undefined &&
+            ["failed", "cancelled", "interrupted"].includes(latestRun.status) &&
+            !projection.providerThreads.some(
+              (thread) => (thread.pendingBackgroundTasks?.length ?? 0) > 0,
+            )
+          ) {
+            const runState = projection.runs.map((run) => `${run.id}:${run.status}`).join(",");
+            return yield* new OrchestratorV2ScenarioStepError({
+              scenario: scenario.name,
+              step: `respond_to_next_runtime_request:${threadId}:terminal_without_request:runs=${runState}:providerTurns=${projection.providerTurns.length}`,
+            });
+          }
           if (scenarioWaitExhausted(attemptsRemaining, deadlineAt)) {
             const runState = projection.runs.map((run) => `${run.id}:${run.status}`).join(",");
             return yield* new OrchestratorV2ScenarioStepError({
@@ -608,15 +628,23 @@ export function runOrchestratorV2Scenario(
 
       const releaseReplayGate = Effect.fn("scenario.releaseReplayGate")(function* (label: string) {
         const gate = options.replayGate;
-        const reached =
-          gate === undefined ? false : yield* Effect.promise(() => gate.waitForReached(label));
-        if (!reached) {
+        if (gate === undefined) {
           return yield* new OrchestratorV2ScenarioStepError({
             scenario: scenario.name,
             step: `release_replay_gate:${label}:not_configured`,
           });
         }
-        gate?.release(label);
+        const reached = yield* Effect.promise(() => gate.waitForReached(label)).pipe(
+          Effect.timeoutOption(Duration.millis(SCENARIO_WAIT_DEADLINE_MS)),
+          Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
+        );
+        if (Option.isNone(reached) || !reached.value) {
+          return yield* new OrchestratorV2ScenarioStepError({
+            scenario: scenario.name,
+            step: `release_replay_gate:${label}:${Option.isNone(reached) ? "not_reached_within_deadline" : "not_configured"}`,
+          });
+        }
+        gate.release(label);
       });
 
       for (const step of scenarioSteps(scenario)) {

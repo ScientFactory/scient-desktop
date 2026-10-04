@@ -599,6 +599,20 @@ export const layer: Layer.Layer<
             },
           });
         });
+      const prepareHistoryBeforeStart = (runIds?: ReadonlyArray<RunId>) =>
+        Effect.gen(function* () {
+          const history = yield* Effect.result(
+            projectionStore.getTurnStartHistory(input.threadId, runIds),
+          );
+          if (history._tag === "Success") return history.success;
+          if (input.willRetry === true) return yield* history.failure;
+          yield* settleStartFailure({
+            signal: "provider-history-preparation-failure",
+            title: "Provider history could not be prepared",
+            error: history.failure,
+          });
+          return undefined;
+        });
       if (sessionResult._tag === "Failure") {
         if (input.willRetry === true) return yield* sessionResult.failure;
         yield* settleStartFailure({
@@ -609,8 +623,8 @@ export const layer: Layer.Layer<
         return;
       }
       const session = sessionResult.success;
-      // Only the provider's own thread load fails the run on the last attempt;
-      // store, id and handoff failures around it keep their typed errors.
+      // Native load failures settle the final start attempt separately from
+      // portable-history preparation. Other binding failures keep typed errors.
       const loadFromProvider = (
         load: Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapterV2Error>,
       ) =>
@@ -680,7 +694,9 @@ export const layer: Layer.Layer<
             );
             if (replacement === undefined) return undefined;
             const createdAt = yield* DateTime.now;
-            const prefix = (yield* projectionStore.getTurnStartHistory(input.threadId)).filter(
+            const history = yield* prepareHistoryBeforeStart();
+            if (history === undefined) return undefined;
+            const prefix = history.filter(
               (item) =>
                 item.runId === null ||
                 projection.runs.some(
@@ -844,6 +860,8 @@ export const layer: Layer.Layer<
           type: "provider_resume_fallback",
         });
         const createdAt = yield* DateTime.now;
+        const history = yield* prepareHistoryBeforeStart();
+        if (history === undefined) return undefined;
         const handoff = yield* contextHandoffService.prepareProviderHandoff({
           threadId: projection.thread.id,
           targetRunId: run.id,
@@ -855,7 +873,7 @@ export const layer: Layer.Layer<
           coveredRunOrdinals: { from: 1, to: Math.max(1, run.ordinal - 1) },
           strategy: "full_thread_summary",
           runs: projection.runs,
-          items: (yield* projectionStore.getTurnStartHistory(input.threadId)).filter(
+          items: history.filter(
             (item) =>
               item.runId === null ||
               projection.runs.some(
@@ -1082,19 +1100,9 @@ export const layer: Layer.Layer<
       // becomes running. A failed read must not strand a run without a native turn.
       const missedItems = yield* Effect.gen(function* () {
         if (missedRunIds.size === 0) return [];
-        const history = yield* Effect.result(
-          projectionStore.getTurnStartHistory(input.threadId, [...missedRunIds]),
-        );
-        if (history._tag === "Failure") {
-          if (input.willRetry === true) return yield* history.failure;
-          yield* settleStartFailure({
-            signal: "provider-history-preparation-failure",
-            title: "Provider history could not be prepared",
-            error: history.failure,
-          });
-          return undefined;
-        }
-        return history.success.filter(
+        const history = yield* prepareHistoryBeforeStart([...missedRunIds]);
+        if (history === undefined) return undefined;
+        return history.filter(
           (item) =>
             item.runId !== null && missedRunIds.has(item.runId) && historicalMessage(item) !== null,
         );

@@ -706,15 +706,33 @@ effectIt.effect(
         historyReadFailureAfterFallback: new Error("database unavailable"),
       });
 
-      const error = yield* harness.start.pipe(Effect.flip);
+      const error = yield* harness.startWithRetry.pipe(Effect.flip);
 
-      // The provider succeeded; the failing stage is the projection read, so
-      // the run is not failed as a provider error on the last attempt.
+      // The typed store failure stays retryable until the worker's final attempt.
       expect(error._tag).toBe("ProviderTurnStartError");
       expect((error.cause as { _tag?: string } | undefined)?._tag).toBe("ProjectionStoreReadError");
       expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
       expect(harness.projection().runs.at(-1)?.status).toBe("starting");
       expect(harness.events).toEqual([]);
+    }),
+);
+
+effectIt.effect(
+  "terminalizes the final portable-resume history failure without provider dispatch",
+  () =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        historyReadFailureAfterFallback: new Error("database unavailable"),
+      });
+      yield* harness.start;
+      expect(harness.startRootRun).not.toHaveBeenCalled();
+      expect(harness.projection().runs.at(-1)).toMatchObject({ status: "failed", startedAt: null });
+      expect(harness.projection().attempts[0]).toMatchObject({ status: "failed", startedAt: null });
+      expect(harness.projection().nodes[0]).toMatchObject({ status: "failed", startedAt: null });
+      expect(harness.projection().turnItems).toMatchObject([
+        { type: "error", title: "Provider history could not be prepared", status: "failed" },
+      ]);
     }),
 );
 
