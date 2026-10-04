@@ -895,6 +895,21 @@ Provider output comes back as internal commands such as `thread.message.assistan
 `thread.session.set`, which clients observe through `orchestration.subscribeThread`. See
 [overview.md](./overview.md) for the command/event loop.
 
+### Provider-initiated native work
+
+A native extension can start work after the previous Scient run settles. Its adapter buffers the
+new frames and offers `ProviderInitiatedWorkRequest` through the shared continuation queue. The
+server admits an independent run only while that exact provider instance, live session and native
+thread still own an idle application thread. The request has a stable work ID, a generation guard
+invalidated by Stop, and a callback that disposes a dropped buffer. Duplicate offers replay the
+same command receipt; archived, replaced or busy owners cannot acquire another run.
+
+Admission records an agent-authored system notification rather than a user message. The adapter's
+`startTurn` receives `message.notification.source.kind = "provider_work"` and its `workId`: it
+adopts the buffered native work under the admitted run/attempt identities and sends no prompt.
+Normal event ingestion, terminal settlement and Stop then use that run's ownership. Adapters must
+not project unowned frames or treat the notification text as instructions for another native turn.
+
 ### Stop ownership and confirmation
 
 Accepting an interrupt command is not evidence that execution ended. The command reactor tracks

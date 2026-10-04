@@ -15,6 +15,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
 import {
   presentPendingBackgroundWork,
+  notificationChildThreadId,
   deriveLatestThreadRun,
   deriveProviderSubagentStatus,
   formatModelSelectionEffort,
@@ -521,4 +522,10 @@ describe("presentPendingBackgroundWork", () => {
       "Waiting on a background task",
     );
   });
+});
+
+it("keeps a provider-initiated notification on its own thread", () => {
+  expect(
+    notificationChildThreadId({ kind: "provider_work", workId: "extension-work-1" }),
+  ).toBeUndefined();
 });

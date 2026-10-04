@@ -1129,6 +1129,7 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
     CommandNotificationSource,
     Schema.Struct({ kind: Schema.Literal("monitor") }),
     Schema.Struct({ kind: Schema.Literal("background_task") }),
+    Schema.Struct({ kind: Schema.Literal("provider_work"), workId: TrimmedNonEmptyString }),
     // SCIENT-FORK: a persisted, successful-but-cut-short provider response.
     Schema.Struct({
       kind: Schema.Literal("output_truncated"),
@@ -3049,6 +3050,19 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  * send them.
  */
 const OrchestrationV2InternalCommand = Schema.Union([
+  /** Adopt buffered native work from the exact live session; never send a user prompt. */
+  Schema.Struct({
+    type: Schema.Literal("provider-work.admit"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    messageId: MessageId,
+    providerThreadId: ProviderThreadId,
+    providerSessionId: ProviderSessionId,
+    providerInstanceId: ProviderInstanceId,
+    driver: ProviderDriverKind,
+    workId: TrimmedNonEmptyString,
+    detail: Schema.String,
+  }),
   Schema.Struct({
     type: Schema.Literal("legacy-queue.reorder"),
     commandId: CommandId,
