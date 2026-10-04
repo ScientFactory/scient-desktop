@@ -55,6 +55,7 @@ export const scriptedOmpRpc = (input: {
   readonly version?: string;
   readonly environment?: Readonly<Record<string, string>>;
   readonly eventFilterError?: string;
+  readonly commandError?: (frame: Frame) => string | undefined;
   readonly readyDelay?: Effect.Effect<void>;
   readonly promptError?: string;
   readonly modelsError?: string;
@@ -143,6 +144,8 @@ export const scriptedOmpRpc = (input: {
       );
       const reply = (frame: Frame, bytes: number): Uint8Array => {
         state.frames.push(frame);
+        const refused = input.commandError?.(frame);
+        if (refused) return respond(frame, undefined, refused);
         if (
           frame.type !== "get_state" &&
           frame.type !== "negotiate_protocol" &&

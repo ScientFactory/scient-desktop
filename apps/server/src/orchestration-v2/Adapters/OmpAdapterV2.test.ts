@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   OmpSettings,
+  EnvironmentId,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   MessageId,
   NodeId,
@@ -15,6 +16,10 @@ import {
   ThreadId,
   type OrchestrationV2AppThread,
 } from "@t3tools/contracts";
+import { setMcpProviderSession, clearMcpProviderSession } from "../../mcp/McpProviderSession.ts";
+import { ompProcessEnvironment } from "../../provider/omp/OmpEnvironment.ts";
+import { SCIENT_CORE_AWARENESS } from "../../provider/ScientAwareness.ts";
+import { ompScientExtensionSource } from "../../provider/omp/OmpScientExtension.ts";
 import { OMP_PENDING_CONNECTION_DETAIL } from "../../provider/omp/OmpModel.ts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
@@ -74,6 +79,12 @@ const harness = Effect.fnUntraced(function* (
   ignoreModelWrite = false,
   behavior?: {
     readonly model?: string;
+    readonly threadId?: ThreadId;
+    readonly environment?: NodeJS.ProcessEnv;
+    readonly prepareOpen?: (
+      input: Parameters<ReturnType<typeof makeOmpAdapterV2>["openSession"]>[0],
+      adapter: ReturnType<typeof makeOmpAdapterV2>,
+    ) => Effect.Effect<void>;
     readonly initialNativeThreadId?: string;
     readonly ignoreFreshWrite?: boolean;
     readonly misreportResume?: boolean;
@@ -96,16 +107,19 @@ const harness = Effect.fnUntraced(function* (
   const target = behavior?.target ?? ompTarget;
   const scientific = target.driverKind === scientAgentTarget.driverKind;
   const ownedHome = path.join(config.stateDir, "scient-agent", "instances", "scient-v2-test");
-  const environment = scientific
-    ? scientAgentProcessEnvironment({
-        root: ownedHome,
-        platform: yield* HostProcessPlatform,
-        baseEnv: { OMP_PROFILE: "foreign-omp-profile", PI_CODING_AGENT_DIR: "/foreign/omp-home" },
-      })
-    : {};
+  const environment =
+    behavior?.environment ??
+    (scientific
+      ? scientAgentProcessEnvironment({
+          root: ownedHome,
+          platform: yield* HostProcessPlatform,
+          baseEnv: { OMP_PROFILE: "foreign-omp-profile", PI_CODING_AGENT_DIR: "/foreign/omp-home" },
+        })
+      : {});
   let model = { provider: "test", id: "initial" };
   const instanceId = ProviderInstanceId.make(scientific ? "scient-v2-test" : "omp-v2-test");
-  const threadId = ThreadId.make(`omp-v2-${yield* (yield* Crypto.Crypto).randomUUIDv4}`);
+  const threadId =
+    behavior?.threadId ?? ThreadId.make(`omp-v2-${yield* (yield* Crypto.Crypto).randomUUIDv4}`);
   const modelSelection = { instanceId, model: behavior?.model ?? "test/selected" };
   const runtimePolicy = {
     cwd: config.stateDir,
@@ -220,7 +234,7 @@ const harness = Effect.fnUntraced(function* (
           return client;
         })),
   });
-  const runtime = yield* adapter.openSession({
+  const openInput = {
     threadId,
     providerSessionId: ProviderSessionId.make("omp-v2-session"),
     modelSelection,
@@ -228,7 +242,9 @@ const harness = Effect.fnUntraced(function* (
     ...(behavior?.initialNativeThreadId === undefined
       ? {}
       : { initialNativeThreadId: behavior.initialNativeThreadId }),
-  });
+  };
+  yield* behavior?.prepareOpen?.(openInput, adapter) ?? Effect.void;
+  const runtime = yield* adapter.openSession(openInput);
   const providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
   const now = yield* DateTime.now;
   const appThread: OrchestrationV2AppThread = {
@@ -293,6 +309,8 @@ const harness = Effect.fnUntraced(function* (
   });
   return {
     runtime,
+    adapter,
+    openInput,
     input,
     fs,
     path,
@@ -459,6 +477,15 @@ const nativeToolEnd = (id: string, name: string, result: unknown, isError = fals
 
 const encodeDiagnostic = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const decodeImagePath = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.String));
+const decodeNativeBootstrap = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      endpoint: Schema.NullOr(Schema.String),
+      authorization: Schema.NullOr(Schema.String),
+      awareness: Schema.String,
+    }),
+  ),
+);
 const attachedImagePaths = (message: string | undefined) =>
   (message ?? "")
     .split("\n")
@@ -1576,6 +1603,257 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
       ),
   );
 
+  for (const granted of [true, false] as const) {
+    it.effect(`loads native OMP private Scient bootstrap with a tool credential=${granted}`, () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const threadId = ThreadId.make(`native-bootstrap-${granted}`);
+          const token = "Bearer synthetic-scient-omp-token";
+          yield* Effect.addFinalizer(() => Effect.sync(() => clearMcpProviderSession(threadId)));
+          const peer = scriptedOmpRpc({
+            models: [],
+            initial: { provider: "test", id: "selected" },
+          });
+          let extension: string | undefined;
+          let bootstrap:
+            | { path: string; value: ReturnType<typeof decodeNativeBootstrap> }
+            | undefined;
+          let launch: Parameters<typeof peer.makeProcess>[0] | undefined;
+          const h = yield* harness(false, {
+            threadId,
+            environment: ompProcessEnvironment({
+              platform: "darwin",
+              baseEnv: {
+                PATH: "/usr/bin",
+                SCIENT_OMP_MCP_ENDPOINT: "http://127.0.0.1:1/inherited",
+                SCIENT_OMP_MCP_AUTHORIZATION: "Bearer inherited",
+                SCIENT_OMP_AWARENESS: "inherited awareness",
+              },
+            }),
+            prepareOpen: (input) =>
+              Effect.sync(() => {
+                if (granted)
+                  setMcpProviderSession({
+                    environmentId: EnvironmentId.make("bootstrap-environment"),
+                    threadId,
+                    providerSessionId: "bootstrap-session",
+                    providerInstanceId: input.modelSelection.instanceId,
+                    endpoint: "http://127.0.0.1:43123/mcp",
+                    authorizationHeader: token,
+                    capabilities: new Set(["preview", "skills:read", "sources:read"]),
+                    agentDeviceEnvironment: { PATH: "/scient/device-shim", PATH_SEPARATOR: ":" },
+                  });
+              }),
+            makeProcess: (options) =>
+              Effect.gen(function* () {
+                launch = options;
+                const args = options.extraArgs ?? [];
+                extension = args[args.indexOf("--extension") + 1];
+                if (!extension) return yield* Effect.die("Missing native Scient extension");
+                assert.equal(NodeFS.statSync(extension).mode & 0o777, 0o600);
+                const source = NodeFS.readFileSync(extension, "utf8");
+                const embedded = /\bSCIENT_BOOTSTRAP_PATH = ("(?:[^"\\]|\\.)*");/u.exec(
+                  source,
+                )?.[1];
+                if (!embedded) return yield* Effect.die("Missing native private bootstrap path");
+                const bootstrapPath = decodeImagePath(embedded);
+                assert.equal(NodeFS.statSync(bootstrapPath).mode & 0o777, 0o600);
+                bootstrap = {
+                  path: bootstrapPath,
+                  value: decodeNativeBootstrap(NodeFS.readFileSync(bootstrapPath, "utf8")),
+                };
+                assert.equal(source, ompScientExtensionSource(ompTarget, bootstrapPath));
+                assert.notInclude(source, "synthetic-scient-omp-token");
+                assert.notInclude(source, "http://127.0.0.1:43123/mcp");
+                NodeFS.unlinkSync(bootstrapPath);
+                return yield* peer.makeProcess(options);
+              }),
+          });
+          if (!launch || !extension || !bootstrap)
+            return yield* Effect.die("Native bootstrap was not observed");
+          assert.deepEqual(launch.extraArgs, ["--extension", extension]);
+          assert.equal(h.path.dirname(extension), NodeFS.realpathSync(launch.sessionDir!));
+          assert.equal(h.path.dirname(bootstrap.path), h.path.dirname(extension));
+          assert.notInclude(encodeDiagnostic(launch.env), "synthetic-scient-omp-token");
+          assert.deepEqual(
+            Object.keys(launch.env ?? {}).filter((name) => name.startsWith("SCIENT_")),
+            [],
+          );
+          assert.equal(launch.env?.PATH, granted ? "/scient/device-shim:/usr/bin" : "/usr/bin");
+          assert.equal(bootstrap.value.endpoint, granted ? "http://127.0.0.1:43123/mcp" : null);
+          assert.equal(bootstrap.value.authorization, granted ? token : null);
+          assert.isTrue(bootstrap.value.awareness.startsWith(SCIENT_CORE_AWARENESS));
+          assert.notInclude(bootstrap.value.awareness, "inherited awareness");
+          if (granted) {
+            assert.include(bootstrap.value.awareness, "## Scient browser");
+            assert.include(bootstrap.value.awareness, "## Scient skills");
+            assert.include(bootstrap.value.awareness, "`scient_skill_load`");
+          } else assert.equal(bootstrap.value.awareness, SCIENT_CORE_AWARENESS);
+          assert.isFalse(NodeFS.existsSync(bootstrap.path));
+        }),
+      ),
+    );
+  }
+
+  it.effect(
+    "refuses a foreign native OMP tool credential before launch and frees its lock for an immediate retry",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const threadId = ThreadId.make("native-foreign-bootstrap");
+          yield* Effect.addFinalizer(() => Effect.sync(() => clearMcpProviderSession(threadId)));
+          const peer = scriptedOmpRpc({
+            models: [],
+            initial: { provider: "test", id: "selected" },
+          });
+          let launches = 0;
+          let retry: Effect.Effect<unknown, ProviderAdapterV2Error, Scope.Scope> =
+            Effect.die("Missing native retry");
+          const refused = yield* harness(false, {
+            threadId,
+            prepareOpen: (input, adapter) =>
+              Effect.sync(() => {
+                retry = adapter.openSession(input);
+                setMcpProviderSession({
+                  environmentId: EnvironmentId.make("foreign-bootstrap-environment"),
+                  threadId,
+                  providerSessionId: "foreign-bootstrap-session",
+                  providerInstanceId: ProviderInstanceId.make("other-instance"),
+                  endpoint: "http://127.0.0.1:43123/mcp",
+                  authorizationHeader: "Bearer synthetic-foreign-native-token",
+                  capabilities: new Set(["preview"]),
+                });
+              }),
+            makeProcess: (options) => {
+              launches++;
+              return peer.makeProcess(options);
+            },
+          }).pipe(Effect.result);
+          assert.equal(refused._tag, "Failure");
+          if (refused._tag !== "Failure")
+            return yield* Effect.die("Foreign credential reached native launch");
+          assert.include(encodeDiagnostic(refused.failure), "belongs to another provider instance");
+          assert.equal(launches, 0);
+          clearMcpProviderSession(threadId);
+          yield* retry;
+          assert.equal(launches, 1);
+        }),
+      ),
+  );
+
+  for (const command of [
+    "set_subagent_subscription",
+    "new_session",
+    "get_state",
+    "get_available_commands",
+  ] as const) {
+    it.effect(`cleans native OMP ${command} startup failure before a same-owner retry`, () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const peer = scriptedOmpRpc({
+            models: [],
+            initial: { provider: "test", id: "selected" },
+            commandError: (frame) =>
+              frame.type === command ? "Synthetic startup failure" : undefined,
+          });
+          const healthy = scriptedOmpRpc({
+            models: [],
+            initial: { provider: "test", id: "selected" },
+          });
+          let launches = 0;
+          let root: string | undefined;
+          let retry: Effect.Effect<unknown, ProviderAdapterV2Error, Scope.Scope> =
+            Effect.die("Missing startup retry");
+          const refused = yield* harness(false, {
+            prepareOpen: (input, adapter) =>
+              Effect.sync(() => {
+                retry = adapter.openSession(input);
+              }),
+            makeProcess: (options) => {
+              root = options.sessionDir;
+              return (launches++ === 0 ? peer : healthy).makeProcess(options);
+            },
+          }).pipe(Effect.result);
+          assert.equal(refused._tag, "Failure");
+          assert.equal(peer.state.shutdowns, 1);
+          if (!root) return yield* Effect.die("Missing native startup root");
+          assert.isFalse(NodeFS.existsSync(`${root}/.session.lock`));
+          assert.deepEqual(
+            NodeFS.readdirSync(root).filter((file) => file.startsWith("scient-extension-")),
+            [],
+          );
+          yield* retry;
+          assert.equal(launches, 2);
+        }),
+      ),
+    );
+  }
+
+  for (const closePath of ["user-stop", "process-loss", "owner-close"] as const) {
+    it.effect(`removes native OMP private files and lock on ${closePath}`, () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const owned = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(owned, Exit.void));
+          const peer = scriptedOmpRpc({
+            models: [],
+            initial: { provider: "test", id: "selected" },
+          });
+          let root: string | undefined;
+          const h = yield* harness(false, {
+            makeProcess: (options) => {
+              root = options.sessionDir;
+              return peer.makeProcess(options);
+            },
+          }).pipe(Effect.provideService(Scope.Scope, owned));
+          if (!root) return yield* Effect.die("Missing native close root");
+          const privateFiles = () =>
+            NodeFS.readdirSync(root!).filter(
+              (file) => file.startsWith("scient-extension-") || file === ".session.lock",
+            );
+          assert.equal(privateFiles().length, 2);
+          yield* h.runtime.startTurn(h.input);
+          yield* peer.promptDelivered();
+          yield* peer.emit([{ type: "agent_start" }]);
+          const turn = yield* h.takeUntil((event) => event.type === "provider_turn.updated");
+          if (turn.type !== "provider_turn.updated")
+            return yield* Effect.die("Missing native close turn");
+          if (closePath === "user-stop")
+            yield* h.runtime.interruptTurn({
+              providerThread: h.input.providerThread,
+              providerTurnId: turn.providerTurn.id,
+            });
+          else if (closePath === "process-loss") yield* peer.close();
+          else yield* Scope.close(owned, Exit.void);
+          if (closePath !== "owner-close") {
+            const terminal = yield* h.takeUntil((event) => event.type === "turn.terminal");
+            if (terminal.type !== "turn.terminal")
+              return yield* Effect.die("Missing native close terminal");
+            assert.equal(terminal.status, closePath === "user-stop" ? "interrupted" : "failed");
+            assert.equal(h.recorded.filter((event) => event.type === "turn.terminal").length, 1);
+          }
+          yield* Effect.gen(function* () {
+            while (privateFiles().length > 0) yield* Effect.sleep("10 millis");
+          }).pipe(Effect.timeout("2 seconds"), TestClock.withLive);
+          assert.deepEqual(privateFiles(), []);
+          assert.equal(peer.state.shutdowns, 1);
+          if (closePath !== "owner-close") {
+            const replacement = scriptedOmpRpc({
+              models: [],
+              initial: { provider: "test", id: "selected" },
+            });
+            // A fresh adapter on the same native conversation must acquire the released lock.
+            yield* harness(false, {
+              threadId: h.openInput.threadId,
+              makeProcess: (options) => replacement.makeProcess(options),
+            });
+            assert.equal(replacement.state.shutdowns, 0);
+          }
+        }),
+      ),
+    );
+  }
+
   for (const scenario of [
     { version: "18.3.1", rejected: false, filters: 1 },
     { version: "18.3.1", rejected: true, filters: 1 },
@@ -1632,6 +1910,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
           }).pipe(Effect.exit, Effect.forkScoped);
           yield* Deferred.await(launched);
           yield* TestClock.adjust("8 seconds");
+          yield* Fiber.join(opening).pipe(Effect.timeout("2 seconds"), TestClock.withLive);
           const result = opening.pollUnsafe();
           assert.notEqual(result, undefined);
           if (!result) return yield* Effect.die("Startup did not settle at its deadline");
