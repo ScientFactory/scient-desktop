@@ -1280,7 +1280,8 @@ export function makePiAdapterV2(
           if (message.startsWith("scient:context-limit:")) {
             turn.contextRecoveryPending = false;
             turn.failure = makeProviderFailure({
-              message: piContextErrorMessage("context limit"),
+              message:
+                "Pi reached this model's context limit and automatic recovery could not make room. Saved messages and completed tool results are intact. Compact this conversation and then continue, or choose a larger-context model.",
               class: "provider_error",
               retryable: false,
             });
@@ -1912,6 +1913,7 @@ export function makePiAdapterV2(
             return;
           case "compaction_start": {
             if (turn === null) return;
+            yield* markTurnAccepted(turn);
             turn.settleProbeGeneration += 1;
             turn.sawCompaction = true;
             if (turn.activeCompaction !== null) {
