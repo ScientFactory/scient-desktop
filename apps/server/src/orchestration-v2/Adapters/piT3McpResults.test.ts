@@ -66,6 +66,65 @@ async function loadBridge(result: unknown, mode = "full-access") {
 }
 
 describe("native Pi MCP result fidelity", () => {
+  for (const block of [
+    {
+      type: "resource_link",
+      uri: "file:///fixture/report.pdf",
+      name: "report.pdf",
+      description: "Synthetic report",
+    },
+    {
+      type: "resource",
+      resource: {
+        uri: "fixture://report",
+        mimeType: "text/plain",
+        text: "Synthetic resource text",
+      },
+    },
+    {
+      type: "resource",
+      resource: { uri: "fixture://binary", mimeType: "application/pdf", blob: "cGRm" },
+    },
+  ]) {
+    it(`exposes ${block.type} model content while retaining the complete native result`, async () => {
+      const result = { content: [block] };
+      const bridge = await loadBridge(result);
+      const actual = await bridge.execute();
+      expect(actual.details).toEqual({ server: "t3-code", tool: "scient_fixture", result });
+      expect(actual.content).toHaveLength(1);
+      const text = actual.content[0];
+      expect(text?.type).toBe("text");
+      if (text?.type !== "text") throw new Error("Resource information must reach the model");
+      expect(text.text).toContain(block.uri ?? block.resource?.uri);
+      if (block.name) expect(text.text).toContain(block.name);
+      if (block.resource?.text) expect(text.text).toContain(block.resource.text);
+      if (block.resource?.blob) expect(text.text).not.toContain(block.resource.blob);
+    });
+  }
+
+  it("keeps mixed text, images and bounded resource text without duplicating structured snapshots", async () => {
+    const text = { type: "text", text: "Useful summary" };
+    const image = { type: "image", data: "cG5n", mimeType: "image/png" };
+    const result = {
+      content: [
+        text,
+        image,
+        { type: "resource", resource: { uri: "fixture://large", text: "x".repeat(50_000) } },
+        { type: "resource_link", uri: "fixture://overflow", name: "overflow" },
+      ],
+      structuredContent: { snapshot: "snapshot-must-not-be-duplicated" },
+    };
+    const actual = await (await loadBridge(result)).execute();
+    expect(actual.content.slice(0, 2)).toEqual([text, image]);
+    expect(actual.content).toHaveLength(3);
+    const resource = actual.content[2];
+    if (resource?.type !== "text") throw new Error("Expected bounded resource text");
+    expect(resource.text).toContain("fixture://large");
+    expect(resource.text.length).toBeLessThanOrEqual(12_000);
+    expect(resource.text).not.toContain(result.structuredContent.snapshot);
+    expect(actual.details).toEqual({ server: "t3-code", tool: "scient_fixture", result });
+  });
+
   it("keeps MCP images and complete metadata in native tool details", async () => {
     const image = { type: "image", data: "cG5n", mimeType: "image/png" };
     const result = { content: [image], structuredContent: { width: 12, height: 8 } };

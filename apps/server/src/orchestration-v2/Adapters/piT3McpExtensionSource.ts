@@ -99,14 +99,27 @@ function mcpContent(result: unknown): Array<{ type: "text"; text: string } | { t
   if (result === null || result === undefined) return [];
   if (typeof result !== "object") return [{ type: "text", text: String(result) }];
   const record = result as {
-    readonly content?: ReadonlyArray<{ readonly type?: string; readonly text?: string; readonly data?: string; readonly mimeType?: string }>;
+    readonly content?: ReadonlyArray<Record<string, unknown>>;
     readonly structuredContent?: unknown;
   };
   const content: ReturnType<typeof mcpContent> = [];
+  let resourceTextRemaining = 12_000;
   for (const part of record.content ?? []) {
     if (part.type === "text" && typeof part.text === "string") content.push({ type: "text", text: part.text });
     else if (part.type === "image" && typeof part.data === "string" && typeof part.mimeType === "string")
       content.push({ type: "image", data: part.data, mimeType: part.mimeType });
+    else if (resourceTextRemaining > 0 && (part.type === "resource_link" || part.type === "resource")) {
+      const resource = part.type === "resource" && typeof part.resource === "object" && part.resource !== null
+        ? part.resource as Record<string, unknown>
+        : part;
+      const text = ["Resource", part.name, resource.uri, part.description, resource.mimeType, resource.text]
+        .filter((value): value is string => typeof value === "string" && value.length > 0)
+        .map((value) => value.slice(0, resourceTextRemaining))
+        .join("\\n")
+        .slice(0, resourceTextRemaining);
+      content.push({ type: "text", text });
+      resourceTextRemaining -= text.length;
+    }
   }
   if (content.length === 0 && record.structuredContent !== undefined)
     content.push({ type: "text", text: JSON.stringify(record.structuredContent) });
