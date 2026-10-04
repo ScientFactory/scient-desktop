@@ -2,10 +2,11 @@
 
 > Maintainer receipt. Product workflows live in [docs/user](../user/).
 
-**Status: integration qualification in progress.** The literal upstream merge is
-committed locally. The separate owned-main catch-up, final gates, artifact review,
-technical review and isolated-app review remain open. Scoped results below are
-checkpoints; they do not declare the current working diff ready to ship.
+**Status: local candidate frozen for technical review.** The literal upstream merge
+and owned-main catch-up are committed locally. Automated gates and macOS artifact
+inspection pass as recorded below. Immutable technical review and isolated-app
+readiness remain open; integrated visual acceptance is blocked by Browser availability.
+This is a review candidate, not approval to publish.
 
 ## Candidate and ancestry
 
@@ -16,13 +17,14 @@ checkpoints; they do not declare the current working diff ready to ship.
 | Adopted upstream            | `ca7df394ed8151fa77f856beefa90bc60a785d60` — 15 commits              |
 | Literal upstream merge      | `b8fbae4ffa84414b02461cf42a0afa4b10a03fcc`                           |
 | Frozen owned-main catch-up  | `33ab8e307afbabda3e155c439d89bc788148d379` — 70 commits              |
+| Owned-main merge checkpoint | `794ff29ed2120ac2d2ee13f30488e68b17402cb7`                           |
 | Branch / upstream push      | `codex/t3-sync-ca7df394ed-20261003` / `DISABLED`                     |
 | Target tag relationship     | No exact local tag; nearest ancestor `v0.0.45-nightly.20260930.2493` |
 | Integration worktree        | `ScientFactory-worktrees/scient-t3-sync-ca7df394ed-20261003`         |
 
 The upstream merge has exact parents `ad215fd9157e86252a2ee1187e746b65c8b003be`
-and `ca7df394ed8151fa77f856beefa90bc60a785d60`. The catch-up is a separate merge
-in progress, with the frozen owned-main commit as its second parent. Neither
+and `ca7df394ed8151fa77f856beefa90bc60a785d60`. The catch-up has exact parents
+`b8fbae4ffa84414b02461cf42a0afa4b10a03fcc` and the frozen owned-main commit. Neither
 history is squash-replayed. `upstream-state.json` retains the previous qualified
 cursor until final acceptance. No push, PR, release or manual acceptance is claimed.
 
@@ -325,11 +327,9 @@ Relevant checkpoints, each superseded when its path changes:
 
 Still required before presenting the candidate as ready for manual review:
 
-1. Finish the separate owned-main merge with its literal parent; record final
-   candidate identity and advance the integration cursor only with final evidence.
-2. Run read-only Codex Sol 6.1 review on the complete immutable diff, address all
+1. Run read-only Codex Sol 6.1 review on the complete immutable diff, address all
    findings and requalify affected paths.
-3. Launch a fresh isolated development candidate, exercise changed surfaces, capture
+2. Launch a fresh isolated development candidate, exercise changed surfaces, capture
    screenshots and perform visual review. Preserve it for the owner's manual review.
 
 The built-in Browser panel reports unavailable, so the required `test-t3-app` skill

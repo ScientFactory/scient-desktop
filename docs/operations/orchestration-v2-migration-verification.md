@@ -5,7 +5,7 @@
 Worktree: `/Users/yaacov/REPOs/ScientFactory-worktrees/scient-t3-sync-ca7df394ed-20261003`.
 Branch: `codex/t3-sync-ca7df394ed-20261003`.
 
-The original preservation fixes, 69-test/nine-file report and zero-native-run JSON result below describe the migration verifier's historical snapshot in the integration worktree. They are retained as historical evidence, not a declaration that the complete V2 cutover is ready. Native V2 held-run admission and production startup qualification have since been added by the integration owner, with the later checkpoints below. The literal upstream merge is complete at `b8fbae4ffa84414b02461cf42a0afa4b10a03fcc`, retaining `ca7df394ed8151fa77f856beefa90bc60a785d60` as its upstream parent. The separate owned-main catchup to `33ab8e307afbabda3e155c439d89bc788148d379`, final immutable candidate identity and remaining whole-candidate/manual gates are tracked in the alignment receipt.
+The original preservation fixes, 69-test/nine-file report and zero-native-run JSON result below describe the migration verifier's historical snapshot in the integration worktree. They are retained as historical evidence, not a declaration that the complete V2 cutover is ready. Native V2 held-run admission and production startup qualification have since been added by the integration owner, with the later checkpoints below. The literal upstream merge is complete at `b8fbae4ffa84414b02461cf42a0afa4b10a03fcc`, retaining `ca7df394ed8151fa77f856beefa90bc60a785d60` as its upstream parent. The separate owned-main catchup to `33ab8e307afbabda3e155c439d89bc788148d379` is committed at `794ff29ed2120ac2d2ee13f30488e68b17402cb7`. Final immutable review identity and manual gates are tracked in the alignment receipt.
 
 At the original verifier snapshot's commit check, `MERGE_HEAD` was `ca7df394ed8151fa77f856beefa90bc60a785d60`. An actual `git commit --only --dry-run -- apps/server/src/orchestration-v2/legacy/LegacyV1ThreadImporter.ts` returned:
 
@@ -13,7 +13,7 @@ At the original verifier snapshot's commit check, `MERGE_HEAD` was `ca7df394ed81
 fatal: cannot do a partial commit during a merge.
 ```
 
-No migration-only commit was made by the verifier. No unrelated files were staged, unstaged, reverted, or committed by that slice. The integration owner has read this handoff, reviewed the implementation and added native held-run admission. The completed upstream checkpoint already records its literal ancestry; the pending owned-main catchup and final candidate are separate from that historical merge. The verifier's partial-commit refusal does not require a separate migration commit or an alternate ancestry construction.
+No migration-only commit was made by the verifier. No unrelated files were staged, unstaged, reverted, or committed by that slice. The integration owner has read this handoff, reviewed the implementation and added native held-run admission. The completed upstream checkpoint already records its literal ancestry; the committed owned-main catchup and final review candidate are separate from that historical merge. The verifier's partial-commit refusal does not require a separate migration commit or an alternate ancestry construction.
 
 ## Changes owned by this slice
 
