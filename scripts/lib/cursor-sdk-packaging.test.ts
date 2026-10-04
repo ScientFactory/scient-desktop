@@ -86,7 +86,12 @@ it("loads packaged Cursor and distinct bundled provider schemas without checkout
       entry,
       `
       import assert from 'node:assert/strict';
+      import { mkdir, readFile, writeFile } from 'node:fs/promises';
+      import path from 'node:path';
       import { Cursor } from ${JSON.stringify(NodePath.join(repoRoot, "apps/server/src/provider/cursorSdk.ts"))};
+      import { setClaudeSkillEnabled } from ${JSON.stringify(NodePath.join(repoRoot, "apps/server/src/provider/Drivers/ClaudeSkills.ts"))};
+      import * as Effect from ${JSON.stringify(serverRequire.resolve("effect/Effect"))};
+      import * as NodeServices from ${JSON.stringify(serverRequire.resolve("@effect/platform-node/NodeServices"))};
       import droidSchema from ${JSON.stringify(droidRequire.resolve("zod"))};
       import { AddUserMessageRequestParamsSchema } from ${JSON.stringify(serverRequire.resolve("@factory/droid-sdk"))};
       import claudeSchema from ${JSON.stringify(claudeRequire.resolve("zod"))};
@@ -103,6 +108,20 @@ it("loads packaged Cursor and distinct bundled provider schemas without checkout
       // schema entry that could bypass the package-name externalization policy.
       assert.ok(AddUserMessageRequestParamsSchema instanceof droidSchema.ZodType);
       assert.equal(AddUserMessageRequestParamsSchema.safeParse({}).success, false);
+
+      // The production Claude skill writer exercises JSONC's parser, editor
+      // and formatter from this bundle, without any checkout package fallback.
+      const claudeHome = path.join(process.env.HOME, 'claude-config');
+      await mkdir(claudeHome);
+      const settingsPath = path.join(claudeHome, 'settings.json');
+      await writeFile(settingsPath, '{\\n  // keep this comment\\n  "theme": "dark",\\n}\\n');
+      await Effect.runPromise(setClaudeSkillEnabled({
+        config: { homePath: claudeHome }, environment: {}, name: 'review', scope: 'user', enabled: false,
+      }).pipe(Effect.provide(NodeServices.layer)));
+      const settings = await readFile(settingsPath, 'utf8');
+      assert.match(settings, /keep this comment/);
+      assert.match(settings, /"theme": "dark"/);
+      assert.match(settings, /"review": "off"/);
 
       for (const [operation, request] of [
         ['Cursor.models.list', () => Cursor.models.list({ apiKey: '' })],
