@@ -3,6 +3,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import type * as PlatformError from "effect/PlatformError";
@@ -22,24 +23,6 @@ import { CLIENT_METHODS } from "./_generated/meta.gen.ts";
 import * as AcpError from "./errors.ts";
 const isAcpError = Schema.is(AcpError.AcpError);
 const isProtocolError = Schema.is(AcpSchema.Error);
-
-/**
- * Effect's generic JSON-RPC decoder represents a standard JSON-RPC error as a
- * defect because it cannot know the declared error schema for the pending RPC.
- * ACP does declare that schema, so restore matching defects to typed failures
- * before the response reaches the generated client.
- */
-const restoreAcpResponseError = (
-  message: RpcMessage.ResponseExitEncoded,
-): RpcMessage.ResponseExitEncoded => {
-  if (message.exit._tag !== "Failure") return message;
-  const cause = message.exit.cause.map((entry) =>
-    entry._tag === "Die" && isProtocolError(entry.defect)
-      ? ({ _tag: "Fail", error: entry.defect } as const)
-      : entry,
-  );
-  return { ...message, exit: { ...message.exit, cause } };
-};
 
 export interface AcpProtocolLogEvent {
   readonly direction: "incoming" | "outgoing";
@@ -739,6 +722,18 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     Effect.forkScoped,
   );
 
+  // A closed native stdin can beat stdout EOF. Prefer the child's observed
+  // exit when available, but do not let a live process delay writer failure.
+  const classifyWriterTermination = (error: AcpError.AcpError) =>
+    options.terminationError === undefined
+      ? Effect.succeed(error)
+      : options.terminationError.pipe(
+          Effect.timeoutOption("250 millis"),
+          Effect.map((exit) =>
+            Option.isSome(exit) && exit.value._tag === "AcpProcessExitedError" ? exit.value : error,
+          ),
+        );
+
   const failOutgoingWrites = (error: AcpError.AcpError) =>
     Ref.modify(outgoingWriterState, (state) => {
       const terminalError = state.terminalError ?? error;
@@ -805,11 +800,19 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
               : "Failed to write an outgoing ACP message",
             cause,
           });
-          return failOutgoingWrites(error).pipe(
-            Effect.andThen(
-              Cause.hasInterruptsOnly(cause)
-                ? Effect.void
-                : handleTermination(() => Effect.succeed(error)),
+          return (
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.succeed(error)
+              : classifyWriterTermination(error)
+          ).pipe(
+            Effect.flatMap((terminalError) =>
+              failOutgoingWrites(terminalError).pipe(
+                Effect.andThen(
+                  Cause.hasInterruptsOnly(cause)
+                    ? Effect.void
+                    : handleTermination(() => Effect.succeed(terminalError)),
+                ),
+              ),
             ),
           );
         },
@@ -826,8 +829,12 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
                       detail: "ACP output writer ended before the protocol closed",
                       cause: "Output writer ended",
                     });
-                    return failOutgoingWrites(error).pipe(
-                      Effect.andThen(handleTermination(() => Effect.succeed(error))),
+                    return classifyWriterTermination(error).pipe(
+                      Effect.flatMap((terminalError) =>
+                        failOutgoingWrites(terminalError).pipe(
+                          Effect.andThen(handleTermination(() => Effect.succeed(terminalError))),
+                        ),
+                      ),
                     );
                   })();
               return handled.pipe(

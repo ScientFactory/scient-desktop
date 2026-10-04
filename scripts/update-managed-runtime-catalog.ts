@@ -42,7 +42,11 @@ const githubOutput = process.env.GITHUB_OUTPUT?.trim();
 if (githubOutput) {
   await NodeFSP.appendFile(
     githubOutput,
-    [`changed=${result.changedProviders.length > 0}`, ""].join("\n"),
+    [
+      `changed=${result.changedProviders.length > 0}`,
+      `available=${requestedProvider === undefined || result.catalog.providers[requestedProvider] !== undefined}`,
+      "",
+    ].join("\n"),
   );
 }
 

@@ -83,6 +83,7 @@ it.layer(TestLayer, { excludeTestServices: true })("LegacyAntigravityAdapterV2",
               offer: () => Effect.die("An idle process failure must not wake a synthetic turn"),
             },
           });
+          assert.isFalse(adapter.mcpSessionInjection);
           const runtime = yield* adapter.openSession({
             threadId,
             providerSessionId: ProviderSessionId.make("agy-v2-session"),

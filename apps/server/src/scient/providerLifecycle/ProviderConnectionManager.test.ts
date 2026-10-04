@@ -103,6 +103,7 @@ function makeHarness(options?: {
   readonly refreshProvider?: (provider: ServerProvider, refreshCount: number) => ServerProvider;
   readonly failStrictRefreshAt?: number;
   readonly useProductionLayer?: boolean;
+  readonly stopProviderSessions?: ProviderRegistryShape["stopProviderSessions"];
 }) {
   return Effect.gen(function* () {
     const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(
@@ -117,15 +118,20 @@ function makeHarness(options?: {
         Effect.gen(function* () {
           yield* options?.beforeSetProviderConnectionOperation?.(input.operation) ?? Effect.void;
           yield* Ref.update(transitionsRef, (transitions) => [...transitions, input.operation]);
+          // As the registry does: a sign-in to one of a provider's accounts is
+          // published in its own field.
           return yield* Ref.updateAndGet(providersRef, (providers) =>
-            providers.map((provider) =>
-              provider.instanceId === input.instanceId && provider.connection
-                ? {
-                    ...provider,
-                    connection: { ...provider.connection, operation: input.operation },
-                  }
-                : provider,
-            ),
+            providers.map((provider) => {
+              if (provider.instanceId !== input.instanceId || !provider.connection) return provider;
+              const { accountOperation: _previous, ...connection } = provider.connection;
+              return {
+                ...provider,
+                connection:
+                  input.operation?.account === undefined
+                    ? { ...connection, operation: input.operation }
+                    : { ...connection, operation: null, accountOperation: input.operation },
+              };
+            }),
           );
         });
 
@@ -172,7 +178,7 @@ function makeHarness(options?: {
       getVoiceTranscriptCorrectionForInstance: () =>
         // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
         Effect.succeed<ProviderVoiceTranscriptCorrection | undefined>(undefined),
-      stopProviderSessions: () => Effect.void,
+      stopProviderSessions: options?.stopProviderSessions ?? (() => Effect.void),
       setProviderManagedRuntimeSummary: () => Effect.succeed([]),
       setProviderMaintenanceActionState: () => Ref.get(providersRef),
       setProviderConnectionOperation,
@@ -1525,6 +1531,505 @@ describe("ProviderConnectionManager", () => {
       yield* Fiber.join(disconnectFiber);
       assert.strictEqual(yield* lifecycleCoordinator.current(CODEX_INSTANCE), undefined);
       assert.strictEqual(yield* Ref.get(lifecycleReleaseCountRef), 1);
+    }),
+  );
+});
+
+describe("ProviderConnectionManager with a provider that lists accounts", () => {
+  const SCIENT = ProviderDriverKind.make("scient");
+  const SCIENT_INSTANCE = ProviderInstanceId.make("scient");
+  type Account = NonNullable<NonNullable<ServerProvider["connection"]>["accounts"]>[number];
+  const account = (overrides: Partial<Account> & Pick<Account, "id">): Account => ({
+    name: overrides.id,
+    kind: "account",
+    connected: false,
+    canDisconnect: false,
+    ...overrides,
+  });
+  const agentProvider = (accounts: ReadonlyArray<Account>): ServerProvider => ({
+    ...disconnectedProvider,
+    instanceId: SCIENT_INSTANCE,
+    driver: SCIENT,
+    // The provider as a whole has no single signed-in state.
+    auth: { status: "unknown", required: false },
+    connection: {
+      methods: [],
+      canDisconnect: false,
+      operation: null,
+      accounts,
+    },
+  });
+  const withAccounts = (provider: ServerProvider, accounts: ReadonlyArray<Account>) => ({
+    ...provider,
+    connection: { ...provider.connection!, accounts },
+  });
+
+  it.effect("signs in to the named account and verifies it against the provider's list", () =>
+    Effect.gen(function* () {
+      const completed = yield* Deferred.make<void, ProviderConnectionActionError>();
+      const startedWith = yield* Ref.make<ReadonlyArray<string | undefined>>([]);
+      const actions: ProviderConnectionActions = {
+        methods: ["scient_agent_account"],
+        requiresAccount: true,
+        start: (_method, requested) =>
+          Ref.update(startedWith, (previous) => [...previous, requested]).pipe(
+            Effect.as({
+              authorizationUrl: "https://auth.openai.com/codex/device",
+              authorizationUrlKind: "primary" as const,
+              initialStatus: "waiting_for_device_code" as const,
+              userCode: "ABCD-1234",
+              instructions: "Enter code: ABCD-1234",
+              waitForCompletion: Deferred.await(completed),
+              cancel: Effect.void,
+            }),
+          ),
+        disconnect: Effect.void,
+      };
+      const { manager, transitionsRef } = yield* makeHarness({
+        actions,
+        provider: agentProvider([account({ id: "openai-codex" }), account({ id: "anthropic" })]),
+        refreshProvider: (provider, refreshCount) =>
+          refreshCount >= 2
+            ? withAccounts(provider, [
+                account({ id: "openai-codex", connected: true, canDisconnect: true }),
+                account({ id: "anthropic" }),
+              ])
+            : provider,
+      });
+
+      const started = yield* manager.start({
+        instanceId: SCIENT_INSTANCE,
+        method: "scient_agent_account",
+        account: "openai-codex",
+      });
+      assert.deepStrictEqual(yield* Ref.get(startedWith), ["openai-codex"]);
+      const operation = started.providers[0]?.connection?.accountOperation;
+      // Never in the field a client that predates accounts decodes.
+      assert.strictEqual(started.providers[0]?.connection?.operation, null);
+      assert.strictEqual(operation?.account, "openai-codex");
+      assert.strictEqual(operation?.instructions, "Enter code: ABCD-1234");
+      assert.strictEqual(operation?.userCode, "ABCD-1234");
+
+      yield* Deferred.succeed(completed, undefined);
+      const transitions = yield* yieldUntil(Ref.get(transitionsRef), (items) =>
+        items.some((item) => item?.status === "connected"),
+      );
+      assert.deepStrictEqual(
+        transitions.map((item) => [item?.status ?? null, item?.account ?? null]),
+        [
+          ["starting", "openai-codex"],
+          ["waiting_for_device_code", "openai-codex"],
+          ["verifying", "openai-codex"],
+          ["connected", "openai-codex"],
+        ],
+      );
+    }),
+  );
+
+  it.effect("fails a sign-in the provider's list does not confirm", () =>
+    Effect.gen(function* () {
+      const actions: ProviderConnectionActions = {
+        methods: ["scient_agent_account"],
+        requiresAccount: true,
+        start: () =>
+          Effect.succeed({
+            initialStatus: "waiting_for_browser",
+            waitForCompletion: Effect.void,
+            cancel: Effect.void,
+          }),
+        disconnect: Effect.void,
+      };
+      const { manager, transitionsRef } = yield* makeHarness({
+        actions,
+        // Another account connecting must not count for this one.
+        provider: agentProvider([
+          account({ id: "openai-codex" }),
+          account({ id: "anthropic", connected: true }),
+        ]),
+      });
+
+      yield* manager.start({
+        instanceId: SCIENT_INSTANCE,
+        method: "scient_agent_account",
+        account: "openai-codex",
+      });
+      const transitions = yield* yieldUntil(Ref.get(transitionsRef), (items) =>
+        items.some((item) => item?.status === "failed"),
+      );
+      assert.strictEqual(
+        transitions.at(-1)?.message,
+        "The provider finished sign in, but Scient could not verify the connected account.",
+      );
+    }),
+  );
+
+  it.effect("publishes a question the provider asks after the link was shown", () =>
+    Effect.gen(function* () {
+      const asked = yield* Deferred.make<void>();
+      const completed = yield* Deferred.make<void, ProviderConnectionActionError>();
+      const answers = yield* Ref.make<ReadonlyArray<string>>([]);
+      const actions: ProviderConnectionActions = {
+        methods: ["scient_agent_account"],
+        requiresAccount: true,
+        start: () =>
+          Effect.succeed({
+            authorizationUrl: "https://auth.example.com/",
+            authorizationUrlKind: "primary" as const,
+            initialStatus: "waiting_for_browser" as const,
+            laterQuestion: Deferred.await(asked).pipe(
+              Effect.as({
+                instructions: "Paste the redirect URL",
+                submitAuthorizationCode: (code: string) =>
+                  Ref.update(answers, (previous) => [...previous, code]),
+              }),
+            ),
+            waitForCompletion: Deferred.await(completed),
+            cancel: Effect.void,
+          }),
+        disconnect: Effect.void,
+      };
+      const { manager, providersRef } = yield* makeHarness({
+        actions,
+        provider: agentProvider([account({ id: "openai-codex" })]),
+      });
+      const published = Ref.get(providersRef).pipe(
+        Effect.map((providers) => providers[0]?.connection?.accountOperation),
+      );
+
+      const started = yield* manager.start({
+        instanceId: SCIENT_INSTANCE,
+        method: "scient_agent_account",
+        account: "openai-codex",
+      });
+      const operationId = started.providers[0]!.connection!.accountOperation!.operationId;
+      assert.strictEqual(
+        started.providers[0]?.connection?.accountOperation?.acceptsAuthorizationCode,
+        false,
+      );
+      // Before the question, there is nothing to answer.
+      const early = yield* manager
+        .submitAuthorizationCode({
+          instanceId: SCIENT_INSTANCE,
+          operationId,
+          authorizationCode: "too-early",
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(early.reason, "authorization_code_not_supported");
+
+      yield* Deferred.succeed(asked, undefined);
+      const waiting = yield* yieldUntil(
+        published,
+        (operation) => operation?.acceptsAuthorizationCode === true,
+      );
+      assert.strictEqual(waiting?.instructions, "Paste the redirect URL");
+      assert.strictEqual(waiting?.account, "openai-codex");
+      assert.strictEqual(waiting?.authorizationUrl, "https://auth.example.com/");
+
+      yield* manager.submitAuthorizationCode({
+        instanceId: SCIENT_INSTANCE,
+        operationId,
+        authorizationCode: "the-answer",
+      });
+      assert.deepStrictEqual(yield* Ref.get(answers), ["the-answer"]);
+    }),
+  );
+
+  it.effect("does not reopen a cancelled sign-in for a question that comes too late", () =>
+    Effect.gen(function* () {
+      const asked = yield* Deferred.make<void>();
+      const actions: ProviderConnectionActions = {
+        methods: ["scient_agent_account"],
+        requiresAccount: true,
+        start: () =>
+          Effect.succeed({
+            initialStatus: "waiting_for_browser" as const,
+            laterQuestion: Deferred.await(asked).pipe(
+              Effect.as({ submitAuthorizationCode: () => Effect.void }),
+            ),
+            waitForCompletion: Effect.never,
+            cancel: Effect.void,
+          }),
+        disconnect: Effect.void,
+      };
+      const { manager, providersRef } = yield* makeHarness({
+        actions,
+        provider: agentProvider([account({ id: "openai-codex" })]),
+      });
+      const started = yield* manager.start({
+        instanceId: SCIENT_INSTANCE,
+        method: "scient_agent_account",
+        account: "openai-codex",
+      });
+      yield* manager.cancel({
+        instanceId: SCIENT_INSTANCE,
+        operationId: started.providers[0]!.connection!.accountOperation!.operationId,
+      });
+      yield* Deferred.succeed(asked, undefined);
+      for (let turn = 0; turn < 20; turn += 1) yield* Effect.yieldNow;
+      const operation = (yield* Ref.get(providersRef))[0]?.connection?.accountOperation;
+      assert.strictEqual(operation?.status, "cancelled");
+      assert.notStrictEqual(operation?.acceptsAuthorizationCode, true);
+    }),
+  );
+
+  it.effect("starts nothing for an account the provider does not list", () =>
+    Effect.gen(function* () {
+      const started = yield* Ref.make(0);
+      const actions: ProviderConnectionActions = {
+        methods: ["scient_agent_account"],
+        requiresAccount: true,
+        start: () =>
+          Ref.update(started, (count) => count + 1).pipe(
+            Effect.as({
+              initialStatus: "waiting_for_browser" as const,
+              waitForCompletion: Effect.void,
+              cancel: Effect.void,
+            }),
+          ),
+        disconnect: Effect.void,
+      };
+      const { manager } = yield* makeHarness({
+        actions,
+        provider: agentProvider([account({ id: "openai-codex" })]),
+      });
+
+      for (const requested of [undefined, "not-listed"]) {
+        const error = yield* manager
+          .start({
+            instanceId: SCIENT_INSTANCE,
+            method: "scient_agent_account",
+            ...(requested === undefined ? {} : { account: requested }),
+          })
+          .pipe(Effect.flip);
+        assert.strictEqual(error.reason, "invalid_method");
+      }
+      assert.strictEqual(yield* Ref.get(started), 0);
+    }),
+  );
+
+  it.effect("publishes nothing for a sign-in to no account when the list could not be read", () =>
+    Effect.gen(function* () {
+      const actions: ProviderConnectionActions = {
+        methods: ["scient_agent_account"],
+        requiresAccount: true,
+        start: () => Effect.die("must not start"),
+        disconnect: Effect.void,
+      };
+      // The latest check could not read the agent's list.
+      const { accounts: _accounts, ...connection } = agentProvider([]).connection!;
+      const { manager, transitionsRef } = yield* makeHarness({
+        actions,
+        provider: { ...agentProvider([]), connection },
+      });
+
+      for (const requested of [undefined, "openai-codex"]) {
+        const error = yield* manager
+          .start({
+            instanceId: SCIENT_INSTANCE,
+            method: "scient_agent_account",
+            ...(requested === undefined ? {} : { account: requested }),
+          })
+          .pipe(Effect.flip);
+        assert.strictEqual(error.reason, "invalid_method");
+      }
+      // No operation, so the method never reaches a field an older client decodes.
+      assert.deepStrictEqual(yield* Ref.get(transitionsRef), []);
+    }),
+  );
+
+  it.effect("takes no account for a provider that lists none", () =>
+    Effect.gen(function* () {
+      const actions: ProviderConnectionActions = {
+        methods: ["codex_browser"],
+        start: () => Effect.die("must not start"),
+        disconnect: Effect.void,
+      };
+      const { manager } = yield* makeHarness({ actions });
+      const error = yield* manager
+        .start({ instanceId: CODEX_INSTANCE, method: "codex_browser", account: "openai-codex" })
+        .pipe(Effect.flip);
+      assert.strictEqual(error.reason, "invalid_method");
+    }),
+  );
+
+  it.effect("signs out of one account and leaves the provider-wide sign-out alone", () =>
+    Effect.gen(function* () {
+      const signedOut = yield* Ref.make<ReadonlyArray<string>>([]);
+      const actions: ProviderConnectionActions = {
+        methods: ["scient_agent_account"],
+        requiresAccount: true,
+        start: () => Effect.die("must not start"),
+        disconnect: Effect.die("must not sign out of the whole provider"),
+        disconnectAccount: (requested) =>
+          Ref.update(signedOut, (previous) => [...previous, requested]),
+      };
+      const { manager, accountChangeRefreshCountRef } = yield* makeHarness({
+        actions,
+        provider: agentProvider([
+          account({ id: "openai-codex", connected: true, canDisconnect: true }),
+          // Connected through the environment: nothing is stored to remove.
+          account({ id: "anthropic", connected: true }),
+        ]),
+      });
+
+      yield* manager.disconnect({ instanceId: SCIENT_INSTANCE, account: "openai-codex" });
+      assert.deepStrictEqual(yield* Ref.get(signedOut), ["openai-codex"]);
+      assert.strictEqual(yield* Ref.get(accountChangeRefreshCountRef), 1);
+
+      for (const requested of ["anthropic", "not-listed", undefined]) {
+        const error = yield* manager
+          .disconnect({
+            instanceId: SCIENT_INSTANCE,
+            ...(requested === undefined ? {} : { account: requested }),
+          })
+          .pipe(Effect.flip);
+        assert.strictEqual(error.reason, "unsupported_provider");
+      }
+      assert.deepStrictEqual(yield* Ref.get(signedOut), ["openai-codex"]);
+    }),
+  );
+
+  const signedInAgent = () =>
+    agentProvider([account({ id: "openai-codex", connected: true, canDisconnect: true })]);
+
+  it.effect("removes an account's sign-in and then stops only its native instance", () =>
+    Effect.gen(function* () {
+      const steps = yield* Ref.make<ReadonlyArray<string>>([]);
+      const otherInstance = ProviderInstanceId.make("scient-independent-account-root");
+      const liveInstances = yield* Ref.make<ReadonlyArray<ProviderInstanceId>>([
+        SCIENT_INSTANCE,
+        otherInstance,
+      ]);
+      const note = (step: string) => Ref.update(steps, (previous) => [...previous, step]);
+      const actions: ProviderConnectionActions = {
+        methods: ["scient_agent_account"],
+        requiresAccount: true,
+        start: () => Effect.die("must not start"),
+        disconnect: Effect.die("must not sign out of the whole provider"),
+        disconnectAccount: (requested) => note(`remove ${requested}`),
+      };
+      const { manager } = yield* makeHarness({
+        actions,
+        provider: signedInAgent(),
+        closeInstance: (instanceId) =>
+          Ref.update(liveInstances, (instances) =>
+            instances.filter((id) => id !== instanceId),
+          ).pipe(Effect.andThen(note(`stop ${instanceId}`))),
+        stopProviderSessions: () => Effect.die("Independent provider instances must stay live"),
+      });
+
+      yield* manager.disconnect({ instanceId: SCIENT_INSTANCE, account: "openai-codex" });
+      assert.deepStrictEqual(yield* Ref.get(steps), [
+        "remove openai-codex",
+        `stop ${SCIENT_INSTANCE}`,
+      ]);
+      assert.deepStrictEqual(yield* Ref.get(liveInstances), [otherInstance]);
+    }),
+  );
+
+  it.live("still stops the conversations when the request is interrupted after the removal", () =>
+    Effect.gen(function* () {
+      const removing = yield* Deferred.make<void>();
+      const finishRemoval = yield* Deferred.make<void>();
+      const stopped = yield* Deferred.make<void>();
+      const actions: ProviderConnectionActions = {
+        methods: ["scient_agent_account"],
+        requiresAccount: true,
+        start: () => Effect.die("must not start"),
+        disconnect: Effect.void,
+        disconnectAccount: () =>
+          Deferred.succeed(removing, undefined).pipe(Effect.andThen(Deferred.await(finishRemoval))),
+      };
+      const { manager } = yield* makeHarness({
+        actions,
+        provider: signedInAgent(),
+        closeInstance: (instanceId) => {
+          assert.strictEqual(instanceId, SCIENT_INSTANCE);
+          return Deferred.succeed(stopped, undefined).pipe(Effect.asVoid);
+        },
+      });
+
+      const request = yield* manager
+        .disconnect({ instanceId: SCIENT_INSTANCE, account: "openai-codex" })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(removing);
+      // The client goes away while the agent is removing the sign-in.
+      const interruption = yield* Fiber.interrupt(request).pipe(Effect.forkChild);
+      // Let the interruption reach the request while the removal is still pending.
+      yield* Effect.sleep("50 millis");
+      yield* Deferred.succeed(finishRemoval, undefined);
+      yield* Fiber.join(interruption);
+      assert.isTrue(yield* Deferred.isDone(stopped));
+    }),
+  );
+
+  it.effect("stops the conversations after a sign-out that may have removed the sign-in", () =>
+    Effect.gen(function* () {
+      const stops = yield* Ref.make(0);
+      const outcome = yield* Ref.make<{ readonly maybeRemoved: boolean }>({ maybeRemoved: true });
+      const actions: ProviderConnectionActions = {
+        methods: ["scient_agent_account"],
+        requiresAccount: true,
+        start: () => Effect.die("must not start"),
+        disconnect: Effect.void,
+        disconnectAccount: () =>
+          Ref.get(outcome).pipe(
+            Effect.flatMap(({ maybeRemoved }) =>
+              Effect.fail({
+                message: "The agent did not answer.",
+                signInMayBeRemoved: maybeRemoved,
+              }),
+            ),
+          ),
+      };
+      const { manager } = yield* makeHarness({
+        actions,
+        provider: signedInAgent(),
+        closeInstance: (instanceId) => {
+          assert.strictEqual(instanceId, SCIENT_INSTANCE);
+          return Ref.update(stops, (count) => count + 1);
+        },
+      });
+      const signOut = manager
+        .disconnect({ instanceId: SCIENT_INSTANCE, account: "openai-codex" })
+        .pipe(Effect.flip);
+
+      const unknown = yield* signOut;
+      assert.strictEqual(unknown.reason, "disconnect_failed");
+      assert.strictEqual(unknown.message, "The agent did not answer.");
+      assert.strictEqual(yield* Ref.get(stops), 1);
+
+      // The agent said it kept the sign-in: running work is left alone.
+      yield* Ref.set(outcome, { maybeRemoved: false });
+      yield* signOut;
+      assert.strictEqual(yield* Ref.get(stops), 1);
+    }),
+  );
+
+  it.effect("reports a removal whose conversations could not be stopped", () =>
+    Effect.gen(function* () {
+      const actions: ProviderConnectionActions = {
+        methods: ["scient_agent_account"],
+        requiresAccount: true,
+        start: () => Effect.die("must not start"),
+        disconnect: Effect.void,
+        disconnectAccount: () => Effect.void,
+      };
+      const { manager } = yield* makeHarness({
+        actions,
+        provider: signedInAgent(),
+        closeInstance: () =>
+          Effect.fail(
+            new ProviderSessionCloseError({
+              providerSessionId: ProviderSessionId.make("scient-account-session"),
+            }),
+          ),
+      });
+      const error = yield* manager
+        .disconnect({ instanceId: SCIENT_INSTANCE, account: "openai-codex" })
+        .pipe(Effect.flip);
+      assert.strictEqual(error.reason, "disconnect_failed");
+      assert.match(error.message, /The sign-in was removed, but Scient could not stop/u);
     }),
   );
 });

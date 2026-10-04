@@ -102,4 +102,5 @@ export class ProviderConnectionActionError extends Data.TaggedError(
 )<{
   readonly message: string;
   readonly cause?: unknown;
+  readonly signInMayBeRemoved?: boolean;
 }> {}

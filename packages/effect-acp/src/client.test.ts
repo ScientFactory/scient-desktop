@@ -101,6 +101,37 @@ function concatBytes(chunks: ReadonlyArray<Uint8Array>): Uint8Array {
 }
 
 it.layer(NodeServices.layer)("effect-acp client", (it) => {
+  for (const observer of ["blocked", "defect", "throw"] as const) {
+    it.effect(`cleans pending prompts before a ${observer} termination observer`, () =>
+      Effect.gen(function* () {
+        const { stdio, input, output } = yield* makeInMemoryStdio();
+        const acknowledged = yield* Deferred.make<void>();
+        const acp = yield* AcpClient.make(stdio, {
+          onResponse: () => Deferred.succeed(acknowledged, undefined).pipe(Effect.asVoid),
+          onTermination: () => {
+            if (observer === "throw") throw new Error("observer threw");
+            return observer === "defect" ? Effect.die("observer defect") : Effect.never;
+          },
+        });
+        const pending = yield* acp.agent
+          .prompt({ sessionId: "session-1", prompt: [{ type: "text", text: "pending" }] })
+          .pipe(Effect.forkScoped);
+        const request = yield* decodePromptRequestLine(yield* Queue.take(output));
+        yield* Queue.offer(
+          input,
+          yield* encodeJsonl(PromptResponse, { jsonrpc: "2.0", id: request.id, result: {} }),
+        );
+        yield* Deferred.await(acknowledged);
+        yield* Queue.end(input);
+        const failure = yield* Fiber.join(pending).pipe(Effect.flip);
+        assert.instanceOf(failure, AcpError.AcpInputStreamEndedError);
+        const next = yield* acp.agent
+          .prompt({ sessionId: "session-1", prompt: [{ type: "text", text: "after exit" }] })
+          .pipe(Effect.flip);
+        assert.strictEqual(next, failure);
+      }),
+    );
+  }
   it.effect(
     "settles an acknowledged V2 prompt when transport closes with a termination observer",
     () =>
@@ -894,6 +925,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       );
       const initialized = yield* Fiber.join(initializeFiber);
       assert.equal(initialized.protocolVersion, protocolVersion);
+      assert.equal(yield* acp.getProtocolGeneration, 1);
       assert.equal(initialized.agentInfo?.name, "antigravity-acp");
 
       const exchange = <A, E>(effect: Effect.Effect<A, E>, method: string) =>
@@ -998,6 +1030,64 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
         }),
       );
       yield* Fiber.join(selectMode);
+
+      const option = {
+        id: "native-mode",
+        type: "select" as const,
+        name: "Mode",
+        currentValue: "yolo",
+        options: [{ value: "yolo", name: "Full access" }],
+      };
+      const groupedOption = {
+        ...option,
+        id: "native-grouped-mode",
+        options: [
+          {
+            group: "native-group",
+            name: "Native group",
+            _meta: { source: "agent" },
+            options: option.options,
+          },
+        ],
+      };
+      const configWrite = yield* acp.agent
+        .setSessionConfigOption({
+          sessionId: session.sessionId,
+          configId: option.id,
+          value: "yolo",
+        })
+        .pipe(Effect.forkScoped);
+      const configRequest = yield* Queue.take(output).pipe(
+        Effect.flatMap(
+          Schema.decodeEffect(
+            Schema.fromJsonString(jsonRpcRequest("session/set_config_option", Schema.Unknown)),
+          ),
+        ),
+      );
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(jsonRpcResponse(Schema.Unknown), {
+          jsonrpc: "2.0",
+          id: configRequest.id,
+          result: { configOptions: [option, groupedOption] },
+        }),
+      );
+      assert.deepEqual(yield* Fiber.join(configWrite), {
+        configOptions: [
+          option,
+          {
+            ...groupedOption,
+            options: [
+              {
+                groupId: "native-group",
+                name: "Native group",
+                _meta: { source: "agent" },
+                options: option.options,
+              },
+            ],
+          },
+        ],
+      });
 
       yield* acp.handleElicitation(() =>
         Effect.succeed({ action: "accept", content: { branch: "main" } }),

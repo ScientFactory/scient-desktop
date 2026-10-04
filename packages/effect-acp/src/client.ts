@@ -63,6 +63,8 @@ export type AcpRequestHandler<Request, Response> = AcpProtocol.AcpRequestHandler
 export class AcpClient extends Context.Service<
   AcpClient,
   {
+    /** Negotiated wire generation, independent of the agent's advertised version. */
+    readonly getProtocolGeneration: Effect.Effect<1 | 2 | undefined>;
     readonly raw: AcpClientRaw;
     readonly agent: {
       /**
@@ -399,9 +401,26 @@ function normalizeToolCallUpdate(update: AcpSchemaV2.ToolCallUpdate): AcpSchema.
   };
 }
 
+const isV1ConfigOption = Schema.is(AcpSchemaV1.SessionConfigOption);
+const isV1ConfigChoices = Schema.is(Schema.Array(AcpSchemaV1.SessionConfigSelectOption));
+const isV1ConfigGroups = Schema.is(Schema.Array(AcpSchemaV1.SessionConfigSelectGroup));
+const decodeMcpNotification = Schema.decodeUnknownEffect(AcpSchemaV2.MessageMcpNotification);
+
 function normalizeConfigOption(
-  option: AcpSchemaV2.SessionConfigOption,
+  option: AcpSchemaV1.SessionConfigOption | AcpSchemaV2.SessionConfigOption,
 ): AcpSchema.SessionConfigOption | undefined {
+  if (isV1ConfigOption(option)) {
+    if (option.type === "select" && isV1ConfigGroups(option.options)) {
+      return {
+        ...option,
+        options: option.options.map(({ group, ...rest }) => ({ groupId: group, ...rest })),
+      };
+    }
+    if (option.type === "select") {
+      return isV1ConfigChoices(option.options) ? { ...option, options: option.options } : undefined;
+    }
+    return option;
+  }
   if (option.type === "boolean") {
     const known = option as Extract<AcpSchemaV2.SessionConfigOption, { readonly type: "boolean" }>;
     return {
@@ -431,7 +450,9 @@ function normalizeConfigOption(
 }
 
 function normalizeConfigOptions(
-  options: ReadonlyArray<AcpSchemaV2.SessionConfigOption> | undefined,
+  options:
+    | ReadonlyArray<AcpSchemaV1.SessionConfigOption | AcpSchemaV2.SessionConfigOption>
+    | undefined,
 ): ReadonlyArray<AcpSchema.SessionConfigOption> | undefined {
   return options?.flatMap((option) => {
     const normalized = normalizeConfigOption(option);
@@ -937,21 +958,15 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
     ...(options.logger ? { logger: options.logger } : {}),
     ...(options.onIncomingRequest ? { onIncomingRequest: options.onIncomingRequest } : {}),
     onTermination: (error) =>
-      Effect.all(
-        [
-          ...Array.from(promptCompletions.values(), (completion) =>
-            Deferred.fail(completion, error).pipe(Effect.asVoid),
-          ),
-          options.onTermination?.(error) ?? Effect.void,
-        ],
-        { discard: true },
-      ).pipe(
-        Effect.tap(() =>
-          Effect.sync(() => {
-            promptCompletions.clear();
-          }),
-        ),
-      ),
+      Effect.gen(function* () {
+        yield* Effect.forEach(
+          promptCompletions.values(),
+          (completion) => Deferred.fail(completion, error),
+          { discard: true },
+        );
+        promptCompletions.clear();
+        yield* Effect.suspend(() => options.onTermination?.(error) ?? Effect.void);
+      }),
     ...(options.onOutgoingResponseFailure
       ? { onOutgoingResponseFailure: options.onOutgoingResponseFailure }
       : {}),
@@ -1118,6 +1133,7 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
   }).pipe(Effect.provideService(RpcClient.Protocol, transport.clientProtocol));
 
   return AcpClient.of({
+    getProtocolGeneration: Effect.sync(() => negotiatedProtocolGeneration),
     raw: {
       notifications: transport.incoming,
       request: transport.request,
@@ -1272,13 +1288,20 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
       // inventory is preserved as absent rather than normalized to `[]`, because
       // absence means "the agent will publish the refresh asynchronously".
       setSessionConfigOption: (payload) => {
-        const respond = (options: unknown) => {
-          const normalized = normalizeConfigOptions(
-            (options as AcpSchemaV2.SetSessionConfigOptionResponse | undefined)?.configOptions,
-          );
-          return normalized === undefined ? {} : { configOptions: normalized };
+        const respond = (response: {
+          readonly _meta?: { readonly [key: string]: unknown } | null;
+          readonly configOptions?: ReadonlyArray<
+            AcpSchemaV1.SessionConfigOption | AcpSchemaV2.SessionConfigOption
+          > | null;
+        }): AcpRpcs.LenientSetSessionConfigOptionResponseData => {
+          const normalized =
+            response.configOptions === null ? null : normalizeConfigOptions(response.configOptions);
+          return {
+            ...(response._meta === undefined ? {} : { _meta: response._meta }),
+            ...(normalized === undefined ? {} : { configOptions: normalized }),
+          };
         };
-        return (negotiatedProtocolGeneration === 1
+        return negotiatedProtocolGeneration === 1
           ? callRpc(
               AGENT_METHODS.session_set_config_option,
               rpc[AGENT_METHODS.session_set_config_option](
@@ -1291,9 +1314,7 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
                 ...payload,
                 type: "type" in payload && payload.type === "boolean" ? "boolean" : "id",
               }),
-            ).pipe(
-              Effect.map((response) => respond(response)),
-            )) as unknown as Effect.Effect<AcpRpcs.LenientSetSessionConfigOptionResponseData>;
+            ).pipe(Effect.map((response) => respond(response)));
       },
       // SCIENT-FORK:END
       prompt: (payload) =>
@@ -1355,7 +1376,7 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
     handleMcpNotification: (handler) =>
       Effect.sync(() => {
         extNotificationHandlers.set(CLIENT_METHODS.mcp_message, (params) =>
-          Schema.decodeUnknownEffect(AcpSchemaV2.MessageMcpNotification)(params).pipe(
+          decodeMcpNotification(params).pipe(
             Effect.mapError(() => AcpError.AcpRequestError.invalidParams()),
             Effect.flatMap(handler),
           ),

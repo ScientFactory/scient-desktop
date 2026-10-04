@@ -15,6 +15,9 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationV2RpcSchemas,
   OrchestrationV2ThreadDetailSnapshot,
+  OrchestrationV2HttpThreadDetailSnapshot,
+  THREAD_SNAPSHOT_FORMAT_HEADER,
+  COMPACT_THREAD_SNAPSHOT_FORMAT,
   OrchestrationV2ShellSnapshot,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2GetShellSnapshotError,
@@ -59,11 +62,17 @@ import {
   transferBudgetViolations,
   type TransferBudgetRun,
 } from "./TransferBudgetReport.integration.ts";
-import { TRANSFER_HISTORY_TURN_COUNT } from "./fixtures/transferBudget.ts";
+import {
+  TRANSFER_HISTORY_TURN_COUNT,
+  TRANSFER_HISTORY_TOOLS_PER_TURN,
+} from "./fixtures/transferBudget.ts";
 import { THREAD_ID, threadCreated, turnEvents } from "./TransferBudgetV2Fixture.integration.ts";
 
 const decodeThreadSnapshot = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadDetailSnapshot)),
+);
+const decodeHttpThreadSnapshot = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2HttpThreadDetailSnapshot)),
 );
 const decodeShellSnapshot = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ShellSnapshot)),
@@ -217,6 +226,7 @@ it.live(
   () =>
     Effect.gen(function* () {
       const runs: TransferBudgetRun[] = [];
+      const legacyMeasurements: string[] = [];
       for (const provider of [
         ProviderDriverKind.make("codex"),
         ProviderDriverKind.make("claudeAgent"),
@@ -244,9 +254,29 @@ it.live(
             const address = Context.get(server, HttpServer.HttpServer).address;
             if (!("port" in address)) return yield* Effect.die("Expected TCP server");
             const base = `http://127.0.0.1:${address.port}`;
-            const threadSnapshot = yield* measureHttpGet({
+            const legacyThreadSnapshot = yield* measureHttpGet({
               url: `${base}/api/orchestration/threads/${THREAD_ID}`,
               headers: { [ORCHESTRATION_PROTOCOL_HEADER]: String(ORCHESTRATION_PROTOCOL_VERSION) },
+            });
+            assert.equal(legacyThreadSnapshot.status, 200);
+            const legacyThread = yield* decodeThreadSnapshot(
+              Buffer.from(legacyThreadSnapshot.decodedBody).toString(),
+            );
+            legacyMeasurements.push(
+              `| ${provider} | ${legacyThreadSnapshot.decodedBodyBytes} | ${legacyThreadSnapshot.encodedBodyBytes} | ${legacyThreadSnapshot.wireBytes} |`,
+            );
+            yield* Effect.log("Legacy default full-snapshot measurement", {
+              provider,
+              rawJsonBytes: legacyThreadSnapshot.decodedBodyBytes,
+              encodedBodyBytes: legacyThreadSnapshot.encodedBodyBytes,
+              wireBytes: legacyThreadSnapshot.wireBytes,
+            });
+            const threadSnapshot = yield* measureHttpGet({
+              url: `${base}/api/orchestration/threads/${THREAD_ID}`,
+              headers: {
+                [ORCHESTRATION_PROTOCOL_HEADER]: String(ORCHESTRATION_PROTOCOL_VERSION),
+                [THREAD_SNAPSHOT_FORMAT_HEADER]: COMPACT_THREAD_SNAPSHOT_FORMAT,
+              },
             });
             assert.equal(
               threadSnapshot.status,
@@ -254,13 +284,38 @@ it.live(
               Buffer.from(threadSnapshot.decodedBody).toString(),
             );
             assert.equal(threadSnapshot.contentEncoding, "gzip");
-            const decodedThread = yield* decodeThreadSnapshot(
+            const decodedThread = yield* decodeHttpThreadSnapshot(
               Buffer.from(threadSnapshot.decodedBody).toString(),
             );
+            assert.equal(decodedThread.snapshotSequence, legacyThread.snapshotSequence);
+            assert.deepEqual(decodedThread.projection, legacyThread.projection);
+            assert.isTrue("snapshotFormat" in decodedThread);
+            if ("snapshotFormat" in decodedThread)
+              assert.equal(decodedThread.snapshotFormat, COMPACT_THREAD_SNAPSHOT_FORMAT);
             assert.equal(decodedThread.projection.messages.length, TRANSFER_HISTORY_TURN_COUNT * 2);
             assert.equal(
               decodedThread.projection.turnItems.length,
-              TRANSFER_HISTORY_TURN_COUNT * 6,
+              TRANSFER_HISTORY_TURN_COUNT * (TRANSFER_HISTORY_TOOLS_PER_TURN + 3),
+            );
+            assert.lengthOf(
+              decodedThread.projection.turnItems.filter((item) => item.type === "user_message"),
+              TRANSFER_HISTORY_TURN_COUNT,
+            );
+            assert.lengthOf(
+              decodedThread.projection.turnItems.filter(
+                (item) => item.type === "assistant_message",
+              ),
+              TRANSFER_HISTORY_TURN_COUNT,
+            );
+            assert.lengthOf(
+              decodedThread.projection.turnItems.filter(
+                (item) => item.type === "command_execution",
+              ),
+              TRANSFER_HISTORY_TURN_COUNT * TRANSFER_HISTORY_TOOLS_PER_TURN,
+            );
+            assert.lengthOf(
+              decodedThread.projection.turnItems.filter((item) => item.type === "dynamic_tool"),
+              TRANSFER_HISTORY_TURN_COUNT,
             );
             assert.notInclude(Buffer.from(threadSnapshot.decodedBody).toString(), "digest=");
             const shellSnapshot = yield* measureHttpGet({
@@ -323,6 +378,7 @@ it.live(
             assert.equal(threadMode, "snapshot"); // retained MCP payload exceeds raw replay budget
             return {
               provider,
+              startupTransport: "full-compact-http-with-live-cursor",
               threadSnapshot,
               shellSnapshot,
               measuredTurnWebSocket,
@@ -341,7 +397,15 @@ it.live(
         runs.push(run);
       }
       const fs = yield* FileSystem.FileSystem;
-      const report = formatTransferBudgetReport(runs);
+      const report = `${formatTransferBudgetReport(runs)}
+## Legacy default response comparison
+
+The same full endpoint without negotiation is retained for old clients. Its decoded projection and cursor match the compact response exactly (20 messages; 80 timeline items including 50 commands and 10 MCP results). These legacy measurements are outside the modern codec budget; the old default exceeds the 5,000 B snapshot ceiling.
+
+| Provider | Raw JSON bytes | Gzip body bytes | HTTP wire bytes |
+| --- | ---: | ---: | ---: |
+${legacyMeasurements.join("\n")}
+`;
       for (const [path, contents] of [
         [process.env.T3CODE_TRANSFER_BUDGET_REPORT_PATH, report],
         [process.env.T3CODE_TRANSFER_BUDGET_RESULT_PATH, formatTransferBudgetResult(runs)],

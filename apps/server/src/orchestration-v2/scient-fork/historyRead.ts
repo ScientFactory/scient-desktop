@@ -32,6 +32,7 @@ const HistoryItem = Schema.Struct({
   createdAt: Schema.String,
   updatedAt: Schema.String,
 });
+const decodeHistoryItems = Schema.decodeUnknownEffect(Schema.Array(HistoryItem));
 export interface HistoryPage {
   readonly items: ReadonlyArray<typeof HistoryItem.Type>;
   readonly itemCount: number;
@@ -77,7 +78,7 @@ export const readHistoryPage = Effect.fn("readScientHistoryPage")(function* (
           : sql`itemId = ${input.itemId}`
       }
       ORDER BY position LIMIT ${limit + 1}`;
-      const items = yield* Schema.decodeUnknownEffect(Schema.Array(HistoryItem))(rows);
+      const items = yield* decodeHistoryItems(rows);
       return {
         items: items.slice(0, limit),
         itemCount: count[0]?.count ?? 0,

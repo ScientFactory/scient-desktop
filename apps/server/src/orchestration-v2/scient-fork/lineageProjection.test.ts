@@ -24,6 +24,9 @@ import { runScientMigrations } from "./schema.ts";
 const NOW = "2026-01-01T00:00:00.000Z";
 const ORIGIN = ThreadId.make("origin-thread");
 const NEW = ThreadId.make("forked-thread");
+const decodeImportSource = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationConversationImportSource),
+);
 
 function forkedEvent(sequence: number): Extract<OrchestrationEvent, { type: "thread.forked" }> {
   return {
@@ -152,9 +155,7 @@ layer("scient thread lineage projection", (it) => {
       const [transfer] = yield* sql<{ readonly origin_json: string | null }>`
         SELECT origin_json FROM scient_context_transfers WHERE thread_id = ${NEW}
       `;
-      const storedSource = yield* Schema.decodeUnknownEffect(
-        Schema.fromJsonString(OrchestrationConversationImportSource),
-      )(transfer?.origin_json);
+      const storedSource = yield* decodeImportSource(transfer?.origin_json);
       assert.deepStrictEqual(storedSource, sourceImport);
       const originRow = yield* makeForkLineageQueries(sql).getForkLineageRowByThread({
         threadId: NEW,

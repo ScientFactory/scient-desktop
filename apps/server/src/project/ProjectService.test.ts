@@ -48,6 +48,7 @@ const metadataLayer = Layer.merge(
       }),
   }),
   Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+    invalidate: () => Effect.void,
     resolvePath: (workspaceRoot) => Effect.succeed(`${workspaceRoot}/favicon.svg`),
   }),
 );
@@ -519,6 +520,7 @@ it.effect(
             }),
         }),
         Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+          invalidate: () => Effect.void,
           resolvePath: (workspaceRoot) =>
             Ref.updateAndGet(faviconCalls, (count) => count + 1).pipe(
               Effect.as(`${workspaceRoot}/favicon.svg`),
@@ -596,6 +598,68 @@ it.effect(
     }),
 );
 
+it.live("returns mutations and reads while favicon enrichment is waiting", () =>
+  Effect.gen(function* () {
+    const faviconStarted = yield* Deferred.make<void>();
+    const releaseFavicon = yield* Deferred.make<void>();
+    const faviconCalls = yield* Ref.make(0);
+    const delayedMetadata = Layer.merge(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: () => Effect.succeed(null),
+      }),
+      Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        invalidate: () => Effect.void,
+        resolvePath: (workspaceRoot) =>
+          Effect.gen(function* () {
+            yield* Ref.update(faviconCalls, (count) => count + 1);
+            yield* Deferred.succeed(faviconStarted, undefined);
+            yield* Deferred.await(releaseFavicon);
+            return `${workspaceRoot}/favicon.svg`;
+          }),
+      }),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const projectId = ProjectId.make("project:delayed-favicon");
+      const creation = yield* service
+        .create({
+          commandId: CommandId.make("command:delayed-favicon:create"),
+          projectId,
+          title: "Before favicon",
+          workspaceRoot: "/work/delayed-favicon",
+        })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(faviconStarted).pipe(Effect.timeout("5 seconds"));
+      const created = yield* Fiber.join(creation).pipe(Effect.timeout("5 seconds"));
+      assert.isNull(created.faviconPath);
+      const updated = yield* service
+        .update({
+          commandId: CommandId.make("command:delayed-favicon:update"),
+          projectId,
+          title: "Updated while favicon waits",
+        })
+        .pipe(Effect.timeout("5 seconds"));
+      assert.equal(updated.title, "Updated while favicon waits");
+      assert.isNull(updated.faviconPath);
+      const immediate = Option.getOrThrow(yield* service.getById(projectId));
+      assert.isNull(immediate.faviconPath);
+      const snapshot = yield* service.snapshot.pipe(Effect.timeout("5 seconds"));
+      assert.isNull(snapshot.projects.find((project) => project.id === projectId)?.faviconPath);
+      assert.equal(yield* Ref.get(faviconCalls), 1);
+
+      yield* Deferred.succeed(releaseFavicon, undefined);
+      const resolved = yield* waitForProject(
+        service,
+        projectId,
+        (project) => project.faviconPath === "/work/delayed-favicon/favicon.svg",
+      ).pipe(Effect.timeout("5 seconds"));
+      assert.equal(resolved.title, "Updated while favicon waits");
+      assert.equal(resolved.faviconPath, "/work/delayed-favicon/favicon.svg");
+      assert.equal(yield* Ref.get(faviconCalls), 1);
+    }).pipe(Effect.provide(makeTestLayer(delayedMetadata)));
+  }),
+);
+
 it.effect("keeps project snapshots available when optional metadata enrichment fails", () =>
   Effect.gen(function* () {
     const failingMetadataLayer = Layer.merge(
@@ -603,6 +667,7 @@ it.effect("keeps project snapshots available when optional metadata enrichment f
         resolve: () => Effect.succeed(null),
       }),
       Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        invalidate: () => Effect.void,
         resolvePath: (workspaceRoot) =>
           Effect.fail(
             new ProjectFaviconResolver.ProjectFaviconResolutionError({
@@ -653,6 +718,7 @@ it.effect("invalidates workspace-derived metadata when a project moves", () =>
           ),
       }),
       Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        invalidate: () => Effect.void,
         resolvePath: (workspaceRoot) =>
           Ref.get(metadataVersion).pipe(
             Effect.map((version) => `${workspaceRoot}/favicon-v${version}.svg`),

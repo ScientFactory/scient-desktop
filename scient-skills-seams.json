@@ -44,28 +44,13 @@
     },
     {
       "path": "apps/mobile/src/state/use-thread-outbox-drain.ts",
-      "anchor": "selectedScientSkillNames",
-      "purpose": "Preserve explicit Scient skill selection when delivering mobile outbox turns."
-    },
-    {
-      "path": "apps/server/src/orchestration/Layers/ProviderCommandReactor.ts",
-      "anchor": "selectedScientSkillNames",
-      "purpose": "Forward persisted skill selection into the provider turn without changing upstream turn ownership."
-    },
-    {
-      "path": "apps/server/src/orchestration/decider.ts",
-      "anchor": "selectedScientSkillNames",
-      "purpose": "Persist optional explicit skill selection in the existing turn event."
+      "anchor": "buildExistingThreadOutboxStartTurnInput",
+      "purpose": "Deliver the captured mobile outbox payload through the shared selected-skill and dispatch helper (thread-outbox-start-turn.test.ts)."
     },
     {
       "path": "apps/web/src/proposedPlan.ts",
       "anchor": "selectedScientSkillNames",
       "purpose": "Collect explicit Scient skill selections in plan feedback submissions."
-    },
-    {
-      "path": "packages/contracts/src/orchestration.ts",
-      "anchor": "SelectedScientSkillNames",
-      "purpose": "Carry optional bounded Scient skill selections through turn commands and events."
     },
     {
       "path": "packages/contracts/src/provider.ts",
@@ -126,11 +111,6 @@
       "path": "apps/server/src/mcp/McpSessionRegistry.ts",
       "anchor": "skillScope",
       "purpose": "Bind defensive copies of exact turn skill authority to bearer credentials."
-    },
-    {
-      "path": "apps/server/src/provider/Layers/ProviderService.ts",
-      "anchor": "ScientSkillSession",
-      "purpose": "Resolve and install the exact effective skill scope before every turn."
     },
     {
       "path": "apps/server/src/provider/ProviderDriver.ts",
@@ -229,8 +209,8 @@
     },
     {
       "path": "apps/web/src/session-logic.ts",
-      "anchor": "scientSkillUsageLabel",
-      "purpose": "Label managed skill loads concisely in the existing work log."
+      "anchor": "const skillUsageLabel = scientSkillUsageLabel({",
+      "purpose": "Present managed native V2 skill-load status through the shared provider-prefix resolver and retained skill label policy (session-logic.test.ts)."
     },
     {
       "path": "packages/client-runtime/src/providerSkills.ts",
@@ -256,6 +236,93 @@
       "path": "package.json",
       "anchor": "skills:seams:check",
       "purpose": "Expose the fork seam audit as a repository command."
+    },
+    {
+      "path": "packages/contracts/src/orchestrationV2.ts",
+      "anchor": "selectedScientSkillNames",
+      "purpose": "Carry bounded selections through native messages, start, steer and queued edits (SelectedScientSkillNames.test.ts)."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/Orchestrator.ts",
+      "anchor": "selectedScientSkillNames: command.selectedScientSkillNames",
+      "purpose": "Persist captured selections atomically in native V2 command/message admission (SelectedScientSkillNames.test.ts)."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/ProviderTurnStartService.ts",
+      "anchor": "prepareScientV2SkillTurn",
+      "purpose": "Prepare exact native-turn skill authority from the persisted V2 message (SelectedScientSkillNames.test.ts)."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/ProviderTurnControlService.ts",
+      "anchor": "prepareScientV2SkillTurn",
+      "purpose": "Prepare persisted selections before native steer delivery (SelectedScientSkillNames.test.ts)."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/ProviderSessionManager.ts",
+      "anchor": "scientSkillDeliveryForProvider",
+      "purpose": "Issue/reuse skills grants only for an actual configured native MCP channel; exact live/reserved owners govern release (ProviderSessionManager.test.ts)."
+    },
+    {
+      "path": "packages/shared/src/t3McpToolPresentation.ts",
+      "anchor": "export function resolveT3McpToolName",
+      "purpose": "Resolve exact known MCP tool identities through provider prefixes without changing the generic tool inventory (t3McpToolPresentation.test.ts and session-logic.test.ts)."
+    },
+    {
+      "path": "apps/mobile/src/state/use-thread-composer-state.ts",
+      "anchor": "collectSelectedScientSkillNames",
+      "purpose": "Capture exact composer skill tokens in the persisted mobile outbox snapshot; qualify via thread-outbox-start-turn.test.ts."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/ThreadLaunchService.ts",
+      "anchor": "input.initialMessage.selectedScientSkillNames",
+      "purpose": "Carry captured initial skill selection into native bootstrap admission; qualify via ThreadLaunchService.test.ts and SelectedScientSkillNames.test.ts."
+    },
+    {
+      "path": "packages/client-runtime/src/operations/commands.ts",
+      "anchor": "selectedScientSkillNames: input.selectedScientSkillNames",
+      "purpose": "Forward selected skills in native start/steer and atomic queued edit, including explicit empty clearing; qualify via commands.test.ts and SelectedScientSkillNames.test.ts."
+    }
+  ],
+  "scientMounts": [
+    {
+      "path": "apps/mobile/src/state/thread-outbox-start-turn.ts",
+      "anchor": "selectedScientSkillNames",
+      "purpose": "Build mobile outbox commands with captured skill selections, dispatch and first-message title (thread-outbox-start-turn.test.ts)."
+    },
+    {
+      "path": "apps/server/src/orchestration/Layers/ProviderCommandReactor.ts",
+      "anchor": "selectedScientSkillNames",
+      "purpose": "Retain legacy persisted skill-selection forwarding for compatibility; native execution is mounted separately."
+    },
+    {
+      "path": "apps/server/src/orchestration/decider.ts",
+      "anchor": "selectedScientSkillNames",
+      "purpose": "Retain legacy turn-event skill selection for compatibility and migration."
+    },
+    {
+      "path": "packages/contracts/src/orchestration.ts",
+      "anchor": "SelectedScientSkillNames",
+      "purpose": "Preserve bounded skill selections in the retained V1 compatibility and migration contracts."
+    },
+    {
+      "path": "apps/server/src/provider/Layers/ProviderService.ts",
+      "anchor": "ScientSkillSession",
+      "purpose": "Retain the legacy library skill-scope planner; native V2 turn services install execution scope."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/legacy/HeldQueueAdmission.ts",
+      "anchor": "selectedScientSkillNames: command.selectedScientSkillNames",
+      "purpose": "Preserve legacy queue skill payloads as inert native held runs without minting provider authority; qualify via LegacyQueueAdmission.test.ts."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/legacy/LegacyQueueCompatibility.ts",
+      "anchor": "selectedScientSkillNames: message.selectedScientSkillNames",
+      "purpose": "Reconstruct retained queue payload from durable native messages for compatibility views and edits; qualify via LegacyQueueCompatibility.clone.test.ts."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/legacy/LegacyQueueCutover.ts",
+      "anchor": "selectedScientSkillNames: item.selectedScientSkillNames",
+      "purpose": "Carry preserved queued selections through resumable native admission rather than retaining stale V1 delivery authority; qualify via LegacyQueueAdmission.test.ts."
     }
   ]
 }

@@ -1,6 +1,5 @@
 import { projectQuestionToolInput } from "@t3tools/shared/toolActivity";
 import type {
-  OrchestrationEvent,
   OrchestrationThreadActivity,
   OrchestrationThreadDetailSnapshot,
 } from "@t3tools/contracts";
@@ -248,7 +247,7 @@ function projectPreviewToolMetadata(data: Record<string, unknown>, status: unkno
   const name = item ? `mcp__${item.server}__${item.tool}` : (data.toolName ?? data.tool);
   if (
     typeof name !== "string" ||
-    !/^(?:mcp__)?(?:t3-code|t3_code|t3code)_{1,2}preview_(?:open|navigate|status|snapshot|click|type|press|scroll|resize|set_appearance|evaluate|wait_for|recording_start|recording_stop)$/.test(
+    !/^(?:mcp__)?(?:scient|t3-code|t3_code|t3code)_{1,2}preview_(?:open|navigate|status|snapshot|click|type|press|scroll|resize|set_appearance|evaluate|wait_for|recording_start|recording_stop)$/.test(
       name,
     )
   )
@@ -659,31 +658,6 @@ export function projectThreadDetailSnapshot(
       activities: dropSupersededToolUpdatedActivities(
         dropStaleContextWindowActivities(snapshot.thread.activities),
       ).map(projectActivityPayload),
-    },
-  };
-}
-
-export function projectActivityEvent(
-  event: OrchestrationEvent,
-  reasoningMessages = true,
-): OrchestrationEvent {
-  // Preserve sequence watermarks and message identities for clients whose role
-  // decoder predates reasoning. Filtering would strand their history pages.
-  if (
-    !reasoningMessages &&
-    event.type === "thread.message-sent" &&
-    event.payload.role === "reasoning"
-  ) {
-    return { ...event, payload: { ...event.payload, role: "system" } };
-  }
-  if (event.type !== "thread.activity-appended") {
-    return event;
-  }
-  return {
-    ...event,
-    payload: {
-      ...event.payload,
-      activity: projectActivityPayload(event.payload.activity),
     },
   };
 }

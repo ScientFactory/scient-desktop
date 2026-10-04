@@ -156,5 +156,3 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
 
 export const makeProviderSessionReaperLive = (options?: ProviderSessionReaperLiveOptions) =>
   Layer.effect(ProviderSessionReaper, makeProviderSessionReaper(options));
-
-export const ProviderSessionReaperLive = makeProviderSessionReaperLive();

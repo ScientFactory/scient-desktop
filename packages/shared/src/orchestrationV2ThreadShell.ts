@@ -161,7 +161,7 @@ export function threadShellFromProjection(
 }
 
 /** A newer unfinished run does not replace the last successful root answer. */
-export function latestCompletedAnswerFromProjection(projection: OrchestrationV2ThreadProjection) {
+function latestCompletedAnswerFromProjection(projection: OrchestrationV2ThreadProjection) {
   const nodes = new Map(projection.nodes.map((node) => [node.id, node]));
   const completedRuns = projection.runs
     .filter((run) => run.status === "completed" && run.completedAt !== null)

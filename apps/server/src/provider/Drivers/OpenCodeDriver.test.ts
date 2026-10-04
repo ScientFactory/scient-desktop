@@ -75,6 +75,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
     Effect.gen(function* () {
       serverStarts.length = 0;
       const instance = yield* create({}, noHttp);
+      assert.isTrue(instance.orchestrationAdapter.mcpSessionInjection);
       // Text generation goes to the instance's 2.x server, which this test refuses to start.
       yield* Effect.flip(
         instance.textGeneration.generateThreadTitle({
@@ -101,6 +102,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         server,
       );
 
+      assert.isFalse(instance.orchestrationAdapter.mcpSessionInjection);
       const workspace = yield* instance.snapshotForCwd!("/work");
       assert.includeMembers(
         workspace.skills.map((skill) => skill.name),

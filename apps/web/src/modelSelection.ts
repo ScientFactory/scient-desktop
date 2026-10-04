@@ -302,7 +302,8 @@ export function resolveAppModelSelection(
 ): string {
   const resolvedProvider = resolveSelectableProvider(providers, provider);
   const options = getAppModelOptions(settings, providers, resolvedProvider, selectedModel);
-  if (resolvedProvider === "pi" || resolvedProvider === "omp") {
+  if (resolvedProvider === "pi" || resolvedProvider === "omp" || resolvedProvider === "scient") {
+    if (options.length === 0) return "";
     return (
       resolveSelectableModel(resolvedProvider, selectedModel, options) ??
       resolveAutomaticModel(resolvedProvider, options) ??
@@ -458,10 +459,11 @@ export function resolveAppModelSelectionState(
       ) ??
       getAppModelOptionsForInstance(settings, entry).find((model) => !model.unavailableReason)
         ?.slug ??
-      // Pi/OMP automatic markers are resolved from a discovered catalog. Do
+      // Native agent automatic markers are resolved from a discovered catalog. Do
       // not render one as a selectable native model before discovery succeeds.
       (entry.driverKind === "pi" ||
       entry.driverKind === "omp" ||
+      entry.driverKind === "scient" ||
       (entry.models.length > 0 && entry.models.every((model) => model.unavailableReason))
         ? undefined
         : DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[entry.driverKind]);

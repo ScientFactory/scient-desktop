@@ -29,7 +29,7 @@ import {
 } from "../ProviderDriver.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
 
-export const kind = ProviderDriverKind.make("native-lifetime-test");
+const kind = ProviderDriverKind.make("native-lifetime-test");
 export const first = ProviderInstanceId.make("native-first");
 export const second = ProviderInstanceId.make("native-second");
 const configSchema = Schema.Struct({ revision: Schema.Number });
@@ -104,6 +104,8 @@ export const harness = Effect.fnUntraced(function* (options?: {
             driver: kind,
             idAllocator,
             defaultCwd: "/workspace",
+            // This scripted native transport captures the host credential during open.
+            mcpSessionInjection: true,
             capabilities: AcpProviderCapabilitiesV2,
             continuations: { offer: () => Effect.void },
             open: (input) =>

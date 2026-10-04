@@ -15,9 +15,10 @@ import * as DateTime from "effect/DateTime";
 import type * as FileSystem from "effect/FileSystem";
 import type * as Path from "effect/Path";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import type { ServerConfig } from "../../config.ts";
+import { ServerConfig } from "../../config.ts";
+import { listScientThreadQueue } from "../../scient/threadQueue/Store.ts";
 import { readQueue, writeQueue } from "../../scient/threadQueue/Ledger.ts";
-import { enqueueQueue } from "../../scient/threadQueue/operations.ts";
+import { enqueueQueue } from "../../scient/threadQueue/admission.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { ThreadManagementService } from "../ThreadManagementService.ts";
 import { EventSinkV2 } from "../EventSink.ts";
@@ -61,6 +62,25 @@ export const makeLegacyQueueCompatibility = Effect.gen(function* () {
       });
     if (request.method !== "list" && projection.thread.archivedAt !== null)
       return yield* new ScientThreadQueueOperationError({ message: "Unarchive the thread first." });
+    if (request.method === "list") {
+      const recoveryError = () =>
+        new ScientThreadQueueOperationError({
+          message:
+            "Saved queued work requires recovery and has been retained. Keep your recovery backup and restart Scient to retry admission. If this persists, request recovery support before sending these messages again.",
+        });
+      const document = yield* readQueue(threadId).pipe(Effect.mapError(() => recoveryError()));
+      if (document.items.length > 0) return yield* recoveryError();
+      if (!document.migrated) {
+        const config = yield* ServerConfig;
+        const legacy = yield* Effect.tryPromise(() =>
+          listScientThreadQueue({
+            stateDir: config.stateDir,
+            threadId,
+          }),
+        ).pipe(Effect.mapError(() => recoveryError()));
+        if (legacy.items.length > 0) return yield* recoveryError();
+      }
+    }
     const commandId = CommandId.make(`legacy-queue-api:${yield* randomUuidV4}`);
     const ownedRuns = projection.runs.filter((run) => run.legacyQueue !== undefined);
     if (request.method === "enqueue") {

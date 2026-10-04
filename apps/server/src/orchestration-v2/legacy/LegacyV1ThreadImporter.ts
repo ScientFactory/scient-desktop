@@ -492,6 +492,7 @@ const make = Effect.gen(function* () {
       INNER JOIN orchestration_v2_projection_threads AS projection
         ON projection.thread_id = legacy_import.thread_id
       WHERE json_type(projection.payload_json, '$.pinnedAt') IS NULL
+         OR json_type(projection.payload_json, '$.autoSettleDisabledAt') IS NULL
          OR json_type(projection.payload_json, '$.pinOrderKey') IS NULL
          OR json_type(projection.payload_json, '$.snoozedUntil') IS NULL
          OR json_type(projection.payload_json, '$.snoozedAt') IS NULL

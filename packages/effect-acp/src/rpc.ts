@@ -26,7 +26,7 @@ import { AGENT_METHODS, CLIENT_METHODS } from "./_generated/meta.gen.ts";
  */
 export interface LenientSetSessionConfigOptionResponseData {
   readonly _meta?: { readonly [x: string]: unknown } | null;
-  readonly configOptions?: ReadonlyArray<AcpSchema.SessionConfigOption> | null;
+  readonly configOptions?: ReadonlyArray<AcpCompat.SessionConfigOption> | null;
 }
 export const LenientSetSessionConfigOptionResponse = Schema.Struct({
   _meta: Schema.optionalKey(
@@ -34,6 +34,19 @@ export const LenientSetSessionConfigOptionResponse = Schema.Struct({
   ),
   configOptions: Schema.optionalKey(
     Schema.Union([Schema.Array(AcpSchema.SessionConfigOption), Schema.Null]),
+  ),
+});
+
+/** The compatibility client accepts inventories from either negotiated generation. */
+const CompatSetSessionConfigOptionResponse = Schema.Struct({
+  _meta: Schema.optionalKey(
+    Schema.Union([Schema.Record(Schema.String, Schema.Unknown), Schema.Null]),
+  ),
+  configOptions: Schema.optionalKey(
+    Schema.Union([
+      Schema.Array(Schema.Union([AcpSchemaV1.SessionConfigOption, AcpSchema.SessionConfigOption])),
+      Schema.Null,
+    ]),
   ),
 });
 
@@ -289,7 +302,7 @@ const CompatSetSessionConfigOptionRpc = Rpc.make(AGENT_METHODS.session_set_confi
     AcpSchema.SetSessionConfigOptionRequest,
     AcpSchemaV1.SetSessionConfigOptionRequest,
   ]),
-  success: LenientSetSessionConfigOptionResponse,
+  success: CompatSetSessionConfigOptionResponse,
   error: AcpSchema.Error,
 });
 

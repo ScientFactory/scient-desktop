@@ -126,7 +126,17 @@ export function resolveProviderRuntimeForPresentation(
   return localRuntime;
 }
 
-function runtimeSourceLabel(runtime: ProviderRuntimeSummary): string {
+function runtimeSourceLabel(
+  runtime: ProviderRuntimeSummary,
+  driver: ServerProvider["driver"],
+): string {
+  if (driver === "cursor") {
+    if (runtime.source === "scient_managed") return "Cursor CLI managed by Scient";
+    if (runtime.source === "system") return "System Cursor CLI";
+    if (runtime.source === "custom") return "Custom Cursor CLI";
+    if (runtime.source === "missing") return "Cursor CLI not installed";
+    return "Cursor CLI status unavailable";
+  }
   if (runtime.source === "scient_managed") return "Managed by Scient";
   if (runtime.source === "system") return "System installation";
   if (runtime.source === "custom") return "Custom installation";
@@ -151,6 +161,9 @@ export function ProviderRuntimeSection(props: {
   readonly onActionSucceeded?: (action: ProviderManagedRuntimeAction) => void;
   readonly onPlanOpenChange?: (open: boolean) => void;
 }) {
+  const { environmentId, provider, onActionSucceeded, onPlanOpenChange } = props;
+  const runtimeDisplayName =
+    provider.driver === "cursor" ? `${props.displayName} CLI` : props.displayName;
   const planRuntime = useAtomCommand(serverEnvironment.planProviderRuntime, {
     reportFailure: false,
   });
@@ -168,13 +181,13 @@ export function ProviderRuntimeSection(props: {
     useState<OptimisticProviderValue<ProviderRuntimeSummary> | null>(null);
   const [localFailure, setLocalFailure] = useState<LocalRuntimeFailure | null>(null);
   const [startedOperation, setStartedOperation] = useState<StartedRuntimeOperation | null>(null);
-  const providerInstanceIdRef = useRef(props.provider.instanceId);
+  const providerInstanceIdRef = useRef(provider.instanceId);
   const initialPlanRequestRef = useRef<string | null>(null);
   const reportedOperationIdRef = useRef<ProviderRuntimeOperation["operationId"] | null>(null);
 
   useEffect(() => {
-    if (providerInstanceIdRef.current === props.provider.instanceId) return;
-    providerInstanceIdRef.current = props.provider.instanceId;
+    if (providerInstanceIdRef.current === provider.instanceId) return;
+    providerInstanceIdRef.current = provider.instanceId;
     setPendingAction(null);
     setPreparedPlan(null);
     setLocalRuntimeSnapshot(null);
@@ -182,13 +195,13 @@ export function ProviderRuntimeSection(props: {
     setStartedOperation(null);
     initialPlanRequestRef.current = null;
     reportedOperationIdRef.current = null;
-  }, [props.provider.instanceId]);
+  }, [provider.instanceId]);
 
-  const serverRuntime = props.provider.connection?.runtime;
+  const serverRuntime = provider.connection?.runtime;
   // A command result bridges the transport delay only while the provider prop
   // is still the exact snapshot from which that command started. Once the
   // provider-status stream replaces it, the canonical server snapshot wins.
-  const localRuntime = currentOptimisticProviderValue(localRuntimeSnapshot, props.provider);
+  const localRuntime = currentOptimisticProviderValue(localRuntimeSnapshot, provider);
   const serverOperation = serverRuntime?.operation;
   const startedOperationId = startedOperation?.operationId;
   const startedOperationAction = startedOperation?.action;
@@ -203,29 +216,23 @@ export function ProviderRuntimeSection(props: {
       reportedOperationIdRef.current !== serverOperation.operationId
     ) {
       reportedOperationIdRef.current = serverOperation.operationId;
-      if (startedOperationAction) props.onActionSucceeded?.(startedOperationAction);
+      if (startedOperationAction) onActionSucceeded?.(startedOperationAction);
     }
-  }, [
-    props.onActionSucceeded,
-    serverOperation?.operationId,
-    serverOperation?.status,
-    startedOperationAction,
-    startedOperationId,
-  ]);
+  }, [onActionSucceeded, serverOperation, startedOperationAction, startedOperationId]);
   const runtime = useMemo(
     () => resolveProviderRuntimeForPresentation(serverRuntime, localRuntime),
     [localRuntime, serverRuntime],
   );
 
-  if (!runtime) return null;
-
-  const operation = runtime.operation;
+  const operation = runtime?.operation ?? null;
+  const runtimeActions = runtime?.actions;
+  const runtimeSource = runtime?.source;
   const activeOperation = isActiveProviderRuntimeOperation(operation) ? operation : null;
   const plan =
-    !activeOperation && preparedPlan && runtime.actions.includes(preparedPlan.action)
+    !activeOperation && preparedPlan && runtimeActions?.includes(preparedPlan.action)
       ? preparedPlan
       : null;
-  const localError = localRuntimeFailureMessage(localFailure, runtime);
+  const localError = runtime ? localRuntimeFailureMessage(localFailure, runtime) : null;
   const progress =
     activeOperation?.downloadedBytes !== undefined && activeOperation.totalBytes !== undefined
       ? Math.min(
@@ -240,13 +247,14 @@ export function ProviderRuntimeSection(props: {
 
   const startPlan = useCallback(
     async (nextPlan: ProviderRuntimePlan) => {
-      const operationId = runtime.operation?.operationId ?? null;
+      if (!runtimeActions?.includes(nextPlan.action)) return;
+      const operationId = operation?.operationId ?? null;
       setLocalFailure(null);
       setPendingAction("start");
       const result = await startRuntime({
-        environmentId: props.environmentId,
+        environmentId,
         input: {
-          instanceId: props.provider.instanceId,
+          instanceId: provider.instanceId,
           action: nextPlan.action,
           catalogRevision: nextPlan.catalogRevision,
           // Reached only from the decision that showed both releases.
@@ -259,13 +267,13 @@ export function ProviderRuntimeSection(props: {
           // The system runtime changed since the plan: show the switch as it
           // is now, for a new decision, instead of starting or failing it.
           const replanned = await planRuntime({
-            environmentId: props.environmentId,
-            input: { instanceId: props.provider.instanceId, action: nextPlan.action },
+            environmentId,
+            input: { instanceId: provider.instanceId, action: nextPlan.action },
           });
           if (replanned._tag === "Success" && replanned.value.systemVersion !== undefined) {
             setPendingAction(null);
             setPreparedPlan(replanned.value);
-            props.onPlanOpenChange?.(true);
+            onPlanOpenChange?.(true);
             return;
           }
         }
@@ -277,13 +285,13 @@ export function ProviderRuntimeSection(props: {
             operationId,
             message: providerLifecycleFailureMessage(
               failure,
-              `Scient could not start the ${props.displayName} runtime operation.`,
+              `Scient could not start the ${runtimeDisplayName} runtime operation.`,
             ),
           });
         }
         return;
       }
-      const nextRuntime = runtimeFromResult(result.value.providers, props.provider.instanceId);
+      const nextRuntime = runtimeFromResult(result.value.providers, provider.instanceId);
       const nextOperation = nextRuntime?.operation;
       if (nextOperation?.action === nextPlan.action) {
         if (isActiveProviderRuntimeOperation(nextOperation)) {
@@ -296,63 +304,58 @@ export function ProviderRuntimeSection(props: {
           reportedOperationIdRef.current !== nextOperation.operationId
         ) {
           reportedOperationIdRef.current = nextOperation.operationId;
-          props.onActionSucceeded?.(nextPlan.action);
+          onActionSucceeded?.(nextPlan.action);
         }
       }
-      setLocalRuntimeSnapshot(
-        nextRuntime ? { baseProvider: props.provider, value: nextRuntime } : null,
-      );
+      setLocalRuntimeSnapshot(nextRuntime ? { baseProvider: provider, value: nextRuntime } : null);
       setPreparedPlan(null);
-      props.onPlanOpenChange?.(false);
+      onPlanOpenChange?.(false);
       setPendingAction(null);
     },
     [
       planRuntime,
       startRuntime,
-      props.displayName,
-      props.environmentId,
-      props.onActionSucceeded,
-      props.onPlanOpenChange,
-      props.provider,
-      props.provider.instanceId,
-      runtime.operation?.operationId,
+      runtimeDisplayName,
+      environmentId,
+      onActionSucceeded,
+      onPlanOpenChange,
+      provider,
+      operation?.operationId,
+      runtimeActions,
     ],
   );
 
   const requestPlan = useCallback(
     async (action: ProviderManagedRuntimeAction) => {
-      if (
-        isActiveProviderRuntimeOperation(runtime.operation) ||
-        !runtime.actions.includes(action)
-      ) {
+      if (isActiveProviderRuntimeOperation(operation) || !runtimeActions?.includes(action)) {
         setPendingAction(null);
         setPreparedPlan(null);
         setLocalFailure(null);
-        props.onPlanOpenChange?.(false);
+        onPlanOpenChange?.(false);
         return;
       }
       // Removal is destructive, and switching away from a working system
       // installation changes the release in use: both wait for a decision made
       // with the plan in view.
       const needsDecision =
-        action === "remove" || (action === "install" && runtime.source === "system");
+        action === "remove" || (action === "install" && runtimeSource === "system");
       setLocalFailure(null);
       setPendingAction("plan");
-      if (needsDecision) props.onPlanOpenChange?.(true);
+      if (needsDecision) onPlanOpenChange?.(true);
       const result = await planRuntime({
-        environmentId: props.environmentId,
-        input: { instanceId: props.provider.instanceId, action },
+        environmentId,
+        input: { instanceId: provider.instanceId, action },
       });
       if (result._tag === "Failure") {
         setPendingAction(null);
-        props.onPlanOpenChange?.(false);
+        onPlanOpenChange?.(false);
         if (!isAtomCommandInterrupted(result)) {
           setLocalFailure({
             kind: "plan",
             action,
             message: providerLifecycleFailureMessage(
               squashAtomCommandFailure(result),
-              `Scient could not prepare the ${props.displayName} setup plan.`,
+              `Scient could not prepare the ${runtimeDisplayName} setup plan.`,
             ),
           });
         }
@@ -366,41 +369,43 @@ export function ProviderRuntimeSection(props: {
         await startPlan(result.value);
         return;
       }
-      if (!needsDecision) props.onPlanOpenChange?.(true);
+      if (!needsDecision) onPlanOpenChange?.(true);
       setPendingAction(null);
       setPreparedPlan(result.value);
     },
     [
       planRuntime,
-      props.displayName,
-      props.environmentId,
-      props.onPlanOpenChange,
-      props.provider.instanceId,
-      runtime.actions,
-      runtime.operation,
-      runtime.source,
+      runtimeDisplayName,
+      environmentId,
+      onPlanOpenChange,
+      provider.instanceId,
+      runtimeActions,
+      operation,
+      runtimeSource,
       startPlan,
     ],
   );
 
   useEffect(() => {
-    if (!props.initialAction) return;
-    const requestKey = `${props.provider.instanceId}:${props.initialAction}`;
+    if (!props.initialAction || !runtimeActions) return;
+    const requestKey = `${provider.instanceId}:${props.initialAction}`;
     if (initialPlanRequestRef.current === requestKey) return;
     initialPlanRequestRef.current = requestKey;
     void requestPlan(props.initialAction);
-  }, [props.initialAction, props.provider.instanceId, requestPlan]);
+  }, [props.initialAction, provider.instanceId, requestPlan, runtimeActions]);
 
   useEffect(() => {
     if (!preparedPlan || plan) return;
     setPreparedPlan(null);
-    props.onPlanOpenChange?.(false);
-  }, [plan, preparedPlan, props.onPlanOpenChange]);
+    onPlanOpenChange?.(false);
+  }, [plan, preparedPlan, onPlanOpenChange]);
 
   useEffect(() => {
     if (!localFailure || localError) return;
     setLocalFailure(null);
   }, [localError, localFailure]);
+
+  if (!runtime) return null;
 
   const start = async () => {
     if (!plan) return;
@@ -412,9 +417,9 @@ export function ProviderRuntimeSection(props: {
     setLocalFailure(null);
     setPendingAction("cancel");
     const result = await cancelRuntime({
-      environmentId: props.environmentId,
+      environmentId,
       input: {
-        instanceId: props.provider.instanceId,
+        instanceId: provider.instanceId,
         operationId: activeOperation.operationId,
       },
     });
@@ -426,16 +431,14 @@ export function ProviderRuntimeSection(props: {
           operationId: activeOperation.operationId,
           message: providerLifecycleFailureMessage(
             squashAtomCommandFailure(result),
-            `Scient could not cancel the ${props.displayName} runtime operation.`,
+            `Scient could not cancel the ${runtimeDisplayName} runtime operation.`,
           ),
         });
       }
       return;
     }
-    const nextRuntime = runtimeFromResult(result.value.providers, props.provider.instanceId);
-    setLocalRuntimeSnapshot(
-      nextRuntime ? { baseProvider: props.provider, value: nextRuntime } : null,
-    );
+    const nextRuntime = runtimeFromResult(result.value.providers, provider.instanceId);
+    setLocalRuntimeSnapshot(nextRuntime ? { baseProvider: provider, value: nextRuntime } : null);
   };
 
   if (activeOperation) {
@@ -492,7 +495,7 @@ export function ProviderRuntimeSection(props: {
             </span>
           ) : null}
           <Button
-            aria-label={cancelRuntimeActionLabel(props.displayName, activeOperation.action)}
+            aria-label={cancelRuntimeActionLabel(runtimeDisplayName, activeOperation.action)}
             type="button"
             size="sm"
             variant={props.compact ? "ghost-destructive-action" : "destructive-outline"}
@@ -519,7 +522,7 @@ export function ProviderRuntimeSection(props: {
         <LoaderIcon className="mt-0.5 size-5 shrink-0 animate-spin text-primary" aria-hidden />
         <div className="min-w-0">
           <p role="status" className="text-sm font-medium text-foreground">
-            Preparing {props.displayName}…
+            Preparing {runtimeDisplayName}…
           </p>
         </div>
       </div>
@@ -545,14 +548,14 @@ export function ProviderRuntimeSection(props: {
           <div className="min-w-0">
             <p className="text-sm font-medium text-foreground">
               {removing
-                ? `Remove ${props.displayName}?`
-                : managedRuntimeSwitchTitle(props.displayName, plan)}
+                ? `Remove ${runtimeDisplayName}?`
+                : managedRuntimeSwitchTitle(runtimeDisplayName, plan)}
             </p>
             <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
               {removing ? (
                 <>
                   Only Scient’s managed copy will be removed. Your account and other{" "}
-                  {props.displayName} installations stay unchanged.
+                  {runtimeDisplayName} installations stay unchanged.
                 </>
               ) : (
                 // The server names the release it installs and the system one it replaces.
@@ -574,7 +577,7 @@ export function ProviderRuntimeSection(props: {
             disabled={isWorking}
             onClick={() => {
               setPreparedPlan(null);
-              props.onPlanOpenChange?.(false);
+              onPlanOpenChange?.(false);
             }}
           >
             Back
@@ -602,14 +605,12 @@ export function ProviderRuntimeSection(props: {
 
   const terminalOperation =
     operation && !isActiveProviderRuntimeOperation(operation) ? operation : null;
-  const providerRuntimeError = needsManagedRuntimeRecovery(props.provider)
-    ? props.provider.message
-    : null;
+  const providerRuntimeError = needsManagedRuntimeRecovery(provider) ? provider.message : null;
   const statusMessage =
     (terminalOperation?.status === "failed" ? terminalOperation.message : null) ??
     providerRuntimeError ??
     (runtime.source === "missing" &&
-    !(props.provider.driver === "pi" && runtime.actions.includes("install"))
+    !(provider.driver === "pi" && runtime.actions.includes("install"))
       ? runtime.message
       : null);
   const statusIcon =
@@ -648,7 +649,14 @@ export function ProviderRuntimeSection(props: {
         <div className="flex min-w-0 items-start gap-3">
           {statusIcon}
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-foreground">{runtimeSourceLabel(runtime)}</p>
+            <p className="text-sm font-medium text-foreground">
+              {runtimeSourceLabel(runtime, provider.driver)}
+            </p>
+            {provider.driver === "cursor" ? (
+              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                Conversations use the bundled Cursor SDK. These controls manage the separate CLI.
+              </p>
+            ) : null}
             {statusMessage ? (
               <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
                 {statusMessage}
@@ -664,8 +672,8 @@ export function ProviderRuntimeSection(props: {
                 <Button
                   aria-label={
                     isSystemManagedSwitch
-                      ? `Use Scient-managed ${props.displayName}`
-                      : `${RUNTIME_ACTION_VERBS[action]} ${props.displayName}`
+                      ? `Use Scient-managed ${runtimeDisplayName}`
+                      : `${RUNTIME_ACTION_VERBS[action]} ${runtimeDisplayName}`
                   }
                   key={action}
                   type="button"
@@ -712,7 +720,7 @@ export function ProviderRuntimeSection(props: {
                   <TooltipPopup className="max-w-64" side="top">
                     <div className="space-y-0.5 py-0.5">
                       <p className="font-medium text-foreground">
-                        Scient-managed {props.displayName}
+                        Scient-managed {runtimeDisplayName}
                       </p>
                       <p className="leading-relaxed text-muted-foreground">
                         Scient installs and maintains a private copy, including updates and repairs.
@@ -737,8 +745,8 @@ export function ProviderRuntimeSection(props: {
         <div className="flex items-center justify-between gap-3 pt-1">
           <div className="min-w-0 flex-1">
             <ProviderRuntimeDiagnosticsDetails
-              displayName={props.displayName}
-              provider={props.provider}
+              displayName={runtimeDisplayName}
+              provider={provider}
             />
           </div>
           <Button
@@ -758,10 +766,7 @@ export function ProviderRuntimeSection(props: {
           </Button>
         </div>
       ) : (
-        <ProviderRuntimeDiagnosticsDetails
-          displayName={props.displayName}
-          provider={props.provider}
-        />
+        <ProviderRuntimeDiagnosticsDetails displayName={runtimeDisplayName} provider={provider} />
       )}
     </div>
   );

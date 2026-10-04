@@ -150,13 +150,17 @@ for (const includeThreadRead of [false, true]) {
           const toolNames = tools.map((tool) => tool.name);
           const deviceNames = new Set(Object.keys(DeviceToolkit.tools));
           const hostNames = McpHttpServer.hostMcpTools.map((tool) => tool.name);
-          expect(toolNames.filter((name) => name === "t3_thread_read")).toHaveLength(
+          expect(toolNames.filter((name) => name === "scient_thread_read")).toHaveLength(
             includeThreadRead ? 1 : 0,
           );
           if (includeThreadRead)
             expect(
-              tools.find((tool) => tool.name === "t3_thread_read")?.annotations?.readOnlyHint,
+              tools.find((tool) => tool.name === "scient_thread_read")?.annotations?.readOnlyHint,
             ).toBe(true);
+          expect(toolNames.filter((name) => name === "scient_thread_inspect")).toHaveLength(1);
+          expect(
+            tools.find((tool) => tool.name === "scient_thread_inspect")?.annotations?.readOnlyHint,
+          ).toBe(false);
           expect(new Set(hostNames).size).toBe(hostNames.length);
           expect(new Set(toolNames).size).toBe(toolNames.length);
           for (const name of hostNames) {
@@ -174,8 +178,8 @@ for (const includeThreadRead of [false, true]) {
               `${name} must be declared`,
             ).toBe(true);
           }
-          expect(toolNames).toContain("t3_worktree_handoff");
-          expect(toolNames).toContain("t3_worktree_status");
+          expect(toolNames).toContain("scient_worktree_handoff");
+          expect(toolNames).toContain("scient_worktree_status");
           // The worktree registration merges alongside the other toolkits rather
           // than replacing them.
           expect(toolNames).toContain("preview_status");
@@ -184,11 +188,11 @@ for (const includeThreadRead of [false, true]) {
           // The handoff tool mutates thread state, reaches the network (origin
           // fetch), and runs project setup scripts, so its MCP hints must not
           // promise a read-only, closed-world, non-destructive tool.
-          const handoff = tools.find((tool) => tool.name === "t3_worktree_handoff");
+          const handoff = tools.find((tool) => tool.name === "scient_worktree_handoff");
           expect(handoff?.annotations?.readOnlyHint).toBe(false);
           expect(handoff?.annotations?.destructiveHint).toBe(true);
           expect(handoff?.annotations?.openWorldHint).toBe(true);
-          const status = tools.find((tool) => tool.name === "t3_worktree_status");
+          const status = tools.find((tool) => tool.name === "scient_worktree_status");
           expect(status?.annotations?.readOnlyHint).toBe(true);
           expect(status?.annotations?.destructiveHint).toBe(false);
 

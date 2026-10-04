@@ -20,18 +20,18 @@ import * as ScientSkillSession from "./ScientSkillSession.ts";
 export const prepareScientV2SkillTurn = Effect.fnUntraced(function* (input: {
   readonly threadId: ThreadId;
   readonly driver: ProviderDriverKind;
+  readonly mcpSessionInjection?: boolean;
   readonly projectRoot: string | undefined;
   readonly text: string;
   readonly selectedScientSkillNames: ReadonlyArray<string>;
 }) {
   const planner = yield* ScientSkillSession.ScientSkillSessionPlanner;
-  // V2 adapters have no `mcpSessionInjection` capability flag. The presence of
-  // the host-issued session for this thread is the same observable fact: without
-  // it there is no channel to deliver a skill through.
+  // A token is authority, not proof the configured provider can receive it.
   const mcpSession = readMcpProviderSession(input.threadId);
   const plan = yield* planner.resolve({
     provider: input.driver,
-    mcpSessionAvailable: mcpSession !== undefined,
+    mcpSessionAvailable:
+      input.mcpSessionInjection === true && mcpSession?.capabilities.has("skills:read") === true,
     ...(input.projectRoot === undefined ? {} : { projectRoot: input.projectRoot }),
   });
   yield* Effect.forEach(
@@ -46,7 +46,10 @@ export const prepareScientV2SkillTurn = Effect.fnUntraced(function* (input: {
     { discard: true },
   );
   const tools = scientToolProjectionForProvider(input.driver);
-  const deliverable = plan.delivery === "mcp";
+  const deliverable =
+    plan.delivery === "mcp" &&
+    input.mcpSessionInjection === true &&
+    mcpSession?.capabilities.has("skills:read") === true;
   const skillTurn = prepareScientSkillTurn(
     input.text,
     deliverable ? plan.skills : [],

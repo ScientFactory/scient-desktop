@@ -17,7 +17,7 @@ export type RuntimeSubagentStatus =
   | "interrupted";
 
 export interface SubagentUsage {
-  readonly totalTokens: number;
+  readonly totalTokens?: number;
   readonly inputTokens?: number;
   readonly cachedInputTokens?: number;
   readonly outputTokens?: number;
@@ -44,6 +44,7 @@ export interface SubagentRunHandles {
 }
 
 export interface RuntimeSubagent {
+  readonly historical?: boolean;
   readonly id: string;
   readonly kind: "subagent" | "subagent_batch" | "workflow" | "workflow_agent";
   readonly title: string;
@@ -103,6 +104,7 @@ export function projectedSubagentsToRuntime(
     readonly model: string | null;
     readonly status: OrchestrationV2Subagent["status"];
     readonly progress?: string | undefined;
+    readonly presentation?: OrchestrationV2Subagent["presentation"];
     readonly result: string | null;
     readonly startedAt: DateTime.Utc | null;
     readonly completedAt: DateTime.Utc | null;
@@ -114,31 +116,47 @@ export function projectedSubagentsToRuntime(
     const startedAt = subagent.startedAt === null ? null : DateTime.formatIso(subagent.startedAt);
     return {
       id: subagent.id,
-      kind: "subagent" as const,
+      kind: subagent.presentation?.kind ?? "subagent",
       title:
         subagent.title ??
         (subagent.prompt.length > 80 ? `${subagent.prompt.slice(0, 77)}...` : subagent.prompt),
-      role: null,
+      role: subagent.presentation?.role ?? null,
       model: subagent.model,
-      effort: null,
+      effort: subagent.presentation?.effort ?? null,
       status: subagent.status,
-      activationCount: 1,
-      usage: null,
+      activationCount: subagent.presentation?.activationCount ?? 1,
+      usage: asUsage(subagent.presentation?.usage) ?? null,
       progress: subagent.progress ?? null,
-      lastToolName: null,
+      lastToolName: subagent.presentation?.lastToolName ?? null,
       result: subagent.result,
       error: subagent.status === "failed" ? (subagent.result ?? null) : null,
-      outputFile: null,
-      parentAgentId: null,
-      agentIndex: null,
-      phaseIndex: null,
-      phaseTitle: null,
-      attempt: null,
-      workflowName: null,
-      phases: [],
-      runHandles: null,
+      outputFile: subagent.presentation?.outputFile ?? null,
+      parentAgentId: subagent.presentation?.workflowId ?? null,
+      agentIndex: subagent.presentation?.agentIndex ?? null,
+      phaseIndex: subagent.presentation?.phaseIndex ?? null,
+      phaseTitle: subagent.presentation?.phaseTitle ?? null,
+      attempt: subagent.presentation?.attempt ?? null,
+      workflowName: subagent.presentation?.workflowName ?? null,
+      phases: subagent.presentation?.phases ?? [],
+      runHandles:
+        subagent.presentation?.runHandles === undefined
+          ? null
+          : {
+              ...(subagent.presentation.runHandles.runId === undefined
+                ? {}
+                : { runId: subagent.presentation.runHandles.runId }),
+              ...(subagent.presentation.runHandles.scriptPath === undefined
+                ? {}
+                : { scriptPath: subagent.presentation.runHandles.scriptPath }),
+              ...(subagent.presentation.runHandles.transcriptDir === undefined
+                ? {}
+                : { transcriptDir: subagent.presentation.runHandles.transcriptDir }),
+              ...(subagent.presentation.runHandles.sessionUrl === undefined
+                ? {}
+                : { sessionUrl: subagent.presentation.runHandles.sessionUrl }),
+            },
       recentActivity: [],
-      firstSeenAt: startedAt ?? updatedAt,
+      firstSeenAt: subagent.presentation?.firstSeenAt ?? startedAt ?? updatedAt,
       startedAt,
       completedAt: subagent.completedAt === null ? null : DateTime.formatIso(subagent.completedAt),
       updatedAt,
@@ -152,7 +170,8 @@ export function projectedSubagentsToRuntime(
 // panel model every client renders. Deliberately legacy-bridge code: when
 // the v2 projection is available for a thread, deriveAgentPanelModel
 // prefers it (see the v2Projection parameter) and the fold is skipped; when
-// the v1 orchestrator is retired this block is deleted.
+// imported historical task observations can also reuse the pure fold; they
+// never grant provider execution or request-response authority.
 /*
  * Invariants encoded here trace to shipped bugs in the prior PRs (#4220,
  * #3650, #4662): reusable identity vs one-shot activations, idle as a real
@@ -173,7 +192,7 @@ const ROSTER_LIMIT = 100;
  * background by definition: they render in the ordinary work log, exactly
  * as they did before this feature existed.
  */
-export function isBackgroundTaskActivity(payload: Record<string, unknown>): boolean {
+function isBackgroundTaskActivity(payload: Record<string, unknown>): boolean {
   return payload.agentKind !== "agent";
 }
 
@@ -208,32 +227,33 @@ function asUsage(value: unknown): SubagentUsage | undefined {
     return undefined;
   }
   const record = value as Record<string, unknown>;
-  const totalTokens = asCount(record.totalTokens);
-  if (totalTokens === undefined) {
-    return undefined;
-  }
+  const observedCount = (value: unknown): number | undefined => {
+    const count = asCount(value);
+    return count !== undefined && Number.isInteger(count) ? count : undefined;
+  };
+  const totalTokens = observedCount(record.totalTokens);
   const usage: {
-    totalTokens: number;
+    totalTokens?: number;
     inputTokens?: number;
     cachedInputTokens?: number;
     outputTokens?: number;
     reasoningOutputTokens?: number;
     toolUses?: number;
     durationMs?: number;
-  } = { totalTokens };
-  const inputTokens = asCount(record.inputTokens);
+  } = totalTokens === undefined ? {} : { totalTokens };
+  const inputTokens = observedCount(record.inputTokens);
   if (inputTokens !== undefined) usage.inputTokens = inputTokens;
-  const cachedInputTokens = asCount(record.cachedInputTokens);
+  const cachedInputTokens = observedCount(record.cachedInputTokens);
   if (cachedInputTokens !== undefined) usage.cachedInputTokens = cachedInputTokens;
-  const outputTokens = asCount(record.outputTokens);
+  const outputTokens = observedCount(record.outputTokens);
   if (outputTokens !== undefined) usage.outputTokens = outputTokens;
-  const reasoningOutputTokens = asCount(record.reasoningOutputTokens);
+  const reasoningOutputTokens = observedCount(record.reasoningOutputTokens);
   if (reasoningOutputTokens !== undefined) usage.reasoningOutputTokens = reasoningOutputTokens;
-  const toolUses = asCount(record.toolUses);
+  const toolUses = observedCount(record.toolUses);
   if (toolUses !== undefined) usage.toolUses = toolUses;
-  const durationMs = asCount(record.durationMs);
+  const durationMs = observedCount(record.durationMs);
   if (durationMs !== undefined) usage.durationMs = durationMs;
-  return usage;
+  return Object.keys(usage).length === 0 ? undefined : usage;
 }
 
 /**
@@ -259,14 +279,16 @@ function mergeUsageMax(
   const pick = (a: number | undefined, b: number | undefined): number | undefined =>
     a === undefined ? b : b === undefined ? a : Math.max(a, b);
   const merged: {
-    totalTokens: number;
+    totalTokens?: number;
     inputTokens?: number;
     cachedInputTokens?: number;
     outputTokens?: number;
     reasoningOutputTokens?: number;
     toolUses?: number;
     durationMs?: number;
-  } = { totalTokens: Math.max(current.totalTokens, incoming.totalTokens) };
+  } = {};
+  const totalTokens = pick(current.totalTokens, incoming.totalTokens);
+  if (totalTokens !== undefined) merged.totalTokens = totalTokens;
   const inputTokens = pick(current.inputTokens, incoming.inputTokens);
   if (inputTokens !== undefined) merged.inputTokens = inputTokens;
   const cachedInputTokens = pick(current.cachedInputTokens, incoming.cachedInputTokens);
@@ -759,7 +781,7 @@ export interface AgentPanelModel {
   readonly waitingCount: number;
   readonly idleCount: number;
   readonly settledCount: number;
-  readonly totalTokens: number;
+  readonly totalTokens: number | null;
   readonly hasAgents: boolean;
   readonly liveCount: number;
 }
@@ -848,9 +870,10 @@ export function deriveAgentPanelModel({
         .slice()
         .sort((a, b) => (a.agentIndex ?? 0) - (b.agentIndex ?? 0));
       const activeCount = phaseMembers.filter(
-        // Idle members count as active for phase-liveness: a resumable Codex
-        // member has not finished the phase.
-        (member) => isActiveSubagentStatus(member.status) || member.status === "idle",
+        // Native idle members can resume. Historical idle is an observed
+        // status and carries no live phase or resumable execution authority.
+        (member) =>
+          !member.historical && (isActiveSubagentStatus(member.status) || member.status === "idle"),
       ).length;
       const settledCount = phaseMembers.filter((member) =>
         isTerminalSubagentStatus(member.status),
@@ -887,7 +910,7 @@ export function deriveAgentPanelModel({
   let waitingCount = 0;
   let idleCount = 0;
   let settledCount = 0;
-  let totalTokens = 0;
+  let totalTokens: number | null = null;
   for (const agent of source) {
     // A workflow coordinator with members is a container for those members, not
     // work of its own: it reports running for the whole run and aggregates their
@@ -898,7 +921,8 @@ export function deriveAgentPanelModel({
     else if (agent.status === "waiting") waitingCount += 1;
     else if (agent.status === "idle") idleCount += 1;
     else settledCount += 1;
-    totalTokens += agent.usage?.totalTokens ?? 0;
+    if (agent.usage?.totalTokens !== undefined)
+      totalTokens = (totalTokens ?? 0) + agent.usage.totalTokens;
   }
 
   return {

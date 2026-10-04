@@ -530,7 +530,7 @@ it.layer(TestLayer)("delegated completion delivery repairs", (it) => {
           now,
         });
 
-        // Distinct command IDs mirror task_status vs t3_thread_read racing after
+        // Distinct command IDs mirror task_status vs scient_thread_inspect racing after
         // their shared read preflight saw delivered ownership.
         const firstAck = yield* orchestrator.dispatch({
           type: "delegated_task.completion-delivery.acknowledge",

@@ -487,8 +487,6 @@ describe("resolveWorkEntryToolPresentation", () => {
       "Stopping recording the preview browser",
       "Stopped recording the preview browser",
     ],
-    ["t3_thread_read", "Reading a T3 thread", "Read a T3 thread"],
-    ["t3_thread_send", "Sending to a T3 thread", "Sent to a T3 thread"],
     [
       "t3_worktree_handoff",
       "Handing off thread to a git worktree",
@@ -504,19 +502,31 @@ describe("resolveWorkEntryToolPresentation", () => {
       resolveWorkEntryToolPresentation({ ...entry, toolLifecycleStatus: "completed" })?.displayName,
     ).toBe(completed);
   });
-
-  it("keeps T3 branding for non-browser tools and falls back to the original tool label", () => {
-    expect(
-      resolveWorkEntryToolPresentation({
-        label: "mcp__t3_code__task_status",
-        toolTitle: "Check the child task",
-      }),
-    ).toEqual({ displayName: "Getting delegated task status", icon: "t3-code" });
-  });
+  it.each(["inProgress", "completed", "failed", "declined", "stopped"] as const)(
+    "preserves historical tool identity and lifecycle after the Scient cutover: %s",
+    (toolLifecycleStatus) => {
+      const entry = { label: "scient_thread_read", toolLifecycleStatus };
+      const canonical = resolveWorkEntryToolPresentation(entry);
+      expect(canonical?.icon).toBe("scient");
+      for (const label of [
+        "mcp__scient__scient_thread_read",
+        "scient.scient_thread_read",
+        "scient · scient_thread_read",
+        "t3_thread_read",
+        "mcp__t3-code__t3_thread_read",
+        "t3_code/t3_thread_read",
+      ]) {
+        expect(resolveWorkEntryToolPresentation({ ...entry, label })).toEqual(canonical);
+      }
+    },
+  );
 
   it("does not brand unknown tools or another server's matching tool name", () => {
     for (const label of [
       "mcp__github__preview_click",
+      "mcp__github__scient_thread_read",
+      "scient.toString",
+      "scient.unknown_tool",
       "t3-code.unknown_tool",
       "t3-code.toString",
       "Search files",

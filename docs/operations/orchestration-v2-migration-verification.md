@@ -5,15 +5,15 @@
 Worktree: `/Users/yaacov/REPOs/ScientFactory-worktrees/scient-t3-sync-ca7df394ed-20261003`.
 Branch: `codex/t3-sync-ca7df394ed-20261003`.
 
-The preservation fixes and recovery checks below describe the migration verifier's snapshot in the integration worktree. This is **not** a declaration that the complete V2 cutover is ready. Native V2 queue promotion has since been added by the integration owner, with the checkpoints below. Production startup checks now pass; final compiler, whole-candidate qualification and the shared upstream merge remain separate gates.
+The original preservation fixes, 69-test/nine-file report and zero-native-run JSON result below describe the migration verifier's historical snapshot in the integration worktree. They are retained as historical evidence, not a declaration that the complete V2 cutover is ready. Native V2 held-run admission and production startup qualification have since been added by the integration owner, with the later checkpoints below. The literal upstream merge is complete at `b8fbae4ffa84414b02461cf42a0afa4b10a03fcc`, retaining `ca7df394ed8151fa77f856beefa90bc60a785d60` as its upstream parent. The separate owned-main catchup to `33ab8e307afbabda3e155c439d89bc788148d379`, final immutable candidate identity and remaining whole-candidate/manual gates are tracked in the alignment receipt.
 
-At the commit check, `MERGE_HEAD` was `ca7df394ed8151fa77f856beefa90bc60a785d60`. An actual `git commit --only --dry-run -- apps/server/src/orchestration-v2/legacy/LegacyV1ThreadImporter.ts` returned:
+At the original verifier snapshot's commit check, `MERGE_HEAD` was `ca7df394ed8151fa77f856beefa90bc60a785d60`. An actual `git commit --only --dry-run -- apps/server/src/orchestration-v2/legacy/LegacyV1ThreadImporter.ts` returned:
 
 ```text
 fatal: cannot do a partial commit during a merge.
 ```
 
-No migration-only commit was made by the verifier. No unrelated files were staged, unstaged, reverted, or committed by that slice. The integration owner has read this handoff, reviewed the implementation and added native held-run admission. The complete alignment will be committed as a coherent merge with its actual upstream parent; the historical partial-commit refusal does not require a separate migration commit or an alternate ancestry construction.
+No migration-only commit was made by the verifier. No unrelated files were staged, unstaged, reverted, or committed by that slice. The integration owner has read this handoff, reviewed the implementation and added native held-run admission. The completed upstream checkpoint already records its literal ancestry; the pending owned-main catchup and final candidate are separate from that historical merge. The verifier's partial-commit refusal does not require a separate migration commit or an alternate ancestry construction.
 
 ## Changes owned by this slice
 
@@ -154,3 +154,49 @@ a missing SQL dependency and was corrected before the 19-test rerun above. The s
 batch passed **97 tests**. These are synthetic-state local proofs, not a live-profile cutover or
 hosted-provider acceptance. Final candidate identity and owned-main catch-up qualification still
 belong to the complete alignment receipt.
+
+## Receipt-safe claim and recovery visibility checkpoint — 2026-10-04
+
+Further source review found two remaining defects: a failed or interrupted admission left
+randomly claimed attachment copies behind, and the compatibility list could report an empty
+native queue while retained SQL or unreadable JSON work still required recovery.
+
+Claim acquisition and cleanup registration now share an interruption mask. After dispatch
+settles, cleanup reads the exact command receipt. Proven nonacceptance releases only this
+attempt's copies; accepted admission retains the files named by its original committed message
+event and releases only unused raced-replay copies. Later V2 edits do not determine original
+file ownership. Unreadable, mismatched, or missing accepted-event evidence retains copies and
+the source for recovery. Pending upload originals are never removed by this cleanup.
+
+Compatibility list now returns a typed, visible recovery error when retained staging or an
+unreadable/unimported JSON queue remains. It instructs users to keep their backup, restart
+Scient to retry admission, and seek recovery support if the condition persists before
+resending messages. Listing does not admit work, grant execution, or replace existing native
+pending runs. A completed SQL import receipt prevents intentionally retained JSON originals
+from being reported as new pending work.
+
+The final scoped checkpoint passed **54 distinct tests across seven complete files** with
+one worker. `queue-claim-recovery-round3.txt` records 28 passing queue/importer tests;
+`queue-claim-recovery-round2.txt` also qualifies the unchanged three clone-gate and ten
+attachment-claim tests; `queue-claim-recovery-dependencies-round1.txt` records 13 history,
+file-backed cutover and legacy JSON source tests. Seven new queue cases use actual SQLite
+and disposable files, with controlled dispatch boundaries: SQL commit failure and retry,
+interruption before and after acceptance, ambiguous receipt-read failure, concurrent replay,
+an accepted V2 edit clearing references before cleanup, and corrupt-source list visibility
+without altering native pending work. The two new importer metadata cases independently
+qualify missing versus explicit-null auto-settle choices and projection rebuild preservation;
+they use isolated databases to preserve the existing shared-fixture count assertions.
+
+Reproduction from the alignment checkout:
+
+```sh
+./node_modules/.bin/vp test run apps/server/src/orchestration-v2/LegacyQueueAdmission.test.ts apps/server/src/orchestration-v2/legacy/LegacyV1ThreadImporter.test.ts apps/server/src/orchestration-v2/legacy/LegacyQueueCompatibility.clone.test.ts apps/server/src/orchestration-v2/AttachmentClaims.test.ts apps/server/src/orchestration-v2/legacy/LegacyScientHistory.test.ts apps/server/src/orchestration-v2/legacy/LegacyV1Cutover.integration.test.ts apps/server/src/scient/threadQueue/Store.test.ts --maxWorkers 1
+cd apps/server
+../../node_modules/.bin/tsc --noEmit
+```
+
+Canonical server compilation exited **0**, with no hard errors or Effect warnings
+(`queue-claim-recovery-server-compiler-round2.txt`); existing suggestions remain. Scoped
+format, lint and diff checks are recorded with the same checkpoint. This qualifies the
+current working-source slice. Final immutable candidate identity, complete alignment gates,
+and manual/live-profile acceptance remain pending in the integration owner's receipt.

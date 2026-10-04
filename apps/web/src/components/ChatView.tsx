@@ -27,7 +27,6 @@ import {
   useMarkdownPersistenceGuards,
   useMarkdownPersistenceNavigationGuards,
 } from "~/scient/markdownEditor/persistence/useMarkdownPersistenceGuards";
-import { isChatGptUsageLimitError } from "@t3tools/shared/usageLimits";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import {
@@ -88,7 +87,6 @@ import {
   type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import {
   wasBootstrapThreadDeleted,
   wasBootstrapThreadNotCreated,
@@ -133,7 +131,6 @@ import {
   projectScriptRuntimeEnv,
   resolveProjectScripts,
 } from "@t3tools/shared/projectScripts";
-import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
   latestUnheldRun,
@@ -212,8 +209,6 @@ import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
   readTimelinePosition,
   timelineContentOverflowsViewport,
-  observeTimelineRun,
-  type TimelineRunObservation,
   type TimelineScrollMode,
 } from "./chat/timelineScrollAnchoring";
 import { useScientThreadFork, type ForkSource } from "./scient-fork/useScientThreadFork";
@@ -244,8 +239,6 @@ import {
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_TERMINALS_PER_GROUP,
   type ChatMessage,
-  isBrowserPreviewAttachment,
-  isImageAttachment,
   type SessionPhase,
   type Thread,
 } from "../types";
@@ -280,7 +273,6 @@ import {
   useThreadPreviewState,
 } from "../previewStateStore";
 import { BrowserSettingsReadError } from "../browser/openFileInPreview";
-import { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
 import { addBrowserSurface } from "./preview/addBrowserSurface";
 import { closePreviewSession } from "./preview/closePreviewSession";
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
@@ -485,6 +477,11 @@ import { isTimelineScrollTarget } from "./chat/timelineScrollTarget";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
+import { historicalSubagentsToRuntime } from "@t3tools/client-runtime/state/historicalSubagentRuntime";
+import {
+  deriveAgentPanelModel,
+  projectedSubagentsToRuntime,
+} from "@t3tools/client-runtime/state/subagentRuntime";
 import { MessagesTimeline, type MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
 import { ChatCanvas } from "./chat/ChatCanvas";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
@@ -495,7 +492,6 @@ import { recoverQueuedMessageEdit } from "./chat/queuedMessageEdit";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import * as Schema from "effect/Schema";
-import { Debouncer } from "@tanstack/react-pacer";
 import { overlayComposerIsResting } from "./composerFooterLayout";
 import { deriveActiveWorkStartedAt, deriveCanInterruptRunningThread } from "../session-logic";
 import {
@@ -503,7 +499,6 @@ import {
   rememberCheckoutIsRepo,
   resolveBackgroundDraftWorkspaceOptions,
   resolveWorktreeSetupProgress,
-  restorePlanFollowUpComposer,
 } from "./ChatView.logic";
 import {
   findLatestCompletedAssistantMessageId,
@@ -697,11 +692,7 @@ import {
 } from "~/scient/compute/computeContextStore";
 import { useComputeFilePresentationStore } from "~/scient/compute/computeFilePresentationStore";
 import { computeSourceLanguageForPath } from "~/scient/compute/computeSourceLanguage";
-import type {
-  OrchestrationMessageContext,
-  OrchestrationV2TurnItem,
-  TurnId,
-} from "@t3tools/contracts";
+import type { OrchestrationMessageContext, OrchestrationV2TurnItem } from "@t3tools/contracts";
 
 const EMPTY_TURN_ITEMS: ReadonlyArray<OrchestrationV2TurnItem> = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
@@ -1125,7 +1116,6 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     waitForShell: draftThread !== null,
   });
   const serverThreadShell = useThreadShell(threadRef);
-  const serverThread = activeServerThread ?? serverThreadShell;
   // The merged detail already carries the shell's authoritative workspace
   // metadata on its projected thread; the shell branch reads it directly.
   const serverThreadProjectId =
@@ -1831,17 +1821,6 @@ function ChatViewContent(props: ChatViewProps) {
     status: threadStatus,
   });
   const threadDetailLoading = threadSyncPhase === "loading";
-  // Latest provider-reported context usage (#8144): the newest turn that has
-  // a report wins; stale turns keep the meter alive between turns.
-  const activeThreadLiveTokenUsage = useMemo(() => {
-    const turns = serverProjection?.providerTurns;
-    if (!turns || turns.length === 0) return null;
-    for (let index = turns.length - 1; index >= 0; index -= 1) {
-      const usage = turns[index]?.tokenUsage;
-      if (usage !== undefined) return usage;
-    }
-    return null;
-  }, [serverProjection?.providerTurns]);
   const serverVisibleTurnItems = useThreadVisibleTurnItems(routeThreadDetailRef);
   const serverThreadHistory = useThreadHistory(routeThreadDetailRef);
   const threadHistoryControls = useMemo<MessagesTimelineHistoryControls | undefined>(() => {
@@ -2598,14 +2577,6 @@ function ChatViewContent(props: ChatViewProps) {
     sessions: activePreviewState.sessions,
     openPreview,
   });
-  const activePreviewServerEpoch = activePreviewState.serverEpoch;
-  const resolvePreviewRuntimeTabId = useMemo(
-    () =>
-      activeThreadRef
-        ? (tabId: string) => previewRuntimeTabId(activeThreadRef, activePreviewServerEpoch, tabId)
-        : undefined,
-    [activeThreadRef, activePreviewServerEpoch],
-  );
   const activePreviewMiniPlayer = usePreviewMiniPlayerStore((state) =>
     selectThreadPreviewMiniPlayer(state.byThreadKey, activeThreadRef),
   );
@@ -3675,17 +3646,26 @@ function ChatViewContent(props: ChatViewProps) {
     [turnDiffSummaries],
   );
   // SCIENT-FORK:END
-  // Native subagent fold: memoized by activity-list identity, shared by the
-  // Agents surface, live strip, and workflow cards. v2Projection is null
-  // until orchestration-v2 lands (source precedence lives in the derive).
-  // sessionLive derives interruption for agents orphaned by session death.
-  const agentSessionLive = phase !== "disconnected";
-  const agentPanelModel = useMemo(
+  const pendingRequestModel = useMemo(
     () =>
       serverProjection === null
         ? { approvals: [], userInputs: [] }
         : derivePendingThreadRequests(serverProjection),
     [serverProjection],
+  );
+  const agentPanelModel = useMemo(
+    () =>
+      deriveAgentPanelModel({
+        agents: [],
+        v2Projection: [
+          ...projectedSubagentsToRuntime(serverProjection?.subagents ?? []),
+          ...historicalSubagentsToRuntime(
+            serverProjection?.turnItems ?? [],
+            serverProjection?.visibleTurnItems ?? [],
+          ),
+        ],
+      }),
+    [serverProjection?.subagents, serverProjection?.turnItems, serverProjection?.visibleTurnItems],
   );
   const [requestResponseErrors, setRequestResponseErrors] = useState<Record<string, string>>({});
   const setRequestResponseError = useCallback(
@@ -3706,12 +3686,12 @@ function ChatViewContent(props: ChatViewProps) {
       return responseError ? { ...request, responseError } : request;
     };
     return {
-      approvals: derivePendingApprovals(agentPanelModel.approvals).map(withLocalError),
-      userInputs: derivePendingUserInputs(agentPanelModel.userInputs).map(withLocalError),
+      approvals: derivePendingApprovals(pendingRequestModel.approvals).map(withLocalError),
+      userInputs: derivePendingUserInputs(pendingRequestModel.userInputs).map(withLocalError),
     };
   }, [
-    agentPanelModel.approvals,
-    agentPanelModel.userInputs,
+    pendingRequestModel.approvals,
+    pendingRequestModel.userInputs,
     requestResponseErrors,
     environmentId,
     activeThreadId,
@@ -5936,7 +5916,6 @@ function ChatViewContent(props: ChatViewProps) {
         linkedThreadPullRequest.number,
       ])
     : null;
-  const threadRepository = linkedThreadPullRequest?.repository ?? activeProjectRepository;
   const threadPrRelinkKeysRef = useRef(new Map<string, string>());
   const threadPrRelinkWriteRef = useRef(Promise.resolve());
   useEffect(() => {
@@ -6009,32 +5988,6 @@ function ChatViewContent(props: ChatViewProps) {
     readonly threadKey: string;
     readonly reference: ThreadLinkedPullRequest | null;
   } | null>(null);
-  const openProjectPullRequest = useCallback(
-    (number: number) => {
-      if (
-        !supportsPullRequests ||
-        !activeThreadRef ||
-        !activeProject ||
-        activeProjectRepository === null
-      ) {
-        return;
-      }
-      runAfterPendingFileSave(null, () => {
-        useRightPanelStore.getState().openPullRequest(activeThreadRef, {
-          projectId: activeProject.id,
-          repository: activeProjectRepository,
-          number,
-        });
-      });
-    },
-    [
-      activeProject,
-      activeProjectRepository,
-      activeThreadRef,
-      runAfterPendingFileSave,
-      supportsPullRequests,
-    ],
-  );
   useEffect(() => {
     if (!isServerThread || activeThreadKey === null || activeThreadRef === null) {
       proactivePanelObservationRef.current = null;
@@ -9676,9 +9629,6 @@ function ChatViewContent(props: ChatViewProps) {
     const outgoingMessageContext = buildOutgoingMessageContext(
       composerAttachmentsSnapshot.map((attachment) => attachment.id),
     );
-    const messageIdForSend = newMessageId();
-    const messageCreatedAt = new Date().toISOString();
-    const shouldQueueBehindActiveRun = phase === "running" && dispatchMode === "queue";
     const outgoingMessageText = formatOutgoingPrompt({
       provider: ctxSelectedProvider,
       model: ctxSelectedModel,
@@ -11630,7 +11580,13 @@ function ChatViewContent(props: ChatViewProps) {
   }
 
   const rightPanelContent = activeThreadRef ? (
-    renderedRightPanelSurface?.kind === "preview" ? (
+    renderedRightPanelSurface?.kind === "agents" ? (
+      <AgentsPanel
+        model={agentPanelModel}
+        environmentId={activeThreadRef.environmentId}
+        threadId={activeThreadRef.threadId}
+      />
+    ) : renderedRightPanelSurface?.kind === "preview" ? (
       <Suspense fallback={null}>
         <PreviewPanel
           mode="embedded"
@@ -12168,6 +12124,8 @@ function ChatViewContent(props: ChatViewProps) {
             <div className="relative flex min-h-0 flex-1 flex-col bg-background">
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
+                agentPanelModel={agentPanelModel}
+                onOpenAgents={addAgentsSurface}
                 citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
                 citationHistoryLoading={threadDetailLoading}
                 {...(!paintOnlyDisplayedTimeline
@@ -12817,6 +12775,7 @@ function ChatViewContent(props: ChatViewProps) {
           pullRequestAvailable={pullRequestSurfaceAvailable}
           pullRequestsAvailable={pullRequestsSurfaceAvailable}
           agentsAvailable
+          liveAgentCount={agentPanelModel.liveCount}
           sourcesAvailable={activeProject !== null && activeWorkspaceRoot !== undefined}
           computeAvailable={activeProject !== null && activeWorkspaceRoot !== undefined}
           deviceAvailable={activeThreadRef !== null}
@@ -12879,6 +12838,7 @@ function ChatViewContent(props: ChatViewProps) {
             pullRequestAvailable={pullRequestSurfaceAvailable}
             pullRequestsAvailable={pullRequestsSurfaceAvailable}
             agentsAvailable
+            liveAgentCount={agentPanelModel.liveCount}
             sourcesAvailable={activeProject !== null && activeWorkspaceRoot !== undefined}
             computeAvailable={activeProject !== null && activeWorkspaceRoot !== undefined}
             deviceAvailable={activeThreadRef !== null}

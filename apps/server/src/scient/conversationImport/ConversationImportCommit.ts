@@ -193,9 +193,7 @@ export function conversationImportEvents(command: ThreadConversationImportComman
       case "activity": {
         const activity = record.activity;
         if (activity.kind === "user-input.answer-submitted") {
-          const answer = Schema.decodeUnknownSync(UserInputAttachmentAnswerPayload)(
-            activity.payload,
-          );
+          const answer = decodeQuestionAnswer(activity.payload);
           item = {
             ...base,
             ...(activity.turnId === null ? {} : { historyTurnId: activity.turnId }),

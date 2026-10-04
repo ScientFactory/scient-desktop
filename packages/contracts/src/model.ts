@@ -158,6 +158,7 @@ const ACP_REGISTRY_DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
 const DROID_DRIVER_KIND = ProviderDriverKind.make("droid");
 const OMP_DRIVER_KIND = ProviderDriverKind.make("omp");
+const SCIENT_DRIVER_KIND = ProviderDriverKind.make("scient");
 const ANTIGRAVITY_DRIVER_KIND = ProviderDriverKind.make("antigravity");
 
 export const DEFAULT_MODEL = "gpt-6.1-sol";
@@ -192,6 +193,8 @@ export const DROID_DEFAULT_MODEL = "droid-default";
 export const PI_DEFAULT_TEXT_GENERATION_MODEL = "pi-default";
 /** Resolve from this Oh My Pi instance's discovered catalog before background generation. */
 export const OMP_DEFAULT_TEXT_GENERATION_MODEL = "omp-default";
+/** Resolve from this Scient Agent instance's discovered catalog before background generation. */
+export const SCIENT_DEFAULT_TEXT_GENERATION_MODEL = "scient-default";
 export const DEFAULT_TEXT_GENERATION_REASONING_EFFORT = "low";
 
 export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
@@ -221,6 +224,7 @@ export const DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [DROID_DRIVER_KIND]: DROID_DEFAULT_MODEL,
   [PI_DRIVER_KIND]: PI_DEFAULT_TEXT_GENERATION_MODEL,
   [OMP_DRIVER_KIND]: OMP_DEFAULT_TEXT_GENERATION_MODEL,
+  [SCIENT_DRIVER_KIND]: SCIENT_DEFAULT_TEXT_GENERATION_MODEL,
 };
 
 // Droid ships no static default model: its ACP catalog is authoritative and
@@ -265,6 +269,7 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
 
 /** Canonical first-party provider order across Settings, onboarding, and pickers. */
 export const PROVIDER_DISPLAY_ORDER: ReadonlyArray<ProviderDriverKind> = [
+  SCIENT_DRIVER_KIND,
   CODEX_DRIVER_KIND,
   CLAUDE_DRIVER_KIND,
   ANTIGRAVITY_DRIVER_KIND,
@@ -301,5 +306,6 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [OPENCODE_DRIVER_KIND]: "OpenCode",
   [DROID_DRIVER_KIND]: "Droid",
   [OMP_DRIVER_KIND]: "Oh My Pi",
+  [SCIENT_DRIVER_KIND]: "Scient",
   [ANTIGRAVITY_DRIVER_KIND]: "Antigravity",
 };

@@ -532,17 +532,25 @@ function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings
     : fallbackTextGenerationProvider(settings);
 }
 
+const LAST_RESORT_TEXT_GENERATION_DRIVER = "scient";
+
 function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
   // Same precedence as isModelSelectionProviderEnabled: an explicit provider
   // instance wins over the legacy providers map, which decodes to defaults
   // (codex enabled) when the Providers UI has only written providerInstances.
-  const builtIn = Object.entries(settings.providers).find(([driver, provider]) => {
-    const instance = settings.providerInstances[ProviderInstanceId.make(driver)];
-    return instance === undefined ? provider.enabled : resolveProviderInstanceEnabled(instance);
-  });
-  const fallback = builtIn
-    ? { instanceId: ProviderInstanceId.make(builtIn[0]), driver: builtIn[0] }
-    : enabledNamedInstance(settings);
+  const enabledBuiltIns = Object.entries(settings.providers)
+    .filter(([driver, provider]) => {
+      const instance = settings.providerInstances[ProviderInstanceId.make(driver)];
+      return instance === undefined ? provider.enabled : resolveProviderInstanceEnabled(instance);
+    })
+    .map(([driver]) => ({ instanceId: ProviderInstanceId.make(driver), driver }));
+  // Scient Agent is on by default, so its being enabled is not a choice the
+  // user made and does not say it is installed. It generates text only when
+  // nothing else is enabled.
+  const fallback =
+    enabledBuiltIns.find(({ driver }) => driver !== LAST_RESORT_TEXT_GENERATION_DRIVER) ??
+    enabledNamedInstance(settings) ??
+    enabledBuiltIns[0];
   if (!fallback) {
     return settings;
   }

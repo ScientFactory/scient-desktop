@@ -40,19 +40,21 @@ const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
-// Stopping a session kills the agent with SIGTERM; Windows terminates the
-// process instead, so the mock never sees a signal to log.
+// POSIX shutdown is qualified by exact owned PID lifetime.
 const windowsHost = HostProcessPlatform.defaultValue() === "win32";
 
-async function makeMockGrokWrapper(extraEnv?: Record<string, string>) {
+async function makeMockGrokWrapper(extraEnv?: Record<string, string>, scriptPath = mockAgentPath) {
   const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-mock-"));
   return writeFakeCli({
     directory: dir,
     name: "fake-grok",
     env: extraEnv ?? {},
-    source: execScriptSource({ scriptPath: mockAgentPath }),
+    source: execScriptSource({ scriptPath }),
   });
 }
+
+const makeV1MockGrokWrapper = (extraEnv?: Record<string, string>) =>
+  makeMockGrokWrapper(extraEnv, NodePath.join(__dirname, "../../../scripts/grok-v1-mock-agent.ts"));
 
 function waitForFileContent(
   filePath: string,
@@ -238,7 +240,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       Effect.gen(function* () {
         const threadId = ThreadId.make(`grok-background-${taskType}`);
         const wrapperPath = yield* Effect.promise(() =>
-          makeMockGrokWrapper({
+          (taskType === "monitor" ? makeV1MockGrokWrapper : makeMockGrokWrapper)({
             [taskType === "monitor"
               ? "T3_ACP_EMIT_GROK_MONITOR_POST_TURN_POLL"
               : "T3_ACP_EMIT_GROK_BACKGROUND_TASK_STARTED"]: "1",
@@ -300,7 +302,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       );
       const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
       const wrapperPath = yield* Effect.promise(() =>
-        makeMockGrokWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
+        makeV1MockGrokWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
       );
       const adapter = yield* makeTestAdapter(wrapperPath);
       yield* adapter.startSession({
@@ -371,7 +373,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       );
       const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
       const wrapper = yield* Effect.promise(() =>
-        makeMockGrokWrapper({
+        makeV1MockGrokWrapper({
           T3_ACP_CRASH_PROMPT: "1",
           T3_ACP_REQUEST_LOG_PATH: requestLogPath,
         }),
@@ -426,7 +428,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
   it.effect("starts a session and maps mock ACP prompt flow to runtime events", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-mock-thread");
-      const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
+      const wrapperPath = yield* Effect.promise(() => makeV1MockGrokWrapper());
       const adapter = yield* makeTestAdapter(wrapperPath);
 
       const runtimeEvents: ProviderRuntimeEvent[] = [];
@@ -494,11 +496,11 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       const tempDir = yield* Effect.promise(() =>
         NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-adapter-exit-log-")),
       );
-      const exitLogPath = NodePath.join(tempDir, "exit.log");
+      const pidLogPath = NodePath.join(tempDir, "pid");
 
       const wrapperPath = yield* Effect.promise(() =>
-        makeMockGrokWrapper({
-          T3_ACP_EXIT_LOG_PATH: exitLogPath,
+        makeV1MockGrokWrapper({
+          T3_ACP_PID_LOG_PATH: pidLogPath,
         }),
       );
       const adapter = yield* makeTestAdapter(wrapperPath);
@@ -511,10 +513,30 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
         modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
       });
 
+      const peerThreadId = ThreadId.make("grok-stop-session-bystander");
+      const peerPidLog = NodePath.join(tempDir, "peer-pid");
+      const peerWrapper = yield* Effect.promise(() =>
+        makeV1MockGrokWrapper({ T3_ACP_PID_LOG_PATH: peerPidLog }),
+      );
+      const peerAdapter = yield* makeTestAdapter(peerWrapper);
+      yield* peerAdapter.startSession({
+        threadId: peerThreadId,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      const peerPid = yield* Effect.tryPromise(() => NodeFSP.readFile(peerPidLog, "utf8")).pipe(
+        Effect.flatMap(Schema.decodeEffect(Schema.NumberFromString)),
+      );
       yield* adapter.stopSession(threadId);
 
-      const exitLog = yield* waitForFileContent(exitLogPath);
-      assert.include(exitLog, "SIGTERM");
+      const pid = yield* Effect.tryPromise(() => NodeFSP.readFile(pidLogPath, "utf8")).pipe(
+        Effect.flatMap(Schema.decodeEffect(Schema.NumberFromString)),
+      );
+      assert.isAbove(pid, 0);
+      assert.throws(() => process.kill(pid, 0), /ESRCH/);
+      assert.doesNotThrow(() => process.kill(peerPid, 0));
+      assert.isTrue(yield* peerAdapter.hasSession(peerThreadId));
+      yield* peerAdapter.stopSession(peerThreadId);
     }),
   );
 
@@ -992,7 +1014,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-watchdog-plan-stall");
       const wrapperPath = yield* Effect.promise(() =>
-        makeMockGrokWrapper({
+        makeV1MockGrokWrapper({
           T3_ACP_EMIT_PLAN_THEN_HANG: "1",
         }),
       );
@@ -1957,7 +1979,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-usage-limit-error");
       const wrapperPath = yield* Effect.promise(() =>
-        makeMockGrokWrapper({
+        makeV1MockGrokWrapper({
           T3_ACP_EMIT_XAI_RATE_LIMIT_THEN_HANG: "1",
         }),
       );

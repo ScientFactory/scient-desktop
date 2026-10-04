@@ -297,7 +297,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
   const keyPairBytes = yield* secrets
     .get("cloud-link-ed25519-key-pair")
     .pipe(Effect.map((bytes) => Option.map(bytes, (value) => new TextDecoder().decode(value))));
-  const keyPair = yield* Option.match(decodeEnvironmentKeyPair(keyPairBytes), {
+  const keyPair = yield* Option.match(Option.flatMap(keyPairBytes, decodeEnvironmentKeyPair), {
     onNone: () => Effect.die("The relay did not persist an environment signing key pair"),
     onSome: Effect.succeed,
   });
@@ -394,6 +394,9 @@ describe("AgentAwarenessRelay", () => {
     Effect.gen(function* () {
       const { relay, publications } = yield* makeTestRelay({ readProject: () => Option.none() });
       yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 0);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
       assert.equal(publications.length, 1);
       assert.isNull(publications[0]?.state);
     }),

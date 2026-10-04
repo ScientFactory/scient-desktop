@@ -31,7 +31,7 @@ import { nativeThreadKey } from "../../orchestration-v2/scient-fork/context/nati
 import { makeOmpAdapter } from "../Layers/OmpAdapter.ts";
 import * as OmpExecutableGate from "./OmpExecutableGate.ts";
 import { makeOmpCustomModelsClientFactory } from "./OmpCustomModels.ts";
-import { ompLiveInstance, ompQualifyBinary } from "./OmpLive.testFixtures.ts";
+import { ompLiveInstance, ompQualifyBinary, ompQualifyTarget } from "./OmpLive.testFixtures.ts";
 
 const layer = ScientForkContextDeliveryLive.pipe(
   Layer.provide(ServerSettingsService.layerTest()),
@@ -94,6 +94,7 @@ describe.runIf(ompQualifyBinary)("real OMP fork continuity", () => {
           baseEnv: { PATH: process.env.PATH ?? "" },
         });
         const factory = yield* makeOmpCustomModelsClientFactory(
+          ompQualifyTarget,
           {
             resolveCustomModels: () =>
               Effect.succeed([
@@ -125,6 +126,7 @@ describe.runIf(ompQualifyBinary)("real OMP fork continuity", () => {
           NodePath.join(root, "state"),
         );
         const adapter = yield* makeOmpAdapter({
+          target: ompQualifyTarget,
           binaryPath: ompQualifyBinary!,
           providerInstanceId: instanceId,
           stateDir: NodePath.join(root, "state"),

@@ -19,12 +19,15 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
+import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import type { ProviderAdapterV2SessionRuntime } from "./ProviderAdapter.ts";
 
 const threadId = ThreadId.make("thread:control-reads");
 const providerThreadId = ProviderThreadId.make("provider-thread:control-reads");
@@ -267,25 +270,45 @@ for (const storage of ["sqlite", "memory"] as const) {
       assert.instanceOf(missingThread, ProjectionStore.ProjectionStoreThreadNotFoundError);
 
       const calls: string[] = [];
+      const runtime: ProviderAdapterV2SessionRuntime = {
+        instanceId: providerInstanceId,
+        driver,
+        providerSessionId,
+        providerSession: {
+          id: providerSessionId,
+          driver,
+          providerInstanceId,
+          status: "running",
+          cwd: "/workspace",
+          model: modelSelection.model,
+          capabilities: CodexProviderCapabilitiesV2,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        },
+        events: Stream.empty,
+        ensureThread: () => Effect.die("unused ensureThread"),
+        resumeThread: () => Effect.die("unused resumeThread"),
+        startTurn: () => Effect.die("unused startTurn"),
+        interruptTurn: () =>
+          Effect.sync(() => {
+            calls.push("interrupt");
+          }),
+        steerTurn: (input) =>
+          Effect.sync(() => {
+            assert.equal(input.runId, runId);
+            calls.push(input.message.text);
+          }),
+        respondToRuntimeRequest: () =>
+          Effect.sync(() => {
+            calls.push("reply");
+          }),
+        readThreadSnapshot: () => Effect.die("unused readThreadSnapshot"),
+        rollbackThread: () => Effect.die("unused rollbackThread"),
+        forkThread: () => Effect.die("unused forkThread"),
+      };
       const sessions = Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
-        get: () =>
-          Effect.succeed(
-            Option.some({
-              interruptTurn: () =>
-                Effect.sync(() => {
-                  calls.push("interrupt");
-                }),
-              steerTurn: (input: { message: { text: string }; runId: RunId }) =>
-                Effect.sync(() => {
-                  assert.equal(input.runId, runId);
-                  calls.push(input.message.text);
-                }),
-              respondToRuntimeRequest: () =>
-                Effect.sync(() => {
-                  calls.push("reply");
-                }),
-            } as never),
-          ),
+        get: () => Effect.succeed(Option.some(runtime)),
       });
       yield* Effect.gen(function* () {
         const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;

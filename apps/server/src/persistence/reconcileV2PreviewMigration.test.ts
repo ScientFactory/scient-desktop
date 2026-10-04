@@ -37,8 +37,12 @@ describe("V2 preview upgrade", () => {
       yield* seedPreview;
       const imports = yield* sql`SELECT * FROM orchestration_v2_legacy_imports`;
       assert.deepStrictEqual(yield* runMigrations(), [
+        [53, "ProjectionThreadPullRequests"],
+        [54, "ProjectionThreadMessageContext"],
+        [55, "ProjectionThreadTitleState"],
         [56, "PullRequestFilesViewed"],
         [57, "ProjectionThreadsAutoSettleDisabledAt"],
+        [58, "ProjectionThreadSections"],
         [60, "RemoveRedundantProjectionIndexes"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
@@ -115,11 +119,28 @@ describe("V2 preview upgrade", () => {
         yield* sql`SELECT name FROM sqlite_master WHERE name = 'pull_request_files_viewed'`,
         [],
       );
+      assert.deepStrictEqual(
+        yield* sql`SELECT name FROM sqlite_master WHERE name = 'projection_thread_pull_requests'`,
+        [],
+      );
+      const messageColumns = yield* sql<{
+        readonly name: string;
+      }>`PRAGMA table_info(projection_thread_messages)`;
+      const threadColumns = yield* sql<{
+        readonly name: string;
+      }>`PRAGMA table_info(projection_threads)`;
+      assert.isFalse(messageColumns.some((column) => column.name === "context_json"));
+      assert.isFalse(threadColumns.some((column) => column.name === "title_state_json"));
+      assert.isFalse(threadColumns.some((column) => column.name === "section_id"));
       assert.strictEqual((yield* sql`SELECT * FROM orchestration_v2_legacy_imports`).length, 1);
       yield* sql`DROP TRIGGER fail_preview_upgrade`;
       assert.deepStrictEqual(yield* runMigrations(), [
+        [53, "ProjectionThreadPullRequests"],
+        [54, "ProjectionThreadMessageContext"],
+        [55, "ProjectionThreadTitleState"],
         [56, "PullRequestFilesViewed"],
         [57, "ProjectionThreadsAutoSettleDisabledAt"],
+        [58, "ProjectionThreadSections"],
         [60, "RemoveRedundantProjectionIndexes"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
@@ -139,6 +160,53 @@ describe("V2 preview upgrade", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
+  it.effect("preserves title state already carried by a preview", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* seedPreview;
+      yield* sql`ALTER TABLE projection_threads ADD COLUMN title_state_json TEXT`;
+      yield* sql`INSERT INTO projection_threads (
+        thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
+        created_at, updated_at, title_state_json
+      ) VALUES (
+        'preview-with-title', 'preview-project', 'Authored title',
+        '{"instanceId":"codex","model":"gpt-5.4"}', 'full-access', 'default',
+        '2026-09-15', '2026-09-15', '{"source":"user"}'
+      )`;
+      yield* runMigrations();
+      assert.deepStrictEqual(
+        yield* sql`SELECT title, title_state_json FROM projection_threads
+          WHERE thread_id = 'preview-with-title'`,
+        [{ title: "Authored title", title_state_json: '{"source":"user"}' }],
+      );
+      assert.deepStrictEqual(yield* runMigrations(), []);
+      assert.deepStrictEqual(
+        yield* sql`SELECT created_at FROM effect_sql_migrations WHERE migration_id = 59`,
+        [{ created_at: "2026-09-15 00:00:00" }],
+      );
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
+  it.effect("refuses an incompatible preview title column without changing schema or history", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* seedPreview;
+      yield* sql`ALTER TABLE projection_threads ADD COLUMN title_state_json INTEGER`;
+      const history = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
+      const schema = yield* sql`SELECT name, type, sql FROM sqlite_master ORDER BY name`;
+      assert.ok(Exit.isFailure(yield* Effect.exit(runMigrations())));
+      assert.deepStrictEqual(
+        yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`,
+        history,
+      );
+      assert.deepStrictEqual(
+        yield* sql`SELECT name, type, sql FROM sqlite_master ORDER BY name`,
+        schema,
+      );
+      assert.strictEqual((yield* sql`SELECT * FROM orchestration_v2_legacy_imports`).length, 1);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect("leaves an ordinary Scient ledger untouched", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -153,7 +221,11 @@ describe("V2 preview upgrade", () => {
       assert.deepStrictEqual(
         yield* sql`SELECT migration_id, name FROM effect_sql_migrations
           WHERE migration_id IN (53, 54, 55)`,
-        [{ migration_id: 53, name: "ProjectionThreadPullRequests" }],
+        [
+          { migration_id: 53, name: "ProjectionThreadPullRequests" },
+          { migration_id: 54, name: "ProjectionThreadMessageContext" },
+          { migration_id: 55, name: "ProjectionThreadTitleState" },
+        ],
       );
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

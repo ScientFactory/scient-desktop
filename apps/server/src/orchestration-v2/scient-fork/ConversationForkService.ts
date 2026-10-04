@@ -254,7 +254,11 @@ const make = Effect.gen(function* () {
         }
         return receipt.value.resultSequence;
       }
-      if ((yield* projections.getThreadShell(command.newThreadId)) !== null)
+      const destinationExists = yield* projections.getThread(command.newThreadId).pipe(
+        Effect.as(true),
+        Effect.catchTag("ProjectionStoreThreadNotFoundError", () => Effect.succeed(false)),
+      );
+      if (destinationExists)
         return yield* failure("The destination already exists. Choose a new fork identity.");
       const inspected = yield* inspect(command, command.newThreadId);
       const { projection, plan, source, cwd, fromCheckpointRef, checkpointAvailable } = inspected;

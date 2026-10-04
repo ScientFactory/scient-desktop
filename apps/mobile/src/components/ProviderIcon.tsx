@@ -181,6 +181,17 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
+  if (props.provider === "scient") {
+    // Scient Agent's Möbius symbol, the same drawing the web client shows.
+    return (
+      <Image
+        source={require("../../assets/scient-agent.png")}
+        style={{ width: size, height: size }}
+        contentFit="contain"
+      />
+    );
+  }
+
   // codex (and unknown drivers)
   return (
     <Svg width={size} height={size} viewBox="100 100 411 411" fill="none">

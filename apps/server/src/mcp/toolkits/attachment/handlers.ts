@@ -32,20 +32,20 @@ export function resolveAttachmentReferences(
 }
 
 export const AttachmentHandlersLive = AttachmentToolkit.toLayer({
-  t3_attachment_prepare_upload: (input) =>
+  scient_attachment_prepare_upload: (input) =>
     Effect.gen(function* () {
       yield* readMutationCaller();
       return yield* Upload.issueAttachmentUploadUrl(input.upload).pipe(
         Effect.mapError(unavailable),
       );
     }),
-  t3_attachment_discard: (input) =>
+  scient_attachment_discard: (input) =>
     Effect.gen(function* () {
       yield* readMutationCaller();
       yield* Upload.deletePendingAttachment(input.attachmentId);
       return {};
     }),
-  t3_thread_send_attachments: (input) =>
+  scient_thread_send_attachments: (input) =>
     Effect.gen(function* () {
       const { caller, projection, scope } = yield* readWritableThread(input.threadId, ["messages"]);
       if (projection.thread.archivedAt !== null)

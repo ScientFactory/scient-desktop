@@ -28,6 +28,10 @@ const SCENARIO_KEYS = [
   "measuredCommandTools",
   "measuredMcpResultBytes",
 ];
+const STARTUP_TRANSPORT_LABELS = {
+  "bounded-compact-http-with-live-cursor": "Bounded compact HTTP snapshot with live cursor",
+  "full-compact-http-with-live-cursor": "Full compact HTTP snapshot with live cursor",
+};
 
 function resultShaMarker(sha) {
   return `<!-- t3-thread-transfer-result-sha:${sha} -->`;
@@ -56,16 +60,35 @@ function assertMetric(value, label) {
 
 function validateResult(value) {
   assertExactKeys(value, ["schemaVersion", "scenario", "providers"], "result");
-  if (value.schemaVersion !== 1) {
-    throw new Error("result.schemaVersion must be 1");
+  if (value.schemaVersion !== 1 && value.schemaVersion !== 2) {
+    throw new Error("result.schemaVersion must be 1 or 2");
   }
 
-  assertExactKeys(value.scenario, SCENARIO_KEYS, "result.scenario");
+  assertExactKeys(
+    value.scenario,
+    value.schemaVersion === 2 ? [...SCENARIO_KEYS, "startupTransport"] : SCENARIO_KEYS,
+    "result.scenario",
+  );
   if (!["thread-transfer-v1", "thread-transfer-v2"].includes(value.scenario.id)) {
     throw new Error("result.scenario.id is not supported");
   }
   for (const key of SCENARIO_KEYS.slice(1)) {
     assertMetric(value.scenario[key], `result.scenario.${key}`);
+  }
+  if (value.schemaVersion === 2) {
+    const transports = value.scenario.startupTransport;
+    if (
+      !Array.isArray(transports) ||
+      transports.length === 0 ||
+      transports.length > Object.keys(STARTUP_TRANSPORT_LABELS).length ||
+      new Set(transports).size !== transports.length ||
+      transports.some(
+        (transport) =>
+          typeof transport !== "string" || !Object.hasOwn(STARTUP_TRANSPORT_LABELS, transport),
+      )
+    ) {
+      throw new Error("result.scenario.startupTransport must contain unique supported transports");
+    }
   }
 
   assertExactKeys(value.providers, PROVIDERS, "result.providers");
@@ -117,7 +140,11 @@ function formatImpact(current, baseline, kind) {
 }
 
 function sameScenario(left, right) {
-  return SCENARIO_KEYS.every((key) => left[key] === right[key]);
+  return (
+    SCENARIO_KEYS.every((key) => left[key] === right[key]) &&
+    JSON.stringify(left.startupTransport?.toSorted()) ===
+      JSON.stringify(right.startupTransport?.toSorted())
+  );
 }
 
 const METRICS = [
@@ -209,6 +236,9 @@ function renderComment(input) {
     "<summary>Scenario and decoded snapshot size</summary>",
     "",
     `${current.scenario.historyTurns} historical turns, ${current.scenario.historyCommandToolsPerTurn} command tools per turn, ${formatBytes(current.scenario.historyMcpResultBytes)} retained MCP result per historical turn, and a ${formatBytes(current.scenario.measuredMcpResultBytes)} retained result in the measured turn.`,
+    ...(current.scenario.startupTransport ?? []).map(
+      (transport) => `${STARTUP_TRANSPORT_LABELS[transport]}.`,
+    ),
     "",
     ...PROVIDERS.map(
       (provider) =>

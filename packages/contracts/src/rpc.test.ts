@@ -6,6 +6,13 @@ import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
 import { WsRpcGroup, WsSubscribeServerConfigRpc } from "./rpc.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 
+const sharedDispatchRpc = WsRpcGroup.requests.get(ORCHESTRATION_V2_WS_METHODS.dispatchCommand);
+if (!sharedDispatchRpc) throw new Error("dispatchCommand is not registered");
+const decodeDispatchPayload = Schema.decodeUnknownSync(sharedDispatchRpc.payloadSchema);
+const encodeDispatchError = Schema.encodeSync(sharedDispatchRpc.errorSchema);
+const decodeDispatchError = Schema.decodeUnknownSync(sharedDispatchRpc.errorSchema);
+const decodeServerConfigPayload = Schema.decodeSync(WsSubscribeServerConfigRpc.payloadSchema);
+
 /**
  * The client always sends `environmentThemes`, including to servers built
  * before the field existed, whose payload schema was an empty struct. What
@@ -20,42 +27,38 @@ describe("subscribeServerConfig payload compatibility", () => {
   });
 
   it("is carried by a server that declares it", () => {
-    const decoded = Schema.decodeSync(WsSubscribeServerConfigRpc.payloadSchema)({
+    const decoded = decodeServerConfigPayload({
       environmentThemes: true,
     });
     expect(decoded).toEqual({ environmentThemes: true });
   });
 
   it("stays optional, so a client that never sends it still subscribes", () => {
-    const decoded = Schema.decodeSync(WsSubscribeServerConfigRpc.payloadSchema)({});
+    const decoded = decodeServerConfigPayload({});
     expect(decoded).toEqual({});
   });
 });
 
 describe("WebSocket RPC contracts", () => {
   it("accepts retained section commands through the shared dispatch registration", () => {
-    const rpc = WsRpcGroup.requests.get(ORCHESTRATION_V2_WS_METHODS.dispatchCommand);
-    if (!rpc) throw new Error("dispatchCommand is not registered");
     const command = {
       type: "thread.section.set",
       commandId: "section-command",
       threadId: "thread-1",
       sectionId: null,
     };
-    expect(Schema.decodeUnknownSync(rpc.payloadSchema)(command)).toEqual(command);
+    expect(decodeDispatchPayload(command)).toEqual(command);
   });
 
   it("preserves every fork disposition through the registered error codec", () => {
-    const rpc = WsRpcGroup.requests.get(ORCHESTRATION_V2_WS_METHODS.dispatchCommand);
-    if (!rpc) throw new Error("dispatchCommand is not registered");
     for (const forkDisposition of ["rejected", "abandoned", "ready"] as const) {
       const error = new OrchestrationDispatchCommandError({
         message: "Fork failed",
         forkDisposition,
       });
-      const encoded = Schema.encodeSync(rpc.errorSchema)(error);
+      const encoded = encodeDispatchError(error);
       expect(encoded).toMatchObject({ forkDisposition });
-      expect(Schema.decodeUnknownSync(rpc.errorSchema)(encoded)).toMatchObject({ forkDisposition });
+      expect(decodeDispatchError(encoded)).toMatchObject({ forkDisposition });
     }
   });
   it("exposes only the V2 orchestration transport surface", () => {

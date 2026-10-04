@@ -1,28 +1,35 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
-import { ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  CursorSettings,
+  ProviderInstanceId,
+  ProviderSessionId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as Schema from "effect/Schema";
 import { vi } from "vite-plus/test";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ProviderEventLoggers from "../Layers/ProviderEventLoggers.ts";
-import { CursorDriver } from "./CursorDriver.ts";
+import { CursorDriver, assistedCursorConnectionMethods } from "./CursorDriver.ts";
 import * as CursorAgentSdk from "../../orchestration-v2/Adapters/CursorAgentSdk.ts";
 import { ProviderAdapterV2RuntimePolicy } from "../../orchestration-v2/ProviderAdapter.ts";
 import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
 import { Cursor } from "../cursorSdk.ts";
+
+const decodeCursorSettings = Schema.decodeEffect(CursorSettings);
 
 const testLayer = ServerSecretStore.layer.pipe(
   Layer.provideMerge(
@@ -59,7 +66,7 @@ const testLayer = ServerSecretStore.layer.pipe(
 
 it.layer(testLayer)("CursorDriver", (it) => {
   it.effect(
-    "persists browser credentials, uses them for chat, and closes the SDK session on logout",
+    "preserves SDK browser auth with legacy CLI settings and closes the session on logout",
     () =>
       Effect.gen(function* () {
         const login = vi.spyOn(Cursor.auth, "login").mockImplementation(async (options) => {
@@ -89,16 +96,23 @@ it.layer(testLayer)("CursorDriver", (it) => {
             models.mockRestore();
           }),
         );
+        const fs = yield* FileSystem.FileSystem;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "scient-cursor-browser-" });
         const input = {
           instanceId: ProviderInstanceId.make("cursor-browser-persisted"),
           displayName: "Personal Cursor",
           enabled: true,
-          environment: [{ name: "CURSOR_API_KEY", value: "", sensitive: true }],
-          config: CursorDriver.defaultConfig(),
+          environment: [
+            { name: "CURSOR_API_KEY", value: "", sensitive: true },
+            { name: "CURSOR_AUTH_TOKEN", value: "synthetic-legacy-cli-token", sensitive: true },
+            { name: "PATH", value: "", sensitive: false },
+            { name: "HOME", value: home, sensitive: false },
+          ],
+          config: { ...CursorDriver.defaultConfig(), apiEndpoint: "https://cli.example.test" },
         };
         const openedKeys: Array<string | undefined> = [];
         let closed = 0;
-        const instance = yield* CursorDriver.create(input).pipe(
+        const create = CursorDriver.create(input).pipe(
           Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
             assertComplete: Effect.void,
             open: (request) =>
@@ -114,14 +128,31 @@ it.layer(testLayer)("CursorDriver", (it) => {
                 };
               }),
           }),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) => {
+              expect(request.url).toBe(
+                "https://cli.example.test/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+              );
+              expect(request.headers.authorization).toBe("Bearer synthetic-legacy-cli-token");
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  Response.json({ planUsage: { totalPercentUsed: 10 } }),
+                ),
+              );
+            }),
+          ),
         );
+        const instance = yield* create;
         expect((yield* instance.snapshot.refresh).auth.status).toBe("unauthenticated");
         yield* instance.auth!.start("client");
-        yield* instance.auth!.subscribe("client").pipe(
-          Stream.filter((state) => state.phase === "succeeded"),
+        const terminal = yield* instance.auth!.subscribe("client").pipe(
+          Stream.filter((state) => state.phase === "succeeded" || state.phase === "failed"),
           Stream.runHead,
           Effect.map(Option.getOrThrow),
         );
+        expect(terminal.phase).toBe("succeeded");
         expect(me).toHaveBeenCalledWith({ apiKey: "instance-browser-key" });
         expect(yield* instance.snapshot.getSnapshot).toMatchObject({
           status: "ready",
@@ -149,7 +180,7 @@ it.layer(testLayer)("CursorDriver", (it) => {
         yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
         expect(openedKeys).toEqual(["instance-browser-key"]);
         expect(closed).toBe(0);
-        const recreated = yield* CursorDriver.create(input);
+        const recreated = yield* create;
         expect((yield* recreated.snapshot.refresh).auth.status).toBe("authenticated");
         yield* instance.auth!.logout(Effect.void);
         expect(closed).toBe(1);
@@ -164,43 +195,80 @@ it.layer(testLayer)("CursorDriver", (it) => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect("keeps the bundled SDK manual-only without probing or updating cursor-agent", () =>
+  for (const enabled of [false, true]) {
+    it.effect(
+      `keeps SDK maintenance manual-only with a discoverable CLI (enabled=${enabled})`,
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "scient-cursor-sdk-maintenance-",
+          });
+          const binary = path.join(root, "cursor-agent");
+          yield* fs.writeFileString(binary, "#!/bin/sh\nprintf 'Cursor Agent 2026.10.01\\n'\n");
+          yield* fs.chmod(binary, 0o755);
+          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          let resolvingMaintenance = false;
+          const guardedSpawner = ChildProcessSpawner.make((command) =>
+            Effect.suspend(() =>
+              resolvingMaintenance
+                ? Effect.die("SDK maintenance must not spawn a process")
+                : spawner.spawn(command),
+            ),
+          );
+          const instance = yield* CursorDriver.create({
+            instanceId: ProviderInstanceId.make(`cursor-sdk-${enabled}`),
+            displayName: "Cursor test",
+            enabled,
+            environment: [
+              { name: "PATH", value: root, sensitive: false },
+              { name: "HOME", value: root, sensitive: false },
+            ],
+            config: CursorDriver.defaultConfig(),
+          }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, guardedSpawner));
+          resolvingMaintenance = true;
+          const maintenance = yield* instance.snapshot.resolveMaintenance();
+          expect(maintenance.update).toBeNull();
+          if (!enabled) expect((yield* instance.snapshot.refresh).status).toBe("disabled");
+        }).pipe(Effect.scoped),
+    );
+  }
+
+  it.effect("retains maintenance for an explicitly configured external CLI", () =>
     Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-cursor-explicit-cli-" });
+      const binary = path.join(root, "cursor-agent");
+      yield* fs.writeFileString(binary, "#!/bin/sh\nexit 0\n");
+      yield* fs.chmod(binary, 0o755);
       const instance = yield* CursorDriver.create({
-        instanceId: ProviderInstanceId.make("cursor-sdk"),
-        displayName: "Cursor test",
+        instanceId: ProviderInstanceId.make("cursor-explicit-cli"),
+        displayName: "External Cursor CLI",
         enabled: false,
-        environment: [],
-        config: CursorDriver.defaultConfig(),
+        environment: [{ name: "PATH", value: root, sensitive: false }],
+        config: yield* decodeCursorSettings({ binaryPath: binary }),
       });
-      expect((yield* instance.snapshot.resolveMaintenance()).update).toBeNull();
-      expect((yield* instance.snapshot.refresh).status).toBe("disabled");
-    }).pipe(
-      Effect.provideService(
-        ChildProcessSpawner.ChildProcessSpawner,
-        ChildProcessSpawner.make(() => Effect.die("SDK maintenance must not spawn a process")),
-      ),
-      Effect.scoped,
-    ),
+      expect((yield* instance.snapshot.resolveMaintenance()).update).toMatchObject({
+        executable: binary,
+        args: ["update"],
+        lockKey: "cursor-agent",
+      });
+    }).pipe(Effect.scoped),
   );
 });
 
-import { assistedCursorConnectionMethods } from "./CursorDriver.ts";
-
 describe("CursorDriver assisted account boundary", () => {
-  it("offers the official browser subscription flow for the default provider", () => {
-    expect(assistedCursorConnectionMethods({ apiEndpoint: "" }, {})).toEqual(["cursor_browser"]);
+  it("offers the official browser subscription flow without an SDK API key", () => {
+    expect(assistedCursorConnectionMethods({})).toEqual(["cursor_browser"]);
+    expect(assistedCursorConnectionMethods({ CURSOR_API_KEY: " " })).toEqual(["cursor_browser"]);
+    expect(assistedCursorConnectionMethods({ CURSOR_AUTH_TOKEN: "legacy-cli-token" })).toEqual([
+      "cursor_browser",
+    ]);
   });
 
-  it("does not misrepresent external credentials or endpoints as managed browser auth", () => {
-    expect(assistedCursorConnectionMethods({ apiEndpoint: "https://cursor.example" }, {})).toEqual(
-      [],
-    );
-    expect(
-      assistedCursorConnectionMethods({ apiEndpoint: "" }, { CURSOR_API_KEY: "configured" }),
-    ).toEqual([]);
-    expect(
-      assistedCursorConnectionMethods({ apiEndpoint: "" }, { CURSOR_AUTH_TOKEN: "configured" }),
-    ).toEqual([]);
+  it("preserves explicit SDK API-key ownership", () => {
+    expect(assistedCursorConnectionMethods({ CURSOR_API_KEY: "configured" })).toEqual([]);
   });
 });

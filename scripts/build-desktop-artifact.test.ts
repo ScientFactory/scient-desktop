@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -279,6 +280,8 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
     appExecutableName,
   } as const;
 });
+
+const isCursorSdkPlatformPackagesMissingError = Schema.is(CursorSdkPlatformPackagesMissingError);
 
 it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   it("resolves the dedicated nightly updater channel from nightly versions", () => {
@@ -1103,8 +1106,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           yield* fs.makeDirectory(path.dirname(source), { recursive: true });
           yield* fs.writeFileString(source, "fixture helper", { mode: 0o755 });
         }
-        yield* stageCursorSdkPlatformPackages(nodeModules, destination);
-        for (const helper of helpers) {
+        yield* stageCursorSdkPlatformPackages(nodeModules, destination, {
+          platform: "mac",
+          arch: "arm64",
+        });
+        assert.isFalse(yield* fs.exists(path.join(destination, "sdk-win32-x64")));
+        for (const helper of helpers.filter((name) => name.startsWith("sdk-darwin-arm64/"))) {
           assert.equal(yield* fs.readFileString(path.join(destination, helper)), "fixture helper");
           const packagedPath = `node_modules/@cursor/${helper}`;
           assert.isTrue(
@@ -1122,7 +1129,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
-  it.effect("stages Cursor helpers from the Windows server dependency tree before packing", () =>
+  it.effect("stages Cursor helpers and extracts the actual Windows archive for WSL fallback", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -1135,7 +1142,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           root,
           "app/apps/desktop/prod-resources/cursor-sdk",
         );
+        const resourcesPath = path.join(root, "final/resources");
+        yield* fs.makeDirectory(resourcesPath, { recursive: true });
         const files = [
+          "apps/server/dist/bin.mjs",
           "node_modules/@cursor/sdk/dist/esm/index.js",
           "node_modules/@cursor/sdk-win32-x64/bin/rg.exe",
           "node_modules/@cursor/sdk-win32-x64/vendor/tree-sitter/binding.node",
@@ -1147,14 +1157,14 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           yield* fs.makeDirectory(path.dirname(target), { recursive: true });
           yield* fs.writeFileString(target, "packaged fixture", { mode: 0o755 });
         }
-        const asarPath = path.join(root, "server.asar");
+        const asarPath = path.join(resourcesPath, "server.asar");
         yield* stageAndPackWindowsServerAsar({
           sourceDir,
           asarPath,
           arch: "x64",
           cursorSdkResourcesPath,
         });
-        const members = listPackage(asarPath);
+        const members = listPackage(asarPath, { isPack: false });
         assert.isTrue(members.some((member) => member.endsWith("@cursor/sdk/dist/esm/index.js")));
         assert.isFalse(
           members.some(
@@ -1180,6 +1190,82 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  it.effect("stages both Cursor macOS architectures for a universal artifact", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-cursor-universal-" });
+        const nodeModules = path.join(root, "node_modules");
+        yield* fs.makeDirectory(path.join(nodeModules, "@cursor/sdk"), { recursive: true });
+        for (const arch of ["arm64", "x64"]) {
+          const helper = path.join(nodeModules, "@cursor", `sdk-darwin-${arch}`, "bin/rg");
+          yield* fs.makeDirectory(path.dirname(helper), { recursive: true });
+          yield* fs.writeFileString(helper, arch, { mode: 0o755 });
+        }
+        const destination = path.join(root, "resources");
+        yield* stageCursorSdkPlatformPackages(nodeModules, destination, {
+          platform: "mac",
+          arch: "universal",
+        });
+        for (const arch of ["arm64", "x64"]) {
+          const helper = path.join(destination, `sdk-darwin-${arch}`, "bin/rg");
+          assert.equal(yield* fs.readFileString(helper), arch);
+          assert.equal((yield* fs.stat(helper)).mode & 0o777, 0o755);
+        }
+      }),
+    ),
+  );
+
+  for (const scenario of [
+    {
+      name: "foreign-only",
+      platform: "mac" as const,
+      arch: "arm64" as const,
+      installed: ["sdk-win32-x64"],
+      missing: ["sdk-darwin-arm64"],
+    },
+    {
+      name: "universal missing x64",
+      platform: "mac" as const,
+      arch: "universal" as const,
+      installed: ["sdk-darwin-arm64"],
+      missing: ["sdk-darwin-x64"],
+    },
+    {
+      name: "Windows missing WSL helpers",
+      platform: "win" as const,
+      arch: "x64" as const,
+      installed: ["sdk-win32-x64"],
+      missing: ["sdk-linux-x64"],
+    },
+  ]) {
+    it.effect(`rejects Cursor ${scenario.name} packages before staging a partial target`, () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-cursor-target-" });
+          const nodeModules = path.join(root, "node_modules");
+          yield* fs.makeDirectory(path.join(nodeModules, "@cursor/sdk"), { recursive: true });
+          for (const name of scenario.installed)
+            yield* fs.makeDirectory(path.join(nodeModules, "@cursor", name), { recursive: true });
+          const destination = path.join(root, "resources");
+          const error = yield* stageCursorSdkPlatformPackages(nodeModules, destination, {
+            platform: scenario.platform,
+            arch: scenario.arch,
+            linuxServerBackend: scenario.platform === "win",
+          }).pipe(Effect.flip);
+          if (!isCursorSdkPlatformPackagesMissingError(error)) {
+            return yield* Effect.die("Expected a missing Cursor target package error.");
+          }
+          assert.deepEqual(error.missingPackages, scenario.missing);
+          assert.isFalse(yield* fs.exists(destination));
+        }),
+      ),
+    );
+  }
+
   it.effect("rejects a staged server missing Cursor platform optional dependencies", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1192,6 +1278,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         const error = yield* stageCursorSdkPlatformPackages(
           path.join(root, "node_modules"),
           path.join(root, "resources"),
+          { platform: "mac", arch: "arm64" },
         ).pipe(Effect.flip);
         assert.instanceOf(error, CursorSdkPlatformPackagesMissingError);
       }),

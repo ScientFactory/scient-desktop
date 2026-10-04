@@ -1,18 +1,21 @@
 import {
   ApprovalRequestId,
   CheckpointRef,
+  ComposerContextId,
   EnvironmentId,
   EventId,
   MessageId,
+  NodeId,
+  OrchestrationV2TurnItemJson,
   RunId,
   ThreadId,
   TurnId,
-  type ComposerContextRecord,
   type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
 import {
   deriveAgentPanelModel,
   foldSubagentActivities,
+  projectedSubagentsToRuntime,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   act,
@@ -22,13 +25,17 @@ import {
   type ReactNode,
   type Ref,
 } from "react";
+import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
 import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import type { LegendListRef, MaintainScrollAtEndOptions } from "@legendapp/list/react";
+import type { LegendListRef } from "@legendapp/list/react";
 import { deriveWorkLogEntries } from "../../session-logic";
 import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
 import { useComposerFocusState } from "./useComposerFocusState";
+
+const decodeNativeWorkflowItem = Schema.decodeUnknownSync(OrchestrationV2TurnItemJson);
 
 const activityTestState = vi.hoisted(() => ({
   expanded: false,
@@ -226,9 +233,10 @@ function matchMedia() {
 }
 
 let MessagesTimeline: typeof import("./MessagesTimeline").MessagesTimeline;
-let resolvePreviewAnnotationImage: typeof import("./MessagesTimeline").resolvePreviewAnnotationImage;
 
-const ElementStub = class ElementStub {};
+const ElementStub = class ElementStub {
+  readonly nodeType = 1;
+};
 function stubDomGlobals() {
   const classList = {
     add: () => {},
@@ -268,7 +276,7 @@ function stubDomGlobals() {
 beforeEach(stubDomGlobals);
 beforeAll(async () => {
   stubDomGlobals();
-  ({ MessagesTimeline, resolvePreviewAnnotationImage } = await import("./MessagesTimeline"));
+  ({ MessagesTimeline } = await import("./MessagesTimeline"));
 }, 30_000);
 
 const ACTIVE_THREAD_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
@@ -893,7 +901,8 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-content-inset-end="144"');
     expect(markup).toContain("[overflow-anchor:none]");
     expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
-    expect(markup).toContain('data-maintain-visible-content-position="false"');
+    expect(markup).toContain('data-maintain-visible-content-position="object"');
+    expect(markup).toContain('data-maintain-visible-content-position-size="true"');
     expect(markup).toContain("Terminal");
     expect(markup).toContain("t3code — Tests");
     expect(markup).toContain('src="data:image/png;base64,aWNvbg=="');
@@ -1255,9 +1264,8 @@ describe("MessagesTimeline", () => {
       ),
     ).not.toContain('data-maintain-scroll-at-end="enabled"');
 
-    // Dropping the anchor is what actually gives end-following back, so
-    // returning to the live edge has to release it — re-enabling live follow
-    // alone leaves nothing pinned to the stream.
+    // Releasing reserved end space retains the bounded answer reader;
+    // arbitrary list-layout changes must never pin the reader.
     expect(
       renderToStaticMarkup(
         <MessagesTimeline
@@ -1761,7 +1769,8 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).not.toContain("data-anchor-index=");
-    expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
+    expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
+    expect(markup).toContain('data-maintain-visible-content-position-data="true"');
     expect(onAnchorReady).not.toHaveBeenCalled();
   });
 
@@ -1914,7 +1923,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
   });
 
-  it("hands end-following back to the list once the send anchor is released", () => {
+  it("keeps answer following bounded when the send anchor is released", () => {
     const firstEntry = buildUserTimelineEntry("First prompt.");
     const secondEntry = {
       ...buildUserTimelineEntry("Newest prompt."),
@@ -1938,9 +1947,8 @@ describe("MessagesTimeline", () => {
       ),
     ).not.toContain('data-maintain-scroll-at-end="enabled"');
 
-    // Dropping the anchor is what actually gives end-following back, so
-    // returning to the live edge has to release it — re-enabling live follow
-    // alone leaves nothing pinned to the stream.
+    // Releasing reserved end space retains the bounded answer reader;
+    // arbitrary list-layout changes must never pin the reader.
     expect(
       renderToStaticMarkup(
         <MessagesTimeline
@@ -1949,7 +1957,7 @@ describe("MessagesTimeline", () => {
           timelineEntries={timelineEntries}
         />,
       ),
-    ).toContain('data-maintain-scroll-at-end="enabled"');
+    ).not.toContain('data-maintain-scroll-at-end="enabled"');
 
     // Reading history still wins over both.
     expect(
@@ -1973,13 +1981,9 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Show full message");
-    // LegendList owns ordinary end-follow (#5449): with live follow on and no
-    // anchored end space, its maintainScrollAtEnd is enabled.
-    expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
-    expect(markup).toContain('data-maintain-scroll-at-end-animated="false"');
-    expect(markup).toContain('data-maintain-scroll-at-end-data-change="true"');
-    expect(markup).toContain('data-maintain-scroll-at-end-item-layout="true"');
-    expect(markup).toContain('data-maintain-scroll-at-end-layout="true"');
+    // Prompt disclosure resizes the row without transferring reader ownership.
+    expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
+    expect(markup).toContain('data-maintain-visible-content-position-size="true"');
     expect(markup).toContain('data-user-message-collapsed="true"');
     expect(markup).toContain('data-user-message-fade="true"');
     expect(markup).toContain('data-user-message-footer="true"');
@@ -3050,6 +3054,34 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('data-v2-event-disclosure="true"');
   });
 
+  it("marks an agent's own tool with the one-colour Scient symbol", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-dynamic-tool",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "work-dynamic-tool",
+              createdAt: MESSAGE_CREATED_AT,
+              toolCallId: "call-dynamic-tool",
+              label: "lsp",
+              toolTitle: "lsp",
+              tone: "tool",
+              itemType: "dynamic_tool",
+              toolLifecycleStatus: "completed",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-scient-symbol="mono"');
+    expect(markup).not.toContain("lucide-hammer");
+  });
+
   it("keeps inherited V2 work provenance on the rendered row", async () => {
     activityTestState.expanded = true;
     const { MessagesTimeline } = await import("./MessagesTimeline");
@@ -3192,9 +3224,9 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    // The T3 wordmark replaces the generic tool icon for T3 MCP calls.
-    expect(markup).toContain('viewBox="15.5309 37 94.3941 56.96"');
-    expect(markup).toContain("Read a T3 thread");
+    // Known historical MCP namespaces retain the current Scient product symbol.
+    expect(markup).toContain("scient-symbol.svg");
+    expect(markup).toContain("Read a Scient thread");
     expect(markup).not.toContain("mcp__t3-code__t3_thread_read");
   });
 
@@ -3235,7 +3267,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("t3code/apps/web/src/session-logic.ts");
+    expect(markup).toContain("src/session-logic.ts");
     expect(markup).not.toContain("C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts");
   });
 
@@ -3315,16 +3347,72 @@ describe("MessagesTimeline", () => {
   });
 
   it("collapses settled tool runs behind a generated summary toggle", () => {
+    activityTestState.expandedRuns = true;
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
         timelineEntries={[
+          {
+            ...buildUserTimelineEntry(
+              "![shot.png](t3-context://v1/image/img-1) [notes.txt](t3-context://v1/file/file-1) [legacy.txt](t3-context://v1/file/legacy)",
+            ),
+            id: "attachment-message",
+            message: {
+              ...buildUserTimelineEntry(
+                "![shot.png](t3-context://v1/image/img-1) [notes.txt](t3-context://v1/file/file-1) [legacy.txt](t3-context://v1/file/legacy)",
+              ).message,
+              context: {
+                version: 1,
+                records: [
+                  {
+                    version: 1,
+                    contextId: ComposerContextId.make("img-1"),
+                    kind: "image",
+                    label: "shot.png",
+                    attachmentId: "img-1",
+                    name: "shot.png",
+                    mimeType: "image/png",
+                    sizeBytes: 1024,
+                  },
+                  {
+                    version: 1,
+                    contextId: ComposerContextId.make("file-1"),
+                    kind: "file",
+                    label: "notes.txt",
+                    attachmentId: "file-1",
+                    name: "notes.txt",
+                    mimeType: "text/plain",
+                    sizeBytes: 1024,
+                  },
+                ],
+              },
+              attachments: [
+                {
+                  type: "image",
+                  id: "img-1",
+                  name: "shot.png",
+                  mimeType: "image/png",
+                  sizeBytes: 1024,
+                  previewUrl: "data:image/png;base64,aA==",
+                },
+                {
+                  type: "file",
+                  id: "file-1",
+                  name: "notes.txt",
+                  mimeType: "text/plain",
+                  sizeBytes: 1024,
+                  downloadable: false,
+                },
+              ],
+            },
+          },
           {
             id: "entry-1",
             kind: "work",
             createdAt: "2026-03-17T19:12:28.000Z",
             entry: {
               id: "work-1",
+              runId: RunId.make("run-1"),
               createdAt: "2026-03-17T19:12:28.000Z",
               label: "Ran command",
               command: "vp lint",
@@ -3339,6 +3427,7 @@ describe("MessagesTimeline", () => {
             createdAt: "2026-03-17T19:12:29.000Z",
             entry: {
               id: "work-2",
+              runId: RunId.make("run-1"),
               createdAt: "2026-03-17T19:12:29.000Z",
               label: "Ran command",
               command: "vp test run",
@@ -3565,6 +3654,122 @@ describe("MessagesTimeline", () => {
   });
 });
 
+it("opens the native workflow roster from its timeline row without reading V1 activities", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const now = DateTime.makeUnsafe(MESSAGE_CREATED_AT);
+  const common = {
+    prompt: "Audit",
+    title: "Audit",
+    model: null,
+    status: "running" as const,
+    result: null,
+    startedAt: now,
+    completedAt: null,
+    updatedAt: now,
+  };
+  const model = deriveAgentPanelModel({
+    agents: [],
+    v2Projection: projectedSubagentsToRuntime([
+      {
+        ...common,
+        id: "workflow",
+        presentation: {
+          kind: "workflow",
+          workflowName: "Evidence audit",
+          phases: [{ index: 0, title: "Review" }],
+        },
+      },
+      {
+        ...common,
+        id: "member",
+        title: "Source reader",
+        presentation: {
+          kind: "workflow_agent",
+          workflowId: NodeId.make("workflow"),
+          phaseIndex: 0,
+          role: "researcher",
+        },
+      },
+    ]),
+  });
+  const item = decodeNativeWorkflowItem({
+    id: "native-workflow-item",
+    threadId: "thread-1",
+    runId: "run-1",
+    nodeId: "workflow",
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 1,
+    status: "running",
+    title: "Audit",
+    startedAt: MESSAGE_CREATED_AT,
+    completedAt: null,
+    updatedAt: MESSAGE_CREATED_AT,
+    type: "subagent",
+    subagentId: "workflow",
+    origin: "provider_native",
+    driver: "claude-code",
+    providerInstanceId: "claude-code",
+    childThreadId: null,
+    prompt: "Audit",
+    result: null,
+  });
+  const onOpenAgents = vi.fn();
+  let renderer: ReactTestRenderer | undefined;
+  try {
+    await act(() => {
+      renderer = create(
+        <MessagesTimeline
+          {...buildProps()}
+          isWorking
+          runningRunId={RunId.make("run-1")}
+          agentPanelModel={model}
+          onOpenAgents={onOpenAgents}
+          timelineEntries={[
+            {
+              id: "native-workflow-item",
+              kind: "event",
+              createdAt: MESSAGE_CREATED_AT,
+              projectedItem: {
+                item,
+                position: 0,
+                visibility: "local",
+                sourceThreadId: ThreadId.make("thread-1"),
+                sourceItemId: item.id,
+              },
+            },
+          ]}
+        />,
+      );
+    });
+    const expand = renderer!.root
+      .findAllByType("button")
+      .find((button) => button.props["aria-expanded"] === false);
+    expect(expand).toBeDefined();
+    await act(() => expand!.props.onClick());
+    const text = renderer!.root
+      .findAll(() => true)
+      .flatMap((node) => node.children)
+      .filter((child) => typeof child === "string")
+      .join("|");
+    expect(text).toContain("Evidence audit");
+    expect(text).toContain("Source reader");
+    expect(text).toContain("researcher");
+    const open = renderer!.root
+      .findAllByType("button")
+      .find((button) =>
+        button.children.some((child) => typeof child === "string" && child.includes("Agents")),
+      );
+    expect(open).toBeDefined();
+    await act(() => open!.props.onClick());
+    expect(onOpenAgents).toHaveBeenCalledOnce();
+  } finally {
+    await act(() => renderer?.unmount());
+  }
+});
+
 it("announces a runtime failure as an operation, preserving the concise label", () => {
   const markup = renderToStaticMarkup(
     <MessagesTimeline
@@ -3663,7 +3868,7 @@ describe("sub-agent rows: what runs, whether it is alive, how it ended", () => {
       id: entry.id,
       kind: "work" as const,
       createdAt: entry.createdAt,
-      entry,
+      entry: { ...entry, runId },
     })),
   });
   const textOf = (renderer: ReactTestRenderer) =>

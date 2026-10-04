@@ -239,6 +239,22 @@ describe("AntigravityAdapterV2 client file system", () => {
       assert.isTrue(Exit.isFailure(outsideWrite));
       assert.isFalse(yield* fileSystem.exists(path.join(outside, "planted.txt")));
 
+      const linkedDirectory = path.join(workspace, "linked-directory");
+      yield* fileSystem.symlink(outside, linkedDirectory);
+      const nestedEscape = yield* writeTextFile(
+        {
+          sessionId: "mock-session-1",
+          path: path.join(linkedDirectory, "new", "planted.txt"),
+          content: "x",
+        },
+        context("fs/write_text_file"),
+      ).pipe(Effect.exit);
+      assert.isTrue(
+        Exit.isFailure(nestedEscape),
+        "a new suffix cannot escape through its existing ancestor",
+      );
+      assert.isFalse(yield* fileSystem.exists(path.join(outside, "new")));
+
       // An in-workspace symlink to an outside file must not carry a read or
       // write out of the workspace.
       const linkPath = path.join(workspace, "linked-secret.txt");

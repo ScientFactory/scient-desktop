@@ -21,6 +21,7 @@ export type ScientForkWorkspaceStatus = "project-root" | "shared" | "worktree";
 
 const AttachmentCopiesJson = Schema.fromJsonString(Schema.Array(ThreadForkAttachmentCopy));
 const encodeAttachmentCopiesJson = Schema.encodeEffect(AttachmentCopiesJson);
+const decodeAttachmentCopiesJson = Schema.decodeEffect(AttachmentCopiesJson);
 const CopiedBoundariesJson = Schema.fromJsonString(Schema.Array(ThreadForkCopiedBoundary));
 const encodeCopiedBoundariesJson = Schema.encodeEffect(CopiedBoundariesJson);
 const InheritedTurnIdsJson = Schema.fromJsonString(Schema.Array(TurnId));
@@ -441,8 +442,6 @@ export const getReadyForkAttachmentIdMap = Effect.fn("getReadyForkAttachmentIdMa
     WHERE thread_id = ${threadId} AND status = 'ready' LIMIT 1
   `;
   if (!rows[0]) return {};
-  const copies = yield* Schema.decodeUnknownEffect(AttachmentCopiesJson)(
-    rows[0].attachment_copies_json,
-  );
+  const copies = yield* decodeAttachmentCopiesJson(rows[0].attachment_copies_json);
   return Object.fromEntries(copies.map(({ source, target }) => [source.id, target.id]));
 });

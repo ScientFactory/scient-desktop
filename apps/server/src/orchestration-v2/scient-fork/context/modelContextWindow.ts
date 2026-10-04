@@ -12,20 +12,22 @@ const RuntimeConfiguration = Schema.Struct({
   providers: ServerSettings.fields.providers,
   providerInstances: ServerSettings.fields.providerInstances,
 });
+const encodeRuntimeConfiguration = Schema.encodeEffect(Schema.fromJsonString(RuntimeConfiguration));
+const encodeModelWindowKey = Schema.encodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({ selection: ModelSelection, configurationHash: Schema.String }),
+  ),
+);
 
 export const forkModelWindowKey = Effect.fn("forkModelWindowKey")(function* (
   selection: ModelSelection,
   settings: ServerSettings,
 ) {
-  const configuration = yield* Schema.encodeEffect(Schema.fromJsonString(RuntimeConfiguration))({
+  const configuration = yield* encodeRuntimeConfiguration({
     providers: settings.providers,
     providerInstances: settings.providerInstances,
   });
-  return yield* Schema.encodeEffect(
-    Schema.fromJsonString(
-      Schema.Struct({ selection: ModelSelection, configurationHash: Schema.String }),
-    ),
-  )({
+  return yield* encodeModelWindowKey({
     selection,
     configurationHash: NodeCrypto.createHash("sha256").update(configuration).digest("hex"),
   });

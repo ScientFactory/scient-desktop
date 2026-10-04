@@ -682,7 +682,7 @@ meaning is the same.
   latest turn's thinking ranks right after the anchors, older thinking last; a
   running-turn cut ranks first. Anchors that do not fit are kept truncated,
   never silently lost. The coverage header lists omitted and truncated item ids
-  and names `t3_thread_read` for reading them.
+  and names `scient_thread_read` for reading them.
 - Every delivery adds a `scient.fork.context` activity to the fork's timeline
   saying whether it continued natively or received history as a summary.
 
@@ -729,18 +729,18 @@ provider message ids their fork APIs need.
 
 ### Orchestration V2 mapping
 
-| Scient (this branch)                                 | Upstream V2                                                                 |
-| ---------------------------------------------------- | --------------------------------------------------------------------------- |
-| `scient_thread_lineage` + `forkLineage` marker       | `AppThread.lineage` + `forkedFrom`                                          |
-| `scient_context_transfers.status`                    | `ContextTransfer.status` (same literals)                                    |
-| `resolution_json` `native_fork` / `portable_context` | `ContextTransfer.resolution`                                                |
-| `scient_context_handoffs` (`full_thread_summary`)    | `ContextHandoff` + `delivery {nativeThreadId, status}`                      |
-| `native_thread_key`                                  | `delivery.nativeThreadId`                                                   |
-| fork point turn id / checkpoint count                | `sourcePoint.runId` / `checkpointId`                                        |
-| running-turn cut (`mid_turn_cut_json`)               | `sourcePoint.turnItemId` + relaxed forkable-status guard (Scient extension) |
-| `handoffBudget` / `selectHistory` / coverage header  | `ContextHandoffBudget` (Scient cap + estimator override)                    |
-| `t3_thread_read` (Scient bridge)                     | V2 orchestrator `t3_thread_read`                                            |
-| `nativeFork` / `forkFrom`                            | `ProviderAdapter.forkThread`                                                |
+| Scient (this branch)                                 | Upstream V2                                                                        |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `scient_thread_lineage` + `forkLineage` marker       | `AppThread.lineage` + `forkedFrom`                                                 |
+| `scient_context_transfers.status`                    | `ContextTransfer.status` (same literals)                                           |
+| `resolution_json` `native_fork` / `portable_context` | `ContextTransfer.resolution`                                                       |
+| `scient_context_handoffs` (`full_thread_summary`)    | `ContextHandoff` + `delivery {nativeThreadId, status}`                             |
+| `native_thread_key`                                  | `delivery.nativeThreadId`                                                          |
+| fork point turn id / checkpoint count                | `sourcePoint.runId` / `checkpointId`                                               |
+| running-turn cut (`mid_turn_cut_json`)               | `sourcePoint.turnItemId` + relaxed forkable-status guard (Scient extension)        |
+| `handoffBudget` / `selectHistory` / coverage header  | `ContextHandoffBudget` (Scient cap + estimator override)                           |
+| `scient_thread_read` (read-only history)             | V2 native timeline projection; orchestration inspection is `scient_thread_inspect` |
+| `nativeFork` / `forkFrom`                            | `ProviderAdapter.forkThread`                                                       |
 
 On the V2 day, the transfer and handoff rows translate one-to-one; the
 Scient-only concepts (running-turn cut, reasoning items, workspace mode,
@@ -839,36 +839,35 @@ Interface-wide provider and VCS changes from the prototype were deliberately
 removed. They forced unrelated adapters and test doubles to understand Scient
 forking and would have increased every future upstream merge.
 
-## Omitted-history recovery: `t3_thread_read` bridge
+## Omitted-history recovery: `scient_thread_read`
 
 A fork's first provider turn receives a bounded transcript, so older messages
-can be omitted. The Scient MCP tool `t3_thread_read` lets the model read them
-back from the projections. It is a temporary bridge: it keeps the tool name,
-input fields, defaults, and paging semantics of T3 Orchestration V2's
-`t3_thread_read` (`OrchestratorMcpThreadReadInput`, upstream
-`apps/server/src/mcp/toolkits/orchestrator/tools.ts`), so prompts that name the
-tool keep working. **Delete `apps/server/src/mcp/toolkits/threads/`, the
-`threads:read` grant, and the `SCIENT-THREAD-READ` seams when V2's orchestrator
-toolkit lands.**
+can be omitted. The Scient MCP tool `scient_thread_read` lets the model read them
+back from native V2 projections. Its shipped input fields, defaults and paging
+semantics are preserved. It keeps the narrow `threads:read` grant and performs
+no delegated-result acknowledgment. Orchestration's `scient_thread_inspect`
+requires the separate `orchestration` grant: it includes run metadata, can read
+explicitly user-attached context threads, and acknowledges a direct child's
+terminal result when the complete result is read. Both tools are registered
+under distinct names and retain honest side-effect annotations.
 
 - Input: `threadId` (required), `view` (`messages` default, or `activity`),
   `afterPosition` (exclusive), `limit` (1–100, default 50), `itemId`,
   `textOffset`, `maxCharsPerItem` (1–50,000, default 20,000), and `runLimit`.
-  `runLimit` is accepted and ignored because this server projects only the
-  latest turn, not run history.
+  `runLimit` is accepted for input compatibility and ignored by this reader;
+  `scient_thread_inspect` supplies run history.
 - Output: a V2-compatible subset. `thread` includes identity, project, title,
   V2-vocabulary `status`, model, modes, fork parent, `itemCount`, and archive
   state. `items` carry `position`, `itemId`, `type`, `status`, `title`,
   `activityKind`, `messageId`, `turnId`, windowed `text`, `textTruncated`,
   `nextTextOffset`, and timestamps. The page also returns `nextPosition` and
   `hasMore`. There is no `recentRuns` field.
-- Timeline: messages of every role, proposed plans, and thread activities
-  are paged directly from durable projection tables by `historyRead.ts`.
+- Timeline: messages of every role, proposed plans, and tool/activity items
+  are paged through `ProjectionStoreV2.getTimelinePage`.
   Direct item lookup and paging do not inherit the UI's 500-activity limit.
   Internal fork hydration explicitly requests full retained activity history;
-  ordinary UI reads remain bounded. Items are ordered by creation time,
-  source kind, source sequence, and identifier. `position`
-  indexes this full timeline in both views. The `messages` view returns user
+  ordinary UI reads remain bounded. Native projection positions preserve local
+  and inherited timeline order in both views. The `messages` view returns user
   messages, assistant messages, and proposed plans. The `activity` view also
   returns reasoning, system messages, and activities. An activity is rendered
   as its kind and summary followed by its payload. `maxCharsPerItem` bounds
@@ -882,10 +881,11 @@ toolkit lands.**
   invocation. It may read itself or a non-deleted thread, including an archived
   one, in the same project. Other projects fail with `thread_outside_project`.
   A projectless thread can read only itself. A fork reads its own copied
-  transcript even after the origin is deleted. V2's reads of user-attached
-  context threads are not supported because main has no thread context records.
-  The tool never mutates state. Unlike V2, it never acknowledges delegated-child
-  completion, so it is annotated read-only.
+  transcript even after the origin is deleted. Explicitly user-attached context
+  from other projects is available only through orchestration inspection.
+  Historical imports may lazily materialize the projection before reading it;
+  reading never acknowledges delegated-child completion or starts work, so the
+  tool is annotated read-only.
 
 ## Safety and bounded compromises
 
@@ -906,7 +906,7 @@ toolkit lands.**
 - Every retained attachment gets a new fork-owned ID and verified file copy, so
   deletion or cleanup of the origin cannot invalidate the fork.
 - Portable handoffs keep whole items within a model-window-derived budget and
-  never emit invalid JSON; omitted items stay readable through `t3_thread_read`.
+  never emit invalid JSON; omitted items stay readable through `scient_thread_read`.
 - Provider acceptance cannot be made globally exactly-once without provider
   idempotency. Scient therefore re-delivers uncertain context on a fresh
   provider session: the abandoned session may hold a duplicate, the new one

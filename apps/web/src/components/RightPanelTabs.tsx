@@ -152,6 +152,7 @@ interface RightPanelTabsProps {
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
   agentsAvailable: boolean;
+  liveAgentCount?: number;
   sourcesAvailable: boolean;
   computeAvailable: boolean;
 
@@ -1282,6 +1283,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       />
                     ) : null}
                   </PanelTabCloseButton>
+                  {surface.kind === "agents" && !active && (props.liveAgentCount ?? 0) > 0 ? (
+                    <span
+                      className="text-3xs tabular-nums text-info"
+                      aria-label={`${props.liveAgentCount} agents working`}
+                    >
+                      {props.liveAgentCount}
+                    </span>
+                  ) : null}
                   {audio === "none" || !audioRuntimeTabId ? null : (
                     <Tooltip>
                       <TooltipTrigger

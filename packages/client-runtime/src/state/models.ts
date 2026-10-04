@@ -104,12 +104,10 @@ export interface EnvironmentThreadShell {
   readonly runtime: ThreadRuntimeSummary | null;
   readonly latestUserMessageAt: string | null;
   readonly hasPendingApprovals: boolean;
-  // SCIENT-FORK:START — user-defined thread section. Upstream's V2 shell
-  // carries no section column, so this decodes null until the V2 projection
-  // store projects `section_id` (open parity gap, see the parity ledger).
+  // SCIENT-FORK:START — section and answer metadata projected by the V2 server.
   readonly sectionId: ThreadSectionId | null;
-  // Last successful answer, independent of the currently running run. Null
-  // until the V2 shell projects it (same open parity gap as `sectionId`).
+  // Last successful answer, independent of the currently running run.
+  // Undefined identifies an older server; explicit null is authoritative.
   readonly latestCompletedAnswer: ScientCompletedAnswer | null | undefined;
   // SCIENT-FORK:END
   readonly hasPendingUserInput: boolean;

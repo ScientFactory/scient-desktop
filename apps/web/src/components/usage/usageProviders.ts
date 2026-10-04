@@ -30,6 +30,11 @@ export const PROVIDER_PRESENTATION = {
     color: "color-mix(in oklab, var(--contrast-foreground) 72%, var(--background))",
     driverKind: ProviderDriverKind.make("grok"),
   },
+  pi: {
+    label: "Custom models (pi)",
+    color: "#6d8ee8",
+    driverKind: ProviderDriverKind.make("pi"),
+  },
   cursor: { label: "Cursor", color: "#8b8b8b", driverKind: ProviderDriverKind.make("cursor") },
   opencode: {
     label: "OpenCode",
@@ -41,14 +46,6 @@ export const PROVIDER_PRESENTATION = {
     color: "#8c7bd1",
     driverKind: ProviderDriverKind.make("antigravity"),
   },
-  // SCIENT-FORK:START "pi" is custom models, not a vendor; it rides the Codex
-  // mark so the chart stays legible next to the OpenAI-derived custom models.
-  pi: {
-    label: "Custom models (pi)",
-    color: "#6d8ee8",
-    driverKind: ProviderDriverKind.make("pi"),
-  },
-  // SCIENT-FORK:END
 } satisfies Record<UsageProviderKind, UsageProviderPresentation>;
 
 /** Stable provider reading order across charts, summaries, tables, and hover rows. */

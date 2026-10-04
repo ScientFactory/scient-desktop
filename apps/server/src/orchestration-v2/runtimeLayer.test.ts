@@ -8,6 +8,7 @@ import {
   CheckpointId,
   CheckpointRef,
   CommandId,
+  ComposerContextId,
   ContextTransferId,
   EventId,
   MessageId,
@@ -16,6 +17,7 @@ import {
   TurnItemId,
   type ModelSelection,
   type OrchestrationV2Run,
+  type OrchestrationMessageContext,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -3137,6 +3139,172 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         }),
     );
   }
+
+  it.effect("retains omitted queued context and clears both historical message and user item", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("runtime-layer-historical-queued-context");
+      const runId = RunId.make("runtime-layer-historical-queued-run");
+      const messageId = MessageId.make("runtime-layer-historical-queued-message");
+      const itemId = TurnItemId.make("runtime-layer-historical-queued-item");
+      const context: OrchestrationMessageContext = {
+        version: 1,
+        records: [
+          {
+            version: 1,
+            contextId: ComposerContextId.make("retained_terminal_context"),
+            kind: "terminal",
+            label: "Captured terminal output",
+            terminalId: "terminal-1",
+            terminalLabel: "Build",
+            lineStart: 0,
+            lineEnd: 1,
+            text: "Immutable captured output",
+          },
+        ],
+      };
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("historical-queued-context-create"),
+        threadId,
+        projectId: ProjectId.make("historical-queued-context-project"),
+        title: "Historical queued context",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: "/tmp/historical-queued-context",
+        createdBy: "user",
+        creationSource: "web",
+      });
+      // New admission has no queued timeline item. Seed the older durable
+      // shape through the real event sink to qualify its retained edit path.
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("historical-queued-context-run"),
+            type: "run.created",
+            threadId,
+            runId,
+            occurredAt: now,
+            payload: {
+              id: runId,
+              threadId,
+              ordinal: 1,
+              providerInstanceId: modelSelection.instanceId,
+              modelSelection,
+              providerThreadId: null,
+              userMessageId: messageId,
+              rootNodeId: null,
+              activeAttemptId: null,
+              status: "queued",
+              queuePosition: 1,
+              queueHeld: true,
+              requestedAt: now,
+              startedAt: null,
+              completedAt: null,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          },
+          {
+            id: EventId.make("historical-queued-context-message"),
+            type: "message.updated",
+            threadId,
+            runId,
+            occurredAt: now,
+            payload: {
+              id: messageId,
+              threadId,
+              runId,
+              nodeId: null,
+              role: "user",
+              text: "Original queued message",
+              context,
+              attachments: [],
+              selectedScientSkillNames: ["retained-skill"],
+              streaming: false,
+              createdAt: now,
+              updatedAt: now,
+              createdBy: "user",
+              creationSource: "web",
+            },
+          },
+          {
+            id: EventId.make("historical-queued-context-item"),
+            type: "turn-item.updated",
+            threadId,
+            runId,
+            occurredAt: now,
+            payload: {
+              id: itemId,
+              threadId,
+              runId,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              status: "pending",
+              title: null,
+              startedAt: null,
+              completedAt: null,
+              updatedAt: now,
+              type: "user_message",
+              messageId,
+              inputIntent: "turn_start",
+              text: "Original queued message",
+              context,
+              attachments: [],
+              createdBy: "user",
+              creationSource: "web",
+            },
+          },
+        ],
+      });
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      yield* orchestrator.dispatch({
+        type: "queued-run.edit",
+        commandId: CommandId.make("historical-queued-context-omit"),
+        threadId,
+        runId,
+        text: "Text-only edit",
+      });
+      const retained = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(
+        retained.messages.find((message) => message.id === messageId)?.context,
+        context,
+      );
+      const retainedItem = retained.turnItems.find((item) => item.id === itemId);
+      assert.ok(retainedItem?.type === "user_message");
+      assert.deepEqual(retainedItem.context, context);
+      assert.equal(retainedItem.text, "Text-only edit");
+      assert.deepEqual(retained.messages[0]?.selectedScientSkillNames, ["retained-skill"]);
+      yield* orchestrator.dispatch({
+        type: "queued-run.edit",
+        commandId: CommandId.make("historical-queued-context-clear"),
+        threadId,
+        runId,
+        text: "Context removed",
+        context: null,
+      });
+      const cleared = yield* orchestrator.getThreadProjection(threadId);
+      assert.isUndefined(cleared.messages.find((message) => message.id === messageId)?.context);
+      const clearedItem = cleared.turnItems.find((item) => item.id === itemId);
+      assert.ok(clearedItem?.type === "user_message");
+      assert.isUndefined(clearedItem.context);
+      assert.equal(clearedItem.text, "Context removed");
+      assert.deepEqual(cleared.runs, before.runs);
+      assert.deepEqual(cleared.providerSessions, before.providerSessions);
+      assert.deepEqual(cleared.runtimeRequests, before.runtimeRequests);
+      assert.deepEqual(cleared.messages[0]?.selectedScientSkillNames, ["retained-skill"]);
+      assert.lengthOf(cleared.messages, 1);
+      assert.lengthOf(cleared.turnItems, 1);
+    }),
+  );
 
   it.effect("edits and removes queued runs", () =>
     Effect.gen(function* () {

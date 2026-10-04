@@ -137,6 +137,9 @@ function selectOpenCodeRuntimeAdapter(input: {
   return {
     instanceId: input.v1.instanceId,
     driver: DRIVER_KIND,
+    // Both native protocol versions must support the configured host channel.
+    mcpSessionInjection:
+      input.v1.mcpSessionInjection === true && input.v2.mcpSessionInjection === true,
     getCapabilities: () => Effect.flatMap(hot, (adapter) => adapter.getCapabilities()),
     planSelectionTransition: (transition) =>
       Effect.flatMap(hot, (adapter) => adapter.planSelectionTransition(transition)),
@@ -311,9 +314,9 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
       const orchestrationAdapter = selectOpenCodeRuntimeAdapter({
         probe: runtimeProbe,
         v1: openCodeV1Adapter,
-        v2: yield* OpenCode2AdapterV2.make(instanceId).pipe(
-          Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
-        ),
+        v2: yield* OpenCode2AdapterV2.make(instanceId, {
+          mcpSessionInjection: effectiveConfig.serverUrl.trim().length === 0,
+        }).pipe(Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server)),
       });
       const loadOpenCode2Models = yield* makeOpenCode2ModelLoader(
         openCode2Server.withConnection((connection) =>

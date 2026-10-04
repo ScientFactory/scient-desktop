@@ -30,7 +30,18 @@ describe("LenientSetSessionConfigOptionResponse", () => {
       expect(yield* decode({})).toEqual({});
       expect(yield* decode({ configOptions: null })).toEqual({ configOptions: null });
       expect(yield* decode({ configOptions: [] })).toEqual({ configOptions: [] });
+      for (const key of ["id", "configId"] as const) {
+        const option = {
+          [key]: "native-mode",
+          type: "select",
+          name: "Mode",
+          currentValue: "supervised",
+          options: [{ value: "supervised", name: "Supervised" }],
+        };
+        expect(yield* decode({ configOptions: [option] })).toEqual({ configOptions: [option] });
+      }
       yield* Effect.flip(decode({ configOptions: "invalid" }));
+      yield* Effect.flip(decode({ configOptions: [{ type: "select", name: "missing-id" }] }));
     }),
   );
   it.effect("accepts the spec-shaped response", () =>

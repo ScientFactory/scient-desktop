@@ -12,6 +12,7 @@ import {
   ThreadId,
   type OrchestrationV2AppThread,
 } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -30,11 +31,17 @@ import * as ServerConfig from "../../config.ts";
 import { makeOmpRedaction, type OmpRpcProcess } from "../../provider/omp/OmpRpcProcess.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { makeOmpAdapterV2 } from "./OmpAdapterV2.ts";
+import { ompTarget, type OmpTarget } from "../../provider/omp/OmpTarget.ts";
+import {
+  scientAgentTarget,
+  scientAgentProcessEnvironment,
+} from "../../provider/scient/ScientAgentTarget.ts";
 import type { ProviderAdapterV2Event } from "../ProviderAdapter.ts";
 const decodeOmpSettings = Schema.decodeEffect(OmpSettings);
 
 const TestLayer = Layer.mergeAll(
   NodeServices.layer,
+  Layer.succeed(HostProcessPlatform, "darwin"),
   IdAllocator.layer,
   ServerConfig.layerTest(process.cwd(), { prefix: "scient-omp-v2-" }).pipe(
     Layer.provide(NodeServices.layer),
@@ -53,6 +60,7 @@ const harness = Effect.fnUntraced(function* (
     readonly initialNativeThreadId?: string;
     readonly ignoreFreshWrite?: boolean;
     readonly misreportResume?: boolean;
+    readonly target?: OmpTarget;
   },
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -63,8 +71,22 @@ const harness = Effect.fnUntraced(function* (
   let freshSessions = 0;
   let switches = 0;
   let prompts = 0;
+  let eventFilterWrites = 0;
+  let processTarget: OmpTarget | undefined;
+  let processStateRoot: string | undefined;
+  let processSessionDir: string | undefined;
+  const target = behavior?.target ?? ompTarget;
+  const scientific = target.driverKind === scientAgentTarget.driverKind;
+  const ownedHome = path.join(config.stateDir, "scient-agent", "instances", "scient-v2-test");
+  const environment = scientific
+    ? scientAgentProcessEnvironment({
+        root: ownedHome,
+        platform: yield* HostProcessPlatform,
+        baseEnv: { OMP_PROFILE: "foreign-omp-profile", PI_CODING_AGENT_DIR: "/foreign/omp-home" },
+      })
+    : {};
   let model = { provider: "test", id: "initial" };
-  const instanceId = ProviderInstanceId.make("omp-v2-test");
+  const instanceId = ProviderInstanceId.make(scientific ? "scient-v2-test" : "omp-v2-test");
   const threadId = ThreadId.make(`omp-v2-${yield* (yield* Crypto.Crypto).randomUUIDv4}`);
   const modelSelection = { instanceId, model: "test/selected" };
   const runtimePolicy = {
@@ -73,9 +95,11 @@ const harness = Effect.fnUntraced(function* (
     interactionMode: "default" as const,
   };
   const adapter = makeOmpAdapterV2({
+    target,
     instanceId,
-    settings: yield* decodeOmpSettings({}),
-    environment: {},
+    settings: yield* decodeOmpSettings({ binaryPath: scientific ? "scient-agent" : "omp" }),
+    ...(scientific ? { homePath: ownedHome } : {}),
+    environment,
     spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
     fileSystem: fs,
     path,
@@ -85,6 +109,9 @@ const harness = Effect.fnUntraced(function* (
     continuations: { offer: () => Effect.void },
     makeProcess: (options) =>
       Effect.gen(function* () {
+        processTarget = options.target;
+        processStateRoot = options.env?.SCIENT_AGENT_ROOT;
+        processSessionDir = options.sessionDir;
         const sessionDir = options.sessionDir;
         if (!sessionDir) return yield* Effect.die("Missing owned session directory");
         let sessionFile = path.join(sessionDir, "session.jsonl");
@@ -93,7 +120,8 @@ const harness = Effect.fnUntraced(function* (
         yield* fs.writeFileString(sessionFile, "{}\n").pipe(Effect.orDie);
 
         const client: OmpRpcProcess = {
-          version: "18.3.1",
+          version: scientific ? "0.1.0" : "18.3.1",
+          runtimeVersion: scientific ? "18.4.8" : "18.3.1",
           redaction: makeOmpRedaction({}, []),
           shutdown: Effect.succeed({ code: 0, forced: false, stderrTail: "" }),
           ready: Effect.succeed({
@@ -153,7 +181,10 @@ const harness = Effect.fnUntraced(function* (
             }),
           setSubagentSubscription: () => Effect.succeed(success("set_subagent_subscription")),
           setEventFilter: (filter) =>
-            Effect.succeed({ events: filter === null ? null : [...filter] }),
+            Effect.sync(() => {
+              eventFilterWrites += 1;
+              return { events: filter === null ? null : [...filter] };
+            }),
           limits: Effect.succeed({
             maxFrameBytes: 1_048_576,
             maxReassembledFrameBytes: 67_108_864,
@@ -240,6 +271,11 @@ const harness = Effect.fnUntraced(function* (
   return {
     runtime,
     input,
+    ownedHome,
+    processTarget,
+    processStateRoot,
+    processSessionDir,
+    eventFilterWrites: () => eventFilterWrites,
     prompts: () => prompts,
     freshSessions: () => freshSessions,
     switches: () => switches,
@@ -251,6 +287,80 @@ const harness = Effect.fnUntraced(function* (
 });
 
 it.layer(TestLayer)("OmpAdapterV2", (it) => {
+  it.effect("runs Scient Agent through its independent native target and runtime version", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, { target: scientAgentTarget });
+        assert.equal(h.runtime.driver, scientAgentTarget.driverKind);
+        assert.strictEqual(h.processTarget, scientAgentTarget);
+        assert.equal(h.processStateRoot, h.ownedHome);
+        assert.include(h.processSessionDir ?? "", "scient-agent-sessions");
+        assert.notInclude(h.processSessionDir ?? "", "/omp-sessions/");
+        // Product 0.1.0 speaks OMP 18.4.8; feature gates use the runtime release.
+        assert.equal(h.eventFilterWrites(), 1);
+        const cursor = h.input.providerThread.nativeMetadata?.resumeCursor;
+        assert.deepInclude(cursor, { driverKind: "scient", ompVersion: "18.4.8" });
+        yield* h.runtime.startTurn(h.input);
+        yield* Deferred.await(h.promptDelivered);
+        assert.equal(h.prompts(), 1);
+      }),
+    ),
+  );
+
+  it.effect("names Scient Agent when its native reasoning selection is coerced", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, { target: scientAgentTarget });
+        yield* h.runtime.startTurn({
+          ...h.input,
+          modelSelection: {
+            ...h.input.modelSelection,
+            options: [{ id: "thinkingLevel", value: "off" }],
+          },
+        });
+        const warning = yield* h.takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.toolName === "Scient Agent reasoning selection",
+        );
+        if (warning.type !== "turn_item.updated" || warning.turnItem.type !== "dynamic_tool")
+          return yield* Effect.die("Missing native reasoning warning");
+        assert.equal(
+          warning.turnItem.output,
+          "Scient Agent applied its default reasoning instead of off.",
+        );
+        yield* Deferred.await(h.promptDelivered);
+        assert.equal(h.prompts(), 1);
+      }),
+    ),
+  );
+
+  it.effect("resumes an exact Scient cursor but refuses OMP authority in the same instance", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, { target: scientAgentTarget });
+        const providerThread = h.input.providerThread;
+        const cursor = providerThread.nativeMetadata?.resumeCursor;
+        if (typeof cursor !== "object" || cursor === null)
+          return yield* Effect.die("Missing Scient continuation cursor");
+        const resumed = yield* h.runtime.resumeThread({ providerThread });
+        assert.equal(resumed.id, providerThread.id);
+        assert.equal(h.switches(), 1);
+        const rejected = yield* Effect.result(
+          h.runtime.resumeThread({
+            providerThread: {
+              ...providerThread,
+              nativeMetadata: { resumeCursor: { ...cursor, driverKind: "omp" } },
+            },
+          }),
+        );
+        assert.equal(rejected._tag, "Failure");
+        assert.equal(h.switches(), 1);
+      }),
+    ),
+  );
+
   it.effect("opens fresh native state without trusting an eager native id", () =>
     Effect.scoped(
       Effect.gen(function* () {

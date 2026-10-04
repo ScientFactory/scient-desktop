@@ -1,10 +1,10 @@
 import type { StartThreadTurnInput } from "@t3tools/client-runtime/operations";
 import { collectSelectedScientSkillNames } from "@t3tools/shared/composerInlineTokens";
 
-import type { QueuedThreadMessage, ThreadSettingsSnapshot } from "../state/thread-outbox-model";
-import { serializeComposerMessageForServer, uploadedComposerContext } from "./composerContext";
-import { deriveThreadTitleSeed } from "./projectThreadStartTurn";
-import type { UploadedMobileAttachment } from "./attachmentUpload";
+import type { QueuedThreadMessage, ThreadSettingsSnapshot } from "./thread-outbox-model";
+import { serializeComposerMessageForServer, uploadedComposerContext } from "../lib/composerContext";
+import { deriveThreadTitleSeed } from "../lib/projectThreadStartTurn";
+import type { UploadedMobileAttachment } from "../lib/attachmentUpload";
 
 /** Replay the captured intent after uploads and settings resolution, including legacy queue rows. */
 export function buildExistingThreadOutboxStartTurnInput(input: {

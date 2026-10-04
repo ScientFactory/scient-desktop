@@ -44,9 +44,9 @@ export const makeCursorManagedRuntimeResolution = Effect.fn("CursorManagedRuntim
     const targetLabel = target ? managedRuntimeTargetKey(target) : `${platform}-${arch}`;
 
     return yield* makeManagedProviderRuntimeResolution({
-      configuredBinaryPath: input.settings.binaryPath ?? "",
+      configuredBinaryPath: input.settings.binaryPath?.trim() || DEFAULT_CURSOR_BINARY,
       defaultBinary: DEFAULT_CURSOR_BINARY,
-      providerName: "Cursor",
+      providerName: "Cursor CLI",
       providerSlug: "cursor",
       runtime: new ManagedCursorRuntime(input.baseDir),
       bundledArtifact: artifact,
@@ -57,9 +57,9 @@ export const makeCursorManagedRuntimeResolution = Effect.fn("CursorManagedRuntim
       configuredRuntimeProbeAllowed: input.enabled,
       managedInstallationAllowed: input.managedInstallationAllowed,
       systemToManagedSwitchAllowed: true,
-      sourceLabel: "Official Cursor Agent release",
+      sourceLabel: "Official Cursor CLI release",
       managedInstallationLimitation:
-        "Scient can use a healthy Cursor runtime here, but managed installation is only enabled in the local desktop app.",
+        "Scient can use a healthy Cursor CLI here, but managed installation is only enabled in the local desktop app.",
       diagnosticsHomePath:
         input.environment.HOME?.trim() || input.environment.USERPROFILE?.trim() || null,
       diagnosticsBackend: nativeProviderRuntimeBackendLabel(platform),

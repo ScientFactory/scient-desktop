@@ -145,8 +145,69 @@ const operationOf = (
 const replayHttpClient = (
   controller: OpenCodeReplayController,
   replayGate: ProviderReplayGate | undefined,
-) =>
-  HttpClient.make((request, url) =>
+) => {
+  // OpenCode's global SSE endpoint broadcasts to every live runtime. One
+  // transcript cursor feeds all subscribers, including pooled predecessors.
+  let feed:
+    | {
+        lifetime: AbortController;
+        subscribers: Map<ReadableStreamDefaultController<Uint8Array>, () => void>;
+      }
+    | undefined;
+  const encoder = new TextEncoder();
+  const subscribe = (signal: AbortSignal) => {
+    let subscriber: ReadableStreamDefaultController<Uint8Array>;
+    let ownedFeed: NonNullable<typeof feed>;
+    const abort = () => {
+      signal.removeEventListener("abort", abort);
+      if (ownedFeed.subscribers.delete(subscriber)) subscriber.close();
+      if (ownedFeed.subscribers.size === 0) {
+        ownedFeed.lifetime.abort();
+        if (feed === ownedFeed) feed = undefined;
+      }
+    };
+    return new ReadableStream<Uint8Array>({
+      start(stream) {
+        subscriber = stream;
+        const startsFeed = feed === undefined;
+        ownedFeed = feed ?? { lifetime: new AbortController(), subscribers: new Map() };
+        feed = ownedFeed;
+        ownedFeed.subscribers.set(stream, () => signal.removeEventListener("abort", abort));
+        signal.addEventListener("abort", abort, { once: true });
+        if (signal.aborted) abort();
+        if (!startsFeed) return;
+        const broadcast = async () => {
+          try {
+            for await (const event of controller.events(
+              ownedFeed.lifetime.signal,
+              replayGate?.beforeEmit,
+            )) {
+              const bytes = encoder.encode(`data: ${encodeJson(event)}\n\n`);
+              for (const reader of ownedFeed.subscribers.keys()) reader.enqueue(bytes);
+            }
+            for (const reader of ownedFeed.subscribers.keys()) reader.close();
+          } catch (error) {
+            for (const reader of ownedFeed.subscribers.keys()) reader.error(error);
+          } finally {
+            for (const detach of ownedFeed.subscribers.values()) detach();
+            ownedFeed.subscribers.clear();
+            if (feed === ownedFeed) feed = undefined;
+            signal.removeEventListener("abort", abort);
+          }
+        };
+        void broadcast();
+      },
+      cancel() {
+        signal.removeEventListener("abort", abort);
+        ownedFeed.subscribers.delete(subscriber);
+        if (ownedFeed.subscribers.size === 0) {
+          ownedFeed.lifetime.abort();
+          if (feed === ownedFeed) feed = undefined;
+        }
+      },
+    });
+  };
+  const client = HttpClient.make((request, url, signal) =>
     Effect.tryPromise({
       try: async () => {
         if (controller.exited && controller.finished) {
@@ -169,16 +230,7 @@ const replayHttpClient = (
         await controller.expectOutbound(operation);
         if (operation.type === "event.subscribe") {
           controller.exited = false;
-          const encoder = new TextEncoder();
-          const events = controller.events(undefined, replayGate?.beforeEmit);
-          const frames = events[Symbol.asyncIterator]();
-          const body = new ReadableStream<Uint8Array>({
-            async pull(stream) {
-              const next = await frames.next();
-              if (next.done === true) stream.close();
-              else stream.enqueue(encoder.encode(`data: ${encodeJson(next.value)}\n\n`));
-            },
-          });
+          const body = subscribe(signal);
           return new Response(body, { headers: { "content-type": "text/event-stream" } });
         }
         // Recorded responses are the raw HTTP bodies; `null` is an empty 204.
@@ -201,6 +253,20 @@ const replayHttpClient = (
         }),
     }).pipe(Effect.map((response) => HttpClientResponse.fromWeb(request, response))),
   );
+  return {
+    client,
+    close: () => {
+      if (feed === undefined) return;
+      feed.lifetime.abort();
+      for (const [reader, detach] of feed.subscribers) {
+        detach();
+        reader.close();
+      }
+      feed.subscribers.clear();
+      feed = undefined;
+    },
+  };
+};
 
 /**
  * An OpenCode 2 server that answers from `transcript`, checking at scope close
@@ -223,11 +289,10 @@ export const replayServer = (
         controller.assertComplete();
       }),
     );
+    const replay = replayHttpClient(controller, options?.replayGate);
+    yield* Effect.addFinalizer(() => Effect.sync(replay.close));
     const opencode = yield* OpenCode2Client.make.pipe(
-      Effect.provideService(
-        HttpClient.HttpClient,
-        replayHttpClient(controller, options?.replayGate),
-      ),
+      Effect.provideService(HttpClient.HttpClient, replay.client),
     );
     const connection = {
       ...(yield* opencode.connect({ baseUrl: BASE_URL, password: "replay" })),

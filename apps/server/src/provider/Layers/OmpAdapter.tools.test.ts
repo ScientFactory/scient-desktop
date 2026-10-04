@@ -17,6 +17,7 @@ import { liveActivityToolStatus } from "../../../../../packages/client-runtime/s
 import { projectActivityPayload } from "../../orchestration-v2/ActivityPayloadProjection.ts";
 import { runtimeEventToActivities } from "../../orchestration/Layers/ProviderRuntimeIngestion.ts";
 import { makeOmpScriptedWire } from "../omp/OmpCaptureReplay.testFixtures.ts";
+import { ompTarget } from "../omp/OmpTarget.ts";
 import { makeOmpAdapter } from "./OmpAdapter.ts";
 
 const encodeEventJson = Schema.encodeUnknownEffect(Schema.fromJsonString(ProviderRuntimeEvent));
@@ -34,6 +35,7 @@ const toolsHarness = Effect.fn("ompToolsHarness")(function* (
   );
   const wire = yield* makeOmpScriptedWire();
   const adapter = yield* makeOmpAdapter({
+    target: ompTarget,
     binaryPath: "omp",
     providerInstanceId: ProviderInstanceId.make("omp"),
     stateDir: root,
@@ -41,7 +43,9 @@ const toolsHarness = Effect.fn("ompToolsHarness")(function* (
     environment,
     eventQueueByteLimit: 64 * 1024,
     makeProcess: () =>
-      makeOmpRpcClient(wire.io).pipe(Effect.map((client) => ({ ...client, version: "18.3.1" }))),
+      makeOmpRpcClient(wire.io).pipe(
+        Effect.map((client) => ({ ...client, version: "18.3.1", runtimeVersion: "18.3.1" })),
+      ),
   });
   const events: Array<ProviderRuntimeEvent> = [];
   const queue = yield* Queue.unbounded<ProviderRuntimeEvent>();

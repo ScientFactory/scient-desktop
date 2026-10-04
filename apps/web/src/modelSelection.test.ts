@@ -3,6 +3,7 @@ import {
   DROID_DEFAULT_MODEL,
   OMP_DEFAULT_TEXT_GENERATION_MODEL,
   PI_DEFAULT_TEXT_GENERATION_MODEL,
+  SCIENT_DEFAULT_TEXT_GENERATION_MODEL,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -78,7 +79,7 @@ function settingsWithProviderInstances(): UnifiedSettings {
 }
 
 describe("instance-scoped model selection", () => {
-  it.each(["pi", "omp"])(
+  it.each(["pi", "omp", "scient"])(
     "applies curated %s defaults without replacing saved visibility",
     (kind) => {
       const native = provider({
@@ -154,7 +155,7 @@ describe("instance-scoped model selection", () => {
       ]);
     },
   );
-  it.each(["pi", "omp", "claudeAgent"])(
+  it.each(["pi", "omp", "scient", "claudeAgent"])(
     "does not invent a default when every %s model is unavailable",
     (kind) => {
       const driver = ProviderDriverKind.make(kind);
@@ -173,7 +174,33 @@ describe("instance-scoped model selection", () => {
       expect(resolveAppModelSelection(driver, DEFAULT_UNIFIED_SETTINGS, [blocked], null)).toBe("");
     },
   );
-  it.each(["pi", "omp"])(
+  it.each(["pi", "omp", "scient"])(
+    "does not revive a native default after every %s model is explicitly hidden",
+    (kind) => {
+      const driver = ProviderDriverKind.make(kind);
+      const native = provider({
+        provider: driver,
+        instanceId: kind,
+        models: ["native/available"],
+      });
+      const settings: UnifiedSettings = {
+        ...DEFAULT_UNIFIED_SETTINGS,
+        providerModelPreferences: {
+          [native.instanceId]: { hiddenModels: ["native/available"], modelOrder: [] },
+        },
+      };
+      expect(resolveAppModelSelection(driver, settings, [native], "native/available")).toBe("");
+      expect(
+        resolveAppModelSelectionForInstance(
+          native.instanceId,
+          settings,
+          [native],
+          "native/available",
+        ),
+      ).toBeNull();
+    },
+  );
+  it.each(["pi", "omp", "scient"])(
     "excludes known unavailable %s models even when selected or configured as custom",
     (kind) => {
       const driver = ProviderDriverKind.make(kind);
@@ -206,7 +233,7 @@ describe("instance-scoped model selection", () => {
       expect(getDefaultProviderInstanceModel([entry], entry.instanceId)).toBe("native/unknown");
     },
   );
-  it.each(["droid", "pi", "omp"] as const)(
+  it.each(["droid", "pi", "omp", "scient"] as const)(
     "keeps %s discovered BYOK models selectable, scoped, hideable, and removable",
     (kind) => {
       const driver = ProviderDriverKind.make(kind);
@@ -1044,6 +1071,7 @@ describe("instance-scoped model selection", () => {
   it.each([
     ["pi", PI_DEFAULT_TEXT_GENERATION_MODEL],
     ["omp", OMP_DEFAULT_TEXT_GENERATION_MODEL],
+    ["scient", SCIENT_DEFAULT_TEXT_GENERATION_MODEL],
   ] as const)(
     "shows %s's automatic native model without changing stored settings",
     (driver, marker) => {

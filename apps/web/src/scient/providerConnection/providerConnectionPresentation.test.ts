@@ -318,6 +318,16 @@ describe("providerConnectionPresentation", () => {
     expect(
       needsManagedRuntimeRecovery({
         ...provider,
+        driver: ProviderDriverKind.make("cursor"),
+        status: "error",
+        auth: { status: "unknown", required: true },
+        message: "Cursor SDK model discovery failed.",
+        connection: { ...provider.connection!, runtime: managedRuntime },
+      }),
+    ).toBe(false);
+    expect(
+      needsManagedRuntimeRecovery({
+        ...provider,
         driver: ProviderDriverKind.make("claudeAgent"),
         status: "error",
         auth: { status: "unknown", required: true },

@@ -3,8 +3,6 @@ import * as Schema from "effect/Schema";
 // @effect-diagnostics nodeBuiltinImport:off -- Pure hash for durable edit request identity.
 import * as NodeCrypto from "node:crypto";
 import type {
-  ScientThreadQueueEnqueueRequest,
-  ScientThreadQueueRemoveRequest,
   ScientThreadQueueReorderRequest,
   ScientThreadQueueControlRequest,
 } from "@t3tools/contracts";
@@ -17,28 +15,7 @@ import { QueueError, type QueueDocument } from "./Ledger.ts";
 
 const encodeUpdate = Schema.encodeEffect(Schema.fromJsonString(ScientThreadQueueUpdateRequest));
 
-export const enqueueQueue = Effect.fn("ScientQueue.enqueue")(function* (
-  payload: ScientThreadQueueEnqueueRequest,
-  doc: QueueDocument,
-) {
-  const sql = yield* SqlClient.SqlClient;
-  const receipts = yield* sql<{
-    thread_id: string;
-  }>`SELECT thread_id FROM scient_queue_receipts WHERE queue_item_id = ${payload.queueItemId}`;
-  if (receipts[0] && receipts[0].thread_id !== payload.threadId)
-    return yield* new QueueError({ message: "This message belongs to another thread." });
-  if (receipts.length || doc.items.some((item) => item.queueItemId === payload.queueItemId))
-    return doc;
-  const now = DateTime.formatIso(yield* DateTime.now);
-  yield* sql`INSERT INTO scient_queue_receipts (queue_item_id, thread_id) VALUES (${payload.queueItemId}, ${payload.threadId})`;
-  return {
-    ...doc,
-    items: [
-      ...doc.items,
-      { ...payload, state: "waiting" as const, createdAt: now, updatedAt: now },
-    ],
-  };
-});
+export { enqueueQueue } from "./admission.ts";
 
 export const updateQueue = Effect.fn("ScientQueue.update")(function* (
   payload: ScientThreadQueueUpdateRequest,
@@ -101,20 +78,6 @@ export const updateQueue = Effect.fn("ScientQueue.update")(function* (
           }
         : entry,
     ),
-  };
-});
-
-export const removeQueue = Effect.fn("ScientQueue.remove")(function* (
-  payload: ScientThreadQueueRemoveRequest,
-  doc: QueueDocument,
-) {
-  if (
-    doc.items.some((item) => item.queueItemId === payload.queueItemId && item.state === "editing")
-  )
-    return yield* Effect.fail(new QueueError({ message: "This message is being edited." }));
-  return {
-    ...doc,
-    items: doc.items.filter((item) => item.queueItemId !== payload.queueItemId),
   };
 });
 

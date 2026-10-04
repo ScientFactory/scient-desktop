@@ -17,6 +17,28 @@ describe("Scient brand guard", () => {
     ]);
   });
 
+  it.each([
+    "packages/client-runtime/src/work-log/presentation.ts",
+    "apps/mobile/src/lib/threadActivity.ts",
+    "apps/mobile/src/features/threads/thread-work-log.tsx",
+  ])("covers owned tool presentation without expanding donor-wide enforcement: %s", (path) => {
+    const contents = 'const label = "Reading a T3 thread";';
+    expect(findPublicBrandViolations([{ path, contents }])).toEqual([
+      { path, line: 1, text: contents },
+    ]);
+  });
+
+  it.each([
+    'Tool.make("t3_thread_read", {})',
+    'const title = "T3 MCP";',
+    'const instructions = "Use the t3-code MCP server";',
+  ])("rejects inherited public tool identity: %s", (contents) => {
+    const path = "apps/server/src/mcp/tools.ts";
+    expect(findPublicBrandViolations([{ path, contents }])).toEqual([
+      { path, line: 1, text: contents },
+    ]);
+  });
+
   it("rejects an inherited visual wordmark even when its name is split from the copy", () => {
     expect(
       findPublicBrandViolations([
@@ -97,5 +119,17 @@ describe("Scient brand guard", () => {
   it("keeps internal package namespaces outside product-brand enforcement", () => {
     expect(isProductSurface("packages/shared/src/scientDesktopIdentity.ts")).toBe(false);
     expect(isProductSurface("packages/contracts/src/settings.ts")).toBe(true);
+  });
+
+  it("preserves captured compatibility identities in test-only replay helpers", () => {
+    const contents = 'const capturedClientTitle = "T3 Code";';
+    expect(
+      findPublicBrandViolations([
+        { path: "apps/server/src/provider/CodexAdapterV2.testkit.ts", contents },
+      ]),
+    ).toEqual([]);
+    expect(
+      findPublicBrandViolations([{ path: "apps/server/src/provider/CodexAdapterV2.ts", contents }]),
+    ).toHaveLength(1);
   });
 });

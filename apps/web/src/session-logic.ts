@@ -10,7 +10,7 @@ import { UserInputAttachmentAnswerPayload, questionAnswerMessageId } from "@t3to
 import { foldUserInputActivities } from "@t3tools/client-runtime/work-log/user-input";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as Arr from "effect/Array";
+import { resolveT3McpToolName } from "@t3tools/shared/t3McpToolPresentation";
 
 import {
   type AssetResource,
@@ -42,12 +42,9 @@ import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-lo
 import {
   compareProviderDriverKinds,
   isToolLifecycleItemType,
-  type OrchestrationLatestTurn,
   type OrchestrationThreadActivity,
-  type OrchestrationProposedPlanId,
   ProviderDriverKind,
   type ToolLifecycleItemType,
-  type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
@@ -467,48 +464,6 @@ export interface TurnPlanEntry {
   plan: ActivePlanState;
 }
 
-/**
- * One inline plan chip per turn that produced plan/todo steps: the latest
- * snapshot for the turn, anchored at the first snapshot's timestamp.
- */
-export function deriveTurnPlans(
-  activities: ReadonlyArray<OrchestrationThreadActivity>,
-): TurnPlanEntry[] {
-  const ordered = [...activities].toSorted(compareActivitiesByOrder);
-  const byTurn = new Map<
-    string,
-    { activities: OrchestrationThreadActivity[]; entry: TurnPlanEntry }
-  >();
-  for (const activity of ordered) {
-    if (activity.kind !== "turn.plan.updated") continue;
-    const plan = planStateFromActivity(activity);
-    const key = activity.turnId ?? "no-turn";
-    if (!plan) {
-      byTurn.delete(key);
-      continue;
-    }
-    const existing = byTurn.get(key);
-    if (existing) {
-      existing.entry.plan = plan;
-      existing.activities.push(activity);
-    } else {
-      byTurn.set(key, {
-        activities: [activity],
-        entry: {
-          id: `turn-plan:${key}`,
-          createdAt: activity.createdAt,
-          turnId: activity.turnId,
-          plan,
-        },
-      });
-    }
-  }
-  return [...byTurn.values()].map(({ activities: planActivities, entry }) => ({
-    ...entry,
-    plan: addPlanStepDurations(entry.plan, planActivities),
-  }));
-}
-
 export function findLatestProposedPlan(
   projection: OrchestrationV2ThreadProjection | null,
   latestRunId: RunId | string | null | undefined,
@@ -747,9 +702,14 @@ export function providerErrorPresentation(
   };
 }
 
+const scientSkillLoadToolNames: ReadonlySet<string> = new Set(["scient_skill_load"]);
+
 function scientSkillUsageLabel(itemValue: unknown): string | null {
   const item = asRecord(itemValue);
-  if (asTrimmedString(item?.tool) !== "scient_skill_load") return null;
+  const tool = asTrimmedString(item?.tool);
+  if (!tool || resolveT3McpToolName(tool, scientSkillLoadToolNames) !== "scient_skill_load") {
+    return null;
+  }
   const args = asRecord(item?.arguments);
   const releaseKey = asTrimmedString(args?.releaseKey);
   const name = asTrimmedString(args?.name) ?? releaseKey?.split("@")[0]?.split(".").at(-1);
@@ -767,6 +727,8 @@ function scientSkillUsageLabel(itemValue: unknown): string | null {
       return `Couldn't load ${displayName}`;
     case "declined":
     case "stopped":
+    case "cancelled":
+    case "interrupted":
       return `Didn't load ${displayName}`;
     default:
       return `Loading ${displayName}`;
@@ -1062,6 +1024,11 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
       };
     }
     case "dynamic_tool": {
+      const skillUsageLabel = scientSkillUsageLabel({
+        tool: item.toolName,
+        arguments: item.input,
+        status: item.status,
+      });
       const classified = classifyToolActivity({
         itemType: "dynamic_tool_call",
         data: { toolName: item.toolName ?? undefined, input: item.input },
@@ -1070,13 +1037,14 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
       return {
         ...common,
         label:
+          skillUsageLabel ??
           title ??
           (classified === "read"
             ? formatReadToolLabel(readPath ?? "")
             : classified === "search"
               ? (formatSearchToolLabel({ input: item.input }) ?? item.toolName ?? "Tool call")
               : (item.toolName ?? "Tool call")),
-        toolTitle: title ?? item.toolName ?? "Tool",
+        toolTitle: skillUsageLabel ?? title ?? item.toolName ?? "Tool",
         toolData: { input: item.input, output: item.output },
       };
     }
@@ -2440,108 +2408,6 @@ function compareActivityLifecycleRank(kind: string): number {
   return 1;
 }
 
-function planStateFromActivity(activity: OrchestrationThreadActivity): ActivePlanState | null {
-  const payload =
-    activity.payload && typeof activity.payload === "object"
-      ? (activity.payload as Record<string, unknown>)
-      : null;
-  const rawPlan = payload?.plan;
-  if (!Array.isArray(rawPlan)) {
-    return null;
-  }
-  const steps: Array<{
-    step: string;
-    status: "pending" | "inProgress" | "completed";
-  }> = [];
-  for (const entry of rawPlan) {
-    if (!entry || typeof entry !== "object") {
-      continue;
-    }
-    const record = entry as Record<string, unknown>;
-    if (typeof record.step !== "string") {
-      continue;
-    }
-    const status =
-      record.status === "completed" || record.status === "inProgress" ? record.status : "pending";
-    steps.push({
-      step: record.step,
-      status,
-    });
-  }
-  if (steps.length === 0) {
-    return null;
-  }
-  return {
-    createdAt: activity.createdAt,
-    // SCIENT-FORK:START — a V1 activity carries no run identity; upstream's
-    // ActivePlanState requires the field, so the plan is explicitly runless.
-    runId: null,
-    // SCIENT-FORK:END
-    turnId: activity.turnId,
-    ...(payload && "explanation" in payload
-      ? { explanation: payload.explanation as string | null }
-      : {}),
-    steps,
-  };
-}
-
-function addPlanStepDurations(
-  plan: ActivePlanState,
-  activities: ReadonlyArray<OrchestrationThreadActivity>,
-): ActivePlanState {
-  const timings = new Map<string, { completedAt?: number; startedAt?: number }>();
-  let planStartedAt: number | undefined;
-
-  const keyedSteps = (steps: ActivePlanState["steps"]) => {
-    const occurrences = new Map<string, number>();
-    return steps.map((step) => {
-      const occurrence = occurrences.get(step.step) ?? 0;
-      occurrences.set(step.step, occurrence + 1);
-      return { key: `${step.step}:${occurrence}`, step };
-    });
-  };
-
-  for (const activity of activities) {
-    const snapshot = planStateFromActivity(activity);
-    const activityAt = Date.parse(activity.createdAt);
-    if (!snapshot || Number.isNaN(activityAt)) continue;
-    planStartedAt ??= activityAt;
-
-    for (const { key, step } of keyedSteps(snapshot.steps)) {
-      const timing = timings.get(key) ?? {};
-      if (step.status === "inProgress" && timing.startedAt === undefined) {
-        timing.startedAt = activityAt;
-      }
-      if (step.status === "completed" && timing.completedAt === undefined) {
-        timing.completedAt = activityAt;
-      }
-      timings.set(key, timing);
-    }
-  }
-
-  const durationByKey = new Map<string, number>();
-  let previousCompletedAt = planStartedAt;
-  for (const [key, timing] of [...timings.entries()].toSorted(
-    (left, right) => (left[1].completedAt ?? Infinity) - (right[1].completedAt ?? Infinity),
-  )) {
-    const completedAt = timing.completedAt;
-    const startedAt = timing.startedAt ?? previousCompletedAt;
-    if (completedAt === undefined) continue;
-    if (startedAt !== undefined && completedAt > startedAt) {
-      durationByKey.set(key, completedAt - startedAt);
-    }
-    previousCompletedAt = completedAt;
-  }
-
-  return {
-    ...plan,
-    steps: keyedSteps(plan.steps).map(({ key, step }) => {
-      if (step.status !== "completed") return step;
-      const durationMs = durationByKey.get(key);
-      return durationMs === undefined ? step : { ...step, durationMs };
-    }),
-  };
-}
 /** Agent (non-background) task.started rows seed spawn CTA batches. */
 function isAgentTaskStartedActivity(activity: OrchestrationThreadActivity): boolean {
   const payload =

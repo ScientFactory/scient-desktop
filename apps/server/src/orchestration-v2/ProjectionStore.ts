@@ -940,6 +940,7 @@ type ShellRunItemCountRow = {
 };
 
 const encodeIdList = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+const decodeCompletedAnswer = Schema.decodeEffect(Schema.fromJsonString(ScientCompletedAnswer));
 
 const encodeThreadPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJsonSchema),
@@ -5124,9 +5125,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           latestCompletedAnswer:
             row.latest_completed_answer_json === null
               ? null
-              : yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ScientCompletedAnswer))(
-                  row.latest_completed_answer_json,
-                ),
+              : yield* decodeCompletedAnswer(row.latest_completed_answer_json),
           activeRunId: row.active_run_id === null ? null : RunId.make(row.active_run_id),
           activityRunStartedAt:
             row.activity_run_started_at === null

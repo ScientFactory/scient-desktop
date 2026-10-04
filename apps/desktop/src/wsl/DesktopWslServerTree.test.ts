@@ -163,6 +163,70 @@ describe("DesktopWslServerTree", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect(
+    "rebuilds an old same-version cache with Linux Cursor helpers and preserves executable mode",
+    () =>
+      withTempDir((tempDir) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const resourcesPath = path.join(tempDir, "resources");
+          const serverRoot = path.join(resourcesPath, "server.asar");
+          yield* fs.makeDirectory(path.join(serverRoot, "apps/server/dist"), { recursive: true });
+          yield* fs.writeFileString(path.join(serverRoot, "apps/server/dist/bin.mjs"), "new-entry");
+          yield* fs.makeDirectory(path.join(serverRoot, "node_modules/@cursor/sdk"), {
+            recursive: true,
+          });
+          const helper = path.join(resourcesPath, "node_modules/@cursor/sdk-linux-x64/bin/rg");
+          yield* fs.makeDirectory(path.dirname(helper), { recursive: true });
+          yield* fs.writeFileString(helper, "linux-helper", { mode: 0o755 });
+          const oldRoot = path.join(tempDir, "userdata/wsl-server-tree/1.2.3");
+          yield* fs.makeDirectory(oldRoot, { recursive: true });
+          yield* fs.writeFileString(
+            path.join(oldRoot, "t3code-wsl-server-tree.json"),
+            '{"version":"1.2.3"}',
+          );
+          yield* fs.writeFileString(path.join(oldRoot, "stale"), "previous-incomplete-layout");
+          const result = yield* ensureWith({ baseDir: tempDir, resourcesPath });
+          if (!result.ok) return yield* Effect.die(result.reason);
+          assert.equal(result.root, oldRoot);
+          assert.isFalse(yield* fs.exists(path.join(oldRoot, "stale")));
+          const installed = path.join(oldRoot, "node_modules/@cursor/sdk-linux-x64/bin/rg");
+          assert.equal(yield* fs.readFileString(installed), "linux-helper");
+          assert.equal((yield* fs.stat(installed)).mode & 0o777, 0o755);
+          yield* fs.writeFileString(helper, "mutated-resource");
+          const repeated = yield* ensureWith({ baseDir: tempDir, resourcesPath });
+          assert.deepEqual(repeated, result);
+          assert.equal(yield* fs.readFileString(installed), "linux-helper");
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not publish a fallback tree when only foreign Cursor helpers are packaged", () =>
+    withTempDir((tempDir) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const resourcesPath = path.join(tempDir, "resources");
+        const serverRoot = path.join(resourcesPath, "server.asar");
+        yield* fs.makeDirectory(path.join(serverRoot, "node_modules/@cursor/sdk"), {
+          recursive: true,
+        });
+        yield* fs.makeDirectory(path.join(resourcesPath, "node_modules/@cursor/sdk-win32-x64"), {
+          recursive: true,
+        });
+        const result = yield* ensureWith({ baseDir: tempDir, resourcesPath });
+        assert.isFalse(result.ok);
+        assert.isFalse(yield* fs.exists(path.join(tempDir, "userdata/wsl-server-tree/1.2.3")));
+        assert.isTrue(
+          yield* fs.exists(path.join(resourcesPath, "node_modules/@cursor/sdk-win32-x64")),
+        );
+        const treeRoot = path.join(tempDir, "userdata/wsl-server-tree");
+        assert.deepEqual(yield* fs.readDirectory(treeRoot), []);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("serializes concurrent extraction callers and publishes one complete tree", () =>
     withTempDir((tempDir) =>
       Effect.gen(function* () {

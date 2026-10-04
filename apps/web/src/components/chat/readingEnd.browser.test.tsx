@@ -7,7 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
 import { MessagesTimeline } from "./MessagesTimeline";
-import { readerAtReadingEnd, withReadingEnd } from "./readerScrollPolicy";
+import { readerAtReadingEnd, readingEndGapOnScreen, withReadingEnd } from "./readerScrollPolicy";
 import { readTimelinePosition, rememberTimelinePosition } from "./timelineScrollAnchoring";
 
 // Real-Chromium geometry for DF-047 and the #396 follow-ups: where the bottom
@@ -430,7 +430,11 @@ it("keeps the answer's end in view when content above it grows in the same layou
   await frames(8);
   const readingGap = () => {
     const now = listRef.current!.getState();
-    return withReadingEnd(now, COMPOSER_INSET)!.contentLength - now.scroll - now.scrollLength;
+    // The virtualizer can report its requested scroll after the browser clamps
+    // it. Both measurements must describe the rendered viewport.
+    const gap = readingEndGapOnScreen(now, node(), COMPOSER_INSET);
+    expect(gap).not.toBeNull();
+    return gap!;
   };
   const before = readingGap();
   // Both an earlier answer (above, still rendered) and the last answer grow at once.

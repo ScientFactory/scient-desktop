@@ -1244,6 +1244,7 @@ export class AcpSessionRuntime extends Context.Service<
       EffectAcpSchema.InitializeResponse,
       EffectAcpErrors.AcpError
     >;
+    readonly getProtocolGeneration: Effect.Effect<1 | 2 | undefined>;
     /**
      * Authenticates an initialized ACP connection without creating a session.
      * Accepts a bare method id or the full request payload; the payload form is
@@ -1455,7 +1456,8 @@ export const make = (
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const runtimeScope = yield* Scope.Scope;
+    const callerScope = yield* Scope.Scope;
+    const runtimeScope = yield* Scope.fork(callerScope);
     const eventQueue = yield* Queue.unbounded<AcpSessionRuntimeEvent>();
     const modeStateRef = yield* Ref.make<AcpSessionModeState | undefined>(undefined);
     const toolCallsRef = yield* Ref.make(new Map<string, AcpToolCallTrackedState>());
@@ -1888,8 +1890,13 @@ export const make = (
         ...(options.onIncomingRequest ? { onIncomingRequest: options.onIncomingRequest } : {}),
         onTermination: (error) =>
           recordTermination(error).pipe(
-            Effect.andThen(options.onTermination?.(error) ?? Effect.void),
-            Effect.ensuring(
+            Effect.andThen(
+              Effect.suspend(() => options.onTermination?.(error) ?? Effect.void).pipe(
+                Effect.forkIn(callerScope),
+                Effect.asVoid,
+              ),
+            ),
+            Effect.andThen(
               Scope.close(runtimeScope, Exit.fail(error)).pipe(Effect.forkDetach, Effect.asVoid),
             ),
           ),
@@ -2896,6 +2903,7 @@ export const make = (
       handleExtRequest: acp.handleExtRequest,
       handleExtNotification: acp.handleExtNotification,
       initialize: () => initialize,
+      getProtocolGeneration: acp.getProtocolGeneration,
       authenticate: (payload) =>
         initialize.pipe(
           Effect.andThen(
@@ -3231,20 +3239,13 @@ export const layer = (
   ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto
 > => Layer.effect(AcpSessionRuntime, make(options));
 
-// SCIENT-FORK:START — `AcpClient.agent.setSessionConfigOption` decodes the
-// agent's answer with the generated ACP v2 codec, whose option is keyed by
-// `configId`, and then normalizes it into the compat shape this runtime keeps
-// (`id`). Its declared result is still the v2 one, so read the inventory the
-// client produced. `effect-acp/compat` exports no codec for it, so the shape
-// is asserted once, here, rather than validated on every write.
+// SCIENT-FORK:START — The client normalizes both wire generations into the
+// compat inventory, preserving absent acknowledgements and authoritative [].
 const setConfigOptionInventory = (
   response: EffectAcpRpc.LenientSetSessionConfigOptionResponseData | undefined,
 ): ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined => {
   if (response === undefined) return undefined;
-  const compatResponse = response as unknown as {
-    readonly configOptions?: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null;
-  };
-  return compatResponse.configOptions;
+  return response.configOptions;
 };
 // SCIENT-FORK:END
 

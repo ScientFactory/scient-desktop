@@ -45,6 +45,160 @@ for (const driverName of ["codex", "claudeAgent"] as const) {
     { runEffectWorker: false },
   );
 
+  for (const destinationState of ["live", "deleted", "source"] as const) {
+    it.effect(`preserves ${driver} fork identities for a ${destinationState} destination`, () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const sourceThreadId = ThreadId.make("immutable-native-source");
+        const occupiedThreadId =
+          destinationState === "source"
+            ? sourceThreadId
+            : ThreadId.make("immutable-native-occupied");
+        const freshThreadId = ThreadId.make("immutable-native-fresh");
+        const sourceRunId = RunId.make("immutable-native-source-run");
+        for (const threadId of new Set([sourceThreadId, occupiedThreadId])) {
+          const runId =
+            threadId === sourceThreadId ? sourceRunId : RunId.make("immutable-native-occupied-run");
+          const messageId = MessageId.make(`history:${threadId}`);
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`create:${threadId}`),
+            threadId,
+            projectId: ProjectId.make("immutable-native-project"),
+            title: `History ${threadId}`,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdBy: "user",
+            creationSource: "web",
+          });
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make(`run:${threadId}`),
+                type: "run.created",
+                threadId,
+                runId,
+                occurredAt: now,
+                payload: {
+                  id: runId,
+                  threadId,
+                  ordinal: 1,
+                  providerInstanceId: instanceId,
+                  modelSelection,
+                  providerThreadId: null,
+                  userMessageId: messageId,
+                  rootNodeId: null,
+                  activeAttemptId: null,
+                  status: "completed",
+                  queuePosition: null,
+                  requestedAt: now,
+                  startedAt: now,
+                  completedAt: now,
+                  checkpointId: null,
+                  contextHandoffId: null,
+                },
+              },
+              {
+                id: EventId.make(`item:${threadId}`),
+                type: "turn-item.updated",
+                threadId,
+                runId,
+                occurredAt: now,
+                payload: {
+                  id: TurnItemId.make(`item:${threadId}`),
+                  threadId,
+                  runId,
+                  nodeId: null,
+                  providerThreadId: null,
+                  providerTurnId: null,
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal: 1,
+                  status: "completed",
+                  title: null,
+                  startedAt: now,
+                  completedAt: now,
+                  updatedAt: now,
+                  type: "user_message",
+                  createdBy: "user",
+                  creationSource: "web",
+                  inputIntent: "turn_start",
+                  messageId,
+                  text: `Immutable history ${threadId}`,
+                  attachments: [],
+                },
+              },
+            ],
+          });
+        }
+        if (destinationState === "deleted")
+          yield* orchestrator.dispatch({
+            type: "thread.delete",
+            commandId: CommandId.make("delete-occupied"),
+            threadId: occupiedThreadId,
+          });
+        const sourceBefore = yield* orchestrator.getThreadProjection(sourceThreadId);
+        const occupiedBefore = yield* orchestrator.getThreadProjection(occupiedThreadId);
+        const rejected = yield* orchestrator
+          .dispatch({
+            type: "thread.fork",
+            commandId: CommandId.make("reject-identity-reuse"),
+            sourceThreadId,
+            targetThreadId: occupiedThreadId,
+            sourcePoint: { type: "run", runId: sourceRunId },
+            createdBy: "user",
+            creationSource: "web",
+          })
+          .pipe(Effect.flip);
+        assert.equal(rejected._tag, "OrchestratorCommandRejectedError");
+        assert.deepEqual(yield* orchestrator.getThreadProjection(sourceThreadId), sourceBefore);
+        assert.deepEqual(yield* orchestrator.getThreadProjection(occupiedThreadId), occupiedBefore);
+        const command = {
+          type: "thread.fork" as const,
+          commandId: CommandId.make("fresh-identity"),
+          sourceThreadId,
+          targetThreadId: freshThreadId,
+          sourcePoint: { type: "run" as const, runId: sourceRunId },
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+        };
+        const first = yield* orchestrator.dispatch(command);
+        const fresh = yield* orchestrator.getThreadProjection(freshThreadId);
+        const retried = yield* orchestrator.dispatch(command);
+        assert.equal(retried.sequence, first.sequence);
+        assert.deepEqual(yield* orchestrator.getThreadProjection(freshThreadId), fresh);
+        assert.equal(fresh.thread.lineage.parentThreadId, sourceThreadId);
+        assert.equal(fresh.thread.lineage.relationshipToParent, "fork");
+        assert.isNull(fresh.thread.deletedAt);
+        assert.lengthOf(fresh.contextTransfers, 1);
+        assert.lengthOf(fresh.runs, 0);
+        assert.lengthOf(fresh.turnItems, 0);
+        assert.lengthOf(fresh.providerSessions, 0);
+        const sourceAfter = yield* orchestrator.getThreadProjection(sourceThreadId);
+        // The new fork adds its legitimate outgoing relation to the source
+        // read model; all original identity, history and execution state stay intact.
+        assert.deepEqual(
+          { ...sourceAfter, contextTransfers: sourceBefore.contextTransfers },
+          sourceBefore,
+        );
+        assert.deepEqual(sourceAfter.contextTransfers, fresh.contextTransfers);
+        assert.equal(sourceAfter.contextTransfers[0]?.type, "fork");
+        assert.equal(sourceAfter.contextTransfers[0]?.sourceThreadId, sourceThreadId);
+        assert.equal(sourceAfter.contextTransfers[0]?.targetThreadId, freshThreadId);
+        if (occupiedThreadId !== sourceThreadId)
+          assert.deepEqual(
+            yield* orchestrator.getThreadProjection(occupiedThreadId),
+            occupiedBefore,
+          );
+      }).pipe(Effect.provide(layer)),
+    );
+  }
+
   for (const status of ["failed", "interrupted", "cancelled"] as const) {
     it.effect(`bounds ${driver} context when continuing a fork of a ${status} run`, () =>
       Effect.gen(function* () {

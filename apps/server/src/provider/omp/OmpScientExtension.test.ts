@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { ompCustomModelsExtensionSource } from "./OmpCustomModels.ts";
 import { ompScientExtensionSource } from "./OmpScientExtension.ts";
+import { ompTarget } from "./OmpTarget.ts";
 
 type Content =
   | { readonly type: "text"; readonly text: string }
@@ -106,7 +107,10 @@ const SESSION = {
 describe("Scient's Oh My Pi extension", () => {
   it("registers essential tools through the session's bearer and consumes its bootstrap", async () => {
     const requests = stubMcp({ content: [{ type: "text", text: "ok" }] });
-    const extension = await loadExtension(ompScientExtensionSource, SESSION);
+    const extension = await loadExtension(
+      (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+      SESSION,
+    );
     // The module names its bootstrap; it holds no secret itself.
     expect(extension.source).not.toContain("synthetic-omp");
     expect(extension.source).not.toContain("127.0.0.1");
@@ -137,7 +141,10 @@ describe("Scient's Oh My Pi extension", () => {
 
   it("gives a subagent's re-run the same tools over the one connection", async () => {
     const requests = stubMcp({ content: [{ type: "text", text: "child" }] });
-    const extension = await loadExtension(ompScientExtensionSource, SESSION);
+    const extension = await loadExtension(
+      (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+      SESSION,
+    );
     const parent = makeApi();
     const child = makeApi();
 
@@ -164,11 +171,14 @@ describe("Scient's Oh My Pi extension", () => {
 
   it("appends awareness as one more system prompt element", async () => {
     const requests = stubMcp();
-    const extension = await loadExtension(ompScientExtensionSource, {
-      endpoint: null,
-      authorization: null,
-      awareness: SESSION.awareness,
-    });
+    const extension = await loadExtension(
+      (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+      {
+        endpoint: null,
+        authorization: null,
+        awareness: SESSION.awareness,
+      },
+    );
     const host = makeApi();
     await (
       await extension.importFresh()
@@ -185,11 +195,14 @@ describe("Scient's Oh My Pi extension", () => {
 
   it("leaves the system prompt untouched without awareness", async () => {
     stubMcp();
-    const extension = await loadExtension(ompScientExtensionSource, {
-      endpoint: null,
-      authorization: null,
-      awareness: "",
-    });
+    const extension = await loadExtension(
+      (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+      {
+        endpoint: null,
+        authorization: null,
+        awareness: "",
+      },
+    );
     const host = makeApi();
     await (
       await extension.importFresh()
@@ -201,7 +214,10 @@ describe("Scient's Oh My Pi extension", () => {
 
   it("fails to load without its bootstrap, on every run", async () => {
     stubMcp();
-    const extension = await loadExtension(ompScientExtensionSource, undefined);
+    const extension = await loadExtension(
+      (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+      undefined,
+    );
 
     await expect((await extension.importFresh())(makeApi().api)).rejects.toThrow(
       "Scient's Oh My Pi bootstrap is unavailable.",
@@ -214,7 +230,10 @@ describe("Scient's Oh My Pi extension", () => {
   describe("tool results", () => {
     const run = async (toolResult: Record<string, unknown>) => {
       stubMcp(toolResult);
-      const extension = await loadExtension(ompScientExtensionSource, SESSION);
+      const extension = await loadExtension(
+        (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+        SESSION,
+      );
       const host = makeApi();
       await (
         await extension.importFresh()
@@ -293,11 +312,14 @@ const connection = (apiKey: string) => ({
 describe("Scient's Oh My Pi custom-model extension", () => {
   it("registers literal keys, and a re-run replays them without another refresh loop", async () => {
     const requests = stubModels([connection("scient-model-key-1")]);
-    const extension = await loadExtension(ompCustomModelsExtensionSource, {
-      url: "http://127.0.0.1:1/models",
-      token: "synthetic-models-token",
-      keys: { "scient-model-key-1": "sk-synthetic" },
-    });
+    const extension = await loadExtension(
+      (bootstrapPath) => ompCustomModelsExtensionSource(ompTarget, bootstrapPath),
+      {
+        url: "http://127.0.0.1:1/models",
+        token: "synthetic-models-token",
+        keys: { "scient-model-key-1": "sk-synthetic" },
+      },
+    );
     expect(extension.source).not.toContain("sk-synthetic");
     expect(extension.source).not.toContain("synthetic-models-token");
     const parent = makeApi();
@@ -327,11 +349,14 @@ describe("Scient's Oh My Pi custom-model extension", () => {
     ["names an environment variable", "PATH", "names an environment variable"],
   ])("refuses a key that %s instead of letting OMP resolve it", async (_label, key, detail) => {
     const requests = stubModels([connection("scient-model-key-1")]);
-    const extension = await loadExtension(ompCustomModelsExtensionSource, {
-      url: "http://127.0.0.1:1/models",
-      token: "synthetic-models-token",
-      keys: { "scient-model-key-1": key },
-    });
+    const extension = await loadExtension(
+      (bootstrapPath) => ompCustomModelsExtensionSource(ompTarget, bootstrapPath),
+      {
+        url: "http://127.0.0.1:1/models",
+        token: "synthetic-models-token",
+        keys: { "scient-model-key-1": key },
+      },
+    );
     const host = makeApi();
 
     await expect((await extension.importFresh())(host.api)).rejects.toThrow(detail);

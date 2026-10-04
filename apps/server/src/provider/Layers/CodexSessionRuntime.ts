@@ -1171,7 +1171,7 @@ const CHILD_CHATTER_METHODS: ReadonlySet<string> = new Set([
   "thread/started",
 ]);
 
-export function routeCodexChildNotification(method: string): CodexChildNotificationRoute {
+function routeCodexChildNotification(method: string): CodexChildNotificationRoute {
   if (CHILD_AGENT_EVENT_METHODS.has(method)) {
     return "agent-event";
   }

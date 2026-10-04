@@ -35,9 +35,27 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import { scientInvocationForMcp } from "../mcp/ScientMcpInvocation.ts";
+import { AgentInvocationContext } from "../scient/operations/AgentInvocationContext.ts";
+import { dispatchScientOperation } from "../scient/operations/AgentOperationDispatcher.ts";
+import { skillReleaseKey } from "@scientfactory/scient-skills";
+import { BUILT_IN_SKILL_RELEASES } from "../scient/skills/BuiltInSkillReleases.ts";
+import { prepareScientV2SkillTurn } from "../scient/skills/ScientV2SkillTurn.ts";
+import { ScientSkillSessionPlanner } from "../scient/skills/ScientSkillSession.ts";
+import { readScientThreadForInvocation } from "../mcp/toolkits/threads/handlers.ts";
+import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
+import {
+  loadScientSkillForInvocation,
+  listScientSkillsForInvocation,
+} from "../mcp/toolkits/skills/handlers.ts";
+import { listScientComputeInventory } from "../mcp/toolkits/compute/handlers.ts";
+import { ComputeMcpGateway } from "../mcp/toolkits/compute/ComputeMcpGateway.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import {
+  codexThreadRuntimeParams,
+  CodexProviderCapabilitiesV2,
+} from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "./IdAllocator.ts";
@@ -241,6 +259,7 @@ function makeProviderAdapter(
   state: Ref.Ref<TestProviderRuntimeState>,
   options: {
     readonly failEventStream?: boolean;
+    readonly mcpSessionInjection?: boolean | "undeclared";
     readonly capabilities?: OrchestrationV2ProviderCapabilities;
     readonly mcpConfigs?: Ref.Ref<
       ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
@@ -248,6 +267,8 @@ function makeProviderAdapter(
     readonly beforeOpen?: (input: {
       readonly providerSessionId: ProviderSessionId;
       readonly initialProviderItemIdentityVersion?: 2;
+      readonly threadId: ThreadId;
+      readonly configureMcp?: boolean;
     }) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly hangSessionScopeClose?: boolean;
@@ -257,6 +278,9 @@ function makeProviderAdapter(
   return {
     instanceId: ProviderInstanceId.make("codex"),
     driver: CODEX_DRIVER,
+    ...(options.mcpSessionInjection === "undeclared"
+      ? {}
+      : { mcpSessionInjection: options.mcpSessionInjection ?? true }),
     getCapabilities: () => Effect.succeed(options.capabilities ?? CodexCapabilities),
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (input) =>
@@ -267,7 +291,9 @@ function makeProviderAdapter(
         if (options.mcpConfigs !== undefined) {
           yield* Ref.update(options.mcpConfigs, (configs) => [
             ...configs,
-            McpProviderSession.readMcpProviderSession(input.threadId),
+            input.configureMcp === false
+              ? undefined
+              : McpProviderSession.readMcpProviderSession(input.threadId),
           ]);
         }
         const now = yield* DateTime.now;
@@ -362,6 +388,9 @@ function makeTestLayer(input: {
   readonly idleTimeoutMs: number;
   readonly maxIdlePinMs?: number;
   readonly failEventStream?: boolean;
+  readonly mcpSessionInjection?: boolean | "undeclared";
+  readonly mcpInjectionEnabled?: Ref.Ref<boolean>;
+  readonly configureMcp?: boolean;
   readonly capabilities?: OrchestrationV2ProviderCapabilities;
   readonly mcpConfigs?: Ref.Ref<
     ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
@@ -369,6 +398,8 @@ function makeTestLayer(input: {
   readonly beforeOpen?: (input: {
     readonly providerSessionId: ProviderSessionId;
     readonly initialProviderItemIdentityVersion?: 2;
+    readonly threadId: ThreadId;
+    readonly configureMcp?: boolean;
   }) => Effect.Effect<void>;
   readonly failReleaseEventWrites?: boolean;
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
@@ -380,21 +411,36 @@ function makeTestLayer(input: {
   const configuredEventSinkLayer = input.failReleaseEventWrites
     ? FailingReleaseEventSinkLayer
     : TestEventSinkLayer;
-  const registryLayer = ProviderAdapterRegistry.makeSingleLayer(
-    makeProviderAdapter(input.state, {
-      failEventStream: input.failEventStream ?? false,
-      ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities }),
-      ...(input.mcpConfigs === undefined ? {} : { mcpConfigs: input.mcpConfigs }),
-      ...(input.beforeOpen === undefined ? {} : { beforeOpen: input.beforeOpen }),
-      ...(input.hasPendingBackgroundWork === undefined
-        ? {}
-        : { hasPendingBackgroundWork: input.hasPendingBackgroundWork }),
-      ...(input.hangSessionScopeClose === undefined
-        ? {}
-        : { hangSessionScopeClose: input.hangSessionScopeClose }),
-      ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
-    }),
-  );
+  const configuredAdapter = makeProviderAdapter(input.state, {
+    failEventStream: input.failEventStream ?? false,
+    ...(input.mcpSessionInjection === undefined
+      ? {}
+      : { mcpSessionInjection: input.mcpSessionInjection }),
+    ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities }),
+    ...(input.mcpConfigs === undefined ? {} : { mcpConfigs: input.mcpConfigs }),
+    ...(input.beforeOpen === undefined ? {} : { beforeOpen: input.beforeOpen }),
+    ...(input.hasPendingBackgroundWork === undefined
+      ? {}
+      : { hasPendingBackgroundWork: input.hasPendingBackgroundWork }),
+    ...(input.hangSessionScopeClose === undefined
+      ? {}
+      : { hangSessionScopeClose: input.hangSessionScopeClose }),
+    ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
+  });
+  const injectionEnabled = input.mcpInjectionEnabled;
+  const registryLayer =
+    injectionEnabled === undefined
+      ? ProviderAdapterRegistry.makeSingleLayer(configuredAdapter)
+      : Layer.succeed(
+          ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+          ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
+            get: () =>
+              Ref.get(injectionEnabled).pipe(
+                Effect.map((enabled) => ({ ...configuredAdapter, mcpSessionInjection: enabled })),
+              ),
+            list: () => Effect.succeed([configuredAdapter.instanceId]),
+          }),
+        );
   const providerEventIngestorTestLayer = ProviderEventIngestor.layer.pipe(
     Layer.provide(Layer.mergeAll(configuredEventSinkLayer, IdAllocator.layer, TestStoresLayer)),
   );
@@ -404,6 +450,7 @@ function makeTestLayer(input: {
     IdAllocator.layer,
     TestMcpRegistryLayer,
     ProviderSessionManager.layerWithOptions({
+      ...(input.configureMcp === undefined ? {} : { configureMcp: input.configureMcp }),
       idleTimeoutMs: input.idleTimeoutMs,
       ...(input.maxIdlePinMs === undefined ? {} : { maxIdlePinMs: input.maxIdlePinMs }),
     }).pipe(
@@ -433,13 +480,17 @@ const fakeEnvironment = ServerEnvironment.ServerEnvironment.of({
   getDescriptor: Effect.die("unused"),
 });
 
-const TestMcpRegistryLayer = Layer.effect(
-  McpSessionRegistry.McpSessionRegistry,
-  McpSessionRegistry.__testing.make(),
-).pipe(
-  Layer.provide(Layer.succeed(HttpServer.HttpServer, fakeHttpServer)),
-  Layer.provide(Layer.succeed(ServerEnvironment.ServerEnvironment, fakeEnvironment)),
-  Layer.provide(NodeServices.layer),
+const TestMcpRegistryLayer = McpSessionRegistry.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.succeed(HttpServer.HttpServer, fakeHttpServer),
+      Layer.succeed(ServerEnvironment.ServerEnvironment, fakeEnvironment),
+      NodeServices.layer,
+    ),
+  ),
+);
+const TestLegacyImporterLayer = LegacyV1ThreadImporter.layer.pipe(
+  Layer.provide(Layer.merge(TestDatabaseLayer, TestEventSinkLayer)),
 );
 
 function makeBrowserAccessProject(projectId: ProjectId): Project {
@@ -1039,8 +1090,107 @@ it.effect(
         assert.equal(resolved?.threadId, threadId);
         assert.deepEqual(
           resolved?.capabilities,
-          new Set(["preview", "orchestration", "worktree", "pull-requests"]),
+          new Set([
+            "preview",
+            "orchestration",
+            "worktree",
+            "pull-requests",
+            "documents:build",
+            "compute:inventory",
+            "sources:read",
+            "sources:write",
+            "threads:read",
+            "skills:read",
+          ]),
         );
+
+        if (resolved === undefined)
+          return yield* Effect.die("The manager-issued token must resolve");
+        const invocation = scientInvocationForMcp(resolved);
+        const discovery = yield* dispatchScientOperation(
+          "skills.list",
+          listScientSkillsForInvocation(),
+        ).pipe(Effect.provideService(AgentInvocationContext, invocation));
+        assert.equal(discovery.scope.status, "pending");
+        const inventory = yield* dispatchScientOperation(
+          "compute.inventory",
+          listScientComputeInventory(),
+        ).pipe(
+          Effect.provideService(AgentInvocationContext, invocation),
+          Effect.provideService(ComputeMcpGateway, {
+            runtimeInventory: () => Effect.succeed({ languages: [] }),
+          }),
+        );
+        assert.deepEqual(inventory, { languages: [] });
+        const history = yield* dispatchScientOperation(
+          "threads.read",
+          readScientThreadForInvocation({ threadId }),
+        ).pipe(Effect.provideService(AgentInvocationContext, invocation));
+        assert.equal(history.thread.threadId, threadId);
+        assert.deepEqual(history.items, []);
+        const release = BUILT_IN_SKILL_RELEASES.find(
+          (candidate) => candidate.name === "improve-workspace-readiness",
+        );
+        if (release === undefined)
+          return yield* Effect.die("Expected the immutable built-in skill release");
+        const releaseKey = skillReleaseKey(release);
+        const descriptor = {
+          releaseKey,
+          id: release.id,
+          name: release.name,
+          description: release.description,
+          origin: release.origin,
+          activationScope: "user" as const,
+          invocationPolicy: "explicit" as const,
+        };
+        const planner = {
+          resolve: () =>
+            Effect.succeed({
+              delivery: "mcp" as const,
+              catalogStatus: "complete" as const,
+              releases: new Map([[releaseKey, release]]),
+              skills: [descriptor],
+              diagnostics: [],
+            }),
+        };
+        yield* prepareScientV2SkillTurn({
+          threadId,
+          driver: CODEX_DRIVER,
+          mcpSessionInjection: true,
+          projectRoot: undefined,
+          text: "Prepare selected skill",
+          selectedScientSkillNames: [release.name],
+        }).pipe(Effect.provideService(ScientSkillSessionPlanner, planner));
+        const selectedScope = yield* registry.resolve(token!);
+        if (selectedScope === undefined)
+          return yield* Effect.die("Stable native credential was lost");
+        const loaded = yield* dispatchScientOperation(
+          "skills.load",
+          loadScientSkillForInvocation({ name: release.name }),
+        ).pipe(
+          Effect.provideService(AgentInvocationContext, scientInvocationForMcp(selectedScope)),
+        );
+        assert.equal(loaded.instructions, release.instructions);
+        assert.equal(loaded.skill.releaseKey, releaseKey);
+        yield* prepareScientV2SkillTurn({
+          threadId,
+          driver: CODEX_DRIVER,
+          mcpSessionInjection: true,
+          projectRoot: undefined,
+          text: "Clear selection",
+          selectedScientSkillNames: [],
+        }).pipe(Effect.provideService(ScientSkillSessionPlanner, planner));
+        const clearedScope = yield* registry.resolve(token!);
+        if (clearedScope === undefined)
+          return yield* Effect.die("Stable native credential was lost");
+        const unavailable = yield* dispatchScientOperation(
+          "skills.load",
+          loadScientSkillForInvocation({ name: release.name }),
+        ).pipe(
+          Effect.provideService(AgentInvocationContext, scientInvocationForMcp(clearedScope)),
+          Effect.flip,
+        );
+        assert.equal(unavailable._tag, "ScientSkillToolError");
 
         yield* manager.close(providerSessionId);
         assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
@@ -1049,11 +1199,14 @@ it.effect(
 
       yield* effect.pipe(
         Effect.provide(
-          makeTestLayer({
-            state,
-            idleTimeoutMs: 1_000,
-            mcpConfigs,
-          }),
+          Layer.merge(
+            makeTestLayer({
+              state,
+              idleTimeoutMs: 1_000,
+              mcpConfigs,
+            }),
+            TestLegacyImporterLayer,
+          ),
         ),
       );
     }),
@@ -1096,7 +1249,17 @@ it.effect(
         const resolved = yield* registry.resolve(token!);
         assert.deepEqual(
           resolved?.capabilities,
-          new Set(["orchestration", "worktree", "pull-requests"]),
+          new Set([
+            "orchestration",
+            "worktree",
+            "pull-requests",
+            "documents:build",
+            "compute:inventory",
+            "sources:read",
+            "sources:write",
+            "threads:read",
+            "skills:read",
+          ]),
         );
 
         yield* manager.close(providerSessionId);
@@ -3236,3 +3399,264 @@ it.effect(
       assert.isFalse(denied?.capabilities?.has("device"));
     }),
 );
+
+for (const stalePolicy of [
+  "missing-owned-grants",
+  "excess-device-grant",
+  "missing-skill-scope",
+] as const) {
+  it.effect(
+    `ProviderSessionManagerV2 rotates ${stalePolicy} and reuses only the complete native policy`,
+    () =>
+      Effect.gen(function* () {
+        const state = yield* Ref.make(emptyState);
+        const mcpConfigs = yield* Ref.make<
+          ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+        >([]);
+        yield* Effect.gen(function* () {
+          const eventSink = yield* EventSink.EventSinkV2;
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+          const registry = yield* McpSessionRegistry.McpSessionRegistry;
+          const now = yield* DateTime.now;
+          const threadId = ThreadId.make(`thread-mcp-policy-${stalePolicy}`);
+          yield* eventSink.write({
+            events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+          });
+          const stale = yield* registry.issue({
+            threadId,
+            providerInstanceId: modelSelection.instanceId,
+            browserToolsAvailable: false,
+            capabilities: new Set(
+              stalePolicy === "missing-owned-grants"
+                ? ["orchestration", "worktree", "pull-requests"]
+                : [
+                    "orchestration",
+                    "worktree",
+                    "pull-requests",
+                    "documents:build",
+                    "compute:inventory",
+                    "sources:read",
+                    "sources:write",
+                    "threads:read",
+                    "skills:read",
+                    ...(stalePolicy === "excess-device-grant" ? ["device" as const] : []),
+                  ],
+            ),
+          });
+          McpProviderSession.setMcpProviderSession(stale.config);
+          const firstId = yield* idAllocator.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+          });
+          const first = yield* manager.open({
+            threadId,
+            providerSessionId: firstId,
+            modelSelection,
+            runtimePolicy,
+          });
+          assert.isTrue(first.mcpSessionInjection);
+          const configured = McpProviderSession.readMcpProviderSession(threadId);
+          if (configured === undefined)
+            return yield* Effect.die("Injectable native session must have a credential");
+          assert.notEqual(configured.authorizationHeader, stale.config.authorizationHeader);
+          assert.isUndefined(
+            yield* registry.resolve(stale.config.authorizationHeader.replace(/^Bearer\s+/, "")),
+          );
+          assert.isFalse(configured.capabilities.has("device"));
+          assert.isTrue(configured.capabilities.has("threads:read"));
+          assert.isTrue(configured.capabilities.has("skills:read"));
+          const secondId = yield* idAllocator.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+          });
+          yield* manager.open({
+            threadId,
+            providerSessionId: secondId,
+            modelSelection,
+            runtimePolicy,
+          });
+          assert.equal(
+            McpProviderSession.readMcpProviderSession(threadId)?.authorizationHeader,
+            configured.authorizationHeader,
+          );
+          yield* manager.close(firstId);
+          assert.isDefined(
+            yield* registry.resolve(configured.authorizationHeader.replace(/^Bearer\s+/, "")),
+          );
+          yield* manager.close(secondId);
+          assert.isUndefined(
+            yield* registry.resolve(configured.authorizationHeader.replace(/^Bearer\s+/, "")),
+          );
+        }).pipe(
+          Effect.provide(
+            makeTestLayer({
+              state,
+              idleTimeoutMs: 1000,
+              mcpConfigs,
+              serverSettingsLayer: ServerSettings.layerTest({
+                enableAgentBrowserAccess: false,
+                enableAgentDeviceAccess: false,
+              }),
+            }),
+          ),
+        );
+      }),
+  );
+}
+
+for (const injectionPolicy of ["non-injectable", "disabled", "undeclared"] as const) {
+  it.effect(
+    `ProviderSessionManagerV2 withholds host credentials when injection is ${injectionPolicy}`,
+    () =>
+      Effect.gen(function* () {
+        const state = yield* Ref.make(emptyState);
+        const mcpConfigs = yield* Ref.make<
+          ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+        >([]);
+        yield* Effect.gen(function* () {
+          const eventSink = yield* EventSink.EventSinkV2;
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+          const registry = yield* McpSessionRegistry.McpSessionRegistry;
+          const now = yield* DateTime.now;
+          const threadId = ThreadId.make("thread-mcp-unavailable-instance");
+          yield* eventSink.write({
+            events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+          });
+          const stale = yield* registry.issue({
+            threadId,
+            providerInstanceId: modelSelection.instanceId,
+            capabilities: new Set(["skills:read"]),
+          });
+          McpProviderSession.setMcpProviderSession(stale.config);
+          const providerSessionId = yield* idAllocator.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+          });
+          const native = yield* manager.open({
+            threadId,
+            providerSessionId,
+            modelSelection,
+            runtimePolicy,
+          });
+          assert.isFalse(native.mcpSessionInjection);
+          assert.deepEqual(yield* Ref.get(mcpConfigs), [undefined]);
+          assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+          assert.isUndefined(
+            yield* registry.resolve(stale.config.authorizationHeader.replace(/^Bearer\s+/, "")),
+          );
+          yield* manager.close(providerSessionId);
+        }).pipe(
+          Effect.provide(
+            makeTestLayer({
+              state,
+              idleTimeoutMs: 1000,
+              mcpConfigs,
+              mcpSessionInjection:
+                injectionPolicy === "undeclared" ? "undeclared" : injectionPolicy === "disabled",
+              ...(injectionPolicy === "disabled" ? { configureMcp: false } : {}),
+              beforeOpen: (opening) =>
+                Effect.sync(() => {
+                  assert.isFalse(opening.configureMcp);
+                  assert.isUndefined(
+                    codexThreadRuntimeParams({
+                      threadId: opening.threadId,
+                      configureMcp: opening.configureMcp !== false,
+                    }).config.mcp_servers,
+                  );
+                }),
+            }),
+          ),
+        );
+      }),
+  );
+}
+
+for (const predecessorState of ["live", "pending"] as const) {
+  it.effect(
+    `ProviderSessionManagerV2 preserves ${predecessorState} injectable ownership during an unsupported replacement`,
+    () =>
+      Effect.gen(function* () {
+        const state = yield* Ref.make(emptyState);
+        const enabled = yield* Ref.make(true);
+        const started = yield* Deferred.make<void>();
+        const gate = yield* Deferred.make<void>();
+        let firstId: ProviderSessionId | undefined;
+        yield* Effect.gen(function* () {
+          const events = yield* EventSink.EventSinkV2;
+          const ids = yield* IdAllocator.IdAllocatorV2;
+          const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+          const registry = yield* McpSessionRegistry.McpSessionRegistry;
+          const threadId = ThreadId.make(`thread-mcp-unsupported-replacement-${predecessorState}`);
+          const now = yield* DateTime.now;
+          yield* events.write({
+            events: [yield* makeThreadCreatedEvent({ idAllocator: ids, threadId, now })],
+          });
+          const predecessorId = yield* ids.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+          });
+          firstId = predecessorId;
+          const firstOpening = yield* manager
+            .open({ threadId, providerSessionId: predecessorId, modelSelection, runtimePolicy })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(started);
+          if (predecessorState === "live") yield* Fiber.join(firstOpening);
+          const credential = McpProviderSession.readMcpProviderSession(threadId);
+          if (credential === undefined)
+            return yield* Effect.die("Injectable predecessor must hold a credential");
+          const token = credential.authorizationHeader.replace(/^Bearer\s+/, "");
+          assert.isDefined(yield* registry.resolve(token));
+          yield* Ref.set(enabled, false);
+          const replacementId = yield* ids.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+          });
+          const replacement = yield* manager.open({
+            threadId,
+            providerSessionId: replacementId,
+            modelSelection,
+            runtimePolicy,
+          });
+          assert.isFalse(replacement.mcpSessionInjection);
+          assert.equal(
+            McpProviderSession.readMcpProviderSession(threadId)?.authorizationHeader,
+            credential.authorizationHeader,
+          );
+          assert.isDefined(yield* registry.resolve(token));
+          yield* manager.close(replacementId);
+          assert.isDefined(yield* registry.resolve(token));
+          if (predecessorState === "pending") {
+            yield* Deferred.succeed(gate, undefined);
+            yield* Fiber.join(firstOpening);
+          }
+          yield* manager.close(predecessorId);
+          assert.isUndefined(yield* registry.resolve(token));
+        }).pipe(
+          Effect.provide(
+            makeTestLayer({
+              state,
+              idleTimeoutMs: 1000,
+              mcpInjectionEnabled: enabled,
+              beforeOpen: (opening) =>
+                Effect.gen(function* () {
+                  if (opening.providerSessionId === firstId) {
+                    yield* Deferred.succeed(started, undefined);
+                    if (predecessorState === "pending") yield* Deferred.await(gate);
+                  } else {
+                    // Actual native Codex prepare parameters must not inherit the live peer's MCP channel.
+                    assert.isFalse(opening.configureMcp);
+                    const native = codexThreadRuntimeParams({
+                      threadId: opening.threadId,
+                      configureMcp: opening.configureMcp !== false,
+                    });
+                    assert.isUndefined(native.config.mcp_servers);
+                  }
+                }),
+            }),
+          ),
+        );
+      }),
+  );
+}

@@ -4,6 +4,7 @@ import { DRIVER_OPTIONS } from "./components/settings/providerDriverMeta";
 import { PROVIDER_OPTIONS } from "./session-logic";
 
 const expectedOrder = [
+  "scient",
   "codex",
   "claudeAgent",
   "antigravity",
@@ -16,8 +17,11 @@ const expectedOrder = [
 ];
 
 describe("provider ordering consumers", () => {
-  it("keeps Settings and provider pickers on the canonical order", () => {
-    expect(DRIVER_OPTIONS.map((option) => option.value)).toEqual(expectedOrder);
+  it("keeps Settings and provider pickers on the canonical order with registry creation in Settings", () => {
+    expect(DRIVER_OPTIONS.map((option) => option.value)).toEqual([...expectedOrder, "acpRegistry"]);
+    expect(
+      DRIVER_OPTIONS.find((option) => option.value === "acpRegistry")?.hasDefaultInstance,
+    ).toBe(false);
     expect(PROVIDER_OPTIONS.map((option) => option.value)).toEqual(expectedOrder);
   });
 });

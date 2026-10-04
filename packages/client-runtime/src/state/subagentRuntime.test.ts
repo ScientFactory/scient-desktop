@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
-import { classifyTaskAgentKind, type OrchestrationThreadActivity } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import {
+  NodeId,
+  classifyTaskAgentKind,
+  type OrchestrationThreadActivity,
+} from "@t3tools/contracts";
 import {
   deriveAgentPanelModel,
+  projectedSubagentsToRuntime,
   foldSubagentActivities,
   formatSubagentModelLabel,
   formatSubagentTokenCount,
@@ -371,6 +377,41 @@ describe("foldSubagentActivities", () => {
     expect(agents[0]!.runHandles?.sessionUrl).toBeUndefined();
     expect(agents[0]!.runHandles?.runId).toBe("run-1");
   });
+});
+
+it("decodes and merges observed count-only usage without invented token aggregates", () => {
+  const first = fold([
+    activity("task.progress", { taskId: "calls-only", typedUsage: { toolUses: 2 } }),
+  ]);
+  expect(first[0]?.usage).toEqual({ toolUses: 2 });
+  expect(deriveAgentPanelModel({ agents: first }).totalTokens).toBeNull();
+  const merged = fold([
+    activity("task.progress", { taskId: "mixed", typedUsage: { totalTokens: 40 } }),
+    activity("task.progress", { taskId: "mixed", typedUsage: { toolUses: 5 } }),
+  ]);
+  expect(merged[0]?.usage).toEqual({ totalTokens: 40, toolUses: 5 });
+  expect(deriveAgentPanelModel({ agents: merged }).totalTokens).toBe(40);
+  expect(
+    fold([activity("task.progress", { taskId: "empty", typedUsage: {} })])[0]?.usage,
+  ).toBeNull();
+  expect(
+    fold([activity("task.progress", { taskId: "zero", typedUsage: { totalTokens: 0 } })])[0]?.usage,
+  ).toEqual({ totalTokens: 0 });
+  expect(
+    deriveAgentPanelModel({
+      agents: fold([
+        activity("task.progress", { taskId: "known-zero", typedUsage: { totalTokens: 0 } }),
+      ]),
+    }).totalTokens,
+  ).toBe(0);
+  expect(
+    fold([
+      activity("task.progress", {
+        taskId: "invalid",
+        typedUsage: { totalTokens: NaN, toolUses: 1.5, durationMs: -1 },
+      }),
+    ])[0]?.usage,
+  ).toBeNull();
 });
 
 describe("deriveAgentPanelModel", () => {
@@ -889,5 +930,65 @@ describe("nested agents vs subagent shells", () => {
       }),
     ]);
     expect(agents.map((agent) => agent.id)).toEqual(["nested-1"]);
+  });
+});
+
+describe("native workflow presentation", () => {
+  it("groups phase members and preserves first observation independently of progress time", () => {
+    const now = DateTime.makeUnsafe("2026-10-04T00:02:00.000Z");
+    const firstSeenAt = "2026-10-04T00:00:00.000Z";
+    const base = {
+      prompt: "",
+      title: "Workflow",
+      model: null,
+      status: "running" as const,
+      result: null,
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+    };
+    const agents = projectedSubagentsToRuntime([
+      {
+        ...base,
+        id: "workflow",
+        presentation: {
+          kind: "workflow",
+          workflowName: "Audit",
+          firstSeenAt,
+          phases: [{ index: 0, title: "Review" }],
+        },
+      },
+      {
+        ...base,
+        id: "member",
+        title: "Reader",
+        presentation: {
+          kind: "workflow_agent",
+          workflowId: NodeId.make("workflow"),
+          agentIndex: 0,
+          phaseIndex: 0,
+          attempt: 2,
+          role: "researcher",
+          effort: "high",
+          usage: { totalTokens: 40, toolUses: 2 },
+          runHandles: { runId: "native-run" },
+          firstSeenAt,
+        },
+      },
+    ]);
+    const model = deriveAgentPanelModel({ agents: [], v2Projection: agents });
+    expect(model.workflows).toHaveLength(1);
+    expect(model.directAgents).toHaveLength(0);
+    expect(model.workflows[0]?.phases[0]?.members[0]).toMatchObject({
+      id: "member",
+      role: "researcher",
+      effort: "high",
+      attempt: 2,
+      firstSeenAt,
+      usage: { totalTokens: 40, toolUses: 2 },
+      runHandles: { runId: "native-run" },
+    });
+    // Only workers contribute to the badge; a coordinator groups their work.
+    expect(model.liveCount).toBe(1);
   });
 });

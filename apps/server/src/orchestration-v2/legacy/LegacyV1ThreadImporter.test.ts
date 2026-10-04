@@ -32,6 +32,85 @@ const TestLayer = Layer.mergeAll(
   projectionMaintenanceProvided,
 );
 
+for (const missing of [true, false]) {
+  it.effect(
+    missing
+      ? "repairs an opt-out missing from otherwise complete imported metadata"
+      : "preserves an explicit V2 auto-settle choice during metadata repair",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`thread:legacy-opt-out:${missing}`);
+        const optOut = "2026-01-02T00:00:00.000Z";
+        yield* sql`
+            INSERT INTO projection_projects (
+              project_id, title, workspace_root, scripts_json, created_at, updated_at
+            ) VALUES (
+              ${`project:legacy-opt-out:${missing}`}, 'Legacy project', '/tmp/legacy-opt-out',
+              '[]', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+            )
+          `;
+        yield* sql`
+            INSERT INTO projection_threads (
+              thread_id, project_id, title, model_selection_json, runtime_mode,
+              interaction_mode, created_at, updated_at, auto_settle_disabled_at
+            ) VALUES (
+              ${threadId}, ${`project:legacy-opt-out:${missing}`}, 'Original title',
+              '{"instanceId":"codex","model":"gpt-5.4"}', 'full-access', 'default',
+              '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', ${optOut}
+            )
+          `;
+        yield* importer.reconcileShells;
+        const imported = yield* projections.getThreadProjection(threadId);
+        const edited: {
+          -readonly [K in keyof typeof imported.thread]: (typeof imported.thread)[K];
+        } = {
+          ...imported.thread,
+          title: "Renamed in V2",
+          autoSettleDisabledAt: null,
+        };
+        if (missing) delete edited.autoSettleDisabledAt;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`metadata:opt-out:${missing}`),
+              type: "thread.metadata-updated",
+              threadId,
+              providerInstanceId: edited.providerInstanceId,
+              occurredAt: DateTime.makeUnsafe("2026-01-03T00:00:00.000Z"),
+              payload: edited,
+            },
+          ],
+        });
+        assert.deepStrictEqual(yield* importer.reconcileShells, {
+          importedThreadCount: missing ? 1 : 0,
+          importedMessageCount: 0,
+        });
+        const repaired = yield* projections.getThreadProjection(threadId);
+        assert.equal(repaired.thread.title, "Renamed in V2");
+        assert.equal(
+          repaired.thread.autoSettleDisabledAt === null
+            ? null
+            : DateTime.formatIso(repaired.thread.autoSettleDisabledAt!),
+          missing ? optOut : null,
+        );
+        assert.deepStrictEqual(yield* importer.reconcileShells, {
+          importedThreadCount: 0,
+          importedMessageCount: 0,
+        });
+        assert.isTrue((yield* maintenance.rebuild).valid);
+        assert.deepStrictEqual(
+          (yield* projections.getThreadProjection(threadId)).thread,
+          repaired.thread,
+        );
+      }).pipe(Effect.provide(TestLayer)),
+  );
+}
+
 it.layer(TestLayer)("LegacyV1ThreadImporter", (it) => {
   it.effect("uses the created-thread index for startup migration checks", () =>
     Effect.gen(function* () {

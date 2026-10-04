@@ -374,6 +374,8 @@ export const ProviderAdapterV2Error = Schema.Union([
 export type ProviderAdapterV2Error = typeof ProviderAdapterV2Error.Type;
 
 export interface ProviderAdapterV2OpenSessionInput {
+  /** Explicit host injection policy. A disabled session must ignore another owner's thread credential. */
+  readonly configureMcp?: boolean;
   readonly threadId: ThreadId;
   readonly providerSessionId: ProviderSessionId;
   readonly modelSelection: ModelSelection;
@@ -482,6 +484,8 @@ export interface ProviderAdapterV2HistoricalContext {
 }
 
 export interface ProviderAdapterV2SessionRuntime {
+  /** Manager-projected, instance-specific host MCP injection support. Absence is unsupported. */
+  readonly mcpSessionInjection?: boolean;
   readonly instanceId: ProviderInstanceId;
   readonly driver: ProviderDriverKind;
   readonly providerSessionId: ProviderSessionId;
@@ -579,6 +583,8 @@ export interface ProviderAdapterV2SessionRuntime {
 }
 
 export interface ProviderAdapterV2Shape {
+  /** This configured adapter can inject a host-issued MCP session. Independent of native tools. */
+  readonly mcpSessionInjection?: boolean;
   readonly instanceId: ProviderInstanceId;
   readonly driver: ProviderDriverKind;
   readonly getCapabilities: () => Effect.Effect<

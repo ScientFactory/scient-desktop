@@ -233,9 +233,11 @@ export function hasInstallableCompatibilityRemedy(provider: ServerProvider | und
   );
 }
 
+/** Provider execution errors can diagnose its runtime; Cursor SDK errors cannot diagnose its CLI. */
 export function needsManagedRuntimeRecovery(provider: ServerProvider | undefined): boolean {
   const runtime = provider?.connection?.runtime;
   return (
+    provider?.driver !== "cursor" &&
     runtime?.source === "scient_managed" &&
     provider?.status === "error" &&
     provider.auth.status !== "unauthenticated"

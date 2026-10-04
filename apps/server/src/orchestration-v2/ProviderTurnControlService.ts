@@ -299,6 +299,7 @@ export const layer: Layer.Layer<
           const text = yield* prepareScientV2SkillTurn({
             threadId: input.threadId,
             driver: loaded.session.value.driver,
+            mcpSessionInjection: loaded.session.value.mcpSessionInjection === true,
             projectRoot: loaded.session.value.providerSession.cwd ?? undefined,
             text: projectComposerContextForProvider({
               text: message.text,

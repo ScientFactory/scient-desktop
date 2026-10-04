@@ -42,60 +42,9 @@ const ProjectEventType = Schema.Literals([
   "project.deleted",
 ]);
 const ActorKind = Schema.Literals(["client", "server", "provider"]);
-// SCIENT-FORK:START — V1 event decode + row schemas. V1 rows are the
+// SCIENT-FORK:START — V1 event access. V1 rows are the
 // `application_event_version = 1` rows plus every project row; that is exactly the
 // row set the V1 projector can decode, so the V1 reads filter on it.
-const AppendV1EventRequestSchema = Schema.Struct({
-  eventId: EventId,
-  aggregateKind: Schema.Literals(["project", "thread"]),
-  streamId: Schema.String,
-  type: Schema.String,
-  causationEventId: Schema.NullOr(EventId),
-  correlationId: Schema.NullOr(CommandId),
-  actorKind: ActorKind,
-  occurredAt: IsoDateTime,
-  commandId: Schema.NullOr(CommandId),
-  payloadJson: UnknownFromJsonString,
-  metadataJson: EventMetadataFromJsonString,
-});
-
-const V1EventPersistedRowSchema = Schema.Struct({
-  sequence: NonNegativeInt,
-  eventId: EventId,
-  type: Schema.String,
-  aggregateKind: Schema.Literals(["project", "thread"]),
-  aggregateId: Schema.String,
-  occurredAt: IsoDateTime,
-  commandId: Schema.NullOr(CommandId),
-  causationEventId: Schema.NullOr(EventId),
-  correlationId: Schema.NullOr(CommandId),
-  payload: UnknownFromJsonString,
-  metadata: EventMetadataFromJsonString,
-});
-
-const HasEventAfterRequestSchema = Schema.Struct({
-  aggregateKind: Schema.String,
-  aggregateId: Schema.String,
-  type: Schema.optional(Schema.String),
-  sequenceExclusive: NonNegativeInt,
-});
-
-const ReadFromSequenceRequestSchema = Schema.Struct({
-  sequenceExclusive: NonNegativeInt,
-  limit: Schema.Number,
-});
-const AggregateReplayRequestSchema = Schema.Struct({
-  aggregateKind: Schema.Literals(["project", "thread"]),
-  aggregateId: Schema.String,
-  fromSequenceExclusive: NonNegativeInt,
-  toSequenceInclusive: NonNegativeInt,
-  limit: Schema.Number,
-});
-const AggregateReplayStatsRowSchema = Schema.Struct({
-  eventCount: Schema.Number,
-  payloadBytes: Schema.Number,
-  hasCreateEvent: Schema.Number,
-});
 const DEFAULT_READ_FROM_SEQUENCE_LIMIT = 1_000;
 
 function inferV1ActorKind(event: Omit<OrchestrationEvent, "sequence">): typeof ActorKind.Type {

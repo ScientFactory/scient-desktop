@@ -425,17 +425,6 @@ export const cleanupFailedUploadedAttachments = Effect.fn(
 });
 
 /** Reject old client-owned queue pumps before they can create a turn. */
-export const requireQueueProtocol = (
-  command: ClientOrchestrationCommand,
-): Effect.Effect<void, OrchestrationDispatchCommandError> =>
-  command.type === "thread.turn.start" && command.queueProtocolVersion !== 2
-    ? Effect.fail(
-        new OrchestrationDispatchCommandError({
-          message: "Update this client before sending messages. This server uses queue protocol 2.",
-        }),
-      )
-    : Effect.void;
-
 /** Reclaim only files no longer owned by either a message or a queue item. */
 export const cleanupUnusedAttachments = Effect.fn("Normalizer.cleanupUnusedAttachments")(function* (
   attachments: ReadonlyArray<ChatAttachment>,

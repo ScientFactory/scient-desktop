@@ -8,10 +8,31 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import type { ReactNode } from "react";
+import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 const runtime = vi.hoisted(() => ({ plan: vi.fn(), start: vi.fn() }));
+const atoms = vi.hoisted(() => ({ plan: Symbol("planRuntime"), start: Symbol("startRuntime") }));
+
+vi.mock("../../state/server", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../state/server")>();
+  return {
+    ...actual,
+    serverEnvironment: {
+      ...actual.serverEnvironment,
+      planProviderRuntime: atoms.plan,
+      startProviderRuntime: atoms.start,
+    },
+  };
+});
+vi.mock("../../state/use-atom-command", () => ({
+  useAtomCommand: (atom: unknown) => async () => {
+    if (atom === atoms.plan) return { _tag: "Success", value: await runtime.plan() };
+    if (atom === atoms.start) return { _tag: "Success", value: await runtime.start() };
+    return new Promise<never>(() => undefined);
+  },
+}));
 
 vi.mock("./useProviderLifecycleController", () => {
   const never = () => new Promise<never>(() => undefined);
@@ -34,6 +55,7 @@ vi.mock("./useProviderEnableAction", () => ({
 }));
 
 import { AssistedProviderSetupHost } from "./AssistedProviderSetupHost";
+import { ProviderRuntimeSection } from "./ProviderRuntimeSection";
 
 type Methods = NonNullable<ServerProvider["connection"]>["methods"];
 
@@ -166,6 +188,48 @@ const visibleButton = (label: string) =>
     (button) => isVisible(button) && button.textContent!.trim() === label,
   );
 
+describe("optional provider runtime summaries", () => {
+  it.each([
+    ["cursor", "Cursor", ["cursor_browser"]],
+    ["droid", "Droid", ["droid_device_pairing"]],
+  ] as const)(
+    "keeps %s hook order when a summary appears and disappears",
+    (driver, name, methods) => {
+      const provider = snapshot(driver, name, [...methods]);
+      const withoutRuntime: ServerProvider = {
+        ...provider,
+        connection: { methods: [...methods], canDisconnect: false, operation: null },
+      };
+      host = document.createElement("div");
+      document.body.append(host);
+      root = createRoot(host);
+      const render = (next: ServerProvider) => {
+        flushSync(() => {
+          root!.render(
+            <ProviderRuntimeSection
+              displayName={name}
+              environmentId={EnvironmentId.make("local")}
+              provider={next}
+            />,
+          );
+        });
+      };
+
+      render(withoutRuntime);
+      expect(host.childElementCount).toBe(0);
+      render(provider);
+      expect(host.textContent).toContain(
+        driver === "cursor" ? "Cursor CLI managed by Scient" : "Managed by Scient",
+      );
+      expect(visibleButton("Repair")).toBeTruthy();
+      render(withoutRuntime);
+      expect(host.childElementCount).toBe(0);
+      expect(runtime.plan).not.toHaveBeenCalled();
+      expect(runtime.start).not.toHaveBeenCalled();
+    },
+  );
+});
+
 describe.each(PROVIDERS)("%s setup mark", (driver, name, methods) => {
   const states = [
     ["install", notInstalled(snapshot(driver, name, methods))],
@@ -208,7 +272,7 @@ describe.each(PROVIDERS)("%s setup mark", (driver, name, methods) => {
   );
 });
 
-describe.each(PROVIDERS.filter(([, , methods]) => methods.length > 0))(
+describe.each(PROVIDERS.filter(([driver, , methods]) => driver !== "cursor" && methods.length > 0))(
   "%s switch to an older Scient-managed release",
   (driver, name, methods) => {
     const provider = signInFailedOnSystem(driver, name, methods);
@@ -278,3 +342,63 @@ describe.each(PROVIDERS.filter(([, , methods]) => methods.length > 0))(
     );
   },
 );
+
+// Cursor's SDK account state does not select its optional CLI. Exercise the
+// same version decision through the CLI controls that settings actually owns.
+describe("Cursor CLI switch to an older Scient-managed release", () => {
+  const provider = signInFailedOnSystem("cursor", "Cursor CLI", ["cursor_browser"]);
+  const plan: ProviderRuntimePlan = {
+    instanceId: provider.instanceId,
+    action: "install",
+    target: "darwin-arm64",
+    version: "0.230.0",
+    downloadBytes: null,
+    sourceLabel: "Official Cursor CLI release",
+    catalogRevision: "reviewed:1:older-than-system",
+    message:
+      "Scient-managed Cursor CLI 0.230.0 is older than the system CLI 0.231.0. Your system installation stays unchanged.",
+    systemVersion: "0.231.0",
+    olderThanSystem: true,
+  };
+
+  it.each([true, false])(
+    "fits the host and returns on Back without starting (compact: %s)",
+    async (compact) => {
+      runtime.plan.mockResolvedValue(plan);
+      host = document.createElement("div");
+      document.body.append(host);
+      root = createRoot(host);
+      root.render(
+        <Container picker={false}>
+          <ProviderRuntimeSection
+            compact={compact}
+            displayName="Cursor"
+            environmentId={EnvironmentId.make("local")}
+            provider={provider}
+          />
+        </Container>,
+      );
+      await expect.poll(() => visibleButton("Use Scient-managed")).toBeTruthy();
+      expect(host.textContent).toContain("Conversations use the bundled Cursor SDK.");
+      visibleButton("Use Scient-managed")!.click();
+
+      await expect.poll(() => visibleButton("Back")).toBeTruthy();
+      expect(host.textContent).toContain("Use Scient-managed Cursor CLI 0.230.0?");
+      expect(host.textContent).toContain(plan.message);
+      expect(host.textContent).not.toContain("The sign-in window was closed.");
+      expect(runtime.start).not.toHaveBeenCalled();
+      const container = host.querySelector("[data-container]")!.getBoundingClientRect();
+      for (const label of ["Back", "Use Scient-managed"]) {
+        const box = visibleButton(label)!.getBoundingClientRect();
+        expect(box.left, label).toBeGreaterThanOrEqual(container.left);
+        expect(box.right, label).toBeLessThanOrEqual(container.right);
+        expect(box.bottom, label).toBeLessThanOrEqual(container.bottom);
+      }
+
+      visibleButton("Back")!.click();
+      await expect.poll(() => host!.textContent).not.toContain(plan.message);
+      expect(host.textContent).toContain("System Cursor CLI");
+      expect(runtime.start).not.toHaveBeenCalled();
+    },
+  );
+});

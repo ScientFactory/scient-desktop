@@ -277,12 +277,9 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
         Effect.all(
           [
             Cache.invalidate(repositoryIdentityCache, workspaceRoot),
-            faviconResolver.resolvePath(workspaceRoot, undefined, { refresh: true }).pipe(
-              Effect.catchCause((cause) =>
-                Effect.logWarning("Project favicon refresh failed", { cause }),
-              ),
-              Effect.andThen(Cache.invalidate(faviconCache, workspaceRoot)),
-            ),
+            faviconResolver
+              .invalidate(workspaceRoot)
+              .pipe(Effect.andThen(Cache.invalidate(faviconCache, workspaceRoot))),
           ],
           { concurrency: "unbounded", discard: true },
         ),

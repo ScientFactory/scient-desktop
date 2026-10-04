@@ -56,16 +56,14 @@ import {
 import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
 import { computerUseToolTitle } from "@t3tools/shared/toolActivity";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
+import { compactPathLabel } from "../../scient/presentation/compactPathLabel";
 import {
   collectToolFilePaths,
   formatReadToolLabel,
   formatSearchToolLabel,
 } from "@t3tools/shared/toolActivity";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
-import {
-  computeElapsedMs,
-  shouldPreserveAssistantLineBreaks,
-} from "@scientfactory/conversation/work-log-grouping";
+import { computeElapsedMs } from "@scientfactory/conversation/work-log-grouping";
 export { shouldPreserveAssistantLineBreaks } from "@scientfactory/conversation/work-log-grouping";
 
 /** The later of two ISO timestamps, ignoring unparseable ones. */
@@ -199,11 +197,11 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
   const detailIsSearchOutput =
     (action === "code-search" || action === "search") && /[\r\n]/.test(compactDetail ?? "");
   if (compactDetail && !providerRetry && action !== "read" && !detailIsSearchOutput) {
-    return compactDetail;
+    return compactPathLabel(compactDetail, workspaceRoot);
   }
   const [firstPath] = entry.changedFiles ?? [];
   if (firstPath) {
-    const path = formatWorkspaceRelativePath(firstPath, workspaceRoot);
+    const path = compactPathLabel(firstPath, workspaceRoot);
     return entry.changedFiles!.length === 1
       ? path
       : `${path} +${entry.changedFiles!.length - 1} more`;
@@ -558,7 +556,7 @@ type MessagesTimelineRowContent =
       summaryKind: ToolGroupSummaryKind;
       toolSurface?: WorkLogEntry["toolSurface"];
       toolIcon?: WorkLogEntry["toolIcon"];
-      summaryToolIcon?: "browser" | "device" | "t3-code" | "pull-request";
+      summaryToolIcon?: "browser" | "device" | "scient" | "t3-code" | "pull-request";
       hasFailure: boolean;
     }
   | {
@@ -1303,6 +1301,7 @@ export function deriveMessagesTimelineRows(input: {
   forkBaselineAssistantMessageId?: MessageId | null | undefined;
   /** Task ids of subagents still working, used by the active tool indicator. */
   liveAgentTaskIds?: ReadonlySet<string> | undefined;
+  subagentWorkflowIds?: ReadonlyMap<string, string> | undefined;
   /** Live bootstrap progress. Renders a stage card under the first user message. */
   worktreeSetup?: WorktreeSetupSnapshot | null;
 }): MessagesTimelineRow[] {
@@ -1324,6 +1323,7 @@ export function deriveMessagesTimelineRows(input: {
       })
     : new Map<MessageId, number>();
   const nextRows: MessagesTimelineRow[] = [];
+  const nativeSubagentRows = new Map<string, number>();
   if (input.hasForkBaseline === true && input.forkBaselineAssistantMessageId === null) {
     nextRows.push({ kind: "fork-marker", id: "conversation-fork-marker" });
   }
@@ -1467,10 +1467,17 @@ export function deriveMessagesTimelineRows(input: {
     activeWorkRow !== null || latestToolFailed ? activeToolEntries.map((entry) => entry.id) : [],
   );
   const appendWorkingRow = () => {
+    const boundary = timelineEntries[lastResponseBoundaryIndex(timelineEntries)];
+    const startedAt =
+      activeVisualResponseRunIds.size > 1 &&
+      boundary?.kind === "message" &&
+      boundary.message.role === "user"
+        ? boundary.message.createdAt
+        : input.activeTurnStartedAt;
     nextRows.push({
       kind: "working",
       id: "working-indicator-row",
-      createdAt: input.activeTurnStartedAt ?? null,
+      createdAt: startedAt ?? null,
     });
   };
   let hasActivityRow = false;
@@ -1756,16 +1763,26 @@ export function deriveMessagesTimelineRows(input: {
     }
 
     if (timelineEntry.kind === "event") {
-      const previous = nextRows.at(-1);
+      const item = timelineEntry.projectedItem.item;
+      const groupKey =
+        item.type === "subagent"
+          ? [
+              timelineEntry.projectedItem.sourceThreadId,
+              timelineEntry.projectedItem.visibility,
+              item.runId ?? (item.providerTurnId === null ? item.subagentId : "runless"),
+              item.providerTurnId,
+              input.subagentWorkflowIds?.get(item.subagentId) ?? "direct",
+            ].join("\u0000")
+          : null;
+      const previousIndex = groupKey === null ? undefined : nativeSubagentRows.get(groupKey);
+      const previous = previousIndex === undefined ? undefined : nextRows[previousIndex];
       if (
-        timelineEntry.projectedItem.item.type === "subagent" &&
-        previous?.kind === "event" &&
-        previous.projectedItem.item.type === "subagent" &&
-        previous.projectedItem.item.runId === timelineEntry.projectedItem.item.runId &&
-        previous.projectedItem.item.providerTurnId ===
-          timelineEntry.projectedItem.item.providerTurnId
+        item.type === "subagent" &&
+        previousIndex !== undefined &&
+        previousIndex === nextRows.length - 1 &&
+        previous?.kind === "event"
       ) {
-        nextRows[nextRows.length - 1] = {
+        nextRows[previousIndex] = {
           ...previous,
           subagents: [
             ...(previous.subagents ?? [previous.projectedItem]),
@@ -1774,6 +1791,7 @@ export function deriveMessagesTimelineRows(input: {
         };
         continue;
       }
+      if (groupKey !== null) nativeSubagentRows.set(groupKey, nextRows.length);
       nextRows.push({
         kind: "event",
         id: timelineEntry.id,

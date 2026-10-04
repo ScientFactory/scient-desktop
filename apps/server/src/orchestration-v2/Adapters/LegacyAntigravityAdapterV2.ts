@@ -40,6 +40,8 @@ export function makeLegacyAntigravityAdapterV2(options: LegacyAntigravityAdapter
   const scopes = new Set<Scope.Scope>();
   const adapter = makeNativeSessionAdapterV2({
     ...options,
+    // Legacy agy has no host MCP transport; modern Antigravity uses the ACP bridge.
+    mcpSessionInjection: false,
     defaultCwd: options.serverConfig.cwd,
     driver: ProviderDriverKind.make("antigravity"),
     capabilities: {

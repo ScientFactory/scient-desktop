@@ -99,11 +99,11 @@ describe("runtime diagnostics in the work log", () => {
     );
   });
 
-  it("shows the retained diagnostic message beyond its truncated title", () => {
+  it("keeps the issue heading and the full diagnostic beyond its truncated title", () => {
     const entry = workEntry(errorItem({ title: warningSummary }));
 
     expect(entry).toMatchObject({ label: warningSummary, detail: retainedMessage });
-    expect(workEntryDisplayLabel(entry, undefined)).toBe(retainedMessage);
+    expect(workEntryDisplayLabel(entry, undefined)).toBe("The agent encountered a problem");
   });
 
   it("uses the full system notice instead of a truncated warning title", () => {
@@ -180,7 +180,10 @@ describe("runtime diagnostics in the work log", () => {
     if (diagnostic?.kind !== "work") throw new Error("Expected a diagnostic row");
     expect(diagnostic.isExpandedToolGroup).toBe(false);
     expect(diagnostic.groupedEntries).toHaveLength(1);
-    expect(workEntryDisplayLabel(diagnostic.groupedEntries[0]!, undefined)).toBe(retainedMessage);
+    expect(workEntryDisplayLabel(diagnostic.groupedEntries[0]!, undefined)).toBe(
+      "The agent encountered a problem",
+    );
+    expect(diagnostic.groupedEntries[0]?.detail).toBe(retainedMessage);
   });
 
   it("keeps an Oh My Pi browser action visible and clickable", () => {

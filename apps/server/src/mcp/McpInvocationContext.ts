@@ -22,7 +22,7 @@ const ALL_MCP_CAPABILITIES = [
   "skills:read",
   "sources:read",
   "sources:write",
-  // SCIENT-THREAD-READ: read-only t3_thread_read bridge until V2's orchestrator toolkit lands.
+  // The Scient reader retains its own read-only grant alongside native orchestration tools.
   "threads:read",
 ] as const;
 export type McpCapability = (typeof ALL_MCP_CAPABILITIES)[number];

@@ -1979,7 +1979,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : "disposed";
       const now = yield* DateTime.now;
       const emitEvent = emit(events, command);
-      // task_status and t3_thread_read use distinct command IDs, so two
+      // task_status and scient_thread_inspect use distinct command IDs, so two
       // valid observations can race after their read preflight. Re-emit the
       // existing task row so the second dispatch is a successful idempotent
       // no-op rather than "already acknowledged/disposed" or empty-events.
@@ -3361,6 +3361,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.target_thread_id": command.targetThreadId,
       "orchestration_v2.source_point_type": command.sourcePoint.type,
     });
+
+    // Accepted command retries return their receipt before planning. Fresh
+    // forks must not resurrect a tombstone or replace another conversation.
+    const destinationExists = yield* projectionStore.getThread(command.targetThreadId).pipe(
+      Effect.as(true),
+      Effect.catchTag("ProjectionStoreThreadNotFoundError", () => Effect.succeed(false)),
+      Effect.mapError(
+        (cause) => new OrchestratorProjectionError({ threadId: command.targetThreadId, cause }),
+      ),
+    );
+    if (destinationExists)
+      return yield* new OrchestratorCommandRejectedError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "The destination already exists. Choose a new fork identity.",
+      });
 
     const sourceProjection = yield* projectionStore
       .getThreadRecords(command.sourceThreadId, [

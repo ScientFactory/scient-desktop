@@ -401,6 +401,7 @@ describe("OpenCode 2 through the orchestrator", () => {
           ...createdSession(before, name),
           ...instructionsWritten,
           ...answeredPrompt("FIRST"),
+          out("event.subscribe"),
           ...directoryModels(after),
           out("session.get", { sessionID: SESSION }),
           reply("session.get", sessionInfo(before, t3Rules(name))),
@@ -445,6 +446,7 @@ describe("OpenCode 2 through the orchestrator", () => {
           ...createdSession(before, name),
           ...instructionsWritten,
           ...answeredPrompt("FIRST"),
+          out("event.subscribe"),
           ...directoryModels(after),
           // Reopened after a worktree change, the session reports the rules an
           // older build gave it, which denied subagents; they are replaced

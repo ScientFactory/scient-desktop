@@ -28,6 +28,7 @@ import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../Layers/Provid
 import * as OmpExecutableGate from "../omp/OmpExecutableGate.ts";
 import { PiDriver } from "./PiDriver.ts";
 import { OmpDriver } from "./OmpDriver.ts";
+import { ScientAgentDriver } from "./ScientAgentDriver.ts";
 import { DroidDriver } from "./DroidDriver.ts";
 import { LegacyAntigravityDriver } from "./LegacyAntigravityDriver.ts";
 
@@ -88,6 +89,14 @@ const factories = [
     kind: "omp",
     create: (ordinal: number) =>
       OmpDriver.create({ ...input("omp", ordinal), config: OmpDriver.defaultConfig() }),
+  },
+  {
+    kind: "scient",
+    create: (ordinal: number) =>
+      ScientAgentDriver.create({
+        ...input("scient", ordinal),
+        config: ScientAgentDriver.defaultConfig(),
+      }),
   },
   {
     kind: "droid",

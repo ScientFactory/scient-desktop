@@ -26,14 +26,20 @@ not create live execution nodes. Message-only imports made by an earlier V2 buil
 missing historical items when first opened, without overwriting edits already made in V2.
 
 The migration does not recreate old runs, live provider sessions, native fork authority,
-checkpoints, or diffs. Queued payloads remain recoverable in the retained legacy queue files and
-SQL queue, including their order, selected skills, context, composer snapshot, and execution
-options. Imported JSON queue entries wait for an explicit send/resume; stale send, steer, and edit
-authority is cleared. Legacy queues are not yet promoted into native V2 queued runs.
+checkpoints, or diffs. Legacy queued messages become held V2 queued runs, retaining their order,
+selected skills, context, composer snapshot, attachments, and execution options. They wait for
+an explicit Send or Resume; stale send, steer, and edit authority is cleared. The old queue entry
+is retired only after V2 durably accepts it. If acceptance fails, its payload remains available
+for recovery. Send releases the idle queue head; Resume releases the queue. A project clone must
+finish before either can deliver work.
+
+If saved queued work cannot be admitted, Scient shows a recovery notice above the composer.
+Keep your recovery copy and restart Scient to retry. If the notice persists, request recovery
+support before sending those messages again; their saved payloads remain retained.
 
 ## Continuing a migrated thread
 
-The first new message starts a fresh provider session. T3 Code selects intact user and assistant
+The first new message starts a fresh provider session. Scient selects intact user and assistant
 messages using the same [handoff budget](./portable-handoffs.md) as a provider switch. Omitted text
 remains in the thread and can be retrieved by the agent. The migration retains its separate
 32,000-character recovery excerpt; neither that excerpt nor the handoff replaces the full imported

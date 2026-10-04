@@ -2,8 +2,12 @@ import * as Effect from "effect/Effect";
 import * as Migrator from "effect/unstable/sql/Migrator";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import ThreadPullRequests from "./Migrations/053_ProjectionThreadPullRequests.ts";
+import MessageContext from "./Migrations/054_ProjectionThreadMessageContext.ts";
+import TitleState from "./Migrations/055_ProjectionThreadTitleState.ts";
 import PullRequestFilesViewed from "./Migrations/056_PullRequestFilesViewed.ts";
 import AutoSettleDisabledAt from "./Migrations/057_ProjectionThreadsAutoSettleDisabledAt.ts";
+import ThreadSections from "./Migrations/058_ProjectionThreadSections.ts";
 
 // Published V2 previews shipped the orchestration schema as migration 53, then
 // 54. Scient's ledger is three ids ahead of upstream's at that point, so those
@@ -14,11 +18,14 @@ import AutoSettleDisabledAt from "./Migrations/057_ProjectionThreadsAutoSettleDi
 // `reconcileV2PreviewMigration.test.ts`.
 //
 //   preview ledger                     -> composed ledger
-//   53 OrchestrationV2                 -> 56 PullRequestFilesViewed (run here)
+//   53 OrchestrationV2                 -> 53-55 Scient prerequisites (run here)
+//                                         56 PullRequestFilesViewed (run here)
 //                                         57 AutoSettleDisabledAt   (run here)
+//                                         58 ThreadSections        (run here)
 //                                         59 OrchestrationV2       (relabelled)
 //   53 PullRequestFilesViewed          -> 56 PullRequestFilesViewed (relabelled)
-//   54 OrchestrationV2                 -> 57 AutoSettleDisabledAt   (run here)
+//   54 OrchestrationV2                 -> 53-55, 57-58 prerequisites (run here)
+//                                         59 OrchestrationV2       (relabelled)
 //   55 RemoveRedundantProjectionIndexes-> 60 RemoveRedundant…       (relabelled)
 //
 // A ledger without `OrchestrationV2` at exactly 53 or 54 is not a preview
@@ -84,8 +91,41 @@ export const reconcileV2PreviewMigration = Effect.fn("reconcileV2PreviewMigratio
       yield* sql`UPDATE effect_sql_migrations SET migration_id = ${COMPOSED_ORCHESTRATION_V2}
         WHERE migration_id = ${legacy.migration_id} AND name = 'OrchestrationV2'`;
 
-      // These two predate the preview and were never run by it, so run them now
-      // and record them at Scient's ids.
+      // The migrator only runs above the latest recorded id. Apply every
+      // prerequisite inside this transaction before publishing the lifted 59,
+      // so a rejected upgrade leaves a recognizable preview that can retry.
+      yield* ThreadPullRequests;
+      yield* sql`INSERT INTO effect_sql_migrations (migration_id, name)
+        VALUES (53, 'ProjectionThreadPullRequests')`;
+      executed.push([53, "ProjectionThreadPullRequests"]);
+      yield* MessageContext;
+      yield* sql`INSERT INTO effect_sql_migrations (migration_id, name)
+        VALUES (54, 'ProjectionThreadMessageContext')`;
+      executed.push([54, "ProjectionThreadMessageContext"]);
+
+      // Some previews already carried title state. The shipped migration is
+      // immutable and unguarded; retain an existing compatible column rather
+      // than replaying its ALTER TABLE.
+      const threadColumns = yield* sql<{
+        readonly name: string;
+        readonly type: string;
+        readonly notnull: number;
+      }>`PRAGMA table_info(projection_threads)`;
+      const titleState = threadColumns.find((column) => column.name === "title_state_json");
+      if (
+        titleState !== undefined &&
+        (titleState.type.toUpperCase() !== "TEXT" || titleState.notnull !== 0)
+      ) {
+        return yield* new Migrator.MigrationError({
+          kind: "BadState",
+          message: "Cannot upgrade a V2 preview database: its title state column is incompatible.",
+        });
+      }
+      if (titleState === undefined) yield* TitleState;
+      yield* sql`INSERT INTO effect_sql_migrations (migration_id, name)
+        VALUES (55, 'ProjectionThreadTitleState')`;
+      executed.push([55, "ProjectionThreadTitleState"]);
+
       if (legacy.migration_id === 53) {
         yield* PullRequestFilesViewed;
         yield* sql`INSERT INTO effect_sql_migrations (migration_id, name)
@@ -96,6 +136,11 @@ export const reconcileV2PreviewMigration = Effect.fn("reconcileV2PreviewMigratio
       yield* sql`INSERT INTO effect_sql_migrations (migration_id, name)
         VALUES (${COMPOSED_AUTO_SETTLE_DISABLED_AT}, 'ProjectionThreadsAutoSettleDisabledAt')`;
       executed.push([COMPOSED_AUTO_SETTLE_DISABLED_AT, "ProjectionThreadsAutoSettleDisabledAt"]);
+
+      yield* ThreadSections;
+      yield* sql`INSERT INTO effect_sql_migrations (migration_id, name)
+        VALUES (58, 'ProjectionThreadSections')`;
+      executed.push([58, "ProjectionThreadSections"]);
 
       return executed;
     }),

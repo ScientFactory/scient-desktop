@@ -212,6 +212,7 @@ const TransferRow = Schema.Struct({
 const decodeTransferRows = Schema.decodeUnknownEffect(Schema.Array(TransferRow));
 const decodeMidTurnCut = Schema.decodeUnknownOption(Schema.fromJsonString(ThreadForkMidTurnCut));
 const decodeUsageJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+const encodeAttachmentIds = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.String)));
 
 const NATIVE_FORK_STRATEGY = "native_fork";
 const LEGACY_FORK_BOUNDARY_TURN_ID = "legacy-fork-boundary";
@@ -641,9 +642,9 @@ const make = Effect.gen(function* () {
     const attachmentIdsJson =
       input.attachmentIds === undefined
         ? null
-        : yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.String)))(
-            input.attachmentIds,
-          ).pipe(Effect.mapError(fail(input.threadId, "Unable to encode delivery attachments.")));
+        : yield* encodeAttachmentIds(input.attachmentIds).pipe(
+            Effect.mapError(fail(input.threadId, "Unable to encode delivery attachments.")),
+          );
     yield* sql
       .withTransaction(
         Effect.gen(function* () {

@@ -12,8 +12,8 @@ import {
   decodeQueuedThreadMessage,
   encodeQueuedThreadMessage,
   type QueuedThreadMessage,
-} from "../state/thread-outbox-model";
-import { buildExistingThreadOutboxStartTurnInput } from "./threadOutboxStartTurn";
+} from "./thread-outbox-model";
+import { buildExistingThreadOutboxStartTurnInput } from "./thread-outbox-start-turn";
 
 const message: QueuedThreadMessage = {
   environmentId: EnvironmentId.make("environment"),

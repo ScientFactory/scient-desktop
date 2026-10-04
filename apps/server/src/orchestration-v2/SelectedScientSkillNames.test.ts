@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import { skillReleaseKey } from "@scientfactory/scient-skills";
 import {
   CommandId,
+  EnvironmentId,
   MessageId,
   ProjectId,
   ProviderDriverKind,
@@ -9,6 +10,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 import * as Layer from "effect/Layer";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { BUILT_IN_SKILL_RELEASES } from "../scient/skills/BuiltInSkillReleases.ts";
@@ -90,12 +92,33 @@ const stubPlanner: ScientSkillSession.ScientSkillSessionPlannerShape = {
 
 /** The text a V2 provider turn would receive for a persisted user message. */
 const providerTextFor = (text: string, selectedScientSkillNames: ReadonlyArray<string>) =>
-  prepareScientV2SkillTurn({
-    threadId: ThreadId.make("thread:selected-skills"),
-    driver: ProviderDriverKind.make("codex"),
-    projectRoot: undefined,
-    text,
-    selectedScientSkillNames,
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:selected-skills");
+    const previous = McpProviderSession.readMcpProviderSession(threadId);
+    McpProviderSession.setMcpProviderSession({
+      environmentId: EnvironmentId.make("selected-skills-fixture"),
+      threadId,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerSessionId: "selected-skills-fixture",
+      endpoint: "http://127.0.0.1/mcp",
+      authorizationHeader: "Bearer selected-skills-fixture",
+      capabilities: new Set(["skills:read"]),
+    });
+    return yield* prepareScientV2SkillTurn({
+      threadId,
+      driver: ProviderDriverKind.make("codex"),
+      mcpSessionInjection: true,
+      projectRoot: undefined,
+      text,
+      selectedScientSkillNames,
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) McpProviderSession.clearMcpProviderSession(threadId);
+          else McpProviderSession.setMcpProviderSession(previous);
+        }),
+      ),
+    );
   }).pipe(Effect.provideService(ScientSkillSession.ScientSkillSessionPlanner, stubPlanner));
 
 it.effect(
@@ -185,6 +208,35 @@ it.effect(
         unselectedText.includes("(selected by the user)"),
         `an unselected turn still claimed a user selection:\n${unselectedText}`,
       );
-      assert.strictEqual(unselectedText, unselected.text);
+      assert.isTrue(unselectedText.startsWith(unselected.text));
+      assert.include(unselectedText, "[Scient skill scope for this turn: complete; 1 skill;");
     }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect(
+  "a credential without a configured injection channel cannot claim selected skill delivery",
+  () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread:unsupported-selected-skills");
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("selected-skills-fixture"),
+        threadId,
+        providerInstanceId: ProviderInstanceId.make("external-opencode"),
+        providerSessionId: "external",
+        endpoint: "http://127.0.0.1/mcp",
+        authorizationHeader: "Bearer stale",
+        capabilities: new Set(["skills:read"]),
+      });
+      const text = yield* prepareScientV2SkillTurn({
+        threadId,
+        driver: ProviderDriverKind.make("opencode"),
+        mcpSessionInjection: false,
+        projectRoot: undefined,
+        text: "User request",
+        selectedScientSkillNames: [explicit.name],
+      }).pipe(
+        Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
+      );
+      assert.equal(text, "User request");
+    }).pipe(Effect.provideService(ScientSkillSession.ScientSkillSessionPlanner, stubPlanner)),
 );

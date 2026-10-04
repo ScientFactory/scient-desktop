@@ -80,12 +80,16 @@ it.effect("routes shared-runtime events only to their owning root run", () =>
   Effect.gen(function* () {
     const now = yield* DateTime.now;
     const first: RunExecutionService.ProviderEventRouteIdentity = {
+      driver,
+      providerInstanceId: ProviderInstanceId.make("codex"),
       threadId: ThreadId.make("thread:shared-runtime:first"),
       runId: RunId.make("run:shared-runtime:first"),
       attemptId: RunAttemptId.make("attempt:shared-runtime:first"),
       providerThreadId: ProviderThreadId.make("provider-thread:shared-runtime:first"),
     };
     const second: RunExecutionService.ProviderEventRouteIdentity = {
+      driver,
+      providerInstanceId: ProviderInstanceId.make("codex"),
       threadId: ThreadId.make("thread:shared-runtime:second"),
       runId: RunId.make("run:shared-runtime:second"),
       attemptId: RunAttemptId.make("attempt:shared-runtime:second"),
@@ -173,6 +177,8 @@ it("leaves a child thread created after the root turn ended to the run that is l
   const threadId = ThreadId.make("thread:late-child");
   const rootProviderTurnId = ProviderTurnId.make("provider-turn:late-child");
   const identity: RunExecutionService.ProviderEventRouteIdentity = {
+    driver,
+    providerInstanceId: ProviderInstanceId.make("codex"),
     threadId,
     runId: RunId.make("run:late-child"),
     attemptId: RunAttemptId.make("attempt:late-child"),
@@ -230,10 +236,173 @@ it("leaves a child thread created after the root turn ended to the run that is l
   assert.isFalse(afterLate.ownedThreadIds.has(lateChild));
 });
 
+it.effect("routes inert workflow slots only through an accepted native coordinator", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const identity: RunExecutionService.ProviderEventRouteIdentity = {
+      driver,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      threadId: ThreadId.make("workflow-owner"),
+      runId: RunId.make("workflow-run"),
+      attemptId: RunAttemptId.make("workflow-attempt"),
+      providerThreadId: ProviderThreadId.make("workflow-provider-thread"),
+    };
+    const coordinator: OrchestrationV2Subagent = {
+      id: NodeId.make("native-workflow"),
+      threadId: identity.threadId,
+      runId: identity.runId,
+      parentNodeId: NodeId.make("workflow-root"),
+      origin: "provider_native",
+      createdBy: "agent",
+      driver,
+      providerInstanceId: identity.providerInstanceId,
+      providerThreadId: null,
+      childThreadId: ThreadId.make("workflow-coordinator-child"),
+      nativeTaskRef: { driver, nativeId: "workflow-task", strength: "strong" },
+      prompt: "",
+      title: "Workflow",
+      model: null,
+      status: "running",
+      result: null,
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+      presentation: { kind: "workflow" },
+    };
+    const member: OrchestrationV2Subagent = {
+      ...coordinator,
+      id: NodeId.make("native-workflow-member"),
+      runId: null,
+      parentNodeId: coordinator.id,
+      childThreadId: null,
+      nativeTaskRef: null,
+      presentation: { kind: "workflow_agent", workflowId: coordinator.id, agentIndex: 0 },
+    };
+    const initial = RunExecutionService.makeProviderEventRoutingState({
+      identity,
+      providerTurnId: null,
+    });
+    const memberEvent = { type: "subagent.updated", driver, subagent: member } as const;
+    assert.isFalse(RunExecutionService.routeProviderEvent(memberEvent, identity, initial)[0]);
+    const [accepted, owned] = RunExecutionService.routeProviderEvent(
+      { type: "subagent.updated", driver, subagent: coordinator },
+      identity,
+      initial,
+    );
+    assert.isTrue(accepted);
+    for (const foreign of [
+      { ...member, threadId: ThreadId.make("sibling-thread") },
+      { ...member, providerInstanceId: ProviderInstanceId.make("sibling-instance") },
+      { ...member, driver: ProviderDriverKind.make("claudeAgent") },
+      { ...member, parentNodeId: NodeId.make("unowned-parent") },
+      { ...member, nativeTaskRef: coordinator.nativeTaskRef },
+      { ...member, childThreadId: coordinator.childThreadId },
+      {
+        ...member,
+        presentation: {
+          kind: "workflow_agent" as const,
+          workflowId: NodeId.make("spoofed-parent"),
+        },
+      },
+    ])
+      assert.isFalse(
+        RunExecutionService.routeProviderEvent(
+          { ...memberEvent, subagent: foreign },
+          identity,
+          owned,
+        )[0],
+      );
+    const [memberAccepted, withMember] = RunExecutionService.routeProviderEvent(
+      memberEvent,
+      identity,
+      owned,
+    );
+    assert.isTrue(memberAccepted);
+    const node: OrchestrationV2ExecutionNode = {
+      id: member.id,
+      threadId: member.threadId,
+      runId: null,
+      parentNodeId: coordinator.id,
+      rootNodeId: coordinator.id,
+      kind: "subagent",
+      status: "running",
+      countsForRun: false,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      runtimeRequestId: null,
+      checkpointScopeId: null,
+      startedAt: now,
+      completedAt: null,
+    };
+    assert.isTrue(
+      RunExecutionService.routeProviderEvent(
+        { type: "node.updated", driver, node },
+        identity,
+        withMember,
+      )[0],
+    );
+    assert.isFalse(
+      RunExecutionService.routeProviderEvent(
+        { type: "node.updated", driver, node: { ...node, countsForRun: true } },
+        identity,
+        withMember,
+      )[0],
+    );
+    assert.isFalse(
+      RunExecutionService.routeProviderEvent(
+        {
+          type: "node.updated",
+          driver,
+          node: { ...node, checkpointScopeId: CheckpointScopeId.make("unowned-scope") },
+        },
+        identity,
+        withMember,
+      )[0],
+    );
+    const [, afterTerminal] = RunExecutionService.routeProviderEvent(
+      {
+        type: "subagent.updated",
+        driver,
+        subagent: { ...coordinator, status: "completed", completedAt: now },
+      },
+      identity,
+      withMember,
+    );
+    assert.isFalse(RunExecutionService.routeProviderEvent(memberEvent, identity, afterTerminal)[0]);
+    assert.isTrue(
+      RunExecutionService.routeProviderEvent(
+        { ...memberEvent, subagent: { ...member, status: "completed", completedAt: now } },
+        identity,
+        afterTerminal,
+      )[0],
+    );
+    const [, transferred] = RunExecutionService.routeProviderEvent(
+      {
+        type: "subagent.updated",
+        driver,
+        subagent: { ...coordinator, runId: RunId.make("later-workflow-run") },
+      },
+      identity,
+      withMember,
+    );
+    assert.isFalse(RunExecutionService.routeProviderEvent(memberEvent, identity, transferred)[0]);
+    assert.isFalse(
+      RunExecutionService.routeProviderEvent(
+        { type: "node.updated", driver, node },
+        identity,
+        transferred,
+      )[0],
+    );
+  }),
+);
+
 it("does not route a superseded attempt through a reused provider thread", () => {
   const threadId = ThreadId.make("thread:shared-runtime:restart");
   const providerThreadId = ProviderThreadId.make("provider-thread:shared-runtime:restart");
   const oldAttempt: RunExecutionService.ProviderEventRouteIdentity = {
+    driver,
+    providerInstanceId: ProviderInstanceId.make("codex"),
     threadId,
     runId: RunId.make("run:shared-runtime:restart"),
     attemptId: RunAttemptId.make("attempt:shared-runtime:restart:old"),
@@ -274,6 +443,8 @@ it("routes only exact same-thread background items inherited from settled runs",
   const currentRunId = RunId.make("run:inherited-background-routing:current");
   const itemId = TurnItemId.make("turn-item:inherited-background-routing");
   const identity: RunExecutionService.ProviderEventRouteIdentity = {
+    driver,
+    providerInstanceId: ProviderInstanceId.make("codex"),
     threadId,
     runId: currentRunId,
     attemptId: RunAttemptId.make("attempt:inherited-background-routing:current"),
@@ -479,6 +650,8 @@ it("does not carry interrupted or still-running child ownership into later attem
   const threadId = ThreadId.make("thread:related-child:next-attempt");
   const childThreadId = ThreadId.make("thread:related-child:interrupted");
   const identity: RunExecutionService.ProviderEventRouteIdentity = {
+    driver,
+    providerInstanceId: ProviderInstanceId.make("codex"),
     threadId,
     runId: RunId.make("run:related-child:next-attempt"),
     attemptId: RunAttemptId.make("attempt:related-child:next-attempt"),
@@ -1239,6 +1412,143 @@ it.effect("keeps ingesting owned child events after the root turn terminalizes",
     assert.isTrue(Option.isSome(observed), "child message was not ingested after root terminal");
     assert.deepEqual(yield* Ref.get(order), ["root-finalized", "child-message"]);
   }),
+);
+
+it.effect.each([false, true])(
+  "cleans workflow nodes after terminal-row races without touching transferred ownership (transfer=%s)",
+  (transfer) =>
+    Effect.gen(function* () {
+      const finalization = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
+      const memberId = NodeId.make(`workflow-race-member:${transfer}`);
+      const observed = yield* runBackgroundItemScenario(
+        `workflow-race:${transfer}`,
+        (ids) => {
+          const base = makeRunOwnedSubagentFixture({
+            ids,
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            childThreadId: ids.childThreadId,
+            driver,
+            status: "running",
+          });
+          const coordinator = { ...base, presentation: { kind: "workflow" as const } };
+          const member: OrchestrationV2Subagent = {
+            ...base,
+            id: memberId,
+            runId: null,
+            parentNodeId: coordinator.id,
+            childThreadId: null,
+            nativeTaskRef: null,
+            presentation: { kind: "workflow_agent", workflowId: coordinator.id },
+          };
+          const memberNode: OrchestrationV2ExecutionNode = {
+            ...makeRunOwnedSubagentNodeFixture({ ids, status: "running" }),
+            id: memberId,
+            runId: null,
+            parentNodeId: coordinator.id,
+            rootNodeId: coordinator.id,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+          };
+          return [
+            { type: "subagent.updated", driver, subagent: coordinator },
+            { type: "subagent.updated", driver, subagent: member },
+            { type: "node.updated", driver, node: memberNode },
+            transfer
+              ? {
+                  type: "subagent.updated",
+                  driver,
+                  subagent: { ...coordinator, runId: RunId.make("later-owner") },
+                }
+              : {
+                  type: "subagent.updated",
+                  driver,
+                  subagent: { ...member, status: "completed", completedAt: base.startedAt },
+                },
+            rootTerminalEvent(ids, "interrupted"),
+          ];
+        },
+        {
+          onFinalization: (events) =>
+            Ref.update(finalization, (current) => [...current, ...events]),
+        },
+      );
+      const events = yield* Ref.get(finalization);
+      const memberNodes = events.filter(
+        (event) => event.type === "node.updated" && event.payload.id === memberId,
+      );
+      assert.equal(memberNodes.length, transfer ? 0 : 1);
+      if (!transfer) {
+        assert.equal(
+          memberNodes[0]?.type === "node.updated" ? memberNodes[0].payload.status : null,
+          "interrupted",
+        );
+        assert.include(observed, "subagent:completed");
+      } else {
+        assert.deepEqual(
+          events
+            .filter((event) => event.type === "subagent.updated")
+            .map((event) => (event.type === "subagent.updated" ? event.payload.id : null)),
+          [],
+        );
+      }
+    }),
+);
+
+it.effect(
+  "releases the old workflow subscriber after a coordinator transfers to a live owner",
+  () =>
+    Effect.gen(function* () {
+      const observed = yield* runBackgroundItemScenario(
+        "workflow-transfer-release",
+        (ids) => {
+          const coordinator: OrchestrationV2Subagent = {
+            ...makeRunOwnedSubagentFixture({
+              ids,
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              childThreadId: ids.childThreadId,
+              driver,
+              status: "running",
+            }),
+            presentation: { kind: "workflow" },
+          };
+          const item = makeRunOwnedSubagentTurnItemFixture({
+            ids,
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            childThreadId: ids.childThreadId,
+            driver,
+            status: "running",
+          });
+          const later = { ...coordinator, runId: RunId.make("live-later-owner") };
+          const nextIdentity: RunExecutionService.ProviderEventRouteIdentity = {
+            driver,
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            threadId: ids.threadId,
+            runId: later.runId,
+            attemptId: RunAttemptId.make("live-later-attempt"),
+            providerThreadId: ids.providerThreadId,
+          };
+          const [accepted, laterRouting] = RunExecutionService.routeProviderEvent(
+            { type: "subagent.updated", driver, subagent: later },
+            nextIdentity,
+            RunExecutionService.makeProviderEventRoutingState({
+              identity: nextIdentity,
+              providerTurnId: null,
+            }),
+          );
+          assert.isTrue(accepted);
+          assert.equal(laterRouting.workflowCoordinators.get(coordinator.id)?.status, "running");
+          return [
+            { type: "subagent.updated", driver, subagent: coordinator },
+            { type: "turn_item.updated", driver, turnItem: item },
+            rootTerminalEvent(ids, "completed"),
+            { type: "subagent.updated", driver, subagent: later },
+          ];
+        },
+        { keepEventStreamOpen: true },
+      );
+      assert.deepEqual(observed, ["subagent:running", "turn_item:running", "root-finalized"]);
+    }),
 );
 
 it.effect("keeps ingesting a late background command item completion after root terminal", () =>
@@ -2995,6 +3305,7 @@ it.effect("cascade helper is provider-neutral for Claude and Codex-shaped child 
           childTurnItems: new Map(),
           nodes: new Map([[subagentId, node]]),
           linkedChildThreadIds: new Set([childThreadId]),
+          linkedWorkflowMemberIds: new Set(),
         },
         status: terminalStatus,
         completedAt: now,
@@ -3043,6 +3354,7 @@ it.effect("cascade helper is provider-neutral for Claude and Codex-shaped child 
             childTurnItems: new Map([[childTurnItem.id, childTurnItem]]),
             nodes: new Map([[childNodeId, openChildNode]]),
             linkedChildThreadIds: new Set([childThreadId]),
+            linkedWorkflowMemberIds: new Set(),
           },
           status: terminalStatus,
           completedAt: now,
@@ -3744,6 +4056,9 @@ function runBackgroundItemScenario(
       ReadonlyArray<{ readonly id: TurnItemId; readonly runId: RunId }>
     >;
     readonly onSubscribe?: Effect.Effect<void>;
+    readonly onFinalization?: (
+      events: ReadonlyArray<OrchestrationV2DomainEvent>,
+    ) => Effect.Effect<void>;
   },
 ) {
   return Effect.gen(function* () {
@@ -3759,6 +4074,7 @@ function runBackgroundItemScenario(
             write: () => Effect.succeed([]),
             writeWithEffects: (input) =>
               Effect.gen(function* () {
+                yield* options?.onFinalization?.(input.events) ?? Effect.void;
                 if (
                   input.events.some(
                     (event) => event.type === "run.updated" && event.runId === ids.runId,
@@ -3802,6 +4118,7 @@ function runBackgroundItemScenario(
         appThread: { id: ids.threadId } as OrchestrationV2AppThread,
         providerSessionId: ProviderSessionId.make(`session:${key}`),
         session: {
+          driver,
           events: Stream.empty,
           subscribeEvents: Effect.gen(function* () {
             yield* options?.onSubscribe ?? Effect.void;

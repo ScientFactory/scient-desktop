@@ -67,6 +67,7 @@ export function buildScientAwareness(
  * adding a provider cannot silently omit Scient awareness.
  */
 export const SCIENT_AWARENESS_DELIVERY = {
+  acpRegistry: "unsupported-no-private-system-seam",
   antigravity: "unsupported-no-private-system-seam",
   claudeAgent: "system-preset-append",
   codex: "developer-instructions",
@@ -76,6 +77,7 @@ export const SCIENT_AWARENESS_DELIVERY = {
   opencode: "managed-server-per-message-system",
   omp: "before-agent-start-system-append",
   pi: "before-agent-start-system-append",
+  scient: "before-agent-start-system-append",
 } as const;
 
 export type ScientAwarenessProvider = keyof typeof SCIENT_AWARENESS_DELIVERY;

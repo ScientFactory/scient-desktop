@@ -87,7 +87,7 @@ interface PreviewMiniPlayerStoreState {
   readonly removeThread: (ref: ScopedThreadRef) => void;
 }
 
-export function previewMiniPlayerSourceKey(source: PreviewMiniPlayerSource): string {
+function previewMiniPlayerSourceKey(source: PreviewMiniPlayerSource): string {
   return source.kind === "browser"
     ? `browser:${source.tabId}`
     : `device:${encodeURIComponent(source.hostId)}:${encodeURIComponent(source.deviceId)}`;

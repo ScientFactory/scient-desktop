@@ -311,6 +311,10 @@
       "types": "./src/state/subagentDisplay.ts",
       "default": "./src/state/subagentDisplay.ts"
     },
+    "./state/historicalSubagentRuntime": {
+      "types": "./src/state/historicalSubagentRuntime.ts",
+      "default": "./src/state/historicalSubagentRuntime.ts"
+    },
     "./state/subagentRuntime": {
       "types": "./src/state/subagentRuntime.ts",
       "default": "./src/state/subagentRuntime.ts"

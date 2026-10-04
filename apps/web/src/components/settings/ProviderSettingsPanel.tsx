@@ -976,7 +976,11 @@ export function EnvironmentProviderSettings({
     const driver = rows.find((row) => row.instanceId === instanceId)?.driver;
     updateClientSettings({
       providerModelPreferences:
-        hiddenModels.length === 0 && modelOrder.length === 0 && driver !== "pi" && driver !== "omp"
+        hiddenModels.length === 0 &&
+        modelOrder.length === 0 &&
+        driver !== "pi" &&
+        driver !== "omp" &&
+        driver !== "scient"
           ? rest
           : {
               ...rest,
@@ -1070,6 +1074,9 @@ export function EnvironmentProviderSettings({
         driverOption={driverOption}
         liveProvider={liveProvider}
         mode={mode}
+        selected={mode === "list" && selectedRow?.instanceId === row.instanceId}
+        onSelect={mode === "list" ? () => setSelectedInstanceId(row.instanceId) : undefined}
+        readOnly={readOnly}
         runtime={
           mode === "editor" &&
           row.driver === "codex" &&

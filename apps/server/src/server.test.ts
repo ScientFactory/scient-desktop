@@ -38,6 +38,8 @@ import {
   OrchestrationV2HttpThreadBoundedSnapshot,
   OrchestrationV2ThreadBoundedSnapshot,
   OrchestrationV2TurnItem,
+  OrchestrationV2SubagentJson,
+  OrchestrationV2TurnItemJson,
   COMPACT_THREAD_SNAPSHOT_FORMAT,
   THREAD_SNAPSHOT_FORMAT_HEADER,
   OrchestrationV2ThreadHistoryPage,
@@ -74,6 +76,10 @@ import {
 } from "@t3tools/shared/dpop";
 import { RELAY_HEALTH_REQUEST_TYP, RELAY_MINT_REQUEST_TYP } from "@t3tools/shared/relayJwt";
 import * as RelayClient from "@t3tools/shared/relayClient";
+import {
+  projectedSubagentsToRuntime,
+  deriveAgentPanelModel,
+} from "../../../packages/client-runtime/src/state/subagentRuntime.ts";
 import { assert, it } from "@effect/vitest";
 import { assertFailure, assertInclude, assertTrue } from "@effect/vitest/utils";
 import * as Clock from "effect/Clock";
@@ -114,6 +120,9 @@ import * as Socket from "effect/unstable/socket/Socket";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, vi } from "vite-plus/test";
 
+const decodeWorkflowSubagent = Schema.decodeUnknownSync(OrchestrationV2SubagentJson);
+const encodeWorkflowSubagent = Schema.encodeSync(OrchestrationV2SubagentJson);
+const decodeWorkflowTurnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItemJson);
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 const SUCCESSFUL_GIT_EXECUTION = {
   exitCode: ChildProcessSpawner.ExitCode(0),
@@ -6123,7 +6132,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 result.failure.message,
                 revision === 1
                   ? "Custom models changed. Test the updated configuration."
-                  : "Connect this model to an enabled Pi, Droid, or Oh My Pi agent first.",
+                  : "Connect this model to an enabled Pi, Droid, Oh My Pi, or Scient agent first.",
               );
             }
           }),
@@ -8253,6 +8262,20 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               authorizationUrlKind: "manual_fallback" as const,
               acceptsAuthorizationCode: true,
               userCode: "GROK-1234",
+              instructions: "Enter code: GROK-1234",
+            },
+            accountOperation: {
+              operationId: "account-operation",
+              method: "scient_agent_account" as const,
+              status: "waiting_for_device_code" as const,
+              startedAt: "2026-08-23T00:00:00.000Z",
+              finishedAt: null,
+              message: "Finish signing in.",
+              account: "openai-codex",
+              authorizationUrl: "https://auth.example.com/device",
+              authorizationUrlKind: "primary" as const,
+              userCode: "ACCT-1234",
+              instructions: "Enter code: ACCT-1234",
             },
           },
         },
@@ -8312,6 +8335,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.isUndefined(provider?.connection?.operation?.authorizationUrl);
         assert.isUndefined(provider?.connection?.operation?.authorizationUrlKind);
         assert.isUndefined(provider?.connection?.operation?.userCode);
+        assert.isUndefined(provider?.connection?.operation?.instructions);
+        const accountOperation = provider?.connection?.accountOperation;
+        assert.equal(accountOperation?.account, "openai-codex");
+        assert.isUndefined(accountOperation?.authorizationUrl);
+        assert.isUndefined(accountOperation?.authorizationUrlKind);
+        assert.isUndefined(accountOperation?.userCode);
+        assert.isUndefined(accountOperation?.instructions);
       };
 
       assertAuthorizationMaterialRedacted(readOnlyResult.config.providers[0]);
@@ -10958,10 +10988,19 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               sourceAssistantMessageId: MessageId.make("assistant-0"),
               workspaceMode: "local" as const,
             };
-            const provisioning = yield* app.v2.worker.awaitWork.pipe(
-              Effect.andThen(app.v2.worker.drain()),
-              Effect.forkScoped,
-            );
+            const provisioningCursor = yield* app.v2.eventSink.latestSequence();
+            const provisioning = yield* app.v2.eventSink
+              .stream({
+                threadId: target,
+                afterSequence: provisioningCursor,
+              })
+              .pipe(
+                Stream.filter((stored) => stored.event.type === "thread.created"),
+                Stream.take(1),
+                Stream.runDrain,
+                Effect.andThen(app.v2.worker.drain()),
+                Effect.forkScoped,
+              );
             const accepted = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand](command);
             yield* Fiber.join(provisioning);
             const fork = yield* app.v2.threads.getThreadProjection(target);
@@ -10998,6 +11037,115 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             assert.equal(rejected._tag, "OrchestrationDispatchCommandError");
             if (rejected._tag === "OrchestrationDispatchCommandError")
               assert.equal(rejected.forkDisposition, "rejected");
+          }),
+        );
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "rejects exact-boundary fork reuse of a deleted identity and preserves its history",
+    () =>
+      Effect.gen(function* () {
+        const app = yield* buildAppUnderTest();
+        const fs = yield* FileSystem.FileSystem;
+        const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "scient-fork-immutable-id-" });
+        yield* app.v2.projects.create({
+          commandId: CommandId.make("immutable-fork-project"),
+          projectId: ProjectId.make("transfer-project"),
+          title: "Immutable fork project",
+          workspaceRoot: cwd,
+        });
+        yield* seedV2StreamThread(app);
+        yield* app.v2.eventSink.write({
+          events: transferV2TurnEvents(ProviderDriverKind.make("codex"), 0, false).filter(
+            (event) =>
+              event.type !== "turn-item.updated" ||
+              event.payload.type === "user_message" ||
+              event.payload.type === "assistant_message",
+          ),
+        });
+        const wsUrl = yield* getWsServerUrl("/ws");
+        yield* withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const deletedId = ThreadId.make("immutable-fork-deleted");
+            const freshId = ThreadId.make("immutable-fork-fresh");
+            const command = {
+              type: "thread.fork" as const,
+              commandId: CommandId.make("immutable-fork-original"),
+              originThreadId: transferV2ThreadId,
+              newThreadId: deletedId,
+              sourceAssistantMessageId: MessageId.make("assistant-0"),
+              workspaceMode: "local" as const,
+            };
+            const firstProvisionCursor = yield* app.v2.eventSink.latestSequence();
+            const firstProvision = yield* app.v2.eventSink
+              .stream({
+                threadId: deletedId,
+                afterSequence: firstProvisionCursor,
+              })
+              .pipe(
+                Stream.filter((stored) => stored.event.type === "thread.created"),
+                Stream.take(1),
+                Stream.runDrain,
+                Effect.andThen(app.v2.worker.drain()),
+                Effect.forkScoped,
+              );
+            yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand](command);
+            yield* Fiber.join(firstProvision);
+            yield* client[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
+              type: "thread.delete",
+              commandId: CommandId.make("immutable-fork-delete"),
+              threadId: deletedId,
+            });
+            const tombstone = yield* app.v2.threads.getThreadProjection(deletedId);
+            assert.isNotNull(tombstone.thread.deletedAt);
+            assert.lengthOf(tombstone.messages, 2);
+            const rejected = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+              ...command,
+              commandId: CommandId.make("immutable-fork-reuse-rejected"),
+            }).pipe(Effect.flip);
+            assert.equal(rejected._tag, "OrchestrationDispatchCommandError");
+            if (rejected._tag === "OrchestrationDispatchCommandError")
+              assert.equal(rejected.forkDisposition, "rejected");
+            assert.deepEqual(yield* app.v2.threads.getThreadProjection(deletedId), tombstone);
+            yield* app.v2.worker.drain();
+            const freshProvisionCursor = yield* app.v2.eventSink.latestSequence();
+            const freshProvision = yield* app.v2.eventSink
+              .stream({
+                threadId: freshId,
+                afterSequence: freshProvisionCursor,
+              })
+              .pipe(
+                Stream.filter((stored) => stored.event.type === "thread.created"),
+                Stream.take(1),
+                Stream.runDrain,
+                Effect.andThen(app.v2.worker.drain()),
+                Effect.forkScoped,
+              );
+            yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+              ...command,
+              commandId: CommandId.make("immutable-fork-fresh"),
+              newThreadId: freshId,
+            });
+            yield* Fiber.join(freshProvision);
+            const fresh = yield* app.v2.threads.getThreadProjection(freshId);
+            assert.equal(fresh.thread.conversationFork?.status, "ready");
+            assert.isNull(fresh.thread.deletedAt);
+            assert.deepEqual(
+              fresh.messages.map((message) => [message.role, message.text]),
+              tombstone.messages.map((message) => [message.role, message.text]),
+            );
+            assert.isTrue(fresh.messages.every((message) => message.threadId === freshId));
+            assert.isTrue(
+              fresh.turnItems.every(
+                (item) =>
+                  item.threadId === freshId && item.runId === null && item.providerTurnId === null,
+              ),
+            );
+            assert.deepEqual(fresh.runs, []);
+            assert.deepEqual(fresh.providerSessions, []);
+            assert.deepEqual(fresh.runtimeRequests, []);
+            assert.deepEqual(yield* app.v2.threads.getThreadProjection(deletedId), tombstone);
           }),
         );
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
@@ -11203,6 +11351,152 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(persisted.messages[0]?.role, "assistant");
       assert.isTrue(persisted.turnItems.some((item) => item.type === "reasoning"));
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "preserves native workflow phases and inert member authority through SQL, HTTP and websocket replay",
+    () =>
+      Effect.gen(function* () {
+        const app = yield* buildAppUnderTest();
+        const seeded = yield* seedV2StreamThread(app);
+        const decodeSubagent = decodeWorkflowSubagent;
+        const now = DateTime.formatIso(seeded.thread.updatedAt);
+        const workflow = decodeSubagent({
+          id: "native-workflow",
+          threadId: transferV2ThreadId,
+          runId: null,
+          parentNodeId: "native-root",
+          origin: "provider_native",
+          createdBy: "agent",
+          driver: "claude-code",
+          providerInstanceId: "claude-code",
+          providerThreadId: null,
+          childThreadId: null,
+          nativeTaskRef: null,
+          prompt: "Review evidence",
+          title: "Audit",
+          model: "claude/reviewer",
+          status: "running",
+          result: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          presentation: {
+            kind: "workflow",
+            workflowName: "Audit",
+            firstSeenAt: now,
+            phases: [{ index: 0, title: "Review" }],
+            runHandles: {
+              runId: "display-handle",
+              scriptPath: "/workspace/review.ts",
+              sessionUrl: "https://session.example/review",
+            },
+          },
+        });
+        const member = decodeSubagent({
+          ...encodeWorkflowSubagent(workflow),
+          id: "native-member",
+          parentNodeId: workflow.id,
+          title: "Reader",
+          status: "completed",
+          result: "Evidence checked",
+          completedAt: now,
+          presentation: {
+            kind: "workflow_agent",
+            workflowId: workflow.id,
+            agentIndex: 0,
+            phaseIndex: 0,
+            attempt: 2,
+            role: "researcher",
+            effort: "high",
+            firstSeenAt: now,
+            usage: { totalTokens: 50, inputTokens: 30, toolUses: 2 },
+          },
+        });
+        yield* app.v2.eventSink.write({
+          events: [workflow, member].map((payload) => ({
+            id: EventId.make(`workflow-${payload.id}`),
+            type: "subagent.updated" as const,
+            threadId: transferV2ThreadId,
+            occurredAt: seeded.thread.updatedAt,
+            payload,
+          })),
+        });
+        // Native coordinators also produce their own timeline item. This cohort anchor
+        // retains completed display-only members in bounded snapshots.
+        yield* app.v2.eventSink.write({
+          events: [
+            {
+              id: EventId.make("workflow-item"),
+              type: "turn-item.updated",
+              threadId: transferV2ThreadId,
+              occurredAt: seeded.thread.updatedAt,
+              payload: decodeWorkflowTurnItem({
+                id: "workflow-item",
+                threadId: transferV2ThreadId,
+                runId: null,
+                nodeId: workflow.id,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 1,
+                status: "running",
+                title: "Audit",
+                startedAt: now,
+                completedAt: null,
+                updatedAt: now,
+                type: "subagent",
+                subagentId: workflow.id,
+                origin: workflow.origin,
+                driver: workflow.driver,
+                providerInstanceId: workflow.providerInstanceId,
+                childThreadId: null,
+                prompt: workflow.prompt,
+                result: null,
+              }),
+            },
+          ],
+        });
+        const headers = {
+          cookie: yield* getAuthenticatedSessionCookieHeader(),
+          [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
+        };
+        const response = yield* measureHttpGet({
+          url: `${yield* getHttpServerUrl()}/api/orchestration/threads/${transferV2ThreadId}/bounded`,
+          headers,
+        });
+        assert.equal(response.status, 200);
+        const http = yield* decodeLegacyThreadBoundedSnapshot(
+          Buffer.from(response.decodedBody).toString("utf8"),
+        );
+        const socket = yield* collectV2ThreadCatchup(yield* getWsServerUrl("/ws"));
+        const snapshot = socket[0];
+        assertTrue(snapshot?.kind === "snapshot");
+        const persisted = yield* app.v2.threads.getThreadProjection(transferV2ThreadId);
+        assert.deepEqual(http.projection.subagents, persisted.subagents);
+        assert.deepEqual(snapshot.projection.subagents, persisted.subagents);
+        const model = deriveAgentPanelModel({
+          agents: [],
+          v2Projection: projectedSubagentsToRuntime(http.projection.subagents),
+        });
+        assert.equal(model.workflows.length, 1);
+        assert.equal(model.workflows[0]?.phases[0]?.members[0]?.attempt, 2);
+        assert.equal(model.workflows[0]?.phases[0]?.members[0]?.usage?.toolUses, 2);
+        assert.equal(model.liveCount, 0);
+        assert.equal(model.workflows[0]?.workflow.runHandles?.runId, "display-handle");
+        assert.deepEqual(persisted.runtimeRequests, []);
+        assert.isNull(persisted.subagents.find((agent) => agent.id === member.id)?.childThreadId);
+        assert.isNull(persisted.subagents.find((agent) => agent.id === member.id)?.nativeTaskRef);
+        const replay = yield* collectV2ThreadCatchup(yield* getWsServerUrl("/ws"), seeded.sequence);
+        const replayed = replay.flatMap((item) =>
+          item.kind === "event" && item.event.type === "subagent.updated"
+            ? [item.event.payload]
+            : [],
+        );
+        assert.deepEqual(replayed, [workflow, member]);
+        assert.deepEqual(replay.at(-1), { kind: "synchronized" });
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("negotiates compact HTTP snapshots without changing local or inherited history", () =>
@@ -13399,6 +13693,7 @@ it.live(
 
                   return {
                     provider,
+                    startupTransport: "bounded-compact-http-with-live-cursor",
                     threadSnapshot,
                     measuredTurnWebSocket,
                     shellSnapshot,

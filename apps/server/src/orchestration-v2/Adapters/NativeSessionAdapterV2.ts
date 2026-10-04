@@ -11,6 +11,7 @@ import {
   type ProviderDriverKind,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
+import { mergeSubagentPresentation } from "./SubagentPresentation.ts";
 import { MODEL_TOKEN_LIMIT_MESSAGE } from "@t3tools/shared/model";
 import * as Schema from "effect/Schema";
 import * as Cause from "effect/Cause";
@@ -52,6 +53,10 @@ export type NativeSessionUpdate =
       readonly title: string;
       readonly status: "running" | "completed" | "failed" | "cancelled";
       readonly detail?: string;
+      readonly model?: string;
+      readonly presentation?: OrchestrationV2Subagent["presentation"];
+      /** Only an authoritative new activation may reopen a settled native task. */
+      readonly reopen?: boolean;
     }
   | {
       readonly type: "question";
@@ -118,6 +123,7 @@ export interface NativeSession {
 }
 
 export interface NativeSessionAdapterV2Options {
+  readonly mcpSessionInjection?: boolean;
   readonly instanceId: ProviderInstanceId;
   readonly driver: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
@@ -143,6 +149,7 @@ export function makeNativeSessionAdapterV2(
   return {
     instanceId: options.instanceId,
     driver,
+    mcpSessionInjection: options.mcpSessionInjection === true,
     getCapabilities: () => Effect.succeed(options.capabilities),
     planSelectionTransition: () =>
       Effect.succeed(
@@ -573,6 +580,19 @@ export function makeNativeSessionAdapterV2(
                   completedAt: update.status === "running" ? null : now,
                 };
               } else if (update.type === "subagent") {
+                const previousSubagent = subagents.get(nativeId);
+                const reopened =
+                  previousSubagent !== undefined &&
+                  previousSubagent.status !== "running" &&
+                  update.status === "running" &&
+                  update.reopen === true;
+                if (
+                  previousSubagent !== undefined &&
+                  previousSubagent.status !== "running" &&
+                  update.status === "running" &&
+                  !reopened
+                )
+                  return;
                 const subagentId = base.nodeId;
                 const childThreadId = idAllocator.derive.threadFromProviderThread({
                   driver,
@@ -620,7 +640,8 @@ export function makeNativeSessionAdapterV2(
                   yield* emit({ type: "message.updated", driver, message: artifacts.message });
                   yield* emit({ type: "turn_item.updated", driver, turnItem: artifacts.turnItem });
                 }
-                const completedAt = update.status === "running" ? null : now;
+                const completedAt =
+                  update.status === "running" ? null : (previousSubagent?.completedAt ?? now);
                 const subagent: OrchestrationV2Subagent = {
                   id: subagentId,
                   threadId: owner.threadId,
@@ -635,10 +656,26 @@ export function makeNativeSessionAdapterV2(
                   nativeTaskRef: ref(update.id),
                   prompt: update.title,
                   title: update.title,
-                  model: null,
+                  model: update.model ?? previousSubagent?.model ?? null,
+                  presentation: mergeSubagentPresentation(
+                    previousSubagent?.presentation,
+                    update.presentation,
+                    DateTime.formatIso(now),
+                    reopened,
+                  ),
                   status: update.status,
-                  result: update.detail ?? null,
-                  startedAt: base.startedAt,
+                  ...(update.status === "running" && update.detail !== undefined
+                    ? { progress: update.detail }
+                    : reopened
+                      ? {}
+                      : previousSubagent?.progress === undefined
+                        ? {}
+                        : { progress: previousSubagent.progress }),
+                  result:
+                    update.status === "running"
+                      ? null
+                      : (update.detail ?? previousSubagent?.result ?? null),
+                  startedAt: reopened ? now : (previousSubagent?.startedAt ?? base.startedAt),
                   completedAt,
                   updatedAt: now,
                 };

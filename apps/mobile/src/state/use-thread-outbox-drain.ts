@@ -21,7 +21,7 @@ import { Alert } from "react-native";
 import { createDebugLogger } from "../lib/debugLog";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn";
-import { buildExistingThreadOutboxStartTurnInput } from "../lib/threadOutboxStartTurn";
+import { buildExistingThreadOutboxStartTurnInput } from "./thread-outbox-start-turn";
 import { serializeComposerMessageForServer, uploadedComposerContext } from "../lib/composerContext";
 import { prepareTurnAttachments, type PreparedTurnAttachments } from "../lib/attachmentUpload";
 import { randomHex } from "../lib/uuid";

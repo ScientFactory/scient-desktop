@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   type ModelSelection,
+  EnvironmentId,
   MessageId,
   NodeId,
   type OrchestrationV2ProviderThread,
@@ -31,6 +32,7 @@ import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 import { BUILT_IN_SKILL_RELEASES } from "../scient/skills/BuiltInSkillReleases.ts";
 import { skillReleaseKey } from "@scientfactory/scient-skills";
 import * as ScientSkillSession from "../scient/skills/ScientSkillSession.ts";
+import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 
 const driver = ProviderDriverKind.make("codex");
 const providerInstanceId = ProviderInstanceId.make("codex");
@@ -369,6 +371,7 @@ it.effect(
         instanceId: providerInstanceId,
         driver,
         providerSessionId,
+        mcpSessionInjection: true,
         providerSession: {
           id: providerSessionId,
           driver,
@@ -459,13 +462,42 @@ it.effect(
             }),
         }),
       );
-      yield* Effect.gen(function* () {
-        const service = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
-        const target = { threadId, providerSessionId, providerThreadId, providerTurnId, messageId };
-        yield* service.steer(target);
-        yield* Ref.set(selection, []);
-        yield* service.steer(target);
-      }).pipe(Effect.provide(ProviderTurnControlService.layer.pipe(Layer.provide(dependencies))));
+      yield* Effect.acquireUseRelease(
+        Effect.sync(() => {
+          const previous = McpProviderSession.readMcpProviderSession(threadId);
+          McpProviderSession.setMcpProviderSession({
+            environmentId: EnvironmentId.make("skill-steer-fixture"),
+            threadId,
+            providerInstanceId,
+            providerSessionId,
+            endpoint: "http://127.0.0.1/mcp",
+            authorizationHeader: "Bearer skill-steer-fixture",
+            capabilities: new Set(["skills:read"]),
+          });
+          return previous;
+        }),
+        () =>
+          Effect.gen(function* () {
+            const service = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
+            const target = {
+              threadId,
+              providerSessionId,
+              providerThreadId,
+              providerTurnId,
+              messageId,
+            };
+            yield* service.steer(target);
+            yield* Ref.set(selection, []);
+            yield* service.steer(target);
+          }).pipe(
+            Effect.provide(ProviderTurnControlService.layer.pipe(Layer.provide(dependencies))),
+          ),
+        (previous) =>
+          Effect.sync(() => {
+            if (previous === undefined) McpProviderSession.clearMcpProviderSession(threadId);
+            else McpProviderSession.setMcpProviderSession(previous);
+          }),
+      );
       const texts = yield* Ref.get(delivered);
       assert.include(texts[0]!, "selected by the user");
       assert.notInclude(texts[1]!, "selected by the user");

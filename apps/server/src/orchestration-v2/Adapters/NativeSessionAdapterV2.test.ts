@@ -285,6 +285,104 @@ it.layer(TestLayer)("NativeSessionAdapterV2", (it) => {
       }),
     ),
   );
+  it.effect("retains native presentation through sparse terminal observations", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness();
+        yield* h.start;
+        yield* h.publish({
+          type: "subagent",
+          id: "metadata",
+          title: "Audit",
+          status: "running",
+          model: "provider/auditor",
+          presentation: {
+            kind: "workflow",
+            workflowName: "Verification",
+            phases: [{ index: 0, title: "Inspect" }],
+            usage: { totalTokens: 20, inputTokens: 12 },
+            role: "researcher",
+            effort: "high",
+            runHandles: { runId: "native-workflow-run" },
+          },
+        });
+        yield* h.takeUntil((event) => event.type === "subagent.updated");
+        const first = h.recorded.findLast((event) => event.type === "subagent.updated");
+        if (first?.type !== "subagent.updated")
+          return yield* Effect.die("Missing initial subagent");
+        yield* h.publish({
+          type: "subagent",
+          id: "metadata",
+          title: "Audit",
+          status: "completed",
+          detail: "Verified",
+          presentation: { kind: "workflow", usage: { totalTokens: 40, toolUses: 2 } },
+        });
+        yield* h.takeUntil(
+          (event) => event.type === "subagent.updated" && event.subagent.status === "completed",
+        );
+        const terminal = h.recorded.findLast((event) => event.type === "subagent.updated");
+        if (terminal?.type !== "subagent.updated")
+          return yield* Effect.die("Missing terminal subagent");
+        assert.deepEqual(terminal.subagent.presentation?.usage, {
+          totalTokens: 40,
+          inputTokens: 12,
+          toolUses: 2,
+        });
+        assert.equal(
+          terminal.subagent.presentation?.firstSeenAt,
+          first.subagent.presentation?.firstSeenAt,
+        );
+        assert.equal(terminal.subagent.model, "provider/auditor");
+        assert.equal(terminal.subagent.presentation?.role, "researcher");
+        assert.deepEqual(terminal.subagent.presentation?.phases, [{ index: 0, title: "Inspect" }]);
+        assert.equal(terminal.subagent.nativeTaskRef?.nativeId, "metadata");
+        assert.equal(terminal.subagent.result, "Verified");
+        assert.equal(terminal.subagent.presentation?.activationCount, 1);
+        const settledCount = h.recorded.filter((event) => event.type === "subagent.updated").length;
+        yield* h.publish({
+          type: "subagent",
+          id: "metadata",
+          title: "Audit",
+          status: "running",
+          detail: "Late progress",
+        });
+        yield* h.publish({ type: "tool", id: "after-late", name: "Barrier", status: "completed" });
+        yield* h.takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.toolName === "Barrier",
+        );
+        assert.equal(
+          h.recorded.filter((event) => event.type === "subagent.updated").length,
+          settledCount,
+        );
+        yield* h.publish({
+          type: "subagent",
+          id: "metadata",
+          title: "Audit",
+          status: "running",
+          reopen: true,
+        });
+        yield* h.takeUntil(
+          (event) =>
+            event.type === "subagent.updated" && event.subagent.presentation?.activationCount === 2,
+        );
+        const reopened = h.recorded.findLast((event) => event.type === "subagent.updated");
+        if (reopened?.type !== "subagent.updated")
+          return yield* Effect.die("Missing reopened subagent");
+        assert.equal(
+          reopened.subagent.presentation?.firstSeenAt,
+          first.subagent.presentation?.firstSeenAt,
+        );
+        assert.isUndefined(reopened.subagent.presentation?.usage);
+        assert.isNull(reopened.subagent.result);
+        assert.isNull(reopened.subagent.completedAt);
+      }),
+    ).pipe(Effect.provide(TestLayer)),
+  );
+
   it.effect("retains background task identity and spawning-run ownership across a wake turn", () =>
     Effect.scoped(
       Effect.gen(function* () {

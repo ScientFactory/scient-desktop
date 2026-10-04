@@ -1,4 +1,4 @@
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Deferred from "effect/Deferred";
@@ -72,11 +72,31 @@ describe("provider compatibility", () => {
           ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
           builtIn.driverKind,
           null,
-          V2_RELEASE,
+          builtIn.driverKind === "scient" ? "0.6.21" : V2_RELEASE,
         ),
         `Missing bundled compatibility policy for ${builtIn.driverKind}`,
       );
     }
+  });
+
+  it("introduces independent Scient Agent compatibility at its owned release", () => {
+    const scient = ProviderDriverKind.make("scient");
+    expect(
+      resolveProviderCompatibility(
+        ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
+        scient,
+        null,
+        "0.6.20",
+      ),
+    ).toBeUndefined();
+    expect(
+      resolveProviderCompatibility(
+        ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
+        scient,
+        "0.1.0",
+        "0.6.21",
+      ),
+    ).toBeDefined();
   });
 
   it("uses Scient's documented Pi runtime floor", () => {

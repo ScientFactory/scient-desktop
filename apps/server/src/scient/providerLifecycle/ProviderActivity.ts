@@ -60,7 +60,7 @@ export function hasProviderActivity(input: {
   });
 }
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const projections = yield* ProjectionStoreV2;
   const instances = yield* ProviderInstanceRegistry;
   const isBusy: ProviderActivityShape["isBusy"] = Effect.fn("ProviderActivity.isBusy")(

@@ -8,12 +8,12 @@ import { runMigrations } from "../Migrations.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" })));
 
-layer("056_RemoveRedundantProjectionIndexes", (it) => {
+layer("060_RemoveRedundantProjectionIndexes", (it) => {
   it.effect("keeps the covering indexes and removes their prefix indexes", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 55 });
-      yield* runMigrations({ toMigrationInclusive: 56 });
+      yield* runMigrations({ toMigrationInclusive: 59 });
+      yield* runMigrations({ toMigrationInclusive: 60 });
 
       const rows = yield* sql<{ readonly name: string }>`
         SELECT name

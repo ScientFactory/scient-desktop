@@ -2,6 +2,7 @@ import { CommandId, MessageId, PlanId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { persistChatAttachments } from "../../AttachmentPersistence.ts";
@@ -11,7 +12,9 @@ import { importLegacyQueue } from "../../scient/threadQueue/migration.ts";
 import { discoverLegacyQueueThreads } from "../../scient/threadQueue/Store.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
-import { claimPendingAttachments } from "../AttachmentClaims.ts";
+import { claimPendingAttachments, releaseClaimedAttachments } from "../AttachmentClaims.ts";
+import { EventSinkV2 } from "../EventSink.ts";
+import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { LegacyV1ThreadImporter } from "./LegacyV1ThreadImporter.ts";
 
 const retireAcceptedSource = Effect.fn("LegacyQueueCutover.retireAcceptedSource")(function* (
@@ -32,6 +35,41 @@ const retireAcceptedSource = Effect.fn("LegacyQueueCutover.retireAcceptedSource"
       });
     }),
   );
+});
+
+/** Only original committed event references authorize retaining this attempt's copies. */
+const reconcileClaims = Effect.fn("LegacyQueueCutover.reconcileClaims")(function* (
+  threadId: ThreadId,
+  messageId: MessageId,
+  commandId: CommandId,
+  claimedPaths: ReadonlyArray<string>,
+) {
+  if (claimedPaths.length === 0) return;
+  const receipts = yield* CommandReceiptStoreV2;
+  const receipt = yield* receipts.getByCommandId(commandId);
+  if (Option.isNone(receipt)) return yield* releaseClaimedAttachments(claimedPaths);
+  if (receipt.value.threadId !== threadId || receipt.value.commandType !== "legacy-queue.import")
+    return;
+  if (receipt.value.status !== "accepted") return yield* releaseClaimedAttachments(claimedPaths);
+  const sink = yield* EventSinkV2;
+  const events = yield* sink.readByCommandId({ commandId }).pipe(Stream.runCollect);
+  const messages = Array.from(events).flatMap(({ event }) =>
+    event.type === "message.updated" &&
+    event.payload.threadId === threadId &&
+    event.payload.id === messageId
+      ? [event.payload]
+      : [],
+  );
+  // Missing/mismatched evidence is ambiguous. Later edits must never decide
+  // ownership of the attachment bytes originally accepted by this command.
+  if (messages.length !== 1) return;
+  const config = yield* ServerConfig;
+  const retained = new Set(
+    messages[0]!.attachments.map((attachment) =>
+      resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment }),
+    ),
+  );
+  yield* releaseClaimedAttachments(claimedPaths.filter((path) => !retained.has(path)));
 });
 
 /** Per-entry receipts let restart finish a partially admitted queue without replaying delivery. */
@@ -91,42 +129,58 @@ export const cutOverLegacyQueue = Effect.fn("LegacyQueueCutover.thread")(functio
     const attachments = item.attachments.map((attachment) =>
       "dataUrl" in attachment ? saved[uploads.indexOf(attachment)]! : attachment,
     );
-    const claimed = yield* claimPendingAttachments({ threadId, attachments });
-    yield* orchestrator.dispatch({
-      type: "legacy-queue.import",
-      commandId,
-      threadId,
-      queueItemId: item.queueItemId,
-      messageId,
-      text: item.text,
-      attachments: claimed.attachments,
-      ...(item.context === undefined
-        ? {}
-        : {
-            context: remapComposerContextAttachments(
-              item.context,
-              attachments,
-              claimed.attachments,
-            ),
+    yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const claimed = yield* claimPendingAttachments({ threadId, attachments });
+        yield* restore(
+          orchestrator.dispatch({
+            type: "legacy-queue.import",
+            commandId,
+            threadId,
+            queueItemId: item.queueItemId,
+            messageId,
+            text: item.text,
+            attachments: claimed.attachments,
+            ...(item.context === undefined
+              ? {}
+              : {
+                  context: remapComposerContextAttachments(
+                    item.context,
+                    attachments,
+                    claimed.attachments,
+                  ),
+                }),
+            ...(item.composerSnapshot === undefined
+              ? {}
+              : { composerSnapshot: item.composerSnapshot }),
+            ...(item.selectedScientSkillNames === undefined
+              ? {}
+              : { selectedScientSkillNames: item.selectedScientSkillNames }),
+            ...(item.modelSelection === undefined ? {} : { modelSelection: item.modelSelection }),
+            ...(item.runtimeMode === undefined ? {} : { runtimeMode: item.runtimeMode }),
+            ...(item.interactionMode === undefined
+              ? {}
+              : { interactionMode: item.interactionMode }),
+            ...(item.titleSeed === undefined ? {} : { titleSeed: item.titleSeed }),
+            ...(item.sourceProposedPlan === undefined
+              ? {}
+              : {
+                  sourceProposedPlan: {
+                    ...item.sourceProposedPlan,
+                    planId: PlanId.make(item.sourceProposedPlan.planId),
+                  },
+                }),
+            createdAt: DateTime.makeUnsafe(item.createdAt),
           }),
-      ...(item.composerSnapshot === undefined ? {} : { composerSnapshot: item.composerSnapshot }),
-      ...(item.selectedScientSkillNames === undefined
-        ? {}
-        : { selectedScientSkillNames: item.selectedScientSkillNames }),
-      ...(item.modelSelection === undefined ? {} : { modelSelection: item.modelSelection }),
-      ...(item.runtimeMode === undefined ? {} : { runtimeMode: item.runtimeMode }),
-      ...(item.interactionMode === undefined ? {} : { interactionMode: item.interactionMode }),
-      ...(item.titleSeed === undefined ? {} : { titleSeed: item.titleSeed }),
-      ...(item.sourceProposedPlan === undefined
-        ? {}
-        : {
-            sourceProposedPlan: {
-              ...item.sourceProposedPlan,
-              planId: PlanId.make(item.sourceProposedPlan.planId),
-            },
-          }),
-      createdAt: DateTime.makeUnsafe(item.createdAt),
-    });
+        ).pipe(
+          Effect.onExit(() =>
+            reconcileClaims(threadId, messageId, commandId, claimed.claimedPaths)
+              // Failed receipt/event reads cannot establish nonacceptance. Retain copies.
+              .pipe(Effect.catch(() => Effect.void)),
+          ),
+        );
+      }),
+    );
     // Source retirement follows acceptance. A crash here replays the accepted
     // command receipt, even after the V2 message has been edited or delivered.
     yield* retireAcceptedSource(threadId, item.queueItemId);

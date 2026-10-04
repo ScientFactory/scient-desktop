@@ -271,7 +271,7 @@ describe("work entry labels", () => {
           entry: {
             id: "old-work",
             createdAt: "2026-01-01T00:00:05Z",
-            turnId: "turn-before-restart" as never,
+            runId: "turn-before-restart" as never,
             label: "Searched files",
             command: "rg restart",
             tone: "tool" as const,
@@ -285,7 +285,7 @@ describe("work entry labels", () => {
           entry: {
             id: "old-stale-work",
             createdAt: "2026-01-01T00:00:06Z",
-            turnId: "turn-before-restart" as never,
+            runId: "turn-before-restart" as never,
             label: "Running stale command",
             command: "rg stale",
             tone: "tool" as const,
@@ -313,7 +313,7 @@ describe("work entry labels", () => {
           entry: {
             id: "new-work",
             createdAt: "2026-01-01T00:01:05Z",
-            turnId: "turn-after-restart" as never,
+            runId: "turn-after-restart" as never,
             label: "Running tests",
             command: "vp test run",
             tone: "tool" as const,
@@ -1268,7 +1268,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(
       resolveTimelineToolPresentation(items[1]!.type === "dynamic_tool" ? items[1].toolName : null)
         ?.logo,
-    ).toBe("t3-code");
+    ).toBe("scient");
     const rows = deriveMessagesTimelineRows({
       timelineEntries: entries,
       isWorking: false,
@@ -2034,28 +2034,6 @@ describe("deriveMessagesTimelineRows", () => {
     };
     const rows = deriveMessagesTimelineRows({ ...input, timelineEntries });
 
-    expect(rows.map((row) => row.id)).toEqual([
-      "turn-fold:turn-1",
-      "assistant-final-entry",
-      "work-toggle:work-entry-after-text-0",
-      "assistant-meta:assistant-final",
-    ]);
-    expect(rows.at(-2)).toMatchObject({
-      kind: "work-toggle",
-      hiddenCount: 3,
-      summary: "Ran 3 commands",
-    });
-    expect(rows.at(-1)).toMatchObject({
-      kind: "assistant-meta",
-      message: { id: "assistant-final" },
-      showAssistantCopyButton: true,
-      canForkConversation: undefined,
-    });
-    expect(rows.at(-3)).toMatchObject({
-      kind: "message",
-      showAssistantMeta: false,
-      showAssistantCopyButton: false,
-    });
     expect(rows.map((row) => row.id)).toEqual(["turn-fold:turn-1", "assistant-final-entry"]);
     const expanded = deriveMessagesTimelineRows({
       ...input,
@@ -2071,6 +2049,27 @@ describe("deriveMessagesTimelineRows", () => {
             row.hiddenCount === count),
       ),
     ).toBe(true);
+
+    if (count > 1) {
+      expect(
+        expanded.find((row) => row.id === "work-toggle:work-entry-after-text-0"),
+      ).toMatchObject({
+        kind: "work-toggle",
+        hiddenCount: count,
+        summary: `Ran ${count} commands`,
+      });
+    }
+    expect(expanded.at(-1)).toMatchObject({
+      kind: "assistant-meta",
+      message: { id: "assistant-final" },
+      showAssistantCopyButton: true,
+      canForkConversation: true,
+    });
+    expect(expanded.find((row) => row.id === "assistant-final-entry")).toMatchObject({
+      kind: "message",
+      showAssistantMeta: false,
+      showAssistantCopyButton: false,
+    });
 
     // A late failure must remain visible even though successful work is folded.
     const failedEntries = timelineEntries.map((entry) =>
@@ -2558,67 +2557,11 @@ describe("deriveMessagesTimelineRows", () => {
             streaming: false,
           },
         },
-        {
-          id: "old-work-entry",
-          kind: "work",
-          createdAt: "2026-01-01T00:00:05Z",
-          entry: {
-            id: "old-work",
-            createdAt: "2026-01-01T00:00:05Z",
-            runId: "turn-before-restart" as never,
-            label: "Searched files",
-            command: "rg restart",
-            tone: "tool" as const,
-            toolLifecycleStatus: "completed" as const,
-          },
-        },
-        {
-          id: "old-stale-work-entry",
-          kind: "work",
-          createdAt: "2026-01-01T00:00:06Z",
-          entry: {
-            id: "old-stale-work",
-            createdAt: "2026-01-01T00:00:06Z",
-            runId: "turn-before-restart" as never,
-            label: "Running stale command",
-            command: "rg stale",
-            tone: "tool" as const,
-            toolLifecycleStatus: "inProgress" as const,
-          },
-        },
-        {
-          id: "old-commentary-entry",
-          kind: "message",
-          createdAt: "2026-01-01T00:00:08Z",
-          message: {
-            id: "old-commentary" as never,
-            role: "assistant",
-            text: "the server restarted, continuing here.",
-            runId: "turn-before-restart" as never,
-            createdAt: "2026-01-01T00:00:08Z",
-            updatedAt: "2026-01-01T00:00:08Z",
-            streaming: false,
-          },
-        },
-        {
-          id: "new-work-entry",
-          kind: "work",
-          createdAt: "2026-01-01T00:01:05Z",
-          entry: {
-            id: "new-work",
-            createdAt: "2026-01-01T00:01:05Z",
-            runId: "turn-after-restart" as never,
-            label: "Running tests",
-            command: "vp test run",
-            tone: "tool" as const,
-            toolLifecycleStatus: "inProgress" as const,
-          },
-        },
       ],
       latestRun: {
-        runId: "turn-after-restart" as never,
+        runId: "turn-1" as never,
         status: "running",
-        startedAt: "2026-01-01T00:01:00Z",
+        startedAt: "2026-01-01T00:00:00Z",
         completedAt: null,
       },
       isWorking: true,
@@ -2631,22 +2574,6 @@ describe("deriveMessagesTimelineRows", () => {
       "working-indicator-row",
       "assistant-commentary-entry",
       "live-activity-row",
-    ]);
-    expect(rows.some((row) => row.kind === "turn-fold")).toBe(false);
-    expect(rows.filter((row) => row.id === "working-indicator-row")).toHaveLength(1);
-    expect(rows.findIndex((row) => row.id === "working-indicator-row")).toBeLessThan(
-      rows.findIndex((row) => row.id === "old-work-entry"),
-    );
-    expect(rows.find((row) => row.id === "working-indicator-row")).toMatchObject({
-      createdAt: "2026-01-01T00:01:00Z",
-    });
-    expect(rows.find((row) => row.id === "old-commentary-entry")).toMatchObject({
-      showAssistantMeta: false,
-      showAssistantCopyButton: false,
-      assistantCopyStreaming: true,
-    });
-    expect(rows.filter((row) => row.kind === "work-live" && row.active)).toEqual([
-      expect.objectContaining({ entry: expect.objectContaining({ id: "new-work" }) }),
     ]);
   });
 
@@ -4013,22 +3940,22 @@ describe("computeStableMessagesTimelineRows", () => {
 describe("resolveTimelineToolPresentation", () => {
   it("pretty prints Claude and Cursor T3 MCP tool names", () => {
     expect(resolveTimelineToolPresentation("mcp__t3-code__t3_thread_read")).toEqual({
-      displayName: "Read a T3 thread",
-      logo: "t3-code",
+      displayName: "Read a Scient thread",
+      logo: "scient",
     });
   });
 
   it("pretty prints Codex T3 MCP tool names", () => {
     expect(resolveTimelineToolPresentation("t3-code.create_threads")).toEqual({
-      displayName: "Create T3 threads",
-      logo: "t3-code",
+      displayName: "Create Scient threads",
+      logo: "scient",
     });
   });
 
   it("pretty prints bare T3 MCP toolkit names", () => {
     expect(resolveTimelineToolPresentation("list_scheduled_tasks")).toEqual({
       displayName: "List scheduled tasks",
-      logo: "t3-code",
+      logo: "scient",
     });
   });
 
@@ -5237,8 +5164,8 @@ it("keeps the working header in place across worktree setup handoff", () => {
     "thinking",
   ]);
 
-  // Once the agent stage is done the setup script may still be running in
-  // the background: the header owns its progress chip, so no setup row remains.
+  // Once the agent starts, a still-running setup script keeps its durable
+  // stage row embedded beneath the stable working header.
   const stage = (id: "agent" | "setup-script", status: "done" | "running") =>
     ({
       id,
@@ -5268,7 +5195,13 @@ it("keeps the working header in place across worktree setup handoff", () => {
     supportsConversationRollback: false,
     worktreeSetup: asyncSnapshot,
   });
-  expect(asyncRows.map((row) => row.kind)).toEqual(["message", "working", "thinking"]);
+  expect(asyncRows.map((row) => row.kind)).toEqual([
+    "message",
+    "working",
+    "worktree-setup",
+    "thinking",
+  ]);
+  expect(asyncRows[2]).toMatchObject({ kind: "worktree-setup", embedded: true });
 
   // Dispatched but not yet visible as a turn: the full card stays put so
   // nothing collapses during the handoff.

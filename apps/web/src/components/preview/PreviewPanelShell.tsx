@@ -2,15 +2,20 @@ import { type ReactNode, type RefObject, useLayoutEffect, useRef, useState } fro
 
 import { isElectron } from "~/env";
 import {
-  getPreviewPanelMaxWidth,
+  getPreviewPanelMaxWidth as getInlinePanelMaxWidth,
   type PreviewPanelInlineSize,
   usePreviewPanelInlineSize,
 } from "~/hooks/usePreviewPanelInlineSize";
 
-export { getPreviewPanelMaxWidth };
 import { cn } from "~/lib/utils";
 
 import { RightPanelResizeHandle } from "./RightPanelResizeHandle";
+
+const PREVIEW_PANEL_MIN_WIDTH = 300;
+
+export function getPreviewPanelMaxWidth(viewportWidth: number, containerWidth?: number): number {
+  return getInlinePanelMaxWidth(viewportWidth, containerWidth, PREVIEW_PANEL_MIN_WIDTH);
+}
 
 export type PreviewPanelMode = "inline" | "sheet" | "sidebar" | "embedded";
 
@@ -50,6 +55,7 @@ function ResizablePreviewPanelShell(props: PreviewPanelShellProps) {
     enabled: props.mode === "inline" && !props.maximized,
     widthStorageKey: props.widthStorageKey,
     defaultWidth: props.defaultWidth,
+    minWidth: PREVIEW_PANEL_MIN_WIDTH,
   });
   return <PreviewPanelShellFrame {...props} inlineSize={inlineSize} hostRef={hostRef} />;
 }

@@ -27,7 +27,13 @@ import { makeOmpAdapter } from "../Layers/OmpAdapter.ts";
 import { OMP_ISOLATED_ARGS } from "./OmpRpcProcess.ts";
 import * as OmpExecutableGate from "./OmpExecutableGate.ts";
 import { makeOmpCustomModelsClientFactory } from "./OmpCustomModels.ts";
-import { ompLiveInstance, ompQualifyBinary } from "./OmpLive.testFixtures.ts";
+import { watchAdapterTextTurn, watchRpcTextTurn } from "./OmpCustomModels.testFixtures.ts";
+import {
+  ompLiveInstance,
+  ompQualifyBinary,
+  ompQualifyLogsDir,
+  ompQualifyTarget,
+} from "./OmpLive.testFixtures.ts";
 
 const binary = ompQualifyBinary ?? "";
 
@@ -100,6 +106,7 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
           });
           const instanceId = ProviderInstanceId.make("omp-custom-model-live");
           const factory = yield* makeOmpCustomModelsClientFactory(
+            ompQualifyTarget,
             {
               resolveCustomModels: () =>
                 Effect.gen(function* () {
@@ -112,6 +119,7 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
             NodePath.join(root, "state"),
           );
           let client = yield* factory({
+            target: ompQualifyTarget,
             command: binary,
             cwd: root,
             env: liveInstance(root).environment,
@@ -154,6 +162,7 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
           expect(yield* client.getModels().pipe(Effect.result)).toMatchObject({ _tag: "Failure" });
           yield* client.close();
           client = yield* factory({
+            target: ompQualifyTarget,
             command: binary,
             cwd: root,
             env: liveInstance(root).environment,
@@ -168,17 +177,11 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
             provider: "scient_local-test",
             id: "gemma4:12b-it-qat",
           });
-          const terminal = yield* Deferred.make<void>();
-          yield* client.events.pipe(
-            Stream.runForEach((event) =>
-              event._tag === "Event" && event.event.type === "agent_end"
-                ? Deferred.succeed(terminal, undefined)
-                : Effect.void,
-            ),
-            Effect.forkScoped,
-          );
+          const completed = yield* watchRpcTextTurn(client.events);
           yield* client.prompt({ message: "Reply with exactly CUSTOM_MODEL_OK." });
-          yield* Deferred.await(terminal).pipe(Effect.timeout("60 seconds"));
+          expect((yield* completed.pipe(Effect.timeout("60 seconds"))).trim()).toBe(
+            "CUSTOM_MODEL_OK",
+          );
           yield* client.shutdown;
           yield* client.close();
         }),
@@ -227,6 +230,7 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
             }),
           );
           const factory = yield* makeOmpCustomModelsClientFactory(
+            ompQualifyTarget,
             {
               resolveCustomModels: () => Effect.succeed(connections),
               subscribeChanges: Effect.succeed(Stream.never),
@@ -235,6 +239,7 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
             NodePath.join(root, "state"),
           );
           const client = yield* factory({
+            target: ompQualifyTarget,
             command: binary,
             cwd: root,
             env: liveInstance(root).environment,
@@ -318,6 +323,7 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
           };
           const stateDir = NodePath.join(root, "state");
           const factory = yield* makeOmpCustomModelsClientFactory(
+            ompQualifyTarget,
             {
               resolveCustomModels: () => Effect.succeed([connection]),
               subscribeChanges: Effect.succeed(Stream.never),
@@ -328,6 +334,7 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
           const logged: Array<unknown> = [];
           const { environment, homePath } = liveInstance(root);
           const adapter = yield* makeOmpAdapter({
+            target: ompQualifyTarget,
             binaryPath: binary,
             providerInstanceId: instanceId,
             stateDir,
@@ -383,9 +390,11 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
           expect(
             filesContaining(root, key).filter(
               (file) =>
-                !file.startsWith(NodePath.join("home", ".omp", "logs")) &&
+                !file.startsWith(ompQualifyLogsDir) &&
                 !(
-                  file.startsWith(NodePath.join("state", "omp-sessions")) && file.endsWith(".jsonl")
+                  file.startsWith(
+                    NodePath.join("state", `${ompQualifyTarget.stateNamespace}-sessions`),
+                  ) && file.endsWith(".jsonl")
                 ),
             ),
           ).toEqual([]);
@@ -429,6 +438,7 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
             ],
           };
           const factory = yield* makeOmpCustomModelsClientFactory(
+            ompQualifyTarget,
             {
               resolveCustomModels: () => Effect.succeed([connection]),
               subscribeChanges: Effect.succeed(Stream.never),
@@ -438,6 +448,7 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
           );
           const { environment, homePath } = liveInstance(root);
           const adapter = yield* makeOmpAdapter({
+            target: ompQualifyTarget,
             binaryPath: binary,
             providerInstanceId: instanceId,
             stateDir: NodePath.join(root, "state"),
@@ -448,15 +459,7 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
           });
           const threadId = ThreadId.make("omp-custom-adapter-thread");
           yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
-          const terminal = yield* Deferred.make<void>();
-          yield* adapter.streamEvents.pipe(
-            Stream.runForEach((event) =>
-              event.type === "turn.completed" || event.type === "turn.aborted"
-                ? Deferred.succeed(terminal, undefined)
-                : Effect.void,
-            ),
-            Effect.forkScoped,
-          );
+          const completed = yield* watchAdapterTextTurn(adapter.streamEvents);
           yield* adapter.sendTurn({
             threadId,
             input: "Reply with exactly CUSTOM_ADAPTER_OK.",
@@ -465,7 +468,9 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi custom model qualification", () 
               "scient_local-adapter/gemma4:12b-it-qat",
             ),
           });
-          yield* Deferred.await(terminal).pipe(Effect.timeout("60 seconds"));
+          expect((yield* completed.pipe(Effect.timeout("60 seconds"))).trim()).toBe(
+            "CUSTOM_ADAPTER_OK",
+          );
           yield* adapter.stopAll();
         }),
       ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer))),

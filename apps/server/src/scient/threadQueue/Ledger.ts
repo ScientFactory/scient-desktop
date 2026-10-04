@@ -5,7 +5,6 @@ import {
   SCIENT_THREAD_QUEUE_MAX_BYTES_PER_THREAD,
   SCIENT_THREAD_QUEUE_MAX_ITEMS_PER_THREAD,
   ScientThreadQueueItem,
-  type ScientThreadQueueSnapshot,
   type ThreadId,
   type OrchestrationCommand,
   type OrchestrationThread,
@@ -106,16 +105,6 @@ export const writeQueue = Effect.fn("ScientQueue.write")(function* (
   notifyQueue(sql, threadId);
   return { ...document, revision: document.revision + 1 };
 });
-
-export function snapshot(threadId: ThreadId, document: QueueDocument): ScientThreadQueueSnapshot {
-  return {
-    threadId,
-    items: document.items,
-    revision: document.revision,
-    paused: document.paused,
-    awaitingCompletion: document.awaitingCompletion ?? false,
-  };
-}
 
 /** Must share the caller's transaction: Stop revokes the old turn before waking the worker. */
 export const suspendQueue = Effect.fn("ScientQueue.suspend")(function* (

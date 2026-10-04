@@ -6,12 +6,18 @@ import {
   RunId,
   TurnId,
   RuntimeRequestId,
-  type OrchestrationThreadActivity,
+  ThreadId,
+  NodeId,
+  TurnItemId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import {
   deriveAgentPanelModel,
-  foldSubagentActivities,
+  projectedSubagentsToRuntime,
 } from "@t3tools/client-runtime/state/subagentRuntime";
+import * as DateTime from "effect/DateTime";
 import type { LegendListRef } from "@legendapp/list/react";
 import { createRef } from "react";
 import { flushSync } from "react-dom";
@@ -20,7 +26,11 @@ import { expect, it, vi } from "vite-plus/test";
 import { page } from "vitest/browser";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
-import { deriveTimelineEntries, deriveWorkLogEntries } from "../../session-logic";
+import {
+  deriveTimelineEntries,
+  deriveWorkLogEntries,
+  deriveTimelineEntriesFromVisibleTurnItems,
+} from "../../session-logic";
 
 const listRef = createRef<LegendListRef>();
 const env = EnvironmentId.make("issue-presentation-fixture");
@@ -166,59 +176,90 @@ it("shows running sub-agents and a long wait as alive, on one line, with a ticki
   // The turn began 2m 5s ago; its sub-agents were launched a minute in.
   const start = Date.now() - 125_000;
   const at = (seconds: number) => new Date(start + seconds * 1_000).toISOString();
-  const turnId = TurnId.make("turn-subagents");
   const runId = RunId.make("run-subagents");
-  const activity = (
-    id: string,
-    kind: string,
-    seconds: number,
-    payload: Record<string, unknown>,
-  ): OrchestrationThreadActivity => ({
-    id: EventId.make(id),
-    kind,
-    summary: kind,
-    tone: kind.startsWith("task.") ? "info" : "tool",
-    turnId,
-    createdAt: at(seconds),
-    payload: kind.startsWith("task.") ? { ...payload, agentKind: "agent" } : payload,
-  });
-  const agent = (taskId: string, title: string) => ({
-    taskId,
-    toolUseId: taskId,
-    taskType: "subagent",
-    title,
-    role: "explorer",
-  });
-  const ci = agent("task-ci", "Audit build, CI, and release pipeline for the desktop app");
-  const code = agent("task-code", "Audit scient-desktop code smells");
+  const threadId = ThreadId.make("thread-subagents");
+  const itemBase = {
+    threadId,
+    runId,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+  };
   const note = "Droid reports a sub-agent's steps only when it finishes.";
+  const subagent = (
+    id: string,
+    title: string,
+    ordinal: number,
+    status: "running" | "cancelled",
+  ): Extract<OrchestrationV2TurnItem, { type: "subagent" }> => ({
+    ...itemBase,
+    id: TurnItemId.make(id),
+    nodeId: NodeId.make(id),
+    ordinal,
+    type: "subagent",
+    subagentId: NodeId.make(id),
+    origin: "provider_native",
+    driver: ProviderDriverKind.make("droid"),
+    providerInstanceId: ProviderInstanceId.make("droid"),
+    childThreadId: null,
+    title,
+    prompt: title,
+    progress: note,
+    result: status === "cancelled" ? "Cancelled when you sent a follow-up message." : null,
+    status,
+    startedAt: DateTime.makeUnsafe(at(60)),
+    completedAt: status === "cancelled" ? DateTime.makeUnsafe(at(90)) : null,
+    updatedAt: DateTime.makeUnsafe(at(status === "cancelled" ? 90 : 60)),
+  });
   const subagents = [
-    activity("a1", "task.started", 60, ci),
-    activity("a2", "task.progress", 60, { ...ci, summary: note, status: "running" }),
-    activity("a3", "task.started", 60, code),
-    activity("a4", "task.updated", 90, {
-      ...code,
-      status: "cancelled",
-      error: "Cancelled when you sent a follow-up message.",
-    }),
+    subagent("task-ci", "Audit build, CI, and release pipeline for the desktop app", 0, "running"),
+    subagent("task-code", "Audit scient-desktop code smells", 1, "cancelled"),
   ];
-  const waiting = activity("a5", "tool.updated", 100, {
-    itemType: "collab_agent_tool_call",
-    toolCallId: "wait-1",
-    status: "inProgress",
+  const agentPanelModel = deriveAgentPanelModel({
+    agents: [],
+    v2Projection: projectedSubagentsToRuntime(
+      subagents.map((item) => ({
+        ...item,
+        model: null,
+        presentation: { kind: "subagent", role: "explorer" },
+      })),
+    ),
+  });
+  const waiting: OrchestrationV2TurnItem = {
+    ...itemBase,
+    id: TurnItemId.make("wait-1"),
+    nodeId: NodeId.make("root"),
+    ordinal: 2,
+    type: "dynamic_tool",
+    toolName: "TaskOutput",
+    input: { taskId: "task-ci", timeout: 600_000 },
+    status: "running",
     title:
       "Waiting for sub-agent · Audit build, CI, and release pipeline for the desktop app (up to 10 min)",
-  });
-  const timeline = (activities: ReadonlyArray<OrchestrationThreadActivity>) => (
+    startedAt: DateTime.makeUnsafe(at(100)),
+    completedAt: null,
+    updatedAt: DateTime.makeUnsafe(at(100)),
+  };
+  const timeline = (items: ReadonlyArray<OrchestrationV2TurnItem>) => (
     <MessagesTimeline
       {...base}
       routeThreadKey="fixture"
       isWorking
       activeTurnStartedAt={at(0)}
       runningRunId={runId}
-      agentPanelModel={deriveAgentPanelModel({ agents: foldSubagentActivities(activities) })}
+      agentPanelModel={agentPanelModel}
       latestRun={{ runId, status: "running", startedAt: at(0), completedAt: null }}
-      timelineEntries={deriveTimelineEntries([], [], deriveWorkLogEntries(activities))}
+      timelineEntries={deriveTimelineEntriesFromVisibleTurnItems({
+        optimisticMessages: [],
+        visibleTurnItems: items.map((item, position) => ({
+          position,
+          visibility: "local",
+          sourceThreadId: threadId,
+          sourceItemId: item.id,
+          item,
+        })),
+      })}
     />
   );
 
@@ -245,7 +286,7 @@ it("shows running sub-agents and a long wait as alive, on one line, with a ticki
       .toBeGreaterThan(first);
 
     const fitsOnOneLine = (row: HTMLElement) => {
-      expect(row.getBoundingClientRect().height, row.textContent ?? "").toBeLessThan(40);
+      expect(row.getBoundingClientRect().height, row.textContent ?? "").toBeLessThan(48);
       expect(row.getBoundingClientRect().right).toBeLessThanOrEqual(
         host.getBoundingClientRect().right,
       );

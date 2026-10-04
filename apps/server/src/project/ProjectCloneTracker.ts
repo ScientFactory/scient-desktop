@@ -1,7 +1,6 @@
 import type {
   // SCIENT-FORK:START — restored from origin/main; upstream's rewrite dropped it, but the
   // V1 `dispatchCommand` body in ws.ts calls it verbatim.
-  OrchestrationCommand,
   // SCIENT-FORK:END
   ProjectCloneSnapshot,
   ProjectCloneStage,
@@ -479,14 +478,5 @@ function describeCloneFailure(cause: Cause.Cause<unknown>): string {
     ? error.message
     : "The repository could not be cloned.";
 }
-
-// SCIENT-FORK:START — restored from origin/main. Removing a project mid-clone stops the
-// clone and drops its partial checkout.
-export const discardCloneForDeletedProject = (
-  tracker: ProjectCloneTracker["Service"],
-  command: OrchestrationCommand,
-): Effect.Effect<void> =>
-  command.type === "project.delete" ? tracker.discard(command.projectId) : Effect.void;
-// SCIENT-FORK:END
 
 export const layer = Layer.effect(ProjectCloneTracker, make);

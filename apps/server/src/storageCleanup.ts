@@ -16,7 +16,6 @@ import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -522,5 +521,4 @@ export const make = Effect.gen(function* () {
 });
 
 // SCIENT-FORK:START
-export const layer = Layer.effect(StorageCleanup, make);
 // SCIENT-FORK:END

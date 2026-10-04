@@ -5,7 +5,7 @@
  * `selectHistory` and `handoffCoverage`. Items are kept whole or omitted whole
  * (V2), in V2's priority order: latest user message, latest assistant message,
  * first user message, then newest to oldest. Omitted items stay reachable
- * through the `t3_thread_read` tool named in the coverage header.
+ * through the `scient_thread_read` tool named in the coverage header.
  *
  * Upstream reference: pingdotgg/t3code PR #2829 at a3fbbe45315e (2026-09-27),
  * `apps/server/src/orchestration-v2/ContextHandoffBudget.ts`. V2's versions
@@ -312,7 +312,7 @@ function itemCost(item: HandoffItem): number {
   return estimateTokens(encode(itemRecord(item, false, new Set()))) + ITEM_OVERHEAD_TOKENS;
 }
 
-const TRUNCATION_NOTE = "\n[… truncated; read the full item with t3_thread_read …]\n";
+const TRUNCATION_NOTE = "\n[… truncated; read the full item with scient_thread_read …]\n";
 
 /** Keeps the head and tail of an item's text so its cost fits `tokens`. */
 function truncateToFit(item: HandoffItem, tokens: number): HandoffItem | undefined {
@@ -492,7 +492,7 @@ export function renderHandoff(input: {
       ...(truncatedIds.length > 0 ? { truncatedItemIds: truncatedIds } : {}),
       ...(omittedCount > 0 || truncatedIds.length > 0
         ? {
-            retrieval: `Read an omitted or truncated item with the t3_thread_read tool: {"threadId":"${input.threadId}","view":"activity","itemId":"<itemId>"}. Page through the whole history with {"threadId":"${input.threadId}","view":"activity"}.`,
+            retrieval: `Read an omitted or truncated item with the scient_thread_read tool: {"threadId":"${input.threadId}","view":"activity","itemId":"<itemId>"}. Page through the whole history with {"threadId":"${input.threadId}","view":"activity"}.`,
           }
         : {}),
       notReplayed:

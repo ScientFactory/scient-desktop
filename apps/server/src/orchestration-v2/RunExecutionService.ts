@@ -17,6 +17,8 @@ import {
   type OrchestrationV2RunAttempt,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
+  type ProviderDriverKind,
+  type ProviderInstanceId,
   type ProviderSessionId,
   type ProviderThreadId,
   type ProviderTurnId,
@@ -59,9 +61,13 @@ export interface ProviderEventRoutingState {
   readonly ownedProviderTurnIds: ReadonlySet<ProviderTurnId>;
   readonly inheritedBackgroundTurnItems: ReadonlyMap<TurnItemId, OrchestrationV2Run["id"]>;
   readonly rootProviderTurnId: ProviderTurnId | null;
+  readonly workflowCoordinators: ReadonlyMap<NodeId, OrchestrationV2Subagent>;
+  readonly workflowMembers: ReadonlyMap<NodeId, OrchestrationV2Subagent>;
 }
 
 export interface ProviderEventRouteIdentity {
+  readonly driver: ProviderDriverKind;
+  readonly providerInstanceId: ProviderInstanceId;
   readonly threadId: ThreadId;
   readonly runId: OrchestrationV2Run["id"];
   readonly attemptId: RunAttemptId;
@@ -151,6 +157,8 @@ type OpenRunOwnedSubagentProjection = {
   readonly nodes: ReadonlyMap<NodeId, OrchestrationV2ExecutionNode>;
   /** Child threads once linked by a root-run subagent row; kept for cascade. */
   readonly linkedChildThreadIds: ReadonlySet<ThreadId>;
+  /** Accepted runless workflow rows remain linked until ownership transfers. */
+  readonly linkedWorkflowMemberIds: ReadonlySet<NodeId>;
 };
 
 type RunOwnedSubagentTerminalStatus = Extract<
@@ -185,6 +193,7 @@ function emptyOpenRunOwnedSubagentProjection(): OpenRunOwnedSubagentProjection {
     childTurnItems: new Map(),
     nodes: new Map(),
     linkedChildThreadIds: new Set(),
+    linkedWorkflowMemberIds: new Set(),
   };
 }
 
@@ -248,7 +257,8 @@ export function cascadeTerminalizeRunOwnedSubagents(input: {
       const node = input.open.nodes.get(key);
       if (
         node !== undefined &&
-        ((node.threadId === input.run.threadId && node.runId === input.run.id) ||
+        ((node.threadId === input.run.threadId &&
+          (node.runId === input.run.id || input.open.linkedWorkflowMemberIds.has(node.id))) ||
           childThreadIds.has(node.threadId)) &&
         isOpenExecutionNodeStatus(node.status)
       ) {
@@ -341,6 +351,8 @@ export function makeProviderEventRoutingState(input: {
       (input.inheritedBackgroundTurnItems ?? []).map((item) => [item.id, item.runId]),
     ),
     rootProviderTurnId: input.providerTurnId,
+    workflowCoordinators: new Map(),
+    workflowMembers: new Map(),
   };
 }
 
@@ -408,14 +420,107 @@ export function routeProviderEvent(
       return belongs ? [true, addProviderTurn(event.providerTurn.id, isRoot)] : [false, state];
     }
     case "node.updated": {
-      const belongs = ownsRun(event.node.runId) || ownsChildThread(event.node.threadId);
+      const member = state.workflowMembers.get(event.node.id);
+      const workflowMemberNode =
+        member !== undefined &&
+        event.driver === member.driver &&
+        event.node.threadId === member.threadId &&
+        event.node.runId === null &&
+        event.node.parentNodeId === member.parentNodeId &&
+        event.node.rootNodeId === member.parentNodeId &&
+        event.node.status === member.status &&
+        event.node.kind === "subagent" &&
+        !event.node.countsForRun &&
+        event.node.providerThreadId === null &&
+        event.node.providerTurnId === null &&
+        event.node.nativeItemRef === null &&
+        event.node.runtimeRequestId === null &&
+        event.node.checkpointScopeId === null;
+      const belongs =
+        ownsRun(event.node.runId) || ownsChildThread(event.node.threadId) || workflowMemberNode;
       if (!belongs || event.node.providerThreadId === null) {
         return [belongs, state];
       }
       return [true, addProviderThread(event.node.providerThreadId)];
     }
-    case "subagent.updated":
-      return [ownsRun(event.subagent.runId) || ownsChildThread(event.subagent.threadId), state];
+    case "subagent.updated": {
+      const task = event.subagent;
+      const belongs = ownsRun(task.runId) || ownsChildThread(task.threadId);
+      const nativeWorkflow =
+        task.presentation?.kind === "workflow" &&
+        task.origin === "provider_native" &&
+        task.nativeTaskRef?.strength === "strong" &&
+        task.nativeTaskRef.driver === task.driver &&
+        event.driver === task.driver &&
+        task.driver === input.driver &&
+        task.providerInstanceId === input.providerInstanceId;
+      if (nativeWorkflow && task.threadId === input.threadId) {
+        const coordinators = new Map(state.workflowCoordinators);
+        const members = new Map(state.workflowMembers);
+        const previous = coordinators.get(task.id);
+        const ownedThreadIds = new Set(state.ownedThreadIds);
+        const ownedProviderThreadIds = new Set(state.ownedProviderThreadIds);
+        if (
+          ownsRun(task.runId) &&
+          (previous === undefined ||
+            (previous.nativeTaskRef?.nativeId === task.nativeTaskRef?.nativeId &&
+              previous.providerInstanceId === task.providerInstanceId &&
+              previous.driver === task.driver))
+        ) {
+          coordinators.set(task.id, task);
+        } else if (
+          previous?.nativeTaskRef?.nativeId === task.nativeTaskRef?.nativeId &&
+          previous?.providerInstanceId === task.providerInstanceId &&
+          previous?.driver === task.driver
+        ) {
+          // An authoritative resume may transfer this task to a later run.
+          coordinators.delete(task.id);
+          if (previous.childThreadId !== null && previous.childThreadId !== input.threadId) {
+            ownedThreadIds.delete(previous.childThreadId);
+          }
+          if (
+            previous.providerThreadId !== null &&
+            previous.providerThreadId !== input.providerThreadId
+          ) {
+            ownedProviderThreadIds.delete(previous.providerThreadId);
+          }
+          for (const [id, member] of members) {
+            if (member.parentNodeId === task.id) members.delete(id);
+          }
+        }
+        return [
+          belongs,
+          {
+            ...state,
+            ownedThreadIds,
+            ownedProviderThreadIds,
+            workflowCoordinators: coordinators,
+            workflowMembers: members,
+          },
+        ];
+      }
+      if (belongs) return [true, state];
+      const coordinator =
+        task.parentNodeId === null ? undefined : state.workflowCoordinators.get(task.parentNodeId);
+      const memberOwned =
+        coordinator !== undefined &&
+        task.id !== coordinator.id &&
+        task.presentation?.kind === "workflow_agent" &&
+        task.presentation.workflowId === coordinator.id &&
+        task.threadId === coordinator.threadId &&
+        task.runId === null &&
+        task.origin === "provider_native" &&
+        task.driver === coordinator.driver &&
+        event.driver === coordinator.driver &&
+        task.providerInstanceId === coordinator.providerInstanceId &&
+        task.childThreadId === null &&
+        task.providerThreadId === null &&
+        task.nativeTaskRef === null &&
+        (!isSettledSubagentStatus(coordinator.status) || isSettledSubagentStatus(task.status));
+      return memberOwned
+        ? [true, { ...state, workflowMembers: new Map(state.workflowMembers).set(task.id, task) }]
+        : [false, state];
+    }
     case "message.updated":
       return [ownsRun(event.message.runId) || ownsChildThread(event.message.threadId), state];
     case "turn_item.updated": {
@@ -910,6 +1015,8 @@ export const layer: Layer.Layer<
             runId: input.run.id,
             attemptId: input.attempt.id,
             providerThreadId: input.providerThread.id,
+            driver: input.session.driver,
+            providerInstanceId: input.run.providerInstanceId,
           };
           const eventSubscription =
             input.session.subscribeEvents === undefined
@@ -1027,7 +1134,7 @@ export const layer: Layer.Layer<
                 // Preserve childThreadId linkage for the root-run lifetime even
                 // after the subagent row terminalizes, so open child-thread
                 // nodes can still be proven linked on a later root interrupt.
-                if (belongsToRootRun) {
+                if (belongsToRootRun || routing.workflowMembers.has(event.subagent.id)) {
                   yield* Ref.update(openRunOwnedSubagents, (current) => {
                     const withLink = withLinkedChildThreadId(current, event.subagent.childThreadId);
                     const subagents = new Map(withLink.subagents);
@@ -1036,7 +1143,11 @@ export const layer: Layer.Layer<
                     } else {
                       subagents.set(event.subagent.id, event.subagent);
                     }
-                    return { ...withLink, subagents };
+                    const linkedWorkflowMemberIds = new Set(withLink.linkedWorkflowMemberIds);
+                    if (routing.workflowMembers.has(event.subagent.id)) {
+                      linkedWorkflowMemberIds.add(event.subagent.id);
+                    }
+                    return { ...withLink, subagents, linkedWorkflowMemberIds };
                   });
                 }
               }
@@ -1046,7 +1157,11 @@ export const layer: Layer.Layer<
                 const belongsToOwnedChildThread =
                   event.node.threadId !== input.run.threadId &&
                   routing.ownedThreadIds.has(event.node.threadId);
-                if (!belongsToRootSubagent && !belongsToOwnedChildThread) {
+                if (
+                  !belongsToRootSubagent &&
+                  !belongsToOwnedChildThread &&
+                  !routing.workflowMembers.has(event.node.id)
+                ) {
                   return;
                 }
                 yield* Ref.update(openRunOwnedSubagents, (current) => {
@@ -1168,11 +1283,91 @@ export const layer: Layer.Layer<
           });
           const filterAssistantEvent = makeAssistantStreamingFilter(responseStreamingMode);
           const providerEventFiber = yield* eventSubscription.events.pipe(
-            Stream.filterEffect((event) =>
-              Ref.modify(eventRouting, (state) => routeProviderEvent(event, routeIdentity, state)),
-            ),
-            Stream.tap((event) =>
+            Stream.mapEffect((event) =>
               Effect.gen(function* () {
+                const [accepted, revokedIds, revokedThreadIds] = yield* Ref.modify(
+                  eventRouting,
+                  (state) => {
+                    const [accepted, next] = routeProviderEvent(event, routeIdentity, state);
+                    const revokedIds = new Set<NodeId>([
+                      ...Array.from(state.workflowCoordinators.keys()).filter(
+                        (id) => !next.workflowCoordinators.has(id),
+                      ),
+                      ...Array.from(state.workflowMembers.keys()).filter(
+                        (id) => !next.workflowMembers.has(id),
+                      ),
+                    ]);
+                    const revokedThreadIds = new Set(
+                      Array.from(state.ownedThreadIds).filter((id) => !next.ownedThreadIds.has(id)),
+                    );
+                    return [[accepted, revokedIds, revokedThreadIds] as const, next];
+                  },
+                );
+                if (revokedIds.size > 0) {
+                  const open = yield* Ref.get(openRunOwnedSubagents);
+                  const revokedItemIds = new Set([
+                    ...Array.from(open.turnItems.values())
+                      .filter((item) => revokedIds.has(item.subagentId))
+                      .map((item) => item.id),
+                    ...Array.from(open.childTurnItems.values())
+                      .filter((item) => revokedThreadIds.has(item.threadId))
+                      .map((item) => item.id),
+                  ]);
+                  yield* Ref.update(
+                    activeBackgroundTurnItems,
+                    (current) =>
+                      new Set(Array.from(current).filter((id) => !revokedItemIds.has(id))),
+                  );
+                  const revokedTurnIds = new Set(
+                    Array.from(open.nodes.values()).flatMap((node) =>
+                      revokedThreadIds.has(node.threadId) && node.providerTurnId !== null
+                        ? [node.providerTurnId]
+                        : [],
+                    ),
+                  );
+                  yield* Ref.update(
+                    activeChildProviderTurns,
+                    (current) =>
+                      new Set(Array.from(current).filter((id) => !revokedTurnIds.has(id))),
+                  );
+                  yield* Ref.update(
+                    activeChildSubagents,
+                    (current) => new Set(Array.from(current).filter((id) => !revokedIds.has(id))),
+                  );
+                  yield* Ref.update(openRunOwnedSubagents, (current) => ({
+                    ...current,
+                    subagents: new Map(
+                      Array.from(current.subagents).filter(([id]) => !revokedIds.has(id)),
+                    ),
+                    nodes: new Map(
+                      Array.from(current.nodes).filter(
+                        ([id, node]) => !revokedIds.has(id) && !revokedThreadIds.has(node.threadId),
+                      ),
+                    ),
+                    turnItems: new Map(
+                      Array.from(current.turnItems).filter(([id]) => !revokedIds.has(id)),
+                    ),
+                    childTurnItems: new Map(
+                      Array.from(current.childTurnItems).filter(
+                        ([, item]) => !revokedThreadIds.has(item.threadId),
+                      ),
+                    ),
+                    linkedChildThreadIds: new Set(
+                      Array.from(current.linkedChildThreadIds).filter(
+                        (id) => !revokedThreadIds.has(id),
+                      ),
+                    ),
+                    linkedWorkflowMemberIds: new Set(
+                      Array.from(current.linkedWorkflowMemberIds).filter(
+                        (id) => !revokedIds.has(id),
+                      ),
+                    ),
+                  }));
+                }
+                // Route, persist, and track each frame in one sequential step.
+                // Separate filter/tap operators can process a whole chunk's
+                // ownership transfers before tracking its earlier accepted rows.
+                if (!accepted) return;
                 let storedEventCount = 0;
                 const deliveredEvent = filterAssistantEvent(
                   event,

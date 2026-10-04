@@ -865,27 +865,6 @@ export const GrokSettings = makeProviderSettingsSchema(
 );
 export type GrokSettings = typeof GrokSettings.Type;
 
-export const ScientAgentSettings = makeProviderSettingsSchema(
-  {
-    enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(true)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-    binaryPath: makeBinaryPathSetting("scient-agent").pipe(
-      Schema.annotateKey({
-        title: "Binary path",
-        description: "Path to the Scient Agent executable (0.1.0 or newer).",
-        providerSettingsForm: { placeholder: "scient-agent", clearWhenEmpty: "omit" },
-      }),
-    ),
-    customModels: Schema.Array(CustomModelSetting).pipe(
-      Schema.withDecodingDefault(Effect.succeed([])),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
-    ),
-  },
-  { order: ["binaryPath"] },
-);
-
 export const OmpSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
@@ -925,6 +904,32 @@ export const OmpSettings = makeProviderSettingsSchema(
   { order: ["binaryPath", "homePath", "profile"] },
 );
 export type OmpSettings = typeof OmpSettings.Type;
+
+/**
+ * Scient Agent keeps its state in a directory this server assigns, so it has
+ * no home or profile setting. It is Scient's own agent, so it is on by default.
+ */
+export const ScientAgentSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: makeBinaryPathSetting("scient-agent").pipe(
+      Schema.annotateKey({
+        title: "Binary path",
+        description: "Path to the Scient Agent executable (0.1.0 or newer).",
+        providerSettingsForm: { placeholder: "scient-agent", clearWhenEmpty: "omit" },
+      }),
+    ),
+    customModels: Schema.Array(CustomModelSetting).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  { order: ["binaryPath"] },
+);
+export type ScientAgentSettings = typeof ScientAgentSettings.Type;
 
 export const DroidSettings = makeProviderSettingsSchema(
   {
@@ -1664,10 +1669,10 @@ export const ServerSettings = Schema.Struct({
     cursor: CursorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     pi: PiSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-    scient: ScientAgentSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     droid: DroidSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     omp: OmpSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    scient: ScientAgentSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     antigravity: AntigravitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
@@ -2013,10 +2018,10 @@ export const ServerSettingsPatch = Schema.Struct({
       cursor: Schema.optionalKey(CursorSettingsPatch),
       grok: Schema.optionalKey(GrokSettingsPatch),
       pi: Schema.optionalKey(PiSettingsPatch),
-      scient: Schema.optionalKey(ScientAgentSettingsPatch),
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
       droid: Schema.optionalKey(DroidSettingsPatch),
       omp: Schema.optionalKey(OmpSettingsPatch),
+      scient: Schema.optionalKey(ScientAgentSettingsPatch),
       antigravity: Schema.optionalKey(AntigravitySettingsPatch),
     }),
   ),

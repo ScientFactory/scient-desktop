@@ -17,7 +17,6 @@ import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/rela
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import * as DesktopUserData from "./DesktopUserData.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
@@ -101,16 +100,9 @@ export const make = Effect.gen(function* () {
   // creates that directory when the lock is acquired. The SDK bridge takes
   // the lock at creation, so userData must already point at the explicit
   // established Scient directory. T3 and retired-Scient paths are never probed.
-  //
-  // Upstream resolves this through DesktopUserData, which walks the T3 legacy
-  // directories and adopts one when present. That is a product decision this
-  // alignment is not authorised to make, so the Scient resolver stays.
-  //
-  // OPEN RISK (verify when the desktop app runs): upstream's comment warns that
-  // this call "must not yield" because the bridge registers a scheme Electron
-  // rejects once ready. This resolver is an Effect and does yield. If scheme
-  // registration fails at startup, the fix is to make this synchronous, not to
-  // adopt the legacy-probing resolver.
+  // Identity resolution is synchronous: scheme registration must finish before
+  // startup yields and Electron emits ready. The pre-ready composition test
+  // exercises this layer with runSync to enforce that boundary.
   const userDataPath = yield* DesktopAppIdentity.resolveUserDataPath;
   yield* electronApp.setPath("userData", userDataPath);
 

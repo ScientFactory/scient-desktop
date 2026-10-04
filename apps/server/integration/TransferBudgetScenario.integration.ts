@@ -15,7 +15,7 @@ import { TRANSFER_HISTORY_TURN_COUNT } from "./fixtures/transferBudget.ts";
 import { THREAD_ID, threadCreated, turnEvents } from "./TransferBudgetV2Fixture.integration.ts";
 
 export const TRANSFER_THREAD_ID = THREAD_ID;
-export const TRANSFER_MEASURED_TURN_INDEX = TRANSFER_HISTORY_TURN_COUNT;
+const TRANSFER_MEASURED_TURN_INDEX = TRANSFER_HISTORY_TURN_COUNT;
 
 /** Persist the same V2 transcript used by the dedicated transport measurement. */
 export const seedTransferBudgetHistory = Effect.fn("TransferBudget.seedHistory")(function* (

@@ -25,6 +25,11 @@ import { assert, describe } from "vite-plus/test";
 import wireFixture from "../testFixtures/codexMultiAgentWire.json" with { type: "json" };
 import { makeCodexSessionRuntime } from "./CodexSessionRuntime.ts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  T3_CODE_ORCHESTRATION_SCOPE_INSTRUCTIONS,
+  T3_CODE_ORCHESTRATION_WORKSPACE_INSTRUCTIONS,
+} from "../T3OrchestrationInstructions.ts";
+import { SCIENT_CORE_AWARENESS } from "../ScientAwareness.ts";
 
 const ROOT = wireFixture.rootThreadId;
 const [CHILD_A, CHILD_B] = wireFixture.childThreadIds as [string, string];
@@ -931,10 +936,31 @@ describe("CodexSessionRuntime compaction", () => {
         assert.equal(item.role, "developer");
         return item.content[0].text;
       });
-      // The harness context and Scient's product awareness travel as two
-      // separate `additionalContext` keys so each stays under Codex's per-entry
-      // token cap. Both are restored after a compaction, so assert both.
-      assert.lengthOf(texts, 2);
+      // All four context entries are restored; orchestration is split into
+      // separate scope and workspace entries to retain Codex's per-entry bound.
+      assert.lengthOf(texts, 4);
+      assert.deepEqual(
+        texts.map((text) => text.slice(0, text.indexOf(">") + 1)),
+        [
+          "<t3_code_orchestration>",
+          "<t3_code_workspace>",
+          "<t3_code_runtime>",
+          "<scient_awareness>",
+        ],
+      );
+      assert.include(
+        texts,
+        `<t3_code_orchestration>${T3_CODE_ORCHESTRATION_SCOPE_INSTRUCTIONS}</t3_code_orchestration>`,
+      );
+      assert.include(
+        texts,
+        `<t3_code_workspace>${T3_CODE_ORCHESTRATION_WORKSPACE_INSTRUCTIONS}</t3_code_workspace>`,
+      );
+      assert.include(texts, `<scient_awareness>${SCIENT_CORE_AWARENESS}</scient_awareness>`);
+      for (const text of texts) {
+        const value = text.slice(text.indexOf(">") + 1, text.lastIndexOf("</"));
+        assert.isBelow(new TextEncoder().encode(value).byteLength, 4000);
+      }
       assert.match(
         texts.find((text) => text.startsWith("<t3_code_runtime>")) ?? "",
         /^<t3_code_runtime><runtime_info>.*as GPT-5\.6 Sol \(model slug: gpt-5\.6-sol\).*<\/t3_code_runtime>$/s,

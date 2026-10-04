@@ -1,5 +1,6 @@
 import React, { type SVGProps, useId } from "react";
 import { cn } from "~/lib/utils";
+import scientAgentSymbolUrl from "../assets/scient-agent-symbol.svg?url";
 export type Icon = React.FC<SVGProps<SVGSVGElement>>;
 
 export const UltrafastIcon: Icon = (props) => (
@@ -639,9 +640,7 @@ export const ACPRegistryIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
-// SCIENT-FORK:START — restored: the union dropped these two while splicing
-// in upstream's PiAgentIcon. Both still have live callers in
-// settings/AddProviderInstanceDialog.
+// SCIENT-FORK:START — registry provider marks used by the provider picker.
 export const Gemini: Icon = (props) => (
   <svg {...props} viewBox="0 0 296 298" fill="none">
     <mask
@@ -798,21 +797,6 @@ export const PiIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
-export const PiAgentIcon: Icon = ({ className, ...props }) => (
-  <svg
-    {...props}
-    viewBox="165.29 165.29 469.43 469.43"
-    fill="none"
-    className={cn("fill-[#0F0F0F] dark:fill-[#F5F5F5]", className)}
-  >
-    <path
-      fillRule="evenodd"
-      d="M165.29 165.29H517.36V400H400V517.36H282.65V634.72H165.29ZM282.65 282.65V400H400V282.65Z"
-    />
-    <path d="M517.36 400H634.72V634.72H517.36Z" />
-  </svg>
-);
-
 // Oh My Pi's official mark (can1357/oh-my-pi packages/collab-web/public/favicon.svg).
 export const OhMyPiIcon: Icon = ({ className, ...props }) => {
   const gradientId = useId();
@@ -830,6 +814,14 @@ export const OhMyPiIcon: Icon = ({ className, ...props }) => {
     </svg>
   );
 };
+
+// Scient Agent's symbol: a Möbius strip blending from blue to peach. The drawing is a few hundred
+// masked slices, so it is kept as an asset and shown as an image.
+export const ScientAgentIcon: Icon = (props) => (
+  <svg {...props} viewBox="0 0 512 512" fill="none">
+    <image href={scientAgentSymbolUrl} width="512" height="512" />
+  </svg>
+);
 
 // Official two-color mark from https://forgejo.org/favicon.svg.
 export const ForgejoIcon: Icon = (props) => (

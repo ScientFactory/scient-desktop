@@ -35,10 +35,7 @@ import {
   type CursorAdapterV2DriverEnv,
 } from "../../orchestration-v2/Adapters/CursorAdapterV2.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import {
-  cursorRuntimeEnvironment,
-  hasExternalCursorAccountConfiguration,
-} from "../Layers/CursorCli.ts";
+import { cursorRuntimeEnvironment } from "../Layers/CursorCli.ts";
 import {
   buildInitialCursorProviderSnapshot,
   checkCursorProviderStatus,
@@ -77,10 +74,10 @@ const isSdkRunnerError = Schema.is(CursorAgentSdk.CursorAgentSdkRunnerError);
 const DRIVER_KIND = ProviderDriverKind.make("cursor");
 
 export function assistedCursorConnectionMethods(
-  settings: Pick<CursorSettings, "apiEndpoint">,
   environment: NodeJS.ProcessEnv,
 ): ReadonlyArray<ProviderConnectionMethod> {
-  return hasExternalCursorAccountConfiguration(settings, environment) ? [] : ["cursor_browser"];
+  // CLI endpoints and tokens do not own the SDK's account.
+  return environment.CURSOR_API_KEY?.trim() ? [] : ["cursor_browser"];
 }
 
 // cursor-agent updates itself, so the resolved executable is its own updater.
@@ -182,7 +179,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         processEnv,
         managedRuntime.usesManagedPath,
       );
-      const connectionMethods = assistedCursorConnectionMethods(config, processEnv);
+      const connectionMethods = assistedCursorConnectionMethods(processEnv);
       const stampIdentity = withInstanceIdentity({
         instanceId,
         displayName: displayName ?? "Cursor",
@@ -191,9 +188,10 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         runtime: managedRuntime.summary,
         connectionMethods,
       });
-      // A managed install is replaced by Scient, never self-updated in place.
+      // The bundled SDK has no CLI update target. Explicit CLI targets retain
+      // their maintenance controls; managed installs are replaced by Scient.
       const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
-        (managedRuntime.usesManagedPath
+        (!config.binaryPath?.trim() || managedRuntime.usesManagedPath
           ? Effect.succeed(
               makeManualOnlyProviderMaintenanceCapabilities({
                 provider: DRIVER_KIND,

@@ -1,5 +1,4 @@
 import {
-  ProviderDriverKind,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type OmpSettings,
@@ -21,6 +20,7 @@ import {
   type OmpRpcImage,
 } from "effect-omp-rpc/schema";
 import { expandHomePath } from "../../pathExpansion.ts";
+import { ompTarget, type OmpTarget } from "../../provider/omp/OmpTarget.ts";
 import {
   assertReadableOmpSessionFile,
   ompSessionFilesEqual,
@@ -73,7 +73,12 @@ export interface OmpAdapterV2Options extends Pick<
   NativeSessionAdapterV2Options,
   "instanceId" | "idAllocator" | "continuations"
 > {
-  readonly settings: OmpSettings;
+  readonly target?: OmpTarget;
+  readonly settings: Pick<OmpSettings, "binaryPath"> & {
+    readonly homePath?: string | undefined;
+    readonly profile?: string | undefined;
+  };
+  readonly homePath?: string;
   readonly environment: NodeJS.ProcessEnv;
   readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly fileSystem: FileSystem.FileSystem;
@@ -87,11 +92,13 @@ const encodeJsonString = Schema.encodeSync(JsonString);
 const encodeJsonStringEffect = Schema.encodeEffect(JsonString);
 
 export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
+  const target = options.target ?? ompTarget;
   const locks = makeOmpSessionLockRegistry();
   return makeNativeSessionAdapterV2({
     ...options,
+    mcpSessionInjection: true,
     defaultCwd: options.serverConfig.cwd,
-    driver: ProviderDriverKind.make("omp"),
+    driver: target.driverKind,
     capabilities: {
       ...AcpProviderCapabilitiesV2,
       sessions: { ...AcpProviderCapabilitiesV2.sessions, supportsModelSwitchInSession: true },
@@ -132,7 +139,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
         )
           return yield* Effect.fail(
             new NativeSessionOperationError({
-              detail: "Oh My Pi supports only full access and has no native sandbox.",
+              detail: `${target.name} supports only full access and has no native sandbox.`,
             }),
           );
         const { fileSystem: fs, path } = options;
@@ -140,23 +147,24 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
         const cwd = yield* fs.realPath(input.runtimePolicy.cwd ?? options.serverConfig.cwd);
         const sessionRoot = path.join(
           options.serverConfig.stateDir,
-          "omp-sessions",
+          `${target.stateNamespace}-sessions`,
           ompSessionDirectoryKey(options.instanceId, input.threadId),
         );
-        yield* fs.makeDirectory(sessionRoot, { recursive: true });
+        yield* fs.makeDirectory(sessionRoot, { recursive: true, mode: 0o700 });
         const root = yield* fs.realPath(sessionRoot);
         const stateRoot = yield* fs.realPath(options.serverConfig.stateDir);
         if (!sessionFileInsideRoot(stateRoot, root))
           return yield* Effect.fail(
             new NativeSessionOperationError({
-              detail: "Oh My Pi session directory escaped Scient's state directory.",
+              detail: `${target.name} session directory escaped Scient's state directory.`,
             }),
           );
         yield* Effect.acquireRelease(
-          acquireOmpSessionLock(path.join(root, ".session.lock"), locks),
+          acquireOmpSessionLock(target, path.join(root, ".session.lock"), locks),
           (lock) => releaseOmpSessionLock(lock, locks),
         );
-        const mcp = readMcpProviderSession(input.threadId);
+        const mcp =
+          input.configureMcp === false ? undefined : readMcpProviderSession(input.threadId);
         if (mcp && mcp.providerInstanceId !== options.instanceId)
           return yield* Effect.fail(
             new NativeSessionOperationError({
@@ -164,9 +172,10 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
             }),
           );
         const extension = yield* writeOmpExtensionFiles({
+          target,
           directory: root,
           name: `scient-extension-${yield* options.crypto.randomUUIDv4}`,
-          source: ompScientExtensionSource,
+          source: (bootstrapPath) => ompScientExtensionSource(target, bootstrapPath),
           bootstrap: {
             endpoint: mcp?.endpoint ?? null,
             authorization: mcp?.authorizationHeader ?? null,
@@ -178,6 +187,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
         );
         const client = yield* options
           .makeProcess({
+            target,
             command: options.settings.binaryPath,
             cwd,
             env: withAgentDeviceEnvironment(options.environment, mcp),
@@ -192,8 +202,9 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
           );
         yield* Effect.addFinalizer(() => client.shutdown.pipe(Effect.ignore));
         const home = expandHomePath(
-          options.settings.homePath?.trim() ||
-            options.environment.PI_CODING_AGENT_DIR?.trim() ||
+          options.homePath?.trim() ||
+            options.settings.homePath?.trim() ||
+            options.environment[target.environment.agentDir]?.trim() ||
             options.environment.HOME?.trim() ||
             options.environment.USERPROFILE?.trim() ||
             "",
@@ -205,8 +216,8 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
           homeIdentity: home ? path.resolve(home) : "",
           profileIdentity:
             options.settings.profile?.trim() ||
-            options.environment.OMP_PROFILE?.trim() ||
-            options.environment.PI_PROFILE?.trim() ||
+            options.environment[target.environment.profile]?.trim() ||
+            options.environment[target.environment.profileFallback]?.trim() ||
             "",
         };
         let nativeId = "";
@@ -217,10 +228,11 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
             const relative = sessionFileInsideRoot(root, sessionFile);
             if (!relative)
               return yield* new NativeSessionOperationError({
-                detail: "Oh My Pi created a conversation outside its owned directory.",
+                detail: `${target.name} created a conversation outside its owned directory.`,
               });
             nativeId = path.resolve(root, relative);
             const readable = yield* assertReadableOmpSessionFile({
+              target,
               sessionRoot: root,
               relativeSessionFile: relative,
             }).pipe(
@@ -230,10 +242,11 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
             );
             cursor = Option.isSome(readable)
               ? makeOmpSessionCursor({
+                  target,
                   identity,
                   sessionFile: nativeId,
                   ...(sessionId === undefined ? {} : { sessionId }),
-                  ompVersion: client.version,
+                  ompVersion: client.runtimeVersion,
                   rpcProtocolVersion: OMP_RPC_PROTOCOL_V2,
                 })
               : undefined;
@@ -324,14 +337,14 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
               return onUpdate({
                 type: "terminal",
                 status: "failed",
-                detail: "Oh My Pi exited before its turn could be confirmed.",
+                detail: `${target.name} exited before its turn could be confirmed.`,
                 broken: true,
               });
             case "error":
               return onUpdate({
                 type: "tool",
                 id: "native-error",
-                name: "Oh My Pi error",
+                name: `${target.name} error`,
                 status: "failed",
                 output: client.redaction.text(update.message),
               });
@@ -339,7 +352,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
               return onUpdate({
                 type: "tool",
                 id: "native-warning",
-                name: "Oh My Pi warning",
+                name: `${target.name} warning`,
                 status: "completed",
                 output: client.redaction.text(update.message),
               });
@@ -385,7 +398,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
               return onUpdate({
                 type: "tool",
                 id: "open-url",
-                name: "Oh My Pi requests a URL",
+                name: `${target.name} requests a URL`,
                 status: "completed",
                 output: client.redaction.text(update.instructions ?? update.url),
               });
@@ -397,6 +410,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
           }
         };
         const runtime = yield* makeOmpSessionRuntime({
+          target,
           client,
           scope,
           continuationIdPrefix: yield* options.crypto.randomUUIDv4,
@@ -405,11 +419,13 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
         const ready = yield* client.ready.pipe(Effect.timeout("8 seconds"));
         if (!ready.supportedProtocolVersions?.includes(OMP_RPC_PROTOCOL_V2))
           return yield* Effect.fail(
-            new NativeSessionOperationError({ detail: "Oh My Pi did not offer RPC protocol v2." }),
+            new NativeSessionOperationError({
+              detail: `${target.name} did not offer RPC protocol v2.`,
+            }),
           );
         yield* extension.discardUnconsumed;
         yield* client.setSubagentSubscription("progress");
-        if (compareSemverVersions(client.version, "18.3.1") >= 0)
+        if (compareSemverVersions(client.runtimeVersion, "18.3.1") >= 0)
           yield* client.setEventFilter(OMP_KNOWN_EVENT_TYPES);
         const ensureFresh = () =>
           Effect.gen(function* () {
@@ -418,7 +434,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
             const result = yield* client.command({ type: "new_session" });
             if (!result.success || (isRecord(result.data) && result.data.cancelled === true))
               return yield* new NativeSessionOperationError({
-                detail: "Oh My Pi did not create a fresh conversation.",
+                detail: `${target.name} did not create a fresh conversation.`,
               });
             const next = yield* client.getState();
             if (
@@ -427,8 +443,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                 path.resolve(next.sessionFile) === path.resolve(previous.sessionFile))
             )
               return yield* new NativeSessionOperationError({
-                detail:
-                  "Oh My Pi acknowledged a new conversation without creating a fresh transcript.",
+                detail: `${target.name} acknowledged a new conversation without creating a fresh transcript.`,
               });
             yield* refreshCursor(next.sessionFile, next.sessionId);
             fresh = true;
@@ -436,11 +451,13 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
         const resume = (requestedId: string, resumeCursor?: unknown) =>
           Effect.gen(function* () {
             const validated = yield* parseOmpSessionCursor(resumeCursor, {
+              target,
               identity,
-              ompVersion: client.version,
+              ompVersion: client.runtimeVersion,
               rpcProtocolVersion: OMP_RPC_PROTOCOL_V2,
             }).pipe(Effect.mapError((detail) => new NativeSessionOperationError({ detail })));
             yield* assertReadableOmpSessionFile({
+              target,
               sessionRoot: root,
               relativeSessionFile: validated.relativeSessionFile,
             }).pipe(
@@ -452,7 +469,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
             const expected = yield* fs.realPath(path.resolve(root, validated.relativeSessionFile));
             if (real !== expected || !sessionFileInsideRoot(root, real))
               return yield* new NativeSessionOperationError({
-                detail: "Oh My Pi resume cursor does not name the requested conversation.",
+                detail: `${target.name} resume cursor does not name the requested conversation.`,
               });
             // A failed or cancelled switch must leave ensureThread able to reset
             // whatever transcript the native process may have partially loaded.
@@ -460,12 +477,13 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
             const result = yield* client.switchSession(real);
             if (result.cancelled)
               return yield* new NativeSessionOperationError({
-                detail: "Oh My Pi cancelled the session switch.",
+                detail: `${target.name} cancelled the session switch.`,
               });
             const resumed = yield* client.getState();
             const sameFile =
               resumed.sessionFile !== undefined &&
               (yield* ompSessionFilesEqual({
+                target,
                 sessionRoot: root,
                 expectedRelativeFile: validated.relativeSessionFile,
                 reportedFile: resumed.sessionFile,
@@ -479,7 +497,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
               (validated.sessionId !== undefined && resumed.sessionId !== validated.sessionId)
             )
               return yield* new NativeSessionOperationError({
-                detail: "Oh My Pi resumed a different conversation than the cursor requested.",
+                detail: `${target.name} resumed a different conversation than the cursor requested.`,
               });
             yield* refreshCursor(real, resumed.sessionId);
           }).pipe(Effect.mapError(nativeSessionFailure));
@@ -498,14 +516,13 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
             if (decision === "mutator")
               return yield* Effect.fail(
                 new NativeSessionOperationError({
-                  detail:
-                    "This Oh My Pi command changes provider configuration; use the provider settings instead.",
+                  detail: `This ${target.name} command changes provider configuration; use the provider settings instead.`,
                 }),
               );
             if (decision === "unavailable")
               return yield* Effect.fail(
                 new NativeSessionOperationError({
-                  detail: "That command is unavailable in this Oh My Pi conversation.",
+                  detail: `That command is unavailable in this ${target.name} conversation.`,
                 }),
               );
             const imageFiles: Array<{ path: string; size: number; mimeType: string }> = [];
@@ -517,7 +534,9 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
               });
               if (!stored)
                 return yield* Effect.fail(
-                  new NativeSessionOperationError({ detail: "Invalid Oh My Pi attachment path." }),
+                  new NativeSessionOperationError({
+                    detail: `Invalid ${target.name} attachment path.`,
+                  }),
                 );
               const real = yield* fs.realPath(stored);
               const root = yield* fs.realPath(options.serverConfig.attachmentsDir);
@@ -533,7 +552,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
               )
                 return yield* Effect.fail(
                   new NativeSessionOperationError({
-                    detail: "Oh My Pi attachment escaped its directory or exceeded its size limit.",
+                    detail: `${target.name} attachment escaped its directory or exceeded its size limit.`,
                   }),
                 );
               if (attachment.type === "image")
@@ -554,7 +573,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
               if (!model?.input?.includes("image"))
                 return yield* Effect.fail(
                   new NativeSessionOperationError({
-                    detail: "The selected Oh My Pi model does not advertise image support.",
+                    detail: `The selected ${target.name} model does not advertise image support.`,
                   }),
                 );
             }
@@ -591,7 +610,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
             if ("messageBytes" in delivery)
               return yield* Effect.fail(
                 new NativeSessionOperationError({
-                  detail: `The prompt exceeds Oh My Pi's ${maxFrameBytes}-byte frame limit.`,
+                  detail: `The prompt exceeds ${target.name}'s ${maxFrameBytes}-byte frame limit.`,
                 }),
               );
             const images: OmpRpcImage[] = [];
@@ -620,7 +639,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                 turnInput.runtimePolicy.sandboxPolicy !== undefined
               )
                 return yield* new NativeSessionOperationError({
-                  detail: "Oh My Pi supports only full access and has no native sandbox.",
+                  detail: `${target.name} supports only full access and has no native sandbox.`,
                 });
               const model =
                 turnInput.modelSelection.model === "default"
@@ -631,8 +650,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
               if (!model)
                 return yield* Effect.fail(
                   new NativeSessionOperationError({
-                    detail:
-                      "Oh My Pi did not report a default model or the selection is not provider/model.",
+                    detail: `${target.name} did not report a default model or the selection is not provider/model.`,
                   }),
                 );
               if (model.provider.startsWith("scient_") && client.refreshModels)
@@ -650,7 +668,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                 if (!level)
                   return yield* Effect.fail(
                     new NativeSessionOperationError({
-                      detail: "Unsupported Oh My Pi thinking level.",
+                      detail: `Unsupported ${target.name} thinking level.`,
                     }),
                   );
                 const available = yield* client.getModels();
@@ -664,7 +682,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                 )
                   return yield* Effect.fail(
                     new NativeSessionOperationError({
-                      detail: "The selected Oh My Pi model does not advertise that thinking level.",
+                      detail: `The selected ${target.name} model does not advertise that thinking level.`,
                     }),
                   );
                 yield* client.setModel(model.provider, model.modelId);
@@ -681,21 +699,21 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
               const applied = yield* client.getState();
               if (applied.model?.provider !== model.provider || applied.model.id !== model.modelId)
                 return yield* new NativeSessionOperationError({
-                  detail: "Oh My Pi did not apply the requested model; the message was not sent.",
+                  detail: `${target.name} did not apply the requested model; the message was not sent.`,
                 });
               const appliedSlug = encodeOmpModelSlug(applied.model.provider, applied.model.id);
               if (!appliedSlug)
                 return yield* new NativeSessionOperationError({
-                  detail: "Oh My Pi reported an invalid model identity.",
+                  detail: `${target.name} reported an invalid model identity.`,
                 });
               yield* onUpdate({ type: "model", model: appliedSlug });
               if (selected !== undefined && applied.thinkingLevel !== selected)
                 yield* onUpdate({
                   type: "tool",
                   id: `${nativeTurnId}:reasoning-warning`,
-                  name: "Oh My Pi reasoning selection",
+                  name: `${target.name} reasoning selection`,
                   status: "completed",
-                  output: `Oh My Pi applied ${applied.thinkingLevel ?? "its default"} reasoning instead of ${selected}.`,
+                  output: `${target.name} applied ${applied.thinkingLevel ?? "its default"} reasoning instead of ${selected}.`,
                 });
               yield* runtime.begin(nativeTurnId);
               fresh = false;
@@ -751,7 +769,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
               if (!question)
                 return yield* Effect.fail(
                   new NativeSessionOperationError({
-                    detail: "The Oh My Pi dialog is no longer pending.",
+                    detail: `The ${target.name} dialog is no longer pending.`,
                   }),
                 );
               const answer = response.answers?.[id];
@@ -763,7 +781,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
               )
                 return yield* Effect.fail(
                   new NativeSessionOperationError({
-                    detail: "The answer is not one of Oh My Pi's offered choices.",
+                    detail: `The answer is not one of ${target.name}'s offered choices.`,
                   }),
                 );
               yield* client.extensionUiResponse(

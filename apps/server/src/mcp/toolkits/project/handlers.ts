@@ -38,7 +38,7 @@ const mutation = Effect.gen(function* () {
   return yield* Project.ProjectService;
 });
 export const ProjectHandlersLive = ProjectToolkit.toLayer({
-  t3_thread_launch: (input) =>
+  scient_thread_launch: (input) =>
     Effect.gen(function* () {
       const { caller, scope } = yield* readMutationCaller();
       if (caller.runtimeMode !== "full-access" || caller.interactionMode !== "default")
@@ -115,7 +115,7 @@ export const ProjectHandlersLive = ProjectToolkit.toLayer({
         status: run?.status ?? null,
       };
     }),
-  t3_project_list: (input) =>
+  scient_project_list: (input) =>
     Effect.gen(function* () {
       const projects = yield* access;
       const snapshot = yield* projects.snapshot.pipe(Effect.mapError(unavailable));
@@ -124,7 +124,7 @@ export const ProjectHandlersLive = ProjectToolkit.toLayer({
         end = start + (input.limit ?? 20);
       return { projects: rows.slice(start, end), nextCursor: end < rows.length ? end : null };
     }),
-  t3_project_read: (input) =>
+  scient_project_read: (input) =>
     Effect.gen(function* () {
       const projects = yield* access;
       const result = yield* projects.getById(input.projectId).pipe(Effect.mapError(unavailable));
@@ -135,7 +135,7 @@ export const ProjectHandlersLive = ProjectToolkit.toLayer({
         });
       return result.value;
     }),
-  t3_project_create: ({ workspaceRoot, ...input }) =>
+  scient_project_create: ({ workspaceRoot, ...input }) =>
     Effect.gen(function* () {
       const projects = yield* mutation;
       if (workspaceRoot === undefined) {
@@ -149,7 +149,7 @@ export const ProjectHandlersLive = ProjectToolkit.toLayer({
           return yield* new OrchestratorMcpFailure({
             code: "invalid_request",
             message:
-              "A project started from its title takes only a title; set scripts or defaultModelSelection afterwards with t3_project_update.",
+              "A project started from its title takes only a title; set scripts or defaultModelSelection afterwards with scient_project_update.",
           });
         const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
         const created = yield* folders
@@ -178,21 +178,21 @@ export const ProjectHandlersLive = ProjectToolkit.toLayer({
         .create({ ...input, workspaceRoot, commandId, projectId: ProjectId.make(commandId) })
         .pipe(Effect.mapError(projectFailure));
     }),
-  t3_project_update: (input) =>
+  scient_project_update: (input) =>
     Effect.gen(function* () {
       const projects = yield* mutation;
       return yield* projects
         .update({ ...input, commandId: yield* newCommandId() })
         .pipe(Effect.mapError(projectFailure));
     }),
-  t3_project_delete: (input) =>
+  scient_project_delete: (input) =>
     Effect.gen(function* () {
       const projects = yield* mutation;
       return yield* projects
         .delete({ ...input, commandId: yield* newCommandId() })
         .pipe(Effect.mapError(projectFailure));
     }),
-  t3_project_clone: (input) =>
+  scient_project_clone: (input) =>
     Effect.gen(function* () {
       yield* mutation;
       const repositories = yield* Repositories.SourceControlRepositoryService;

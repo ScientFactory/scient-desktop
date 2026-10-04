@@ -8,6 +8,16 @@ import {
 } from "./orchestrationV2SnapshotWire.ts";
 
 const now = "2026-10-04T10:00:00.000Z";
+const decodeProjection = Schema.decodeUnknownSync(
+  Schema.toCodecJson(OrchestrationV2ThreadProjection),
+);
+const decodeSnapshotObject = Schema.decodeUnknownSync(
+  Schema.Struct({
+    snapshotFormat: Schema.String,
+    snapshotSequence: Schema.Number,
+    projection: Schema.Record(Schema.String, Schema.Unknown),
+  }),
+);
 function projection() {
   const item = {
     id: "item-1",
@@ -29,7 +39,7 @@ function projection() {
     messageId: "message-1",
     text: "Exact preserved answer. ".repeat(200),
   };
-  return Schema.decodeUnknownSync(Schema.toCodecJson(OrchestrationV2ThreadProjection))({
+  return decodeProjection({
     thread: {
       id: "thread-1",
       projectId: "project-1",
@@ -155,13 +165,7 @@ describe("negotiated native snapshot item references", () => {
       projection: projection(),
       snapshotSequence: 10,
     });
-    const encodedObject = Schema.decodeUnknownSync(
-      Schema.Struct({
-        snapshotFormat: Schema.String,
-        snapshotSequence: Schema.Number,
-        projection: Schema.Record(Schema.String, Schema.Unknown),
-      }),
-    )(encoded);
+    const encodedObject = decodeSnapshotObject(encoded);
     const invalid = {
       ...encodedObject,
       projection: {

@@ -16,6 +16,7 @@
     "apps/server/src/provider/ScientToolProjection.ts",
     "apps/server/src/provider/ScientAwareness.ts",
     "apps/server/src/scient/skills/BuiltInSkillSources.ts",
+    "apps/web/src/scient/markdownEditor/persistence/markdownPersistenceRegistry.ts",
     "scripts/stage-synctex-runtime.ts",
     "scripts/lib/scient-synctex-build.ts",
     "packages/client-runtime/src/state/scientLatexHttp.ts",
@@ -33,6 +34,21 @@
     "/api/scient/latex"
   ],
   "upstreamMounts": [
+    {
+      "path": "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.testkit.ts",
+      "anchor": "latexDir: path.join(stateDir, \"latex\")",
+      "purpose": "Give native Codex replay qualification an isolated server-owned LaTeX state directory."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/Adapters/CursorAdapterV2.testkit.ts",
+      "anchor": "latexDir: path.join(stateDir, \"latex\")",
+      "purpose": "Give native Cursor replay qualification an isolated server-owned LaTeX state directory."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/ProviderReplayHarness.ts",
+      "anchor": "latexDir: path.join(stateDir, \"latex\")",
+      "purpose": "Retain LaTeX state isolation when the shared native provider harness creates disposable server configuration."
+    },
     {
       "path": ".gitignore",
       "anchor": "native/synctex-runtime/",

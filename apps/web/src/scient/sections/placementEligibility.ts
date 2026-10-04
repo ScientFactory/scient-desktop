@@ -5,7 +5,16 @@ import { resolveSidebarThreadStatus } from "../../components/Sidebar.logic";
 import { hasUnreadAnswer } from "../answerAttention/completion";
 
 export function placementEligible(
-  thread: EnvironmentThreadShell,
+  thread: Pick<
+    EnvironmentThreadShell,
+    | "runtime"
+    | "latestRun"
+    | "hasPendingApprovals"
+    | "hasPendingUserInput"
+    | "latestCompletedAnswer"
+    | "snoozedUntil"
+    | "snoozedAt"
+  >,
   visitedAt: string | undefined,
   now: string,
 ): boolean {

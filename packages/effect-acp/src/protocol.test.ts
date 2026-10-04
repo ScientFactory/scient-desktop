@@ -13,6 +13,7 @@ import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { it, assert } from "@effect/vitest";
@@ -840,9 +841,36 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
     }),
   );
 
+  it.effect("classifies an exited native child when its writer fails first", () =>
+    Effect.gen(function* () {
+      const terminated = yield* Deferred.make<AcpError.AcpError>();
+      const nativeExit = new AcpError.AcpProcessExitedError({ code: 3, pid: 123 });
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio: Stdio.make({
+          args: Effect.succeed([]),
+          stdin: Stream.never,
+          stdout: () => Sink.forEach(() => Effect.die("closed native stdin")),
+          stderr: () => Sink.drain,
+        }),
+        terminationError: Effect.succeed(nativeExit),
+        serverRequestMethods: new Set(),
+        onTermination: (error) => Deferred.succeed(terminated, error).pipe(Effect.asVoid),
+      });
+      yield* transport.serverProtocol
+        .send(0, {
+          _tag: "Exit",
+          requestId: "native-exit",
+          exit: { _tag: "Success", value: {} },
+        })
+        .pipe(Effect.exit);
+      assert.strictEqual(yield* Deferred.await(terminated), nativeExit);
+    }),
+  );
+
   it.effect("fails current, queued, and future responses when the stdout writer fails", () =>
     Effect.gen(function* () {
       const writeStarted = yield* Deferred.make<void>();
+      const classificationStarted = yield* Deferred.make<void>();
       const releaseFailure = yield* Deferred.make<void>();
       const failures = yield* Queue.unbounded<string>();
       const terminated = yield* Deferred.make<AcpError.AcpError>();
@@ -860,6 +888,9 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       });
       const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
         stdio,
+        terminationError: Deferred.succeed(classificationStarted, undefined).pipe(
+          Effect.andThen(Effect.never),
+        ),
         serverRequestMethods: new Set(),
         onOutgoingResponseFailure: (requestId) => Queue.offer(failures, requestId),
         onTermination: (error) => Deferred.succeed(terminated, error).pipe(Effect.asVoid),
@@ -879,6 +910,8 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       assert.isUndefined(current.pollUnsafe());
       assert.isUndefined(queued.pollUnsafe());
       yield* Deferred.succeed(releaseFailure, undefined);
+      yield* Deferred.await(classificationStarted);
+      yield* TestClock.adjust("250 millis");
       assert.instanceOf(yield* Deferred.await(terminated), AcpError.AcpTransportError);
       yield* Fiber.join(current);
       yield* Fiber.join(queued);

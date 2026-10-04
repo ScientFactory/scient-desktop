@@ -10,6 +10,7 @@ import { ProviderDriverKind } from "./providerInstance.ts";
 describe("provider display order", () => {
   it("pins the canonical first-party order", () => {
     expect(PROVIDER_DISPLAY_ORDER).toEqual([
+      "scient",
       "codex",
       "claudeAgent",
       "antigravity",
@@ -24,6 +25,10 @@ describe("provider display order", () => {
 
   it("publishes the Oh My Pi display name", () => {
     expect(PROVIDER_DISPLAY_NAMES[ProviderDriverKind.make("omp")]).toBe("Oh My Pi");
+  });
+
+  it("publishes the Scient Agent display name", () => {
+    expect(PROVIDER_DISPLAY_NAMES[ProviderDriverKind.make("scient")]).toBe("Scient");
   });
 
   it("places open plugin drivers after first-party providers alphabetically", () => {

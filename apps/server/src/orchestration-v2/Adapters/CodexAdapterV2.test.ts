@@ -651,6 +651,13 @@ describe("CodexAdapterV2 process spawning", () => {
           },
         },
       );
+      assert.deepEqual(CodexAdapterV2.codexThreadRuntimeParams({ threadId, configureMcp: false }), {
+        config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+      });
+      assert.equal(
+        McpProviderSession.readMcpProviderSession(threadId)?.providerSessionId,
+        "mcp-session-codex",
+      );
     } finally {
       McpProviderSession.clearMcpProviderSession(threadId);
     }
@@ -1631,6 +1638,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     onEvent: (event: ProviderAdapterV2Event) => Effect.Effect<unknown> = () => Effect.void,
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: (threadId: string) => Effect.Effect<unknown>,
+    configureMcp?: boolean,
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1687,6 +1695,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const runtime = yield* adapter.openSession({
         threadId,
         providerSessionId: ProviderSessionId.make(`provider-session-${transcript.scenario}`),
+        ...(configureMcp === undefined ? {} : { configureMcp }),
         modelSelection: CODEX_TEST_MODEL_SELECTION,
         runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
       });
@@ -1738,6 +1747,71 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         firstTerminal: Deferred.await(firstTerminal),
       };
     });
+
+  it.effect(
+    "withholds a live peer's MCP config and turn instructions when native injection is disabled",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const scenario = "disabled-mcp-peer";
+          const threadId = ThreadId.make(`thread-${scenario}`);
+          const nativeThreadId = "disabled-mcp-native";
+          const nativeTurnId = "disabled-mcp-turn";
+          McpProviderSession.setMcpProviderSession({
+            environmentId: EnvironmentId.make("disabled-mcp-environment"),
+            threadId,
+            providerSessionId: "disabled-mcp-live-peer",
+            providerInstanceId: CODEX_TEST_MODEL_SELECTION.instanceId,
+            endpoint: "http://127.0.0.1:43123/mcp",
+            authorizationHeader: "Bearer synthetic-live-peer",
+            capabilities: new Set(["orchestration", "skills:read"] as const),
+          });
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+          );
+          const transcript = makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" }),
+              {
+                type: "emit_inbound",
+                label: "completed",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                  },
+                },
+              },
+            ],
+          });
+          // Exact replay expectations require no peer MCP server/config or agent-facing tool instructions.
+          const harness = yield* makeCodexReplayHarness(
+            transcript,
+            undefined,
+            undefined,
+            undefined,
+            false,
+          );
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("disabled-mcp-attempt"),
+              text: "work",
+            }),
+          );
+          yield* harness.firstTerminal;
+          assert.equal(harness.terminalEvents()[0]?.status, "completed");
+          assert.equal(
+            McpProviderSession.readMcpProviderSession(threadId)?.providerSessionId,
+            "disabled-mcp-live-peer",
+          );
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      ),
+  );
 
   for (const response of ["supported", "unsupported", "invalid"] as const) {
     it.effect(`delivers native history with ${response} app-server protocol`, () =>

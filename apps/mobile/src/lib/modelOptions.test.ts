@@ -16,7 +16,7 @@ import {
 } from "./modelOptions";
 
 describe("mobile model options", () => {
-  it.each(["pi", "omp"])(
+  it.each(["pi", "omp", "scient"])(
     "uses curated %s defaults and does not reinsert a hidden saved model",
     (driver) => {
       const config = {

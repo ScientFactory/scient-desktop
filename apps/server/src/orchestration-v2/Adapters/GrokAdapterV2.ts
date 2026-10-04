@@ -6,6 +6,7 @@ import {
 } from "../../provider/acp/XAiAcpExtension.ts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import {
   defaultInstanceIdForDriver,
   GrokSettings,
@@ -17,7 +18,6 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -28,8 +28,11 @@ import { makeAcpNativeLoggerFactory } from "../../provider/acp/AcpNativeLogging.
 import {
   applyGrokAcpModelSelection,
   currentGrokModelIdFromSessionSetup,
+  currentGrokReasoningEffortFromSessionSetup,
+  GROK_DEFAULT_MODEL_SLUG,
   grokApprovalOptions,
   makeGrokAcpRuntime,
+  normalizeGrokReasoningEffort,
   resolveGrokAcpBaseModelId,
 } from "../../provider/acp/GrokAcpSupport.ts";
 import {
@@ -76,6 +79,7 @@ import {
 export const GROK_PROVIDER = ProviderDriverKind.make("grok");
 const GROK_DRIVER_KIND = GROK_PROVIDER;
 export const GROK_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(GROK_DRIVER_KIND);
+const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 
 export const GrokProviderCapabilitiesV2 = {
@@ -256,27 +260,102 @@ export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdap
     resolveModelId: (selection) => resolveGrokAcpBaseModelId(selection.model),
     applyModelSelection: ({ runtime, startResult, modelSelection }) =>
       Effect.gen(function* () {
-        const legacy = startResult.initializeResult.protocolVersion === 1;
-        const options = legacy ? [] : yield* runtime.getConfigOptions;
-        const configuredModel = options.find((option) => option.category === "model")?.currentValue;
-        return yield* applyGrokAcpModelSelection({
-          runtime: legacy
-            ? runtime
-            : { setSessionModel: (model) => runtime.setModel(model).pipe(Effect.as({})) },
-          currentModelId: legacy
-            ? currentGrokModelIdFromSessionSetup(startResult.sessionSetupResult)
-            : typeof configuredModel === "string"
-              ? configuredModel
-              : undefined,
-          requestedModelId: resolveGrokAcpBaseModelId(modelSelection.model),
-          mapError: (cause) => cause,
-        });
+        const generation = yield* runtime.getProtocolGeneration;
+        const requestedModelId = resolveGrokAcpBaseModelId(modelSelection.model);
+        const requestedReasoningEffort = getModelSelectionStringOptionValue(
+          modelSelection,
+          "reasoningEffort",
+        );
+        if (
+          requestedReasoningEffort !== undefined &&
+          normalizeGrokReasoningEffort(requestedReasoningEffort) === undefined
+        ) {
+          return yield* EffectAcpErrors.AcpRequestError.invalidParams(
+            "Grok cannot apply an invalid reasoning effort.",
+          );
+        }
+        if (generation === 1) {
+          const currentModelId = currentGrokModelIdFromSessionSetup(startResult.sessionSetupResult);
+          if (
+            requestedReasoningEffort !== undefined &&
+            requestedModelId === GROK_DEFAULT_MODEL_SLUG &&
+            currentModelId === undefined
+          ) {
+            return yield* EffectAcpErrors.AcpRequestError.invalidParams(
+              "Grok has not advertised a model for the requested reasoning effort.",
+            );
+          }
+          return yield* applyGrokAcpModelSelection({
+            runtime,
+            currentModelId,
+            currentReasoningEffort: currentGrokReasoningEffortFromSessionSetup(
+              startResult.sessionSetupResult,
+            ),
+            requestedModelId,
+            requestedReasoningEffort,
+            mapError: (cause) => cause,
+          });
+        }
+        if (generation !== 2) {
+          return yield* EffectAcpErrors.AcpRequestError.invalidParams(
+            "Grok has not negotiated an ACP wire generation.",
+          );
+        }
+        const modelOption = (yield* runtime.getConfigOptions).find(
+          (option) => option.category === "model",
+        );
+        if (requestedModelId !== GROK_DEFAULT_MODEL_SLUG) {
+          if (modelOption?.type !== "select") {
+            return yield* EffectAcpErrors.AcpRequestError.invalidParams(
+              "Grok does not advertise a model selection option.",
+            );
+          }
+          if (modelOption.currentValue !== requestedModelId)
+            yield* runtime.setConfigOption(modelOption.id, requestedModelId);
+          const applied = (yield* runtime.getConfigOptions).find(
+            (option) => option.id === modelOption.id,
+          )?.currentValue;
+          if (applied !== requestedModelId) {
+            return yield* EffectAcpErrors.AcpRequestError.invalidParams(
+              "Grok did not confirm the requested model.",
+            );
+          }
+        }
+        if (requestedReasoningEffort !== undefined) {
+          const effort = normalizeGrokReasoningEffort(requestedReasoningEffort);
+          const effortOption = (yield* runtime.getConfigOptions).find(
+            (option) =>
+              option.category === "thought_level" ||
+              option.id === "reasoningEffort" ||
+              option.id === "reasoning_effort",
+          );
+          if (effort === undefined || effortOption?.type !== "select") {
+            return yield* EffectAcpErrors.AcpRequestError.invalidParams(
+              "Grok does not advertise the requested reasoning effort.",
+            );
+          }
+          if (effortOption.currentValue !== effort)
+            yield* runtime.setConfigOption(effortOption.id, effort);
+          const applied = (yield* runtime.getConfigOptions).find(
+            (option) => option.id === effortOption.id,
+          )?.currentValue;
+          if (applied !== effort) {
+            return yield* EffectAcpErrors.AcpRequestError.invalidParams(
+              "Grok did not confirm the requested reasoning effort.",
+            );
+          }
+        }
+        const applied = (yield* runtime.getConfigOptions).find(
+          (option) => option.category === "model",
+        )?.currentValue;
+        return typeof applied === "string" ? applied : undefined;
       }),
     makeRuntime:
       options.makeRuntime ??
       (({ runtimePolicy, ...input }) =>
         makeGrokAcpRuntime({
           ...input,
+          configOptionTransport: "request-confirmed",
           interruptPromptOnCancel: input.interruptPromptOnCancel ?? false,
           grokSettings: options.settings,
           environment: options.environment,
@@ -291,7 +370,7 @@ export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdap
     promptFailure: (cause) =>
       makeProviderFailure({
         cause,
-        ...(Schema.is(EffectAcpErrors.AcpRequestError)(cause)
+        ...(isAcpRequestError(cause)
           ? {
               // Grok's own failure text rides on the cause; makeProviderFailure
               // redacts and bounds it before it reaches the user.
@@ -407,49 +486,3 @@ export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapte
       ),
   ),
 };
-
-const layer: Layer.Layer<
-  ProviderAdapter.ProviderAdapterV2,
-  never,
-  | Path.Path
-  | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
-  | FileSystem.FileSystem
-  | IdAllocator.IdAllocatorV2
-  | ProviderEventLoggers.ProviderEventLoggers
-  | ServerConfig.ServerConfig
-> = Layer.effect(
-  ProviderAdapter.ProviderAdapterV2,
-  Effect.gen(function* () {
-    const hostEnvironment = yield* HostProcessEnvironment;
-    const hostPlatform = yield* HostProcessPlatform;
-    const selfInvocation = yield* resolveSelfInvocation();
-    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const crypto = yield* Crypto.Crypto;
-    const fileSystem = yield* FileSystem.FileSystem;
-    const idAllocator = yield* IdAllocator.IdAllocatorV2;
-    const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
-    const serverConfig = yield* ServerConfig.ServerConfig;
-    const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-    const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
-    return makeGrokAdapterV2({
-      instanceId: GROK_DEFAULT_INSTANCE_ID,
-      settings: DEFAULT_GROK_SETTINGS,
-      environment: hostEnvironment,
-      hostPlatform,
-      childProcessSpawner,
-      crypto,
-      fileSystem,
-      idAllocator,
-      serverConfig,
-      selfInvocation,
-      continuationRequests,
-      nativeLogging: (threadId) =>
-        makeNativeLogger({
-          nativeEventLogger: providerEventLoggers.native,
-          provider: GROK_PROVIDER,
-          threadId,
-        }),
-    });
-  }),
-);

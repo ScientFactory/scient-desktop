@@ -18,7 +18,6 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
@@ -60,7 +59,7 @@ function samePullRequest(
 export type ProjectThreadShell = OrchestrationThreadShell & { readonly projectId: ProjectId };
 
 /** Startup lookups per settled thread before discovery gives up on it. */
-export const BACKFILL_ATTEMPTS = 5;
+const BACKFILL_ATTEMPTS = 5;
 
 interface RefreshRequest {
   readonly threadId: ThreadId | null;
@@ -437,5 +436,3 @@ export const make = Effect.gen(function* () {
 
   return { start, drain: worker.drain } satisfies ThreadPullRequestReactor["Service"];
 });
-
-export const layer = Layer.effect(ThreadPullRequestReactor, make);

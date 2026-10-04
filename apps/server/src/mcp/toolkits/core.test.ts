@@ -8,6 +8,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { McpAttachmentInput } from "./attachment/input.ts";
@@ -18,6 +19,7 @@ import * as ThreadManagement from "../../orchestration-v2/ThreadManagementServic
 import * as McpHttpServer from "../McpHttpServer.ts";
 import * as McpInvocationContext from "../McpInvocationContext.ts";
 import { OrchestratorToolkit } from "./orchestrator/tools.ts";
+import { ScientThreadsToolkit } from "./threads/tools.ts";
 import { PreviewToolkit } from "./preview/tools.ts";
 import { PreviewControlsToolkit } from "./previewControls/tools.ts";
 import { EnvironmentToolkit } from "./environment/tools.ts";
@@ -41,6 +43,7 @@ it("publishes unique tool names with reference-free object-root inputs", () => {
   const names = new Set<string>();
   for (const toolkit of [
     OrchestratorToolkit,
+    ScientThreadsToolkit,
     PreviewToolkit,
     WorktreeToolkit,
     ThreadToolkit,
@@ -66,13 +69,22 @@ it("publishes unique tool names with reference-free object-root inputs", () => {
         tool.name,
       ).toBe(true);
       for (const name of [tool.name, `mcp__t3-code__${tool.name}`, `T3-code.${tool.name}`]) {
-        expect(resolveT3McpToolPresentation(name)?.logo, name).toBe("t3-code");
+        expect(resolveT3McpToolPresentation(name)?.logo, name).toBe("scient");
         expect(resolveT3McpToolSummaryAction(name), name).not.toBeNull();
       }
     }
   }
-  expect(names.has("t3_thread_launch")).toBe(true);
+  expect(names.has("scient_thread_launch")).toBe(true);
   expect(names.has("t3_thread_start")).toBe(false);
+  expect(names.has("scient_thread_read")).toBe(true);
+  expect(names.has("scient_thread_inspect")).toBe(true);
+  expect(names.has("t3_thread_read")).toBe(false);
+  expect(
+    Context.get(ScientThreadsToolkit.tools.scient_thread_read.annotations, Tool.Readonly),
+  ).toBe(true);
+  expect(
+    Context.get(OrchestratorToolkit.tools.scient_thread_inspect.annotations, Tool.Readonly),
+  ).toBe(false);
 });
 
 const threadId = ThreadId.make("mcp-core-thread");
@@ -100,9 +112,9 @@ const client = McpSchema.McpServerClient.of({
 it.effect("checks capability before accessing services through the production registration", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
-    expect(server.tools.some(({ tool }) => tool.name === "t3_thread_organize")).toBe(true);
+    expect(server.tools.some(({ tool }) => tool.name === "scient_thread_organize")).toBe(true);
     const result = yield* server
-      .callTool({ name: "t3_thread_organize", arguments: { action: "pin" } })
+      .callTool({ name: "scient_thread_organize", arguments: { action: "pin" } })
       .pipe(
         Effect.provideService(McpInvocationContext.McpInvocationContext, {
           ...scope,
@@ -126,7 +138,7 @@ it.effect("returns a bounded public failure without serializing storage causes",
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
     const result = yield* server
-      .callTool({ name: "t3_thread_organize", arguments: { action: "pin" } })
+      .callTool({ name: "scient_thread_organize", arguments: { action: "pin" } })
       .pipe(
         Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
         Effect.provideService(McpSchema.McpServerClient, client),

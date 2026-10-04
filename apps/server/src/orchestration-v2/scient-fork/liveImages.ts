@@ -11,6 +11,8 @@ import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
 
 const AttachmentsJson = Schema.fromJsonString(Schema.Array(ChatImageAttachment));
+const encodeAttachments = Schema.encodeEffect(AttachmentsJson);
+const decodeAttachments = Schema.decodeEffect(AttachmentsJson);
 
 export const writeForkLiveImages = Effect.fn("writeForkLiveImages")(function* (
   sql: SqlClient.SqlClient,
@@ -21,7 +23,7 @@ export const writeForkLiveImages = Effect.fn("writeForkLiveImages")(function* (
     readonly createdAt: string;
   },
 ) {
-  const json = yield* Schema.encodeEffect(AttachmentsJson)(input.attachments);
+  const json = yield* encodeAttachments(input.attachments);
   yield* sql`INSERT OR REPLACE INTO scient_fork_live_images (thread_id, turn_id, attachments_json, captured_at)
     VALUES (${input.threadId}, ${input.turnId}, ${json}, ${input.createdAt})`;
 });
@@ -43,7 +45,7 @@ export const withForkLiveImages = Effect.fn("withForkLiveImages")(function* (
       (message.attachments ?? []).map((attachment) => attachment.id),
     ),
   );
-  const attachments = (yield* Schema.decodeEffect(AttachmentsJson)(row.attachments_json)).filter(
+  const attachments = (yield* decodeAttachments(row.attachments_json)).filter(
     (attachment) => !existingIds.has(attachment.id),
   );
   if (attachments.length === 0) return origin;

@@ -94,7 +94,7 @@ describe("AcpSessionRuntime", () => {
         concurrency: "unbounded",
       });
 
-      expect(first).toMatchObject({ protocolVersion: 1 });
+      expect(first).toMatchObject({ protocolVersion: 2 });
       expect(second).toEqual(first);
       expect(
         requestEvents.filter((event) => event.status === "started").map((event) => event.method),
@@ -139,6 +139,7 @@ describe("AcpSessionRuntime", () => {
           cwd: process.cwd(),
           clientInfo: { name: "t3-probe-start-test", version: "0.0.0" },
           authMethodId: "test",
+          authenticateEagerly: true,
           requestLogger: (event) =>
             Effect.sync(() => requestEvents.push(event)).pipe(Effect.asVoid),
         }),

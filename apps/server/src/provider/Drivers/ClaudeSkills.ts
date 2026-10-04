@@ -27,7 +27,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
-import { applyEdits, modify, parse, type ParseError } from "jsonc-parser/lib/esm/main.js";
+import { applyEdits, modify, parse, type ParseError } from "jsonc-parser";
 import { parse as parseYamlDocument } from "yaml";
 
 import { expandHomePath } from "../../pathExpansion.ts";

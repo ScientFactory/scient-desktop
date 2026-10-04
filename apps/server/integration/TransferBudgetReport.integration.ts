@@ -19,6 +19,9 @@ export interface WebSocketCatchUpMeasurement extends WebSocketTransferTotals {
 
 export interface TransferBudgetRun {
   readonly provider: ProviderDriverKind;
+  readonly startupTransport:
+    | "bounded-compact-http-with-live-cursor"
+    | "full-compact-http-with-live-cursor";
   readonly threadSnapshot: HttpTransferMeasurement;
   /** One socket holding only the thread subscription. This is the capped measurement. */
   readonly measuredTurnWebSocket: WebSocketTransferTotals;
@@ -96,10 +99,10 @@ export function formatTransferBudgetResult(runs: ReadonlyArray<TransferBudgetRun
 
   return `${JSON.stringify(
     {
-      schemaVersion: 1,
+      schemaVersion: 2,
       scenario: {
         id: "thread-transfer-v2",
-        startupTransport: "bounded-http-with-live-cursor",
+        startupTransport: [...new Set(runs.map((run) => run.startupTransport))],
         historyTurns: TRANSFER_HISTORY_TURN_COUNT,
         historyCommandToolsPerTurn: TRANSFER_HISTORY_TOOLS_PER_TURN,
         historyMcpResultBytes: TRANSFER_HISTORY_MCP_RESULT_BYTES,
@@ -217,7 +220,11 @@ export function formatTransferBudgetReport(runs: ReadonlyArray<TransferBudgetRun
     "",
     "## Detailed measurements",
     "",
-    "Startup measures the shared client's bounded HTTP snapshot and live cursor. Earlier pages are requested separately and verified to reconstruct the complete retained history.",
+    ...[...new Set(runs.map((run) => run.startupTransport))].map((transport) =>
+      transport === "bounded-compact-http-with-live-cursor"
+        ? "Startup measures the shared client's bounded compact HTTP snapshot and live cursor. Earlier pages are requested separately and verified to reconstruct the complete retained history."
+        : "Startup measures the shared client's full compact HTTP snapshot and live cursor. The complete projection is checked against the default legacy response on the same endpoint.",
+    ),
     "",
     "| Provider | Phase | Metric | Observed | Budget | Result |",
     "| --- | --- | --- | ---: | ---: | --- |",

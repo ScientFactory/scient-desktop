@@ -1595,31 +1595,49 @@ export function resolveMergedStageDependencies(input: {
 
 export class CursorSdkPlatformPackagesMissingError extends Schema.TaggedError<CursorSdkPlatformPackagesMissingError>()(
   "CursorSdkPlatformPackagesMissingError",
-  { nodeModulesDir: Schema.String },
+  { nodeModulesDir: Schema.String, missingPackages: Schema.Array(Schema.String) },
 ) {
   override get message(): string {
-    return `Cursor SDK platform helpers are missing from ${this.nodeModulesDir}. Install the target platform optional dependencies before packaging.`;
+    return `Cursor SDK platform helpers are missing from ${this.nodeModulesDir}: ${this.missingPackages.join(", ")}. Install the target platform optional dependencies before packaging.`;
   }
 }
 
 /** Cursor's helper lookup falls through the archive to this real resources tree. */
 export const stageCursorSdkPlatformPackages = Effect.fn("stageCursorSdkPlatformPackages")(
-  function* (nodeModulesDir: string, destination: string) {
+  function* (
+    nodeModulesDir: string,
+    destination: string,
+    target: {
+      readonly platform: typeof BuildPlatform.Type;
+      readonly arch: typeof BuildArch.Type;
+      readonly linuxServerBackend?: boolean;
+    },
+  ) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    yield* fs.makeDirectory(destination, { recursive: true });
+    const os = target.platform === "mac" ? "darwin" : target.platform === "win" ? "win32" : "linux";
+    const architectures = target.arch === "universal" ? ["arm64", "x64"] : [target.arch];
+    const platforms = target.linuxServerBackend && os !== "linux" ? [os, "linux"] : [os];
+    const packages = platforms.flatMap((platform) =>
+      architectures.map((arch) => `sdk-${platform}-${arch}`),
+    );
     const sdkDirectory = path.join(nodeModulesDir, "@cursor/sdk");
     if (!(yield* fs.exists(sdkDirectory))) {
-      return yield* new CursorSdkPlatformPackagesMissingError({ nodeModulesDir });
+      return yield* new CursorSdkPlatformPackagesMissingError({
+        nodeModulesDir,
+        missingPackages: packages,
+      });
     }
     // pnpm's isolated layout puts optional packages beside the real SDK directory.
     const cursorDirectory = path.dirname(yield* fs.realPath(sdkDirectory));
-    const packages = (yield* fs.readDirectory(cursorDirectory)).filter((name) =>
-      name.startsWith("sdk-"),
-    );
-    if (packages.length === 0) {
-      return yield* new CursorSdkPlatformPackagesMissingError({ nodeModulesDir });
+    const missingPackages: string[] = [];
+    for (const name of packages) {
+      if (!(yield* fs.exists(path.join(cursorDirectory, name)))) missingPackages.push(name);
     }
+    if (missingPackages.length > 0) {
+      return yield* new CursorSdkPlatformPackagesMissingError({ nodeModulesDir, missingPackages });
+    }
+    yield* fs.makeDirectory(destination, { recursive: true });
     for (const name of packages) {
       const source = yield* fs.realPath(path.join(cursorDirectory, name));
       yield* fs.copy(source, path.join(destination, name));
@@ -3329,6 +3347,7 @@ export const stageAndPackWindowsServerAsar = Effect.fn("stageAndPackWindowsServe
     yield* stageCursorSdkPlatformPackages(
       path.join(input.sourceDir, "node_modules"),
       input.cursorSdkResourcesPath,
+      { platform: "win", arch: input.arch, linuxServerBackend: true },
     );
     yield* packWindowsServerAsar(input);
   },
@@ -4348,6 +4367,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     yield* stageCursorSdkPlatformPackages(
       path.join(stageAppDir, "node_modules"),
       cursorSdkResourcesPath,
+      { platform: options.platform, arch: options.arch },
     );
   }
 

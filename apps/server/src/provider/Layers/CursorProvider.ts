@@ -9,21 +9,13 @@ import type {
   ServerProviderModel,
   ServerProviderState,
 } from "@t3tools/contracts";
-import type * as AcpSchemaV2 from "effect-acp/schema";
 import type * as EffectAcpSchema from "effect-acp/compat";
-import { causeErrorTag } from "@t3tools/shared/observability";
-import * as Cache from "effect/Cache";
-import * as Duration from "effect/Duration";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
-import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { HttpClient } from "effect/unstable/http";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import {
@@ -44,12 +36,6 @@ import {
   type CommandResult,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
-import {
-  enrichProviderSnapshotWithVersionAdvisory,
-  type ProviderMaintenanceCapabilities,
-} from "../providerMaintenance.ts";
-import * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
-import { CursorListAvailableModelsResponse } from "../acp/CursorAcpExtension.ts";
 import { cursorCliArgs } from "./CursorCli.ts";
 import type { ServerProviderShape } from "../Services/ServerProvider.ts";
 import * as CursorSdkCatalog from "./CursorSdkCatalog.ts";
@@ -144,10 +130,6 @@ export const makeCursorCommandCatalog = Effect.fn("makeCursorCommandCatalog")(fu
   };
 });
 
-const decodeCursorListAvailableModelsResponse = Schema.decodeUnknownEffect(
-  CursorListAvailableModelsResponse,
-);
-
 const CURSOR_PRESENTATION = {
   displayName: "Cursor",
   supportsConversationRollback: false,
@@ -176,6 +158,7 @@ export function buildInitialCursorProviderSnapshot(
     if (!cursorSettings.enabled) {
       return buildServerProvider({
         presentation: CURSOR_PRESENTATION,
+        slashCommands: [COMPACT_SLASH_COMMAND],
         enabled: false,
         checkedAt,
         models,
@@ -191,6 +174,7 @@ export function buildInitialCursorProviderSnapshot(
 
     return buildServerProvider({
       presentation: CURSOR_PRESENTATION,
+      slashCommands: [COMPACT_SLASH_COMMAND],
       enabled: true,
       checkedAt,
       models,
@@ -208,12 +192,6 @@ export function buildInitialCursorProviderSnapshot(
 interface CursorSessionSelectOption {
   readonly value: string;
   readonly name: string;
-}
-
-interface CursorAcpDiscoveredModel {
-  readonly slug: string;
-  readonly name: string;
-  readonly capabilities: ModelCapabilities;
 }
 
 function flattenSessionConfigSelectOptions(
@@ -299,260 +277,6 @@ function isCursorFastConfigOption(option: EffectAcpSchema.SessionConfigOption): 
   const name = option.name.trim().toLowerCase();
   return id === "fast" || name === "fast" || name.includes("fast mode");
 }
-
-function isBooleanLikeConfigOption(option: EffectAcpSchema.SessionConfigOption): boolean {
-  if (option.type === "boolean") {
-    return true;
-  }
-  if (option.type !== "select") {
-    return false;
-  }
-  const values = new Set(
-    flattenSessionConfigSelectOptions(option).map((entry) => entry.value.trim().toLowerCase()),
-  );
-  return values.has("true") && values.has("false");
-}
-
-function getBooleanCurrentValue(
-  option: EffectAcpSchema.SessionConfigOption | undefined,
-): boolean | undefined {
-  if (!option) {
-    return undefined;
-  }
-  if (option.type === "boolean") {
-    return option.currentValue;
-  }
-  if (option.type !== "select") {
-    return undefined;
-  }
-  const normalized = option.currentValue?.trim().toLowerCase();
-  if (normalized === "true") {
-    return true;
-  }
-  if (normalized === "false") {
-    return false;
-  }
-  return undefined;
-}
-
-export function buildCursorCapabilitiesFromConfigOptions(
-  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
-): ModelCapabilities {
-  if (!configOptions || configOptions.length === 0) {
-    return EMPTY_CAPABILITIES;
-  }
-
-  const reasoningConfig = findCursorEffortConfigOption(configOptions);
-  const reasoningEffortLevels =
-    reasoningConfig?.type === "select"
-      ? flattenSessionConfigSelectOptions(reasoningConfig).flatMap((entry) => {
-          const normalizedValue = normalizeCursorReasoningValue(entry.value);
-          if (!normalizedValue) {
-            return [];
-          }
-          return [
-            {
-              value: normalizedValue,
-              label: entry.name,
-              ...(normalizeCursorReasoningValue(reasoningConfig.currentValue) === normalizedValue
-                ? { isDefault: true }
-                : {}),
-            },
-          ];
-        })
-      : [];
-
-  const contextOption = configOptions.find(
-    (option) => option.category === "model_config" && isCursorContextConfigOption(option),
-  );
-  const contextWindowOptions =
-    contextOption?.type === "select"
-      ? flattenSessionConfigSelectOptions(contextOption).map((entry) => {
-          if (contextOption.currentValue === entry.value) {
-            return {
-              value: entry.value,
-              label: entry.name,
-              isDefault: true,
-            };
-          }
-          return {
-            value: entry.value,
-            label: entry.name,
-          };
-        })
-      : [];
-
-  const fastOption = configOptions.find(
-    (option) => option.category === "model_config" && isCursorFastConfigOption(option),
-  );
-  const fastCurrentValue = getBooleanCurrentValue(fastOption);
-  const optionDescriptors = [
-    ...(reasoningEffortLevels.length > 0
-      ? [
-          buildSelectOptionDescriptor({
-            id: "reasoning",
-            label: reasoningConfig?.name?.trim() || "Reasoning",
-            options: reasoningEffortLevels,
-          }),
-        ]
-      : []),
-    ...(contextWindowOptions.length > 0
-      ? [
-          buildSelectOptionDescriptor({
-            id: "contextWindow",
-            label: contextOption?.name?.trim() || "Context Window",
-            options: contextWindowOptions,
-          }),
-        ]
-      : []),
-    ...(fastOption && isBooleanLikeConfigOption(fastOption)
-      ? [
-          typeof fastCurrentValue === "boolean"
-            ? buildBooleanOptionDescriptor({
-                id: "fastMode",
-                label: fastOption.name?.trim() || "Fast Mode",
-                currentValue: fastCurrentValue,
-              })
-            : buildBooleanOptionDescriptor({
-                id: "fastMode",
-                label: fastOption.name?.trim() || "Fast Mode",
-              }),
-        ]
-      : []),
-  ];
-
-  return createModelCapabilities({
-    optionDescriptors,
-  });
-}
-
-function buildCursorDiscoveredModels(
-  discoveredModels: ReadonlyArray<CursorAcpDiscoveredModel>,
-): ReadonlyArray<ServerProviderModel> {
-  const seen = new Set<string>();
-  return discoveredModels.flatMap((model) => {
-    if (!model.slug || seen.has(model.slug)) {
-      return [];
-    }
-    seen.add(model.slug);
-    return [
-      {
-        slug: model.slug,
-        name: model.name,
-        isCustom: false,
-        capabilities: model.capabilities,
-      } satisfies ServerProviderModel,
-    ];
-  });
-}
-
-type AcpConfigOptionV2 = AcpSchemaV2.SessionConfigOption;
-type DrivableAcpConfigOptionV2 = Extract<
-  AcpConfigOptionV2,
-  { readonly type: "select" } | { readonly type: "boolean" }
->;
-
-function isDrivableCursorConfigOption(
-  option: AcpConfigOptionV2,
-): option is DrivableAcpConfigOptionV2 {
-  return option.type === "select" || option.type === "boolean";
-}
-
-/**
- * ACP v2 renamed a session config option's `id` to `configId` and widened the
- * union with option kinds this model picker cannot drive. The legacy
- * config-option helpers address an option by its pre-v2 `id`, so map the
- * decoded response back and drop the kinds they do not handle.
- */
-function toLegacyCursorConfigOptions(
-  options: ReadonlyArray<AcpConfigOptionV2> | undefined,
-): ReadonlyArray<EffectAcpSchema.SessionConfigOption> {
-  return (
-    options?.flatMap((option): ReadonlyArray<EffectAcpSchema.SessionConfigOption> => {
-      if (!isDrivableCursorConfigOption(option)) {
-        return [];
-      }
-      const identity = {
-        id: option.configId,
-        name: option.name,
-        ...(option.description === undefined ? {} : { description: option.description }),
-        ...(option.category === undefined ? {} : { category: option.category }),
-      };
-      return option.type === "select"
-        ? [
-            {
-              ...identity,
-              type: "select" as const,
-              currentValue: option.currentValue,
-              options: option.options,
-            },
-          ]
-        : [{ ...identity, type: "boolean" as const, currentValue: option.currentValue }];
-    }) ?? []
-  );
-}
-
-function buildCursorDiscoveredModelsFromAvailableModelsResponse(
-  response: typeof CursorListAvailableModelsResponse.Type,
-): ReadonlyArray<ServerProviderModel> {
-  return buildCursorDiscoveredModels(
-    response.models.flatMap((model) => {
-      const slug = model.value.trim();
-      const name = model.name.trim();
-      if (!slug || !name) {
-        return [];
-      }
-
-      return [
-        {
-          slug,
-          name,
-          capabilities: buildCursorCapabilitiesFromConfigOptions(
-            toLegacyCursorConfigOptions(model.configOptions),
-          ),
-        },
-      ];
-    }),
-  );
-}
-
-const makeCursorAcpProbeRuntime = (
-  cursorSettings: CursorSettings,
-  environment?: NodeJS.ProcessEnv,
-) =>
-  Effect.gen(function* () {
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const acpContext = yield* Layer.build(
-      AcpSessionRuntime.layer({
-        spawn: {
-          command: cursorSettings.binaryPath || "cursor-agent",
-          args: [
-            ...(cursorSettings.apiEndpoint ? (["-e", cursorSettings.apiEndpoint] as const) : []),
-            "acp",
-          ],
-          cwd: process.cwd(),
-          ...(environment ? { env: environment } : {}),
-        },
-        cwd: process.cwd(),
-        clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
-        authMethodId: "cursor_login",
-        clientCapabilities: CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES,
-      }).pipe(Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner))),
-    );
-    return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
-      Effect.provide(acpContext),
-    );
-  });
-
-const withCursorAcpProbeRuntime = <A, E, R>(
-  cursorSettings: CursorSettings,
-  useRuntime: (acp: AcpSessionRuntime.AcpSessionRuntime["Service"]) => Effect.Effect<A, E, R>,
-  environment?: NodeJS.ProcessEnv,
-) =>
-  makeCursorAcpProbeRuntime(cursorSettings, environment).pipe(
-    Effect.flatMap(useRuntime),
-    Effect.scoped,
-  );
 
 function normalizeCursorConfigOptionToken(value: string | null | undefined): string {
   return (
@@ -654,47 +378,6 @@ export function resolveCursorAcpConfigUpdates(
 
   return updates;
 }
-
-const discoverCursorModelsViaListAvailableModels = (
-  cursorSettings: CursorSettings,
-  environment?: NodeJS.ProcessEnv,
-) =>
-  withCursorAcpProbeRuntime(
-    cursorSettings,
-    (acp) =>
-      Effect.gen(function* () {
-        yield* acp.start();
-        const response = yield* acp.request("cursor/list_available_models", {});
-        const decoded = yield* decodeCursorListAvailableModelsResponse(response);
-        return buildCursorDiscoveredModelsFromAvailableModelsResponse(decoded);
-      }),
-    environment,
-  );
-
-export const discoverCursorModelsViaAcp = (
-  cursorSettings: CursorSettings,
-  environment?: NodeJS.ProcessEnv,
-) => discoverCursorModelsViaListAvailableModels(cursorSettings, environment);
-
-// Each driver instance owns its cache; version and account changes invalidate it.
-export const makeCursorModelDiscovery = Effect.fn("makeCursorModelDiscovery")(function* (
-  cursorSettings: CursorSettings,
-  environment?: NodeJS.ProcessEnv,
-) {
-  const cache = yield* Cache.makeWith(
-    (_key: string) => discoverCursorModelsViaAcp(cursorSettings, environment),
-    {
-      capacity: 1,
-      timeToLive: (exit) =>
-        Exit.isSuccess(exit) && exit.value.length > 0 ? Duration.minutes(30) : Duration.zero,
-    },
-  );
-  return {
-    discover: (about: Pick<CursorAboutResult, "version" | "auth">) =>
-      Cache.get(cache, JSON.stringify([about.version, about.auth])),
-    invalidate: Cache.invalidateAll(cache),
-  };
-});
 
 function getCursorFallbackModels(
   cursorSettings: Pick<CursorSettings, "customModels">,
@@ -1186,6 +869,7 @@ export function buildCursorProviderSnapshot(input: {
   const message = joinProviderMessages(input.parsed.message, input.discoveryWarning);
   return buildServerProvider({
     presentation: CURSOR_PRESENTATION,
+    slashCommands: [COMPACT_SLASH_COMMAND],
     enabled: input.cursorSettings.enabled,
     checkedAt: input.checkedAt,
     models: providerModelsFromSettings(
@@ -1215,6 +899,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
   if (!cursorSettings.enabled) {
     return buildServerProvider({
       presentation: CURSOR_PRESENTATION,
+      slashCommands: [COMPACT_SLASH_COMMAND],
       enabled: false,
       checkedAt,
       models: fallbackModels,
@@ -1232,6 +917,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
   if (!sdkApiKey) {
     return buildServerProvider({
       presentation: CURSOR_PRESENTATION,
+      slashCommands: [COMPACT_SLASH_COMMAND],
       enabled: cursorSettings.enabled,
       checkedAt,
       models: fallbackModels,
@@ -1257,6 +943,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
     const authenticationFailure = catalogResult.failure.authenticationFailure;
     return buildServerProvider({
       presentation: CURSOR_PRESENTATION,
+      slashCommands: [COMPACT_SLASH_COMMAND],
       enabled: cursorSettings.enabled,
       checkedAt,
       models: fallbackModels,
@@ -1277,6 +964,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
   if (Option.isNone(catalogResult.success)) {
     return buildServerProvider({
       presentation: CURSOR_PRESENTATION,
+      slashCommands: [COMPACT_SLASH_COMMAND],
       enabled: cursorSettings.enabled,
       checkedAt,
       models: fallbackModels,
@@ -1306,41 +994,3 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       : {}),
   });
 });
-
-/**
- * Background maintenance enrichment for a Cursor snapshot.
- *
- * Used by `CursorDriver` as the `makeManagedServerProvider.enrichSnapshot`
- * hook: republishes update/version advisory metadata without performing any
- * model or capability discovery.
- */
-export const enrichCursorSnapshot = (input: {
-  readonly settings: CursorSettings;
-  readonly snapshot: ServerProvider;
-  readonly maintenanceCapabilities: ProviderMaintenanceCapabilities;
-  readonly enableProviderUpdateChecks?: boolean;
-  readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
-  readonly stampIdentity?: (snapshot: ServerProvider) => ServerProvider;
-  readonly httpClient: HttpClient.HttpClient;
-}): Effect.Effect<void> => {
-  const { settings, snapshot, publishSnapshot } = input;
-  const stampIdentity = input.stampIdentity ?? ((value) => value);
-
-  if (!settings.enabled || snapshot.auth.status === "unauthenticated") {
-    return Effect.void;
-  }
-
-  return enrichProviderSnapshotWithVersionAdvisory(snapshot, input.maintenanceCapabilities, {
-    enableProviderUpdateChecks: input.enableProviderUpdateChecks,
-  }).pipe(
-    Effect.provideService(HttpClient.HttpClient, input.httpClient),
-    Effect.flatMap((enrichedSnapshot) =>
-      publishSnapshot(stampIdentity(enrichedSnapshot)).pipe(Effect.as(enrichedSnapshot)),
-    ),
-    Effect.catchCause((cause) =>
-      Effect.logWarning("Cursor version advisory enrichment failed", {
-        errorTag: causeErrorTag(cause),
-      }).pipe(Effect.asVoid),
-    ),
-  );
-};

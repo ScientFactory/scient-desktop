@@ -1084,6 +1084,54 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
         );
       });
 
+      it("replaces Scient Agent's models on a successful discovery and keeps them when the check fails", () => {
+        const model = (slug: string) => ({ slug, name: slug, isCustom: false, capabilities: null });
+        const previous: ServerProvider = {
+          driver: ProviderDriverKind.make("scient"),
+          instanceId: ProviderInstanceId.make("scient"),
+          enabled: true,
+          installed: true,
+          status: "ready",
+          auth: { status: "unknown" },
+          version: "0.1.0",
+          checkedAt: "2026-10-02T00:00:00.000Z",
+          models: [model("scient_one/model-a"), model("scient_two/model-b")],
+          slashCommands: [],
+          skills: [],
+        };
+        // A connection was detached: its model must leave the picker.
+        const refreshed: ServerProvider = { ...previous, models: [model("scient_one/model-a")] };
+        assert.deepStrictEqual(mergeProviderSnapshot(previous, refreshed).models, refreshed.models);
+        // The agent has no model left at all.
+        const empty: ServerProvider = { ...previous, status: "warning", models: [] };
+        assert.deepStrictEqual(mergeProviderSnapshot(previous, empty).models, []);
+        const failed: ServerProvider = { ...empty, status: "error" };
+        assert.deepStrictEqual(mergeProviderSnapshot(previous, failed).models, previous.models);
+        // A model that lost its reasoning levels must not keep the old selector.
+        const withReasoning: ServerProvider = {
+          ...previous,
+          models: [
+            {
+              ...model("scient_one/model-a"),
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "thinkingLevel",
+                    type: "select",
+                    label: "Thinking",
+                    options: [{ id: "high", label: "High" }],
+                  },
+                ],
+              },
+            },
+          ],
+        };
+        assert.strictEqual(
+          mergeProviderSnapshot(withReasoning, refreshed).models[0]?.capabilities,
+          null,
+        );
+      });
+
       it("retains stale Droid models when the installed CLI probe fails", () => {
         const previousProvider = {
           instanceId: ProviderInstanceId.make("droid"),
@@ -3385,6 +3433,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
                 "omp",
                 "opencode",
                 "pi",
+                "scient",
               ]);
               assert.strictEqual(cursorProvider?.enabled, false);
               assert.strictEqual(cursorProvider?.status, "disabled");

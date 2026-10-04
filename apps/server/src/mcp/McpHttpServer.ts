@@ -11,7 +11,7 @@ import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import type * as Types from "effect/Types";
-import { McpSchema, McpServer, Tool, Toolkit } from "effect/unstable/ai";
+import { McpSchema, McpServer, Tool } from "effect/unstable/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { PreviewAutomationError } from "@t3tools/contracts";
 
@@ -58,7 +58,7 @@ import { ScientDocumentsToolkitHandlersLive } from "./toolkits/documents/handler
 import { ScientDocumentsToolkit } from "./toolkits/documents/tools.ts";
 import { ScientComputeToolkitHandlersLive } from "./toolkits/compute/handlers.ts";
 import { ScientComputeToolkit } from "./toolkits/compute/tools.ts";
-// SCIENT-THREAD-READ: Scient-owned t3_thread_read bridge; delete with V2's orchestrator toolkit.
+// Scient's read-only history contract has a narrower grant than orchestration inspection.
 import { ScientThreadsToolkitHandlersLive } from "./toolkits/threads/handlers.ts";
 import { ScientThreadsToolkit } from "./toolkits/threads/tools.ts";
 
@@ -700,15 +700,9 @@ export const ScientThreadsToolkitRegistrationLive = registerScientToolkit(
   ScientThreadsToolkit,
 ).pipe(Layer.provide(ScientThreadsToolkitHandlersLive));
 
-// Scient owns the shipped t3_thread_read contract and its grant. Registering
-// the generic upstream tool under the same name would replace that authority.
-const hostOrchestratorToolkit = Toolkit.make(
-  ...Object.values(OrchestratorToolkit.tools).filter(
-    (tool): tool is Exclude<typeof tool, typeof OrchestratorToolkit.tools.t3_thread_read> =>
-      tool !== OrchestratorToolkit.tools.t3_thread_read,
-  ),
-);
-export const OrchestratorToolkitRegistrationLive = McpServer.toolkit(hostOrchestratorToolkit).pipe(
+// Orchestration inspection can acknowledge child results. It has a distinct
+// name and grant from Scient's read-only omitted-history reader.
+export const OrchestratorToolkitRegistrationLive = McpServer.toolkit(OrchestratorToolkit).pipe(
   Layer.provide(OrchestratorToolkitHandlersLive),
   Layer.provide(OrchestratorMcpService.layer),
   Layer.provide(ThreadMetadataMcpService.layer),
@@ -758,7 +752,7 @@ const deviceTools = Object.values(DeviceToolkit.tools);
 /** Host-owned tools retain their domain admission. Discovery must declare the
  * exact objects registered below rather than treating unknown names as owned. */
 export const hostMcpTools: ReadonlyArray<Tool.Any> = [
-  ...Object.values(hostOrchestratorToolkit.tools),
+  ...Object.values(OrchestratorToolkit.tools),
   ...Object.values(ThreadToolkit.tools),
   ...Object.values(AttachmentToolkit.tools),
   ...Object.values(ProjectToolkit.tools),

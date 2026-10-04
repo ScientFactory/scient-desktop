@@ -72,6 +72,23 @@ beforeEach(() => {
 });
 
 describe("rightPanelStore", () => {
+  it("preserves a closed inline panel while discarding transient popover visibility", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {},
+        threadPanelVisibilityByThreadKey: {
+          closed: { inlineOpen: false, popoverOpen: true },
+          open: { inlineOpen: true, popoverOpen: true },
+          malformed: null,
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {},
+      threadPanelVisibilityByThreadKey: {
+        closed: { inlineOpen: false, popoverOpen: false },
+      },
+    });
+  });
   it("preserves both parallel v16 surface families when migrating to the combined schema", () => {
     const compute = scientComputeSurface({
       cwd: "/project",
@@ -107,6 +124,7 @@ describe("rightPanelStore", () => {
         },
       }),
     ).toEqual({
+      threadPanelVisibilityByThreadKey: {},
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: true,
@@ -334,6 +352,7 @@ describe("rightPanelStore", () => {
         },
       }),
     ).toEqual({
+      threadPanelVisibilityByThreadKey: {},
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: false,
@@ -356,6 +375,7 @@ describe("rightPanelStore", () => {
         },
       }),
     ).toEqual({
+      threadPanelVisibilityByThreadKey: {},
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: true,
@@ -394,6 +414,7 @@ describe("rightPanelStore", () => {
         },
       }),
     ).toEqual({
+      threadPanelVisibilityByThreadKey: {},
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: true,
@@ -437,6 +458,7 @@ describe("rightPanelStore", () => {
         },
       }),
     ).toEqual({
+      threadPanelVisibilityByThreadKey: {},
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: true,
@@ -481,7 +503,10 @@ describe("rightPanelStore", () => {
           "env-1:thread-A": panelState,
         },
       }),
-    ).toEqual({ byThreadKey: { "env-1:thread-A": panelState } });
+    ).toEqual({
+      threadPanelVisibilityByThreadKey: {},
+      byThreadKey: { "env-1:thread-A": panelState },
+    });
   });
 
   it.each([
@@ -508,6 +533,7 @@ describe("rightPanelStore", () => {
         },
       }),
     ).toEqual({
+      threadPanelVisibilityByThreadKey: {},
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: false,
@@ -545,6 +571,7 @@ describe("rightPanelStore", () => {
         },
       }),
     ).toEqual({
+      threadPanelVisibilityByThreadKey: {},
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: true,
@@ -581,6 +608,7 @@ describe("rightPanelStore", () => {
         },
       }),
     ).toEqual({
+      threadPanelVisibilityByThreadKey: {},
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: true,

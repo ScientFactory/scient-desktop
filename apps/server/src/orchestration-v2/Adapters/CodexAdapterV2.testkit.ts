@@ -237,13 +237,39 @@ const decodeCodexAppServerReplayTranscript = Schema.decodeUnknownEffect(
   CodexReplay.CodexAppServerReplayTranscript,
 );
 
+/** Adapt the upstream capture's host identity; all protocol expectations remain exact. */
+function materializeScientClientIdentity(transcript: ProviderReplayTranscript) {
+  return {
+    ...transcript,
+    entries: transcript.entries.map((entry) => {
+      if (entry.type !== "expect_outbound" || !Predicate.isObject(entry.frame)) return entry;
+      const frame = entry.frame;
+      if (frame.method !== "initialize" || !Predicate.isObject(frame.params)) return entry;
+      const params = frame.params;
+      if (!Predicate.isObject(params.clientInfo)) return entry;
+      const clientInfo = params.clientInfo;
+      if (clientInfo.name !== "T3 Code" || clientInfo.title !== "T3 Code") return entry;
+      return {
+        ...entry,
+        frame: {
+          ...frame,
+          params: {
+            ...params,
+            clientInfo: { ...clientInfo, name: "t3code_desktop", title: "Scient Desktop" },
+          },
+        },
+      };
+    }),
+  };
+}
+
 export const CodexOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness<
   CodexReplay.CodexAppServerReplayTranscript,
   CodexOrchestratorReplayHarnessError
 > = {
   driver: CodexAdapterV2.CODEX_DRIVER_KIND,
   decodeTranscript: (transcript) =>
-    decodeCodexAppServerReplayTranscript(transcript).pipe(
+    decodeCodexAppServerReplayTranscript(materializeScientClientIdentity(transcript)).pipe(
       Effect.mapError(
         (cause) =>
           new CodexReplayTranscriptDecodeError({

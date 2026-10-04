@@ -525,6 +525,8 @@ layer("ProviderEventIngestorV2", (it) => {
       });
 
       const identity: ProviderEventRouteIdentity = {
+        driver: CODEX_DRIVER,
+        providerInstanceId: modelSelection.instanceId,
         threadId: threadEvent.threadId,
         runId: currentRunId,
         attemptId: RunAttemptId.make("attempt:provider-event-inherited:current"),
@@ -643,12 +645,16 @@ layer("ProviderEventIngestorV2", (it) => {
       });
 
       const priorIdentity: ProviderEventRouteIdentity = {
+        driver: CODEX_DRIVER,
+        providerInstanceId: modelSelection.instanceId,
         threadId: threadEvent.threadId,
         runId: priorRunId,
         attemptId: RunAttemptId.make("attempt:provider-event-completed:prior"),
         providerThreadId,
       };
       const currentIdentity: ProviderEventRouteIdentity = {
+        driver: CODEX_DRIVER,
+        providerInstanceId: modelSelection.instanceId,
         threadId: threadEvent.threadId,
         runId: currentRunId,
         attemptId: RunAttemptId.make("attempt:provider-event-completed:current"),

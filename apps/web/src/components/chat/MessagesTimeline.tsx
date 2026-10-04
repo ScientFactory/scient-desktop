@@ -39,7 +39,6 @@ import {
   type RunId,
   type ThreadId,
   type ToolActivityIcon,
-  type TurnId,
   type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -96,11 +95,7 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import {
-  LegendList,
-  type LegendListRef,
-  type MaintainScrollAtEndOptions,
-} from "@legendapp/list/react";
+import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { FileDiff } from "@pierre/diffs/react";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 import {
@@ -129,12 +124,11 @@ import {
 } from "../../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown, { ChatMarkdownAssetImage } from "../ChatMarkdown";
-import { ScientSymbol } from "../ScientSymbol";
+import { ScientSymbol, ScientSymbolMono } from "../ScientSymbol";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Root, RootContent } from "mdast";
 
-import { T3Wordmark } from "../T3Wordmark";
 import { ThreadContextChip } from "../ThreadContextChip";
 import {
   BotIcon,
@@ -418,26 +412,7 @@ function timelineRowsKey(data: readonly unknown[]) {
 /** Older-history pages a missing saved message may load before falling back. */
 const MAX_READING_HISTORY_PAGES = 2;
 
-const TIMELINE_MAINTAIN_SCROLL_AT_END = {
-  animated: false,
-  on: {
-    dataChange: true,
-    // Composer inset changes must not move already-visible messages. New
-    // rows and row growth still keep live-follow pinned through the other
-    // triggers below.
-    footerLayout: false,
-    itemLayout: true,
-    layout: true,
-  },
-} as const satisfies MaintainScrollAtEndOptions;
 const EMPTY_TIMELINE_RUNS: ReadonlyArray<HandoffTimelineRun> = [];
-// Streamed text lands a paragraph at a time. A smooth scroll to the end
-// turns each landing into a short glide instead of a jump. Thread switches
-// and layout settles keep the instant variant so nothing visibly travels.
-const TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH = {
-  ...TIMELINE_MAINTAIN_SCROLL_AT_END,
-  animated: true,
-} as const satisfies MaintainScrollAtEndOptions;
 
 // ---------------------------------------------------------------------------
 // Props (public API)
@@ -612,7 +587,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onIsAtEndChange,
   onUnreadBelowChange,
   onContentOverflowChange,
-  liveFollowEnabled = true,
   onToolOutputCollapsedAtEnd,
   onManualNavigation,
   cancelPositionRestoreRef,
@@ -671,9 +645,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const restoringThreadPosition = positionedThreadKey !== listIdentityKey;
   const listIdentityRef = useRef(listIdentityKey);
   const previousLatestRunRef = useRef(latestRun);
-  // The list stays mounted across thread switches. Its first end pins on the
-  // new thread must snap, not glide, even if that thread is mid-turn.
-  const [settlingListIdentity, setSettlingListIdentity] = useState<string | null>(null);
   let paintedExpandedRunIds = expandedRunIds;
   let paintedExpandedWorkGroupIds = expandedWorkGroupIds;
   let paintedExpandedAttemptIds = expandedAttemptIds;
@@ -682,7 +653,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     listIdentityRef.current = listIdentityKey;
     setPositionedThreadKey(null);
     previousLatestRunRef.current = latestRun;
-    setSettlingListIdentity(listIdentityKey);
     paintedExpandedRunIds = rememberedPosition?.disclosures?.runs ?? new Set();
     paintedExpandedWorkGroupIds = rememberedPosition?.disclosures?.workGroups ?? new Set();
     paintedExpandedAttemptIds = rememberedPosition?.disclosures?.attempts ?? new Set();
@@ -869,6 +839,19 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   } | null>(null);
   // SCIENT-FORK:START — match the row header's liveness so a finished
   // sub-agent stops reading as live work.
+  const subagentWorkflowIds = useMemo(
+    () =>
+      new Map(
+        (agentPanelModel?.workflows ?? []).flatMap((group) => [
+          [group.workflow.id, group.workflow.id] as const,
+          ...group.phases
+            .flatMap((phase) => phase.members)
+            .map((member) => [member.id, group.workflow.id] as const),
+          ...group.unphasedMembers.map((member) => [member.id, group.workflow.id] as const),
+        ]),
+      ),
+    [agentPanelModel],
+  );
   const liveAgentTaskKey = useMemo(() => {
     if (agentPanelModel === undefined) return undefined;
     const ids: string[] = [];
@@ -909,6 +892,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         hasForkBaseline,
         forkBaselineAssistantMessageId,
         liveAgentTaskIds,
+        subagentWorkflowIds,
 
         worktreeSetup,
       },
@@ -936,6 +920,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     turnDiffSummaries,
     supportsConversationRollback,
     liveAgentTaskIds,
+    subagentWorkflowIds,
     worktreeSetup,
   ]);
   const rows = useStableRows(rawRows, listIdentityKey);
@@ -3499,7 +3484,11 @@ function v2EventPresentation(item: OrchestrationV2TurnItem): {
 function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event" }> }) {
   const ctx = use(TimelineRowCtx);
   const { item, visibility, sourceThreadId } = row.projectedItem;
-  if (item.type === "subagent" && (row.subagents?.length ?? 1) > 1) {
+  if (
+    item.type === "subagent" &&
+    ((row.subagents?.length ?? 1) > 1 ||
+      ctx.agentPanelModel.workflows.some((group) => group.workflow.id === item.subagentId))
+  ) {
     return <V2SubagentGroup key={row.id} row={row} />;
   }
   if (isV2LifecycleItem(item)) {
@@ -3747,6 +3736,49 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
     else ctx.workGroupViewState.expandedEntries.delete(groupId);
     setExpanded(open);
   };
+  const workflow = ctx.agentPanelModel.workflows.find((group) =>
+    members.some((item) => item.subagentId === group.workflow.id),
+  );
+  const nativeMemberIds: ReadonlyArray<string> = members.map((item) => item.subagentId);
+  const hasRoster =
+    workflow !== undefined ||
+    ctx.agentPanelModel.directAgents.some((agent) => nativeMemberIds.includes(agent.id));
+  if (hasRoster) {
+    return (
+      <WorkLogBlock continues={row.continuesWorkLog}>
+        <AgentSpawnRow
+          workEntry={{
+            id: row.id,
+            createdAt: row.createdAt,
+            runId: row.projectedItem.item.runId,
+            label,
+            tone: "tool",
+            agentSpawn: {
+              workflowId: workflow?.workflow.id ?? null,
+              agentTaskIds: nativeMemberIds,
+            },
+          }}
+          onToggleEntry={(wasExpanded) => ctx.onToggleWorkEntry(row.id, wasExpanded)}
+        />
+        {members.flatMap((member) => {
+          const childThreadId = member.childThreadId;
+          return childThreadId === null
+            ? []
+            : [
+                <button
+                  key={member.id}
+                  type="button"
+                  aria-label="Open child thread"
+                  onClick={() => ctx.onOpenThread(childThreadId)}
+                  className="ms-7 mt-1 self-start text-xs text-muted-foreground hover:text-foreground"
+                >
+                  Open {member.title ?? "subagent"} thread ›
+                </button>,
+              ];
+        })}
+      </WorkLogBlock>
+    );
+  }
   return (
     <WorkLogBlock continues={row.continuesWorkLog}>
       <Collapsible open={expanded} onOpenChange={toggleExpanded} data-subagent-group>
@@ -4432,7 +4464,7 @@ function toolGroupSummaryIconName(
     case "command":
       return "terminal";
     case "thread-create":
-      return "t3-code";
+      return "scient";
     case "browser":
       return "browser";
     case "device":
@@ -4444,7 +4476,7 @@ function toolGroupSummaryIconName(
     case "other":
       return "wrench";
     case "dynamic-tool":
-      return "hammer";
+      return "scient-mono";
     case "reasoning":
       return "brain";
     case "agent-tool":
@@ -5319,6 +5351,8 @@ type WorkEntryIconName =
   | "square-pen"
   | "terminal"
   | "pull-request"
+  | "scient-mono"
+  | "scient"
   | "t3-code"
   | "wrench"
   | "x"
@@ -5496,7 +5530,10 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
     case "device":
       return <SmartphoneIcon className={className} aria-hidden />;
     case "t3-code":
+    case "scient":
       return <ScientSymbol className={className} />;
+    case "scient-mono":
+      return <ScientSymbolMono className={className} />;
     case "check":
       return <CheckIcon className={className} aria-hidden />;
     case "circle-alert":
@@ -5537,7 +5574,7 @@ function workToneIcon(tone: TimelineWorkEntry["tone"]): {
   if (tone === "thinking") {
     return {
       iconName: "brain",
-      className: "text-icon-muted",
+      className: "text-trace-icon",
     };
   }
   if (tone === "info") {
@@ -5653,7 +5690,7 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
 
   switch (workEntry.itemType) {
     case "dynamic_tool":
-      return "wrench";
+      return "scient-mono";
     case "subagent":
       return "bot";
   }
@@ -5662,18 +5699,6 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
 }
 
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
-
-/**
- * Click handler for expanded row labels, which turn text selection back on.
- * Only a click that ends a real selection is withheld from the row toggle, so
- * an ordinary click on the label still bubbles and collapses the row it opened.
- */
-const stopRowToggleWhileSelectingText = (e: MouseEvent<HTMLElement>) => {
-  const selection = e.currentTarget.ownerDocument.getSelection();
-  if (selection && !selection.isCollapsed) {
-    e.stopPropagation();
-  }
-};
 
 /** One tool row per batch, with member results available on expansion. */
 const AgentSpawnRow = memo(function AgentSpawnRow(props: {
@@ -5795,7 +5820,7 @@ function AgentSpawnMemberRow({
       : null;
   const meta = [
     durationMs !== null && durationMs >= 0 ? formatDuration(durationMs) : null,
-    agent.usage && agent.usage.totalTokens > 0
+    agent.usage?.totalTokens !== undefined && agent.usage.totalTokens > 0
       ? `${formatSubagentTokenCount(agent.usage.totalTokens)} tok`
       : null,
   ]
@@ -5841,7 +5866,7 @@ function AgentSpawnMemberRow({
           : undefined
       }
       className={cn(
-        "flex flex-col rounded-md px-1 py-0.5 transition-colors",
+        "flex flex-col rounded-md px-1 py-1 transition-colors",
         canExpand &&
           "cursor-pointer hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
       )}
@@ -6090,7 +6115,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
         : showFailedIndicator
           ? failedToolIconClassName
           : workEntry.tone === "tool"
-            ? "text-icon-muted"
+            ? "text-trace-icon"
             : iconConfig.className,
   );
   const headingClass = showWarningIndicator
@@ -6098,8 +6123,8 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
     : showDestructiveRowStyle
       ? "font-medium text-destructive"
       : workLogEntryIsToolLike(workEntry)
-        ? "text-secondary-label"
-        : "text-foreground/80";
+        ? "text-trace-label"
+        : "text-secondary-label";
   const accessiblePreview = [previewText, answerPreview].filter(Boolean).join(": ");
   const failureLabel = activityIssuePolicy(workEntry.sourceActivityKind)
     ? "Operation failed"

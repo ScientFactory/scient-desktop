@@ -1,7 +1,6 @@
 import { ompProcessEnvironment } from "../omp/OmpEnvironment.ts";
 import {
   OmpSettings,
-  ProviderDriverKind,
   type ServerProvider,
   type ServerProviderVersionAdvisory,
   type ServerSettings,
@@ -27,6 +26,7 @@ import { ProviderContinuationRequests } from "../../orchestration-v2/ProviderCon
 import { makeOmpCustomModelsClientFactory } from "../omp/OmpCustomModels.ts";
 import { sweepStaleOmpExtensionFiles } from "../omp/OmpExtensionBootstrap.ts";
 import type { OmpExecutableGate } from "../omp/OmpExecutableGate.ts";
+import { ompTarget } from "../omp/OmpTarget.ts";
 import { customModelDiscoverySnapshot } from "../../customModelCapabilities.ts";
 import { makeOmpTextGeneration } from "../../textGeneration/OmpTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
@@ -52,7 +52,7 @@ import {
 } from "../providerUpdateSettings.ts";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
 
-const DRIVER_KIND = ProviderDriverKind.make("omp");
+const DRIVER_KIND = ompTarget.driverKind;
 const decodeSettings = Schema.decodeSync(OmpSettings);
 
 export type OmpDriverEnv =
@@ -103,6 +103,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
       // it left unread still holds credentials. Files this server wrote are
       // newer than its start, so creating an instance later keeps them.
       yield* sweepStaleOmpExtensionFiles({
+        target: ompTarget,
         stateDir: serverConfig.stateDir,
         startedAt: performance.timeOrigin,
       }).pipe(
@@ -110,6 +111,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
         Effect.provideService(Path.Path, path),
       );
       const makeRpcClient = yield* makeOmpCustomModelsClientFactory(
+        ompTarget,
         serverSettings,
         instanceId,
         serverConfig.stateDir,
@@ -156,6 +158,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
         },
       });
       const adapter = yield* makeOmpAdapter({
+        target: ompTarget,
         binaryPath: launchConfig.binaryPath,
         providerInstanceId: instanceId,
         stateDir: serverConfig.stateDir,
@@ -173,6 +176,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
         Effect.provideService(Path.Path, path),
       );
       const orchestrationAdapter = makeOmpAdapterV2({
+        target: ompTarget,
         instanceId,
         settings: launchConfig,
         environment: processEnv,
@@ -186,6 +190,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
         continuations: yield* ProviderContinuationRequests,
       });
       const textGeneration = yield* makeOmpTextGeneration(
+        ompTarget,
         launchConfig,
         processEnv,
         makeRpcClient,
@@ -254,8 +259,13 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: (settings) =>
-          makePendingOmpProvider(settings.provider).pipe(Effect.map(stamp)),
-        checkProvider: checkOmpProviderStatus(launchConfig, processEnv, makeRpcClient).pipe(
+          makePendingOmpProvider(ompTarget, settings.provider).pipe(Effect.map(stamp)),
+        checkProvider: checkOmpProviderStatus(
+          ompTarget,
+          launchConfig,
+          processEnv,
+          makeRpcClient,
+        ).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),
@@ -290,7 +300,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
         enabled,
         snapshot,
         snapshotForCwd: (cwd) =>
-          checkOmpProviderStatus(launchConfig, processEnv, makeRpcClient, cwd).pipe(
+          checkOmpProviderStatus(ompTarget, launchConfig, processEnv, makeRpcClient, cwd).pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             Effect.provideService(FileSystem.FileSystem, fs),
             Effect.provideService(Path.Path, path),

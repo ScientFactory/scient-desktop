@@ -19,6 +19,7 @@ import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ThreadManagementService from "../ThreadManagementService.ts";
 import * as McpSessionRegistryTestkit from "../../mcp/McpSessionRegistry.testkit.ts";
+import type * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import * as CheckpointCaptureService from "../CheckpointCaptureService.ts";
@@ -194,6 +195,9 @@ export function runOrchestratorV2ProviderReplayScenario<
       | V2DatabaseImportError
     >;
     readonly runEffectWorker?: boolean;
+    /** Exercise production session credential issuance; disabled for recorded transports. */
+    readonly configureMcp?: boolean;
+    readonly mcpSessionRegistryLayer?: Layer.Layer<McpSessionRegistry.McpSessionRegistry>;
     readonly runtimePolicyLayer?: Layer.Layer<RuntimePolicy.RuntimePolicyV2>;
     // Start continuation runs for provider wake turns, as the live runtime does.
     // Off by default: most fixtures record no wake turn.
@@ -246,6 +250,9 @@ export function makeOrchestratorV2ProviderReplayLayer<
       | V2DatabaseImportError
     >;
     readonly runEffectWorker?: boolean;
+    /** Exercise production session credential issuance; disabled for recorded transports. */
+    readonly configureMcp?: boolean;
+    readonly mcpSessionRegistryLayer?: Layer.Layer<McpSessionRegistry.McpSessionRegistry>;
     // Start continuation runs for provider wake turns, as the live runtime does.
     // Off by default: most fixtures record no wake turn.
     readonly runContinuationWorker?: boolean;
@@ -257,6 +264,8 @@ export function makeOrchestratorV2ProviderReplayLayer<
   } = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
+  | ProviderSessionManager.ProviderSessionManagerV2
+  | ProviderTurnStartService.ProviderTurnStartServiceV2
   | EffectWorker.OrchestrationEffectWorkerV2
   | EventSink.EventSinkV2
   | ConversationForks.ConversationForkService
@@ -290,6 +299,9 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
       | V2DatabaseImportError
     >;
     readonly runEffectWorker?: boolean;
+    /** Exercise production session credential issuance; disabled for recorded transports. */
+    readonly configureMcp?: boolean;
+    readonly mcpSessionRegistryLayer?: Layer.Layer<McpSessionRegistry.McpSessionRegistry>;
     readonly runtimePolicyLayer?: Layer.Layer<RuntimePolicy.RuntimePolicyV2>;
     // Start continuation runs for provider wake turns, as the live runtime does.
     // Off by default: most fixtures record no wake turn.
@@ -301,6 +313,8 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   } = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
+  | ProviderSessionManager.ProviderSessionManagerV2
+  | ProviderTurnStartService.ProviderTurnStartServiceV2
   | EffectWorker.OrchestrationEffectWorkerV2
   | EffectOutbox.EffectOutboxV2
   | EventSink.EventSinkV2
@@ -376,14 +390,14 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     providerEventIngestorProvided,
   );
   const providerSessionManagerProvided = ProviderSessionManager.layerWithOptions({
-    configureMcp: false,
+    configureMcp: options.configureMcp ?? false,
   }).pipe(
     Layer.provide(
       Layer.mergeAll(
         providedRegistryLayer,
         eventSinkProvided,
         IdAllocator.layer,
-        McpSessionRegistryTestkit.layer,
+        options.mcpSessionRegistryLayer ?? McpSessionRegistryTestkit.layer,
         providerEventIngestorProvided,
         storesLayer,
       ),
@@ -523,6 +537,8 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     conversationForkProvided,
     storesLayer,
     orchestratorProvided,
+    providerSessionManagerProvided,
+    providerTurnStartServiceProvided,
     effectWorkerProvided,
     eventSinkProvided,
     continuationWorkerProvided,

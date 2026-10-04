@@ -1130,6 +1130,75 @@ describe("native provider presentation in the v2 timeline", () => {
     item,
   });
 
+  it.each([
+    "scient_skill_load",
+    "mcp__scient__scient_skill_load",
+    "mcp__t3_code__scient_skill_load",
+    "mcp__t3-code__scient_skill_load",
+    "t3-code.scient_skill_load",
+  ])("labels a completed native skill load from its input: %s", (toolName) => {
+    const item = {
+      ...base,
+      type: "dynamic_tool" as const,
+      toolName,
+      title: "Generic provider title",
+      input: { name: "latex-authoring" },
+      output: { content: "Skill instructions" },
+    } satisfies OrchestrationV2TurnItem;
+    const [entry] = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [visible(item)],
+      optimisticMessages: [],
+    });
+    expect(entry).toMatchObject({
+      kind: "work",
+      entry: {
+        label: "Used Latex Authoring",
+        toolTitle: "Used Latex Authoring",
+        toolLifecycleStatus: "completed",
+        toolData: { input: item.input, output: item.output },
+      },
+    });
+  });
+
+  it.each([
+    ["running", "Loading Latex Authoring"],
+    ["pending", "Loading Latex Authoring"],
+    ["waiting", "Loading Latex Authoring"],
+    ["failed", "Couldn't load Latex Authoring"],
+    ["cancelled", "Didn't load Latex Authoring"],
+    ["interrupted", "Didn't load Latex Authoring"],
+  ] as const)("reflects the durable skill load status: %s", (status, label) => {
+    const item = {
+      ...base,
+      type: "dynamic_tool" as const,
+      toolName: "scient_skill_load",
+      status,
+      input: { releaseKey: "scient.latex-authoring@immutable-release" },
+    } satisfies OrchestrationV2TurnItem;
+    const [entry] = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [visible(item)],
+      optimisticMessages: [],
+    });
+    expect(entry).toMatchObject({ kind: "work", entry: { label, toolTitle: label } });
+  });
+
+  it.each(["mcp__foreign__scient_skill_load", "scient_skill_load_extra"])(
+    "keeps a different tool's native label: %s",
+    (toolName) => {
+      const item = {
+        ...base,
+        type: "dynamic_tool" as const,
+        toolName,
+        input: { name: "latex-authoring" },
+      } satisfies OrchestrationV2TurnItem;
+      const [entry] = deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: [visible(item)],
+        optimisticMessages: [],
+      });
+      expect(entry).toMatchObject({ kind: "work", entry: { label: toolName } });
+    },
+  );
+
   it("keeps async answers in the question row, including incrementally appended replies", () => {
     const requestId = RuntimeRequestId.make("question");
     const question: OrchestrationV2TurnItem = {

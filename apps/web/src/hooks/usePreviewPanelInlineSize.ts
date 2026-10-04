@@ -28,19 +28,22 @@ export function usePreviewPanelInlineSize(
     readonly enabled?: boolean | undefined;
     readonly widthStorageKey?: string | undefined;
     readonly defaultWidth?: number | undefined;
+    readonly minWidth?: number | undefined;
     /** Use the caller's existing row measurement instead of observing the panel's parent. */
     readonly containerWidth?: number | undefined;
   } = {},
 ): PreviewPanelInlineSize {
+  const minWidth = options.minWidth ?? PREVIEW_PANEL_MIN_WIDTH;
   const maxWidth = useViewportClampedMaxWidth(
     hostRef,
     options.enabled ?? true,
     options.containerWidth,
+    minWidth,
   );
   return useResizableWidth({
     storageKey: options.widthStorageKey ?? PREVIEW_PANEL_WIDTH_STORAGE_KEY,
     defaultWidth: options.defaultWidth ?? PREVIEW_PANEL_DEFAULT_WIDTH,
-    minWidth: PREVIEW_PANEL_MIN_WIDTH,
+    minWidth,
     maxWidth,
     edge: "left",
   });
@@ -55,6 +58,7 @@ function useViewportClampedMaxWidth(
   hostRef: RefObject<HTMLElement | null> | undefined,
   enabled: boolean,
   containerWidth?: number,
+  minWidth = PREVIEW_PANEL_MIN_WIDTH,
 ): number {
   const [vw, setVw] = useState(() => (typeof window === "undefined" ? 1280 : window.innerWidth));
   const [measuredContainerWidth, setContainerWidth] = useState<number | undefined>(undefined);
@@ -93,9 +97,13 @@ function useViewportClampedMaxWidth(
       observer.disconnect();
     };
   }, [hostRef, enabled]);
-  return getPreviewPanelMaxWidth(vw, containerWidth ?? measuredContainerWidth);
+  return getPreviewPanelMaxWidth(vw, containerWidth ?? measuredContainerWidth, minWidth);
 }
-export function getPreviewPanelMaxWidth(viewportWidth: number, containerWidth?: number): number {
+export function getPreviewPanelMaxWidth(
+  viewportWidth: number,
+  containerWidth?: number,
+  minWidth = PREVIEW_PANEL_MIN_WIDTH,
+): number {
   const fractionCap = Math.floor(viewportWidth * PREVIEW_PANEL_MAX_WIDTH_FRACTION);
   const containerCap =
     containerWidth === undefined ? Infinity : Math.floor(containerWidth) - SIBLING_COLUMN_MIN_WIDTH;
@@ -103,5 +111,5 @@ export function getPreviewPanelMaxWidth(viewportWidth: number, containerWidth?: 
   // columns' minimums the sibling yields, and useResizableWidth's clamp must
   // not see max < min (it would resolve the inversion to min and, via
   // drag-end persistence, overwrite the user's stored width).
-  return Math.max(PREVIEW_PANEL_MIN_WIDTH, Math.min(fractionCap, containerCap));
+  return Math.max(minWidth, Math.min(fractionCap, containerCap));
 }
