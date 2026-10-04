@@ -291,7 +291,8 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
           accentColor,
           environment,
           enabled,
-          config,
+          // The native factory resolves the shared/auth-overlay home itself.
+          config: { ...config, binaryPath: effectiveConfig.binaryPath },
         },
         { onUsageLimits: (update) => snapshot.applyUsageLimits(update) },
       ).pipe(

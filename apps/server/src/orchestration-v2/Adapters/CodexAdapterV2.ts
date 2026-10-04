@@ -1,3 +1,12 @@
+import type { RuntimeCitationSource } from "@t3tools/contracts";
+import {
+  extractCodexCitationSources,
+  extractCodexTextCitations,
+} from "../../provider/codexCitations.ts";
+import {
+  canRenderProviderCitationMarkdown,
+  renderProviderCitationMarkdown,
+} from "../providerCitationMarkdown.ts";
 import { materializeGeneratedImageAttachment } from "../../generatedImageAttachments.ts";
 import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
@@ -1020,6 +1029,7 @@ function codexErrorInfoCode(value: unknown): string | null {
 }
 
 interface ActiveCodexTurnContext {
+  readonly citationSources: Map<string, RuntimeCitationSource>;
   latestProviderFailure?: {
     readonly nativeMessage: string;
     readonly failure: OrchestrationV2ProviderFailure;
@@ -1725,6 +1735,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               subagent: null,
               startedAt: input.startedAt,
               itemPositions: new Map(),
+              citationSources: new Map(),
             };
             yield* Ref.update(limitedTurnItems, (current) => {
               const next = new Map(current);
@@ -2277,6 +2288,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               subagent,
               startedAt: turn.startedAt,
               itemPositions: new Map(),
+              citationSources: new Map(),
             };
             beginTurnTokenUsage(activeContext);
             yield* Ref.update(activeTurns, (current) => {
@@ -2793,6 +2805,12 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           completed: boolean,
         ) =>
           Effect.gen(function* () {
+            const citations = completed ? extractCodexTextCitations(item.text) : [];
+            const sources = Array.from(context.citationSources.values());
+            const text =
+              citations.length > 0 && canRenderProviderCitationMarkdown({ citations, sources })
+                ? renderProviderCitationMarkdown({ text: item.text, citations, sources })
+                : item.text;
             const updatedAt = yield* DateTime.now;
             const completedAt = completed ? updatedAt : null;
             const nodeId = idAllocator.derive.nodeFromProviderItem({
@@ -2833,7 +2851,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               runId: context.projectionRunId,
               nodeId,
               role: "assistant",
-              text: item.text,
+              text,
               attachments: [],
               streaming: !completed,
               createdAt: startedAt,
@@ -2856,7 +2874,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               updatedAt,
               type: "assistant_message",
               messageId,
-              text: item.text,
+              text,
               streaming: !completed,
             };
             return { node, message, turnItem };
@@ -3205,6 +3223,15 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           readonly completed: boolean;
         }) =>
           Effect.gen(function* () {
+            if (input.completed) {
+              for (const source of extractCodexCitationSources(input.item)) {
+                if (
+                  input.context.citationSources.size < 128 ||
+                  input.context.citationSources.has(source.id)
+                )
+                  input.context.citationSources.set(source.id, source);
+              }
+            }
             const updatedAt = yield* DateTime.now;
             const completedAt = input.completed ? updatedAt : null;
             const nodeId = idAllocator.derive.nodeFromProviderItem({

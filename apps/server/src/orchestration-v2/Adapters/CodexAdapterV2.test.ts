@@ -2546,6 +2546,151 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect(
+    "persists native web-search citations as portable links in both assistant representations",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeThreadId = "citation-thread";
+          const nativeTurnId = "citation-turn";
+          const raw = "Evidence 😀 \uE200cite\uE202turn0search0\uE202turn0search1\uE201.";
+          const expected = 'Evidence 😀 [1](<https://example.test/source> "Study").';
+          const transcript = makeCodexReplayTranscript({
+            scenario: "native-citations",
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Find evidence" }),
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "item/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    item: {
+                      type: "webSearch",
+                      id: "search",
+                      query: "evidence",
+                      action: { type: "search", query: "evidence" },
+                      results: [
+                        ["turn0search0", { url: "https://example.test/source", title: "Study" }],
+                        {
+                          ref_id: "turn0search1",
+                          url: "https://example.test/source",
+                          title: "Duplicate source",
+                        },
+                        { ref_id: "unsafe", url: "javascript:alert(1)", title: "Unsafe" },
+                      ],
+                    },
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "item/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    item: {
+                      type: "agentMessage",
+                      id: "citation-answer",
+                      text: raw,
+                      phase: "final_answer",
+                    },
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                  },
+                },
+              },
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          const now = yield* DateTime.now;
+          const input = makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("citation-attempt"),
+            text: "Find evidence",
+          });
+          yield* harness.runtime.startTurn(input);
+          yield* harness.firstTerminal;
+          const message = harness.events.find(
+            (event) => event.type === "message.updated" && event.message.role === "assistant",
+          );
+          if (message?.type !== "message.updated")
+            return yield* Effect.die("Missing native cited answer");
+          assert.equal(message.message.text, expected);
+          const sink = yield* EventSink.EventSinkV2;
+          const ids = yield* IdAllocator.IdAllocatorV2;
+          yield* sink.write({
+            events: [
+              {
+                id: yield* ids.allocate.event({ threadId: harness.threadId }),
+                threadId: harness.threadId,
+                type: "thread.created",
+                occurredAt: now,
+                payload: input.appThread,
+              },
+            ],
+          });
+          const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+          for (const event of harness.events) {
+            if (
+              event.type !== "message.updated" &&
+              event.type !== "turn_item.updated" &&
+              event.type !== "node.updated"
+            )
+              continue;
+            yield* ingestor.ingestNormalized({
+              providerSessionId: harness.runtime.providerSession.id,
+              providerInstanceId: CODEX_TEST_MODEL_SELECTION.instanceId,
+              threadId: harness.threadId,
+              event,
+            });
+          }
+          const projections = yield* ProjectionStore.ProjectionStoreV2;
+          const projected = yield* projections.getThreadProjection(harness.threadId);
+          assert.equal(
+            projected.messages.find((entry) => entry.id === message.message.id)?.text,
+            expected,
+          );
+          const item = projected.turnItems.find(
+            (entry) => entry.type === "assistant_message" && entry.messageId === message.message.id,
+          );
+          if (item?.type !== "assistant_message")
+            return yield* Effect.die("Missing native cited assistant item");
+          assert.equal(item.text, expected);
+          const store = yield* EventStore.EventStoreV2;
+          const persisted = yield* store
+            .read({ threadId: harness.threadId })
+            .pipe(Stream.runCollect);
+          const rebuilt = yield* Effect.gen(function* () {
+            const replay = yield* ProjectionStore.ProjectionStoreV2;
+            for (const row of persisted) yield* replay.apply(row.event);
+            return yield* replay.getThreadProjection(harness.threadId);
+          }).pipe(Effect.provide(ProjectionStore.layerMemory));
+          assert.equal(
+            rebuilt.messages.find((entry) => entry.id === message.message.id)?.text,
+            expected,
+          );
+          const rebuiltItem = rebuilt.turnItems.find((entry) => entry.id === item.id);
+          if (rebuiltItem?.type !== "assistant_message")
+            return yield* Effect.die("Missing rebuilt cited assistant item");
+          assert.equal(rebuiltItem.text, expected);
+          assert.isFalse(rebuilt.messages.some((entry) => entry.text.includes("javascript:")));
+        }).pipe(Effect.provide(imagePersistenceLayer)),
+      ),
+  );
+
   for (const outcome of ["saved", "default-path", "missing", "foreign", "failed"] as const) {
     it.effect(`projects native Codex generated images with ${outcome} materialization`, () =>
       Effect.scoped(

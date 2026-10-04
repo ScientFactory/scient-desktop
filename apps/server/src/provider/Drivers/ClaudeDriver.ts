@@ -268,9 +268,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
           instanceId,
           displayName,
           accentColor,
-          environment,
+          environment: managedRuntime.usesManagedPath
+            ? [...environment, { name: "DISABLE_UPDATES", value: "1", sensitive: false }]
+            : environment,
           enabled,
-          config,
+          config: effectiveConfig,
         },
         { scopedLimitNames, onUsageLimits: (update) => snapshot.applyUsageLimits(update) },
       ).pipe(

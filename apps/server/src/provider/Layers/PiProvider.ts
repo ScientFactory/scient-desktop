@@ -23,6 +23,7 @@ import * as Stream from "effect/Stream";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import type * as Scope from "effect/Scope";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -47,6 +48,7 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
+import type { PiRpcClient, PiRpcError, PiRpcSpawnOptions } from "../pi/PiRpcClient.ts";
 import { encodePiModelSlug } from "../pi/PiModel.ts";
 import {
   EMPTY_PI_MODEL_CAPABILITIES,
@@ -89,7 +91,12 @@ const PI_DEFAULT_MODEL: ServerProviderModel = {
 interface PiDiscovery extends PiDiscoveredCommands {
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly authenticated: boolean;
+  readonly modelConnections?: ServerProvider["modelConnections"];
 }
+
+type PiDiscoveryClientFactory = (
+  options: PiRpcSpawnOptions,
+) => Effect.Effect<PiRpcClient, PiRpcError, ChildProcessSpawner.ChildProcessSpawner | Scope.Scope>;
 
 function piModelsFromSettings(
   customModels: ReadonlyArray<CustomModelSetting> | undefined,
@@ -105,6 +112,7 @@ function piModelsFromSettings(
 function parseDiscoveredModels(
   data: unknown,
   defaultThinkingLevel: unknown,
+  providerLabel?: (provider: string) => string | undefined,
 ): ReadonlyArray<ServerProviderModel> {
   const models = recordField(data, "models");
   if (!Array.isArray(models)) return [];
@@ -122,6 +130,7 @@ function parseDiscoveredModels(
       slug,
       name: recordString(model, "name") ?? slug,
       isCustom: false,
+      ...(providerLabel === undefined ? {} : { subProvider: providerLabel(provider) ?? provider }),
       capabilities: thinkingCapabilitiesForPiModel(model, defaultThinkingLevel),
     });
   }
@@ -132,7 +141,8 @@ const discoverPiViaRpc = (
   piSettings: PiSettings,
   environment: NodeJS.ProcessEnv,
   launchArgs: ReadonlyArray<string>,
-  cwd?: string,
+  cwd: string | undefined,
+  makeDiscoveryClient: PiDiscoveryClientFactory | undefined,
 ) =>
   Effect.gen(function* () {
     const launch = buildPiRpcLaunch({
@@ -142,6 +152,36 @@ const discoverPiViaRpc = (
       extensionPath: undefined,
       ephemeral: true,
     });
+    if (makeDiscoveryClient !== undefined) {
+      const client = yield* makeDiscoveryClient({
+        command: piSettings.binaryPath || "pi",
+        // The typed client owns the RPC mode prefix.
+        args: launch.args.slice(2),
+        ...(cwd === undefined ? {} : { cwd }),
+        env: launch.env,
+      });
+      yield* client.events.pipe(Stream.runDrain, Effect.ignore, Effect.forkScoped);
+      const state = yield* client.getState();
+      const inventory = yield* client.getAvailableModels();
+      const commands = yield* client.getCommands();
+      const models = parseDiscoveredModels(
+        inventory,
+        state.thinkingLevel,
+        client.modelProviderLabel,
+      );
+      const discovered = parsePiDiscoveredCommands(commands);
+      return {
+        models,
+        slashCommands: withPiBuiltinSlashCommands(discovered.slashCommands),
+        skills: discovered.skills,
+        authenticated: models.length > 0,
+        ...(client.assessModelConnections === undefined
+          ? {}
+          : {
+              modelConnections: client.assessModelConnections(inventory.models),
+            }),
+      } satisfies PiDiscovery;
+    }
     const connection = yield* makePiRpcConnection({
       command: piSettings.binaryPath || "pi",
       args: launch.args,
@@ -227,6 +267,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
   piSettings: PiSettings,
   environment: NodeJS.ProcessEnv = process.env,
   cwd?: string,
+  makeDiscoveryClient?: PiDiscoveryClientFactory,
 ): Effect.fn.Return<ServerProviderDraft, never, ChildProcessSpawner.ChildProcessSpawner> {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = piModelsFromSettings(piSettings.customModels);
@@ -360,6 +401,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
     environment,
     resolvedLaunchArgs.args,
     cwd,
+    makeDiscoveryClient,
   ).pipe(Effect.timeoutOption(PI_RPC_DISCOVERY_TIMEOUT_MS), Effect.exit);
   if (Exit.isFailure(discoveryExit)) {
     yield* Effect.logWarning("Pi RPC discovery failed.", {
@@ -404,6 +446,9 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
     enabled: piSettings.enabled,
     checkedAt,
     models,
+    ...(discovery.modelConnections === undefined
+      ? {}
+      : { modelConnections: discovery.modelConnections }),
     slashCommands: discovery.slashCommands,
     skills: discovery.skills,
     probe: {

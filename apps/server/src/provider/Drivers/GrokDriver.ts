@@ -191,10 +191,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
           Effect.provideService(Path.Path, path),
         ),
       );
-      // SCIENT-FORK:START — v1 adapter. Upstream deleted `makeGrokAdapter`'s
-      // construction here when it moved Grok to `GrokAdapterV2`, but the fork's
-      // live `Layers/ProviderService.ts` still drives turns through the v1
-      // `ProviderAdapterShape` (see `ProviderDriver.ts`). Restored.
+      // SCIENT-FORK:START — retained library compatibility; V2 owns production execution.
       const adapter = yield* makeGrokAdapter(effectiveConfig, {
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
@@ -207,7 +204,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         accentColor,
         environment,
         enabled,
-        config,
+        config: effectiveConfig,
       }).pipe(
         Effect.mapError(
           (cause) =>
