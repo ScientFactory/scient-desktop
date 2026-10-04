@@ -187,11 +187,14 @@ describe("orchestration V2 wire projection", () => {
   });
 
   it("preserves image metadata through wire and JSON contracts while redacting output", () => {
+    const imagePath = `/workspace/${"nested folder/".repeat(16)}reference image.webp`;
     const item = {
       ...base,
+      nodeId: NodeId.make("child-tool-owner"),
+      parentItemId: TurnItemId.make("parent-tool"),
       toolName: "Read",
-      input: { file_path: "/workspace/reference.png" },
-      viewedImagePath: "/workspace/reference.png",
+      input: { file_path: imagePath },
+      viewedImagePath: imagePath,
       output: { data: "private-image-data" },
     } satisfies OrchestrationV2TurnItem;
     const projected = projectTurnItemForWire(item);
@@ -199,7 +202,12 @@ describe("orchestration V2 wire projection", () => {
     const encoded = encodeTurnItemJson(live);
     const json = decodeTurnItemJson(encoded);
     const decoded = decodeTurnItem(json);
-    expect(decoded).toMatchObject({ viewedImagePath: "/workspace/reference.png" });
+    expect(decoded).toMatchObject({
+      viewedImagePath: imagePath,
+      nodeId: item.nodeId,
+      parentItemId: item.parentItemId,
+    });
+    expect(projectTurnItemForWire(decoded)).toEqual(decoded);
     expect(decoded).not.toHaveProperty("output");
     expect(item.output.data).toBe("private-image-data");
   });
