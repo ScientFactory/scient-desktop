@@ -866,8 +866,8 @@ export function makeNativeSessionAdapterV2(
             Effect.andThen(
               eventPermit.withPermit(
                 Effect.gen(function* () {
-                  yield* finish({ type: "terminal", status: "cancelled" });
                   yield* stopBackgroundTasks("cancelled", yield* DateTime.now);
+                  yield* finish({ type: "terminal", status: "cancelled" });
                   for (const pending of requests.values())
                     yield* settleRequest(pending, "cancelled", yield* DateTime.now);
                   yield* updateSession("stopped");

@@ -560,4 +560,74 @@ describe("native OMP lifecycle", () => {
       ),
     );
   }
+  for (const ending of ["interrupt", "owner-close", "process-loss"] as const) {
+    it.live(`settles the native OMP child before its parent outcome on ${ending}`, () =>
+      run(
+        Effect.gen(function* () {
+          const f = yield* fixture();
+          const p = peer();
+          const s = yield* f.open(p.makeProcess);
+          const seen = yield* observe(s);
+          yield* s.start({ text: "Delegate a retained child" });
+          yield* p.promptDelivered();
+          yield* p.emit([
+            { type: "agent_start" },
+            {
+              type: "subagent_lifecycle",
+              payload: {
+                id: "owned-child",
+                agent: "task",
+                detached: true,
+                status: "started",
+                description: "Review the parent",
+              },
+            },
+          ]);
+          const started = yield* seen.take(
+            (event) => event.type === "subagent.updated" && event.subagent.status === "running",
+          );
+          if (started.type !== "subagent.updated") return yield* Effect.die("Missing native child");
+          if (ending === "interrupt") yield* s.interrupt;
+          else if (ending === "owner-close") yield* s.close;
+          else yield* p.close();
+          const terminal = yield* seen.terminal();
+          expect(terminal).toMatchObject({
+            status:
+              ending === "interrupt"
+                ? "interrupted"
+                : ending === "owner-close"
+                  ? "cancelled"
+                  : "failed",
+          });
+          yield* f.released;
+          yield* s.close;
+          yield* seen.ended;
+          const children = seen.events.filter(
+            (event) => event.type === "subagent.updated" && event.subagent.status !== "running",
+          );
+          expect(children).toHaveLength(1);
+          expect(children[0]).toMatchObject({
+            subagent: {
+              id: started.subagent.id,
+              runId: started.subagent.runId,
+              status:
+                ending === "interrupt"
+                  ? "interrupted"
+                  : ending === "owner-close"
+                    ? "cancelled"
+                    : "failed",
+            },
+          });
+          expect(seen.events.indexOf(children[0]!)).toBeLessThan(seen.events.indexOf(terminal));
+          expect(seen.events.filter((event) => event.type === "turn.terminal")).toHaveLength(1);
+          const pending = s.runtime.hasPendingBackgroundWork;
+          if (!pending) return yield* Effect.die("Missing native background-work getter");
+          expect(yield* pending).toBe(false);
+          expect(p.state.shutdowns).toBe(1);
+          expect(p.state.frames.some((frame) => frame.type === "abort")).toBe(false);
+          expect(NodeFS.existsSync(f.lock())).toBe(false);
+        }),
+      ),
+    );
+  }
 });
