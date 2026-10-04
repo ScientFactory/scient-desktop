@@ -16,6 +16,7 @@ import {
   RunId,
   ThreadId,
   type OrchestrationV2AppThread,
+  type ChatAttachment,
 } from "@t3tools/contracts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Crypto from "effect/Crypto";
@@ -70,9 +71,11 @@ const harness = Effect.fnUntraced(function* (
     readonly body: string;
     readonly idleMillis?: number;
     readonly blockPromptWrite?: boolean;
+    readonly liveClock?: boolean;
     readonly environment?: Record<string, string>;
     readonly model?: string;
     readonly sensitiveValues?: ReadonlyArray<string>;
+    readonly onPeer?: (peer: Effect.Success<ReturnType<typeof scriptedDroid>>) => void;
   },
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -100,6 +103,7 @@ const harness = Effect.fnUntraced(function* (
         scenario.environment,
       )
     : undefined;
+  if (scripted) scenario?.onPeer?.(scripted);
   const instanceId = ProviderInstanceId.make("droid-v2-test");
   const threadId = ThreadId.make("droid-v2-thread");
   const modelSelection = {
@@ -171,7 +175,7 @@ const harness = Effect.fnUntraced(function* (
       }).pipe(
         Effect.map((native) => {
           const runtime =
-            scenario && native.terminateProcessGroup
+            scenario && !scenario.liveClock && native.terminateProcessGroup
               ? {
                   ...native,
                   terminateProcessGroup: TestClock.withLive(native.terminateProcessGroup),
@@ -244,6 +248,7 @@ const harness = Effect.fnUntraced(function* (
     interactionMode: "default" | "plan" = "default",
     text = "Say hello",
     model = modelSelection.model,
+    attachments: ReadonlyArray<ChatAttachment> = [],
   ) =>
     runtime.startTurn({
       appThread,
@@ -259,7 +264,7 @@ const harness = Effect.fnUntraced(function* (
       message: {
         messageId: MessageId.make(`droid-message-${ordinal}`),
         text,
-        attachments: [],
+        attachments: [...attachments],
         createdBy: "user",
         creationSource: "web",
       },
@@ -885,6 +890,11 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
             const outcome = yield* h.terminal;
             assert.equal(outcome.status, stopped ? "interrupted" : "failed");
             if (!stopped) assert.include(outcome.failure?.message ?? "", "idle timeout (300ms)");
+            const settled = h.recorded.findLast((event) => event.type === "provider_turn.updated");
+            if (settled?.type !== "provider_turn.updated")
+              return yield* Effect.die("Missing native turn receipt");
+            assert.equal(settled.providerTurn.nativeAcceptance, "pending");
+            assert.isUndefined(settled.providerTurn.acceptedAt);
             yield* Deferred.succeed(h.releaseWrite, undefined);
             yield* livePause(50);
             assert.isFalse(
@@ -1673,6 +1683,201 @@ it.layer(testLayer)("DroidAdapterV2 idle supervision", (it) => {
         const terminal = yield* h.terminal;
         assert.equal(terminal.status, "failed");
         assert.equal(terminal.runOrdinal, 2);
+      }),
+    ),
+  );
+});
+
+const nativeTurn = (h: Effect.Success<ReturnType<typeof harness>>, ordinal: number) => {
+  const event = h.recorded.find(
+    (event) => event.type === "provider_turn.updated" && event.providerTurn.ordinal === ordinal,
+  );
+  if (event?.type !== "provider_turn.updated") throw new Error("Missing owned native turn");
+  return event.providerTurn;
+};
+it.layer(testLayer, { excludeTestServices: true })("Droid native lifecycle", (it) => {
+  for (const idle of [false, true]) {
+    it.effect(
+      idle
+        ? "drops an idle dead runtime and cold-starts the next send"
+        : "fails a native turn once after process death and recovers with partial output intact",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const h = yield* harness(false, false, false, undefined, {
+              liveClock: true,
+              body: `function onPrompt(message) {
+          if (!fs.existsSync(__CONTROL_PATH__)) {
+            fs.writeFileSync(__CONTROL_PATH__, "died");
+            update({sessionUpdate: "agent_message_chunk", content: {type: "text", text: "Before death."}});
+            ${idle ? 'reply(message, {stopReason: "end_turn"});' : ""}
+            setTimeout(() => process.exit(7), 30);
+          } else reply(message, {stopReason: "end_turn"});
+        }`,
+            });
+            yield* h.send(1, "full-access");
+            assert.equal((yield* h.terminal).status, idle ? "completed" : "failed");
+            yield* h.nativeTerminated;
+            assert.isTrue(
+              h.recorded.some(
+                (event) =>
+                  event.type === "message.updated" && event.message.text === "Before death.",
+              ),
+            );
+            yield* h.send(2, "full-access");
+            assert.equal((yield* h.terminal).status, "completed");
+            assert.deepEqual(
+              terminals(h).map((event) => event.status),
+              [idle ? "completed" : "failed", "completed"],
+            );
+            assert.equal(new Set(h.ownedPids()).size, 2);
+          }),
+        ),
+    );
+  }
+  it.effect("refuses a missing native autonomy selector without delivering a prompt", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let peer: Effect.Success<ReturnType<typeof scriptedDroid>> | undefined;
+        const result = yield* Effect.result(
+          harness(false, false, false, undefined, {
+            liveClock: true,
+            body: `function onPrompt(message) {reply(message, {stopReason: "end_turn"});}`,
+            environment: { AUTONOMY: "none" },
+            onPeer: (value) => {
+              peer = value;
+            },
+          }),
+        );
+        assert.equal(result._tag, "Failure");
+        if (!peer) return yield* Effect.die("Missing actual ACP peer");
+        assert.isFalse(
+          (yield* peer.readLog()).some((message) => message.method === "session/prompt"),
+        );
+      }),
+    ),
+  );
+  it.effect("keeps a stale Stop from interrupting the next native turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, {
+          liveClock: true,
+          body: `function onPrompt(message) {
+        if (state.prompts === 1) reply(message, {stopReason: "end_turn"});
+        else update({sessionUpdate: "agent_message_chunk", content: {type: "text", text: "Still working."}});
+      }`,
+        });
+        yield* h.send(1, "full-access");
+        assert.equal((yield* h.terminal).status, "completed");
+        const previous = nativeTurn(h, 1);
+        yield* h.runtime.interruptTurn({
+          providerThread: h.providerThread,
+          providerTurnId: previous.id,
+        });
+        yield* h.send(2, "full-access");
+        yield* h.waitForMessage("Still working.");
+        yield* h.runtime.interruptTurn({
+          providerThread: h.providerThread,
+          providerTurnId: previous.id,
+          requestRuntimeRestart: true,
+        });
+        yield* Effect.sleep(40);
+        assert.lengthOf(terminals(h), 1);
+        assert.isFalse(
+          (yield* h.readLog!()).some((message) => message.method === "session/cancel"),
+        );
+        assert.lengthOf(h.ownedPids(), 1);
+        yield* h.runtime.interruptTurn({
+          providerThread: h.providerThread,
+          providerTurnId: nativeTurn(h, 2).id,
+          requestRuntimeRestart: true,
+        });
+        assert.equal((yield* h.terminal).status, "interrupted");
+        assert.lengthOf(terminals(h), 2);
+      }),
+    ),
+  );
+  it.effect("reports no acceptance when the peer dies before the prompt write", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, {
+          liveClock: true,
+          blockPromptWrite: true,
+          body: `
+        fs.watch(".", () => {if (fs.existsSync(__CONTROL_PATH__)) process.exit(7);});
+        function onPrompt(message) { reply(message, {stopReason: "end_turn"}); }
+      `,
+        });
+        yield* h.send(1, "full-access");
+        yield* Deferred.await(h.writeBlocked);
+        yield* h.signal("die");
+        yield* h.nativeTerminated;
+        yield* Deferred.succeed(h.releaseWrite, undefined);
+        assert.equal((yield* h.terminal).status, "failed");
+        const settled = h.recorded.findLast((event) => event.type === "provider_turn.updated");
+        if (settled?.type !== "provider_turn.updated")
+          return yield* Effect.die("Missing native terminal receipt");
+        assert.equal(settled.providerTurn.nativeAcceptance, "pending");
+        assert.isUndefined(settled.providerTurn.acceptedAt);
+        assert.isFalse(
+          (yield* h.readLog!()).some((message) => message.method === "session/prompt"),
+        );
+        assert.lengthOf(terminals(h), 1);
+      }),
+    ),
+  );
+  it.effect("keeps image bytes out of the native thread snapshot", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const image = {
+          type: "image" as const,
+          id: "droid-native-image-1234",
+          name: "image.png",
+          mimeType: "image/png",
+          sizeBytes: 4,
+        };
+        yield* fs.makeDirectory(config.attachmentsDir, { recursive: true });
+        yield* fs.writeFileString(NodePath.join(config.attachmentsDir, `${image.id}.png`), "PNG!");
+        const h = yield* harness(false, false, false, undefined, {
+          liveClock: true,
+          body: `function onPrompt(message) {reply(message, {stopReason: "end_turn"});}`,
+        });
+        yield* h.send(1, "full-access", "default", "look", "droid-native", [image]);
+        assert.equal((yield* h.terminal).status, "completed");
+        const prompt = (yield* h.readLog!()).find((message) => message.method === "session/prompt");
+        const encodedImage = Buffer.from("PNG!").toString("base64");
+        assert.include(encodeJson(prompt), encodedImage);
+        const snapshot = encodeJson(
+          yield* h.runtime.readThreadSnapshot({ providerThread: h.providerThread }),
+        );
+        assert.notInclude(snapshot, encodedImage);
+        assert.include(snapshot, "image/png");
+      }),
+    ),
+  );
+  it.effect("retires an unconfirmed native settings change before the next send", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, {
+          liveClock: true,
+          body: `
+        unreported = message => message.params.value === "droid-other";
+        function onPrompt(message) {reply(message, {stopReason: "end_turn"});}
+      `,
+        });
+        const failed = yield* h
+          .send(1, "full-access", "default", "wrong model", "droid-other")
+          .pipe(Effect.result);
+        assert.equal(failed._tag, "Failure");
+        assert.isFalse(
+          (yield* h.readLog!()).some((message) => message.method === "session/prompt"),
+        );
+        yield* h.send(2, "full-access");
+        assert.equal((yield* h.terminal).status, "completed");
+        assert.equal(new Set(h.ownedPids()).size, 2);
+        assert.lengthOf(terminals(h), 1);
       }),
     ),
   );
