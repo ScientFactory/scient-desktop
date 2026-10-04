@@ -3,29 +3,18 @@ import { type RefObject, useLayoutEffect } from "react";
 /** The text blocks a streamed answer arrives in (providers send whole paragraphs). */
 const STREAMED_BLOCK_SELECTOR = "p, li, h1, h2, h3, h4, h5, h6, blockquote, table, hr";
 
-// Each block shows at once, lighter, and is inked in line by line: a soft dark
-// edge runs across each line from left to right and the text stays dark behind
-// it, one block after the other. Masking only (`.streamed-ink`): nothing moves.
+// Each block shows at once, a little lighter, and a soft edge inks it in from
+// the top down, the text staying full strength above it, one block after the
+// other. Masking only (`.streamed-ink`): nothing moves.
 const INK_MS_PER_LINE = 300;
 /** A long block inks faster per line, so it never takes longer than this. */
 const MAX_INK_MS = 2400;
 const REVEAL_LEAD_MS = 150;
-
-/** One sweep per line: the edge crosses line i, then line i + 1 starts. */
-function inkKeyframes(lines: number): Keyframe[] {
-  const frames: Keyframe[] = [];
-  for (let line = 0; line < lines; line += 1) {
-    frames.push({ offset: line / lines, "--ink-line": line, "--ink-x": 0 });
-    frames.push({ offset: (line + 1) / lines - 1e-4, "--ink-line": line, "--ink-x": 1 });
-  }
-  frames.push({ offset: 1, "--ink-line": lines, "--ink-x": 0 });
-  return frames;
-}
+const INK_KEYFRAMES: Keyframe[] = [{ "--ink-y": 0 }, { "--ink-y": 1 }];
 
 function blockLines(block: HTMLElement) {
   const lineHeight = Number.parseFloat(getComputedStyle(block).lineHeight) || 22;
-  const lines = Math.max(1, Math.round(block.getBoundingClientRect().height / lineHeight));
-  return { lineHeight, lines };
+  return Math.max(1, Math.round(block.getBoundingClientRect().height / lineHeight));
 }
 
 /**
@@ -56,8 +45,8 @@ function streamedBlocks(root: HTMLElement): HTMLElement[] {
 
 /**
  * While a message streams, each block that arrives (a paragraph, list item,
- * heading…) shows at once, lighter, and is inked in line by line from left to
- * right, one block after the other, instead of appearing in one frame; the
+ * heading…) shows at once, a little lighter, and is inked in from the top down,
+ * one block after the other, instead of appearing in one frame; the
  * first one too, which arrives with the message's row. Blocks that
  * already entered never replay; finished messages and reduced motion are left
  * alone.
@@ -89,13 +78,12 @@ export function useStreamingBlockEntrance(
         const now = performance.now();
         // A short lead: the follow scroll is already moving when it starts showing.
         const delay = Math.max(REVEAL_LEAD_MS, revealEndsAt - now);
-        const { lineHeight, lines } = blockLines(block);
+        const lines = blockLines(block);
         const duration = Math.min(MAX_INK_MS, lines * INK_MS_PER_LINE);
         revealEndsAt = now + delay + duration;
         latestRevealEndsAt = Math.max(latestRevealEndsAt, revealEndsAt);
-        block.style.setProperty("--ink-lh", `${lineHeight}px`);
         block.classList.add("streamed-ink");
-        const ink = block.animate(inkKeyframes(lines), {
+        const ink = block.animate(INK_KEYFRAMES, {
           duration,
           delay,
           easing: "linear",

@@ -24,8 +24,8 @@ and fades in on the same curve (clip and opacity only, never a transform, so the
 measurements hold), and the "Working for" label carries the thinking traces' live shine (ActivityShimmerOverlay)
 for as long as the turn works; its line just appears
 (`chat/timelineEntranceMotion.ts`; played entrances never replay on row remount). While an
-answer streams, each block (the first included) shows at once, lighter, and is inked in line by
-line from left to right (about 300ms a line, `.streamed-ink` mask, registered `--ink-line`/`--ink-x`),
+answer streams, each block (the first included) shows at once at 65% strength and a soft edge
+inks it in from the top down (about 300ms a line, `.streamed-ink` mask, registered `--ink-y`),
 one block after the other, counted per message so remounted rows never replay;
 each block starts 150ms after it arrives. A followed response's scroll is velocity-based: it
 accelerates gently, cruises at most 1px/ms, brakes into place, and while text is being revealed
