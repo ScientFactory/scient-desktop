@@ -2651,6 +2651,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   it.effect.each([
     "OAuth access token has been revoked",
     "OAuth session expired and could not be refreshed",
+    "Failed to authenticate. API Error: 401 OAuth access token has been revoked.",
   ])("retires the exact native query after authoritative auth failure: %s", (error) =>
     Effect.gen(function* () {
       const closed = yield* Deferred.make<void>();
@@ -2755,6 +2756,32 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(harness.terminalEvents().length, 1);
         assert.isFalse(harness.events.some((event) => event.type === "authentication.invalidated"));
         assert.equal(closeCount, 0);
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("auth-nonauthoritative-recovery"),
+            providerTurnOrdinal: 2,
+            text: "Continue after the unrelated failure",
+            attachments: [],
+          }),
+        );
+        const recoveryUuid = harness.offeredMessages.at(-1)?.uuid;
+        assert.notEqual(recoveryUuid, submittedUuid);
+        if (recoveryUuid === undefined)
+          return yield* Effect.die("Missing recovery prompt identity");
+        yield* harness.offerAndWait(
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000610",
+            result: "Recovered on the same query.",
+            userMessageUuid: recoveryUuid,
+          }),
+        );
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+        assert.equal(harness.terminalEvents().length, 2);
+        assert.equal(closeCount, 0);
+        assert.isFalse(harness.events.some((event) => event.type === "authentication.invalidated"));
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
