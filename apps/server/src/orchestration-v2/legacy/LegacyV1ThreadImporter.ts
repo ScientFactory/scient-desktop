@@ -43,7 +43,7 @@ import {
   makeForkLineageQueries,
   toForkLineageMarker,
   type ProjectionForkLineageRow,
-} from "../scient-fork/ForkBoundaryReadModel.ts";
+} from "./LegacyForkLineageReader.ts";
 import { importLegacyHistory, prepareLegacyHistory } from "./LegacyScientHistory.ts";
 
 const IMPORT_EVENT_PREFIX = "migration:v1";
