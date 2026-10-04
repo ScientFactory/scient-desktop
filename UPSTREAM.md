@@ -17,6 +17,11 @@ answer keeps its latest content as the end. One rule,
 `readerAtReadingEnd`, decides being at the end for the end control, sending,
 navigation, saved positions and idle end keeping: at most the answer's last three
 lines hidden, in its own line height, never less than the inherited 40-pixel band.
+Send motion (Scient): the draft hero composer's move to the thread always animates
+(`DRAFT_HERO_TRANSITION_DURATION_MS`, decelerating curve), not only with the opt-in panel
+animation setting; reduced motion skips it. A first prompt being placed rises and fades in
+on the same curve, and the "Working for" line draws in from the left once per prompt
+(`chat/timelineEntranceMotion.ts`; played entrances never replay on row remount).
 Preserve the existing first-message framing. Eligible sends, and queued prompts the server delivers (`queue:` ids) while
 the reader is at the end, reveal the prompt and the start of its response's latest
 message through `chat/useBoundedAnswerFollow.ts` (for a later prompt, `followResponse`

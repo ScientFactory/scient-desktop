@@ -499,6 +499,7 @@ import {
 import { deriveLatestContextWindowSnapshot, formatContextWindowTokens } from "../lib/contextWindow";
 import {
   DRAFT_HERO_TRANSITION_ANIMATION_ID,
+  DRAFT_HERO_TRANSITION_DURATION_MS,
   DRAFT_HERO_TRANSITION_EASING,
   MOBILE_COMPOSER_VIEW_TRANSITION_NAME,
   MOBILE_DRAFT_HEADLINE_VIEW_TRANSITION_NAME,
@@ -1917,6 +1918,7 @@ function ChatViewContent(props: ChatViewProps) {
     useState<Record<string, number>>({});
   const shouldUseRightPanelSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   const isMobileViewport = useMediaQuery("max-sm");
+  const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [pullRequestDialogState, setPullRequestDialogState] =
     useState<PullRequestDialogState | null>(null);
@@ -4080,8 +4082,9 @@ function ChatViewContent(props: ChatViewProps) {
     captureDraftHeroComposerRect,
   ] = useDraftHeroLayoutTransition(
     isDraftHeroState,
-    panelAnimationsActive,
-    panelAnimationDurationMs,
+    // Always animated (not the opt-in panel setting), unless motion is reduced.
+    !prefersReducedMotion,
+    DRAFT_HERO_TRANSITION_DURATION_MS,
   );
   const latestCompletedAssistantMessageId = useMemo(
     () =>
