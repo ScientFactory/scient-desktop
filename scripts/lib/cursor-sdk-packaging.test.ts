@@ -17,6 +17,7 @@ import {
   shouldBundleCliDependency,
 } from "./cli-external-packages.ts";
 import { findEsmImportsOfExternalPackages } from "./cli-executable-imports.ts";
+import { CLI_BUNDLE_ALIASES } from "./cli-bundle-aliases.ts";
 
 const decodeManifest = Schema.decodeUnknownSync(
   Schema.fromJsonString(
@@ -139,6 +140,7 @@ it("loads packaged Cursor and distinct bundled provider schemas without checkout
     );
     await build({
       config: false,
+      alias: CLI_BUNDLE_ALIASES,
       entry: [entry],
       outDir: output,
       platform: "node",

@@ -1,7 +1,10 @@
 import * as NodeOS from "node:os";
 
 import { historyResponseItems } from "../ContextHandoffBudget.ts";
-import type { ProviderAdapterV2HistoricalContext } from "../ProviderAdapter.ts";
+import {
+  ProviderAdapterTurnStartError,
+  type ProviderAdapterV2HistoricalContext,
+} from "../ProviderAdapter.ts";
 import {
   makeProviderTextDeltaCoalescer,
   type ProviderTextDeltaUpdate,
@@ -81,6 +84,8 @@ import {
   makeCodexProviderAdapterRegistryReplayLayer,
   withCodexReplayChildMetadata,
 } from "./CodexAdapterV2.testkit.ts";
+
+const isNativeStartReceiptError = Schema.is(ProviderAdapterTurnStartError);
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const replayTranscriptJson = Schema.fromJsonString(CodexReplay.CodexAppServerReplayTranscript);
@@ -3135,6 +3140,163 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assert.equal(harness.terminalEvents()[0]?.status, "completed");
         }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
       ),
+  );
+
+  it.effect.each([
+    { compact: false, completed: false },
+    { compact: true, completed: false },
+    { compact: false, completed: true },
+    { compact: true, completed: true },
+  ])("retains correlated native acceptance before a failing start response: %s", (scenario) =>
+    Effect.gen(function* () {
+      const nativeThreadId = "accepted-before-response-thread";
+      const nativeTurnId = "accepted-before-response-turn";
+      const accepted = yield* Deferred.make<void>();
+      const preamble = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" });
+      const transcript = makeCodexReplayTranscript({
+        scenario: `accepted-before-error-${scenario.compact}-${scenario.completed}`,
+        entries: [
+          ...preamble.slice(0, 5),
+          ...(scenario.compact
+            ? [
+                {
+                  type: "expect_outbound" as const,
+                  frame: {
+                    id: 3,
+                    method: "thread/compact/start",
+                    params: { threadId: nativeThreadId },
+                  },
+                },
+              ]
+            : preamble.slice(5, 6)),
+          ...preamble.slice(7, 8),
+          ...(scenario.completed
+            ? [
+                {
+                  type: "emit_inbound" as const,
+                  frame: {
+                    method: "turn/completed",
+                    params: {
+                      threadId: nativeThreadId,
+                      turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                    },
+                  },
+                },
+              ]
+            : []),
+          // This actual request follows the observed native receipt (and terminal,
+          // when present), so the failing start response cannot race its handler.
+          {
+            type: "expect_outbound",
+            frame: {
+              id: 4,
+              method: "feedback/upload",
+              params: {
+                classification: "bug",
+                includeLogs: true,
+                threadId: nativeThreadId,
+              },
+            },
+          },
+          { type: "emit_inbound", frame: { id: 4, result: { threadId: "feedback" } } },
+          {
+            type: "emit_inbound",
+            frame: {
+              id: 3,
+              error: { code: -32602, message: "Response failed after native acceptance" },
+            },
+          },
+        ],
+      });
+      const h = yield* makeCodexReplayHarness(transcript, (event) =>
+        event.type === "provider_turn.updated" && event.providerTurn.nativeAcceptance === "accepted"
+          ? Deferred.succeed(accepted, undefined)
+          : Effect.void,
+      );
+      const input = makeCodexTestTurnInput({
+        threadId: h.threadId,
+        providerThread: h.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("accepted-before-error-attempt"),
+        text: "work",
+      });
+      const start = scenario.compact ? h.runtime.compactThread : h.runtime.startTurn;
+      assert.ok(start);
+      assert.ok(h.runtime.uploadFeedback);
+      const failing = yield* start(input).pipe(Effect.flip, Effect.forkScoped);
+      yield* Deferred.await(accepted);
+      if (scenario.completed) yield* h.firstTerminal;
+      yield* h.runtime.uploadFeedback({ providerThread: h.providerThread });
+      const error = yield* Fiber.join(failing);
+      if (!isNativeStartReceiptError(error))
+        return yield* Effect.die("Expected native start error");
+      const observed = h.events.find(
+        (event) =>
+          event.type === "provider_turn.updated" &&
+          event.providerTurn.nativeAcceptance === "accepted",
+      );
+      assert.ok(observed?.type === "provider_turn.updated");
+      assert.deepEqual(error.providerTurn, observed.providerTurn);
+      assert.equal(error.providerTurn?.nativeTurnRef?.nativeId, nativeTurnId);
+      assert.equal(error.providerTurn?.nativeAcceptance, "accepted");
+      assert.ok(error.providerTurn?.acceptedAt);
+      assert.equal(error.providerTurn?.runAttemptId, input.attemptId);
+      assert.equal(error.providerTurn?.nodeId, input.rootNodeId);
+      assert.equal(error.providerTurn?.providerThreadId, h.providerThread.id);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect.each([-32602, -32000])(
+    "retains native compaction request refusal versus uncertainty: %s",
+    (code) =>
+      Effect.gen(function* () {
+        const nativeThreadId = "compact-failed-thread";
+        const transcript = makeCodexReplayTranscript({
+          scenario: `native-compaction-failure-${code}`,
+          entries: [
+            ...codexReplayPreamble({
+              nativeThreadId,
+              nativeTurnId: "unused-turn",
+              prompt: "unused",
+            }).slice(0, 5),
+            {
+              type: "expect_outbound",
+              label: "compact",
+              frame: {
+                id: 3,
+                method: "thread/compact/start",
+                params: { threadId: nativeThreadId },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "compact",
+              frame: {
+                id: 3,
+                error: { code, message: "Native compaction refused or response uncertain" },
+              },
+            },
+          ],
+        });
+        const h = yield* makeCodexReplayHarness(transcript);
+        assert.ok(h.runtime.compactThread);
+        const input = makeCodexTestTurnInput({
+          threadId: h.threadId,
+          providerThread: h.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("compact-failed-attempt"),
+          text: "/compact",
+        });
+        const error = yield* h.runtime.compactThread(input).pipe(Effect.flip);
+        if (!isNativeStartReceiptError(error))
+          return yield* Effect.die("Expected exact compaction start error");
+        assert.equal(error.providerTurn?.nativeAcceptance, code === -32602 ? "pending" : "unknown");
+        assert.isUndefined(error.providerTurn?.acceptedAt);
+        assert.isNull(error.providerTurn?.nativeTurnRef);
+        assert.equal(error.providerTurn?.runAttemptId, input.attemptId);
+        assert.equal(error.providerTurn?.nodeId, input.rootNodeId);
+        assert.equal(error.providerTurn?.providerThreadId, h.providerThread.id);
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
   it.effect("compacts Codex with the native RPC and completes the compaction turn", () =>

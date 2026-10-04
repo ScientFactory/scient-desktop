@@ -170,6 +170,8 @@ const seed = Effect.fnUntraced(function* () {
     nativeTurnRef: { driver, nativeId: "actual-native-turn", strength: "strong" },
     ordinal: 1,
     status: "running",
+    nativeAcceptance: "accepted",
+    acceptedAt: now,
     startedAt: now,
     completedAt: null,
   };
@@ -239,6 +241,42 @@ const seed = Effect.fnUntraced(function* () {
   };
   return { sink, thread, sourceThread, run, attempt, root, providerThread, plan, receipt, now };
 });
+
+for (const receiptKind of ["local-pending", "offered-unknown", "old-unknown"] as const) {
+  it.effect(`does not consume a plan from ${receiptKind} running installation`, () =>
+    Effect.gen(function* () {
+      const { sink, plan, receipt } = yield* seed();
+      const projection = yield* ProjectionStore.ProjectionStoreV2;
+      const {
+        acceptedAt: _acceptedAt,
+        nativeAcceptance: _nativeAcceptance,
+        ...installed
+      } = receipt.payload;
+      yield* sink.write({
+        events: [
+          {
+            ...receipt,
+            payload: {
+              ...installed,
+              ...(receiptKind === "local-pending"
+                ? { nativeAcceptance: "pending" as const }
+                : receiptKind === "offered-unknown"
+                  ? { nativeAcceptance: "unknown" as const }
+                  : {}),
+            },
+          },
+        ],
+      });
+      assert.equal((yield* projection.getPlan(plan.threadId, plan.id))?.status, "active");
+      // The later, exact-owner native acknowledgement consumes exactly once.
+      yield* sink.write({ events: [{ ...receipt, id: EventId.make("later-native-acceptance") }] });
+      const consumed = yield* projection.getPlan(plan.threadId, plan.id);
+      assert.ok(consumed?.kind === "proposed_plan");
+      assert.equal(consumed.status, "completed");
+      assert.equal(consumed.consumedBy?.providerTurnId, receipt.payload.id);
+    }).pipe(Effect.provide(testLayer)),
+  );
+}
 
 it.effect(
   "consumes a queued plan with the native receipt atomically and retains exact owner through replay/new attempts",

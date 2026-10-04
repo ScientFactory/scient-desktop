@@ -444,8 +444,11 @@ export async function stashRecoveredDraft(session: EditSession) {
 useComposerDraftStore.subscribe((state, previous) => {
   for (const session of Object.values(useQueueEditSessions.getState().sessions)) {
     if (!session.transferred || ending.has(session.journalKey)) continue;
-    const edited = state.getComposerDraft(session.originalTarget) ?? session.edited;
-    if (edited === previous.getComposerDraft(session.originalTarget)) continue;
+    // Transfer and recovery install this exact key. Store methods close over
+    // live state, so compare the immutable snapshots rather than their getters.
+    const key = composerTargetKey(session.originalTarget);
+    const edited = state.draftsByThreadKey[key];
+    if (!edited || edited === previous.draftsByThreadKey[key]) continue;
     void save({ ...session, edited }).catch((cause) =>
       useQueueEditSessions.setState({
         error: {
@@ -547,6 +550,11 @@ export async function restoreQueueEditStash(
   const recoveryKey = activeSession?.journalKey ?? randomUUID();
   let recovery: EditSession = {
     ...(activeSession ?? session),
+    // An ordinary stash restores authored content, not the extracted run's
+    // plan or retry identity. An existing target edit keeps its own provenance.
+    ...(!activeSession && side === "ordinary"
+      ? { extractedItem: undefined, nativeRun: undefined }
+      : {}),
     key: targetKey,
     journalKey: recoveryKey,
     originalTarget: target,

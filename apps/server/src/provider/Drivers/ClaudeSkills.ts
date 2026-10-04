@@ -27,8 +27,8 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
-// The published ESM entry keeps implementation imports visible to the CLI bundler.
-import { applyEdits, modify, parse, type ParseError } from "jsonc-parser/lib/esm/main.js";
+// Direct Node imports use the public entry; CLI packaging selects its ESM closure.
+import { applyEdits, modify, parse, type ParseError } from "jsonc-parser";
 import { parse as parseYamlDocument } from "yaml";
 
 import { expandHomePath } from "../../pathExpansion.ts";

@@ -1231,6 +1231,17 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
       });
     };
 
+    const markTurnAccepted = Effect.fnUntraced(function* (state: ThreadState, turn: ActiveTurn) {
+      if (state.active !== turn || turn.unsent || turn.providerTurn.acceptedAt !== undefined)
+        return;
+      turn.providerTurn = {
+        ...turn.providerTurn,
+        nativeAcceptance: "accepted",
+        acceptedAt: yield* DateTime.now,
+      };
+      yield* emitProviderTurn(state, turn, turn.providerTurn);
+    });
+
     const makeTurn = (
       owner: TurnOwner,
       providerTurn: OrchestrationV2ProviderTurn,
@@ -2257,6 +2268,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
           return;
         }
         case "session.execution.started":
+          yield* markTurnAccepted(state, turn);
           // The execution that delivers steers the last one ended without.
           turn.heldEnd = undefined;
           return;
@@ -2578,7 +2590,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
       // A session runs one execution at a time, and each opens with `started`
       // on this ordered stream, so what comes before it is the stopped run's.
       if (turn.awaitingStart) {
-        if (event.type === "session.execution.started") turn.awaitingStart = false;
+        if (event.type === "session.execution.started") {
+          turn.awaitingStart = false;
+          yield* markTurnAccepted(state, turn);
+        }
         return;
       }
       return yield* onTurnEvent(state, turn, event);
@@ -3284,6 +3299,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
           ),
           ordinal: turnInput.providerTurnOrdinal,
           status: "running",
+          nativeAcceptance: "pending",
           startedAt,
           completedAt: null,
         };
@@ -3458,18 +3474,23 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
     ) {
       const sessionID = Session.ID.make(sessionId);
       /** Whether the turn still sends; past this point a Stop goes to the server. */
-      const sending = () => {
+      const sending = Effect.fnUntraced(function* () {
         if (state.active !== turn || turn.interrupted) return false;
         turn.unsent = false;
+        turn.providerTurn = { ...turn.providerTurn, nativeAcceptance: "unknown" };
+        yield* emitProviderTurn(state, turn, turn.providerTurn);
         return true;
-      };
+      });
       const text = turnInput.message.text.trim();
       const bare = turnInput.message.attachments.length === 0;
       // The turn's own id, so fork and rollback cut before this turn's item.
       const id = turnPromptId(sessionId, turnInput.attemptId);
       if (bare && text === "/compact") {
-        if (!sending()) return;
-        return yield* client.session.compact({ sessionID, id }).pipe(Effect.asVoid);
+        if (!(yield* sending())) return;
+        return yield* client.session.compact({ sessionID, id }).pipe(
+          Effect.tap(() => markTurnAccepted(state, turn)),
+          Effect.asVoid,
+        );
       }
       const location = { directory: turnInput.runtimePolicy.cwd ?? serverConfig.cwd };
       const command = bare ? commandOf(text) : undefined;
@@ -3484,8 +3505,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
           // so the turn remembers where the history stood before it.
           const newest = yield* client.message.list({ sessionID, order: "desc", limit: 1 });
           yield* markBefore(sessionId, newest.data[0]?.id ?? null);
-          if (!sending()) return;
-          return yield* client.session.command({ sessionID, ...command });
+          if (!(yield* sending())) return;
+          return yield* client.session
+            .command({ sessionID, ...command })
+            .pipe(Effect.tap(() => markTurnAccepted(state, turn)));
         }
       }
       const skills = SKILL_MENTION.test(text)
@@ -3498,7 +3521,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
             ),
           )
         : [];
-      if (!sending()) return;
+      if (!(yield* sending())) return;
       return yield* client.session
         .prompt({
           sessionID,
@@ -3508,7 +3531,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
             ? {}
             : { skills: skills.map((id) => ({ id: Skill.ID.make(id) })) }),
         })
-        .pipe(Effect.asVoid);
+        .pipe(
+          Effect.tap(() => markTurnAccepted(state, turn)),
+          Effect.asVoid,
+        );
     });
 
     const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
@@ -3778,18 +3804,25 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
             // the next turn resume, fail, and recreate it with a handoff.
             Effect.catchTags({
               SessionNotFoundError: () =>
-                finishTurn(
-                  state,
-                  {
-                    status: "failed",
-                    failure: makeProviderFailure({
-                      message:
-                        "The OpenCode session no longer exists. Send the message again to continue in a new session.",
-                      class: "provider_error",
-                    }),
-                  },
-                  "broken",
-                ).pipe(Effect.andThen(Effect.sync(() => threads.delete(sessionId)))),
+                Effect.gen(function* () {
+                  if (state.active === turn && turn.providerTurn.acceptedAt === undefined) {
+                    turn.providerTurn = { ...turn.providerTurn, nativeAcceptance: "pending" };
+                    yield* emitProviderTurn(state, turn, turn.providerTurn);
+                  }
+                  yield* finishTurn(
+                    state,
+                    {
+                      status: "failed",
+                      failure: makeProviderFailure({
+                        message:
+                          "The OpenCode session no longer exists. Send the message again to continue in a new session.",
+                        class: "provider_error",
+                      }),
+                    },
+                    "broken",
+                  );
+                  threads.delete(sessionId);
+                }),
             }),
             Effect.tapError((cause) =>
               state.active === turn
@@ -3797,12 +3830,27 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
                     // Without a clear rejection the server may have taken the
                     // prompt, so the next turn checks before it prompts again.
                     if (!CLEAR_PROMPT_REJECTIONS.has(cause._tag)) state.unsettled = true;
+                    else if (turn.providerTurn.acceptedAt === undefined) {
+                      turn.providerTurn = { ...turn.providerTurn, nativeAcceptance: "pending" };
+                      yield* emitProviderTurn(state, turn, turn.providerTurn);
+                    }
                     yield* finishTurn(state, {
                       status: "failed",
                       failure: makeProviderFailure({ cause, class: "provider_error" }),
                     });
                   })
                 : Effect.void,
+            ),
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapter.ProviderAdapterTurnStartError({
+                  driver,
+                  threadId: turnInput.threadId,
+                  providerThreadId: turnInput.providerThread.id,
+                  runId: turnInput.runId,
+                  providerTurn: turn.providerTurn,
+                  cause,
+                }),
             ),
           );
         }).pipe(

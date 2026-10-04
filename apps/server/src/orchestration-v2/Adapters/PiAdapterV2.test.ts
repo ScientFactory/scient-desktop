@@ -37,12 +37,13 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import {
   ProviderAdapterV2RuntimePolicy,
+  ProviderAdapterTurnStartError,
   type ProviderAdapterV2Event,
   type ProviderAdapterV2SessionRuntime,
 } from "../ProviderAdapter.ts";
 import { handoffBudget } from "../ContextHandoffBudget.ts";
 import { makePiAdapterV2, PI_PROVIDER } from "./PiAdapterV2.ts";
-import { makePiRpcConnection, parsePiModelSlug, type PiRpcRecord } from "./PiRpc.ts";
+import { makePiRpcConnection, parsePiModelSlug, PiRpcError, type PiRpcRecord } from "./PiRpc.ts";
 import { encodePiModelSlug } from "../../provider/pi/PiModel.ts";
 import { makePiCustomModelsConnectionFactory } from "../../provider/pi/PiCustomModelsConnection.ts";
 import type { ResolvedModelConnection } from "../../customModels.ts";
@@ -50,6 +51,8 @@ import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import * as Redacted from "effect/Redacted";
 import * as PubSub from "effect/PubSub";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
+
+const isNativeStartReceiptError = Schema.is(ProviderAdapterTurnStartError);
 
 const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-pi-v2-adapter-",
@@ -503,6 +506,57 @@ const expectModelFailure = (errorMessage: string) =>
   }).pipe(Effect.scoped, Effect.provide(testLayer));
 
 describe("PiAdapterV2", () => {
+  it.effect(
+    "retains the exact uncertain offer when a native stdin write fails before its receipt is emitted",
+    () =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const makeConnection: typeof makePiRpcConnection = (input) =>
+          makePiRpcConnection(input).pipe(
+            Effect.map((connection) => ({
+              ...connection,
+              send: (record) =>
+                connection.send(record).pipe(
+                  Effect.andThen(
+                    record.type === "prompt"
+                      ? Effect.fail(
+                          new PiRpcError({
+                            operation: "stdin write",
+                            detail: "Write outcome unknown",
+                          }),
+                        )
+                      : Effect.void,
+                  ),
+                ),
+            })),
+          );
+        const { runtime } = yield* openRuntime(
+          fake,
+          "default",
+          THREAD_ID,
+          SESSION_ID,
+          undefined,
+          makeConnection,
+        );
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        const error = yield* startTurn(runtime, providerThread).pipe(Effect.flip);
+        if (!isNativeStartReceiptError(error))
+          return yield* Effect.die("Expected exact native start error");
+        assert.equal(error.providerTurn?.nativeAcceptance, "unknown");
+        assert.isUndefined(error.providerTurn?.acceptedAt);
+        assert.equal(error.providerTurn?.providerThreadId, providerThread.id);
+        assert.equal(
+          error.providerTurn?.runAttemptId,
+          RunAttemptId.make(`run-attempt:run:${THREAD_ID}:1:1`),
+        );
+        assert.equal(error.providerTurn?.nodeId, NodeId.make(`node:run:${THREAD_ID}:1:root`));
+        assert.equal((yield* fake.takeRequest("prompt")).type, "prompt");
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
   it.effect("stops provider-initiated work that has no T3 turn owner", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;

@@ -177,6 +177,8 @@ export function claudeProviderTurnTokenUsage(
   };
 }
 export const CLAUDE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CLAUDE_PROVIDER);
+const isNativeStartReceiptError = Schema.is(ProviderAdapter.ProviderAdapterTurnStartError);
+
 const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
 
 export const ClaudeProviderCapabilitiesV2 = {
@@ -2636,6 +2638,8 @@ interface ActiveClaudeTurnContext {
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly providerTurnOrdinal: number;
   readonly startedAt: DateTime.Utc;
+  acceptedAt: DateTime.Utc | null;
+  promptOffered: boolean;
   // Item ordinals allocated in this turn. Later turns never look items up
   // here: a subagent resumed from another turn keeps its ordinal on the
   // session subagent registry.
@@ -3696,8 +3700,26 @@ export function makeClaudeAdapterV2(
           },
           ordinal: input.context.providerTurnOrdinal,
           status: input.status,
+          nativeAcceptance:
+            input.context.acceptedAt === null
+              ? input.context.promptOffered
+                ? "unknown"
+                : "pending"
+              : "accepted",
+          ...(input.context.acceptedAt === null ? {} : { acceptedAt: input.context.acceptedAt }),
           startedAt: input.context.startedAt,
           completedAt: input.completedAt,
+        });
+
+        const markTurnAccepted = Effect.fnUntraced(function* (context: ActiveClaudeTurnContext) {
+          if (context.acceptedAt !== null || (yield* Ref.get(activeTurn)) !== context) return;
+          context.acceptedAt = yield* DateTime.now;
+          yield* emitProviderEvent({
+            type: "provider_turn.updated",
+            driver: CLAUDE_PROVIDER,
+            threadId: context.input.threadId,
+            providerTurn: providerTurnPayload({ context, status: "running", completedAt: null }),
+          });
         });
 
         const buildToolCallArtifacts = (input: {
@@ -5905,6 +5927,7 @@ export function makeClaudeAdapterV2(
                 isClaudeNativeMessageUuid(message.uuid)
               ) {
                 context.nativeMessageCursor = message.uuid;
+                yield* markTurnAccepted(context);
               }
               context.latestAssistantRateLimited = message.error === "rate_limit";
               if (message.error === "authentication_failed") {
@@ -5941,6 +5964,13 @@ export function makeClaudeAdapterV2(
                   },
                   ordinal: context.providerTurnOrdinal,
                   status: "running",
+                  nativeAcceptance:
+                    context.acceptedAt === null
+                      ? context.promptOffered
+                        ? "unknown"
+                        : "pending"
+                      : "accepted",
+                  ...(context.acceptedAt === null ? {} : { acceptedAt: context.acceptedAt }),
                   startedAt: context.startedAt,
                   completedAt: null,
                   tokenUsage: {
@@ -6087,6 +6117,13 @@ export function makeClaudeAdapterV2(
                   },
                   ordinal: context.providerTurnOrdinal,
                   status: "running",
+                  nativeAcceptance:
+                    context.acceptedAt === null
+                      ? context.promptOffered
+                        ? "unknown"
+                        : "pending"
+                      : "accepted",
+                  ...(context.acceptedAt === null ? {} : { acceptedAt: context.acceptedAt }),
                   startedAt: context.startedAt,
                   completedAt: null,
                   tokenUsage: claudeProviderTurnTokenUsage(
@@ -6797,6 +6834,7 @@ export function makeClaudeAdapterV2(
             return;
           }
           if (claudeEchoedPromptUuids(message).includes(context.promptUuid)) {
+            yield* markTurnAccepted(context);
             if (
               liveQuery.promptEchoMode === "unknown" ||
               liveQuery.promptEchoMode === "acknowledged"
@@ -6814,6 +6852,7 @@ export function makeClaudeAdapterV2(
             liveQuery.promptEchoMode === "unknown" &&
             claudeAcknowledgedPromptUuid(message) === context.promptUuid
           ) {
+            yield* markTurnAccepted(context);
             liveQuery.promptEchoMode = "acknowledged";
           }
           if (!isClaudePromptEchoGatedFrame(message)) {
@@ -7499,6 +7538,8 @@ export function makeClaudeAdapterV2(
               providerTurnId,
               providerTurnOrdinal,
               startedAt,
+              acceptedAt: null,
+              promptOffered: false,
               itemOrdinals: new Map(),
               assistant: {
                 fallbackText: "",
@@ -7566,7 +7607,34 @@ export function makeClaudeAdapterV2(
               // afterwards with correct attribution.
               // Counted only here, so a turn that failed to start does not age reports.
               yield* startUserTurnForWakeReports(nativeThreadId);
-              yield* querySession.query.offer(userMessage);
+              context.promptOffered = true;
+              yield* emitProviderEvent({
+                type: "provider_turn.updated",
+                driver: CLAUDE_PROVIDER,
+                threadId: turnInput.threadId,
+                providerTurn: providerTurnPayload({
+                  context,
+                  status: "running",
+                  completedAt: null,
+                }),
+              });
+              yield* querySession.query.offer(userMessage).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterTurnStartError({
+                      driver: CLAUDE_PROVIDER,
+                      threadId: turnInput.threadId,
+                      providerThreadId: turnInput.providerThread.id,
+                      runId: turnInput.runId,
+                      providerTurn: providerTurnPayload({
+                        context,
+                        status: "running",
+                        completedAt: null,
+                      }),
+                      cause,
+                    }),
+                ),
+              );
               return;
             }
             const drained = yield* Ref.modify(wakeBuffers, (current) => {
@@ -7625,15 +7693,16 @@ export function makeClaudeAdapterV2(
           },
           (effect, turnInput) =>
             effect.pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterTurnStartError({
-                    driver: CLAUDE_PROVIDER,
-                    threadId: turnInput.threadId,
-                    providerThreadId: turnInput.providerThread.id,
-                    runId: turnInput.runId,
-                    cause,
-                  }),
+              Effect.mapError((cause) =>
+                isNativeStartReceiptError(cause)
+                  ? cause
+                  : new ProviderAdapter.ProviderAdapterTurnStartError({
+                      driver: CLAUDE_PROVIDER,
+                      threadId: turnInput.threadId,
+                      providerThreadId: turnInput.providerThread.id,
+                      runId: turnInput.runId,
+                      cause,
+                    }),
               ),
             ),
         );

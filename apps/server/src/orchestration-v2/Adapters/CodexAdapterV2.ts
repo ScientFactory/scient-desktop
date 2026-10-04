@@ -170,6 +170,9 @@ import {
   subagentThreadTitle,
 } from "../SubagentProjection.ts";
 
+const isCodexRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
+const isNativeStartReceiptError = Schema.is(ProviderAdapterTurnStartError);
+
 const CODEX_PROVIDER = ProviderDriverKind.make("codex");
 export const CODEX_DRIVER_KIND = CODEX_PROVIDER;
 export const CODEX_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CODEX_DRIVER_KIND);
@@ -1655,6 +1658,13 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           ).hasSubagents = true;
         };
         const pendingRootTurns = yield* Ref.make(new Map<string, ProviderAdapterV2TurnInput>());
+        // Only an in-flight native start owns this observation. Exact input identity
+        // fences thread/run/root/attempt/instance, and survives native completion
+        // removing activeTurns before the request's response arrives.
+        const rootStartReceipts = new Map<
+          ProviderAdapterV2TurnInput,
+          OrchestrationV2ProviderTurn | undefined
+        >();
         const turnWaiters = yield* Ref.make(new Map<string, Deferred.Deferred<void, never>>());
         const subagentThreads = yield* Ref.make(new Map<string, CodexSubagentThreadContext>());
         const subagentModels = new Map<string, string>();
@@ -1785,25 +1795,31 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               updated.set(input.nativeTurnId, context);
               return updated;
             });
+            const providerTurn: OrchestrationV2ProviderTurn = {
+              id: providerTurnId,
+              providerThreadId: input.turnInput.providerThread.id,
+              nodeId: input.turnInput.rootNodeId,
+              runAttemptId: input.turnInput.attemptId,
+              nativeTurnRef: {
+                driver: CODEX_PROVIDER,
+                nativeId: input.nativeTurnId,
+                strength: "strong",
+              },
+              ordinal: input.turnInput.providerTurnOrdinal,
+              status: "running",
+              nativeAcceptance: "accepted",
+              acceptedAt: input.startedAt,
+              startedAt: input.startedAt,
+              completedAt: null,
+            };
+            if (rootStartReceipts.has(input.turnInput)) {
+              rootStartReceipts.set(input.turnInput, providerTurn);
+            }
             yield* emitProviderEvent({
               type: "provider_turn.updated",
               driver: CODEX_PROVIDER,
               threadId: input.turnInput.threadId,
-              providerTurn: {
-                id: providerTurnId,
-                providerThreadId: input.turnInput.providerThread.id,
-                nodeId: input.turnInput.rootNodeId,
-                runAttemptId: input.turnInput.attemptId,
-                nativeTurnRef: {
-                  driver: CODEX_PROVIDER,
-                  nativeId: input.nativeTurnId,
-                  strength: "strong",
-                },
-                ordinal: input.turnInput.providerTurnOrdinal,
-                status: "running",
-                startedAt: input.startedAt,
-                completedAt: null,
-              },
+              providerTurn,
             });
             return context;
           });
@@ -3869,6 +3885,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 },
                 ordinal: context.providerTurnOrdinal,
                 status: "running",
+                nativeAcceptance: "accepted",
+                acceptedAt: context.startedAt,
                 startedAt: context.startedAt,
                 completedAt: null,
                 tokenUsage: codexProviderTurnTokenUsage(
@@ -5269,6 +5287,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   },
                   ordinal: input.context.providerTurnOrdinal,
                   status: input.status,
+                  nativeAcceptance: "accepted",
+                  acceptedAt: input.context.startedAt,
                   startedAt: input.context.startedAt,
                   completedAt: input.completedAt,
                   turnTokenUsage: completeCodexTurnTokenUsage(
@@ -5464,6 +5484,24 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           }),
         );
 
+        const offeredProviderTurn = (
+          turnInput: ProviderAdapterV2TurnInput,
+        ): OrchestrationV2ProviderTurn => ({
+          id: idAllocator.derive.providerTurn({
+            driver: CODEX_PROVIDER,
+            nativeTurnId: `offered:${turnInput.attemptId}`,
+          }),
+          providerThreadId: turnInput.providerThread.id,
+          nodeId: turnInput.rootNodeId,
+          runAttemptId: turnInput.attemptId,
+          nativeTurnRef: null,
+          ordinal: turnInput.providerTurnOrdinal,
+          status: "pending",
+          nativeAcceptance: "unknown",
+          startedAt: null,
+          completedAt: null,
+        });
+
         const runtime: ProviderAdapterV2SessionRuntime = {
           instanceId: adapterOptions.instanceId,
           driver: CODEX_PROVIDER,
@@ -5600,7 +5638,27 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               yield* Ref.update(pendingRootTurns, (current) =>
                 new Map(current).set(threadId, turnInput),
               );
+              rootStartReceipts.set(turnInput, undefined);
               yield* client.request("thread/compact/start", { threadId }).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapterTurnStartError({
+                      driver: CODEX_PROVIDER,
+                      threadId: turnInput.threadId,
+                      providerThreadId: turnInput.providerThread.id,
+                      runId: turnInput.runId,
+                      providerTurn: rootStartReceipts.get(turnInput) ?? {
+                        ...offeredProviderTurn(turnInput),
+                        nativeAcceptance:
+                          isCodexRequestError(cause) &&
+                          (cause.code === -32600 || cause.code === -32601 || cause.code === -32602)
+                            ? "pending"
+                            : "unknown",
+                      },
+                      cause,
+                    }),
+                ),
+                Effect.ensuring(Effect.sync(() => rootStartReceipts.delete(turnInput))),
                 Effect.tapError(() =>
                   Ref.update(pendingRootTurns, (current) => {
                     const next = new Map(current);
@@ -5610,15 +5668,16 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 ),
               );
             }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapterTurnStartError({
-                    driver: CODEX_PROVIDER,
-                    threadId: turnInput.threadId,
-                    providerThreadId: turnInput.providerThread.id,
-                    runId: turnInput.runId,
-                    cause,
-                  }),
+              Effect.mapError((cause) =>
+                isNativeStartReceiptError(cause)
+                  ? cause
+                  : new ProviderAdapterTurnStartError({
+                      driver: CODEX_PROVIDER,
+                      threadId: turnInput.threadId,
+                      providerThreadId: turnInput.providerThread.id,
+                      runId: turnInput.runId,
+                      cause,
+                    }),
               ),
             ),
           injectHistory: (input) =>
@@ -5684,7 +5743,31 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 else next.delete(threadId);
                 return next;
               });
-              const started = yield* client.request("turn/start", turnStartParams);
+              // This records only a possibly offered request. Its local identity
+              // is never a native cursor or successful execution receipt.
+              const offered = offeredProviderTurn(turnInput);
+              rootStartReceipts.set(turnInput, undefined);
+              const started = yield* client.request("turn/start", turnStartParams).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapterTurnStartError({
+                      driver: CODEX_PROVIDER,
+                      threadId: turnInput.threadId,
+                      providerThreadId: turnInput.providerThread.id,
+                      runId: turnInput.runId,
+                      providerTurn: rootStartReceipts.get(turnInput) ?? {
+                        ...offered,
+                        nativeAcceptance:
+                          isCodexRequestError(cause) &&
+                          (cause.code === -32600 || cause.code === -32601 || cause.code === -32602)
+                            ? "pending"
+                            : "unknown",
+                      },
+                      cause,
+                    }),
+                ),
+                Effect.ensuring(Effect.sync(() => rootStartReceipts.delete(turnInput))),
+              );
               const nativeTurnId = started.turn.id;
               const startedAt = codexTimestamp(started.turn.startedAt);
               yield* registerRootTurn({
@@ -5708,15 +5791,16 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   }),
                 ).pipe(Effect.ignore),
               ),
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapterTurnStartError({
-                    driver: CODEX_PROVIDER,
-                    threadId: turnInput.threadId,
-                    providerThreadId: turnInput.providerThread.id,
-                    runId: turnInput.runId,
-                    cause,
-                  }),
+              Effect.mapError((cause) =>
+                isNativeStartReceiptError(cause)
+                  ? cause
+                  : new ProviderAdapterTurnStartError({
+                      driver: CODEX_PROVIDER,
+                      threadId: turnInput.threadId,
+                      providerThreadId: turnInput.providerThread.id,
+                      runId: turnInput.runId,
+                      cause,
+                    }),
               ),
             ),
           steerTurn: (turnInput) =>

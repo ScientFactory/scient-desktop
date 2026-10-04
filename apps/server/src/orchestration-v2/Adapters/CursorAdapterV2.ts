@@ -77,6 +77,8 @@ export { cursorSdkModelSelection } from "../../provider/cursorSdkModel.ts";
 
 export const CURSOR_DRIVER_KIND = CursorAgentSdk.CURSOR_PROVIDER;
 export const CURSOR_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CURSOR_DRIVER_KIND);
+const isNativeStartReceiptError = Schema.is(ProviderAdapter.ProviderAdapterTurnStartError);
+
 const DEFAULT_CURSOR_SETTINGS = Schema.decodeSync(CursorSettings)({});
 
 export const CursorProviderCapabilitiesV2 = {
@@ -1927,6 +1929,8 @@ export function makeCursorAdapterV2(
           },
           ordinal: input.context.input.providerTurnOrdinal,
           status: input.status,
+          nativeAcceptance: "accepted",
+          acceptedAt: input.context.startedAt,
           startedAt: input.context.startedAt,
           completedAt: input.completedAt,
         });
@@ -2189,22 +2193,53 @@ export function makeCursorAdapterV2(
             const mcpServers = cursorMcpServers(turnInput.threadId, input.configureMcp !== false);
             const pendingUpdates: Array<InteractionUpdate> = [];
             let context: ActiveCursorTurn | null = null;
-            const sdkRun = yield* agent.session.send({
-              message,
-              options: {
-                model: cursorSdkModelSelection(turnInput.modelSelection),
-                mode: turnInput.runtimePolicy.interactionMode === "plan" ? "plan" : "agent",
-                ...(mcpServers === undefined ? {} : { mcpServers }),
-              },
-              onDelta: (update) => {
-                if (context === null) {
-                  return Effect.sync(() => {
-                    pendingUpdates.push(update);
-                  });
-                }
-                return handleInteractionUpdate(context, update);
-              },
-            });
+            // No native run id exists until send acknowledges. Keep uncertainty
+            // durable without granting this local request a native cursor.
+            const offered: OrchestrationV2ProviderTurn = {
+              id: idAllocator.derive.providerTurn({
+                driver: CursorAgentSdk.CURSOR_PROVIDER,
+                nativeTurnId: `offered:${turnInput.attemptId}`,
+              }),
+              providerThreadId: turnInput.providerThread.id,
+              nodeId: turnInput.rootNodeId,
+              runAttemptId: turnInput.attemptId,
+              nativeTurnRef: null,
+              ordinal: turnInput.providerTurnOrdinal,
+              status: "pending",
+              nativeAcceptance: "unknown",
+              startedAt: null,
+              completedAt: null,
+            };
+            const sdkRun = yield* agent.session
+              .send({
+                message,
+                options: {
+                  model: cursorSdkModelSelection(turnInput.modelSelection),
+                  mode: turnInput.runtimePolicy.interactionMode === "plan" ? "plan" : "agent",
+                  ...(mcpServers === undefined ? {} : { mcpServers }),
+                },
+                onDelta: (update) => {
+                  if (context === null) {
+                    return Effect.sync(() => {
+                      pendingUpdates.push(update);
+                    });
+                  }
+                  return handleInteractionUpdate(context, update);
+                },
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterTurnStartError({
+                      driver: CursorAgentSdk.CURSOR_PROVIDER,
+                      threadId: turnInput.threadId,
+                      providerThreadId: turnInput.providerThread.id,
+                      runId: turnInput.runId,
+                      providerTurn: offered,
+                      cause,
+                    }),
+                ),
+              );
             const startedAt = yield* DateTime.now;
             const completed = yield* Deferred.make<void, never>();
             const providerTurnId = idAllocator.derive.providerTurn({
@@ -2322,15 +2357,16 @@ export function makeCursorAdapterV2(
           },
           (effect, turnInput) =>
             effect.pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterTurnStartError({
-                    driver: CursorAgentSdk.CURSOR_PROVIDER,
-                    threadId: turnInput.threadId,
-                    providerThreadId: turnInput.providerThread.id,
-                    runId: turnInput.runId,
-                    cause,
-                  }),
+              Effect.mapError((cause) =>
+                isNativeStartReceiptError(cause)
+                  ? cause
+                  : new ProviderAdapter.ProviderAdapterTurnStartError({
+                      driver: CursorAgentSdk.CURSOR_PROVIDER,
+                      threadId: turnInput.threadId,
+                      providerThreadId: turnInput.providerThread.id,
+                      runId: turnInput.runId,
+                      cause,
+                    }),
               ),
             ),
         );

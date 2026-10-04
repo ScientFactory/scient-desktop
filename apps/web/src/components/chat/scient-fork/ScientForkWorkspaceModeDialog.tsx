@@ -219,6 +219,15 @@ export function ScientForkWorkspaceModeDialog({
     };
   }, [open]);
 
+  useLayoutEffect(() => {
+    if (!closingForNavigation) return;
+    // The accepted fork can navigate once the dialog subtree is removed.
+    // Animation completion can be lost when the browser cancels a transition.
+    const complete = finishClose.current;
+    finishClose.current = null;
+    complete?.(open && openSinceSubmit.current);
+  }, [closingForNavigation, open]);
+
   useEffect(() => {
     if (open && !wasOpenRef.current) {
       setTitleDraft(proposedTitle);
@@ -305,16 +314,10 @@ export function ScientForkWorkspaceModeDialog({
     }
   };
 
+  if (closingForNavigation) return null;
+
   return (
-    <Dialog
-      open={open && !closingForNavigation}
-      onOpenChange={onOpenChange}
-      onOpenChangeComplete={(isOpen) => {
-        if (isOpen) return;
-        finishClose.current?.(true);
-        finishClose.current = null;
-      }}
-    >
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup className="max-w-[23rem] -translate-y-4">
         {/* Pulled toward the name field so the subtitle groups with the title. */}
         <DialogHeader size="compact" className="-mb-1">

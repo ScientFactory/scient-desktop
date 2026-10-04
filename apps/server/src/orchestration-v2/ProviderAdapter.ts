@@ -273,6 +273,8 @@ export class ProviderAdapterTurnStartError extends Schema.TaggedError<ProviderAd
     threadId: ThreadId,
     providerThreadId: ProviderThreadId,
     runId: RunId,
+    /** Exact adapter delivery observation, retained if stream ingestion loses the start race. */
+    providerTurn: Schema.optional(OrchestrationV2ProviderTurn),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {

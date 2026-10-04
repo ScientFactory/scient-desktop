@@ -693,7 +693,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const serverConfig = yield* ServerConfig;
   const validateQueueBudget = (
     command: OrchestrationV2ServerCommand,
-    projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "messages">,
+    projection: Pick<
+      OrchestrationV2ThreadProjection,
+      "thread" | "runs" | "messages" | "providerTurns"
+    >,
     message: OrchestrationV2ConversationMessage,
   ) =>
     ensureQueuedMessageBudget({ projection, message }).pipe(
@@ -4817,20 +4820,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Proposed plan ${sourcePlan.id} is not active.`,
         });
       }
-      const completeSourcePlan = (occurredAt: DateTime.Utc) =>
-        sourcePlan === null
-          ? Effect.void
-          : emit(
-              events,
-              command,
-            )({
-              type: "plan.updated",
-              threadId: sourcePlan.threadId,
-              ...(sourcePlan.runId === null ? {} : { runId: sourcePlan.runId }),
-              nodeId: sourcePlan.nodeId,
-              occurredAt,
-              payload: { ...sourcePlan, status: "completed" },
-            });
 
       if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
         yield* dispatchSteerIntoRun({
@@ -5431,6 +5420,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           checkpointId: null,
           contextHandoffId: legacyImportHandoff?.id ?? null,
           ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
+          ...(sourcePlan === null
+            ? {}
+            : { sourcePlanFingerprint: sourcePlanFingerprint(sourcePlan) }),
           ...(command.restartContinuationOfRunId === undefined
             ? {}
             : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
@@ -5606,7 +5598,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           occurredAt: now,
           payload: run,
         });
-        yield* completeSourcePlan(now);
         yield* emitEvent({
           type: "run-attempt.created",
           threadId: command.threadId,
@@ -6201,6 +6192,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           legacyImportRecoveryHandoff?.id ??
           null,
         ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
+        ...(sourcePlan === null
+          ? {}
+          : { sourcePlanFingerprint: sourcePlanFingerprint(sourcePlan) }),
         ...(command.restartContinuationOfRunId === undefined
           ? {}
           : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
@@ -6543,7 +6537,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: run,
       });
-      yield* completeSourcePlan(now);
       yield* emitEvent({
         type: "run-attempt.created",
         threadId: command.threadId,
@@ -7787,7 +7780,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       const projection = yield* projectionStore
-        .getThreadRecords(command.threadId, ["runs", "messages", "turnItems"], {
+        .getThreadRecords(command.threadId, ["runs", "messages", "turnItems", "providerTurns"], {
           turnItemTypes: ["user_message"],
           messageRoles: ["user"],
         })
@@ -9817,7 +9810,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       }
       case "legacy-queue.import": {
-        const projection = yield* loadProjectionForCommand(command, ["runs", "messages"]);
+        const projection = yield* loadProjectionForCommand(command, [
+          "runs",
+          "messages",
+          "providerTurns",
+        ]);
         if (
           projection.thread.deletedAt !== null ||
           isProviderNativeSubagentThread(projection.thread)
@@ -10285,13 +10282,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const now = yield* DateTime.now;
     const rootNode = projection.nodes.find((node) => node.id === run.rootNodeId);
     const attempt = projection.attempts.find((entry) => entry.id === run.activeAttemptId);
-    const nativeReceipt =
-      projection.providerTurns.some((turn) => turn.runAttemptId === run.activeAttemptId) ||
-      projection.turnItems.some(
-        (item) =>
-          item.nodeId === run.rootNodeId &&
-          (item.nativeItemRef !== null || (item.type !== "error" && item.providerTurnId !== null)),
-      );
+    const nativeReceipt = projection.providerTurns.some(
+      (turn) =>
+        turn.runAttemptId === run.activeAttemptId &&
+        turn.nodeId === run.rootNodeId &&
+        turn.providerThreadId === run.providerThreadId &&
+        (turn.acceptedAt !== undefined || turn.nativeAcceptance !== "pending"),
+    );
     const retryable =
       run.status === "failed" &&
       run.queuePosition != null &&

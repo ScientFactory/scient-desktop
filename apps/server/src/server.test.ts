@@ -80,6 +80,7 @@ import {
   projectedSubagentsToRuntime,
   deriveAgentPanelModel,
 } from "../../../packages/client-runtime/src/state/subagentRuntime.ts";
+import { historicalSubagentsToRuntime } from "../../../packages/client-runtime/src/state/historicalSubagentRuntime.ts";
 import { assert, it } from "@effect/vitest";
 import { assertFailure, assertInclude, assertTrue } from "@effect/vitest/utils";
 import * as Clock from "effect/Clock";
@@ -11495,6 +11496,178 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             : [],
         );
         assert.deepEqual(replayed, [workflow, member]);
+        assert.deepEqual(replay.at(-1), { kind: "synchronized" });
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "preserves oversized historical task completion through real HTTP and websocket snapshots and replay",
+    () =>
+      Effect.gen(function* () {
+        const app = yield* buildAppUnderTest();
+        const seeded = yield* seedV2StreamThread(app);
+        const detail = "Review outcome. " + "😀".repeat(12_000);
+        const activity = (
+          activityId: string,
+          kind: string,
+          payload: Record<string, unknown>,
+          ordinal: number,
+        ): OrchestrationV2TurnItem => ({
+          id: TurnItemId.make(`migration:v1:history:activity:${activityId}`),
+          threadId: transferV2ThreadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal,
+          status: "completed",
+          startedAt: seeded.thread.updatedAt,
+          completedAt: seeded.thread.updatedAt,
+          updatedAt: seeded.thread.updatedAt,
+          type: "dynamic_tool",
+          title: kind,
+          toolName: kind,
+          input: {
+            activityId,
+            turnId: null,
+            tone: "info",
+            kind,
+            summary: kind,
+            sequence: ordinal,
+            payload,
+          },
+        });
+        const copied = activity(
+          "copied",
+          "task.completed",
+          {
+            taskId: "copied-reviewer",
+            agentKind: "agent",
+            status: "completed",
+            summary: detail,
+            typedUsage: { toolUses: 2 },
+          },
+          3,
+        );
+        const items = [
+          activity(
+            "start",
+            "task.started",
+            { taskId: "reviewer", agentKind: "agent", title: "Review" },
+            0,
+          ),
+          activity(
+            "completion",
+            "task.completed",
+            {
+              taskId: "reviewer",
+              agentKind: "agent",
+              status: "completed",
+              summary: detail,
+              typedUsage: { totalTokens: 123, toolUses: 4 },
+            },
+            1,
+          ),
+          activity(
+            "completion-only",
+            "task.completed",
+            {
+              taskId: "completion-only",
+              agentKind: "agent",
+              status: "failed",
+              detail,
+              typedUsage: { totalTokens: 99, toolUses: 3 },
+            },
+            2,
+          ),
+          {
+            ...copied,
+            id: TurnItemId.make("fork:historical:copied"),
+            inheritedFrom: {
+              threadId: ThreadId.make("historical-origin"),
+              itemId: copied.id,
+              runId: null,
+              status: copied.status,
+            },
+          },
+        ];
+        yield* app.v2.eventSink.write({
+          events: items.map((payload) => ({
+            id: EventId.make(`historical-wire:${payload.id}`),
+            type: "turn-item.updated" as const,
+            threadId: transferV2ThreadId,
+            occurredAt: seeded.thread.updatedAt,
+            payload,
+          })),
+        });
+        const beforeTransport = yield* app.v2.threads.getThreadProjection(transferV2ThreadId);
+        assert.deepEqual(
+          beforeTransport.turnItems,
+          items.map((item, index) => ({ ...item, ordinal: index + 1 })),
+        );
+        const headers = {
+          cookie: yield* getAuthenticatedSessionCookieHeader(),
+          [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
+        };
+        const response = yield* measureHttpGet({
+          url: `${yield* getHttpServerUrl()}/api/orchestration/threads/${transferV2ThreadId}/bounded`,
+          headers,
+        });
+        assert.equal(response.status, 200);
+        const http = yield* decodeLegacyThreadBoundedSnapshot(
+          Buffer.from(response.decodedBody).toString("utf8"),
+        );
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const snapshots = yield* collectV2ThreadCatchup(wsUrl);
+        const snapshot = snapshots[0];
+        assertTrue(snapshot?.kind === "snapshot");
+        const replay = yield* collectV2ThreadCatchup(wsUrl, seeded.sequence);
+        const replayItems = replay.flatMap((item) =>
+          item.kind === "event" && item.event.type === "turn-item.updated"
+            ? [item.event.payload]
+            : [],
+        );
+        assert.equal(replayItems.length, items.length);
+        for (const wireItems of [
+          http.projection.turnItems,
+          snapshot.projection.turnItems,
+          replayItems,
+        ]) {
+          const agents = historicalSubagentsToRuntime(wireItems);
+          const model = deriveAgentPanelModel({ agents });
+          assert.equal(agents.length, 3);
+          assert.equal(model.liveCount, 0);
+          const reviewer = agents.find(
+            (agent) => agent.id === `historical:${transferV2ThreadId}:reviewer`,
+          );
+          assert.ok(reviewer);
+          assert.equal(reviewer.status, "completed");
+          assert.deepEqual(reviewer.usage, { totalTokens: 123, toolUses: 4 });
+          assert.match(reviewer.result ?? "", /^Review outcome\./);
+          assert.isTrue(reviewer.historical);
+          const failed = agents.find(
+            (agent) => agent.id === `historical:${transferV2ThreadId}:completion-only`,
+          );
+          assert.equal(failed?.status, "failed");
+          assert.deepEqual(failed?.usage, { totalTokens: 99, toolUses: 3 });
+          assert.match(failed?.error ?? "", /^Review outcome\./);
+          const inherited = agents.find(
+            (agent) => agent.id === "historical:historical-origin:copied-reviewer",
+          );
+          assert.equal(inherited?.status, "completed");
+          assert.deepEqual(inherited?.usage, { toolUses: 2 });
+          assert.match(inherited?.result ?? "", /^Review outcome\./);
+          assert.isTrue(
+            wireItems.every(
+              (item) => item.runId === null && item.nodeId === null && item.nativeItemRef === null,
+            ),
+          );
+        }
+        const persisted = yield* app.v2.threads.getThreadProjection(transferV2ThreadId);
+        assert.deepEqual(persisted.turnItems, beforeTransport.turnItems);
+        assert.deepEqual(persisted.runtimeRequests, []);
         assert.deepEqual(replay.at(-1), { kind: "synchronized" });
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

@@ -507,6 +507,39 @@ export const layer: Layer.Layer<
           }
         }
       }
+      // The last start attempt fails the run with the provider's own reason
+      // instead of leaving it `starting` after the effect gives up. A run that
+      // already left `starting` is not overwritten, and a failed write returns
+      // its error to the effect worker.
+      const settleStartFailure = (failed: {
+        readonly signal: string;
+        readonly title: string;
+        readonly error: Error;
+      }) =>
+        Effect.gen(function* () {
+          const nestedCause = "cause" in failed.error ? failed.error.cause : undefined;
+          yield* settleRunBeforeStart({
+            signal: failed.signal,
+            status: "failed",
+            now: yield* DateTime.now,
+            providerInstanceId: run.providerInstanceId,
+            itemProviderThreadId: providerThread.id,
+            item: {
+              type: "error",
+              title: failed.title,
+              failure: makeProviderFailure({
+                cause: failed.error,
+                message:
+                  nestedCause instanceof Error
+                    ? nestedCause.message
+                    : typeof nestedCause === "string"
+                      ? nestedCause
+                      : failed.error.message,
+                class: "provider_error",
+              }),
+            },
+          });
+        });
       const selectInheritedBackgroundItems = (
         current: ProjectionStore.ProjectionRuntimeRecoveryState,
       ): ReturnType<typeof RunExecutionService.selectInheritedBackgroundTurnItems> =>
@@ -517,9 +550,19 @@ export const layer: Layer.Layer<
           runs: current.runs,
           turnItems: current.turnItems,
         });
-      const inheritedBackgroundTurnItems = yield* projectionStore
-        .getRuntimeRecoveryProjection(projection.thread.id)
-        .pipe(Effect.map(selectInheritedBackgroundItems));
+      const recovery = yield* Effect.result(
+        projectionStore.getRuntimeRecoveryProjection(projection.thread.id),
+      );
+      if (recovery._tag === "Failure") {
+        if (input.willRetry === true) return yield* recovery.failure;
+        yield* settleStartFailure({
+          signal: "provider-recovery-preparation-failure",
+          title: "Provider recovery state could not be prepared",
+          error: recovery.failure,
+        });
+        return;
+      }
+      const inheritedBackgroundTurnItems = selectInheritedBackgroundItems(recovery.success);
       const providerSessionId = providerThread.providerSessionId;
       const runControls = makeRunControls({
         threadId: projection.thread.id,
@@ -566,39 +609,6 @@ export const layer: Layer.Layer<
               }),
         }),
       );
-      // The last start attempt fails the run with the provider's own reason
-      // instead of leaving it `starting` after the effect gives up. A run that
-      // already left `starting` is not overwritten, and a failed write returns
-      // its error to the effect worker.
-      const settleStartFailure = (failed: {
-        readonly signal: string;
-        readonly title: string;
-        readonly error: Error;
-      }) =>
-        Effect.gen(function* () {
-          const nestedCause = "cause" in failed.error ? failed.error.cause : undefined;
-          yield* settleRunBeforeStart({
-            signal: failed.signal,
-            status: "failed",
-            now: yield* DateTime.now,
-            providerInstanceId: run.providerInstanceId,
-            itemProviderThreadId: providerThread.id,
-            item: {
-              type: "error",
-              title: failed.title,
-              failure: makeProviderFailure({
-                cause: failed.error,
-                message:
-                  nestedCause instanceof Error
-                    ? nestedCause.message
-                    : typeof nestedCause === "string"
-                      ? nestedCause
-                      : failed.error.message,
-                class: "provider_error",
-              }),
-            },
-          });
-        });
       const prepareHistoryBeforeStart = (runIds?: ReadonlyArray<RunId>) =>
         Effect.gen(function* () {
           const history = yield* Effect.result(

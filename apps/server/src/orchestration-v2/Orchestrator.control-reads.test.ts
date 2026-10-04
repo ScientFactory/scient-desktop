@@ -27,6 +27,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import { sourcePlanFingerprint } from "./SourcePlan.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
@@ -352,59 +353,71 @@ it.effect(
     }).pipe(Effect.provide(testLayer)),
 );
 
-it.effect("implements a proposed plan that the command projection leaves out", () =>
-  Effect.gen(function* () {
-    const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
-    const threadId = ThreadId.make("thread:implement-plan");
-    const planId = PlanId.make("plan:implement-plan");
-    const now = yield* DateTime.now;
-    yield* orchestrator.dispatch({
-      type: "thread.create",
-      commandId: CommandId.make("create-implement-plan"),
-      threadId,
-      projectId: ProjectId.make("project:implement-plan"),
-      title: "Plan",
-      modelSelection,
-      runtimeMode: "full-access",
-      interactionMode: "plan",
-      branch: null,
-      worktreePath: null,
-      createdBy: "user",
-      creationSource: "web",
-    });
-    yield* projections.apply({
-      id: EventId.make("plan:implement-plan"),
-      type: "plan.updated",
-      threadId,
-      occurredAt: now,
-      payload: {
-        id: planId,
-        threadId,
-        runId: null,
-        nodeId: NodeId.make("node:implement-plan"),
-        kind: "proposed_plan",
-        status: "active",
-        markdown: "# Plan\n\n1. Do the thing.",
-      },
-    });
+for (const dispatchMode of ["defer_start", "start_immediately"] as const) {
+  it.effect(
+    `admits ${dispatchMode} with exact proposed-plan fingerprint but no eager consumption`,
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const threadId = ThreadId.make("thread:implement-plan");
+        const planId = PlanId.make("plan:implement-plan");
+        const now = yield* DateTime.now;
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("create-implement-plan"),
+          threadId,
+          projectId: ProjectId.make("project:implement-plan"),
+          title: "Plan",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "plan",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* projections.apply({
+          id: EventId.make("plan:implement-plan"),
+          type: "plan.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: planId,
+            threadId,
+            runId: null,
+            nodeId: NodeId.make("node:implement-plan"),
+            kind: "proposed_plan",
+            status: "active",
+            markdown: "# Plan\n\n1. Do the thing.",
+          },
+        });
 
-    yield* orchestrator.dispatch({
-      type: "message.dispatch",
-      commandId: CommandId.make("implement-plan"),
-      threadId,
-      messageId: MessageId.make("implement-plan-input"),
-      text: "Implement the plan.",
-      attachments: [],
-      sourcePlanRef: { threadId, planId },
-      dispatchMode: { type: "defer_start" },
-      createdBy: "user",
-      creationSource: "web",
-    });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("implement-plan"),
+          threadId,
+          messageId: MessageId.make("implement-plan-input"),
+          text: "Implement the plan.",
+          attachments: [],
+          sourcePlanRef: { threadId, planId },
+          dispatchMode: { type: dispatchMode },
+          createdBy: "user",
+          creationSource: "web",
+        });
 
-    assert.equal((yield* projections.getPlan(threadId, planId))?.status, "completed");
-  }).pipe(Effect.provide(testLayer)),
-);
+        const plan = yield* projections.getPlan(threadId, planId);
+        assert.ok(plan?.kind === "proposed_plan");
+        assert.equal(plan.status, "active");
+        assert.equal(plan.consumedBy, undefined);
+        const run = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1);
+        assert.ok(run);
+        assert.deepEqual(run.sourcePlanRef, { threadId, planId });
+        assert.equal(run.sourcePlanFingerprint, sourcePlanFingerprint(plan));
+        assert.equal(run.status, dispatchMode === "defer_start" ? "preparing" : "starting");
+      }).pipe(Effect.provide(testLayer)),
+  );
+}
 
 // Stop's settle follow-up runs after the provider interrupt returns, possibly
 // long after the Stop (retries) or again (an effect replayed after a crash).
