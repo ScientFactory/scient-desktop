@@ -58,7 +58,7 @@ import {
   type OmpSessionUpdate,
 } from "../../provider/omp/OmpSessionRuntime.ts";
 import type { OmpProcessFactory } from "../../provider/Layers/OmpProvider.ts";
-import { planOmpImages } from "../../provider/Layers/OmpAdapter.ts";
+import { planOmpImages } from "../../provider/omp/OmpImagePrompt.ts";
 import type * as ProviderAdapter from "../ProviderAdapter.ts";
 import { AcpProviderCapabilitiesV2 } from "./AcpAdapterV2.ts";
 import {
