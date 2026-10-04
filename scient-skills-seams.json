@@ -281,6 +281,11 @@
       "path": "packages/client-runtime/src/operations/commands.ts",
       "anchor": "selectedScientSkillNames: input.selectedScientSkillNames",
       "purpose": "Forward selected skills in native start/steer and atomic queued edit, including explicit empty clearing; qualify via commands.test.ts and SelectedScientSkillNames.test.ts."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/EffectWorker.ts",
+      "anchor": "selectedScientSkillNames: message.selectedScientSkillNames",
+      "purpose": "Retain the persisted selection when completed-before-steer delivery becomes a new native run; nonempty, empty and omitted cases use the actual SQL/worker path (SteeringCompletionSkills.integration.test.ts)."
     }
   ],
   "scientMounts": [
@@ -323,6 +328,11 @@
       "path": "apps/server/src/orchestration-v2/legacy/LegacyQueueCutover.ts",
       "anchor": "selectedScientSkillNames: item.selectedScientSkillNames",
       "purpose": "Carry preserved queued selections through resumable native admission rather than retaining stale V1 delivery authority; qualify via LegacyQueueAdmission.test.ts."
+    },
+    {
+      "path": "apps/web/src/scient/threadQueue/nativeQueueEditItem.ts",
+      "anchor": "selectedScientSkillNames: message.selectedScientSkillNames",
+      "purpose": "Extract a native held message into an ordinary draft with its captured selection, including explicit empty clearing; qualify via useThreadQueue.edit.browser.test.tsx."
     }
   ]
 }
