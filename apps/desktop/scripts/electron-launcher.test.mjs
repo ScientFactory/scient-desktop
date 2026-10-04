@@ -12,6 +12,7 @@ import {
 import {
   makeDevelopmentCommandScript,
   makeDevelopmentCodeSigningCommand,
+  hasValidDevelopmentCodeIdentity,
   makeDevelopmentEnvironmentScript,
   makeDevelopmentLauncherScript,
   developmentBootstrapConfig,
@@ -123,6 +124,47 @@ describe("electron development launcher", () => {
           "APPLE-DEVELOPMENT-IDENTITY",
         ],
       },
+    );
+  });
+
+  it("verifies deep strict seals and the expected signed identifier with codesign", () => {
+    assert.isTrue(
+      hasValidDevelopmentCodeIdentity("/runtime/Scient (Dev).app", {
+        bundleId: "com.scientfactory.scient.next.dev.controlled",
+        spawnSync: (command, args, options) => {
+          assert.equal(command, "/usr/bin/codesign");
+          assert.deepEqual(args, [
+            "--verify",
+            "--deep",
+            "--strict",
+            "--test-requirement",
+            '=identifier "com.scientfactory.scient.next.dev.controlled"',
+            "/runtime/Scient (Dev).app",
+          ]);
+          assert.deepEqual(options, { encoding: "utf8" });
+          return { status: 0, stdout: "", stderr: "" };
+        },
+      }),
+    );
+  });
+
+  it("refuses failed or uncompleted native identity verification", () => {
+    for (const status of [1, 2, 3, null]) {
+      assert.isFalse(
+        hasValidDevelopmentCodeIdentity("/runtime/Scient (Dev).app", {
+          spawnSync: () => ({ status, stdout: "", stderr: "" }),
+        }),
+      );
+    }
+  });
+
+  it("retains ad hoc fallback when no development signing certificate exists", () => {
+    assert.equal(
+      resolveDevelopmentCodeSigningIdentity({
+        environment: {},
+        spawnSync: () => ({ status: 0, stdout: "  0 valid identities found\n" }),
+      }),
+      "-",
     );
   });
 
