@@ -8,6 +8,7 @@ import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -179,7 +180,20 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
           });
         };
         const sessionScope = yield* Scope.make();
-        yield* Effect.addFinalizer((exit) => Scope.close(sessionScope, exit));
+        const closed = yield* Deferred.make<void>();
+        let closing = false;
+        // Parent release must join cleanup already started by process loss.
+        const closeSession = (exit: Exit.Exit<unknown, unknown>) =>
+          Effect.uninterruptible(
+            Effect.suspend(() => {
+              if (closing) return Deferred.await(closed);
+              closing = true;
+              return Scope.close(sessionScope, exit).pipe(
+                Effect.ensuring(Deferred.succeed(closed, undefined)),
+              );
+            }),
+          );
+        yield* Effect.addFinalizer(closeSession);
         return yield* Effect.gen(function* () {
           if (
             input.runtimePolicy.runtimeMode !== "full-access" ||
@@ -497,7 +511,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                   ),
                   Effect.andThen(
                     update.source === "process" || update.source === "unconfirmed"
-                      ? Scope.close(scope, Exit.void).pipe(Effect.forkDetach, Effect.asVoid)
+                      ? closeSession(Exit.void).pipe(Effect.forkDetach, Effect.asVoid)
                       : Effect.void,
                   ),
                 );
@@ -509,9 +523,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                   failureClass: "unknown",
                   broken: true,
                 }).pipe(
-                  Effect.andThen(
-                    Scope.close(scope, Exit.void).pipe(Effect.forkDetach, Effect.asVoid),
-                  ),
+                  Effect.andThen(closeSession(Exit.void).pipe(Effect.forkDetach, Effect.asVoid)),
                 );
               case "error":
                 return onUpdate({
@@ -1086,7 +1098,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                       Effect.andThen(
                         cause._tag === "OmpRpcCommandError"
                           ? Effect.void
-                          : Scope.close(scope, Exit.void).pipe(Effect.forkDetach, Effect.asVoid),
+                          : closeSession(Exit.void).pipe(Effect.forkDetach, Effect.asVoid),
                       ),
                     ),
                   ),
@@ -1103,7 +1115,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                   "steer",
                 );
               }).pipe(Effect.provideService(Scope.Scope, scope), Effect.mapError(safeFailure)),
-            interrupt: Scope.close(scope, Exit.void).pipe(Effect.mapError(safeFailure)),
+            interrupt: closeSession(Exit.void).pipe(Effect.mapError(safeFailure)),
             resume,
             respond: (id, response) =>
               Effect.gen(function* () {
@@ -1146,9 +1158,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
           Effect.timeout("2 minutes"),
           Effect.mapError(safeFailure),
           Effect.provideService(Scope.Scope, sessionScope),
-          Effect.onExit((exit) =>
-            Exit.isFailure(exit) ? Scope.close(sessionScope, exit) : Effect.void,
-          ),
+          Effect.onExit((exit) => (Exit.isFailure(exit) ? closeSession(exit) : Effect.void)),
         );
       }),
   });

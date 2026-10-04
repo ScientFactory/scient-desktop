@@ -61,6 +61,8 @@ export const scriptedOmpRpc = (input: {
   readonly eventFilterError?: string;
   readonly commandError?: (frame: Frame) => string | undefined;
   readonly readyDelay?: Effect.Effect<void>;
+  readonly supportedProtocolVersions?: ReadonlyArray<number>;
+  readonly switchCancelled?: boolean;
   readonly promptError?: string;
   readonly modelsError?: string;
   readonly modelsResponse?: unknown;
@@ -83,6 +85,7 @@ export const scriptedOmpRpc = (input: {
   let promptDelivered: Effect.Effect<void> = Effect.void;
   let emit: (frames: ReadonlyArray<unknown>) => Effect.Effect<void> = () => Effect.void;
   let close: Effect.Effect<void> = Effect.void;
+  let raw: (text: string) => Effect.Effect<void> = () => Effect.void;
   let lastPromptId: string | undefined;
   const state = {
     models: [...input.models],
@@ -109,6 +112,7 @@ export const scriptedOmpRpc = (input: {
       const encoder = new TextEncoder();
       const decoder = new TextDecoder();
       const line = (value: unknown) => encoder.encode(`${encodeJson(value)}\n`);
+      raw = (text) => Queue.offer(stdout, encoder.encode(text)).pipe(Effect.asVoid);
       emit = (frames) =>
         Effect.forEach(frames, (frame) => Queue.offer(stdout, line(frame)), { discard: true });
       close = Queue.end(stdout).pipe(Effect.asVoid);
@@ -193,6 +197,7 @@ export const scriptedOmpRpc = (input: {
             });
           }
           case "switch_session":
+            if (input.switchCancelled) return respond(frame, { cancelled: true });
             state.sessionFile = (frame as Frame & { readonly sessionPath?: string }).sessionPath;
             return respond(frame, { cancelled: false });
           case "get_available_models":
@@ -281,7 +286,7 @@ export const scriptedOmpRpc = (input: {
             line({
               type: "ready",
               protocolVersion: 1,
-              supportedProtocolVersions: [1, 2],
+              supportedProtocolVersions: input.supportedProtocolVersions ?? [1, 2],
               maxFrameBytes: input.maxFrameBytes ?? 1_048_576,
               maxReassembledFrameBytes: 67_108_864,
             }),
@@ -314,5 +319,6 @@ export const scriptedOmpRpc = (input: {
     promptDelivered: () => promptDelivered,
     emit: (frames: ReadonlyArray<unknown>) => emit(frames),
     close: () => close,
+    raw: (text: string) => raw(text),
   };
 };
