@@ -167,6 +167,7 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
   let deferredLifecycle: string | undefined;
   let sessionFile = FAKE_SESSION_FILE;
   let sessionGeneration = 0;
+  let sessionUuid = recordedIdleState(FAKE_SESSION_FILE).sessionId;
   let models: ReadonlyArray<unknown> = [];
   let selectedModel: Record<string, unknown> | undefined;
   let thinkingLevel = "high";
@@ -186,7 +187,10 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
       success: true,
     };
     switch (record["type"]) {
-      case "get_state":
+      case "get_state": {
+        const override = stateQueue.shift();
+        if (typeof override?.sessionId === "string") sessionUuid = override.sessionId;
+        if (typeof override?.sessionFile === "string") sessionFile = override.sessionFile;
         if (failState) {
           failState = false;
           return { ...base, success: false, error: "state unavailable" };
@@ -199,9 +203,11 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
             ...recordedIdleState(sessionFile),
             ...(selectedModel === undefined ? {} : { model: selectedModel }),
             thinkingLevel,
-            ...stateQueue.shift(),
+            sessionId: sessionUuid,
+            ...override,
           },
         };
+      }
       case "set_model":
         selectedModel = { provider: record.provider, id: record.modelId };
         return { ...base, data: selectedModel };
@@ -586,6 +592,20 @@ describe("PiAdapterV2", () => {
         );
         assert.equal(error.providerTurn?.nodeId, NodeId.make(`node:run:${THREAD_ID}:1:root`));
         assert.equal((yield* fake.takeRequest("prompt")).type, "prompt");
+        assert.equal(runtime.providerSession.status, "error");
+        assert.equal(
+          (yield* startTurn(
+            runtime,
+            providerThread,
+            "default",
+            [],
+            "cannot replay",
+            undefined,
+            2,
+          ).pipe(Effect.result))._tag,
+          "Failure",
+        );
+        assert.equal(fake.allRequests().filter((request) => request.type === "prompt").length, 1);
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
   it.effect("stops provider-initiated work that has no T3 turn owner", () =>
@@ -2500,6 +2520,256 @@ describe("PiAdapterV2", () => {
         })
         .pipe(Effect.result);
       assert.equal(result._tag, "Failure");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("fails a rejected native Pi prompt once and permits the next turn", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent, observed } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({
+        type: "response",
+        command: "prompt",
+        success: false,
+        error: "Synthetic rejected prompt",
+      });
+      const failed = yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.isTrue(
+        failed.type === "turn.terminal" &&
+          failed.status === "failed" &&
+          failed.failure?.message === "Synthetic rejected prompt",
+      );
+      yield* startTurn(runtime, providerThread, "default", [], "second", undefined, 2);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "agent_settled" });
+      const recovered = yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.isTrue(
+        recovered.type === "turn.terminal" &&
+          recovered.status === "completed" &&
+          recovered.providerTurnId !==
+            (failed.type === "turn.terminal" ? failed.providerTurnId : undefined),
+      );
+      assert.equal(observed.filter((event) => event.type === "turn.terminal").length, 2);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("fails native Pi transport closure once and refuses further delivery", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent, observed } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" &&
+          event.providerTurn.nativeAcceptance === "accepted",
+      );
+      yield* fake.closeStdout;
+      const failed = yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.isTrue(
+        failed.type === "turn.terminal" &&
+          failed.status === "failed" &&
+          failed.threadDisposition === "broken" &&
+          failed.failure?.message.includes("exited unexpectedly"),
+      );
+      assert.equal(
+        (yield* startTurn(runtime, providerThread, "default", [], "after close", undefined, 2).pipe(
+          Effect.result,
+        ))._tag,
+        "Failure",
+      );
+      assert.equal(fake.allRequests().filter((record) => record.type === "prompt").length, 1);
+      assert.equal(observed.filter((event) => event.type === "turn.terminal").length, 1);
+      const replacement = yield* makeFakePi;
+      const next = yield* openRuntime(replacement);
+      const resumed = yield* next.runtime.resumeThread({ providerThread });
+      yield* startTurn(next.runtime, resumed, "default", [], "recovered", undefined, 2);
+      yield* replacement.emit({ type: "agent_start" });
+      yield* replacement.emit({ type: "agent_settled" });
+      assert.isTrue(
+        (yield* next.takeEvent((event) => event.type === "turn.terminal")).type === "turn.terminal",
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects native Pi thread startup after an already closed transport", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      yield* fake.closeStdout;
+      const { runtime } = yield* openRuntime(fake);
+      const starting = yield* runtime
+        .ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        })
+        .pipe(Effect.result, Effect.forkScoped);
+      yield* Effect.yieldNow;
+      assert.isUndefined(starting.pollUnsafe());
+      const result = yield* Fiber.join(starting);
+      assert.equal(result._tag, "Failure");
+      assert.equal(fake.allRequests().filter((record) => record.type === "prompt").length, 0);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects native Pi preflight when stdout closes during model confirmation", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, observed } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      fake.deferNextState();
+      const sending = yield* startTurn(runtime, providerThread, "xai/grok-4.6").pipe(
+        Effect.result,
+        Effect.forkScoped,
+      );
+      yield* fake.takeRequest("set_model");
+      yield* fake.takeRequest("get_state");
+      yield* fake.closeStdout;
+      assert.equal((yield* Fiber.join(sending))._tag, "Failure");
+      assert.equal(fake.allRequests().filter((record) => record.type === "prompt").length, 0);
+      assert.isFalse(observed.some((event) => event.type === "provider_turn.updated"));
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  for (const phase of ["settlement", "steering"] as const) {
+    it.effect(`fails native Pi identity drift during ${phase} once and keeps Stop idempotent`, () =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        let terminations = 0;
+        const makeConnection: typeof makePiRpcConnection = (input) =>
+          makePiRpcConnection(input).pipe(
+            Effect.map((connection) => ({
+              ...connection,
+              terminate: Effect.sync(() => {
+                terminations += 1;
+              }).pipe(Effect.andThen(connection.terminate), Effect.andThen(fake.closeStdout)),
+            })),
+          );
+        const { runtime, takeEvent, observed } = yield* openRuntime(
+          fake,
+          "default",
+          THREAD_ID,
+          SESSION_ID,
+          undefined,
+          makeConnection,
+        );
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        yield* startTurn(runtime, providerThread);
+        yield* fake.takeRequest("prompt");
+        yield* fake.emit({ type: "agent_start" });
+        const accepted = yield* takeEvent(
+          (event) =>
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.nativeAcceptance === "accepted",
+        );
+        if (accepted.type !== "provider_turn.updated") return;
+        fake.queueState({ sessionId: "unexpected-session" });
+        if (phase === "settlement") yield* fake.emit({ type: "agent_settled" });
+        else {
+          const result = yield* runtime
+            .steerTurn({
+              threadId: THREAD_ID,
+              runId: RunId.make("run:thread-pi-test:1"),
+              providerThread,
+              providerTurnId: accepted.providerTurn.id,
+              message: {
+                messageId: "drift" as never,
+                text: "steer",
+                attachments: [],
+                createdBy: "user",
+                creationSource: "web",
+              },
+            })
+            .pipe(Effect.exit);
+          assert.equal(result._tag, "Failure");
+          if (result._tag === "Failure") assert.isFalse(Cause.hasInterruptsOnly(result.cause));
+        }
+        const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+        assert.isTrue(
+          terminal.type === "turn.terminal" &&
+            terminal.status === "failed" &&
+            terminal.threadDisposition === "broken",
+        );
+        for (let count = 0; count < 2; count++)
+          yield* runtime.interruptTurn({
+            providerThread,
+            providerTurnId: accepted.providerTurn.id,
+            requestRuntimeRestart: true,
+          });
+        assert.equal(terminations, 1);
+        assert.equal(observed.filter((event) => event.type === "turn.terminal").length, 1);
+        assert.equal(fake.allRequests().filter((record) => record.type === "prompt").length, 1);
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+  }
+
+  it.effect("keeps native Pi usable after unsupported thinking validation", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent, observed } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const invalid = yield* startTurn(runtime, providerThread, "default", [], "invalid", {
+        ...modelSelection("xai/grok-4.6"),
+        options: [{ id: "thinkingLevel", value: "impossible" }],
+      }).pipe(Effect.result);
+      assert.equal(invalid._tag, "Failure");
+      assert.equal(fake.allRequests().filter((record) => record.type === "prompt").length, 0);
+      assert.isFalse(observed.some((event) => event.type === "provider_turn.updated"));
+      yield* startTurn(runtime, providerThread, "xai/grok-4.6");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "agent_settled" });
+      assert.isTrue(
+        (yield* takeEvent((event) => event.type === "turn.terminal")).type === "turn.terminal",
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects unsupported Pi automatic mode before native spawn", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      let spawned = false;
+      fake.onSpawn(() =>
+        Effect.sync(() => {
+          spawned = true;
+        }),
+      );
+      const adapter = yield* makeAdapter(fake);
+      const result = yield* adapter
+        .openSession({
+          threadId: THREAD_ID,
+          providerSessionId: SESSION_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy: { ...runtimePolicy, runtimeMode: "auto" },
+        })
+        .pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+      assert.isFalse(spawned);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 

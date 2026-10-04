@@ -321,6 +321,7 @@ interface ActivePiTurn {
    */
   readonly toolStartedAt: Map<string, DateTime.Utc>;
   interrupted: boolean;
+  broken: boolean;
   outputTruncated: boolean;
   modelFailure: OrchestrationV2ProviderFailure | null;
   contextRecoveryPending: boolean;
@@ -410,6 +411,8 @@ export function makePiAdapterV2(
     ) {
       if (input.modelSelection.instanceId !== options.instanceId)
         return yield* protocolError("Pi selection belongs to another provider instance");
+      if (input.runtimePolicy.runtimeMode === "auto")
+        return yield* protocolError("Pi does not support automatic runtime mode.");
       const scope = yield* Effect.scope;
       const cwd = input.runtimePolicy.cwd ?? options.serverConfig.cwd;
       const mcpSession =
@@ -505,6 +508,7 @@ export function makePiAdapterV2(
       // dialog's own resolution updates.
       const sessionEventPermit = yield* Semaphore.make(1);
       let threadState: PiThreadState | null = null;
+      let expectedNativeSessionId: string | undefined;
       let boundThreadId = input.threadId;
       let registrationAttempted = false;
       let lastNativeThreadId: string | null = null;
@@ -512,6 +516,7 @@ export function makePiAdapterV2(
       // Keep that intent beyond turn finalization so the later stdout close is
       // not mistaken for an unexpected transport failure.
       let stopRequested = false;
+      let forcedSessionFailure: string | null = null;
       // Pi extensions can trigger an agent turn after the owning T3 turn has
       // settled. Until orchestration has a first-class provider-initiated run,
       // stop that runtime before it can execute tools without a timeline owner.
@@ -1631,7 +1636,7 @@ export function makePiAdapterV2(
                   retry: turn.activeProviderRetry.retry,
                   retryStartedAt: turn.activeProviderRetry.startedAt,
                 }),
-            threadDisposition: "reusable",
+            threadDisposition: turn.broken ? "broken" : "reusable",
           });
         } else {
           yield* emit({
@@ -1642,9 +1647,35 @@ export function makePiAdapterV2(
             runOrdinal: turn.turnInput.runOrdinal,
             status: turn.interrupted ? "interrupted" : "completed",
             failure: null,
-            threadDisposition: "reusable",
+            threadDisposition: turn.broken ? "broken" : "reusable",
           });
         }
+      });
+
+      const assertSessionIdentity = Effect.fnUntraced(function* (data: unknown) {
+        const state = threadState;
+        if (state === null) return;
+        if (
+          recordString(data, "sessionFile") === state.providerThread.nativeThreadRef?.nativeId &&
+          (expectedNativeSessionId === undefined ||
+            recordString(data, "sessionId") === expectedNativeSessionId)
+        )
+          return;
+        const message = "Pi native session identity changed unexpectedly.";
+        forcedSessionFailure = message;
+        stopRequested = true;
+        if (state.activeTurn !== null) {
+          state.activeTurn.broken = true;
+          state.activeTurn.failure = makeProviderFailure({
+            message,
+            class: "transport_error",
+            retryable: false,
+          });
+          yield* finalizeTurn(state, false, { treeRefs: null, tokenUsage: undefined });
+        }
+        yield* connection.terminate;
+        yield* updateProviderSession("error", message);
+        return yield* protocolError(message);
       });
 
       // ── event pump ────────────────────────────────────────
@@ -1665,6 +1696,7 @@ export function makePiAdapterV2(
             settleProbeGeneration,
             attempt,
             data,
+            initialData: data,
           };
           if (
             recordField(data, "isStreaming") !== true &&
@@ -1978,7 +2010,13 @@ export function makePiAdapterV2(
               const pendingCompact = pendingCompactResponses.shift();
               const compactTurn =
                 pendingCompact?.providerTurnId === turn?.providerTurn.id ? turn : null;
-              if (compactTurn !== null) compactTurn.manualCompactInFlight = false;
+              if (compactTurn !== null) {
+                compactTurn.manualCompactInFlight = false;
+                if (pendingCompact?.kind === "steer") {
+                  compactTurn.pendingSteerCount = Math.max(0, compactTurn.pendingSteerCount - 1);
+                  if (compactTurn.settleWhenIdle) yield* scheduleSettleProbe(compactTurn, true);
+                }
+              }
               if (event["success"] === true) {
                 if (pendingCompact?.kind === "turn_start" && compactTurn !== null)
                   yield* markTurnAccepted(compactTurn);
@@ -2102,6 +2140,12 @@ export function makePiAdapterV2(
             ) {
               return;
             }
+            if (!probeFailed) {
+              yield* assertSessionIdentity(event.initialData ?? data).pipe(Effect.ignore);
+              if (state?.activeTurn !== turn) return;
+              yield* assertSessionIdentity(data).pipe(Effect.ignore);
+              if (state?.activeTurn !== turn) return;
+            }
             if (probeFailed) {
               if (!settleAfterAgentActivity) {
                 if (state !== null) yield* finalizeTurn(state);
@@ -2148,6 +2192,7 @@ export function makePiAdapterV2(
               const state = threadState;
               const interrupted = state?.activeTurn?.interrupted === true;
               if (state?.activeTurn != null) {
+                state.activeTurn.broken = !interrupted;
                 state.activeTurn.failure = interrupted
                   ? null
                   : makeProviderFailure({
@@ -2157,7 +2202,10 @@ export function makePiAdapterV2(
                     });
                 yield* finalizeTurn(state, false);
               }
-              if (unsolicitedActivityDetected) {
+              if (forcedSessionFailure !== null) {
+                yield* updateProviderSession("error", forcedSessionFailure);
+                yield* Queue.end(events);
+              } else if (unsolicitedActivityDetected) {
                 yield* updateProviderSession("error", PI_UNSOLICITED_ACTIVITY_ERROR);
                 yield* Queue.end(events);
               } else if (stopRequested) {
@@ -2308,6 +2356,7 @@ export function makePiAdapterV2(
               };
         boundThreadId = threadInput.threadId;
         threadState = { providerThread, activeTurn: null };
+        expectedNativeSessionId = recordString(stateData, "sessionId");
         // Baseline the session-tree leaf so the first turn's user entry can
         // be located with a `since` cursor instead of a full entry scan.
         const baselineEntries = yield* request({ type: "get_entries" }).pipe(
@@ -2415,6 +2464,7 @@ export function makePiAdapterV2(
       const resolvePromptPayload = Effect.fnUntraced(function* (
         text: string,
         attachments: ReadonlyArray<ChatAttachment>,
+        nativeState?: unknown,
       ) {
         // Provider discovery and the live session are separate Pi processes.
         // Retry a failed session-local lookup once at first use so a transient
@@ -2429,7 +2479,7 @@ export function makePiAdapterV2(
         if (attachments.length > 0 && command !== undefined && nativeCommandNames.has(command))
           return yield* protocolError("Pi native commands do not support attachments.");
         if (attachments.some((attachment) => attachment.mimeType.startsWith("image/"))) {
-          const state = yield* request({ type: "get_state" });
+          const state = nativeState ?? (yield* request({ type: "get_state" }));
           const inputs = recordField(recordField(state, "model"), "input");
           if (Array.isArray(inputs) && !inputs.includes("image"))
             return yield* protocolError("The selected Pi model has no image support.");
@@ -2598,6 +2648,7 @@ export function makePiAdapterV2(
               toolArgs: new Map(),
               toolStartedAt: new Map(),
               interrupted: false,
+              broken: false,
               outputTruncated: false,
               modelFailure: null,
               contextRecoveryPending: false,
@@ -2668,8 +2719,15 @@ export function makePiAdapterV2(
                   }),
               ),
               Effect.tapError(() =>
-                Effect.sync(() => {
+                Effect.gen(function* () {
                   if (state.activeTurn === activeTurn) state.activeTurn = null;
+                  stopRequested = true;
+                  forcedSessionFailure = "Pi prompt delivery could not be confirmed.";
+                  yield* updateProviderSession(
+                    "error",
+                    "Pi prompt delivery could not be confirmed.",
+                  );
+                  yield* connection.terminate;
                 }),
               ),
             );
@@ -2702,6 +2760,8 @@ export function makePiAdapterV2(
               steerInput.providerThread.providerInstanceId !== options.instanceId
             )
               return yield* protocolError("Pi steer belongs to another runtime owner");
+            const steerState = yield* request({ type: "get_state" });
+            yield* assertSessionIdentity(steerState);
             const compactCommand = parsePiCompactCommand(steerInput.message.text);
             if (compactCommand !== null && steerInput.message.attachments.length > 0)
               return yield* protocolError("Pi native commands do not support attachments.");
@@ -2710,6 +2770,7 @@ export function makePiAdapterV2(
                 ? yield* resolvePromptPayload(
                     steerInput.message.text,
                     steerInput.message.attachments,
+                    steerState,
                   )
                 : null;
             // Prompt with streamingBehavior steer is atomic on Pi's side: it
@@ -2978,6 +3039,7 @@ export function makePiAdapterV2(
               return yield* protocolError("Pi fork did not return a persisted session file");
             }
             lastNativeThreadId = forkSessionFile;
+            expectedNativeSessionId = recordString(forkState, "sessionId");
             appliedModel = null;
             appliedThinking = null;
             appliedSessionName = null;
