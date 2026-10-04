@@ -548,6 +548,13 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
         // resumeThread, where a refused cursor follows portable fallback.
         yield* ensureFresh();
         const state = yield* client.getState();
+        let lastSelection:
+          | {
+              readonly model: string;
+              readonly level: string | undefined;
+              readonly appliedLevel: string | undefined;
+            }
+          | undefined;
         const commands = yield* client.getCommands();
         runtime.replaceCatalog(commands.commands);
         const payload = (
@@ -737,59 +744,155 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                 turnInput.modelSelection,
                 "thinkingLevel",
               );
-              if (selected !== undefined) {
-                const level = ompThinkingLevel(selected);
-                if (!level)
-                  return yield* Effect.fail(
-                    new NativeSessionOperationError({
-                      detail: `Unsupported ${target.name} thinking level.`,
-                    }),
-                  );
-                const available = yield* client.getModels();
-                const selectedModel = available.models.find(
-                  (candidate) =>
-                    candidate.provider === model.provider && candidate.id === model.modelId,
-                );
-                if (
-                  level !== "off" &&
-                  (!selectedModel || !ompModelThinkingLevels(selectedModel).includes(level))
-                )
-                  return yield* Effect.fail(
-                    new NativeSessionOperationError({
-                      detail: `The selected ${target.name} model does not advertise that thinking level.`,
-                    }),
-                  );
-                yield* client.setModel(model.provider, model.modelId);
-                yield* client.setThinkingLevel(level);
-              }
-              if (selected === undefined) {
-                yield* client.setModel(model.provider, model.modelId);
-                if (
-                  turnInput.modelSelection.model === "default" &&
-                  ompThinkingLevel(state.thinkingLevel)
-                )
-                  yield* client.setThinkingLevel(ompThinkingLevel(state.thinkingLevel)!);
-              }
-              const applied = yield* client.getState();
-              if (applied.model?.provider !== model.provider || applied.model.id !== model.modelId)
+              const requestedSlug = encodeOmpModelSlug(model.provider, model.modelId)!;
+              const previous = yield* client.getState();
+              if (
+                previous.hasPendingAsyncWork &&
+                ompCommandDecision(turnInput.message.text, runtime.catalog()) === "allowed"
+              )
                 return yield* new NativeSessionOperationError({
-                  detail: `${target.name} did not apply the requested model; the message was not sent.`,
+                  detail: `${target.name} commands wait until background work settles.`,
+                  breaksSession: false,
                 });
-              const appliedSlug = encodeOmpModelSlug(applied.model.provider, applied.model.id);
-              if (!appliedSlug)
+              const previousSlug =
+                previous.model && encodeOmpModelSlug(previous.model.provider, previous.model.id);
+              let mutated = false;
+              const restore = Effect.gen(function* () {
+                if (!mutated || !previous.model) return;
+                lastSelection = undefined;
+                yield* client
+                  .setModel(previous.model.provider, previous.model.id)
+                  .pipe(Effect.ignore);
+                const oldLevel = ompThinkingLevel(previous.thinkingLevel);
+                if (oldLevel) yield* client.setThinkingLevel(oldLevel).pipe(Effect.ignore);
+                const actual = yield* client.getState();
+                const actualSlug =
+                  actual.model && encodeOmpModelSlug(actual.model.provider, actual.model.id);
+                if (actualSlug) yield* onUpdate({ type: "model", model: actualSlug });
+                if (actualSlug !== previousSlug || actual.thinkingLevel !== previous.thinkingLevel)
+                  yield* onUpdate({
+                    type: "tool",
+                    id: `${nativeTurnId}:restore-warning`,
+                    name: `${target.name} model restoration`,
+                    status: "completed",
+                    output: `${target.name} could not restore the previous selection; its current model is ${actualSlug ?? "unknown"} with ${actual.thinkingLevel ?? "unknown"} reasoning.`,
+                  });
+              });
+              yield* Effect.gen(function* () {
+                const level = selected === undefined ? undefined : ompThinkingLevel(selected);
+                if (selected !== undefined && !level)
+                  return yield* new NativeSessionOperationError({
+                    detail: `Unsupported ${target.name} thinking level "${selected}".`,
+                    breaksSession: false,
+                  });
+                if (level !== undefined) {
+                  const available = yield* refreshCatalog();
+                  const selectedModel = available.models.find(
+                    (candidate) =>
+                      candidate.provider === model.provider && candidate.id === model.modelId,
+                  );
+                  const levels = selectedModel && ompModelThinkingLevels(selectedModel);
+                  if (level !== "off" && selectedModel && !levels?.includes(level))
+                    return yield* new NativeSessionOperationError({
+                      detail: levels?.length
+                        ? `The selected ${target.name} model does not offer "${level}" reasoning. It offers: ${levels.join(", ")}.`
+                        : `The selected ${target.name} model has no reasoning levels, so "${level}" cannot be applied.`,
+                      breaksSession: false,
+                    });
+                }
+                const unchanged =
+                  previousSlug === requestedSlug &&
+                  (selected === undefined ||
+                    previous.thinkingLevel === selected ||
+                    (lastSelection?.model === requestedSlug &&
+                      lastSelection.level === selected &&
+                      lastSelection.appliedLevel === previous.thinkingLevel));
+                const previousReasoning =
+                  catalog.find(
+                    (candidate) =>
+                      candidate.provider === previous.model?.provider &&
+                      candidate.id === previous.model.id,
+                  )?.reasoning === true;
+                if (!unchanged && previousReasoning && !ompThinkingLevel(previous.thinkingLevel))
+                  return yield* new NativeSessionOperationError({
+                    detail: `${target.name} did not report its current reasoning level; the selection was not changed.`,
+                    breaksSession: false,
+                  });
+                if (!unchanged) {
+                  if (previousSlug !== requestedSlug) {
+                    mutated = true;
+                    yield* client.setModel(model.provider, model.modelId).pipe(
+                      Effect.catchTag("OmpRpcCommandError", () =>
+                        Effect.gen(function* () {
+                          if (client.refreshModels) yield* client.refreshModels();
+                          yield* refreshCatalog().pipe(Effect.ignore);
+                          yield* client.setModel(model.provider, model.modelId);
+                        }),
+                      ),
+                    );
+                  }
+                  const afterModel = yield* client.getState();
+                  const desiredLevel =
+                    level ??
+                    (turnInput.modelSelection.model === "default"
+                      ? ompThinkingLevel(previous.thinkingLevel)
+                      : undefined);
+                  if (desiredLevel !== undefined && desiredLevel !== afterModel.thinkingLevel) {
+                    mutated = true;
+                    yield* client.setThinkingLevel(desiredLevel);
+                  }
+                }
+                const applied = yield* client.getState();
+                if (
+                  applied.model?.provider !== model.provider ||
+                  applied.model.id !== model.modelId
+                )
+                  return yield* new NativeSessionOperationError({
+                    detail: `${target.name} did not apply the requested model; the message was not sent.`,
+                    breaksSession: false,
+                  });
+                const appliedSlug = encodeOmpModelSlug(applied.model.provider, applied.model.id);
+                if (!appliedSlug)
+                  return yield* new NativeSessionOperationError({
+                    detail: `${target.name} reported an invalid model identity.`,
+                  });
+                yield* onUpdate({ type: "model", model: appliedSlug });
+                if (!unchanged && selected !== undefined && applied.thinkingLevel !== selected)
+                  yield* onUpdate({
+                    type: "tool",
+                    id: `${nativeTurnId}:reasoning-warning`,
+                    name: `${target.name} reasoning selection`,
+                    status: "completed",
+                    output: `${target.name} applied ${applied.thinkingLevel ?? "its default"} reasoning instead of ${selected}.`,
+                  });
+                lastSelection = {
+                  model: appliedSlug,
+                  level: selected,
+                  appliedLevel: applied.thinkingLevel,
+                };
+              }).pipe(
+                Effect.catch((cause) =>
+                  restore.pipe(
+                    Effect.andThen(
+                      Effect.fail(
+                        new NativeSessionOperationError({
+                          detail: client.redaction.text(cause.message),
+                          cause,
+                          breaksSession: false,
+                        }),
+                      ),
+                    ),
+                  ),
+                ),
+              );
+              const admission = yield* runtime.begin(nativeTurnId);
+              if (admission.steering) {
+                yield* restore;
                 return yield* new NativeSessionOperationError({
-                  detail: `${target.name} reported an invalid model identity.`,
+                  detail: `${target.name} resumed background work while preparing this message; the message was not sent.`,
+                  breaksSession: false,
                 });
-              yield* onUpdate({ type: "model", model: appliedSlug });
-              if (selected !== undefined && applied.thinkingLevel !== selected)
-                yield* onUpdate({
-                  type: "tool",
-                  id: `${nativeTurnId}:reasoning-warning`,
-                  name: `${target.name} reasoning selection`,
-                  status: "completed",
-                  output: `${target.name} applied ${applied.thinkingLevel ?? "its default"} reasoning instead of ${selected}.`,
-                });
-              yield* runtime.begin(nativeTurnId);
+              }
               fresh = false;
               yield* onUpdate({ type: "offered", nativeTurnId });
               yield* client.prompt({ ...prompt, streamingBehavior: "steer" }).pipe(
@@ -807,7 +910,8 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                   ),
                 ),
                 Effect.catch((cause) =>
-                  runtime.commandFailed(nativeTurnId).pipe(
+                  (cause._tag === "OmpRpcCommandError" ? restore : Effect.void).pipe(
+                    Effect.andThen(runtime.commandFailed(nativeTurnId)),
                     Effect.andThen(
                       onUpdate({
                         type: "terminal",

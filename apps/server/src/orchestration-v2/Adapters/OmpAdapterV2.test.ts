@@ -15,6 +15,7 @@ import {
   ThreadId,
   type OrchestrationV2AppThread,
 } from "@t3tools/contracts";
+import { OMP_PENDING_CONNECTION_DETAIL } from "../../provider/omp/OmpModel.ts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -359,6 +360,48 @@ const imageHarness = Effect.fnUntraced(function* (
   });
   return { ...h, peer, image, send };
 });
+const reasoningModel = (
+  provider: string,
+  id: string,
+  levels: ReadonlyArray<string> = ["low", "high"],
+  defaultLevel = "low",
+) => ({
+  provider,
+  id,
+  reasoning: true,
+  input: ["text"],
+  thinking: { mode: "effort", efforts: levels, defaultLevel },
+});
+const modelHarness = Effect.fnUntraced(function* (
+  configuration: Partial<Parameters<typeof scriptedOmpRpc>[0]> = {},
+) {
+  const peer = scriptedOmpRpc({
+    models: [reasoningModel("vendor", "a"), reasoningModel("vendor", "b")],
+    initial: { provider: "vendor", id: "a", level: "high" },
+    ...configuration,
+  });
+  const h = yield* harness(false, { model: "vendor/a", makeProcess: peer.makeProcess });
+  peer.state.log.length = 0;
+  const start = (ordinal: number, model: string, level?: string, text = "Select honestly") =>
+    h.runtime.startTurn({
+      ...h.input,
+      runId: RunId.make(`model-run-${ordinal}`),
+      runOrdinal: ordinal,
+      providerTurnOrdinal: ordinal,
+      attemptId: RunAttemptId.make(`model-attempt-${ordinal}`),
+      rootNodeId: NodeId.make(`model-root-${ordinal}`),
+      modelSelection: {
+        instanceId: h.input.modelSelection.instanceId,
+        model,
+        ...(level === undefined ? {} : { options: [{ id: "thinkingLevel", value: level }] }),
+      },
+      message: { ...h.input.message, text },
+    });
+  const terminal = () => h.takeUntil((event) => event.type === "turn.terminal");
+  const mutations = () => peer.state.log.filter((entry) => entry.startsWith("set_"));
+  return { ...h, peer, start, terminal, mutations };
+});
+
 const encodeDiagnostic = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const decodeImagePath = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.String));
 const attachedImagePaths = (message: string | undefined) =>
@@ -652,6 +695,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
               models: [
                 { provider: "test", id: "selected", ...(input === undefined ? {} : { input }) },
               ],
+              initial: { provider: "test", id: "initial" },
             });
             const failed = yield* Effect.result(
               h.runtime.startTurn({
@@ -870,6 +914,378 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         ),
     );
   }
+
+  it.effect(
+    "reads native OMP reasoning after a model default reset and preserves a clamped selection across steering and another turn",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* modelHarness({
+            models: [
+              reasoningModel("vendor", "a"),
+              reasoningModel("vendor", "b", ["low", "high", "xhigh"], "low"),
+            ],
+            clamp: { "vendor/b": { xhigh: "high" } },
+          });
+          yield* h.start(1, "vendor/b", "xhigh");
+          yield* h.takeUntil(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "dynamic_tool" &&
+              (typeof event.turnItem.output === "string" ? event.turnItem.output : "").includes(
+                "instead of xhigh",
+              ),
+          );
+          assert.equal(h.peer.state.thinkingLevel, "high");
+          assert.deepEqual(h.mutations(), ["set_model vendor/b", "set_thinking_level xhigh"]);
+          const turn = h.recorded.find((event) => event.type === "provider_turn.updated");
+          if (!turn || turn.type !== "provider_turn.updated")
+            return yield* Effect.die("Missing native model turn");
+          yield* h.peer.promptDelivered();
+          yield* h.runtime.steerTurn({
+            runId: RunId.make("model-run-1"),
+            threadId: h.input.threadId,
+            providerThread: h.input.providerThread,
+            providerTurnId: turn.providerTurn.id,
+            message: { ...h.input.message, text: "Keep working" },
+          });
+          yield* h.peer.finish();
+          yield* h.terminal();
+          yield* h.start(2, "vendor/b", "xhigh");
+          yield* h.peer.finish();
+          yield* h.terminal();
+          assert.deepEqual(h.mutations(), ["set_model vendor/b", "set_thinking_level xhigh"]);
+          assert.deepEqual(
+            h.peer.state.prompts.map((prompt) => prompt.frame.type),
+            ["prompt", "steer", "prompt"],
+          );
+          assert.equal(h.runtime.providerSession.model, "vendor/b");
+        }),
+      ),
+  );
+
+  for (const invalid of ["max", "plain"] as const) {
+    it.effect(
+      `refuses native OMP ${invalid} reasoning before mutation and keeps the current session reusable`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const h = yield* modelHarness({
+              models: [
+                reasoningModel("vendor", "a"),
+                reasoningModel("vendor", "b", ["low", "medium", "high"]),
+                { provider: "vendor", id: "plain", input: ["text"] },
+              ],
+            });
+            const error = yield* h
+              .start(
+                1,
+                invalid === "plain" ? "vendor/plain" : "vendor/b",
+                invalid === "plain" ? "high" : "max",
+              )
+              .pipe(Effect.flip);
+            const detail = encodeDiagnostic(error);
+            assert.include(
+              detail,
+              invalid === "plain" ? "no reasoning levels" : "low, medium, high",
+            );
+            assert.deepEqual(h.mutations(), []);
+            assert.deepEqual(h.peer.state.model, { provider: "vendor", id: "a" });
+            assert.equal(h.peer.state.thinkingLevel, "high");
+            assert.equal(h.peer.state.prompts.length, 0);
+            assert.equal(h.runtime.providerSession.status, "ready");
+          }),
+        ),
+    );
+  }
+
+  for (const provider of ["scient_local", "ollama"] as const) {
+    it.effect(
+      `refreshes native OMP ${provider} registration before completing a late model selection`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const h = yield* modelHarness({ lateModels: [reasoningModel(provider, "late")] });
+            yield* h.start(1, `${provider}/late`, provider === "scient_local" ? "high" : undefined);
+            yield* h.peer.finish();
+            yield* h.terminal();
+            assert.include(h.peer.state.log, "refresh");
+            const writes = h.mutations();
+            assert.deepEqual(
+              writes,
+              provider === "scient_local"
+                ? ["set_model scient_local/late", "set_thinking_level high"]
+                : ["set_model ollama/late", "set_model ollama/late"],
+            );
+            assert.deepEqual(h.peer.state.model, { provider, id: "late" });
+            assert.equal(h.peer.state.prompts.length, 1);
+          }),
+        ),
+    );
+  }
+
+  it.effect(
+    "preserves the native OMP pending connection message without dispatch or selection mutation",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* modelHarness({
+            setModelError: (provider) =>
+              provider === "scient_new-keyed" ? OMP_PENDING_CONNECTION_DETAIL : undefined,
+          });
+          const error = yield* h.start(1, "scient_new-keyed/model").pipe(Effect.flip);
+          assert.include(
+            encodeDiagnostic(error),
+            "Start a new conversation to use this connection",
+          );
+          assert.include(h.peer.state.log, "refresh");
+          assert.deepEqual(h.peer.state.model, { provider: "vendor", id: "a" });
+          assert.equal(h.peer.state.prompts.length, 0);
+        }),
+      ),
+  );
+
+  it.effect(
+    "validates refreshed native OMP levels without changing the previous model or dispatching",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* modelHarness({
+            lateModels: [reasoningModel("scient_local", "late", ["low", "medium"])],
+          });
+          const error = yield* h.start(1, "scient_local/late", "high").pipe(Effect.flip);
+          assert.include(encodeDiagnostic(error), "low, medium");
+          assert.deepEqual(h.peer.state.model, { provider: "vendor", id: "a" });
+          assert.equal(h.peer.state.thinkingLevel, "high");
+          assert.equal(h.peer.state.prompts.length, 0);
+          assert.deepEqual(h.mutations(), []);
+        }),
+      ),
+  );
+
+  for (const recoverable of [true, false] as const) {
+    it.effect(
+      `rechecks native OMP unknown reasoning before mutation with recovery=${recoverable}`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            let reportLevel = false;
+            const h = yield* modelHarness({
+              models: [
+                reasoningModel("vendor", "a"),
+                reasoningModel("vendor", "b", ["low", "high"], "high"),
+              ],
+              reportThinkingLevel: () => reportLevel,
+              setThinkingLevelError: (level) =>
+                level === "low" ? "Thinking level refused" : undefined,
+            });
+            reportLevel = recoverable;
+            const error = yield* h.start(1, "vendor/b", "low").pipe(Effect.flip);
+            assert.include(
+              encodeDiagnostic(error),
+              recoverable ? "Thinking level refused" : "current reasoning level",
+            );
+            assert.deepEqual(h.peer.state.model, { provider: "vendor", id: "a" });
+            assert.equal(h.peer.state.thinkingLevel, "high");
+            assert.equal(h.peer.state.prompts.length, 0);
+            assert.equal(h.runtime.providerSession.status, "ready");
+            if (!recoverable) {
+              assert.deepEqual(h.mutations(), []);
+              yield* h.terminal();
+              yield* h.start(2, "vendor/a");
+              yield* h.peer.finish();
+              yield* h.terminal();
+              assert.equal(h.peer.state.prompts.length, 1);
+            }
+          }),
+        ),
+    );
+  }
+
+  it.effect(
+    "retains native OMP's actual model when restoration is refused and reselects on the next turn",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          let refuseRestore = true;
+          const h = yield* modelHarness({
+            initial: { provider: "vendor", id: "a", level: "low" },
+            setThinkingLevelError: (level) =>
+              level === "high" ? "Thinking level refused" : undefined,
+            setModelError: (provider, id) => {
+              if (provider !== "vendor" || id !== "a" || !refuseRestore) return undefined;
+              refuseRestore = false;
+              return "Model switch refused";
+            },
+          });
+          const error = yield* h.start(1, "vendor/b", "high").pipe(Effect.flip);
+          assert.include(encodeDiagnostic(error), "Thinking level refused");
+          yield* h.terminal();
+          assert.deepEqual(h.peer.state.model, { provider: "vendor", id: "b" });
+          assert.equal(h.runtime.providerSession.model, "vendor/b");
+          assert.equal(h.runtime.providerSession.status, "ready");
+          assert.isTrue(
+            h.recorded.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "dynamic_tool" &&
+                (typeof event.turnItem.output === "string" ? event.turnItem.output : "").includes(
+                  "vendor/b",
+                ),
+            ),
+          );
+          h.peer.state.log.length = 0;
+          yield* h.start(2, "vendor/a", "low");
+          yield* h.peer.finish();
+          yield* h.terminal();
+          assert.equal(h.mutations()[0], "set_model vendor/a");
+          assert.deepEqual(h.peer.state.model, { provider: "vendor", id: "a" });
+        }),
+      ),
+  );
+
+  it.effect(
+    "restores native OMP's exact previous model and reasoning when a prompt is rejected",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* modelHarness({ promptError: "Prompt rejected" });
+          yield* h.start(1, "vendor/b", "low");
+          const terminal = yield* h.terminal();
+          if (terminal.type !== "turn.terminal")
+            return yield* Effect.die("Missing rejection receipt");
+          assert.equal(terminal.status, "failed");
+          assert.include(terminal.failure?.message ?? "", "Prompt rejected");
+          assert.deepEqual(h.peer.state.model, { provider: "vendor", id: "a" });
+          assert.equal(h.peer.state.thinkingLevel, "high");
+          assert.equal(h.runtime.providerSession.model, "vendor/a");
+        }),
+      ),
+  );
+
+  for (const command of ["/model", "/new", "/fork", "/review"] as const) {
+    it.effect(
+      `refuses native OMP ${command} before changing selection or delivering a prompt`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const h = yield* modelHarness();
+            yield* h.start(1, "vendor/b", "low", command).pipe(Effect.flip);
+            assert.deepEqual(h.mutations(), []);
+            assert.deepEqual(h.peer.state.model, { provider: "vendor", id: "a" });
+            assert.equal(h.peer.state.prompts.length, 0);
+          }),
+        ),
+    );
+  }
+
+  it.effect(
+    "refuses a foreign native OMP selection while preserving slash-path text and admitted commands",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* modelHarness();
+          yield* h.runtime
+            .startTurn({
+              ...h.input,
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("foreign-omp"),
+                model: "vendor/b",
+              },
+            })
+            .pipe(Effect.flip);
+          assert.deepEqual(h.mutations(), []);
+          assert.equal(h.peer.state.prompts.length, 0);
+          for (const [index, text] of ["/Users/alice/notes.md", "/compact the patch"].entries()) {
+            yield* h.start(index + 1, "vendor/a", undefined, text);
+            yield* h.peer.finish();
+            yield* h.terminal();
+          }
+          assert.deepEqual(
+            h.peer.state.prompts.map((prompt) => prompt.frame.message),
+            ["/Users/alice/notes.md", "/compact the patch"],
+          );
+        }),
+      ),
+  );
+
+  it.effect(
+    "admits native OMP messages while background work is pending and refuses commands without mutation",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* modelHarness();
+          h.peer.state.pendingAsyncWork = true;
+          yield* h.start(1, "vendor/a", undefined, "Start a job");
+          yield* h.peer.finish();
+          yield* h.terminal();
+          const before = [...h.mutations()];
+          const rejected = yield* h.start(2, "vendor/b", "low", "/help").pipe(Effect.flip);
+          assert.include(encodeDiagnostic(rejected), "commands wait until background work settles");
+          assert.deepEqual(h.mutations(), before);
+          assert.equal(h.peer.state.prompts.length, 1);
+          yield* h.terminal();
+          yield* h.start(3, "vendor/a", undefined, "New request");
+          yield* h.peer.promptDelivered();
+          assert.deepEqual(
+            h.peer.state.prompts.map((prompt) => prompt.frame.message),
+            ["Start a job", "New request"],
+          );
+          assert.isTrue(
+            h.peer.state.prompts.every(
+              (prompt) =>
+                (prompt.frame as { streamingBehavior?: string }).streamingBehavior === "steer",
+            ),
+          );
+        }),
+      ),
+  );
+
+  it.effect(
+    "refuses a native OMP message when background wake races selection and restores the previous model",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          let woke = false;
+          const release = yield* Deferred.make<void>();
+          const switching = yield* Deferred.make<void>();
+          const h = yield* modelHarness({
+            beforeReply: (frame) => {
+              if (frame.type !== "set_model" || frame.modelId !== "b" || woke) return [];
+              woke = true;
+              return [{ type: "agent_start" }];
+            },
+            holdReply: (frame) =>
+              frame.type === "set_model" && frame.modelId === "b"
+                ? Deferred.succeed(switching, undefined).pipe(
+                    Effect.andThen(Deferred.await(release)),
+                  )
+                : Effect.void,
+          });
+          yield* h.start(1, "vendor/a", undefined, "First request");
+          yield* h.peer.finish();
+          yield* h.terminal();
+          const starting = yield* h
+            .start(2, "vendor/b", "low", "Racing request")
+            .pipe(Effect.result, Effect.forkScoped);
+          yield* Deferred.await(switching);
+          // The runtime's background event must enter its serialized inbox before admission.
+          yield* Effect.sleep("30 millis").pipe(TestClock.withLive);
+          yield* Deferred.succeed(release, undefined);
+          const rejected = yield* Fiber.join(starting);
+          assert.equal(rejected._tag, "Failure");
+          if (rejected._tag !== "Failure")
+            return yield* Effect.die("A racing request stole native background ownership");
+          assert.include(encodeDiagnostic(rejected.failure), "resumed background work");
+          assert.deepEqual(
+            h.peer.state.prompts.map((prompt) => prompt.frame.message),
+            ["First request"],
+          );
+          assert.deepEqual(h.peer.state.model, { provider: "vendor", id: "a" });
+          assert.equal(h.peer.state.thinkingLevel, "high");
+        }),
+      ),
+  );
 
   for (const scenario of [
     { version: "18.3.1", rejected: false, filters: 1 },

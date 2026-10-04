@@ -55,6 +55,7 @@ export const scriptedOmpRpc = (input: {
   readonly version?: string;
   readonly eventFilterError?: string;
   readonly readyDelay?: Effect.Effect<void>;
+  readonly promptError?: string;
   readonly modelsError?: string;
   readonly modelsResponse?: unknown;
   readonly reportThinkingLevel?: () => boolean;
@@ -73,6 +74,7 @@ export const scriptedOmpRpc = (input: {
   >;
 }) => {
   let finish: Effect.Effect<void> = Effect.void;
+  let promptDelivered: Effect.Effect<void> = Effect.void;
   let lastPromptId: string | undefined;
   const state = {
     models: [...input.models],
@@ -95,6 +97,7 @@ export const scriptedOmpRpc = (input: {
       const sessionDir = options.sessionDir ?? NodeOS.tmpdir();
       const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done>();
       const delivered = yield* Queue.unbounded<void>();
+      promptDelivered = Queue.peek(delivered);
       const encoder = new TextEncoder();
       const decoder = new TextDecoder();
       const line = (value: unknown) => encoder.encode(`${encodeJson(value)}\n`);
@@ -186,7 +189,13 @@ export const scriptedOmpRpc = (input: {
               state.modelsError,
             );
           case "get_available_commands":
-            return respond(frame, { commands: [{ name: "help", source: "builtin" }] });
+            return respond(frame, {
+              commands: [
+                { name: "help", source: "builtin" },
+                { name: "review", source: "builtin" },
+                { name: "compact", source: "builtin" },
+              ],
+            });
           case "set_model": {
             const provider = frame.provider ?? "";
             const modelId = frame.modelId ?? "";
@@ -219,7 +228,7 @@ export const scriptedOmpRpc = (input: {
           case "steer":
             state.prompts.push({ frame, bytes });
             if (frame.type === "prompt") lastPromptId = String(frame.id);
-            return respond(frame);
+            return respond(frame, undefined, input.promptError);
           default:
             return respond(frame, {});
         }
@@ -285,5 +294,5 @@ export const scriptedOmpRpc = (input: {
           }),
       };
     });
-  return { state, makeProcess, finish: () => finish };
+  return { state, makeProcess, finish: () => finish, promptDelivered: () => promptDelivered };
 };
