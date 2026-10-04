@@ -8,6 +8,7 @@ import {
   OrchestrationV2CreationSource,
   OrchestrationV2Run,
   OrchestrationV2ThreadProjection,
+  OrchestrationV2TurnItem,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -17,11 +18,13 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { planConversationFork } from "./scient-fork/ConversationForkPlan.ts";
 import { freezeConversationForkNativeSource } from "./scient-fork/ConversationForkNativeSource.ts";
+import { conversationForkBoundaryItem } from "./scient-fork/ConversationForkBoundaryItem.ts";
 
 export interface ThreadForkPlanV2 {
   readonly targetThread: OrchestrationV2AppThread;
   readonly transfer: OrchestrationV2ContextTransfer;
   readonly history: Effect.Success<ReturnType<typeof planConversationFork>>;
+  readonly boundaryItem: Extract<OrchestrationV2TurnItem, { type: "fork" }>;
 }
 
 export class ThreadForkPlanError extends Schema.TaggedError<ThreadForkPlanError>()(
@@ -194,7 +197,17 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           updatedAt: input.createdAt,
           consumedAt: null,
         };
-        return { targetThread, transfer, history };
+        const boundaryItem = conversationForkBoundaryItem({
+          targetThreadId: input.targetThreadId,
+          ordinal: history.items.length,
+          createdAt: input.createdAt,
+          source: {
+            type: "run",
+            threadId: input.sourceProjection.thread.id,
+            runId: input.sourceRun.id,
+          },
+        });
+        return { targetThread, transfer, history, boundaryItem };
       }),
   }),
 );

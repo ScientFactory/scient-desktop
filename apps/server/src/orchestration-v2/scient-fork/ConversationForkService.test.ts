@@ -27,6 +27,8 @@ import { OrchestratorV2 } from "../Orchestrator.ts";
 import { EventSinkV2 } from "../EventSink.ts";
 import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
+import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
+import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { ServerConfig } from "../../config.ts";
 import { createDeterministicAttachmentId, resolveAttachmentPath } from "../../attachmentStore.ts";
 
@@ -43,7 +45,7 @@ const layer = makeOrchestratorV2ReplayLayerWithRegistry(
       openSession: () => Effect.die("A history fork must not execute the provider"),
     },
   ]),
-).pipe(Layer.provideMerge(NodeServices.layer));
+).pipe(Layer.provideMerge(SqlitePersistenceMemory), Layer.provideMerge(NodeServices.layer));
 
 it.effect(
   "V2 create, section assignment and exact forks own frozen history without executable approvals",
@@ -294,14 +296,21 @@ it.effect(
       assert.equal(yield* fs.readFileString(ownedPath!), "evidence");
       assert.deepEqual(
         target.turnItems.map((item) => item.type),
-        ["user_message", "assistant_message", "command_execution"],
+        ["user_message", "assistant_message", "command_execution", "fork"],
       );
-      assert.ok(target.visibleTurnItems.every((row) => row.visibility === "inherited"));
+      assert.ok(target.visibleTurnItems.slice(0, 3).every((row) => row.visibility === "inherited"));
+      const boundary = target.visibleTurnItems[3];
+      assert.ok(boundary?.item.type === "fork");
+      assert.equal(boundary.visibility, "local");
+      assert.deepEqual(boundary.item.source, { type: "run", threadId, runId: firstRunId });
+      assert.isNull(boundary.item.runId);
+      assert.isNull(boundary.item.nodeId);
+      assert.isUndefined(boundary.item.providerThreadId);
       const page = yield* store.getTimelinePage(command.newThreadId, {
         view: "activity",
         limit: 100,
       });
-      assert.ok(page.items.every((row) => row.visibility === "inherited"));
+      assert.deepEqual(page.items, target.visibleTurnItems);
       assert.equal((yield* forks.dispatch(command)).sequence, receipt.sequence);
 
       assert.equal(target.thread.title, "Conversation (2)");
@@ -345,7 +354,16 @@ it.effect(
         sourceAssistantMessageId: undefined,
         sourceUserMessageId: MessageId.make("fork-question-1"),
       });
-      assert.equal((yield* orchestrator.getThreadProjection(userTarget)).turnItems.length, 3);
+      const userFork = yield* orchestrator.getThreadProjection(userTarget);
+      assert.equal(userFork.turnItems.length, 4);
+      const userBoundary = userFork.turnItems.at(-1);
+      assert.ok(userBoundary?.type === "fork");
+      assert.deepEqual(userBoundary.source, {
+        type: "message",
+        threadId,
+        messageId: MessageId.make("fork-question-1"),
+        position: "before",
+      });
       const inheritedAssistant = target.turnItems.find((item) => item.type === "assistant_message");
       assert.ok(inheritedAssistant?.type === "assistant_message");
       const descendant = ThreadId.make("thread:fork-of-fork");
@@ -356,7 +374,7 @@ it.effect(
         commandId: CommandId.make("fork-of-fork-command"),
         sourceAssistantMessageId: inheritedAssistant.messageId,
       });
-      assert.equal((yield* orchestrator.getThreadProjection(descendant)).turnItems.length, 3);
+      assert.equal((yield* orchestrator.getThreadProjection(descendant)).turnItems.length, 4);
       yield* orchestrator.dispatch({
         type: "thread.delete",
         commandId: CommandId.make("delete-fork-source"),
@@ -368,6 +386,22 @@ it.effect(
       assert.equal(
         (yield* orchestrator.getThreadProjection(command.newThreadId)).messages[1]?.text,
         "Answer",
+      );
+      assert.equal((yield* forks.dispatch(command)).sequence, receipt.sequence);
+      const afterDelete = yield* store.getTimelinePage(command.newThreadId, {
+        itemId: boundary.item.id,
+        limit: 1,
+      });
+      assert.deepEqual(afterDelete.items, [boundary]);
+      const rebuilt = yield* Effect.service(ProjectionMaintenance.ProjectionMaintenanceV2).pipe(
+        Effect.flatMap((maintenance) => maintenance.rebuild),
+        Effect.provide(ProjectionMaintenance.layer),
+      );
+      assert.isTrue(rebuilt.valid);
+      assert.deepEqual(
+        (yield* store.getTimelinePage(command.newThreadId, { itemId: boundary.item.id, limit: 1 }))
+          .items,
+        [boundary],
       );
       assert.equal((yield* forks.dispatch(command)).sequence, receipt.sequence);
     }).pipe(Effect.provide(layer)),

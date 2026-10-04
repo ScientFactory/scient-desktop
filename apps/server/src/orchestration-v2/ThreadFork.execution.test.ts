@@ -178,7 +178,30 @@ for (const driverName of ["codex", "claudeAgent"] as const) {
         assert.isNull(fresh.thread.deletedAt);
         assert.lengthOf(fresh.contextTransfers, 1);
         assert.lengthOf(fresh.runs, 0);
-        assert.lengthOf(fresh.turnItems, sourceBefore.visibleTurnItems.length);
+        const copied = fresh.turnItems.filter(
+          (item) => item.inheritedFrom?.threadId === sourceThreadId,
+        );
+        assert.lengthOf(copied, sourceBefore.visibleTurnItems.length);
+        assert.deepEqual(
+          copied.map((item) => item.type),
+          sourceBefore.visibleTurnItems.map((row) => row.item.type),
+        );
+        const boundary = fresh.turnItems.filter((item) => item.inheritedFrom === undefined);
+        assert.lengthOf(boundary, 1);
+        assert.equal(boundary[0]?.type, "fork");
+        if (boundary[0]?.type !== "fork") return assert.fail("Expected destination boundary");
+        assert.equal(boundary[0].id, TurnItemId.make(`turn-item:fork:${freshThreadId}`));
+        assert.equal(boundary[0].ordinal, copied.at(-1)!.ordinal + 1);
+        assert.deepEqual(boundary[0].source, {
+          type: "run",
+          threadId: sourceThreadId,
+          runId: sourceRunId,
+        });
+        assert.equal(boundary[0].targetThreadId, freshThreadId);
+        assert.isNull(boundary[0].nodeId);
+        assert.isNull(boundary[0].providerTurnId);
+        assert.isNull(boundary[0].nativeItemRef);
+        assert.isUndefined(boundary[0].providerThreadId);
         assert.isTrue(
           fresh.turnItems.every((item) => item.runId === null && item.threadId === freshThreadId),
         );
@@ -241,7 +264,32 @@ for (const driverName of ["codex", "claudeAgent"] as const) {
                 (item) => item.threadId === racedTargetId && item.runId === null,
               ),
             );
-            assert.lengthOf(owned.turnItems, sourceBefore.visibleTurnItems.length);
+            const racedPrefix = owned.turnItems.filter(
+              (item) => item.inheritedFrom?.threadId === sourceThreadId,
+            );
+            assert.lengthOf(racedPrefix, sourceBefore.visibleTurnItems.length);
+            assert.deepEqual(
+              racedPrefix.map((item) => item.type),
+              sourceBefore.visibleTurnItems.map((row) => row.item.type),
+            );
+            const racedBoundary = owned.turnItems.filter(
+              (item) => item.inheritedFrom === undefined,
+            );
+            assert.lengthOf(racedBoundary, 1);
+            if (racedBoundary[0]?.type !== "fork")
+              return assert.fail("Expected raced destination boundary");
+            assert.equal(racedBoundary[0].id, TurnItemId.make(`turn-item:fork:${racedTargetId}`));
+            assert.equal(racedBoundary[0].ordinal, racedPrefix.at(-1)!.ordinal + 1);
+            assert.deepEqual(racedBoundary[0].source, {
+              type: "run",
+              threadId: sourceThreadId,
+              runId: sourceRunId,
+            });
+            assert.equal(racedBoundary[0].targetThreadId, racedTargetId);
+            assert.isNull(racedBoundary[0].nodeId);
+            assert.isNull(racedBoundary[0].providerTurnId);
+            assert.isNull(racedBoundary[0].nativeItemRef);
+            assert.isUndefined(racedBoundary[0].providerThreadId);
             assert.equal(
               (yield* orchestrator.dispatch(racedCommand)).sequence,
               forked.value.sequence,

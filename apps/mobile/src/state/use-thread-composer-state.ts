@@ -251,6 +251,7 @@ export function useThreadComposerState() {
   const selectedThreadMessages = selectedThreadProjection?.projection.messages;
   const selectedThreadAttempts = selectedThreadProjection?.projection.attempts;
   const selectedThreadNodes = selectedThreadProjection?.projection.nodes;
+  const selectedThreadContextTransfers = selectedThreadProjection?.projection.contextTransfers;
   // A thread whose creation has not delivered its turn yet: the prompt only
   // exists in the outbox, so it is appended to whatever the server has. The
   // detail is usually present but empty during a worktree checkout, so this
@@ -264,6 +265,7 @@ export function useThreadComposerState() {
         : [];
     const feed = buildThreadFeed(selectedThreadVisibleTurnItems, {
       anchoredMessages: pendingCreation,
+      contextTransfers: selectedThreadContextTransfers,
       attempts: selectedThreadAttempts,
       nodes: selectedThreadNodes,
     });
@@ -280,6 +282,7 @@ export function useThreadComposerState() {
     selectedThreadMessages,
     selectedThreadAttempts,
     selectedThreadNodes,
+    selectedThreadContextTransfers,
     selectedThreadVisibleTurnItems,
     pendingCreationMessage,
     selectedThreadKey,
