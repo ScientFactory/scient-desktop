@@ -87,6 +87,7 @@ export interface AntigravityAdapterV2Options {
     cwd: string,
   ) => Effect.Effect<void>;
   readonly onSessionEvent?: AcpAdapterV2Flavor["onSessionEvent"];
+  readonly testHooks?: Parameters<typeof makeAcpAdapterV2>[0]["testHooks"];
   readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
 }
@@ -241,6 +242,7 @@ export function makeAntigravityAdapterV2(options: AntigravityAdapterV2Options) {
   return makeAcpAdapterV2({
     instanceId: options.instanceId,
     flavor: makeAntigravityAcpAdapterFlavor(options),
+    ...(options.testHooks === undefined ? {} : { testHooks: options.testHooks }),
     crypto: options.crypto,
     fileSystem: options.fileSystem,
     idAllocator: options.idAllocator,

@@ -173,6 +173,7 @@ const harness = Effect.fnUntraced(function* (options?: {
   const pidLog = path.join(cwd, "pids.ndjson");
   const writeBlocked = yield* Deferred.make<void>();
   const releaseWrite = yield* Deferred.make<void>();
+  const heldSettlement = yield* Deferred.make<void>();
   const peerPath = path.join(cwd, "peer.mjs");
   if (options?.backgroundPeer) yield* fileSystem.writeFileString(peerPath, backgroundPeer);
   else
@@ -210,6 +211,10 @@ await import(${encodeString(mockAgentPath)});`,
   const commands: string[] = [];
   const selections: string[] = [];
   const adapter = makeAntigravityAdapterV2({
+    testHooks: {
+      afterPromptSettledWithBackgroundWork: () =>
+        Deferred.succeed(heldSettlement, undefined).pipe(Effect.asVoid),
+    },
     instanceId,
     crypto,
     fileSystem,
@@ -322,6 +327,7 @@ await import(${encodeString(mockAgentPath)});`,
     adapter,
     writeBlocked,
     releaseWrite,
+    heldSettlement,
     releaseCommand: () => fileSystem.writeFileString(path.join(cwd, "command-release"), "released"),
     releaseRecovery: () =>
       fileSystem.writeFileString(path.join(cwd, "recovery-release"), "released"),
@@ -554,6 +560,7 @@ it.layer(layer, { excludeTestServices: true })("Antigravity native lifecycle", (
           const owned = h.pids();
           assert.equal(owned.filter(({ kind }) => kind === "watcher").length, 1);
           assert.isTrue(owned.every(({ pid }) => alive(pid)));
+          yield* Deferred.await(h.heldSettlement).pipe(Effect.timeout("5 seconds"));
           assert.lengthOf(
             c.events.filter((event) => event.type === "turn.terminal"),
             0,
@@ -631,6 +638,7 @@ it.layer(layer, { excludeTestServices: true })("Antigravity native lifecycle", (
               event.type === "provider_turn.updated" &&
               event.providerTurn.nativeAcceptance === "accepted",
           );
+          yield* Deferred.await(h.heldSettlement).pipe(Effect.timeout("5 seconds"));
           assert.lengthOf(
             c.events.filter((event) => event.type === "turn.terminal"),
             0,
