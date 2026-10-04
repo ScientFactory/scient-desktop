@@ -321,6 +321,12 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     readonly runEffectWorker?: boolean;
     /** Inject a fault around the production copier without replacing native provisioning. */
     readonly forkAttachmentCopierLayer?: typeof ScientForkAttachmentCopierLive;
+    /** Run actual attachment cleanup on isolated test profiles. */
+    readonly resourceCleanupLayer?: Layer.Layer<
+      never,
+      never,
+      ServerConfig.ServerConfig | FileSystem.FileSystem
+    >;
     /** Exercise native fork checkout with the production Git workflow. */
     readonly forkGitWorkflowLayer?: Layer.Layer<
       GitWorkflowService,
@@ -574,6 +580,9 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   const effectExecutorProvided = EffectWorker.executorLayer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        options.resourceCleanupLayer?.pipe(
+          Layer.provide(Layer.merge(serverConfigLayer, NodeServices.layer)),
+        ) ?? Layer.empty,
         runFinalizationServiceProvided,
         checkpointRollbackServiceProvided,
         providerSessionManagerProvided,
