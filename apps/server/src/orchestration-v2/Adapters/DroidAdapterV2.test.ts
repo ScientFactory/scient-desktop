@@ -328,6 +328,85 @@ const harness = Effect.fnUntraced(function* (
 });
 
 it.layer(testLayer, { excludeTestServices: true })("DroidAdapterV2", (it) => {
+  it.effect("accepts for the session with allow-once when Droid offers no allow-always", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, {
+          body: `async function onPrompt(message) {
+        await request("session/request_permission", {
+          toolCall: { toolCallId: "edit", title: "Edit file", kind: "edit", status: "pending" },
+          options: [{ optionId: "once", name: "Allow once", kind: "allow_once" }, {optionId: "no", name: "Decline", kind: "reject_once"}],
+        });
+        reply(message, {stopReason: "end_turn"});
+      }`,
+        });
+        yield* h.send(1, "approval-required");
+        const approval = yield* h.approval;
+        yield* h.runtime.respondToRuntimeRequest({
+          requestId: approval.id,
+          decision: "acceptForSession",
+        });
+        assert.equal((yield* h.terminal).status, "completed");
+        assert.deepEqual(
+          (yield* h.readLog!())
+            .filter((message) => message.result?.outcome)
+            .map((message) => message.result?.outcome),
+          [{ outcome: "selected", optionId: "once" }],
+        );
+        assert.lengthOf(terminals(h), 1);
+      }),
+    ),
+  );
+  it.effect("advertises and completes standard ACP form elicitation", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, {
+          body: `async function onPrompt(message) {
+        await request("elicitation/create", { mode: "form", message: "Which scope should Droid use?", requestedSchema: {
+          type: "object", properties: { scope: {type: "string", title: "Scope", oneOf: [{const: "workspace", title: "Workspace"}, {const: "session", title: "Session"}]}}, required: ["scope"],
+        }});
+        reply(message, {stopReason: "end_turn"});
+      }`,
+        });
+        yield* h.send(1, "full-access");
+        const question = yield* h.approval;
+        assert.equal(question.kind, "user_input");
+        const item = h.recorded.find(
+          (event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
+        );
+        if (item?.type !== "turn_item.updated" || item.turnItem.type !== "user_input_request")
+          return yield* Effect.die("Missing native question card");
+        assert.deepEqual(item.turnItem.questions, [
+          {
+            id: "scope",
+            header: "Scope",
+            question: "Which scope should Droid use?",
+            options: [
+              { label: "workspace", description: "Workspace" },
+              { label: "session", description: "Session" },
+            ],
+          },
+        ]);
+        yield* h.runtime.respondToRuntimeRequest({
+          requestId: question.id,
+          decision: "accept",
+          answers: { scope: "workspace" },
+        });
+        assert.equal((yield* h.terminal).status, "completed");
+        const log = yield* h.readLog!();
+        const initialize = log.find((message) => message.method === "initialize");
+        assert.deepNestedInclude(initialize?.params, { "clientCapabilities.elicitation.form": {} });
+        assert.deepEqual(
+          log
+            .filter((message) => message.result && !message.method)
+            .map((message) => message.result),
+          [{ action: "accept", content: { scope: "workspace" } }],
+        );
+        assert.lengthOf(terminals(h), 1);
+      }),
+    ),
+  );
   for (const granted of [false, true]) {
     it.effect(
       `delivers exact Scient awareness in native Droid system prompt with grants ${granted}`,

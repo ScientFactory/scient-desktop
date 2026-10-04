@@ -5672,7 +5672,11 @@ export function makeAcpAdapterV2(
                 if (decision === "cancel") {
                   return { outcome: { outcome: "cancelled" } } as const;
                 }
-                const optionId = selectPermissionOptionId(params, decision);
+                const optionId =
+                  selectPermissionOptionId(params, decision) ??
+                  (decision === "acceptForSession"
+                    ? selectPermissionOptionId(params, "accept")
+                    : undefined);
                 return optionId === undefined
                   ? ({ outcome: { outcome: "cancelled" } } as const)
                   : ({ outcome: { outcome: "selected", optionId } } as const);
@@ -5784,15 +5788,30 @@ export function makeAcpAdapterV2(
                   const enumValues = Array.isArray(record?.enum)
                     ? record.enum.filter((value): value is string => typeof value === "string")
                     : [];
+                  const titledOptions = Array.isArray(record?.oneOf)
+                    ? record.oneOf.flatMap((entry) => {
+                        const option = unknownRecord(entry);
+                        return typeof option?.const === "string"
+                          ? [
+                              {
+                                label: option.const,
+                                description: nonEmptyText(option.title, option.const),
+                              },
+                            ]
+                          : [];
+                      })
+                    : [];
                   const options =
-                    enumValues.length > 0
-                      ? enumValues.map((value) => ({ label: value, description: value }))
-                      : record?.type === "boolean"
-                        ? [
-                            { label: "true", description: "Yes" },
-                            { label: "false", description: "No" },
-                          ]
-                        : [];
+                    titledOptions.length > 0
+                      ? titledOptions
+                      : enumValues.length > 0
+                        ? enumValues.map((value) => ({ label: value, description: value }))
+                        : record?.type === "boolean"
+                          ? [
+                              { label: "true", description: "Yes" },
+                              { label: "false", description: "No" },
+                            ]
+                          : [];
                   return {
                     id,
                     header: nonEmptyText(record?.title, `Question ${index + 1}`),

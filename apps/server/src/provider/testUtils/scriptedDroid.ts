@@ -110,6 +110,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
                 readonly method?: string;
                 readonly params?: Record<string, unknown>;
                 readonly result?: {
+                  readonly [key: string]: unknown;
                   readonly outcome?: { readonly outcome?: string; readonly optionId?: string };
                 };
               },
