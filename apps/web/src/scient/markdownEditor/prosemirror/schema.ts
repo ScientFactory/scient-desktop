@@ -449,7 +449,7 @@ export const scientMarkdownSchema: Schema = new Schema({
   nodes,
   marks: defaultMarkdownParser.schema.spec.marks
     .update("link", { ...linkSpec, attrs: { ...linkSpec.attrs, ...referenceAttributes } })
-    .addToEnd("strike", strikeSpec),
+    .addBefore("code", "strike", strikeSpec),
 } satisfies SchemaSpec);
 
 function tableAlignment(token: { readonly attrGet: (name: string) => string | null }): {

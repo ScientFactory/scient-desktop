@@ -60,10 +60,24 @@ export interface MarkdownPersistenceRegistryState extends MarkdownPersistenceTar
   readonly attention: boolean;
 }
 
+/** Unconverted editor input belongs to the file owner, but is never published as source. */
+export interface DocumentPendingInput {
+  readonly message: string;
+  readonly payload: unknown;
+}
+
 export interface MarkdownPersistenceLease {
   readonly target: MarkdownPersistenceTarget;
   readonly getSnapshot: () => MarkdownPersistenceSnapshot;
   readonly subscribe: (listener: () => void) => () => void;
+  readonly getPendingInput: () => DocumentPendingInput | null;
+  readonly canEditPendingInput: (editorOwner?: object) => boolean;
+  readonly claimPendingInput: (editorOwner?: object) => boolean;
+  readonly releasePendingInputClaim: (editorOwner?: object) => void;
+  readonly retainPendingInput: (
+    input: DocumentPendingInput | null,
+    editorOwner?: object,
+  ) => boolean;
   readonly change: (source: string, basedOnVersion: number) => boolean;
   /** A planned edit; refused with a reason, and the draft untouched, when it no longer fits. */
   readonly applyEdit: (edit: DocumentSourceEdit) => DocumentSourceEditOutcome;
@@ -89,6 +103,12 @@ interface RegistryEntry {
   readonly projections: Map<object, PrepareMarkdownExternalUpdate>;
   readonly unsubscribe: () => void;
   readonly checkpoint: MarkdownDraftCheckpointWriter | undefined;
+  pendingInput: DocumentPendingInput | null;
+  pendingInputOwner: object | null;
+  pendingInputOwnerLease: object | null;
+  releasePendingHold: (() => void) | null;
+  pendingInputTransition: boolean;
+  readonly inputListeners: Set<() => void>;
   stopWatching: (() => void) | undefined;
   lastUsed: number;
   evictionTimer: ReturnType<typeof setTimeout> | undefined;
@@ -98,7 +118,7 @@ interface RegistryEntry {
  * Raised whenever a registry built from older code could not serve this code:
  * a new lease method, a new rule for which strategy a file gets.
  */
-const REGISTRY_GENERATION = 2;
+const REGISTRY_GENERATION = 5;
 
 export class MarkdownPersistenceRegistry {
   readonly generation = REGISTRY_GENERATION;
@@ -245,6 +265,7 @@ export class MarkdownPersistenceRegistry {
       read: transport.read,
       classifyFailure: transport.classifyFailure,
       prepareExternalUpdate: (update) => {
+        if (entry.pendingInput !== null) return "defer";
         const prepared = [...projections.values()].map((prepare) => prepare(update));
         if (prepared.includes("defer")) return "defer";
         if (prepared.includes(null)) return null;
@@ -269,6 +290,12 @@ export class MarkdownPersistenceRegistry {
             checkpoint,
           )
         : undefined,
+      pendingInput: null,
+      pendingInputOwner: null,
+      pendingInputOwnerLease: null,
+      releasePendingHold: null,
+      pendingInputTransition: false,
+      inputListeners: new Set(),
       stopWatching: undefined,
       lastUsed: Date.now(),
       evictionTimer: undefined,
@@ -301,14 +328,101 @@ export class MarkdownPersistenceRegistry {
     const isActive = () => active && this.entries.get(key) === ownedEntry;
     const guarded = (action: () => Promise<boolean>) =>
       isActive() ? action() : Promise.resolve(false);
+    const notifyInput = () => {
+      this.changed(ownedEntry);
+      for (const listener of ownedEntry.inputListeners) {
+        try {
+          listener();
+        } catch (error) {
+          console.error("Document pending-input observer failed:", error);
+        }
+      }
+    };
     return {
       target: entry.target,
       getSnapshot: entry.coordinator.getSnapshot,
-      subscribe: entry.coordinator.subscribe,
+      subscribe: (listener) => {
+        const unsubscribe = ownedEntry.coordinator.subscribe(listener);
+        ownedEntry.inputListeners.add(listener);
+        return () => {
+          unsubscribe();
+          ownedEntry.inputListeners.delete(listener);
+        };
+      },
+      getPendingInput: () => ownedEntry.pendingInput,
+      canEditPendingInput: (editorOwner = token) =>
+        isActive() &&
+        (ownedEntry.pendingInput === null ||
+          ownedEntry.pendingInputOwner === null ||
+          (ownedEntry.pendingInputOwner === editorOwner &&
+            ownedEntry.pendingInputOwnerLease === token)),
+      claimPendingInput: (editorOwner = token) => {
+        if (!isActive()) return false;
+        if (
+          ownedEntry.pendingInput === null ||
+          (ownedEntry.pendingInputOwner === editorOwner &&
+            ownedEntry.pendingInputOwnerLease === token)
+        )
+          return true;
+        if (ownedEntry.pendingInputOwner !== null) return false;
+        ownedEntry.pendingInputOwner = editorOwner;
+        ownedEntry.pendingInputOwnerLease = token;
+        notifyInput();
+        return true;
+      },
+      releasePendingInputClaim: (editorOwner = token) => {
+        if (
+          !isActive() ||
+          ownedEntry.pendingInputOwner !== editorOwner ||
+          ownedEntry.pendingInputOwnerLease !== token
+        )
+          return;
+        ownedEntry.pendingInputOwner = null;
+        ownedEntry.pendingInputOwnerLease = null;
+        notifyInput();
+      },
+      retainPendingInput: (input, editorOwner = token) => {
+        if (
+          !isActive() ||
+          ownedEntry.pendingInputTransition ||
+          (ownedEntry.pendingInput !== null &&
+            (ownedEntry.pendingInputOwner !== editorOwner ||
+              ownedEntry.pendingInputOwnerLease !== token))
+        )
+          return false;
+        if (ownedEntry.pendingInput === input) return true;
+        const acquireHold = input !== null && ownedEntry.pendingInput === null;
+        const releasePreviousHold = input === null ? ownedEntry.releasePendingHold : null;
+        if (input === null) ownedEntry.releasePendingHold = null;
+        ownedEntry.pendingInput = input;
+        ownedEntry.pendingInputOwner = input === null ? null : editorOwner;
+        ownedEntry.pendingInputOwnerLease = input === null ? null : token;
+        if (acquireHold) {
+          // The coordinator publishes while acquiring the hold. Readers see
+          // the new input, but cannot replace it before its release is owned.
+          ownedEntry.pendingInputTransition = true;
+          try {
+            ownedEntry.releasePendingHold = ownedEntry.coordinator.suspendExternalUpdates();
+          } finally {
+            ownedEntry.pendingInputTransition = false;
+          }
+        }
+        notifyInput();
+        if (input === null) {
+          releasePreviousHold?.();
+          ownedEntry.coordinator.resumeExternalUpdates();
+        }
+        return true;
+      },
       release: () => {
         if (!active) return;
         active = false;
         ownedEntry.leases.delete(token);
+        if (ownedEntry.pendingInputOwnerLease === token) {
+          ownedEntry.pendingInputOwner = null;
+          ownedEntry.pendingInputOwnerLease = null;
+          notifyInput();
+        }
         for (const registration of registrations) ownedEntry.projections.delete(registration);
         registrations.clear();
         ownedEntry.coordinator.resumeExternalUpdates();
@@ -316,22 +430,47 @@ export class MarkdownPersistenceRegistry {
         this.changed(ownedEntry);
       },
       change: (source, basedOnVersion) =>
-        isActive() && ownedEntry.coordinator.change(source, basedOnVersion),
+        isActive() &&
+        ownedEntry.pendingInput === null &&
+        ownedEntry.coordinator.change(source, basedOnVersion),
       applyEdit: (edit) =>
-        isActive()
+        isActive() && ownedEntry.pendingInput === null
           ? ownedEntry.coordinator.applyEdit(edit)
           : { accepted: false, reason: "unavailable" },
       noteFreshnessHint: (reason) => {
         if (isActive()) ownedEntry.coordinator.noteFreshnessHint(reason);
       },
-      flushNow: () => guarded(() => ownedEntry.coordinator.flushNow()),
-      retry: () => guarded(() => ownedEntry.coordinator.retry()),
+      flushNow: () =>
+        guarded(() =>
+          ownedEntry.pendingInput === null
+            ? ownedEntry.coordinator.flushNow()
+            : Promise.resolve(false),
+        ),
+      retry: () =>
+        guarded(() =>
+          ownedEntry.pendingInput === null
+            ? ownedEntry.coordinator.retry()
+            : Promise.resolve(false),
+        ),
       refresh: () => guarded(() => ownedEntry.coordinator.refresh()),
       resolveWithLocal: (revision) =>
-        guarded(() => ownedEntry.coordinator.resolveWithLocal(revision)),
-      resolveWithDisk: () => guarded(() => ownedEntry.coordinator.resolveWithDisk()),
-      restoreRecovery: () => isActive() && ownedEntry.coordinator.restoreRecovery(),
-      holdForRename: () => (isActive() ? ownedEntry.coordinator.holdForRename() : null),
+        guarded(() =>
+          ownedEntry.pendingInput === null
+            ? ownedEntry.coordinator.resolveWithLocal(revision)
+            : Promise.resolve(false),
+        ),
+      resolveWithDisk: () =>
+        guarded(() =>
+          ownedEntry.pendingInput === null
+            ? ownedEntry.coordinator.resolveWithDisk()
+            : Promise.resolve(false),
+        ),
+      restoreRecovery: () =>
+        isActive() && ownedEntry.pendingInput === null && ownedEntry.coordinator.restoreRecovery(),
+      holdForRename: () =>
+        isActive() && ownedEntry.pendingInput === null
+          ? ownedEntry.coordinator.holdForRename()
+          : null,
       registerExternalProjection: (prepare) => {
         const registration = {};
         if (isActive()) {
@@ -354,11 +493,17 @@ export class MarkdownPersistenceRegistry {
     const entries = [...this.entries.values()].filter(
       (entry) => entry.target.environmentId === environmentId && entry.target.cwd === cwd,
     );
-    const outcomes = await Promise.all(entries.map((entry) => entry.coordinator.flushNow()));
+    const outcomes = await Promise.all(
+      entries.map((entry) =>
+        entry.pendingInput === null ? entry.coordinator.flushNow() : Promise.resolve(false),
+      ),
+    );
     return outcomes.every(Boolean);
   }
 
   flushTarget(target: MarkdownPersistenceTarget): Promise<boolean> {
+    if (this.entries.get(projectFileOperationKey(target))?.pendingInput)
+      return Promise.resolve(false);
     return (
       this.entries.get(projectFileOperationKey(target))?.coordinator.flushNow() ??
       Promise.resolve(true)
@@ -370,6 +515,7 @@ export class MarkdownPersistenceRegistry {
     const key = projectFileOperationKey(target);
     const entry = this.entries.get(key);
     if (entry === undefined) return true;
+    if (entry.pendingInput !== null) return false;
     if (!entry.coordinator.retireClean()) return false;
     if (entry.evictionTimer !== undefined) clearTimeout(entry.evictionTimer);
     this.stopWatching(entry);
@@ -392,6 +538,7 @@ export class MarkdownPersistenceRegistry {
     }
     const retain =
       entry.leases.size > 0 ||
+      entry.pendingInput !== null ||
       snapshot.pending ||
       snapshot.reading ||
       snapshot.retrying ||
@@ -431,6 +578,7 @@ export class MarkdownPersistenceRegistry {
         const value = candidate.coordinator.getSnapshot();
         return (
           candidate.leases.size === 0 &&
+          candidate.pendingInput === null &&
           !value.pending &&
           !value.reading &&
           !value.retrying &&
@@ -448,7 +596,8 @@ export class MarkdownPersistenceRegistry {
   }
 
   private evict(entry: RegistryEntry): void {
-    if (entry.leases.size !== 0 || !entry.coordinator.dispose()) return;
+    if (entry.leases.size !== 0 || entry.pendingInput !== null || !entry.coordinator.dispose())
+      return;
     if (entry.evictionTimer !== undefined) clearTimeout(entry.evictionTimer);
     this.stopWatching(entry);
     entry.unsubscribe();
@@ -471,8 +620,9 @@ export class MarkdownPersistenceRegistry {
       const snapshot = entry.coordinator.getSnapshot();
       return {
         ...entry.target,
-        pending: snapshot.pending,
-        attention: snapshot.error !== null || snapshot.conflict !== null,
+        pending: snapshot.pending || entry.pendingInput !== null,
+        attention:
+          entry.pendingInput !== null || snapshot.error !== null || snapshot.conflict !== null,
       };
     });
     if (

@@ -2013,6 +2013,7 @@ export default function FilePreviewPanel({
         <ScientMarkdownPersistenceNotice
           key={relativePath}
           persistence={markdownLease}
+          {...(!renderMarkdown ? { onReturnToRich: () => setRenderMarkdownPreferred(true) } : {})}
           {...(markdownRefreshCopy ? { refreshCopy: markdownRefreshCopy } : {})}
           {...(markdownRefreshFailure?.reason === "not_found"
             ? { missingFileChoices: missingFile.paths, onOpenFile }

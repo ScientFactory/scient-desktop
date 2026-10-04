@@ -12,6 +12,7 @@ import {
 } from "@scientfactory/scient-markdown";
 import { EnvironmentId } from "@t3tools/contracts";
 import type { MarkdownPersistenceLease } from "./persistence/markdownPersistenceRegistry";
+import { MarkdownPersistenceRegistry } from "./persistence/markdownPersistenceRegistry";
 
 import {
   ScientMarkdownWorkspaceSurface as ProductionScientMarkdownWorkspaceSurface,
@@ -62,6 +63,11 @@ function ScientMarkdownWorkspaceSurface(props: TestSurfaceProps) {
         relativePath: "notes.md",
       },
       getSnapshot: coordinator.getSnapshot,
+      getPendingInput: () => null,
+      canEditPendingInput: () => true,
+      claimPendingInput: () => true,
+      releasePendingInputClaim: () => {},
+      retainPendingInput: () => true,
       subscribe: coordinator.subscribe,
       change: (source, version) => {
         const previous = coordinator.getSnapshot().draftSource;
@@ -135,6 +141,169 @@ describe("ScientMarkdownWorkspaceSurface", () => {
     const coordinator = changed.mock.instances[0] as MarkdownPersistenceCoordinator;
     return { root, controller, coordinator };
   }
+
+  it("keeps refused input visible and restores it from its file owner after a rich surface remount", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const source = "# Result [@smith]\n\nTail\n";
+    const write = vi.fn(async () => ({ revision: "r1" }));
+    const registry = new MarkdownPersistenceRegistry({
+      createTransport: () => ({
+        write,
+        read: async () => ({ source, revision: "r0" }),
+        classifyFailure: () => "terminal",
+        subscribe: () => () => {},
+        project: () => {},
+      }),
+    });
+    const target = {
+      environmentId: EnvironmentId.make("pending-input"),
+      cwd: "/synthetic",
+      relativePath: "paper.md",
+    };
+    const firstLease = registry.acquire(target, {
+      relativePath: "paper.md",
+      contents: source,
+      revision: "r0",
+      byteLength: source.length,
+      truncated: false,
+    })!;
+    const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+    await act(() =>
+      root.render(
+        <ProductionScientMarkdownWorkspaceSurface persistence={firstLease} ariaLabel="Paper" />,
+      ),
+    );
+    const first = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).at(-1)!;
+    let position = -1;
+    first.view!.state.doc.descendants((node, from) => {
+      if (node.type.name === "citation") position = from;
+    });
+    await act(() =>
+      first.view!.dispatch(
+        first.view!.state.tr.setNodeAttribute(position, "source", "@smith\n@jones"),
+      ),
+    );
+    expect(host.textContent).toContain("Your input remains open here");
+    expect(firstLease.getPendingInput()).not.toBeNull();
+    expect(firstLease.getSnapshot().draftSource).toBe(source);
+    expect(write).not.toHaveBeenCalled();
+    const otherLease = registry.acquire(
+      { ...target, cwd: "/another-synthetic-project" },
+      {
+        relativePath: "paper.md",
+        contents: "Other project\n",
+        revision: "other-r0",
+        byteLength: 14,
+        truncated: false,
+      },
+    )!;
+    await act(() =>
+      root.render(
+        <ProductionScientMarkdownWorkspaceSurface
+          persistence={otherLease}
+          ariaLabel="Other paper"
+        />,
+      ),
+    );
+    const other = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).at(-1)!;
+    expect(other.session.state.doc.textContent).toBe("Other project");
+    expect(other.session.pendingWriteback).toBeNull();
+    expect(host.textContent).not.toContain("Your input remains open here");
+    expect(firstLease.getPendingInput()).not.toBeNull();
+    otherLease.release();
+    await act(() => root.render(null));
+    firstLease.release();
+    const secondLease = registry.acquire(target, null)!;
+    await act(() =>
+      root.render(
+        <ProductionScientMarkdownWorkspaceSurface persistence={secondLease} ariaLabel="Paper" />,
+      ),
+    );
+    const second = (mount.mock.instances as unknown as ScientMarkdownEditorView[]).at(-1)!;
+    expect(second.session.state.doc.nodeAt(position)?.attrs.source).toBe("@smith\n@jones");
+    expect(host.textContent).toContain("Your input remains open here");
+    await act(() => second.executeKeyboardCommand("markdown.undo"));
+    expect(secondLease.getPendingInput()).toBeNull();
+    expect(host.textContent).not.toContain("Your input remains open here");
+    expect(secondLease.getSnapshot().draftSource).toBe(source);
+    secondLease.release();
+  });
+
+  it("makes another rich lease read-only while pending input has an owner and transfers the latest input after release", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const source = "# Result [@smith]\n\nTail\n";
+    const registry = new MarkdownPersistenceRegistry({
+      createTransport: () => ({
+        write: async () => ({ revision: "r1" }),
+        read: async () => ({ source, revision: "r0" }),
+        classifyFailure: () => "terminal",
+        subscribe: () => () => {},
+        project: () => {},
+      }),
+    });
+    const target = {
+      environmentId: EnvironmentId.make("pending-owner"),
+      cwd: "/synthetic",
+      relativePath: "paper.md",
+    };
+    const firstLease = registry.acquire(target, {
+      relativePath: "paper.md",
+      contents: source,
+      revision: "r0",
+      byteLength: source.length,
+      truncated: false,
+    })!;
+    const secondLease = registry.acquire(target, null)!;
+    const mount = vi.spyOn(ScientMarkdownEditorView.prototype, "mount");
+    const firstHost = document.createElement("div");
+    const secondHost = document.createElement("div");
+    document.body.append(firstHost, secondHost);
+    const firstRoot = createRoot(firstHost);
+    const secondRoot = createRoot(secondHost);
+    roots.push(firstRoot, secondRoot);
+    await act(() => {
+      firstRoot.render(
+        <ProductionScientMarkdownWorkspaceSurface persistence={firstLease} ariaLabel="First" />,
+      );
+      secondRoot.render(
+        <ProductionScientMarkdownWorkspaceSurface persistence={secondLease} ariaLabel="Second" />,
+      );
+    });
+    const controllers = mount.mock.instances as unknown as ScientMarkdownEditorView[];
+    const first = controllers.find((item) => firstHost.contains(item.view?.dom ?? null))!;
+    const second = controllers.find((item) => secondHost.contains(item.view?.dom ?? null))!;
+    let position = -1;
+    first.view!.state.doc.descendants((node, from) => {
+      if (node.type.name === "citation") position = from;
+    });
+    await act(() => {
+      first.view!.dispatch(
+        first.view!.state.tr.setNodeAttribute(position, "source", "@smith\n@jones"),
+      );
+      expect(second.view!.editable).toBe(false);
+    });
+    expect(second.session.pendingWriteback).toBeNull();
+    expect(secondHost.textContent).toContain("unfinished input in another open editor");
+    expect(secondLease.retainPendingInput(null)).toBe(false);
+    expect(second.executeKeyboardCommand("markdown.undo")).toBe(false);
+    await act(() =>
+      first.view!.dispatch(
+        first.view!.state.tr.setNodeAttribute(position, "source", "@smith\n@latest"),
+      ),
+    );
+    await act(() => firstRoot.render(null));
+    await act(() => firstLease.release());
+    expect(second.view!.editable).toBe(true);
+    expect(second.session.state.doc.nodeAt(position)?.attrs.source).toBe("@smith\n@latest");
+    expect(secondHost.textContent).not.toContain("unfinished input in another open editor");
+    expect(secondHost.textContent).toContain("Your input remains open here");
+    expect(secondLease.getSnapshot().draftSource).toBe(source);
+    secondLease.release();
+  });
 
   it("invalidates only the external presentation domain that changed", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
