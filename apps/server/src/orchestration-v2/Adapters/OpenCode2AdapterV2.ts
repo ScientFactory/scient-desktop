@@ -1247,19 +1247,25 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
       turn: ActiveTurn,
       response: { readonly id: string; readonly sessionID: string },
       offeredId: string,
-      expectedAttemptId: ProviderAdapter.ProviderAdapterV2TurnInput["attemptId"],
+      turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
     ) =>
       lock.withPermit(
         Effect.gen(function* () {
-          yield* markTurnAccepted(state, turn);
-          if (response.id !== offeredId || response.sessionID !== state.sessionId) return;
+          if (
+            response.id !== offeredId ||
+            response.sessionID !== state.sessionId ||
+            threads.get(state.sessionId) !== state ||
+            state.providerThread.id !== turnInput.providerThread.id ||
+            (state.active !== undefined && state.active !== turn)
+          )
+            return;
           // Only the native response can confirm a client-chosen message boundary.
           // The ordered event feed may already have settled this exact turn.
           const latest = state.providerTurns.get(String(turn.providerTurn.id)) ?? turn.providerTurn;
           if (
-            latest.runAttemptId !== expectedAttemptId ||
-            latest.nodeId !== turn.input.rootNodeId ||
-            latest.providerThreadId !== state.providerThread.id ||
+            latest.runAttemptId !== turnInput.attemptId ||
+            latest.nodeId !== turnInput.rootNodeId ||
+            latest.providerThreadId !== turnInput.providerThread.id ||
             latest.nativeTurnRef?.nativeId !== offeredId ||
             latest.nativeTurnRef.driver !== driver
           )
@@ -3601,9 +3607,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
             : { skills: skills.map((id) => ({ id: Skill.ID.make(id) })) }),
         })
         .pipe(
-          Effect.tap((response) =>
-            confirmPromptBoundary(state, turn, response, id, turnInput.attemptId),
-          ),
+          Effect.tap((response) => confirmPromptBoundary(state, turn, response, id, turnInput)),
           Effect.asVoid,
         );
     });
