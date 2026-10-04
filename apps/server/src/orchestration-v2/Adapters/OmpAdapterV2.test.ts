@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -81,6 +82,10 @@ const harness = Effect.fnUntraced(function* (
     readonly model?: string;
     readonly threadId?: ThreadId;
     readonly environment?: NodeJS.ProcessEnv;
+    readonly binaryPath?: string;
+    readonly homePath?: string;
+    readonly profile?: string;
+    readonly cwd?: string;
     readonly prepareOpen?: (
       input: Parameters<ReturnType<typeof makeOmpAdapterV2>["openSession"]>[0],
       adapter: ReturnType<typeof makeOmpAdapterV2>,
@@ -122,14 +127,18 @@ const harness = Effect.fnUntraced(function* (
     behavior?.threadId ?? ThreadId.make(`omp-v2-${yield* (yield* Crypto.Crypto).randomUUIDv4}`);
   const modelSelection = { instanceId, model: behavior?.model ?? "test/selected" };
   const runtimePolicy = {
-    cwd: config.stateDir,
+    cwd: behavior?.cwd ?? config.stateDir,
     runtimeMode: "full-access" as const,
     interactionMode: "default" as const,
   };
   const adapter = makeOmpAdapterV2({
     target,
     instanceId,
-    settings: yield* decodeOmpSettings({ binaryPath: scientific ? "scient-agent" : "omp" }),
+    settings: yield* decodeOmpSettings({
+      binaryPath: behavior?.binaryPath ?? (scientific ? "scient-agent" : "omp"),
+      ...(behavior?.homePath ? { homePath: behavior.homePath } : {}),
+      ...(behavior?.profile ? { profile: behavior.profile } : {}),
+    }),
     ...(scientific ? { homePath: ownedHome } : {}),
     environment,
     spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
@@ -1957,6 +1966,145 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
       }),
     ),
   );
+
+  for (const scenario of [
+    {
+      name: "system-to-managed",
+      first: "/usr/local/bin/omp",
+      second: "/Users/test/.scient-next/provider-runtimes/omp/versions/18.3.1/darwin-arm64/omp",
+    },
+    {
+      name: "Homebrew-upgrade",
+      first: "/opt/homebrew/Cellar/omp/18.2.8/bin/omp",
+      second: "/opt/homebrew/Cellar/omp/18.3.1/bin/omp",
+    },
+    {
+      name: "custom-install",
+      first: "/opt/company/production/omp",
+      second: "/opt/company/testing/omp",
+    },
+    {
+      name: "tilde-to-absolute",
+      first: "omp",
+      second: "omp",
+      firstHome: "~/.omp-scient-resume-home",
+      secondHome: `${NodeOS.homedir()}/.omp-scient-resume-home`,
+    },
+    {
+      name: "absolute-to-tilde",
+      first: "omp",
+      second: "omp",
+      firstHome: `${NodeOS.homedir()}/.omp-scient-resume-home`,
+      secondHome: "~/.omp-scient-resume-home",
+    },
+  ]) {
+    it.effect(
+      `resumes native OMP across ${scenario.name} without changing conversation authority`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const firstScope = yield* Scope.make();
+            yield* Effect.addFinalizer(() => Scope.close(firstScope, Exit.void));
+            const firstPeer = scriptedOmpRpc({
+              models: [],
+              initial: { provider: "test", id: "selected" },
+              version: "18.2.8",
+            });
+            let firstCommand: string | undefined;
+            const first = yield* harness(false, {
+              binaryPath: scenario.first,
+              ...(scenario.firstHome ? { homePath: scenario.firstHome } : {}),
+              makeProcess: (options) => {
+                firstCommand = options.command;
+                return firstPeer.makeProcess(options);
+              },
+            }).pipe(Effect.provideService(Scope.Scope, firstScope));
+            const prior = first.input.providerThread;
+            assert.isDefined(prior.nativeMetadata?.resumeCursor);
+            const priorCursor = prior.nativeMetadata?.resumeCursor;
+            if (typeof priorCursor !== "object" || priorCursor === null)
+              return yield* Effect.die("Missing native cross-install cursor");
+            yield* Scope.close(firstScope, Exit.void);
+            const secondPeer = scriptedOmpRpc({
+              models: [],
+              initial: { provider: "test", id: "selected" },
+              version: "18.3.1",
+            });
+            let secondCommand: string | undefined;
+            const second = yield* harness(false, {
+              threadId: first.openInput.threadId,
+              binaryPath: scenario.second,
+              ...(scenario.secondHome ? { homePath: scenario.secondHome } : {}),
+              makeProcess: (options) => {
+                secondCommand = options.command;
+                return secondPeer.makeProcess(options);
+              },
+            });
+            const resumed = yield* second.runtime.resumeThread({ providerThread: prior });
+            assert.equal(firstCommand, scenario.first);
+            assert.equal(secondCommand, scenario.second);
+            assert.equal(resumed.id, prior.id);
+            assert.equal(resumed.nativeThreadRef?.nativeId, prior.nativeThreadRef?.nativeId);
+            assert.deepEqual(resumed.nativeMetadata?.resumeCursor, {
+              ...priorCursor,
+              ompVersion: "18.3.1",
+            });
+            assert.equal(
+              secondPeer.state.frames.filter((frame) => frame.type === "switch_session").length,
+              1,
+            );
+            assert.equal(firstPeer.state.shutdowns, 1);
+          }),
+        ),
+    );
+  }
+
+  for (const changed of ["home", "profile", "workspace"] as const) {
+    it.effect(
+      `refuses cross-install native OMP resume when its ${changed} changes before switching history`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const owned = yield* Scope.make();
+            yield* Effect.addFinalizer(() => Scope.close(owned, Exit.void));
+            const firstPeer = scriptedOmpRpc({
+              models: [],
+              initial: { provider: "test", id: "selected" },
+            });
+            const first = yield* harness(false, {
+              binaryPath: "/opt/company/production/omp",
+              homePath: "/synthetic/home-a",
+              profile: "production",
+              makeProcess: firstPeer.makeProcess,
+            }).pipe(Effect.provideService(Scope.Scope, owned));
+            yield* Scope.close(owned, Exit.void);
+            const otherWorkspace = first.path.join(first.config.stateDir, "other-workspace");
+            yield* first.fs.makeDirectory(otherWorkspace, { recursive: true });
+            const secondPeer = scriptedOmpRpc({
+              models: [],
+              initial: { provider: "test", id: "selected" },
+            });
+            const second = yield* harness(false, {
+              threadId: first.openInput.threadId,
+              binaryPath: "/opt/company/testing/omp",
+              homePath: changed === "home" ? "/synthetic/home-b" : "/synthetic/home-a",
+              profile: changed === "profile" ? "testing" : "production",
+              cwd: changed === "workspace" ? otherWorkspace : first.input.runtimePolicy.cwd,
+              makeProcess: secondPeer.makeProcess,
+            });
+            const result = yield* second.runtime
+              .resumeThread({ providerThread: first.input.providerThread })
+              .pipe(Effect.result);
+            assert.equal(result._tag, "Failure");
+            assert.equal(
+              secondPeer.state.frames.filter((frame) => frame.type === "switch_session").length,
+              0,
+            );
+            assert.equal(secondPeer.state.prompts.length, 0);
+          }),
+        ),
+    );
+  }
 
   it.effect("runs Scient Agent through its independent native target and runtime version", () =>
     Effect.scoped(
