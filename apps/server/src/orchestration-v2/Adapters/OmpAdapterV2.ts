@@ -6,6 +6,7 @@ import {
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as Schema from "effect/Schema";
+import * as SchemaIssue from "effect/SchemaIssue";
 import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
 import * as Scope from "effect/Scope";
@@ -201,6 +202,41 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
             Effect.provideService(Path.Path, path),
           );
         yield* Effect.addFinalizer(() => client.shutdown.pipe(Effect.ignore));
+        let catalog: Effect.Success<ReturnType<typeof client.getModels>>["models"] = [];
+        let catalogCurrent = false;
+        let closed = false;
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            closed = true;
+          }),
+        );
+        const refreshCatalog = Effect.fnUntraced(function* () {
+          const available = yield* client.getModels().pipe(
+            Effect.tapError((cause) => {
+              const fields =
+                cause._tag === "OmpRpcProtocolError" && Schema.isSchemaError(cause.cause)
+                  ? SchemaIssue.makeFormatterStandardSchemaV1({
+                      leafHook: (issue) => issue._tag,
+                      checkHook: () => "InvalidValue",
+                    })(cause.cause.issue)
+                      .issues.slice(0, 10)
+                      .map((issue) => (issue.path ?? []).map(String).join("."))
+                  : [];
+              return Effect.logWarning(`${target.name} model discovery failed.`, {
+                command: "get_available_models",
+                errorType: cause._tag,
+                version: client.version,
+                detail: client.redaction.text(cause.message).slice(0, 1024),
+                fields,
+              });
+            }),
+          );
+          catalog = available.models;
+          catalogCurrent = true;
+          return available;
+        });
+        yield* refreshCatalog().pipe(Effect.ignore);
+
         const home = expandHomePath(
           options.homePath?.trim() ||
             options.settings.homePath?.trim() ||
@@ -567,15 +603,36 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
             }
             if (imageFiles.length > 0) {
               const modelRef = selected ?? (yield* client.getState()).model;
-              const available = yield* client.getModels();
-              const model = available.models.find(
+              if (
+                !catalogCurrent ||
+                !catalog.some(
+                  (model) =>
+                    model.provider === modelRef?.provider &&
+                    model.id === modelRef?.id &&
+                    model.input !== undefined,
+                )
+              )
+                yield* refreshCatalog().pipe(
+                  Effect.mapError(
+                    () =>
+                      new NativeSessionOperationError({
+                        detail: `Couldn't verify image support for the selected ${target.name} model. Text messages still work.`,
+                        breaksSession: false,
+                      }),
+                  ),
+                );
+              const model = catalog.find(
                 (candidate) =>
                   candidate.provider === modelRef?.provider && candidate.id === modelRef?.id,
               );
               if (!model?.input?.includes("image"))
                 return yield* Effect.fail(
                   new NativeSessionOperationError({
-                    detail: `The selected ${target.name} model does not advertise image support.`,
+                    detail:
+                      model?.input === undefined
+                        ? `Couldn't verify image support for the selected ${target.name} model. Text messages still work.`
+                        : `The selected ${target.name} model does not support images.`,
+                    breaksSession: false,
                   }),
                 );
             }
@@ -625,6 +682,14 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
             return { message: delivery.message, images };
           });
         const native: NativeSession = {
+          getModelContextWindow: (selection) => {
+            if (closed || selection.instanceId !== options.instanceId) return undefined;
+            const selected = decodeOmpModelSlug(selection.model);
+            const window = catalog.find(
+              (model) => model.provider === selected?.provider && model.id === selected.modelId,
+            )?.contextWindow;
+            return typeof window === "number" && window > 0 ? window : undefined;
+          },
           get nativeId() {
             return nativeId;
           },

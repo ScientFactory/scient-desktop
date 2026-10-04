@@ -84,7 +84,11 @@ export type NativeSessionUpdate =
 
 export class NativeSessionOperationError extends Schema.TaggedError<NativeSessionOperationError>()(
   "NativeSessionOperationError",
-  { detail: Schema.String, cause: Schema.optional(Schema.Defect()) },
+  {
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+    breaksSession: Schema.optional(Schema.Boolean),
+  },
 ) {
   override get message(): string {
     return this.detail;
@@ -103,6 +107,7 @@ export const nativeSessionFailure = (cause: unknown): NativeSessionOperationErro
       });
 
 export interface NativeSession {
+  readonly getModelContextWindow?: ProviderAdapter.ProviderAdapterV2SessionRuntime["getModelContextWindow"];
   readonly nativeId: string;
   /** A local session identity is not authority to resume a provider conversation. */
   readonly nativeThreadKnown?: boolean;
@@ -919,6 +924,9 @@ export function makeNativeSessionAdapterV2(
           get providerSession() {
             return providerSession;
           },
+          ...(native.getModelContextWindow === undefined
+            ? {}
+            : { getModelContextWindow: native.getModelContextWindow }),
           events: Stream.fromQueue(events),
           hasPendingBackgroundWork: Effect.sync(
             () =>
@@ -1039,7 +1047,7 @@ export function makeNativeSessionAdapterV2(
                           type: "terminal",
                           status: "failed",
                           detail: cause.message,
-                          broken: true,
+                          broken: cause.breaksSession !== false,
                         }),
                       )
                       .pipe(

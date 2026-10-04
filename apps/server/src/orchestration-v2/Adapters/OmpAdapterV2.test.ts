@@ -21,6 +21,9 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as Scope from "effect/Scope";
+import * as Exit from "effect/Exit";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -294,11 +297,15 @@ const harness = Effect.fnUntraced(function* (
   };
 });
 
-const imageHarness = Effect.fnUntraced(function* (maxFrameBytes = 1_048_576) {
+const imageHarness = Effect.fnUntraced(function* (
+  maxFrameBytes = 1_048_576,
+  configuration: Partial<Parameters<typeof scriptedOmpRpc>[0]> = {},
+) {
   const peer = scriptedOmpRpc({
     models: [{ provider: "test", id: "selected", input: ["text", "image"], contextWindow: null }],
     initial: { provider: "test", id: "selected" },
     maxFrameBytes,
+    ...configuration,
   });
   const h = yield* harness(false, { makeProcess: peer.makeProcess });
   yield* h.fs.makeDirectory(h.config.attachmentsDir, { recursive: true });
@@ -340,6 +347,7 @@ const imageHarness = Effect.fnUntraced(function* (maxFrameBytes = 1_048_576) {
   });
   return { ...h, peer, image, send };
 });
+const encodeDiagnostic = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const decodeImagePath = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.String));
 const attachedImagePaths = (message: string | undefined) =>
   (message ?? "")
@@ -455,6 +463,146 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         assert.lengthOf(h.peer.state.prompts, 0);
       }),
     ),
+  );
+
+  for (const failure of ["command", "decode"] as const) {
+    it.effect(
+      `keeps native OMP ${failure} model discovery failures out of text turns with safe diagnostics`,
+      () => {
+        const messages: unknown[] = [];
+        const logger = Logger.make(({ message }) => messages.push(message));
+        return Effect.scoped(
+          Effect.gen(function* () {
+            const h = yield* imageHarness(
+              1_048_576,
+              failure === "command"
+                ? { modelsError: "Rejected Bearer synthetic-secret-123" }
+                : {
+                    modelsResponse: {
+                      models: [
+                        { provider: "test", id: "selected", input: { private: "catalog-secret" } },
+                      ],
+                    },
+                  },
+            );
+            yield* h.send(1, "Text still works", []);
+            assert.lengthOf(h.peer.state.prompts, 1);
+            assert.isFalse(
+              h.recorded.some(
+                (event) =>
+                  event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool",
+              ),
+            );
+            const log = encodeDiagnostic(messages);
+            assert.include(log, "Oh My Pi model discovery failed.");
+            assert.include(log, "get_available_models");
+            assert.include(
+              log,
+              failure === "command" ? "OmpRpcCommandError" : "OmpRpcProtocolError",
+            );
+            if (failure === "decode") assert.include(log, "models.0.input");
+            assert.notInclude(log, "synthetic-secret-123");
+            assert.notInclude(log, "catalog-secret");
+          }),
+        ).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+      },
+    );
+  }
+  it.effect(
+    "retries native OMP image discovery and recovers on the same session without dispatching the rejection",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* imageHarness(1_048_576, {
+            modelsError: "Catalog temporarily unavailable",
+          });
+          const image = yield* h.image("catalog-recovery", 20);
+          const failed = yield* Effect.result(
+            h.runtime.startTurn({
+              ...h.input,
+              message: { ...h.input.message, attachments: [image] },
+            }),
+          );
+          assert.equal(failed._tag, "Failure");
+          if (failed._tag !== "Failure")
+            return yield* Effect.die("Unverified image reached the peer");
+          const detail = Cause.pretty(Cause.fail(failed.failure));
+          assert.include(detail, "Couldn't verify image support");
+          assert.notInclude(detail, "Catalog temporarily unavailable");
+          assert.lengthOf(h.peer.state.prompts, 0);
+          yield* h.takeUntil((event) => event.type === "turn.terminal");
+          h.peer.state.modelsError = undefined;
+          const sent = yield* h.send(2, "Describe", [image]);
+          assert.lengthOf(sent.frame.images ?? [], 1);
+          assert.lengthOf(h.peer.state.prompts, 1);
+          assert.deepEqual(
+            h.recorded.flatMap((event) => (event.type === "turn.terminal" ? [event.status] : [])),
+            ["failed", "completed"],
+          );
+        }),
+      ),
+  );
+  for (const input of [undefined, ["text"]] as const) {
+    it.effect(
+      `distinguishes native OMP ${input === undefined ? "unknown" : "unsupported"} image capability without poisoning text turns`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const h = yield* imageHarness(1_048_576, {
+              models: [
+                { provider: "test", id: "selected", ...(input === undefined ? {} : { input }) },
+              ],
+            });
+            const failed = yield* Effect.result(
+              h.runtime.startTurn({
+                ...h.input,
+                message: { ...h.input.message, attachments: [yield* h.image("capability", 20)] },
+              }),
+            );
+            assert.equal(failed._tag, "Failure");
+            if (failed._tag !== "Failure")
+              return yield* Effect.die("Unsupported image reached the peer");
+            assert.include(
+              Cause.pretty(Cause.fail(failed.failure)),
+              input === undefined ? "Couldn't verify image support" : "does not support images",
+            );
+            assert.lengthOf(h.peer.state.prompts, 0);
+            yield* h.takeUntil((event) => event.type === "turn.terminal");
+            yield* h.send(2, "Text still works", []);
+            assert.lengthOf(h.peer.state.prompts, 1);
+          }),
+        ),
+    );
+  }
+  it.effect(
+    "reports native OMP model capacity only for its own live instance and selected model",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const h = yield* imageHarness(1_048_576, {
+            models: [{ provider: "test", id: "a/b", contextWindow: 1_000_000 }],
+          }).pipe(Effect.provideService(Scope.Scope, scope));
+          assert.equal(
+            h.runtime.getModelContextWindow?.({ ...h.input.modelSelection, model: "test/a%2Fb" }),
+            1_000_000,
+          );
+          assert.isUndefined(
+            h.runtime.getModelContextWindow?.({ ...h.input.modelSelection, model: "test/missing" }),
+          );
+          assert.isUndefined(
+            h.runtime.getModelContextWindow?.({
+              instanceId: ProviderInstanceId.make("foreign"),
+              model: "test/a%2Fb",
+            }),
+          );
+          yield* Scope.close(scope, Exit.void);
+          assert.isUndefined(
+            h.runtime.getModelContextWindow?.({ ...h.input.modelSelection, model: "test/a%2Fb" }),
+          );
+        }),
+      ),
   );
 
   it.effect("runs Scient Agent through its independent native target and runtime version", () =>
