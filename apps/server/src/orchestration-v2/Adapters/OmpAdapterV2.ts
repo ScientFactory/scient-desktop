@@ -70,6 +70,11 @@ import {
 } from "../../provider/omp/OmpSessionRuntime.ts";
 import type { OmpProcessFactory } from "../../provider/Layers/OmpProvider.ts";
 import { formatOmpBytes, planOmpImages } from "../../provider/omp/OmpImagePrompt.ts";
+import {
+  browserActionUrl,
+  browserActionText,
+  browserActionDiagnostic,
+} from "../../provider/omp/OmpBrowserAction.ts";
 import type * as ProviderAdapter from "../ProviderAdapter.ts";
 import { AcpProviderCapabilitiesV2 } from "./AcpAdapterV2.ts";
 import {
@@ -80,19 +85,6 @@ import {
   type NativeSessionUpdate,
   type NativeSessionAdapterV2Options,
 } from "./NativeSessionAdapterV2.ts";
-
-/** Persist only HTTP origins and paths; OAuth queries, fragments and user info are transient. */
-const externalHttpUrl = (value: string | undefined): string | undefined => {
-  if (!value) return undefined;
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:"
-      ? `${url.origin}${url.pathname}`
-      : undefined;
-  } catch {
-    return undefined;
-  }
-};
 
 export interface OmpAdapterV2Options extends Pick<
   NativeSessionAdapterV2Options,
@@ -331,7 +323,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                           frame.type === "response" && typeof frame.command === "string"
                             ? frame.command
                             : String(frame.type),
-                        payload: frame,
+                        payload: browserActionDiagnostic(frame),
                       }),
                   }
                 : {}),
@@ -659,8 +651,8 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                   status: "completed",
                 });
               case "open-url": {
-                const url = externalHttpUrl(update.url);
-                const launchUrl = externalHttpUrl(update.launchUrl);
+                const url = browserActionUrl(update.url);
+                const launchUrl = browserActionUrl(update.launchUrl);
                 return onUpdate({
                   type: "tool",
                   id: `open-url-${++nextWarningOrdinal}`,
@@ -671,7 +663,9 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                     : {}),
                   output: url
                     ? client.redaction.text(
-                        update.instructions ?? `${target.name} requested a browser action.`,
+                        browserActionText(
+                          update.instructions ?? `${target.name} requested a browser action.`,
+                        ),
                       )
                     : `${target.name} requested an invalid browser URL.`,
                 });
@@ -700,7 +694,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                       kind: "notification",
                       method:
                         notification._tag === "Event" ? notification.event.type : notification._tag,
-                      payload: client.redaction.log(notification),
+                      payload: client.redaction.log(browserActionDiagnostic(notification)),
                     }),
                 }
               : {}),

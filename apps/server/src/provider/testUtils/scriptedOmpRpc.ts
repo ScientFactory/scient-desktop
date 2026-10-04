@@ -252,6 +252,7 @@ export const scriptedOmpRpc = (input: {
         }
       };
       const client = yield* makeOmpRpcClient({
+        ...(options.onFrame ? { onFrame: options.onFrame } : {}),
         stdout: Stream.fromQueue(stdout),
         write: (bytes) =>
           Effect.forEach(
