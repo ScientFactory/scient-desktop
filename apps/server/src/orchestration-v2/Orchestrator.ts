@@ -79,6 +79,7 @@ import { isRestartNoteSource } from "./RestartBackgroundNote.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 import { threadShellFromProjection } from "@t3tools/shared/orchestrationV2ThreadShell";
 import { EventSinkV2 } from "./EventSink.ts";
+import { sourcePlanFingerprint } from "./SourcePlan.ts";
 import { planHeldQueueAdmission } from "./legacy/HeldQueueAdmission.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
@@ -1310,7 +1311,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }
           : previousAttempt;
       const commandId = CommandId.make(`command:system:start-queued:${queuedRun.id}:${attempt.id}`);
-      const sourcePlanRef = queuedRun.legacyQueue?.sourceProposedPlan;
+      const sourcePlanRef = queuedRun.sourcePlanRef ?? queuedRun.legacyQueue?.sourceProposedPlan;
       const sourcePlan =
         sourcePlanRef === undefined
           ? undefined
@@ -1319,7 +1320,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const sourceThread = yield* projectionStore.getThreadShell(sourcePlanRef.threadId);
         if (
           sourcePlan?.kind !== "proposed_plan" ||
-          sourcePlan.status !== "active" ||
+          sourcePlan.id !== sourcePlanRef.planId ||
+          sourcePlan.threadId !== sourcePlanRef.threadId ||
+          (sourcePlan.status !== "active" &&
+            !(
+              sourcePlan.status === "completed" &&
+              sourcePlan.consumedBy?.threadId === threadId &&
+              sourcePlan.consumedBy.runId === queuedRun.id
+            )) ||
+          (queuedRun.sourcePlanFingerprint !== undefined &&
+            queuedRun.sourcePlanFingerprint !== sourcePlanFingerprint(sourcePlan)) ||
           sourceThread === null ||
           sourceThread.deletedAt !== null ||
           sourceThread.archivedAt !== null ||
@@ -1649,6 +1659,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         startedAt: null,
         completedAt: null,
         contextHandoffId: activeHandoff?.id ?? null,
+        ...(sourcePlan?.kind !== "proposed_plan"
+          ? {}
+          : {
+              sourcePlanFingerprint: sourcePlanFingerprint(sourcePlan),
+            }),
       };
       const userTurnItem: OrchestrationV2TurnItem = {
         ...(legacyQueuedTurnItem ?? {
@@ -1754,18 +1769,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       yield* writeSystemEvents(
         [
-          ...(sourcePlan?.kind === "proposed_plan"
-            ? [
-                {
-                  type: "plan.updated" as const,
-                  threadId: sourcePlan.threadId,
-                  ...(sourcePlan.runId === null ? {} : { runId: sourcePlan.runId }),
-                  nodeId: sourcePlan.nodeId,
-                  occurredAt: now,
-                  payload: { ...sourcePlan, status: "completed" as const },
-                },
-              ]
-            : []),
           ...(selectionChanged || modesChanged || generateInitialTitle
             ? [
                 {
@@ -5003,6 +5006,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           checkpointId: null,
           contextHandoffId: null,
           ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
+          ...(sourcePlan === null
+            ? {}
+            : { sourcePlanFingerprint: sourcePlanFingerprint(sourcePlan) }),
           ...(command.restartContinuationOfRunId === undefined
             ? {}
             : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
@@ -5088,7 +5094,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           occurredAt: now,
           payload: run,
         });
-        yield* completeSourcePlan(now);
         yield* emitEvent({
           type: "run-attempt.created",
           threadId: command.threadId,

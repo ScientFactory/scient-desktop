@@ -2,6 +2,9 @@ import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
+  EventId,
+  NodeId,
+  PlanId,
   MessageId,
   ProjectId,
   ProviderDriverKind,
@@ -10,6 +13,8 @@ import {
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as DateTime from "effect/DateTime";
+import { EventSinkV2 } from "./EventSink.ts";
 import type * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
@@ -457,6 +462,101 @@ it.live("non-user native interruption holds ordinary queued work without a holdQ
             projection.runs.find((run) => run.id === queued.id)?.status === "completed",
         );
         assert.deepEqual(offers, ["foreground", "queued"]);
+      }),
+  ),
+);
+
+it.live("queued plan extraction and resubmission consume only the exact accepted native run", () =>
+  withNativeQueue(
+    "queued-source-plan-extraction",
+    ({ orchestrator, threadId, takeOffer, waitFor }) =>
+      Effect.gen(function* () {
+        const sink = yield* EventSinkV2;
+        const now = yield* DateTime.now;
+        const planId = PlanId.make("queued-plan-extraction");
+        yield* send(orchestrator, threadId, "foreground");
+        const foreground = yield* takeOffer;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("queued-plan-extraction:plan"),
+              type: "plan.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: planId,
+                threadId,
+                runId: null,
+                nodeId: NodeId.make("queued-plan-extraction:plan-node"),
+                kind: "proposed_plan",
+                status: "active",
+                markdown: "# Plan\nImplement this exact change.",
+              },
+            },
+          ],
+        });
+        const dispatch = (suffix: string) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`queued-plan-extraction:${suffix}`),
+            threadId,
+            messageId: MessageId.make(`queued-plan-extraction:${suffix}`),
+            text: "Implement the plan",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+            dispatchMode: { type: "queue_after_active" },
+            sourcePlanRef: { threadId, planId },
+          });
+        yield* dispatch("original");
+        const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.status === "queued",
+        );
+        assert.ok(queued);
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).plans[0]?.status,
+          "active",
+        );
+        yield* orchestrator.dispatch({
+          type: "queued-run.cancel",
+          commandId: CommandId.make("queued-plan-extraction:cancel"),
+          threadId,
+          runId: queued.id,
+        });
+        yield* dispatch("resubmitted");
+        const resubmitted = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.status === "queued",
+        );
+        assert.ok(resubmitted);
+        assert.notEqual(resubmitted.id, queued.id);
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).plans[0]?.status,
+          "active",
+        );
+        yield* foreground.settle("completed");
+        const accepted = yield* takeOffer;
+        assert.equal(accepted.input.runId, resubmitted.id);
+        const consumed = yield* waitFor((projection) =>
+          projection.plans.some((plan) => plan.id === planId && plan.status === "completed"),
+        );
+        const plan = consumed.plans.find((plan) => plan.id === planId);
+        assert.ok(plan?.kind === "proposed_plan");
+        assert.deepEqual(plan.consumedBy, {
+          threadId,
+          runId: accepted.input.runId,
+          runAttemptId: accepted.input.attemptId,
+          providerTurnId: consumed.providerTurns.find(
+            (turn) => turn.runAttemptId === accepted.input.attemptId,
+          )?.id,
+        });
+        yield* accepted.settle("failed");
+        const failed = yield* waitFor((projection) =>
+          projection.runs.some((run) => run.id === accepted.input.runId && run.status === "failed"),
+        );
+        assert.equal(
+          failed.plans.find((candidate) => candidate.id === planId)?.status,
+          "completed",
+        );
       }),
   ),
 );

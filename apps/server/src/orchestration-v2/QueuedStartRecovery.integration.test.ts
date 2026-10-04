@@ -3,6 +3,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ChatAttachmentId,
   CommandId,
+  EventId,
+  NodeId,
+  PlanId,
   MessageId,
   ProjectId,
   ProviderDriverKind,
@@ -10,6 +13,8 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as DateTime from "effect/DateTime";
+import { EventSinkV2 } from "./EventSink.ts";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -289,4 +294,99 @@ it.live(
         );
       }),
     ),
+);
+
+it.live("imported plan remains active across native open failure and explicit Retry", () =>
+  withQueuedRun("imported-source-plan-retry", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSinkV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("imported-source-plan-retry");
+      const planId = PlanId.make("imported-source-plan-retry:plan");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("imported-source-plan-retry:create"),
+        threadId,
+        projectId: ProjectId.make("imported-source-plan-retry:project"),
+        title: "Imported plan retry",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("imported-source-plan-retry:plan"),
+            type: "plan.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: planId,
+              threadId,
+              runId: null,
+              nodeId: NodeId.make("imported-source-plan-retry:plan-node"),
+              kind: "proposed_plan",
+              status: "active",
+              markdown: "# Captured imported plan",
+            },
+          },
+        ],
+      });
+      yield* orchestrator.dispatch({
+        type: "legacy-queue.import",
+        commandId: CommandId.make("imported-source-plan-retry:import"),
+        threadId,
+        queueItemId: "qitem_sourceplanretry",
+        messageId: MessageId.make("imported-source-plan-retry:message"),
+        text: "Implement imported plan",
+        attachments: [],
+        sourceProposedPlan: { threadId, planId },
+        createdAt: now,
+      });
+      yield* orchestrator.dispatch({
+        type: "queue.resume",
+        commandId: CommandId.make("imported-source-plan-retry:start"),
+        threadId,
+      });
+      const prepared = yield* orchestrator.getThreadProjection(threadId);
+      const run = prepared.runs[0];
+      assert.ok(run?.activeAttemptId);
+      assert.equal(prepared.plans[0]?.status, "active");
+      const cursor = yield* orchestrator.getThreadEventSequence(threadId);
+      const pull = yield* Stream.toPull(
+        orchestrator.streamStoredEventsFrom({ threadId, afterSequence: cursor }),
+      );
+      const start = yield* ProviderTurnStart.ProviderTurnStartServiceV2;
+      yield* start.start({ threadId, runId: run.id, expectedAttemptId: run.activeAttemptId });
+      const heldReceipt = yield* Stream.fromPull(Effect.succeed(pull)).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "run.updated" &&
+            stored.event.payload.id === run.id &&
+            stored.event.payload.status === "queued" &&
+            stored.event.payload.queueHeld === true,
+        ),
+        Stream.runHead,
+        Effect.timeout("15 seconds"),
+      );
+      assert.isTrue(Option.isSome(heldReceipt));
+      assert.equal((yield* orchestrator.getThreadProjection(threadId)).plans[0]?.status, "active");
+      yield* orchestrator.dispatch({
+        type: "queue.resume",
+        commandId: CommandId.make("imported-source-plan-retry:retry"),
+        threadId,
+        runId: run.id,
+      });
+      const retry = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(retry.runs[0]?.status, "starting");
+      assert.notEqual(retry.runs[0]?.activeAttemptId, run.activeAttemptId);
+      assert.equal(retry.runs[0]?.sourcePlanFingerprint, run.sourcePlanFingerprint);
+      assert.equal(retry.plans[0]?.status, "active");
+    }),
+  ),
 );

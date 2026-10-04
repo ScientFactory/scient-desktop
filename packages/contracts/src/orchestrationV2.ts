@@ -593,6 +593,8 @@ export const OrchestrationV2Run = Schema.Struct({
       planId: PlanId,
     }),
   ),
+  /** Exact proposed-plan content selected by a queued run before native acceptance. */
+  sourcePlanFingerprint: Schema.optional(Schema.String),
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
 });
 export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
@@ -1222,6 +1224,15 @@ export const OrchestrationV2PlanArtifact = Schema.Union([
     ...OrchestrationV2PlanArtifactBaseFields,
     kind: Schema.Literal("proposed_plan"),
     markdown: Schema.String,
+    /** Native acceptance consumes a queued source plan exactly once for this owner. */
+    consumedBy: Schema.optional(
+      Schema.Struct({
+        threadId: ThreadId,
+        runId: RunId,
+        runAttemptId: RunAttemptId,
+        providerTurnId: ProviderTurnId,
+      }),
+    ),
   }),
   Schema.Struct({
     ...OrchestrationV2PlanArtifactBaseFields,

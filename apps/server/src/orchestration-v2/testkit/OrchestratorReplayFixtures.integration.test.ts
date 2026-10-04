@@ -14,7 +14,10 @@ import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testk
 import { CursorOrchestratorReplayHarness } from "../Adapters/CursorAdapterV2.testkit.ts";
 import { AcpRegistryOrchestratorReplayHarness } from "../Adapters/AcpRegistryAdapterV2.testkit.ts";
 import { GrokOrchestratorReplayHarness } from "../Adapters/GrokAdapterV2.testkit.ts";
-import { OpenCodeOrchestratorReplayHarness } from "../Adapters/OpenCodeAdapterV2.testkit.ts";
+import {
+  OpenCodeOrchestratorReplayHarness,
+  materializeOpenCodeReplayPermissions,
+} from "../Adapters/OpenCodeAdapterV2.testkit.ts";
 import {
   OPENCODE2_HTTP_PROTOCOL,
   OpenCode2OrchestratorReplayHarness,
@@ -23,6 +26,7 @@ import { PiOrchestratorReplayHarness } from "../Adapters/PiAdapterV2.testkit.ts"
 import * as IdAllocator from "../IdAllocator.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "./fixtures/index.ts";
+import { materializeCodexOwnerReload } from "./CodexReplayOwnerReload.ts";
 import { messageRestartInput } from "./fixtures/message_steering/input.ts";
 import {
   assertProviderNativeSubagentRootTurns,
@@ -99,10 +103,31 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
   );
   const fixtureInput = input.buildInput();
   const workspace = yield* checkpointWorkspace(input.fixtureName, fixtureInput.workspaceFiles);
+  const permissionTranscript =
+    input.driver.driver === "opencode" && replayTranscript.protocol !== OPENCODE2_HTTP_PROTOCOL
+      ? materializeOpenCodeReplayPermissions(replayTranscript, {
+          runtimeMode: fixtureInput.runtimeMode ?? "full-access",
+          interactionMode: fixtureInput.interactionMode ?? "default",
+          ...input.driver.runtimePolicyOverride,
+          cwd: input.driver.runtimePolicyOverride?.cwd ?? workspace ?? null,
+        })
+      : replayTranscript;
+  const ownerReloadTranscript =
+    input.driver.driver === "codex" &&
+    [
+      "subagent_continue",
+      "multi_turn",
+      "queued_turn",
+      "thread_rollback",
+      "thread_rollback_after_restart",
+      "thread_rollback_to_stopped_turn",
+    ].includes(input.fixtureName)
+      ? materializeCodexOwnerReload(replayTranscript, 2)
+      : replayTranscript;
   const transcript = yield* input.harness.decodeTranscript(
     input.driver.driver === "codex"
-      ? materializeReplayTranscriptWorkspace(replayTranscript, workspace)
-      : replayTranscript,
+      ? materializeReplayTranscriptWorkspace(ownerReloadTranscript, workspace)
+      : permissionTranscript,
   );
   const materialized = yield* materializeFixtureInput({
     scenario: input.fixtureName,

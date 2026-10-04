@@ -1000,7 +1000,7 @@ for (const scenario of ["active", "renamed", "completed", "foreign-project"] as 
         );
         assert.equal(
           (yield* orchestrator.getThreadProjection(sourceThreadId)).plans[0]?.status,
-          canDeliver || scenario === "completed" ? "completed" : "active",
+          scenario === "completed" ? "completed" : "active",
         );
         const effectCount = (effectType: string) =>
           sql<{
