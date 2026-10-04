@@ -871,7 +871,9 @@ Natural terminal events and persisted attempt identity remain authoritative.
 Adapters own protocol cancellation and process teardown. `ProviderSessionManager` owns scopes,
 idle release and exact-instance close; `ProviderRuntimeRecoveryService` settles process loss.
 Stop, failure and interruption hold ordinary queued runs. Neither session-idle state nor a later
-successful message implicitly releases that hold. Do not reintroduce the V1 command-reactor's
+successful message implicitly releases that hold. Delayed terminal/checkpoint echoes from an older
+attempt cannot override newer explicit Send/Resume or hold work admitted after its original terminal
+boundary. Do not reintroduce the V1 command-reactor's
 cancellation handle or its timing assumptions as the shared V2 policy.
 
 ### Assistant delivery

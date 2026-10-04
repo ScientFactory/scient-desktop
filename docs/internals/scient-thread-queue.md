@@ -35,6 +35,9 @@ uses `queue.resume(runId)`; Resume explicitly releases the queue. Idle reorder
 remains available, including before a provider session exists. Send releases
 only the held head; the tail stays held until Resume. Provider-start failure
 retains the queued message for Retry.
+Holds follow the exact attempt's original failure or interruption boundary.
+Delayed checkpoint or cleanup echoes from an older attempt cannot override a
+newer explicit Send/Resume or hold work admitted after that terminal boundary.
 Queue limits remain 20 items and 64 MiB, including actual owned attachment bytes.
 
 Pending admission previews belong only above the composer. A durable queued
