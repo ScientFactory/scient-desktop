@@ -168,6 +168,48 @@ describe("production subject reachability", () => {
     expect(f.test("dead").status).toBe("dead");
   });
 
+  it("follows repository helper conventions and keeps helpers in their own tests", () => {
+    const f = fixture();
+    f.write("apps/server/src/dead.ts", "export const dead = true;");
+    const helpers = [
+      "test-fixtures",
+      "mobileTheme.test-support",
+      "orchestrationV2TestFixtures",
+      "OrchestrationEngineHarness.integration",
+    ];
+    for (const helper of helpers) f.write(`apps/server/src/${helper}.ts`, "import './dead';");
+    f.write(
+      "apps/server/src/consumer.test.ts",
+      helpers.map((name) => `import './${name}';`).join("\n"),
+    );
+    expect(f.test("consumer").subjects).toEqual(["apps/server/src/dead.ts"]);
+    expect(f.test("consumer").subjectWitnesses["apps/server/src/dead.ts"]).toHaveLength(3);
+    f.write(
+      "apps/server/src/mobileTheme.test-support.ts",
+      "export const stylesheet = 'synthetic';",
+    );
+    f.write("apps/server/src/mobileTheme.test.ts", "import './mobileTheme.test-support';");
+    expect(f.test("mobileTheme").status).toBe("no-subject");
+    f.write("apps/server/src/hostProcess.ts", "export const host = true;");
+    f.write("apps/server/src/main.ts", "import './hostProcess';");
+    f.write(
+      "apps/server/src/testUtils/fakeCli.ts",
+      "import '../hostProcess'; export const writeFakeCli = () => true;",
+    );
+    f.write("apps/server/src/testUtils/fakeCli.test.ts", "import './fakeCli';");
+    f.write(
+      "apps/server/src/testUtils/weightedShardSequencer.ts",
+      "export const sequence = () => [];",
+    );
+    f.write(
+      "apps/server/src/testUtils/weightedShardSequencer.test.ts",
+      "import './weightedShardSequencer';",
+    );
+    const tests = f.inspect().tests.filter((test) => test.test.includes("testUtils/"));
+    expect(tests.map((test) => test.status)).toEqual(["dead", "dead"]);
+    expect(tests[0].subjects).toEqual(["apps/server/src/testUtils/fakeCli.ts"]);
+  });
+
   it("honors actual production imports of test support and exposes that unusual edge", () => {
     const f = fixture();
     f.write("apps/server/src/main.ts", "import './dead.test';");

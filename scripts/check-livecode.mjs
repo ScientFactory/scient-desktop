@@ -85,7 +85,7 @@ const assetPattern =
   /\.(?:json|css|scss|less|svg|png|jpe?g|gif|webp|ico|woff2?|ttf|wasm|node|mp[34]|wav|pdf|xml|glb|gltf)$/u;
 const testPattern = /\.(?:test|spec|node-tests)\.[cm]?[jt]sx?$/u;
 const helperPattern =
-  /(?:^|\/)(?:test|tests|__tests__|testUtils|testkit|testing|fixtures)(?:\/|$)|\.(?:testkit|testFixtures|test-fixtures|fixture|test-harness)\.|(?:TestHelpers|TestUtils|Harness|Mock)\.[cm]?[jt]sx?$/u;
+  /(?:^|\/)(?:test|tests|__tests__|testUtils|testkit|testing|fixtures)(?:\/|$)|\.(?:testkit|testFixtures|test-fixtures|fixture|test-harness)\.|(?:TestHelpers|TestUtils|TestFixtures|Harness(?:\.integration)?|Mock)\.[cm]?[jt]sx?$|(?:^|[/.])(?:test-fixtures|test-support)\.[cm]?[jt]sx?$/u;
 const ignoredDirectories = new Set([
   "node_modules",
   ".git",
@@ -467,13 +467,25 @@ function readAllowlist(root, path, tests) {
 function subjectsOf(test, graph, helpers, supportMetadata) {
   const subjects = new Set();
   const seen = new Set([test]);
-  const pending = [test];
+  const pending = [[test]];
+  const witnesses = {};
+  const ownStem = test.replace(testPattern, "");
+  const ownHelper = (target) =>
+    NodePath.basename(target).replace(sourcePattern, "") === NodePath.basename(ownStem) &&
+    [NodePath.dirname(test), NodePath.dirname(NodePath.dirname(test))].includes(
+      NodePath.dirname(target),
+    );
   while (pending.length) {
-    for (const target of graph.get(pending.pop()) ?? []) {
+    const witness = pending.pop();
+    for (const target of [...(graph.get(witness.at(-1)) ?? [])].sort()) {
       if (seen.has(target)) continue;
       seen.add(target);
-      if (helpers.has(target)) pending.push(target);
-      else subjects.add(target);
+      const path = [...witness, target];
+      if (helpers.has(target) && !ownHelper(target)) pending.push(path);
+      else {
+        subjects.add(target);
+        witnesses[target] = path;
+      }
     }
   }
   const imports = [...subjects].sort();
@@ -490,7 +502,12 @@ function subjectsOf(test, graph, helpers, supportMetadata) {
   const selected = imports.filter((file) => !support?.modules.includes(file));
   if (support && !selected.length)
     throw new Error(`Support metadata removes every subject of ${test}`);
-  return { imports, subjects: selected, ...(support ? { supportReason: support.reason } : {}) };
+  return {
+    imports,
+    subjects: selected,
+    subjectWitnesses: witnesses,
+    ...(support ? { supportReason: support.reason } : {}),
+  };
 }
 
 export function inspectLivecode({
@@ -585,7 +602,7 @@ export function inspectLivecode({
   const testFiles = new Set([...files].filter((file) => testPattern.test(file)));
   const allowed = readAllowlist(root, allowlist, testFiles);
   const tests = [...testFiles].sort().map((test) => {
-    const { subjects, imports, supportReason } = subjectsOf(
+    const { subjects, imports, supportReason, subjectWitnesses } = subjectsOf(
       test,
       subjectGraph,
       helpers,
@@ -609,6 +626,7 @@ export function inspectLivecode({
       deadSubjects,
       liveSubjects,
       deadImports,
+      subjectWitnesses,
       ...(supportReason ? { supportReason } : {}),
       ...(allowed.has(test) ? { allowlistReason: allowed.get(test) } : {}),
     };
