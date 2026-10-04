@@ -76,6 +76,13 @@ export const ProviderAdapterV2SessionStatus = Schema.Literals([
 export type ProviderAdapterV2SessionStatus = typeof ProviderAdapterV2SessionStatus.Type;
 
 export const ProviderAdapterV2Event = Schema.Union([
+  // Consumed by the owning session manager before canonical run ingestion.
+  // The manager supplies trusted instance identity; native frames do not.
+  Schema.Struct({
+    type: Schema.Literal("authentication.invalidated"),
+    driver: ProviderDriverKind,
+    message: Schema.String,
+  }),
   Schema.Struct({
     type: Schema.Literal("app_thread.created"),
     driver: ProviderDriverKind,

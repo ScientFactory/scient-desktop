@@ -1,3 +1,4 @@
+import { ProviderRegistryLive } from "../provider/Layers/ProviderRegistry.ts";
 import * as OmpExecutableGate from "../provider/omp/OmpExecutableGate.ts";
 import * as NodePtyAdapter from "../terminal/NodePtyAdapter.ts";
 /**
@@ -210,6 +211,7 @@ const providerInstanceRegistryLayer = ProviderInstanceRegistryHydrationLive.pipe
   ),
 );
 const orchestrationLayer = OrchestrationV2LayerLive.pipe(
+  Layer.provide(ProviderRegistryLive.pipe(Layer.provide(ModelManifest.layerTest))),
   Layer.provide(worktreeRepairDependenciesTestLayer),
   Layer.provide(mcpRegistryLayer),
   Layer.provide(SqlitePersistenceMemory),

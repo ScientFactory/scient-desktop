@@ -1,5 +1,7 @@
 import {
   EventId,
+  ContextTransferId,
+  type OrchestrationV2ContextTransfer,
   OrchestrationDispatchCommandError,
   type ForkOptions,
   type GetForkOptionsInput,
@@ -27,12 +29,18 @@ import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { ProjectStoreV2 } from "../ProjectStore.ts";
 import { ThreadCommandExecutor } from "../ThreadCommandExecutor.ts";
 import { randomUuidV4 } from "../RandomUuid.ts";
+import { LegacyV1ThreadImporter } from "../legacy/LegacyV1ThreadImporter.ts";
 import {
   ScientForkAttachmentCopier,
   ScientForkAttachmentCopyError,
 } from "./ForkAttachmentCopier.ts";
 import { ScientForkCheckpointBaseline } from "./ForkCheckpointBaseline.ts";
-import { planConversationFork, type ConversationForkSource } from "./ConversationForkPlan.ts";
+import {
+  planConversationFork,
+  ConversationForkPlanError,
+  type ConversationForkSource,
+} from "./ConversationForkPlan.ts";
+import { freezeConversationForkNativeSource } from "./ConversationForkNativeSource.ts";
 
 export class ConversationForkService extends Context.Service<
   ConversationForkService,
@@ -55,6 +63,7 @@ export class ConversationForkService extends Context.Service<
 
 const isDispatchError = Schema.is(OrchestrationDispatchCommandError);
 const isAttachmentCopyError = Schema.is(ScientForkAttachmentCopyError);
+const isPlanError = Schema.is(ConversationForkPlanError);
 const isAbandonedFailure = (cause: unknown) =>
   (isDispatchError(cause) && cause.forkDisposition === "abandoned") ||
   (isAttachmentCopyError(cause) &&
@@ -75,6 +84,7 @@ const make = Effect.gen(function* () {
   const baseline = yield* ScientForkCheckpointBaseline;
   const copier = yield* ScientForkAttachmentCopier;
   const git = yield* GitWorkflowService;
+  const legacyImporter = yield* LegacyV1ThreadImporter;
 
   const resolveSource = (projection: OrchestrationV2ThreadProjection, input: GetForkOptionsInput) =>
     Effect.gen(function* () {
@@ -128,6 +138,7 @@ const make = Effect.gen(function* () {
     input: GetForkOptionsInput,
     targetThreadId: ThreadId,
   ) {
+    yield* legacyImporter.ensureTranscript(input.originThreadId);
     const projection = yield* projections.getThreadProjection(input.originThreadId);
     if (
       projection.thread.conversationFork != null &&
@@ -283,6 +294,43 @@ const make = Effect.gen(function* () {
           return yield* failure("Unable to freeze this workspace checkpoint. Retry the fork.");
       }
       const now = yield* DateTime.now;
+      const retainedSourceIds = new Set(plan.items.map((item) => item.inheritedFrom?.itemId));
+      const nativeSource = freezeConversationForkNativeSource({
+        projection,
+        retainedSourceItems: projection.visibleTurnItems
+          .toSorted((a, b) => a.position - b.position)
+          .filter(({ item }) => retainedSourceIds.has(item.id))
+          .map(({ item }) => item),
+        boundaryRunId: plan.boundaryRunId,
+        sourceKind: source.kind,
+      });
+      const transfer: OrchestrationV2ContextTransfer = {
+        id: ContextTransferId.make(`scient-fork:${command.commandId}:transfer`),
+        type: "fork",
+        sourceThreadId: projection.thread.id,
+        targetThreadId: command.newThreadId,
+        sourcePoint: {
+          threadId: projection.thread.id,
+          ...(plan.boundaryRunId === null ? {} : { runId: plan.boundaryRunId }),
+        },
+        basePoint: null,
+        sourceProviderInstanceId:
+          nativeSource.strategy === "native_fork"
+            ? nativeSource.frozenSource.sourceRun.providerInstanceId
+            : projection.thread.providerInstanceId,
+        targetProviderInstanceId: null,
+        targetRunId: null,
+        status: "pending",
+        resolution: null,
+        ...(nativeSource.strategy === "native_fork"
+          ? { frozenSource: nativeSource.frozenSource }
+          : { portableReason: nativeSource.reason }),
+        createdBy: "user",
+        error: null,
+        createdAt: now,
+        updatedAt: now,
+        consumedAt: null,
+      };
       const shells = yield* projections.getShellSnapshot();
       const archived = yield* projections.getShellSnapshot({ location: "archive" });
       const lastAssistant = plan.items.findLast((item) => item.type === "assistant_message");
@@ -294,7 +342,7 @@ const make = Effect.gen(function* () {
           deriveForkTitle({
             origin: projection.thread,
             originHasForkLineage: projection.thread.forkLineage != null,
-            projectThreads: [...shells.threads, ...archived.threads].filter(
+            projectThreads: [...shells.threads, ...archived.archivedThreads].filter(
               (thread) => thread.projectId === projection.thread.projectId,
             ),
           }),
@@ -359,6 +407,13 @@ const make = Effect.gen(function* () {
           occurredAt: now,
           type: "thread.created",
           payload: thread,
+        },
+        {
+          id: EventId.make(`scient-fork:${command.commandId}:transfer`),
+          threadId: thread.id,
+          occurredAt: now,
+          type: "context-transfer.created",
+          payload: transfer,
         },
         ...plan.messages.map((payload, index): OrchestrationV2DomainEvent => ({
           id: EventId.make(`scient-fork:${command.commandId}:message:${index}`),
@@ -583,14 +638,22 @@ const make = Effect.gen(function* () {
           sourceRunningRunId: source.kind === "running-turn" ? source.runId : null,
         })),
         Effect.catch((cause) =>
-          Effect.succeed({
-            available: false,
-            localAvailable: false,
-            reason: cause.message,
-            newWorktree: false,
-            sourceAssistantMessageId: null,
-            sourceUserMessageId: null,
-          }),
+          !isDispatchError(cause) && !isPlanError(cause)
+            ? Effect.fail(
+                new OrchestrationDispatchCommandError({
+                  message: cause.message,
+                  cause,
+                  forkDisposition: "rejected",
+                }),
+              )
+            : Effect.succeed({
+                available: false,
+                localAvailable: false,
+                reason: cause.message,
+                newWorktree: false,
+                sourceAssistantMessageId: null,
+                sourceUserMessageId: null,
+              }),
         ),
       ),
   });

@@ -69,6 +69,8 @@ import {
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import { requireInvocationPolicy } from "./InvocationPolicy.ts";
+import { ProviderSessionManagerV2 } from "../orchestration-v2/ProviderSessionManager.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
@@ -752,6 +754,11 @@ function timelineItem(input: {
 
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
+  const sessionManager = yield* ProviderSessionManagerV2;
+  const invocationPolicy = (scope: McpInvocationScope) =>
+    requireInvocationPolicy(scope).pipe(
+      Effect.provideService(ProviderSessionManagerV2, sessionManager),
+    );
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const providerAdapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
@@ -1189,7 +1196,12 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* requireCapability(scope);
         const parent = yield* loadProjection(scope.threadId);
+        const policy = yield* invocationPolicy(scope);
         const bindToCurrentThread = input.bindToCurrentThread ?? true;
+        if (bindToCurrentThread) {
+          yield* resolveRuntimeMode(policy.runtimeMode, parent.thread.runtimeMode);
+          yield* resolveInteractionMode(policy.interactionMode, parent.thread.interactionMode);
+        }
         const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
         const title =
           input.title ?? (derivedTitle.length > 0 ? derivedTitle.slice(0, 80) : "Scheduled task");
@@ -1202,8 +1214,8 @@ const make = Effect.gen(function* () {
           threadId: bindToCurrentThread ? scope.threadId : null,
           workspaceStrategy: scheduledTaskWorkspaceStrategy(bindToCurrentThread),
           modelSelection: parent.thread.modelSelection,
-          runtimeMode: parent.thread.runtimeMode,
-          interactionMode: parent.thread.interactionMode,
+          runtimeMode: policy.runtimeMode,
+          interactionMode: policy.interactionMode,
           createdBy: "agent",
           creationSource: "mcp",
           // Scope the idempotency key by provider session so two callers
@@ -1249,6 +1261,7 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* requireCapability(scope);
         const parent = yield* loadProjection(scope.threadId);
+        const policy = yield* invocationPolicy(scope);
         const existing = yield* loadScopedScheduledTask(
           parent.thread.projectId,
           input.scheduledTaskId,
@@ -1256,15 +1269,12 @@ const make = Effect.gen(function* () {
         // Editing or unbinding a task changes future executable instructions.
         // The saved launch modes and an existing bound thread both set a ceiling:
         // bound runs execute with that thread's current modes, not the task copy.
-        yield* resolveRuntimeMode(parent.thread.runtimeMode, existing.runtimeMode);
-        yield* resolveInteractionMode(parent.thread.interactionMode, existing.interactionMode);
+        yield* resolveRuntimeMode(policy.runtimeMode, existing.runtimeMode);
+        yield* resolveInteractionMode(policy.interactionMode, existing.interactionMode);
         if (existing.threadId !== null) {
           const bound = yield* loadProjection(existing.threadId);
-          yield* resolveRuntimeMode(parent.thread.runtimeMode, bound.thread.runtimeMode);
-          yield* resolveInteractionMode(
-            parent.thread.interactionMode,
-            bound.thread.interactionMode,
-          );
+          yield* resolveRuntimeMode(policy.runtimeMode, bound.thread.runtimeMode);
+          yield* resolveInteractionMode(policy.interactionMode, bound.thread.interactionMode);
         }
         const threadId =
           input.bindToCurrentThread === undefined
@@ -1307,6 +1317,7 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* requireCapability(scope);
         const parent = yield* loadProjection(scope.threadId);
+        yield* invocationPolicy(scope);
         const existing = yield* loadScopedScheduledTask(
           parent.thread.projectId,
           input.scheduledTaskId,
@@ -1370,6 +1381,7 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* requireCapability(scope);
         const parent = yield* loadProjection(scope.threadId);
+        const policy = yield* invocationPolicy(scope);
         const parentRun = parent.runs
           .filter(ThreadManagementService.isActiveRun)
           .toSorted((left, right) => right.ordinal - left.ordinal)[0];
@@ -1389,9 +1401,9 @@ const make = Effect.gen(function* () {
           target: input.target,
           providers,
         });
-        const runtimeMode = yield* resolveRuntimeMode(parent.thread.runtimeMode, input.runtimeMode);
+        const runtimeMode = yield* resolveRuntimeMode(policy.runtimeMode, input.runtimeMode);
         const interactionMode = yield* resolveInteractionMode(
-          parent.thread.interactionMode,
+          policy.interactionMode,
           input.interactionMode,
         );
         const key = yield* requestKey(input.clientRequestId);
@@ -1575,6 +1587,7 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* requireCapability(scope);
         const parent = yield* loadProjection(scope.threadId);
+        const policy = yield* invocationPolicy(scope);
         const parentRun = ThreadManagementService.latestActiveRun(parent);
         if (
           parentRun === undefined ||
@@ -1599,11 +1612,11 @@ const make = Effect.gen(function* () {
                 providers,
               });
               const runtimeMode = yield* resolveRuntimeMode(
-                parent.thread.runtimeMode,
+                policy.runtimeMode,
                 request.runtimeMode,
               );
               const interactionMode = yield* resolveInteractionMode(
-                parent.thread.interactionMode,
+                policy.interactionMode,
                 request.interactionMode,
               );
               const threadId = stableThreadId({
@@ -1844,8 +1857,9 @@ const make = Effect.gen(function* () {
     sendToThread: (scope, input) =>
       Effect.gen(function* () {
         const { parent, target } = yield* loadScopedThread(scope, input.threadId);
-        yield* resolveRuntimeMode(parent.thread.runtimeMode, target.thread.runtimeMode);
-        yield* resolveInteractionMode(parent.thread.interactionMode, target.thread.interactionMode);
+        const policy = yield* invocationPolicy(scope);
+        yield* resolveRuntimeMode(policy.runtimeMode, target.thread.runtimeMode);
+        yield* resolveInteractionMode(policy.interactionMode, target.thread.interactionMode);
 
         const mode = input.mode ?? "auto";
         const key = yield* requestKey(input.clientRequestId);
@@ -1960,4 +1974,5 @@ export const layer: Layer.Layer<
   | ProviderRegistry.ProviderRegistry
   | ProviderAdapterRegistry.ProviderAdapterRegistryV2
   | ScheduledTaskService.ScheduledTaskService
+  | ProviderSessionManagerV2
 > = Layer.effect(OrchestratorMcpService, make);

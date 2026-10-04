@@ -18,17 +18,19 @@ import {
 } from "@t3tools/contracts";
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { attachmentFileExtension, createDeterministicAttachmentId } from "../../attachmentStore.ts";
 import {
-  HISTORICAL_SYSTEM_MESSAGE_TOOL_NAME,
+  readHistoricalSystemMessage,
   HistoricalSystemMessage,
 } from "../legacy/HistoricalSystemMessage.ts";
 
 export type ConversationForkSource =
   | { readonly kind: "assistant-response"; readonly messageId: MessageId }
   | { readonly kind: "user-message"; readonly messageId: MessageId }
-  | { readonly kind: "running-turn"; readonly runId: RunId };
+  | { readonly kind: "running-turn"; readonly runId: RunId }
+  | { readonly kind: "settled-run"; readonly runId: RunId };
 
 export class ConversationForkPlanError extends Schema.TaggedError<ConversationForkPlanError>()(
   "ConversationForkPlanError",
@@ -42,7 +44,6 @@ export class ConversationForkPlanError extends Schema.TaggedError<ConversationFo
 const itemJson = Schema.fromJsonString(OrchestrationV2TurnItemJson);
 const messageJson = Schema.fromJsonString(OrchestrationV2ConversationMessageJson);
 const attachmentJson = Schema.fromJsonString(ChatAttachment);
-const decodeHistoricalSystemMessage = Schema.decodeUnknownEffect(HistoricalSystemMessage);
 
 /** Freeze the visible conversation prefix; no source execution or pending request is adopted. */
 export const planConversationFork = Effect.fn("ScientConversationFork.plan")(function* (input: {
@@ -76,7 +77,27 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
           candidate.inheritedFrom?.runId === selected.inheritedFrom.runId;
   let end = -1;
   let boundaryRunId: RunId | null = null;
-  if (source.kind === "running-turn") {
+  if (source.kind === "settled-run") {
+    const run = projection.runs.find((run) => run.id === source.runId);
+    if (
+      !run ||
+      !["completed", "waiting", "failed", "interrupted", "cancelled"].includes(run.status)
+    )
+      return yield* reject("The selected run has not settled at a forkable boundary.");
+    boundaryRunId = run.id;
+    end = rows.findLastIndex(({ item }) => item.runId === run.id);
+    if (end < 0) {
+      // A cancelled queued run has no rendered item. Preserve the preceding
+      // history, without admitting a later run or adopting its execution.
+      const ordinals = new Map(
+        projection.runs.map((candidate) => [candidate.id, candidate.ordinal]),
+      );
+      const next = rows.findIndex(
+        ({ item }) => item.runId !== null && (ordinals.get(item.runId) ?? Infinity) > run.ordinal,
+      );
+      end = next < 0 ? rows.length - 1 : next - 1;
+    }
+  } else if (source.kind === "running-turn") {
     const run = projection.runs.find((run) => run.id === source.runId);
     if (!run || !["preparing", "starting", "running", "waiting"].includes(run.status)) {
       return yield* reject(
@@ -183,10 +204,9 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
       if (!collectAttachments(item.attachments ?? []))
         return yield* reject("The destination cannot own retained attachment files.");
     }
-    if (item.type === "dynamic_tool" && item.toolName === HISTORICAL_SYSTEM_MESSAGE_TOOL_NAME) {
-      const system = yield* decodeHistoricalSystemMessage(item.input).pipe(
-        Effect.mapError(() => reject("The retained system message has invalid historical data.")),
-      );
+    const historicalSystem = readHistoricalSystemMessage(item);
+    if (Option.isSome(historicalSystem)) {
+      const system = historicalSystem.value;
       systemMessages.set(item.id, system);
       if (!messageIds.has(system.messageId)) {
         messageIds.set(

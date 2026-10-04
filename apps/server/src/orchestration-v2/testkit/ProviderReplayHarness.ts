@@ -37,6 +37,8 @@ import * as Orchestrator from "../Orchestrator.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProjectStore from "../ProjectStore.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
+import * as ProviderRegistry from "../../provider/Services/ProviderRegistry.ts";
+import { makeProviderRegistryMock } from "../../provider/testUtils/providerRegistryMock.ts";
 import * as ProviderAuthService from "../../provider/Services/ProviderAuthService.ts";
 import * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
 import * as ProviderContinuationService from "../ProviderContinuationService.ts";
@@ -55,6 +57,7 @@ import * as TurnItemPositionStore from "../TurnItemPositionStore.ts";
 import * as RuntimeRequestService from "../RuntimeRequestService.ts";
 import * as ThreadForkService from "../ThreadForkService.ts";
 import * as ConversationForks from "../scient-fork/ConversationForkService.ts";
+import * as LegacyV1ThreadImporter from "../legacy/LegacyV1ThreadImporter.ts";
 import { ScientForkCheckpointBaselineLive } from "../scient-fork/ForkCheckpointBaseline.ts";
 import { ScientForkAttachmentCopierLive } from "../scient-fork/ForkAttachmentCopier.ts";
 import { layer as threadCommandExecutorLayer } from "../ThreadCommandExecutor.ts";
@@ -198,6 +201,8 @@ export function runOrchestratorV2ProviderReplayScenario<
     /** Exercise production session credential issuance; disabled for recorded transports. */
     readonly configureMcp?: boolean;
     readonly mcpSessionRegistryLayer?: Layer.Layer<McpSessionRegistry.McpSessionRegistry>;
+    /** Auth integration tests must supply the actual snapshot registry. */
+    readonly providerRegistryLayer?: Layer.Layer<ProviderRegistry.ProviderRegistry>;
     readonly runtimePolicyLayer?: Layer.Layer<RuntimePolicy.RuntimePolicyV2>;
     // Start continuation runs for provider wake turns, as the live runtime does.
     // Off by default: most fixtures record no wake turn.
@@ -253,6 +258,8 @@ export function makeOrchestratorV2ProviderReplayLayer<
     /** Exercise production session credential issuance; disabled for recorded transports. */
     readonly configureMcp?: boolean;
     readonly mcpSessionRegistryLayer?: Layer.Layer<McpSessionRegistry.McpSessionRegistry>;
+    /** Auth integration tests must supply the actual snapshot registry. */
+    readonly providerRegistryLayer?: Layer.Layer<ProviderRegistry.ProviderRegistry>;
     // Start continuation runs for provider wake turns, as the live runtime does.
     // Off by default: most fixtures record no wake turn.
     readonly runContinuationWorker?: boolean;
@@ -266,9 +273,14 @@ export function makeOrchestratorV2ProviderReplayLayer<
   | Orchestrator.OrchestratorV2
   | ProviderSessionManager.ProviderSessionManagerV2
   | ProviderTurnStartService.ProviderTurnStartServiceV2
+  | CommandReceiptStore.CommandReceiptStoreV2
   | EffectWorker.OrchestrationEffectWorkerV2
   | EventSink.EventSinkV2
+  | EventStore.EventStoreV2
+  | CheckpointService.CheckpointServiceV2
+  | CheckpointStore.CheckpointStore
   | ConversationForks.ConversationForkService
+  | LegacyV1ThreadImporter.LegacyV1ThreadImporter
   | ProjectionStore.ProjectionStoreV2
   | ProjectStore.ProjectStoreV2
   | ServerConfig.ServerConfig,
@@ -290,6 +302,8 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   scenario: Pick<OrchestratorV2ProviderReplayScenario, "name" | "runtimePolicyOverride">,
   registryLayer: Layer.Layer<ProviderAdapterRegistry.ProviderAdapterRegistryV2, Error>,
   options: {
+    /** Preserve one disposable profile across file-backed restart and recovery tests. */
+    readonly serverConfigLayer?: Layer.Layer<ServerConfig.ServerConfig>;
     readonly databaseLayer?: Layer.Layer<
       SqlClient.SqlClient,
       | MigrationError
@@ -302,6 +316,8 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     /** Exercise production session credential issuance; disabled for recorded transports. */
     readonly configureMcp?: boolean;
     readonly mcpSessionRegistryLayer?: Layer.Layer<McpSessionRegistry.McpSessionRegistry>;
+    /** Auth integration tests must supply the actual snapshot registry. */
+    readonly providerRegistryLayer?: Layer.Layer<ProviderRegistry.ProviderRegistry>;
     readonly runtimePolicyLayer?: Layer.Layer<RuntimePolicy.RuntimePolicyV2>;
     // Start continuation runs for provider wake turns, as the live runtime does.
     // Off by default: most fixtures record no wake turn.
@@ -315,10 +331,15 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   | Orchestrator.OrchestratorV2
   | ProviderSessionManager.ProviderSessionManagerV2
   | ProviderTurnStartService.ProviderTurnStartServiceV2
+  | CommandReceiptStore.CommandReceiptStoreV2
   | EffectWorker.OrchestrationEffectWorkerV2
   | EffectOutbox.EffectOutboxV2
   | EventSink.EventSinkV2
+  | EventStore.EventStoreV2
+  | CheckpointService.CheckpointServiceV2
+  | CheckpointStore.CheckpointStore
   | ConversationForks.ConversationForkService
+  | LegacyV1ThreadImporter.LegacyV1ThreadImporter
   | ProjectionStore.ProjectionStoreV2
   | ProjectStore.ProjectStoreV2
   | ServerConfig.ServerConfig,
@@ -329,10 +350,12 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   | ScientMigrationError
   | V2DatabaseImportError
 > {
-  const serverConfigLayer = Layer.effect(
-    ServerConfig.ServerConfig,
-    makeReplayServerConfig(scenario.name).pipe(Effect.orDie),
-  ).pipe(Layer.provide(NodeServices.layer));
+  const serverConfigLayer =
+    options.serverConfigLayer ??
+    Layer.effect(
+      ServerConfig.ServerConfig,
+      makeReplayServerConfig(scenario.name).pipe(Effect.orDie),
+    ).pipe(Layer.provide(NodeServices.layer));
   const runtimeLayer =
     options.runtimePolicyLayer ??
     (scenario.runtimePolicyOverride === undefined
@@ -364,6 +387,9 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     Layer.provide(Layer.mergeAll(storesLayer, databaseLayer)),
   );
   const commandReceiptStoreProvided = CommandReceiptStore.layer.pipe(Layer.provide(databaseLayer));
+  const legacyImporterProvided = LegacyV1ThreadImporter.layer.pipe(
+    Layer.provide(Layer.mergeAll(eventSinkProvided, databaseLayer)),
+  );
   const providerEventIngestorProvided = ProviderEventIngestor.layer.pipe(
     Layer.provide(Layer.mergeAll(storesLayer, eventSinkProvided, IdAllocator.layer)),
   );
@@ -389,12 +415,22 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     IdAllocator.layer,
     providerEventIngestorProvided,
   );
+  // Recorded transports have no snapshot instance registry. Unexpected auth
+  // control must fail visibly; dedicated auth proofs provide the live registry.
+  const snapshotRegistryLayer =
+    options.providerRegistryLayer ??
+    Layer.succeed(ProviderRegistry.ProviderRegistry, {
+      ...makeProviderRegistryMock(),
+      setProviderAuthenticationFailure: () =>
+        Effect.die("Unexpected authentication invalidation in recorded provider replay."),
+    });
   const providerSessionManagerProvided = ProviderSessionManager.layerWithOptions({
     configureMcp: options.configureMcp ?? false,
   }).pipe(
     Layer.provide(
       Layer.mergeAll(
         providedRegistryLayer,
+        snapshotRegistryLayer,
         eventSinkProvided,
         IdAllocator.layer,
         options.mcpSessionRegistryLayer ?? McpSessionRegistryTestkit.layer,
@@ -468,6 +504,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   const orchestratorProvided = Orchestrator.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        serverConfigLayer,
         checkpointServiceProvided,
         CommandPolicy.layer,
         contextHandoffServiceProvided,
@@ -507,6 +544,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
         eventSinkProvided,
         commandReceiptStoreProvided,
         threadCommandExecutorLayer,
+        legacyImporterProvided,
         ScientForkCheckpointBaselineLive,
         ScientForkAttachmentCopierLive,
       ),
@@ -533,6 +571,10 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     Layer.provide(Layer.merge(storesLayer, effectExecutorProvided)),
   );
   const replayRuntime = Layer.mergeAll(
+    commandReceiptStoreProvided,
+    checkpointServiceProvided,
+    checkpointStoreLayer,
+    legacyImporterProvided,
     serverConfigLayer,
     conversationForkProvided,
     storesLayer,

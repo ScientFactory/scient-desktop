@@ -115,7 +115,10 @@ export function assertQueueEditSelectionProvenance(separated: boolean | undefine
 
 /** Typed ordinary submissions (including mobile) can recover without a web-only snapshot. */
 export function decodeQueueItemComposerContext(
-  item: ScientThreadQueueItem,
+  item: Pick<
+    ScientThreadQueueItem,
+    "text" | "context" | "composerSnapshot" | "selectedScientSkillNames" | "createdAt"
+  >,
   threadId: ThreadId,
 ): ContextDraft | undefined {
   if (item.composerSnapshot !== undefined)

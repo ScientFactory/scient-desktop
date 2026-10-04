@@ -10,6 +10,7 @@ import {
   RunId,
   ThreadId,
   TurnId,
+  TurnItemId,
   type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
 import {
@@ -2207,6 +2208,7 @@ describe("MessagesTimeline", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
+        onForkAssistantMessage={() => undefined}
         timelineEntries={[
           {
             id: "assistant-message-1",
@@ -2227,7 +2229,56 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain('aria-label="Fork from this response"');
+    expect(markup.match(/aria-label="Fork conversation from this response"/g)).toHaveLength(1);
+    expect(markup).not.toContain('aria-label="Fork from this response"');
+  });
+
+  it("renders the prior Scient fork separator once and retains outbound fork navigation", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const event = (id: string, targetThreadId: string) => ({
+      kind: "event" as const,
+      id,
+      createdAt: MESSAGE_CREATED_AT,
+      projectedItem: {
+        position: 0,
+        visibility: "local" as const,
+        sourceThreadId: ThreadId.make("thread-1"),
+        sourceItemId: TurnItemId.make(id),
+        item: decodeNativeWorkflowItem({
+          id,
+          threadId: "thread-1",
+          type: "fork",
+          runId: null,
+          nodeId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 0,
+          status: "completed",
+          title: null,
+          startedAt: null,
+          completedAt: null,
+          updatedAt: MESSAGE_CREATED_AT,
+          source:
+            targetThreadId === "thread-1"
+              ? { type: "run", threadId: "original-thread", runId: "original-run" }
+              : { type: "node", nodeId: "outgoing-source-node" },
+          targetThreadId,
+        }),
+      },
+    });
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        hasForkBaseline
+        forkBaselineAssistantMessageId={null}
+        timelineEntries={[event("incoming-fork", "thread-1"), event("outgoing-fork", "next-child")]}
+      />,
+    );
+    expect(markup.match(/Conversation forked here/g)).toHaveLength(1);
+    expect(markup).not.toContain("Forked from conversation");
+    expect(markup).toContain("Open fork");
+    expect(markup).toContain("bg-border/60");
   });
 
   it("applies Scient BiDi to user messages while keeping HTML literal", async () => {

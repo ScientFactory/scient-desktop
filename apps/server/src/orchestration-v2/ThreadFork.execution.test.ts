@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
@@ -177,7 +178,12 @@ for (const driverName of ["codex", "claudeAgent"] as const) {
         assert.isNull(fresh.thread.deletedAt);
         assert.lengthOf(fresh.contextTransfers, 1);
         assert.lengthOf(fresh.runs, 0);
-        assert.lengthOf(fresh.turnItems, 0);
+        assert.lengthOf(fresh.turnItems, sourceBefore.visibleTurnItems.length);
+        assert.isTrue(
+          fresh.turnItems.every((item) => item.runId === null && item.threadId === freshThreadId),
+        );
+        assert.isNull(fresh.thread.forkedFrom);
+        assert.equal(fresh.thread.conversationFork?.sourceThreadId, sourceThreadId);
         assert.lengthOf(fresh.providerSessions, 0);
         const sourceAfter = yield* orchestrator.getThreadProjection(sourceThreadId);
         // The new fork adds its legitimate outgoing relation to the source
@@ -186,6 +192,68 @@ for (const driverName of ["codex", "claudeAgent"] as const) {
           { ...sourceAfter, contextTransfers: sourceBefore.contextTransfers },
           sourceBefore,
         );
+        if (destinationState === "live") {
+          const opposite = yield* Effect.all(
+            [
+              orchestrator
+                .dispatch({
+                  ...command,
+                  commandId: CommandId.make("opposite-fork-forward"),
+                  targetThreadId: occupiedThreadId,
+                })
+                .pipe(Effect.exit),
+              orchestrator
+                .dispatch({
+                  ...command,
+                  commandId: CommandId.make("opposite-fork-reverse"),
+                  sourceThreadId: occupiedThreadId,
+                  targetThreadId: sourceThreadId,
+                })
+                .pipe(Effect.exit),
+            ],
+            { concurrency: 2 },
+          ).pipe(Effect.timeout("5 seconds"));
+          assert.isTrue(opposite.every(Exit.isFailure));
+          const racedTargetId = ThreadId.make("native-fork-delete-race-target");
+          const racedCommand = {
+            ...command,
+            commandId: CommandId.make("native-fork-delete-race"),
+            targetThreadId: racedTargetId,
+          };
+          const [forked, deleted] = yield* Effect.all(
+            [
+              orchestrator.dispatch(racedCommand).pipe(Effect.exit),
+              orchestrator
+                .dispatch({
+                  type: "thread.delete",
+                  commandId: CommandId.make("delete-fork-source-race"),
+                  threadId: sourceThreadId,
+                })
+                .pipe(Effect.exit),
+            ],
+            { concurrency: 2 },
+          ).pipe(Effect.timeout("5 seconds"));
+          assert.isTrue(Exit.isSuccess(deleted));
+          if (Exit.isSuccess(forked)) {
+            const owned = yield* orchestrator.getThreadProjection(racedTargetId);
+            assert.isTrue(
+              owned.turnItems.every(
+                (item) => item.threadId === racedTargetId && item.runId === null,
+              ),
+            );
+            assert.lengthOf(owned.turnItems, sourceBefore.visibleTurnItems.length);
+            assert.equal(
+              (yield* orchestrator.dispatch(racedCommand)).sequence,
+              forked.value.sequence,
+            );
+          } else {
+            assert.isTrue(
+              Exit.isFailure(
+                yield* orchestrator.getThreadProjection(racedTargetId).pipe(Effect.exit),
+              ),
+            );
+          }
+        }
         assert.deepEqual(sourceAfter.contextTransfers, fresh.contextTransfers);
         assert.equal(sourceAfter.contextTransfers[0]?.type, "fork");
         assert.equal(sourceAfter.contextTransfers[0]?.sourceThreadId, sourceThreadId);

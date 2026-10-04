@@ -9,6 +9,7 @@ import {
   type OrchestrationV2RunAttempt,
   type OrchestrationV2TurnItem,
   RunId,
+  RunAttemptId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -19,6 +20,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { frozenForkPortableReason } from "./scient-fork/ConversationForkNativeSource.ts";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -77,6 +79,7 @@ export interface ProviderTurnStartServiceV2Shape {
     readonly threadId: ThreadId;
     readonly runId: RunId;
     readonly willRetry?: boolean;
+    readonly expectedAttemptId?: RunAttemptId;
   }) => Effect.Effect<void, ProviderTurnStartError>;
 }
 
@@ -222,6 +225,7 @@ export const layer: Layer.Layer<
       readonly threadId: ThreadId;
       readonly runId: RunId;
       readonly willRetry?: boolean;
+      readonly expectedAttemptId?: RunAttemptId;
     }) {
       const { runId } = input;
       const projection = yield* projectionStore.getTurnStartContext(input.threadId, runId);
@@ -231,6 +235,13 @@ export const layer: Layer.Layer<
       }
       if (run.status !== "starting") {
         // The effect is idempotent once the run has advanced or terminalized.
+        return;
+      }
+      if (
+        input.expectedAttemptId !== undefined &&
+        run.activeAttemptId !== input.expectedAttemptId
+      ) {
+        // A delayed effect for an older attempt has no authority over Retry.
         return;
       }
       const rootNode = projection.nodes.find((candidate) => candidate.id === run.rootNodeId);
@@ -615,8 +626,118 @@ export const layer: Layer.Layer<
           return undefined;
         });
       let effectiveHandoffs = handoffs;
+      let completedNativeFork = nativeForkTransfer;
       const loadedProviderThread = yield* Effect.gen(function* () {
         if (nativeForkTransfer !== undefined) {
+          if (projection.thread.conversationFork != null) {
+            const frozen = nativeForkTransfer.frozenSource;
+            let portableReason = frozenForkPortableReason({
+              frozenSource: frozen,
+              sourceRunId: nativeForkTransfer.sourcePoint.runId,
+              sourceThreadId: nativeForkTransfer.sourceThreadId,
+              targetInstanceId: run.providerInstanceId,
+              targetDriver: session.driver,
+              capabilities: session.providerSession.capabilities,
+            });
+            if (portableReason === undefined && frozen !== undefined) {
+              const forked = yield* Effect.result(
+                session.forkThread({
+                  sourceProviderThread: frozen.sourceProviderThread,
+                  sourceProviderTurns: frozen.sourceProviderTurns,
+                  providerTurnId: frozen.providerTurnId,
+                  targetThreadId: projection.thread.id,
+                  modelSelection: run.modelSelection,
+                  runtimePolicy: resolvedRuntimePolicy,
+                }),
+              );
+              if (forked._tag === "Success") return forked.success;
+              portableReason = `The native fork failed: ${forked.failure.message}`;
+            }
+            if (!session.providerSession.capabilities.context.canConsumeHandoffSummaries) {
+              return yield* new ProviderTurnStartError({
+                runId,
+                cause:
+                  "The selected provider cannot consume the frozen portable prefix after native fork failure.",
+              });
+            }
+            // Only the destination's immutable prefix remains authoritative after acceptance.
+            // A failed clone never grants resume authority over the source or a guessed native id.
+            const replacement = yield* loadFromProvider(
+              session.ensureThread({
+                threadId: projection.thread.id,
+                modelSelection: run.modelSelection,
+                runtimePolicy: resolvedRuntimePolicy,
+                providerSessionId,
+                existingProviderThread: {
+                  ...providerThread,
+                  nativeThreadRef: null,
+                  nativeConversationHeadRef: null,
+                  nativeMetadata: null,
+                  forkedFrom: null,
+                  handoffIds: [],
+                },
+              }),
+            );
+            if (replacement === undefined) return undefined;
+            const createdAt = yield* DateTime.now;
+            const prefix = (yield* projectionStore.getTurnStartHistory(input.threadId)).filter(
+              (item) =>
+                item.runId === null ||
+                projection.runs.some(
+                  (source) => source.id === item.runId && source.ordinal < run.ordinal,
+                ),
+            );
+            const handoff = yield* contextHandoffService.prepareProviderHandoff({
+              threadId: projection.thread.id,
+              targetRunId: run.id,
+              transferId: nativeForkTransfer.id,
+              fromProviderThreadIds: [],
+              toProviderThreadId: providerThread.id,
+              fromProviderInstanceId:
+                nativeForkTransfer.sourceProviderInstanceId ?? run.providerInstanceId,
+              toProviderInstanceId: run.providerInstanceId,
+              coveredRunOrdinals: { from: 1, to: Math.max(1, run.ordinal - 1) },
+              strategy: "full_thread_summary",
+              runs: projection.runs,
+              items: prefix,
+              createdAt,
+            });
+            yield* eventSink.write({
+              events: [
+                {
+                  id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+                  type: "context-handoff.updated",
+                  threadId: projection.thread.id,
+                  runId: run.id,
+                  providerInstanceId: run.providerInstanceId,
+                  occurredAt: createdAt,
+                  payload: handoff,
+                },
+                {
+                  id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+                  type: "context-transfer.updated",
+                  threadId: projection.thread.id,
+                  runId: run.id,
+                  providerInstanceId: run.providerInstanceId,
+                  occurredAt: createdAt,
+                  payload: {
+                    ...nativeForkTransfer,
+                    targetProviderInstanceId: run.providerInstanceId,
+                    targetRunId: run.id,
+                    status: "consumed",
+                    resolution: { strategy: "portable_context", contextHandoffId: handoff.id },
+                    portableReason: portableReason ?? "The native source is unavailable.",
+                    error: null,
+                    updatedAt: createdAt,
+                    consumedAt: createdAt,
+                  },
+                },
+              ],
+            });
+            effectiveHandoffs = [handoff, ...effectiveHandoffs];
+            completedNativeFork = undefined;
+            return { ...replacement, forkedFrom: null };
+          }
           const sourceProjection = yield* projectionStore.getThreadRecords(
             nativeForkTransfer.sourceThreadId,
             ["runs", "providerThreads", "attempts", "providerTurns"],
@@ -841,7 +962,10 @@ export const layer: Layer.Layer<
         firstRunOrdinal: providerThread.firstRunOrdinal ?? run.ordinal,
         lastRunOrdinal: run.ordinal,
         handoffIds: providerThread.handoffIds,
-        forkedFrom: providerThread.forkedFrom,
+        forkedFrom:
+          completedNativeFork === undefined && nativeForkTransfer !== undefined
+            ? null
+            : providerThread.forkedFrom,
         status: "active",
         createdAt: providerThread.createdAt,
         updatedAt: now,
@@ -886,7 +1010,7 @@ export const layer: Layer.Layer<
           occurredAt: now,
           payload: runningProviderThread,
         },
-        ...(nativeForkTransfer === undefined || runningProviderThread.nativeThreadRef === null
+        ...(completedNativeFork === undefined || runningProviderThread.nativeThreadRef === null
           ? []
           : [
               {
@@ -898,7 +1022,7 @@ export const layer: Layer.Layer<
                 providerInstanceId: run.providerInstanceId,
                 occurredAt: now,
                 payload: {
-                  ...nativeForkTransfer,
+                  ...completedNativeFork,
                   targetProviderInstanceId: run.providerInstanceId,
                   targetRunId: run.id,
                   status: "consumed" as const,
@@ -943,6 +1067,39 @@ export const layer: Layer.Layer<
           payload: runningRootNode,
         },
       ];
+      const deliveredAttemptIds = new Set(
+        projection.providerTurns.map((turn) => turn.runAttemptId),
+      );
+      const missedRuns = projection.runs.filter(
+        (source) =>
+          source.ordinal < run.ordinal &&
+          source.providerThreadId === providerThread.id &&
+          (source.status === "failed" || source.status === "interrupted") &&
+          !deliveredAttemptIds.has(source.activeAttemptId),
+      );
+      const missedRunIds = new Set(missedRuns.map((source) => source.id));
+      // Missing native receipts require portable history before this attempt
+      // becomes running. A failed read must not strand a run without a native turn.
+      const missedItems = yield* Effect.gen(function* () {
+        if (missedRunIds.size === 0) return [];
+        const history = yield* Effect.result(
+          projectionStore.getTurnStartHistory(input.threadId, [...missedRunIds]),
+        );
+        if (history._tag === "Failure") {
+          if (input.willRetry === true) return yield* history.failure;
+          yield* settleStartFailure({
+            signal: "provider-history-preparation-failure",
+            title: "Provider history could not be prepared",
+            error: history.failure,
+          });
+          return undefined;
+        }
+        return history.success.filter(
+          (item) =>
+            item.runId !== null && missedRunIds.has(item.runId) && historicalMessage(item) !== null,
+        );
+      });
+      if (missedItems === undefined) return;
       const runningWrite = yield* eventSink.writeIfRunCurrent({
         threadId: projection.thread.id,
         runId: run.id,
@@ -1016,9 +1173,6 @@ export const layer: Layer.Layer<
         ...deliveredItemIds,
         ...settledHandoffs.flatMap((handoff) => handoff.delivery?.omittedItemIds ?? []),
       ]);
-      const deliveredAttemptIds = new Set(
-        projection.providerTurns.map((turn) => turn.runAttemptId),
-      );
       const acceptedAttempts = projection.attempts.filter(
         (source) =>
           source.providerThreadId === providerThread.id && deliveredAttemptIds.has(source.id),
@@ -1093,24 +1247,7 @@ export const layer: Layer.Layer<
         ...runningProviderThread,
         contextUsage: handoffUsage,
       };
-      const missedRuns = projection.runs.filter(
-        (source) =>
-          source.ordinal < run.ordinal &&
-          source.providerThreadId === providerThread.id &&
-          (source.status === "failed" || source.status === "interrupted") &&
-          !deliveredAttemptIds.has(source.activeAttemptId),
-      );
-      const missedRunIds = new Set(missedRuns.map((source) => source.id));
-      const missedItems =
-        missedRunIds.size === 0
-          ? []
-          : (yield* projectionStore.getTurnStartHistory(input.threadId, [...missedRunIds])).filter(
-              (item) =>
-                item.runId !== null &&
-                missedRunIds.has(item.runId) &&
-                !coveredItemIds.has(item.id) &&
-                historicalMessage(item) !== null,
-            );
+      const uncoveredMissedItems = missedItems.filter((item) => !coveredItemIds.has(item.id));
       const startWithHandoffs = (
         turnInput: Parameters<typeof session.startTurn>[0],
         compact = false,
@@ -1119,7 +1256,7 @@ export const layer: Layer.Layer<
           // A failed turn/start can leave the requested turn absent from
           // native history even when its preceding handoff was injected.
           const retryHandoff =
-            missedItems.length === 0
+            uncoveredMissedItems.length === 0
               ? []
               : [
                   yield* contextHandoffService.prepareProviderHandoff({
@@ -1135,7 +1272,7 @@ export const layer: Layer.Layer<
                       to: missedRuns.at(-1)!.ordinal,
                     },
                     strategy: "delta_since_target_last_seen",
-                    items: missedItems,
+                    items: uncoveredMissedItems,
                     runs: projection.runs,
                     createdAt: yield* DateTime.now,
                   }),
@@ -1227,7 +1364,7 @@ export const layer: Layer.Layer<
         );
       const deliverySession =
         effectiveHandoffs.length === 0 &&
-        missedItems.length === 0 &&
+        uncoveredMissedItems.length === 0 &&
         restartNote === "" &&
         !noteContinuation
           ? session

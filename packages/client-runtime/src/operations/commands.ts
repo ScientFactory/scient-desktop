@@ -31,6 +31,7 @@ import {
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import {
@@ -275,6 +276,10 @@ export interface PromoteQueuedRunInput extends ThreadCommandInput {
 
 export interface CancelQueuedRunInput extends ThreadCommandInput {
   readonly runId: RunId;
+  readonly expectedUpdatedAt?: string;
+}
+export interface ResumeThreadQueueInput extends ThreadCommandInput {
+  readonly runId?: RunId;
 }
 
 export interface EditQueuedRunInput extends ThreadCommandInput {
@@ -1026,12 +1031,13 @@ export const mergeThreadBack = Effect.fn("EnvironmentCommands.mergeThreadBack")(
 });
 
 export const resumeThreadQueue = Effect.fn("EnvironmentCommands.resumeThreadQueue")(function* (
-  input: ThreadCommandInput,
+  input: ResumeThreadQueueInput,
 ) {
   return yield* dispatch({
     type: "queue.resume",
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
+    ...(input.runId === undefined ? {} : { runId: input.runId }),
   });
 });
 
@@ -1083,6 +1089,9 @@ export const cancelQueuedRun = Effect.fn("EnvironmentCommands.cancelQueuedRun")(
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
     runId: input.runId,
+    ...(input.expectedUpdatedAt === undefined
+      ? {}
+      : { expectedUpdatedAt: DateTime.makeUnsafe(input.expectedUpdatedAt) }),
   });
 });
 

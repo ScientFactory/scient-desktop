@@ -504,7 +504,7 @@ it.effect("rejects nested, unknown, and mismatched assistant-node ownership", ()
 );
 
 it.effect(
-  "owns historical system message identity, attachments and context, and rejects malformed reserved history",
+  "owns inert system history and degrades malformed fields without granting attachment authority",
   () =>
     Effect.gen(function* () {
       const projection = makeProjection();
@@ -531,6 +531,8 @@ it.effect(
       assert.ok(commandItem.type === "command_execution");
       const systemItem: Extract<OrchestrationV2TurnItem, { readonly type: "dynamic_tool" }> = {
         ...commandItem,
+        id: TurnItemId.make("migration:v1:history:system:historical-system"),
+        runId: null,
         type: "dynamic_tool",
         toolName: HISTORICAL_SYSTEM_MESSAGE_TOOL_NAME,
         input: {
@@ -564,9 +566,95 @@ it.effect(
         ...projection.visibleTurnItems[1]!,
         item: { ...systemItem, input: {} },
       };
-      const invalid = yield* Effect.result(planConversationFork(input));
-      assert.equal(invalid._tag, "Failure");
-      if (invalid._tag === "Failure")
-        assert.include(invalid.failure.message, "invalid historical data");
+      const invalid = yield* planConversationFork(input);
+      const generic = invalid.items[1]!;
+      assert.ok(generic.type === "dynamic_tool");
+      assert.deepEqual(generic.input, {});
+      assert.notInclude(
+        invalid.attachmentCopies.map((copy) => copy.source.id),
+        systemAttachment.id,
+      );
+      projection.visibleTurnItems[1] = {
+        ...projection.visibleTurnItems[1]!,
+        item: {
+          ...systemItem,
+          input: {
+            ...(systemItem.input as object),
+            attachments: [{ type: "file", id: "unsafe", name: "unsafe" }],
+            context: { version: -1 },
+          },
+        },
+      };
+      const partial = yield* planConversationFork(input);
+      const sanitized = partial.items[1]!;
+      assert.ok(sanitized.type === "dynamic_tool");
+      const safeRecord = yield* decodeHistoricalSystemMessage(sanitized.input);
+      assert.equal(safeRecord.text, "System history");
+      assert.isNull(safeRecord.attachments);
+      assert.isNull(safeRecord.context);
+      assert.notInclude(
+        partial.attachmentCopies.map((copy) => copy.source.id),
+        systemAttachment.id,
+      );
+      // The same tool name and record from a native run grant no history/file authority.
+      projection.visibleTurnItems[1] = {
+        ...projection.visibleTurnItems[1]!,
+        item: { ...systemItem, id: TurnItemId.make("native-system-tool"), runId: completed },
+      };
+      const native = yield* planConversationFork(input);
+      assert.notInclude(
+        native.attachmentCopies.map((copy) => copy.source.id),
+        systemAttachment.id,
+      );
+      const nativeItem = native.items[1]!;
+      assert.ok(nativeItem.type === "dynamic_tool");
+      assert.deepEqual(nativeItem.input, systemItem.input);
     }),
+);
+
+it.effect("freezes a settled native run through its trailing facts and excludes later runs", () =>
+  Effect.gen(function* () {
+    const projection = makeProjection();
+    const plan = yield* planConversationFork({
+      projection,
+      targetThreadId,
+      source: { kind: "settled-run", runId: completed },
+    });
+    assert.equal(plan.boundaryRunId, completed);
+    assert.deepEqual(
+      plan.items.map((item) => item.inheritedFrom?.itemId),
+      projection.visibleTurnItems
+        .filter(({ item }) => item.runId === completed)
+        .map(({ item }) => item.id),
+    );
+    assert.isTrue(
+      plan.items.every((item) => item.threadId === targetThreadId && item.runId === null),
+    );
+  }),
+);
+
+it.effect("a cancelled run with no rendered facts keeps only the earlier frozen prefix", () =>
+  Effect.gen(function* () {
+    const projection = makeProjection();
+    const cancelledId = RunId.make("empty-cancelled-run");
+    const prior = projection.runs[0]!;
+    const later = projection.runs[1]!;
+    projection.runs = [
+      prior,
+      { ...later, id: cancelledId, ordinal: 2, status: "cancelled" },
+      { ...later, ordinal: 3 },
+    ];
+    const plan = yield* planConversationFork({
+      projection,
+      targetThreadId,
+      source: { kind: "settled-run", runId: cancelledId },
+    });
+    assert.equal(plan.boundaryRunId, cancelledId);
+    assert.deepEqual(
+      plan.items.map((item) => item.inheritedFrom?.itemId),
+      projection.visibleTurnItems
+        .filter(({ item }) => item.runId === completed)
+        .map(({ item }) => item.id),
+    );
+  }),
 );

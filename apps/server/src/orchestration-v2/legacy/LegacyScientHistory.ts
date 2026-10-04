@@ -3,6 +3,8 @@ import {
   NodeId,
   OrchestrationV2TurnItemJson,
   PlanId,
+  RuntimeRequestId,
+  UserInputAttachmentAnswerPayload,
   TurnItemId,
   TurnId,
   type OrchestrationV2DomainEvent,
@@ -18,7 +20,7 @@ import type { EventSinkV2Shape } from "../EventSink.ts";
 interface HistoryRow {
   readonly item_id: string;
   readonly turn_id: string | null;
-  readonly source: "message" | "reasoning" | "system" | "activity" | "approval" | "plan";
+  readonly source: "message" | "reasoning" | "system" | "activity" | "answer" | "approval" | "plan";
   readonly created_at: string;
   readonly updated_at: string;
   readonly ordinal: number;
@@ -66,6 +68,7 @@ class LegacyHistoryPositionError extends Schema.TaggedError<LegacyHistoryPositio
   }
 }
 const decodeActivity = Schema.decodeUnknownEffect(Schema.fromJsonString(Activity));
+const decodeAnswer = Schema.decodeUnknownEffect(UserInputAttachmentAnswerPayload);
 const decodeApproval = Schema.decodeUnknownEffect(Schema.fromJsonString(Approval));
 const decodePlan = Schema.decodeUnknownEffect(Schema.fromJsonString(Plan));
 const decodeSystem = Schema.decodeUnknownEffect(Schema.fromJsonString(SystemMessage));
@@ -105,6 +108,13 @@ export const prepareLegacyHistory = Effect.fn("LegacyScientHistory.prepare")(fun
             'summary', summary, 'sequence', sequence, 'payload', payload_json)
         ELSE '{}' END
       FROM projection_thread_activities WHERE thread_id = ${threadId}
+      UNION ALL
+      SELECT 'migration:v1:history:answer:' || activity_id, turn_id, 'answer', created_at, created_at, 2, COALESCE(sequence, 0),
+        CASE WHEN ${includeDetails} = 1 THEN
+          json_object('activityId', activity_id, 'turnId', turn_id, 'tone', tone, 'kind', kind,
+            'summary', summary, 'sequence', sequence, 'payload', payload_json)
+        ELSE '{}' END
+      FROM projection_thread_activities WHERE thread_id = ${threadId} AND kind = 'user-input.answer-submitted'
       UNION ALL
       SELECT 'migration:v1:history:approval:' || request_id, turn_id, 'approval', created_at, COALESCE(resolved_at, created_at), 3, 0,
         CASE WHEN ${includeDetails} = 1 THEN
@@ -164,6 +174,11 @@ export const importLegacyHistory = Effect.fn("LegacyScientHistory.import")(funct
       (row) => row.event_id,
     ),
   );
+  for (const row of yield* sql<{ turn_item_id: string }>`
+    SELECT turn_item_id FROM orchestration_v2_projection_turn_items
+    WHERE thread_id = ${threadId} AND turn_item_id LIKE 'migration:v1:history:answer:%'`) {
+    existing.add(row.turn_item_id);
+  }
   let events: OrchestrationV2DomainEvent[] = [];
   const existingPlans = new Set(
     (yield* sql<{ plan_id: string }>`SELECT plan_id FROM orchestration_v2_projection_plans
@@ -259,6 +274,31 @@ export const importLegacyHistory = Effect.fn("LegacyScientHistory.import")(funct
           "output" in record.payload
             ? { output: record.payload.output }
             : {}),
+        };
+        break;
+      }
+      case "answer": {
+        const record = yield* decodeActivity(row.record_json);
+        const payload = record.payload;
+        const answer = yield* decodeAnswer(
+          typeof payload === "object" && payload !== null
+            ? { attachmentsByQuestionId: {}, ...payload }
+            : payload,
+        );
+        // A separate historical fact preserves the original work-log audit and
+        // never adopts a pending request, native callback, node or run.
+        item = {
+          ...base,
+          type: "user_input_request",
+          title: "Historical submitted answer",
+          requestId: RuntimeRequestId.make(`migration:v1:answer:${record.activityId}`),
+          questions: Object.keys(answer.answers).map((id) => ({
+            id,
+            header: "Question",
+            question: answer.questionTextById?.[id]?.trim() || id,
+            options: [],
+          })),
+          questionAnswer: answer,
         };
         break;
       }
@@ -368,10 +408,10 @@ export const importLegacyHistory = Effect.fn("LegacyScientHistory.import")(funct
         payload: item,
       });
     if (events.length >= 100) {
-      yield* eventSink.write({ events });
+      yield* eventSink.write({ events, guardLegacyQuestionInsertions: true });
       events = [];
       yield* Effect.yieldNow;
     }
   }
-  if (events.length > 0) yield* eventSink.write({ events });
+  if (events.length > 0) yield* eventSink.write({ events, guardLegacyQuestionInsertions: true });
 });

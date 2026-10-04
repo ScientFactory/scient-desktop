@@ -1,8 +1,12 @@
 import "fake-indexeddb/auto";
 import {
+  CommandId,
+  OrchestrationV2DispatchCommandError,
   EnvironmentId,
   ThreadId,
   ProviderInstanceId,
+  RunId,
+  MessageId,
   ScientThreadQueueOperationError,
   type ScientThreadQueueItem,
   type ScientThreadQueueSnapshot,
@@ -22,7 +26,8 @@ import {
   restoreQueueEditStash,
   useQueueEditSessions,
 } from "./editSession";
-import { controlThreadQueue, readQueuedAttachmentFile } from "./client";
+import { controlThreadQueue, extractNativeQueuedRun, readQueuedAttachmentFile } from "./client";
+import { nativeQueueExtractionError } from "./nativeQueueExtractionError";
 import { encodeQueueComposerSnapshot } from "./composerSnapshot";
 import * as editJournal from "./editJournal";
 import { collectSelectedScientSkillNames } from "@t3tools/shared/composerInlineTokens";
@@ -60,7 +65,11 @@ vi.hoisted(() => {
     },
   });
 });
-vi.mock("./client", () => ({ controlThreadQueue: vi.fn(), readQueuedAttachmentFile: vi.fn() }));
+vi.mock("./client", () => ({
+  controlThreadQueue: vi.fn(),
+  extractNativeQueuedRun: vi.fn(),
+  readQueuedAttachmentFile: vi.fn(),
+}));
 const target = {
   environmentId: EnvironmentId.make("environment-a"),
   threadId: ThreadId.make("thread-a"),
@@ -99,6 +108,7 @@ beforeEach(async () => {
     revision: 1,
   }));
   vi.mocked(readQueuedAttachmentFile).mockReset();
+  vi.mocked(extractNativeQueuedRun).mockReset();
 });
 describe("queue extraction into an ordinary draft", () => {
   it("uses journaled bytes after extraction even when another attachment download would fail", async () => {
@@ -532,4 +542,117 @@ describe("queue extraction into an ordinary draft", () => {
     expect(await restored.images[0]?.file.text()).toBe("plot");
     expect(await restored.files[0]?.file?.text()).toBe("hello");
   });
+});
+
+describe("native run extraction journal", () => {
+  it("stashes the ordinary draft, installs captured native bytes only after cancellation, and retries one revision/token", async () => {
+    const nativeRun = {
+      runId: RunId.make("native-queued-run"),
+      messageId: MessageId.make("native-message"),
+      expectedUpdatedAt: item.updatedAt,
+    };
+    const nativeItem = { ...item, queueItemId: nativeRun.runId, selectedScientSkillNames: [] };
+    useComposerDraftStore.getState().setPrompt(target, "ordinary draft to keep");
+    vi.mocked(extractNativeQueuedRun)
+      .mockRejectedValueOnce(new Error("ambiguous cancellation"))
+      .mockResolvedValue({ sequence: 1 });
+    await expect(beginQueueEdit(target, nativeItem, nativeRun)).rejects.toThrow(
+      "ambiguous cancellation",
+    );
+    const partial = useQueueEditSessions.getState().sessions[composerTargetKey(target)]!;
+    expect(partial.transferred).not.toBe(true);
+    expect(useComposerDraftStore.getState().getComposerDraft(target)?.prompt).toBe(
+      "ordinary draft to keep",
+    );
+    const saved = await readQueueEditJournal(partial.journalKey);
+    expect(saved?.nativeRun).toEqual(nativeRun);
+    expect(saved?.edited.prompt).toBe("queued text");
+    // Retry from the actual persisted record, rather than the in-memory draft.
+    const reloaded = (await readQueueEditJournal(partial.journalKey))!;
+    expect(reloaded.nativeRun).toEqual(nativeRun);
+    const complete = await flushQueueEdit(reloaded);
+    expect(complete.transferred).toBe(true);
+    expect(useComposerDraftStore.getState().getComposerDraft(target)?.prompt).toBe("queued text");
+    const calls = vi.mocked(extractNativeQueuedRun).mock.calls.slice(-2);
+    expect(calls[0]).toEqual(calls[1]);
+    expect(calls[1]).toEqual([
+      target.environmentId,
+      {
+        threadId: target.threadId,
+        runId: nativeRun.runId,
+        expectedUpdatedAt: item.updatedAt,
+        editToken: complete.editToken,
+      },
+    ]);
+    useComposerDraftStore.getState().setPrompt(target, "edited after extraction");
+    const durable = await flushQueueEdit(complete);
+    expect((await readQueueEditJournal(durable.journalKey))?.edited.prompt).toBe(
+      "edited after extraction",
+    );
+    expect(vi.mocked(controlThreadQueue)).not.toHaveBeenCalled();
+    expect(
+      usePromptStashStore
+        .getState()
+        .entries.some((entry) => entry.prompt === "ordinary draft to keep"),
+    ).toBe(true);
+  });
+});
+
+it("releases a definitively refused native edit journal while keeping ordinary file bytes and allowing another edit", async () => {
+  const ordinary = new File(["ordinary bytes"], "ordinary.txt", { type: "text/plain" });
+  useComposerDraftStore.setState({
+    draftsByThreadKey: {
+      [composerTargetKey(target)]: {
+        ...createEmptyThreadDraft(),
+        prompt: "Ordinary draft",
+        files: [
+          {
+            type: "file",
+            id: "ordinary",
+            name: ordinary.name,
+            mimeType: ordinary.type,
+            sizeBytes: ordinary.size,
+            file: ordinary,
+          },
+        ],
+      },
+    },
+  });
+  const nativeRun = {
+    runId: RunId.make("delivered-run"),
+    messageId: MessageId.make("delivered-message"),
+    expectedUpdatedAt: item.updatedAt,
+  };
+  let failedJournalKey: string | undefined;
+  vi.mocked(extractNativeQueuedRun).mockImplementationOnce(async (_environment, request) => {
+    failedJournalKey = request.editToken;
+    const commandId = CommandId.make(`client:queue-extract:${request.editToken}`);
+    throw nativeQueueExtractionError(
+      new OrchestrationV2DispatchCommandError({
+        commandId,
+        commandType: "queued-run.cancel",
+        commandDisposition: "rejected",
+        message: "Already delivered",
+      }),
+      commandId,
+    );
+  });
+  await expect(
+    beginQueueEdit(target, { ...item, queueItemId: nativeRun.runId }, nativeRun),
+  ).rejects.toThrow("Already delivered");
+  expect(useQueueEditSessions.getState().sessions[composerTargetKey(target)]).toBeUndefined();
+  expect(failedJournalKey).toBeDefined();
+  expect(await readQueueEditJournal(failedJournalKey!)).toBeUndefined();
+  const draft = useComposerDraftStore.getState().getComposerDraft(target)!;
+  expect(draft.prompt).toBe("Ordinary draft");
+  expect(await draft.files[0]?.file?.text()).toBe("ordinary bytes");
+  vi.mocked(extractNativeQueuedRun).mockResolvedValueOnce({ sequence: 1 });
+  await beginQueueEdit(
+    target,
+    { ...item, queueItemId: "fresh-run" },
+    { ...nativeRun, runId: RunId.make("fresh-run") },
+  );
+  expect(useQueueEditSessions.getState().sessions[composerTargetKey(target)]?.transferred).toBe(
+    true,
+  );
 });

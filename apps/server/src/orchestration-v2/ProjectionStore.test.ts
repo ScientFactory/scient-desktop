@@ -479,11 +479,65 @@ const completedAnswerSurvivesNewRuns = Effect.gen(function* () {
   assert.isNull((yield* store.getThreadShell(threadId))?.latestCompletedAnswer);
 });
 
+const completedQuestionsInRecoveryHistory = Effect.gen(function* () {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const threadId = yield* addRolledBackRecoveryCandidate("question-recovery-history");
+  const projection = yield* store.getThreadProjection(threadId);
+  const run = projection.runs[0]!;
+  const now = yield* DateTime.now;
+  for (const [index, status] of (["completed", "running", "cancelled"] as const).entries()) {
+    yield* store.apply({
+      id: EventId.make(`question-history:${status}`),
+      type: "turn-item.updated",
+      threadId,
+      runId: run.id,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make(`question-history:${status}`),
+        threadId,
+        runId: run.id,
+        nodeId: run.rootNodeId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 100 + index,
+        status,
+        startedAt: now,
+        completedAt: status === "running" ? null : now,
+        updatedAt: now,
+        type: "user_input_request",
+        title: "Dataset",
+        requestId: RuntimeRequestId.make(`request:${status}`),
+        questions: [{ id: "dataset", header: "Dataset", question: "Which dataset?", options: [] }],
+        questionAnswer: {
+          requestId: `request:${status}`,
+          answers: { dataset: "Measured data" },
+          attachmentsByQuestionId: {},
+        },
+      },
+    });
+  }
+  const all = yield* store.getTurnStartHistory(threadId);
+  const answers = all.filter((item) => item.type === "user_input_request");
+  assert.lengthOf(answers, 1);
+  assert.equal(answers[0]?.status, "completed");
+  assert.deepEqual(yield* store.getTurnStartHistory(threadId, [run.id]), all);
+  assert.deepEqual(yield* store.getTurnStartHistory(threadId, []), []);
+});
+it.effect("memory recovery history retains only completed submitted native questions", () =>
+  completedQuestionsInRecoveryHistory.pipe(Effect.provide(ProjectionStore.layerMemory)),
+);
+
 it.effect("memory shell preserves the completed answer until it is rolled back", () =>
   completedAnswerSurvivesNewRuns.pipe(Effect.provide(ProjectionStore.layerMemory)),
 );
 
 it.layer(TestLayer)("ProjectionStoreV2", (it) => {
+  it.effect(
+    "SQL recovery history retains only completed submitted native questions",
+    () => completedQuestionsInRecoveryHistory,
+  );
   it.effect(
     "SQL shell preserves the completed answer until it is rolled back",
     () => completedAnswerSurvivesNewRuns,

@@ -44,6 +44,15 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("provider-turn.start"),
     runId: RunId,
+    /** Newly queued starts cannot execute a later retry's active attempt. */
+    expectedAttemptId: Schema.optional(RunAttemptId),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("provider-run.interrupt"),
+    runId: RunId,
+    expectedAttemptId: RunAttemptId,
+    providerSessionId: ProviderSessionId,
+    providerThreadId: ProviderThreadId,
   }),
   Schema.Struct({
     type: Schema.Literal("provider-turn.interrupt"),
@@ -125,6 +134,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
 export const PROCESS_BOUND_EFFECT_TYPES = [
   "provider-turn.start",
   "provider-turn.interrupt",
+  "provider-run.interrupt",
   "provider-turn.steer",
   "provider-turn.restart",
   "runtime-request.respond",

@@ -480,7 +480,6 @@ const VcsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitWorkflowLayerLive),
   Layer.provideMerge(ReviewLayerLive),
   Layer.provideMerge(SourceControlRepositoryServiceLayerLive),
-  Layer.provideMerge(ProjectCloneTrackerLayerLive),
   Layer.provideMerge(
     VcsStatusBroadcaster.layer.pipe(
       Layer.provide(GitWorkflowLayerLive),
@@ -492,6 +491,9 @@ const VcsLayerLive = Layer.empty.pipe(
       ),
     ),
   ),
+  // The broadcaster acquires GitWorkflow independently; its setup runner
+  // reads ProjectService, which needs this same tracker during construction.
+  Layer.provideMerge(ProjectCloneTrackerLayerLive),
 );
 
 const CheckpointStoreLayerLive = CheckpointStore.layer.pipe(

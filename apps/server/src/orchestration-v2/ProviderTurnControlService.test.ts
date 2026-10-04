@@ -23,6 +23,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as IdAllocator from "./IdAllocator.ts";
+import { makeNativeSessionAdapterV2 } from "./Adapters/NativeSessionAdapterV2.ts";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -266,6 +268,8 @@ it.effect(
       const sessionManagerLayer = Layer.succeed(
         ProviderSessionManager.ProviderSessionManagerV2,
         ProviderSessionManager.ProviderSessionManagerV2.of({
+          resolveMcpInvocationPolicy: () =>
+            Effect.die("MCP invocation policy is not used in this fixture."),
           shutdown: Effect.void,
           open: () => Effect.die("unused open"),
           get: (providerSessionId) =>
@@ -503,4 +507,296 @@ it.effect(
       assert.notInclude(texts[1]!, "selected by the user");
       assert.include(texts[1]!, `$${release.name}`);
     }),
+);
+
+it.effect.each([
+  "old-attempt",
+  "replaced-binding",
+  "settled-run",
+  "archived-thread",
+  "deleted-thread",
+  "wrong-root",
+  "replaced-active-thread",
+  "wrong-root-binding",
+  "receipt-arrives",
+] as const)(
+  "pending Stop preserves exact native ownership until its accepted turn receipt: %s",
+  (kind) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make(`thread:pending-stop:${kind}`);
+        const sessionId = ProviderSessionId.make(`session:pending-stop:${kind}`);
+        const providerThreadId = ProviderThreadId.make(`provider-thread:pending-stop:${kind}`);
+        const attemptId = RunAttemptId.make(`attempt:pending-stop:${kind}`);
+        const runId = RunId.make("run:restart-session");
+        const rootNodeId = NodeId.make("node:restart-session");
+        const interruptCount = yield* Ref.make(0);
+        const offers = yield* Ref.make(0);
+        const allocator = yield* IdAllocator.IdAllocatorV2;
+        const adapter = makeNativeSessionAdapterV2({
+          driver,
+          instanceId: providerInstanceId,
+          capabilities: CodexProviderCapabilitiesV2,
+          defaultCwd: "/workspace",
+          idAllocator: allocator,
+          continuations: { offer: () => Effect.die("No background wake in pending Stop fixture") },
+          open: () =>
+            Effect.succeed({
+              nativeId: "native-thread:pending-stop",
+              nativeThreadKnown: true,
+              send: () => Ref.update(offers, (count) => count + 1),
+              interrupt: Ref.update(interruptCount, (count) => count + 1),
+              resume: () => Effect.void,
+              respond: () => Effect.die("No runtime request in pending Stop fixture"),
+            }),
+        });
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: sessionId,
+          modelSelection,
+          runtimePolicy: {
+            cwd: "/workspace",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+          },
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy: {
+            cwd: "/workspace",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+          },
+          existingProviderThread: {
+            id: providerThreadId,
+            driver,
+            providerInstanceId,
+            providerSessionId: sessionId,
+            appThreadId: threadId,
+            ownerNodeId: null,
+            nativeThreadRef: null,
+            nativeConversationHeadRef: null,
+            status: "active",
+            firstRunOrdinal: 1,
+            lastRunOrdinal: 1,
+            handoffIds: [],
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        const base = makeProjection({
+          now,
+          threadId,
+          providerThread,
+          providerTurnId: ProviderTurnId.make("placeholder:not-a-native-receipt"),
+          attemptId,
+        });
+        const run: OrchestrationV2ThreadProjection["runs"][number] = {
+          id: runId,
+          threadId,
+          ordinal: 1,
+          providerInstanceId,
+          modelSelection,
+          providerThreadId,
+          userMessageId: MessageId.make("message:pending-stop"),
+          rootNodeId,
+          activeAttemptId: attemptId,
+          status: "running",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+        };
+        const projection = yield* Ref.make<OrchestrationV2ThreadProjection>({
+          ...base,
+          runs: [run],
+          providerTurns: [],
+          attempts: base.attempts.map((attempt) => ({
+            ...attempt,
+            providerTurnId: null,
+            status: "running",
+            completedAt: null,
+          })),
+          nodes: [
+            {
+              id: rootNodeId,
+              threadId,
+              runId,
+              parentNodeId: null,
+              rootNodeId,
+              kind: "root_turn",
+              status: "running",
+              countsForRun: true,
+              providerThreadId,
+              providerTurnId: null,
+              nativeItemRef: null,
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: now,
+              completedAt: null,
+            },
+          ],
+        });
+        const turnInput = {
+          appThread: base.thread,
+          threadId,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId,
+          rootNodeId,
+          providerThread,
+          modelSelection,
+          runtimePolicy: {
+            cwd: "/workspace",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+          },
+          message: {
+            messageId: run.userMessageId,
+            text: "Native foreground accepted before SQL receipt.",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        } satisfies Parameters<typeof runtime.startTurn>[0];
+        yield* runtime.startTurn(turnInput);
+        assert.equal(yield* Ref.get(offers), 1);
+        const nativeReceipt = yield* Stream.runHead(
+          runtime.events.pipe(Stream.filter((event) => event.type === "provider_turn.updated")),
+        );
+        assert.isTrue(Option.isSome(nativeReceipt));
+        if (Option.isNone(nativeReceipt) || nativeReceipt.value.type !== "provider_turn.updated")
+          return yield* Effect.die("Native adapter did not emit its accepted turn receipt");
+        const receipt = nativeReceipt.value.providerTurn;
+        // SQL projection deliberately has not ingested the actual adapter receipt yet.
+        if (kind === "old-attempt")
+          yield* Ref.update(projection, (current) => ({
+            ...current,
+            runs: [{ ...run, activeAttemptId: RunAttemptId.make("newer-retry-attempt") }],
+          }));
+        if (kind === "replaced-binding")
+          yield* Ref.update(projection, (current) => ({
+            ...current,
+            providerThreads: [
+              {
+                ...providerThread,
+                providerSessionId: ProviderSessionId.make("replacement-session"),
+              },
+            ],
+          }));
+        if (kind === "settled-run")
+          yield* Ref.update(projection, (current) => ({
+            ...current,
+            runs: [
+              {
+                ...run,
+                status: "completed",
+                completedAt: now,
+              } satisfies OrchestrationV2ThreadProjection["runs"][number],
+            ],
+          }));
+        if (kind === "archived-thread")
+          yield* Ref.update(projection, (current) => ({
+            ...current,
+            thread: { ...current.thread, archivedAt: now },
+          }));
+        if (kind === "deleted-thread")
+          yield* Ref.update(projection, (current) => ({
+            ...current,
+            thread: { ...current.thread, deletedAt: now },
+          }));
+        if (kind === "replaced-active-thread")
+          yield* Ref.update(projection, (current) => ({
+            ...current,
+            thread: {
+              ...current.thread,
+              activeProviderThreadId: ProviderThreadId.make("replacement-active-thread"),
+            },
+          }));
+        if (kind === "wrong-root-binding")
+          yield* Ref.update(projection, (current) => ({
+            ...current,
+            nodes: current.nodes.map((node) => ({
+              ...node,
+              providerThreadId: ProviderThreadId.make("wrong-root-binding"),
+            })),
+          }));
+        if (kind === "wrong-root")
+          yield* Ref.update(projection, (current) => ({
+            ...current,
+            nodes: current.nodes.map((node) => ({
+              ...node,
+              rootNodeId: NodeId.make("foreign-root"),
+            })),
+          }));
+        const dependencies = Layer.mergeAll(
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getThreadRecords: () => Ref.get(projection),
+            getProviderControlContext: (_threadId, target) =>
+              Ref.get(projection).pipe(
+                Effect.map((current) => ({
+                  providerThread: current.providerThreads.find(
+                    (entry) => entry.id === target.providerThreadId,
+                  ),
+                  providerTurn: current.providerTurns.find(
+                    (entry) => entry.id === target.providerTurnId,
+                  ),
+                  attempt: current.attempts.find((entry) => entry.id === attemptId),
+                  run,
+                  message: undefined,
+                })),
+              ),
+          }),
+          Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+            get: (id) => Effect.succeed(id === sessionId ? Option.some(runtime) : Option.none()),
+            close: () => Effect.die("Pending Stop must not close a shared provider session"),
+            closeInstance: () => Effect.die("Pending Stop must not close bystander instances"),
+          }),
+        );
+        yield* Effect.gen(function* () {
+          const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
+          const input = {
+            threadId,
+            runId,
+            expectedAttemptId: attemptId,
+            providerSessionId: sessionId,
+            providerThreadId,
+          };
+          if (kind !== "receipt-arrives") {
+            assert.isTrue(Option.isNone(yield* control.interruptPendingStart(input)));
+            assert.equal(yield* Ref.get(interruptCount), 0);
+            return;
+          }
+          const pending = yield* control.interruptPendingStart(input).pipe(Effect.flip);
+          assert.equal(pending.reason, "receipt_pending");
+          assert.equal(pending.runId, runId);
+          assert.equal(yield* Ref.get(interruptCount), 0);
+          yield* Ref.update(projection, (current) => ({
+            ...current,
+            providerTurns: [receipt],
+            attempts: current.attempts.map((attempt) => ({
+              ...attempt,
+              providerTurnId: receipt.id,
+            })),
+          }));
+          assert.deepEqual(yield* control.interruptPendingStart(input), Option.some(receipt.id));
+          assert.equal(yield* Ref.get(interruptCount), 1);
+          // The actual generic native adapter cleared its private active turn:
+          // the next prompt is accepted without a session teardown or synthetic turn.
+          yield* runtime.startTurn({
+            ...turnInput,
+            runId: RunId.make("run:after-stopped-receipt"),
+            attemptId: RunAttemptId.make("attempt:after-stopped-receipt"),
+            runOrdinal: 2,
+            providerTurnOrdinal: 2,
+          });
+          assert.equal(yield* Ref.get(offers), 2);
+        }).pipe(Effect.provide(ProviderTurnControlService.layer.pipe(Layer.provide(dependencies))));
+      }),
+    ).pipe(Effect.provide(IdAllocator.layer)),
 );

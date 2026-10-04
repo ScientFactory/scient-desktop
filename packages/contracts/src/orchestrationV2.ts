@@ -185,6 +185,10 @@ export const OrchestrationV2ContextTransfer = Schema.Struct({
   sourcePoint: OrchestrationV2ContextSourcePoint,
   basePoint: Schema.NullOr(OrchestrationV2ContextSourcePoint),
   sourceProviderInstanceId: Schema.NullOr(ProviderInstanceId),
+  /** Scient exact-prefix forks own this immutable native proof on the destination. */
+  frozenSource: Schema.optional(Schema.suspend(() => OrchestrationV2FrozenForkSource)),
+  /** Durable explanation when a frozen prefix needs portable delivery. */
+  portableReason: Schema.optional(Schema.String),
   targetProviderInstanceId: Schema.NullOr(ProviderInstanceId),
   targetRunId: Schema.NullOr(RunId),
   status: Schema.Literals([
@@ -379,6 +383,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
   projectId: ProjectId,
+  /** Canonical event-source stamp preserves committed workspace authority through compaction. */
+  workspaceAuthorityRevision: Schema.optional(NonNegativeInt),
   title: TrimmedNonEmptyString,
   providerInstanceId: ProviderInstanceId,
   modelSelection: ModelSelection,
@@ -1018,6 +1024,33 @@ export const OrchestrationV2ProviderTurn = Schema.Struct({
   turnTokenUsage: Schema.optional(TurnTokenUsage),
 });
 export type OrchestrationV2ProviderTurn = typeof OrchestrationV2ProviderTurn.Type;
+
+/** Exact native Claude cursors are root assistant UUIDs, rather than native turn IDs. */
+export const OrchestrationV2ClaudeForkBoundaryEvidence = Schema.Struct({
+  kind: Schema.Literal("claude_root_assistant_uuid"),
+  sourceThreadId: ThreadId,
+  runId: RunId,
+  rootNodeId: NodeId,
+  assistantNodeId: NodeId,
+  assistantItemId: TurnItemId,
+  providerThreadId: ProviderThreadId,
+  providerTurnId: ProviderTurnId,
+  nativeMessageId: Schema.String.check(Schema.isUUID()),
+});
+export type OrchestrationV2ClaudeForkBoundaryEvidence =
+  typeof OrchestrationV2ClaudeForkBoundaryEvidence.Type;
+
+export const OrchestrationV2FrozenForkSource = Schema.Struct({
+  sourceThreadId: ThreadId,
+  driver: ProviderDriverKind,
+  modelSelection: ModelSelection,
+  sourceRun: OrchestrationV2Run,
+  sourceProviderThread: OrchestrationV2ProviderThread,
+  sourceProviderTurns: Schema.Array(OrchestrationV2ProviderTurn),
+  providerTurnId: ProviderTurnId,
+  claudeBoundaryEvidence: Schema.optional(Schema.Array(OrchestrationV2ClaudeForkBoundaryEvidence)),
+});
+export type OrchestrationV2FrozenForkSource = typeof OrchestrationV2FrozenForkSource.Type;
 
 export const OrchestrationV2RuntimeRequest = Schema.Struct({
   id: RuntimeRequestId,
@@ -2050,6 +2083,16 @@ export const OrchestrationV2ContextTransferJson = OrchestrationV2ContextTransfer
     createdAt: Schema.DateTimeUtcFromString,
     updatedAt: Schema.DateTimeUtcFromString,
     consumedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+    frozenSource: Schema.optional(
+      Schema.suspend(() =>
+        OrchestrationV2FrozenForkSource.mapFields((fields) => ({
+          ...fields,
+          sourceRun: OrchestrationV2RunJson,
+          sourceProviderThread: OrchestrationV2ProviderThreadJson,
+          sourceProviderTurns: Schema.Array(OrchestrationV2ProviderTurnJson),
+        })),
+      ),
+    ),
   }),
 );
 export type OrchestrationV2ContextTransferJson = typeof OrchestrationV2ContextTransferJson.Type;
@@ -3311,6 +3354,8 @@ export class OrchestrationV2DispatchCommandError extends Schema.TaggedError<Orch
     commandType: Schema.String,
     message: Schema.String,
     detail: Schema.optional(Schema.String),
+    /** A durable rejected receipt proves that this command committed no execution. */
+    commandDisposition: Schema.optional(Schema.Literal("rejected")),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}

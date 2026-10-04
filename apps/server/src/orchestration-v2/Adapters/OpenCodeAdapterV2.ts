@@ -1004,6 +1004,7 @@ export function makeOpenCodeAdapterV2(
         };
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
         let nativeStreamFailure: OrchestrationV2ProviderFailure | null = null;
+        const turnStartPermit = yield* Semaphore.make(1);
         const threads = new Map<string, OpenCodeThreadState>();
         const commandReceipts = new Map<string, Deferred.Deferred<void>>();
         const commandControllers = new Map<string, Set<AbortController>>();
@@ -3111,6 +3112,32 @@ export function makeOpenCodeAdapterV2(
                   `OpenCode model '${turnInput.modelSelection.model}' must use provider/model format`,
                 );
               }
+              // Native conversations persist their original rules across process
+              // replacement. Install this turn's captured authority before prompting.
+              const permission = openCodePermissionRules(turnInput.runtimePolicy);
+              yield* sdkCall("session.update", { sessionID: sessionId, permission }, (signal) =>
+                client.session.update({ sessionID: sessionId, permission }, { signal }),
+              );
+              const confirmed = unwrapData(
+                "session.get",
+                yield* sdkCall("session.get", { sessionID: sessionId }, (signal) =>
+                  client.session.get({ sessionID: sessionId }, { signal }),
+                ),
+              );
+              const effectivePermission = confirmed.permission;
+              if (
+                confirmed.id !== sessionId ||
+                effectivePermission === undefined ||
+                effectivePermission.length !== permission.length ||
+                !permission.every((rule, index) => {
+                  const effective = effectivePermission[index];
+                  return effective !== undefined && permissionRuleEquals(rule, effective);
+                })
+              ) {
+                return yield* protocolError(
+                  "OpenCode did not confirm this turn's permission rules.",
+                );
+              }
               const isCompaction =
                 turnInput.message.text.trim() === "/compact" &&
                 turnInput.message.attachments.length === 0;
@@ -3281,6 +3308,7 @@ export function makeOpenCodeAdapterV2(
                 }
               }
             }).pipe(
+              turnStartPermit.withPermit,
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapter.ProviderAdapterTurnStartError({

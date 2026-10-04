@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as OrchestrationMcp from "./OrchestratorMcpService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import { requireInvocationPolicy } from "./InvocationPolicy.ts";
 
 export const unavailable = () =>
   new OrchestratorMcpFailure({
@@ -39,14 +40,11 @@ export const readCaller = Effect.fn("mcp.readCaller")(function* () {
 
 function assertLiveCaller({
   caller,
-  scope,
 }: {
   caller: OrchestrationV2ThreadShell;
   scope: McpInvocationContext.McpInvocationScope;
 }) {
-  return caller.archivedAt !== null ||
-    caller.activeRunId === null ||
-    caller.providerInstanceId !== scope.providerInstanceId
+  return caller.archivedAt !== null || caller.activeRunId === null
     ? Effect.fail(
         new OrchestratorMcpFailure({
           code: "parent_not_active",
@@ -58,7 +56,8 @@ function assertLiveCaller({
 export const readMutationCaller = Effect.fn("mcp.readMutationCaller")(function* () {
   const context = yield* readCaller();
   yield* assertLiveCaller(context);
-  return context;
+  const policy = yield* requireInvocationPolicy(context.scope);
+  return { ...context, policy };
 });
 
 /** Resolve the credential's project before looking up a caller-supplied thread. */
@@ -90,15 +89,16 @@ export const readWritableThread = Effect.fn("mcp.readWritableThread")(function* 
 >(threadId?: ThreadId, fields: ReadonlyArray<K> = []) {
   const context = yield* readThread(threadId, fields);
   yield* assertLiveCaller(context);
+  const policy = yield* requireInvocationPolicy(context.scope);
   yield* OrchestrationMcp.resolveRuntimeMode(
-    context.caller.runtimeMode,
+    policy.runtimeMode,
     context.projection.thread.runtimeMode,
   );
   yield* OrchestrationMcp.resolveInteractionMode(
-    context.caller.interactionMode,
+    policy.interactionMode,
     context.projection.thread.interactionMode,
   );
-  return context;
+  return { ...context, policy };
 });
 
 export const newCommandId = Effect.fn("mcp.newCommandId")(function* () {

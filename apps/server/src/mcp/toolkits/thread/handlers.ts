@@ -78,11 +78,11 @@ const readQuestion = Effect.fn("mcp.readQuestion")(function* (
 export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
   run_scheduled_task_now: (input) =>
     Effect.gen(function* () {
-      const { caller } = yield* readMutationCaller();
+      const { caller, policy } = yield* readMutationCaller();
       if (
         caller.archivedAt !== null ||
-        caller.runtimeMode !== "full-access" ||
-        caller.interactionMode !== "default"
+        policy.runtimeMode !== "full-access" ||
+        policy.interactionMode !== "default"
       )
         return yield* new OrchestratorMcpFailure({
           code: "capability_denied",

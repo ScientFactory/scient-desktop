@@ -1083,6 +1083,7 @@ const getNativeThreadId = Effect.fnUntraced(function* (
 });
 
 const isSyntheticClaudeTurnId = (nativeTurnId: string): boolean => nativeTurnId.startsWith("turn:");
+const isClaudeNativeMessageUuid = Schema.is(Schema.String.check(Schema.isUUID()));
 
 const isTerminalProviderTurn = (turn: OrchestrationV2ProviderTurn): boolean =>
   turn.status === "completed" ||
@@ -2247,6 +2248,22 @@ const awaitClaudeUserInputAnswers = Effect.fn("awaitClaudeUserInputAnswers")(fun
  * entries are CLI-internal telemetry (the CLI hides them from its own UI too),
  * so they must never become the error banner (#5557).
  */
+function requiresClaudeReauthentication(message: SDKMessage): message is SDKResultMessage {
+  if (
+    message.type !== "result" ||
+    message.subtype === "success" ||
+    parentToolUseIdFromSdkMessage(message) !== null
+  )
+    return false;
+  return message.errors.some((error) => {
+    const normalized = error.toLowerCase();
+    return (
+      normalized.includes("oauth access token has been revoked") ||
+      normalized.includes("oauth session expired and could not be refreshed")
+    );
+  });
+}
+
 function resultUserFacingError(result: SDKResultMessage): string | undefined {
   const errors = "errors" in result && Array.isArray(result.errors) ? result.errors : [];
   if (result.subtype === "success" && !result.is_error) {
@@ -5608,6 +5625,15 @@ export function makeClaudeAdapterV2(
           }
 
           const message = input.message;
+          // Child frames have their own routing; root facts must belong to
+          // this query's native transcript before they can enter its history.
+          if (
+            (message.type === "assistant" || message.type === "stream_event") &&
+            message.parent_tool_use_id === null &&
+            message.session_id !== liveQuery.nativeThreadId
+          ) {
+            return;
+          }
           // Before any routing: a Monitor started during an idle wake turn
           // reports its task before the drain replays the tool call.
           yield* trackClaudeMonitorCalls(message);
@@ -5790,6 +5816,14 @@ export function makeClaudeAdapterV2(
             return;
           }
 
+          if (
+            (message.type === "assistant" || message.type === "stream_event") &&
+            message.parent_tool_use_id === null &&
+            context.input.providerThread.nativeThreadRef?.nativeId !== liveQuery.nativeThreadId
+          ) {
+            return;
+          }
+
           // Subagent narration belongs to its child thread, never the parent log.
           if (message.type === "stream_event" && !message.parent_tool_use_id) {
             const event = message.event;
@@ -5862,8 +5896,16 @@ export function makeClaudeAdapterV2(
           }
 
           if (message.type === "assistant" && input.replayed !== true) {
-            context.nativeMessageCursor = message.uuid;
             if (message.parent_tool_use_id === null) {
+              // API-error snapshots and synthetic ids are presentation, not
+              // inclusive native fork boundaries. Held replay cannot move it.
+              if (
+                message.error === undefined &&
+                message.message.model !== "<synthetic>" &&
+                isClaudeNativeMessageUuid(message.uuid)
+              ) {
+                context.nativeMessageCursor = message.uuid;
+              }
               context.latestAssistantRateLimited = message.error === "rate_limit";
               if (message.error === "authentication_failed") {
                 context.authenticationFailureMessage = claudeSignedOutMessage({
@@ -7337,7 +7379,55 @@ export function makeClaudeAdapterV2(
           };
           yield* Ref.set(queryContext, context);
           yield* querySession.messages.pipe(
-            Stream.runForEach((message) => handleSdkMessage({ query: querySession, message })),
+            Stream.takeUntil(
+              (message) =>
+                requiresClaudeReauthentication(message) && message.session_id === nativeThreadId,
+            ),
+            Stream.runForEach((message) =>
+              Effect.gen(function* () {
+                yield* handleSdkMessage({ query: querySession, message });
+                if (
+                  !requiresClaudeReauthentication(message) ||
+                  message.session_id !== nativeThreadId
+                )
+                  return;
+                const current = yield* Ref.get(queryContext);
+                if (current?.query !== querySession || current.stopping) return;
+                current.stopping = true;
+                // Even an idle/wake result proves this query's credential is
+                // revoked. Any attached prompt must settle before retirement.
+                const active = yield* Ref.get(activeTurn);
+                if (active !== null) {
+                  const failure = providerFailureFromResult(
+                    message,
+                    active.authenticationFailureMessage,
+                    false,
+                  );
+                  yield* finalizeActiveTurn({
+                    context: active,
+                    status: "failed",
+                    completedAt: yield* DateTime.now,
+                    result: message,
+                    ...(failure === null ? {} : { failure }),
+                  });
+                }
+                yield* emitProviderEvent({
+                  type: "authentication.invalidated",
+                  driver: CLAUDE_PROVIDER,
+                  message: "Claude authentication expired. Sign in again.",
+                });
+                yield* querySession.close.pipe(Effect.ignore);
+                yield* emitProviderEvent({
+                  type: "provider_session.updated",
+                  driver: CLAUDE_PROVIDER,
+                  providerSession: {
+                    ...session,
+                    status: "stopped",
+                    updatedAt: yield* DateTime.now,
+                  },
+                });
+              }),
+            ),
             Effect.exit,
             Effect.flatMap(
               Effect.fnUntraced(function* (exit: ClaudeQueryStreamExit) {
@@ -7686,7 +7776,8 @@ export function makeClaudeAdapterV2(
 
         const closeSession = Effect.fnUntraced(function* () {
           const existing = yield* Ref.get(queryContext);
-          if (existing !== null) {
+          if (existing !== null && !existing.stopping) {
+            existing.stopping = true;
             yield* existing.query.close.pipe(Effect.ignore);
             yield* settleWorkflowMembersForNativeProcess(existing.nativeThreadId, "cancelled");
           }
@@ -7734,7 +7825,13 @@ export function makeClaudeAdapterV2(
           providerSession: session,
           getModelContextWindow: (selection) =>
             resolveClaudeCatalogContextWindowTokens(BUNDLED_CLAUDE_MODEL_CATALOG, selection),
-          events: Stream.fromEffectRepeat(Queue.take(events)),
+          events: Stream.fromEffectRepeat(Queue.take(events)).pipe(
+            Stream.takeUntil(
+              (event) =>
+                event.type === "provider_session.updated" &&
+                event.providerSession.status === "stopped",
+            ),
+          ),
           hasPendingBackgroundWork: Effect.gen(function* () {
             // Session capability: any native thread with pending work pins idle.
             for (const roster of (yield* Ref.get(pendingBackgroundTasksByNativeThread)).values()) {

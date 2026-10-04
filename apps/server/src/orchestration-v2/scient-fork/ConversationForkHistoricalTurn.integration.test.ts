@@ -1,4 +1,6 @@
 import { assert, it } from "@effect/vitest";
+import { historicalSubagentsToRuntime } from "../../../../../packages/client-runtime/src/state/historicalSubagentRuntime.ts";
+import { deriveAgentPanelModel } from "../../../../../packages/client-runtime/src/state/subagentRuntime.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
@@ -86,7 +88,9 @@ it.live(
         ('trailing-system', ${source}, 'system', 'Trailing system history', 'same-turn', 0, '2026-01-01T00:00:06.000Z', '2026-01-01T00:00:06.000Z'),
         ('next-turn', ${source}, 'user', 'Excluded next turn', 'next-turn', 0, '2026-01-01T00:00:10.000Z', '2026-01-01T00:00:10.000Z')`;
         yield* sql`INSERT INTO projection_thread_activities (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at)
-      VALUES ('trailing-tool', ${source}, 'same-turn', 'tool', 'tool.completed', 'Trailing result', '{"toolName":"read_file","output":"Late result"}', '2026-01-01T00:00:07.000Z')`;
+      VALUES ('task-start', ${source}, 'same-turn', 'info', 'task.started', 'Workflow', '{"taskId":"audit","taskType":"local_workflow","title":"Audit"}', '2026-01-01T00:00:06.500Z'),
+        ('task-member', ${source}, 'same-turn', 'info', 'task.progress', 'Reader', '{"taskId":"reader","parentAgentId":"audit","phaseIndex":0,"status":"running","title":"Reader"}', '2026-01-01T00:00:06.600Z'),
+        ('trailing-tool', ${source}, 'same-turn', 'tool', 'tool.completed', 'Trailing result', '{"toolName":"read_file","output":"Late result"}', '2026-01-01T00:00:07.000Z')`;
         yield* sql`INSERT INTO projection_pending_approvals (request_id, thread_id, turn_id, status, created_at)
       VALUES ('trailing-approval', ${source}, 'same-turn', 'pending', '2026-01-01T00:00:08.000Z')`;
         yield* sql`INSERT INTO projection_thread_proposed_plans (plan_id, thread_id, turn_id, plan_markdown, created_at, updated_at)
@@ -106,7 +110,12 @@ it.live(
         };
         const receipt = yield* forks.dispatch(command);
         const child = yield* store.getThreadProjection(command.newThreadId);
-        assert.equal(child.turnItems.length, 9);
+        assert.equal(child.turnItems.length, 11);
+        const roster = historicalSubagentsToRuntime(child.turnItems);
+        assert.equal(roster.length, 2);
+        assert.isTrue(roster.every((agent) => agent.historical === true));
+        assert.isTrue(roster.every((agent) => agent.id.startsWith(`historical:${source}:`)));
+        assert.equal(deriveAgentPanelModel({ agents: roster }).liveCount, 0);
         assert.isFalse(
           child.turnItems.some(
             (item) => item.type === "user_message" && item.text === "Excluded next turn",
@@ -143,7 +152,7 @@ it.live(
         assert.deepEqual(child.providerSessions, []);
         assert.isTrue(
           child.turnItems.filter((item) => item.historyTurnId === TurnId.make("same-turn"))
-            .length === 8,
+            .length === 10,
         );
         assert.equal((yield* forks.dispatch(command)).sequence, receipt.sequence);
         for (const sourceUserMessageId of ["turn-start", "turn-steer"]) {

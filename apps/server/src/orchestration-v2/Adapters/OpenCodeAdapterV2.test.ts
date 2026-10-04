@@ -124,6 +124,33 @@ function permissionAction(rules: ReturnType<typeof openCodePermissionRules>, per
     ?.action;
 }
 
+/** Existing transcripts start in Full; updates persist the native ordered rules. */
+function nativePermissionPeer(initial = openCodePermissionRules(runtimePolicy("full-access"))) {
+  const permissions = new Map<string, ReturnType<typeof openCodePermissionRules>>();
+  return {
+    get: async ({ sessionID }: { readonly sessionID: string }) => ({
+      data: {
+        id: sessionID,
+        permission: permissions.get(sessionID) ?? initial,
+        time: { created: 1, updated: 1 },
+      },
+    }),
+    update: async (input: {
+      readonly sessionID: string;
+      readonly permission: ReturnType<typeof openCodePermissionRules>;
+    }) => {
+      permissions.set(input.sessionID, input.permission);
+      return {
+        data: {
+          id: input.sessionID,
+          permission: input.permission,
+          time: { created: 1, updated: 1 },
+        },
+      };
+    },
+  };
+}
+
 function providerTurn(input: {
   readonly id: string;
   readonly ordinal: number;
@@ -150,6 +177,10 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
   nativeSessionId: string,
   client: object,
   external = true,
+  setup: {
+    readonly policy?: ProviderAdapterV2RuntimePolicy;
+    readonly existingProviderThread?: OrchestrationV2ProviderThread;
+  } = {},
 ) {
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const instanceId = ProviderInstanceId.make(`opencode-${suffix}`);
@@ -159,7 +190,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     model: "anthropic/claude-sonnet",
     options: [],
   };
-  const policy = runtimePolicy("full-access", { cwd: "/workspace" });
+  const policy = setup.policy ?? runtimePolicy("full-access", { cwd: "/workspace" });
   const adapter = makeOpenCodeAdapterV2({
     instanceId,
     settings: OPEN_CODE_TEST_SETTINGS,
@@ -185,9 +216,12 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     threadId,
     modelSelection,
     runtimePolicy: policy,
+    ...(setup.existingProviderThread === undefined
+      ? {}
+      : { existingProviderThread: setup.existingProviderThread }),
   });
   const now = yield* DateTime.now;
-  const startTurn = (text = "hello") =>
+  const startTurn = (text = "hello", capturedPolicy = policy) =>
     runtime.startTurn({
       appThread: {
         id: threadId,
@@ -227,7 +261,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
         attachments: [],
       },
       modelSelection,
-      runtimePolicy: policy,
+      runtimePolicy: capturedPolicy,
     });
   return {
     nativeSessionId,
@@ -242,6 +276,157 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
+  for (const previousMode of ["full-access", "approval-required"] as const) {
+    for (const reopen of [false, true]) {
+      it.effect(
+        `replaces saved ${previousMode} permissions before a resumed prompt with reopen ${reopen}`,
+        () =>
+          Effect.gen(function* () {
+            const targetMode = previousMode === "full-access" ? "approval-required" : "full-access";
+            const previousPolicy = runtimePolicy(previousMode, { cwd: "/workspace" });
+            const capturedPolicy = runtimePolicy(targetMode, { cwd: "/workspace" });
+            const nativePermissions = nativePermissionPeer(openCodePermissionRules(previousPolicy));
+            const nativeSessionId = `permission-resume-${previousMode}-${reopen}`;
+            const calls: string[] = [];
+            let creates = 0;
+            let prompts = 0;
+            const client = {
+              event: {
+                subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+                  const events = asyncEventStream();
+                  options.signal?.addEventListener("abort", () => events.close(), { once: true });
+                  return { stream: events.stream };
+                },
+              },
+              session: {
+                create: async (input: {
+                  permission: ReturnType<typeof openCodePermissionRules>;
+                }) => {
+                  creates++;
+                  assert.deepEqual(input.permission, openCodePermissionRules(previousPolicy));
+                  return { data: { id: nativeSessionId, time: { created: 1, updated: 1 } } };
+                },
+                get: async (input: { sessionID: string }) => {
+                  calls.push("get");
+                  return nativePermissions.get(input);
+                },
+                update: async (input: {
+                  sessionID: string;
+                  permission: ReturnType<typeof openCodePermissionRules>;
+                }) => {
+                  calls.push("update");
+                  assert.equal(input.sessionID, nativeSessionId);
+                  assert.deepEqual(input.permission, openCodePermissionRules(capturedPolicy));
+                  return nativePermissions.update(input);
+                },
+                promptAsync: async () => {
+                  calls.push("prompt");
+                  prompts++;
+                  const effective = await nativePermissions.get({ sessionID: nativeSessionId });
+                  assert.equal(
+                    permissionAction(effective.data.permission, "bash"),
+                    targetMode === "full-access" ? "allow" : "ask",
+                  );
+                  return { data: true };
+                },
+                abort: async () => ({ data: true }),
+                children: async () => ({ data: [] }),
+              },
+            };
+            const initialScope = yield* Scope.fork(yield* Scope.Scope);
+            let harness = yield* makeOpenCodeRuntimeHarness(
+              nativeSessionId,
+              nativeSessionId,
+              client,
+              true,
+              { policy: previousPolicy },
+            ).pipe(Effect.provideService(Scope.Scope, initialScope));
+            const original = harness.providerThread;
+            if (reopen) {
+              yield* Scope.close(initialScope, Exit.void);
+              harness = yield* makeOpenCodeRuntimeHarness(
+                nativeSessionId,
+                nativeSessionId,
+                client,
+                true,
+                {
+                  policy: capturedPolicy,
+                  existingProviderThread: original,
+                },
+              );
+            } else {
+              yield* harness.runtime.resumeThread({ providerThread: original });
+            }
+            calls.length = 0;
+            // The app thread retains its old default; only the captured turn policy
+            // controls the resumed native conversation's permissions.
+            yield* harness.startTurn("captured follow-up", capturedPolicy);
+            assert.deepEqual(calls, ["update", "get", "prompt"]);
+            assert.equal(creates, 1);
+            assert.equal(prompts, 1);
+            assert.equal(
+              harness.providerThread.nativeThreadRef?.nativeId,
+              original.nativeThreadRef?.nativeId,
+            );
+          }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
+      );
+    }
+  }
+
+  for (const failure of ["update", "confirmation", "missing-permissions"] as const) {
+    it.effect(`does not prompt a resumed conversation after ${failure} permission failure`, () =>
+      Effect.gen(function* () {
+        const nativeSessionId = `permission-rejected-${failure}`;
+        const nativePermissions = nativePermissionPeer();
+        let updated = false;
+        let prompts = 0;
+        const client = {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              const events = asyncEventStream();
+              options.signal?.addEventListener("abort", () => events.close(), { once: true });
+              return { stream: events.stream };
+            },
+          },
+          session: {
+            create: async () => ({
+              data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
+            }),
+            get: async (input: { sessionID: string }) => {
+              const original = await nativePermissions.get(input);
+              return updated && failure === "missing-permissions"
+                ? { data: { id: nativeSessionId, time: { created: 1, updated: 1 } } }
+                : original;
+            },
+            update: async () => {
+              if (failure === "update")
+                throw new Error("Controlled native permission write failed.");
+              updated = true;
+              // Simulate a native server that acknowledges but retains Full.
+              return nativePermissions.get({ sessionID: nativeSessionId });
+            },
+            promptAsync: async () => {
+              prompts++;
+              return { data: true };
+            },
+            abort: async () => ({ data: true }),
+            children: async () => ({ data: [] }),
+          },
+        };
+        const harness = yield* makeOpenCodeRuntimeHarness(nativeSessionId, nativeSessionId, client);
+        yield* harness.runtime.resumeThread({ providerThread: harness.providerThread });
+        const error = yield* harness
+          .startTurn("must not run", runtimePolicy("approval-required", { cwd: "/workspace" }))
+          .pipe(Effect.flip);
+        assert.equal(error._tag, "ProviderAdapterTurnStartError");
+        assert.equal(prompts, 0);
+        const effective = yield* Effect.promise(() =>
+          nativePermissions.get({ sessionID: nativeSessionId }),
+        );
+        assert.equal(permissionAction(effective.data.permission, "bash"), "allow");
+      }).pipe(Effect.provide(IdAllocator.layer), Effect.scoped),
+    );
+  }
   for (const external of [false, true]) {
     it.effect(
       `delivers Scient system guidance through native OpenCode prompt with external ${external}`,
@@ -288,6 +473,7 @@ describe("OpenCodeAdapterV2", () => {
                   },
                 },
                 session: {
+                  ...nativePermissionPeer(),
                   create: async () => ({
                     data: { id: "awareness-native", time: { created: 1, updated: 1 } },
                   }),
@@ -323,6 +509,7 @@ describe("OpenCodeAdapterV2", () => {
         const harness = yield* makeOpenCodeRuntimeHarness(`usage-${ending}`, "root", {
           event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
           session: {
+            ...nativePermissionPeer(),
             create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
             promptAsync: async (input: { messageID: string }) => {
               promptId = input.messageID;
@@ -466,6 +653,7 @@ describe("OpenCodeAdapterV2", () => {
         const harness = yield* makeOpenCodeRuntimeHarness(`reply-${kind}`, "root", {
           event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
           session: {
+            ...nativePermissionPeer(),
             create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
             promptAsync: async () => ({ data: true }),
             abort: async () => ({ data: true }),
@@ -550,6 +738,7 @@ describe("OpenCodeAdapterV2", () => {
           },
         },
         session: {
+          ...nativePermissionPeer(),
           create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
           abort: async ({ sessionID }: { sessionID: string }) => {
             calls.push(`abort:${sessionID}`);
@@ -581,9 +770,16 @@ describe("OpenCodeAdapterV2", () => {
         const harness = yield* makeOpenCodeRuntimeHarness(`cleanup-${failure}`, "root", {
           event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
           session: {
+            ...nativePermissionPeer(),
             create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
             promptAsync: async () => ({ data: true }),
-            get: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            get: async () => ({
+              data: {
+                id: "root",
+                permission: openCodePermissionRules(runtimePolicy("full-access")),
+                time: { created: 1, updated: 1 },
+              },
+            }),
             messages: async () => ({ data: [] }),
             children: async ({ sessionID }: { sessionID: string }) => {
               if (failure === "enumeration") throw new Error("cannot enumerate");
@@ -640,6 +836,7 @@ describe("OpenCodeAdapterV2", () => {
             },
           },
           session: {
+            ...nativePermissionPeer(),
             create: async () => ({
               data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
             }),
@@ -799,15 +996,24 @@ describe("OpenCodeAdapterV2", () => {
       const push = (event: unknown) => Effect.promise(() => nativeEvents.push(event));
       const root = "ses_root";
       const child = "ses_child";
+      const nativePermissions = nativePermissionPeer();
       let promptId = "";
       const harness = yield* makeOpenCodeRuntimeHarness("background-child", root, {
         event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
         session: {
+          ...nativePermissions,
           create: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
-          get: async () => ({
-            data: { id: child, parentID: root, permission: [], time: { created: 2, updated: 2 } },
-          }),
-          update: async () => ({ data: { id: child, parentID: root } }),
+          get: async ({ sessionID }: { sessionID: string }) =>
+            sessionID === root
+              ? nativePermissions.get({ sessionID })
+              : {
+                  data: {
+                    id: child,
+                    parentID: root,
+                    permission: [],
+                    time: { created: 2, updated: 2 },
+                  },
+                },
           promptAsync: async (input: { messageID: string }) => {
             promptId = input.messageID;
             return { data: true };
@@ -897,6 +1103,7 @@ describe("OpenCodeAdapterV2", () => {
           },
         },
         session: {
+          ...nativePermissionPeer(),
           create: async () => ({
             data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
           }),
@@ -983,6 +1190,7 @@ describe("OpenCodeAdapterV2", () => {
         },
         command: { list: async () => ({ data: [{ name: "review" }] }) },
         session: {
+          ...nativePermissionPeer(),
           create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
           command: async (input: {
             messageID: string;
@@ -1038,6 +1246,7 @@ describe("OpenCodeAdapterV2", () => {
         },
         command: { list: async () => ({ data: [{ name: "review" }] }) },
         session: {
+          ...nativePermissionPeer(),
           create: async () => ({
             data: { id: "unknown-command", time: { created: 1, updated: 1 } },
           }),
@@ -1065,6 +1274,7 @@ describe("OpenCodeAdapterV2", () => {
           },
         },
         session: {
+          ...nativePermissionPeer(),
           create: async () => ({
             data: { id: "native-opencode-compact", time: { created: 1, updated: 1 } },
           }),
@@ -1159,11 +1369,13 @@ describe("OpenCodeAdapterV2", () => {
           },
         },
         session: {
+          ...nativePermissionPeer(),
           create: async () => ({
             data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
           }),
           get: async () => ({
             data: {
+              permission: openCodePermissionRules(runtimePolicy("full-access")),
               id: nativeSessionId,
               time: { created: 1, updated: 6 },
               revert: { messageID: "user-reverted" },
@@ -1216,11 +1428,16 @@ describe("OpenCodeAdapterV2", () => {
           },
         },
         session: {
+          ...nativePermissionPeer(),
           create: async () => ({
             data: { id: "native-opencode-race", time: { created: 1, updated: 1 } },
           }),
           get: async () => ({
-            data: { id: "native-opencode-race", time: { created: 1, updated: 1 } },
+            data: {
+              permission: openCodePermissionRules(runtimePolicy("full-access")),
+              id: "native-opencode-race",
+              time: { created: 1, updated: 1 },
+            },
           }),
           promptAsync: async (
             input: { readonly messageID?: string },
@@ -1525,11 +1742,16 @@ describe("OpenCodeAdapterV2", () => {
           },
         },
         session: {
+          ...nativePermissionPeer(),
           create: async () => ({
             data: { id: "native-opencode-initial-stop", time: { created: 1, updated: 1 } },
           }),
           get: async () => ({
-            data: { id: "native-opencode-initial-stop", time: { created: 1, updated: 1 } },
+            data: {
+              permission: openCodePermissionRules(runtimePolicy("full-access")),
+              id: "native-opencode-initial-stop",
+              time: { created: 1, updated: 1 },
+            },
           }),
           promptAsync: async (_input: unknown, options?: { readonly signal?: AbortSignal }) => {
             promptStarted.resolve();
@@ -1690,6 +1912,7 @@ describe("OpenCodeAdapterV2", () => {
             },
           },
           session: {
+            ...nativePermissionPeer(),
             create: async () => ({
               data: { id: "native-opencode-clean-event-eof", time: { created: 1, updated: 1 } },
             }),
@@ -1745,6 +1968,7 @@ describe("OpenCodeAdapterV2", () => {
         {
           event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
           session: {
+            ...nativePermissionPeer(),
             create: async () => ({
               data: { id: "native-opencode-compaction-eof-race", time: { created: 1, updated: 1 } },
             }),
@@ -1795,6 +2019,7 @@ describe("OpenCodeAdapterV2", () => {
             },
           },
           session: {
+            ...nativePermissionPeer(),
             create: async () => ({
               data: {
                 id: "native-opencode-event-eof-start-race",
@@ -1947,11 +2172,16 @@ describe("OpenCodeAdapterV2", () => {
           },
         },
         session: {
+          ...nativePermissionPeer(),
           create: async () => ({
             data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
           }),
           get: async () => ({
-            data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
+            data: {
+              permission: openCodePermissionRules(runtimePolicy("full-access")),
+              id: nativeSessionId,
+              time: { created: 1, updated: 1 },
+            },
           }),
           promptAsync: async (input: { readonly messageID?: string }) => {
             Queue.offerUnsafe(promptCalls, input.messageID!);
@@ -2033,11 +2263,16 @@ describe("OpenCodeAdapterV2", () => {
           },
         },
         session: {
+          ...nativePermissionPeer(),
           create: async () => ({
             data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
           }),
           get: async () => ({
-            data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
+            data: {
+              permission: openCodePermissionRules(runtimePolicy("full-access")),
+              id: nativeSessionId,
+              time: { created: 1, updated: 1 },
+            },
           }),
           promptAsync: async (input: { readonly messageID?: string }) => {
             promptCallCount += 1;

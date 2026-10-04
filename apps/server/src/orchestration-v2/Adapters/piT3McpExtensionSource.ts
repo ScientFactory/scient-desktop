@@ -9,6 +9,7 @@
  * `@earendil-works/pi-coding-agent` and `typebox` from the user's pi install.
  */
 import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/T3OrchestrationInstructions.ts";
+import { piContextExtension } from "../../provider/pi/PiContextExtension.ts";
 
 export const PI_T3_MCP_EXTENSION_FILENAME = "pi-t3-mcp-extension.ts";
 
@@ -207,6 +208,10 @@ function createMcpClient(endpoint: string, token: string) {
 }
 
 export default async function t3McpExtension(pi: ExtensionAPI) {
+  // Runs even when MCP is disabled: native model input still includes system
+  // instructions, tools and images that the conversation meter cannot count.
+  (${piContextExtension.toString()})(pi);
+
   // Workaround for an upstream Pi context-budgeting bug: pi-ai reuses the
   // previous response's usage even when a fork's instructions/tools differ,
   // then reserves almost all remaining context for output. OpenRouter can

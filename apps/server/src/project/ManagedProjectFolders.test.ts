@@ -1,3 +1,4 @@
+import * as ProjectCloneTracker from "./ProjectCloneTracker.ts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CommandId, GitCommandError, ProjectId, ThreadId } from "@t3tools/contracts";
@@ -80,6 +81,9 @@ const makeLayer = (baseDir: string, options?: HarnessOptions) =>
           ),
     ),
     Layer.provideMerge(ProjectServiceLayerLive),
+    Layer.provide(
+      Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ discard: () => Effect.void }),
+    ),
     Layer.provideMerge(enrichmentLayer),
     Layer.provideMerge(WorkspacePaths.layer),
     Layer.provideMerge(gitWorkflowLayer),

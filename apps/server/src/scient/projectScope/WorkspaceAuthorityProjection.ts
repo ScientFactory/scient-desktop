@@ -6,6 +6,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+import { PROJECT_WORKSPACE_AUTHORITY_PREFIX } from "./WorkspaceAuthorityRevision.ts";
 
 import {
   WorkspaceAuthorityScopeRevision,
@@ -52,9 +53,9 @@ export interface WorkspaceAuthorityProjectionContext {
 /**
  * App-private projection bridge for workspace authority.
  *
- * The inherited shell projection remains the product read model. This narrow
- * query adds one Scient-owned guarantee it does not need: a monotonic revision
- * of only the thread/project events that can change filesystem authority.
+ * The native V2 projection supplies the workspace and its committed revision.
+ * A title, model or attention update retains the revision; a workspace change
+ * receives a new canonical sequence. Unstamped pre-cutover rows fail closed.
  */
 export class WorkspaceAuthorityProjection extends Context.Service<
   WorkspaceAuthorityProjection,
@@ -86,11 +87,11 @@ const make = Effect.gen(function* () {
       FROM projection_projects WHERE deleted_at IS NULL
       UNION ALL
       SELECT projects.project_id AS "projectId", threads.thread_id AS "threadId",
-        threads.worktree_path AS "workspaceRoot"
-      FROM projection_threads threads
+        json_extract(threads.payload_json, '$.worktreePath') AS "workspaceRoot"
+      FROM orchestration_v2_projection_threads threads
       JOIN projection_projects projects ON projects.project_id = threads.project_id
       WHERE projects.deleted_at IS NULL AND threads.deleted_at IS NULL
-        AND threads.archived_at IS NULL AND threads.worktree_path IS NOT NULL
+        AND threads.archived_at IS NULL AND json_type(threads.payload_json, '$.worktreePath') = 'text'
       ORDER BY "projectId", "threadId"
     `,
   });
@@ -100,17 +101,11 @@ const make = Effect.gen(function* () {
     Result: ProjectContextRow,
     execute: ({ projectId }) => sql`
       SELECT projects.project_id AS "projectId", projects.workspace_root AS "workspaceRoot",
-        COALESCE((
-          SELECT MAX(events.sequence) FROM orchestration_events events
-          WHERE events.aggregate_kind = 'project' AND events.stream_id = projects.project_id
-            AND events.sequence <= COALESCE((SELECT last_applied_sequence FROM projection_state
-              WHERE projector = 'projection.projects'), 0)
-            AND (events.event_type = 'project.created' OR (
-              events.event_type = 'project.meta-updated'
-              AND json_type(events.payload_json, '$.workspaceRoot') IS NOT NULL
-            ))
-        ), 0) AS "scopeRevision"
+        COALESCE(authority.last_sequence, 0) AS "scopeRevision"
       FROM projection_projects projects
+      LEFT JOIN orchestration_v2_projection_metadata authority
+        ON authority.projection_name = ${PROJECT_WORKSPACE_AUTHORITY_PREFIX}
+          || json_array(projects.project_id, projects.workspace_root)
       WHERE projects.project_id = ${projectId} AND projects.deleted_at IS NULL
       LIMIT 1
     `,
@@ -141,81 +136,26 @@ const make = Effect.gen(function* () {
     Request: WorkspaceAuthorityProjectionRequest,
     Result: WorkspaceAuthorityProjectionRow,
     execute: ({ threadId }) => sql`
-      WITH authority_cursors AS (
-        SELECT
-          COALESCE(
-            MAX(
-              CASE
-                WHEN projector = 'projection.threads' THEN last_applied_sequence
-                ELSE NULL
-              END
-            ),
-            0
-          ) AS thread_cursor,
-          COALESCE(
-            MAX(
-              CASE
-                WHEN projector = 'projection.projects' THEN last_applied_sequence
-                ELSE NULL
-              END
-            ),
-            0
-          ) AS project_cursor
-        FROM projection_state
-      )
-      SELECT
-        threads.thread_id AS "threadId",
-        threads.project_id AS "projectId",
-        threads.worktree_path AS "worktreePath",
+      SELECT threads.thread_id AS "threadId", threads.project_id AS "projectId",
+        json_extract(threads.payload_json, '$.worktreePath') AS "worktreePath",
         projects.workspace_root AS "projectWorkspaceRoot",
-        MAX(
-          COALESCE(
-            (
-              SELECT MAX(events.sequence)
-              FROM orchestration_events events
-              WHERE events.aggregate_kind = 'thread'
-                AND events.stream_id = threads.thread_id
-                AND events.sequence <= authority_cursors.thread_cursor
-                AND (
-                  events.event_type = 'thread.created'
-                  OR (
-                    events.event_type = 'thread.meta-updated'
-                    AND (
-                      json_type(events.payload_json, '$.projectId') IS NOT NULL
-                      OR json_type(events.payload_json, '$.workspaceRoot') IS NOT NULL
-                      OR json_type(events.payload_json, '$.worktreePath') IS NOT NULL
-                    )
-                  )
-                )
-            ),
-            0
-          ),
-          COALESCE(
-            (
-              SELECT MAX(events.sequence)
-              FROM orchestration_events events
-              WHERE events.aggregate_kind = 'project'
-                AND events.stream_id = threads.project_id
-                AND events.sequence <= authority_cursors.project_cursor
-                AND (
-                  events.event_type = 'project.created'
-                  OR (
-                    events.event_type = 'project.meta-updated'
-                    AND json_type(events.payload_json, '$.workspaceRoot') IS NOT NULL
-                  )
-                )
-            ),
-            0
-          )
-        ) AS "scopeRevision"
-      FROM projection_threads threads
-      CROSS JOIN authority_cursors
-      LEFT JOIN projection_projects projects
-        ON projects.project_id = threads.project_id
+        CASE
+          WHEN json_type(threads.payload_json, '$.workspaceAuthorityRevision') <> 'integer'
+            OR json_type(threads.payload_json, '$.workspaceAuthorityRevision') IS NULL
+            OR (projects.project_id IS NOT NULL AND authority.last_sequence IS NULL)
+          THEN 0
+          ELSE MAX(json_extract(threads.payload_json, '$.workspaceAuthorityRevision'),
+            COALESCE(authority.last_sequence, 0))
+        END AS "scopeRevision"
+      FROM orchestration_v2_projection_threads threads
+      LEFT JOIN projection_projects projects ON projects.project_id = threads.project_id
         AND projects.deleted_at IS NULL
+      LEFT JOIN orchestration_v2_projection_metadata authority
+        ON authority.projection_name = ${PROJECT_WORKSPACE_AUTHORITY_PREFIX}
+          || json_array(projects.project_id, projects.workspace_root)
       WHERE threads.thread_id = ${threadId}
-        AND threads.deleted_at IS NULL
-        AND threads.archived_at IS NULL
+        AND threads.deleted_at IS NULL AND threads.archived_at IS NULL
+        AND (threads.project_id IS NULL OR projects.project_id IS NOT NULL)
       LIMIT 1
     `,
   });

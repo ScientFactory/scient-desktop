@@ -379,6 +379,9 @@ export function routeProviderEvent(
   });
 
   switch (event.type) {
+    case "authentication.invalidated":
+      // Only the trusted session manager may mutate the instance auth overlay.
+      return [false, state];
     case "provider_session.updated":
       // The session manager persists process-wide status once for every
       // attached app thread before broadcasting the adapter event.
@@ -745,6 +748,7 @@ export const layer: Layer.Layer<
         const finalizedRun: OrchestrationV2Run = {
           ...runWithoutDelegatedCompletion,
           status: persistedStatus,
+          ...(input.terminal.status === "completed" ? { queuePosition: null } : {}),
           completedAt: input.terminal.status === "completed" ? null : completedAt,
         };
         const finalizedRootNode: OrchestrationV2ExecutionNode = {

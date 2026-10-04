@@ -9,6 +9,7 @@ import {
 } from "../providerCitationMarkdown.ts";
 import { materializeGeneratedImageAttachment } from "../../generatedImageAttachments.ts";
 import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
+import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
 import { historyResponseItems } from "../ContextHandoffBudget.ts";
@@ -347,6 +348,32 @@ function toProtocolError(detail: string, payload?: unknown): ProviderAdapterProt
     detail,
     ...(payload === undefined ? {} : { payload }),
   });
+}
+
+/** Diagnostics retain the rejection cause without logging native paths or payloads. */
+function generatedImageImportFailureReason(cause: unknown): string {
+  const knownReasons: Readonly<Record<string, string>> = {
+    "Generated image is not a regular file.": "not_regular_file",
+    "Generated image is empty or exceeds the chat image size limit.": "invalid_size",
+    "Generated image escaped its authorized provider-thread directory.": "outside_authorized_root",
+    "Generated image is outside its authorized provider-thread directory.":
+      "outside_authorized_root",
+    "Generated image identity changed while it was being opened.": "identity_changed",
+    "Generated image changed while it was being read.": "content_changed",
+    "Generated image has an unsupported raster format.": "unsupported_format",
+    "Persisted generated image extension does not match its bytes.": "persisted_format_mismatch",
+    "Generated-image replay resolved to different persisted bytes.": "replay_bytes_mismatch",
+    "Generated-image replay resolved to different persisted bytes or format.":
+      "replay_bytes_mismatch",
+    "Concurrent generated-image replays produced different bytes.": "concurrent_bytes_mismatch",
+  };
+  const knownReason = cause instanceof Error ? knownReasons[cause.message] : undefined;
+  if (knownReason !== undefined) return knownReason;
+  const code = typeof cause === "object" && cause !== null ? Reflect.get(cause, "code") : undefined;
+  return typeof code === "string" &&
+    ["ENOENT", "EACCES", "EPERM", "ELOOP", "ENOTDIR", "EIO", "ENOSPC", "EROFS"].includes(code)
+    ? code
+    : "unknown_import_failure";
 }
 
 function normalizeCodexCause(error: unknown): unknown {
@@ -752,7 +779,17 @@ export function buildCodexTurnStartParams(input: {
                 ...(input.deviceToolsAvailable ? (["device"] as const) : []),
               ]),
           )
-        : { scient_awareness: { kind: "application" as const, value: buildScientAwareness() } };
+        : {
+            t3_code_runtime: {
+              kind: "application" as const,
+              value: buildRuntimeInstructions({
+                harness: "Codex",
+                model: input.modelSelection.model,
+                reasoningEffort: effort ?? "medium",
+              }),
+            },
+            scient_awareness: { kind: "application" as const, value: buildScientAwareness() },
+          };
     const collaborationMode: CodexSchema.ClientRequest__CollaborationMode | undefined =
       input.runtimePolicy.interactionMode !== "plan" && developerInstructions === undefined
         ? undefined
@@ -1235,7 +1272,7 @@ export function codexThreadRuntimeParams(input: {
         ? {}
         : {
             mcp_servers: {
-              "t3-code": {
+              scient: {
                 url: mcpSession.endpoint,
                 http_headers: {
                   Authorization: mcpSession.authorizationHeader,
@@ -4171,28 +4208,36 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 ),
               );
               const nativeThreadId = context.providerThread.nativeThreadRef?.nativeId;
+              const importFailures: Array<{ readonly candidate: number; readonly reason: string }> =
+                [];
+              let importFailureReason = "candidate_import_failed";
               const imported = yield* Effect.gen(function* () {
-                if (image.failure != null || image.status === "failed")
+                if (image.failure != null || image.status === "failed") {
+                  importFailureReason = "provider_generation_failed";
                   return yield* toProtocolError("Codex image generation failed.");
+                }
                 if (
                   !nativeThreadId ||
                   /[\\/]/u.test(nativeThreadId) ||
                   path.basename(nativeThreadId) !== nativeThreadId ||
                   nativeThreadId === "." ||
                   nativeThreadId === ".."
-                )
+                ) {
+                  importFailureReason = "invalid_native_thread_identity";
                   return yield* toProtocolError(
                     "Generated image has no valid provider-thread identity.",
                   );
+                }
                 const roots = homes.map((home) =>
                   path.join(home, "generated_images", nativeThreadId),
                 );
                 const candidates = image.savedPath
                   ? [image.savedPath]
                   : roots.map((root) => path.join(root, `${image.id}.png`));
+                if (candidates.length === 0) importFailureReason = "no_authorized_image_candidate";
                 return yield* Effect.tryPromise({
                   try: async () => {
-                    for (const sourcePath of candidates) {
+                    for (const [candidate, sourcePath] of candidates.entries()) {
                       try {
                         return await materializeGeneratedImageAttachment({
                           threadId: context.projectionThreadId,
@@ -4202,15 +4247,30 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                           attachmentsDir: serverConfig.attachmentsDir,
                           allowDurableFallbackWhenSourceUnavailable: true,
                         });
-                      } catch {
-                        /* Another authorized home may hold the image. */
+                      } catch (cause) {
+                        importFailures.push({
+                          candidate,
+                          reason: generatedImageImportFailureReason(cause),
+                        });
+                        // Another authorized home may hold the image.
                       }
                     }
                     throw new Error("Generated image could not be imported.");
                   },
-                  catch: () => toProtocolError("Generated image could not be imported."),
+                  catch: () =>
+                    toProtocolError("Generated image could not be imported.", {
+                      failures: importFailures,
+                    }),
                 });
               }).pipe(Effect.result);
+              if (imported._tag === "Failure") {
+                yield* Effect.logWarning("orchestration-v2.codex.generated-image-import-failed", {
+                  instanceId: adapterOptions.instanceId,
+                  threadId: context.projectionThreadId,
+                  reason: importFailureReason,
+                  failures: importFailures,
+                });
+              }
               const text =
                 imported._tag === "Success"
                   ? ""

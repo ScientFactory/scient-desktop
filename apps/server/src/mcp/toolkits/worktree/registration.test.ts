@@ -8,6 +8,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { ProviderSessionManagerV2 } from "../../../orchestration-v2/ProviderSessionManager.ts";
 import * as Schema from "effect/Schema";
 import { HttpBody, HttpClient, HttpRouter } from "effect/unstable/http";
 
@@ -30,6 +31,9 @@ import { DeviceToolkit } from "../device/tools.ts";
 import { scientOperationCatalog } from "../../ScientOperationCatalog.ts";
 
 const StubServicesLive = Layer.mergeAll(
+  Layer.mock(ProviderSessionManagerV2)({
+    resolveMcpInvocationPolicy: () => Effect.die("Tool listing cannot grant mutation authority."),
+  }),
   Layer.mock(WorkspaceBindingResolver.WorkspaceBindingResolver)({
     // This fixture has no verified Scient project workspace. Host tools keep
     // their own invocation checks rather than obtaining a workspace grant.

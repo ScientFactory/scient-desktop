@@ -1077,6 +1077,78 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows).toEqual([{ kind: "fork-marker", id: "conversation-fork-marker" }]);
   });
 
+  it("renders one Scient incoming fork boundary while retaining outgoing and inherited fork history", () => {
+    const threadId = ThreadId.make("fork-child");
+    const sourceThreadId = ThreadId.make("fork-parent");
+    const event = (
+      id: string,
+      targetThreadId: ThreadId,
+      visibility: "local" | "inherited",
+    ): TimelineEntry => {
+      const itemId = TurnItemId.make(id);
+      return {
+        kind: "event",
+        id,
+        createdAt: "2026-01-01T00:00:00Z",
+        projectedItem: {
+          position: 0,
+          visibility,
+          sourceThreadId: visibility === "local" ? threadId : sourceThreadId,
+          sourceItemId: itemId,
+          item: {
+            id: itemId,
+            type: "fork",
+            threadId,
+            runId: null,
+            nodeId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 0,
+            status: "completed",
+            title: null,
+            startedAt: null,
+            completedAt: null,
+            updatedAt: DateTime.makeUnsafe("2026-01-01T00:00:00Z"),
+            source: { type: "run", threadId: sourceThreadId, runId: RunId.make("source-run") },
+            targetThreadId,
+          },
+        },
+      };
+    };
+    const entries = [
+      event("incoming", threadId, "local"),
+      event("outgoing", ThreadId.make("next-child"), "local"),
+      event("ancestor", threadId, "inherited"),
+    ];
+    const common = {
+      timelineEntries: entries,
+      isWorking: false,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    };
+    const rows = deriveMessagesTimelineRows({
+      ...common,
+      hasForkBaseline: true,
+      forkBaselineAssistantMessageId: null,
+    });
+    expect(rows.filter((row) => row.kind === "fork-marker")).toHaveLength(1);
+    expect(rows.filter((row) => row.kind === "event").map((row) => row.id)).toEqual([
+      "outgoing",
+      "ancestor",
+    ]);
+    const unloadedBoundary = deriveMessagesTimelineRows({
+      ...common,
+      hasForkBaseline: true,
+      forkBaselineAssistantMessageId: MessageId.make("not-loaded-yet"),
+    });
+    expect(unloadedBoundary.filter((row) => row.kind === "event").map((row) => row.id)).toEqual([
+      "incoming",
+      "outgoing",
+      "ancestor",
+    ]);
+  });
+
   it("allows a durable user message to be selected as a fork point", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [

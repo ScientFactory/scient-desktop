@@ -13,6 +13,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderThreadId,
   type ProviderSessionId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -30,6 +31,8 @@ import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { HttpServer } from "effect/unstable/http";
 
+import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
+import { makeProviderRegistryMock } from "../provider/testUtils/providerRegistryMock.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -457,6 +460,11 @@ function makeTestLayer(input: {
       Layer.provide(
         Layer.mergeAll(
           registryLayer,
+          Layer.succeed(ProviderRegistry.ProviderRegistry, {
+            ...makeProviderRegistryMock(),
+            setProviderAuthenticationFailure: () =>
+              Effect.die("Unexpected authentication invalidation in scripted manager test."),
+          }),
           configuredEventSinkLayer,
           IdAllocator.layer,
           providerEventIngestorTestLayer,
@@ -3015,6 +3023,52 @@ it.effect(
       });
 
       yield* effect.pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1000 })));
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 reloads a different app-owned row for the same native thread",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const sink = yield* EventSink.EventSinkV2;
+        const allocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("same-native-owned-row");
+        const providerSessionId = yield* allocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* sink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator: allocator, threadId, now })],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const first = makeProviderThread({
+          idAllocator: allocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+        const second = { ...first, id: ProviderThreadId.make("next-app-owned-row") };
+        for (const providerThread of [first, first, second, second, first]) {
+          const resumed = yield* runtime.resumeThread({
+            providerThread,
+            threadId,
+            modelSelection,
+            runtimePolicy,
+          });
+          assert.equal(resumed.id, providerThread.id);
+        }
+        assert.equal((yield* Ref.get(state)).resumeCount, 3);
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+      }).pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000 })));
     }),
 );
 

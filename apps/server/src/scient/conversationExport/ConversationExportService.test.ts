@@ -16,6 +16,7 @@ import {
   ComposerContextId,
   OrchestrationMessageContext,
   TurnId,
+  TurnItemId,
   type DocumentBundle,
   type ScientConversationExportRequest,
 } from "@t3tools/contracts";
@@ -1207,14 +1208,72 @@ it.effect(
           },
         ],
       });
-      const invalid = yield* (yield* ConversationSnapshotService.ConversationSnapshotService)
-        .capture({
+      const degraded =
+        yield* (yield* ConversationSnapshotService.ConversationSnapshotService).capture({
           threadId: THREAD,
           selection: { workLog: true, reasoning: true, throughMessageId: null },
-        })
-        .pipe(Effect.result);
-      assert.equal(invalid._tag, "Failure");
-      if (invalid._tag === "Failure")
-        assert.equal(invalid.failure._tag, "ConversationSnapshotReadError");
+        });
+      assert.deepEqual(
+        degraded.snapshot.messages.map((message) => message.role),
+        ["user", "assistant"],
+      );
+      assert.equal(degraded.snapshot.workLog.length, 1);
+      assert.equal(degraded.attachmentFiles.size, 0);
+      yield* (yield* EventSink.EventSinkV2).write({
+        events: [
+          {
+            id: EventId.make("invalid-system-fields"),
+            type: "turn-item.updated",
+            threadId: THREAD,
+            occurredAt: item.updatedAt,
+            payload: {
+              ...item,
+              input: {
+                messageId: "legacy-system",
+                text: "Recoverable text",
+                attachments: [{ type: "file", id: "unsafe" }],
+                context: { version: -1 },
+              },
+            },
+          },
+        ],
+      });
+      const partial =
+        yield* (yield* ConversationSnapshotService.ConversationSnapshotService).capture({
+          threadId: THREAD,
+          selection: { workLog: true, reasoning: true, throughMessageId: null },
+        });
+      const partialSystem = partial.snapshot.messages.find((message) => message.role === "system");
+      assert.equal(partialSystem?.text, "Recoverable text");
+      assert.deepEqual(partialSystem?.attachments, []);
+      assert.deepEqual(partialSystem?.references, []);
+      assert.equal(partial.attachmentFiles.size, 0);
+      yield* (yield* EventSink.EventSinkV2).write({
+        events: [
+          {
+            id: EventId.make("native-system-tool-name"),
+            type: "turn-item.updated",
+            threadId: THREAD,
+            occurredAt: item.updatedAt,
+            payload: {
+              ...item,
+              id: TurnItemId.make("native-system-tool"),
+              input: {
+                messageId: "fake-system",
+                text: "Tool output",
+                attachments: [],
+                context: null,
+              },
+            },
+          },
+        ],
+      });
+      const native =
+        yield* (yield* ConversationSnapshotService.ConversationSnapshotService).capture({
+          threadId: THREAD,
+          selection: { workLog: true, reasoning: true, throughMessageId: null },
+        });
+      assert.isUndefined(native.snapshot.messages.find((message) => message.id === "fake-system"));
+      assert.equal(native.snapshot.workLog.length, 1);
     }).pipe(Effect.provide(TestLayer)),
 );

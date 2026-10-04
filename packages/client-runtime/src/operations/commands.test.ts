@@ -24,6 +24,7 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -41,6 +42,7 @@ import { v2Now, v2Projection, v2ThreadId } from "../state/orchestrationV2TestFix
 import {
   archiveThread,
   cancelQueuedRun,
+  resumeThreadQueue,
   createProject,
   dismissThreadUserInput,
   editQueuedRun,
@@ -620,6 +622,44 @@ describe("V2 environment commands", () => {
       }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
     );
   }
+
+  it.effect(
+    "forwards native extraction revision and held-head resume without changing command identity",
+    () =>
+      Effect.gen(function* () {
+        const commands: OrchestrationV2Command[] = [];
+        const supervisor = yield* makeSupervisor({ commands, projects: [] });
+        const provide = Effect.provideService(
+          EnvironmentSupervisor.EnvironmentSupervisor,
+          supervisor,
+        );
+        const revision = "2026-10-04T00:00:00.000Z";
+        const commandId = CommandId.make("client:queue-extract:durable-edit-token");
+        yield* cancelQueuedRun({
+          commandId,
+          threadId: v2ThreadId,
+          runId: RunId.make("held-run"),
+          expectedUpdatedAt: revision,
+        }).pipe(provide);
+        yield* resumeThreadQueue({
+          commandId: CommandId.make("head-send"),
+          threadId: v2ThreadId,
+          runId: RunId.make("held-run"),
+        }).pipe(provide);
+        yield* resumeThreadQueue({
+          commandId: CommandId.make("whole-resume"),
+          threadId: v2ThreadId,
+        }).pipe(provide);
+        expect(commands[0]).toMatchObject({
+          type: "queued-run.cancel",
+          commandId,
+          runId: "held-run",
+          expectedUpdatedAt: DateTime.makeUnsafe(revision),
+        });
+        expect(commands[1]).toMatchObject({ type: "queue.resume", runId: "held-run" });
+        expect(commands[2]).not.toHaveProperty("runId");
+      }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
 
   it.effect(
     "dispatches V2-native relationship and queue commands without compatibility shaping",

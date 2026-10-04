@@ -31,6 +31,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
+import * as ProjectCloneTracker from "./ProjectCloneTracker.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 export interface ProjectCreateInput extends ProjectCreatePayload {
@@ -153,6 +154,7 @@ export const make = Effect.gen(function* () {
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+  const clones = yield* ProjectCloneTracker.ProjectCloneTracker;
   // Commands for one project run in order. Commands that claim a workspace root
   // also hold that root, so two projects cannot both claim it.
   const projectLocks = yield* makeKeyedSerialExecutor<ProjectId>();
@@ -499,7 +501,12 @@ export const make = Effect.gen(function* () {
       if (existing.value.deletedAt === null) {
         yield* deleteChildThreads(input);
       }
-      yield* commit({ type: "project.delete", commandId: input.commandId, projectId });
+      // Once deletion commits, caller cancellation must not strand the clone.
+      // commit releases its project lock before discard acquires the tracker lock.
+      yield* Effect.gen(function* () {
+        yield* commit({ type: "project.delete", commandId: input.commandId, projectId });
+        yield* clones.discard(projectId);
+      }).pipe(Effect.uninterruptible);
       yield* projectEnrichment.invalidate([existing.value.workspaceRoot]);
       return yield* readCommitted(projectId);
     },

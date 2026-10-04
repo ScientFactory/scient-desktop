@@ -1991,6 +1991,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly subtype?: string;
     readonly isError?: boolean;
     readonly errors?: ReadonlyArray<string>;
+    readonly userMessageUuid?: string;
     readonly apiErrorStatus?: number;
     // null omits the field, as the CLI does on a zero-turn result.
     readonly terminalReason?: SDKResultMessage["terminal_reason"] | null;
@@ -2017,6 +2018,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       session_id: WAKE_NATIVE_SESSION,
       ...(input.origin === undefined ? {} : { origin: input.origin }),
       ...(input.errors === undefined ? {} : { errors: input.errors }),
+      ...(input.userMessageUuid === undefined ? {} : { user_message_uuid: input.userMessageUuid }),
       ...(input.apiErrorStatus === undefined ? {} : { api_error_status: input.apiErrorStatus }),
       ...(input.terminalReason === null
         ? {}
@@ -2198,6 +2200,150 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       };
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
+
+  it.effect.each([
+    "foreign-session",
+    "child-replay",
+    "synthetic-model",
+    "synthetic-id",
+    "api-error",
+    "owned-root",
+  ] as const)("keeps Claude's inclusive fork cursor owned by the root query: %s", (kind) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* h.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: h.threadId,
+            providerThread: h.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-cursor-${kind}`),
+            text: "Answer with native root ownership.",
+            attachments: [],
+            providerTurnOrdinal: 1,
+          }),
+        );
+        const rootUuid = "00000000-0000-4000-8000-000000009001";
+        const nextUuid = "00000000-0000-4000-8000-000000009002";
+        yield* h.offerAndWait(makeAssistantTextFrame({ uuid: rootUuid, text: "Root answer." }));
+        if (kind === "foreign-session") {
+          for (const event of [
+            { type: "message_start", message: { id: "foreign-thinking" } },
+            {
+              type: "content_block_start",
+              index: 0,
+              content_block: { type: "thinking", thinking: "Foreign thought." },
+            },
+            { type: "content_block_stop", index: 0 },
+          ]) {
+            yield* h.offerAndWait(
+              claudeSdkFrame({
+                type: "stream_event",
+                event,
+                parent_tool_use_id: null,
+                session_id: "foreign-native-session",
+                uuid: nextUuid,
+              }),
+            );
+          }
+        }
+        const candidate = makeAssistantTextFrame({
+          uuid: kind === "synthetic-id" ? "turn:synthetic-message" : nextUuid,
+          text: "Candidate answer.",
+        });
+        if (candidate.type !== "assistant") assert.fail("Expected native assistant fixture.");
+        yield* h.offerAndWait(
+          claudeSdkFrame({
+            ...candidate,
+            session_id: kind === "foreign-session" ? "foreign-native-session" : WAKE_NATIVE_SESSION,
+            parent_tool_use_id: kind === "child-replay" ? "cursor-child-tool" : null,
+            message: {
+              ...candidate.message,
+              model: kind === "synthetic-model" ? "<synthetic>" : candidate.message.model,
+            },
+            ...(kind === "api-error" ? { error: "server_error" } : {}),
+          }),
+        );
+        if (kind === "child-replay") {
+          // Registration releases the held child frame through the real replay
+          // route after the root answer. It must never move the root cursor.
+          yield* h.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_started",
+              task_id: "cursor-child-task",
+              tool_use_id: "cursor-child-tool",
+              description: "Child answer",
+              subagent_type: "general-purpose",
+              is_backgrounded: true,
+              task_type: "local_agent",
+              prompt: "Inspect independently.",
+              uuid: "00000000-0000-4000-8000-000000009003",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        }
+        yield* h.offerAndWait(
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000009004",
+            result: "Done.",
+          }),
+        );
+        yield* Queue.take(h.terminalReceipts);
+        const terminalTurn = h.events.findLast(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+        );
+        if (terminalTurn?.type !== "provider_turn.updated")
+          assert.fail("Missing persisted native turn artifact.");
+        assert.equal(
+          terminalTurn.providerTurn.nativeTurnRef?.nativeId,
+          kind === "owned-root" ? nextUuid : rootUuid,
+        );
+        assert.equal(terminalTurn.providerTurn.nativeTurnRef?.strength, "weak");
+        const rootItems = h.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.threadId === h.threadId
+            ? [event.turnItem]
+            : [],
+        );
+        assert.ok(rootItems.some((item) => item.nativeItemRef?.nativeId === rootUuid));
+        if (kind === "foreign-session") {
+          assert.equal(
+            rootItems.some((item) => item.type === "reasoning"),
+            false,
+          );
+        }
+        if (kind === "foreign-session" || kind === "child-replay") {
+          assert.equal(
+            rootItems.some((item) => item.nativeItemRef?.nativeId === nextUuid),
+            false,
+          );
+          assert.equal(
+            h.events.some(
+              (event) =>
+                event.type === "message.updated" &&
+                event.message.threadId === h.threadId &&
+                event.message.text === "Candidate answer.",
+            ),
+            false,
+          );
+        }
+        if (kind === "child-replay") {
+          yield* awaitUntil(
+            () =>
+              h.events.some(
+                (event) =>
+                  event.type === "message.updated" &&
+                  event.message.threadId !== h.threadId &&
+                  event.message.text === "Candidate answer.",
+              ),
+            "owned child replay projection",
+          );
+        }
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
 
   it.effect.each(["completed", "interrupted"] as const)(
     "projects Claude thinking blocks when %s",
@@ -2500,6 +2646,116 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
       );
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect.each([
+    "OAuth access token has been revoked",
+    "OAuth session expired and could not be refreshed",
+  ])("retires the exact native query after authoritative auth failure: %s", (error) =>
+    Effect.gen(function* () {
+      const closed = yield* Deferred.make<void>();
+      let closeCount = 0;
+      const harness = yield* makeWakeHarnessWithOptions({
+        close: () =>
+          Effect.sync(() => {
+            closeCount += 1;
+          }).pipe(Effect.andThen(Deferred.succeed(closed, undefined))),
+      });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("auth-revoked"),
+          text: "Continue",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000608",
+          result: "",
+          subtype: "error_during_execution",
+          isError: true,
+          errors: [error],
+          terminalReason: "api_error",
+        }),
+      );
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      yield* Deferred.await(closed);
+      yield* awaitUntil(
+        () =>
+          harness.events.some(
+            (event) =>
+              event.type === "provider_session.updated" &&
+              event.providerSession.status === "stopped",
+          ),
+        "retired native session",
+      );
+      const controls = harness.events.filter(
+        (event) => event.type === "authentication.invalidated",
+      );
+      assert.equal(controls.length, 1);
+      assert.equal(harness.terminalEvents().length, 1);
+      const terminalIndex = harness.events.indexOf(terminal);
+      assert.isBelow(
+        terminalIndex,
+        harness.events.findIndex((event) => event.type === "authentication.invalidated"),
+      );
+      assert.isBelow(
+        harness.events.findIndex((event) => event.type === "authentication.invalidated"),
+        harness.events.findIndex(
+          (event) =>
+            event.type === "provider_session.updated" && event.providerSession.status === "stopped",
+        ),
+      );
+      assert.equal(closeCount, 1);
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect.each([
+    { subtype: "error_during_execution", error: "HTTP 401 Unauthorized" },
+    { subtype: "success", error: "OAuth access token has been revoked" },
+  ])(
+    "does not invalidate account state for non-authoritative result $subtype/$error",
+    ({ subtype, error }) =>
+      Effect.gen(function* () {
+        let closeCount = 0;
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: () =>
+            Effect.sync(() => {
+              closeCount += 1;
+            }),
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("auth-nonauthoritative"),
+            text: "Continue",
+            attachments: [],
+          }),
+        );
+        const submittedUuid = harness.offeredMessages.at(-1)?.uuid;
+        if (submittedUuid === undefined) return yield* Effect.die("Missing native prompt identity");
+        yield* harness.offerAndWait(
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000609",
+            result: error,
+            subtype,
+            isError: subtype !== "success",
+            errors: [error],
+            userMessageUuid: submittedUuid,
+          }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        assert.equal(harness.terminalEvents().length, 1);
+        assert.isFalse(harness.events.some((event) => event.type === "authentication.invalidated"));
+        assert.equal(closeCount, 0);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
   it.effect("names an expired Claude login instead of the terminal API error", () =>

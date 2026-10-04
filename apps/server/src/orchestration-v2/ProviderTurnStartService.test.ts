@@ -2,6 +2,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  CommandId,
   MessageId,
   NodeId,
   ProviderSessionId,
@@ -36,6 +37,17 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as EffectWorker from "./EffectWorker.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
+import * as ProviderTurnControl from "./ProviderTurnControlService.ts";
+import * as CheckpointRollback from "./CheckpointRollbackService.ts";
+import * as RunFinalization from "./RunFinalizationService.ts";
+import * as RuntimeRequest from "./RuntimeRequestService.ts";
+import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
+import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as ResourceCleanup from "./ResourceCleanupService.ts";
+import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 const isDomainEvent = Schema.is(OrchestrationV2DomainEvent);
 
@@ -497,6 +509,9 @@ function makeLocalCommandHarness(input: {
     ),
   );
   return {
+    layer,
+    threadId,
+    runId,
     open,
     writeIfRunCurrent,
     startRootRun,
@@ -802,3 +817,77 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
       }),
   );
 }
+
+effectIt.effect("a stale outbox start cannot execute the newer retry attempt", () =>
+  Effect.gen(function* () {
+    const h = makeLocalCommandHarness({
+      text: "Retained queued retry",
+      openFailure: new Error("Controlled native open failure"),
+    });
+    const executorLayer = EffectWorker.executorLayer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          h.layer,
+          Layer.mock(ResourceCleanup.ResourceCleanupService)({}),
+          Layer.mock(CheckpointRollback.CheckpointRollbackServiceV2)({}),
+          Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
+          Layer.mock(ProviderTurnControl.ProviderTurnControlServiceV2)({}),
+          Layer.mock(RunFinalization.RunFinalizationService)({}),
+          Layer.mock(RuntimeRequest.RuntimeRequestServiceV2)({}),
+          Layer.mock(ThreadTitleRegeneration.ThreadTitleRegenerationService)({}),
+          Layer.mock(ThreadManagement.ThreadManagementService)({}),
+          Layer.mock(ConversationForkService)({}),
+          ServerSettings.layerTest(),
+        ),
+      ),
+    );
+    const timestamp = DateTime.formatIso(yield* DateTime.now);
+    const stale: EffectOutbox.OrchestrationEffectV2 = {
+      id: "effect:queued:stale-attempt",
+      commandId: CommandId.make("command:queued:stale-attempt"),
+      threadId: h.threadId,
+      request: {
+        type: "provider-turn.start",
+        runId: h.runId,
+        expectedAttemptId: RunAttemptId.make("failed-predecessor-attempt"),
+      },
+      status: "running",
+      attemptCount: 1,
+      availableAt: timestamp,
+      leaseOwner: "fixture-worker",
+      leaseExpiresAt: timestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      completedAt: null,
+      lastError: null,
+    };
+    yield* Effect.gen(function* () {
+      const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+      yield* executor.execute(stale, { willRetry: false });
+      expect(h.open).not.toHaveBeenCalled();
+      expect(h.tryHandlePromptCommand).not.toHaveBeenCalled();
+      expect(h.writeIfRunCurrent).not.toHaveBeenCalled();
+      expect(h.startRootRun).not.toHaveBeenCalled();
+      expect(h.projection().runs.at(-1)).toMatchObject({
+        status: "starting",
+        activeAttemptId: h.attemptId,
+      });
+      // The matching new attempt still follows the real startup path and owns
+      // its own failure receipt; the fence does not block legitimate Retry.
+      yield* executor.execute(
+        {
+          ...stale,
+          id: "effect:queued:current-attempt",
+          request: { type: "provider-turn.start", runId: h.runId, expectedAttemptId: h.attemptId },
+        },
+        { willRetry: false },
+      );
+      expect(h.open).toHaveBeenCalledOnce();
+      expect(h.writeIfRunCurrent).toHaveBeenCalled();
+      expect(h.projection().runs.at(-1)).toMatchObject({
+        status: "failed",
+        activeAttemptId: h.attemptId,
+      });
+    }).pipe(Effect.provide(executorLayer));
+  }),
+);

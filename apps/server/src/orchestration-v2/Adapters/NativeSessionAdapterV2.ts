@@ -22,6 +22,7 @@ import {
 } from "../SubagentProjection.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -1058,10 +1059,38 @@ export function makeNativeSessionAdapterV2(
             ),
           respondToRuntimeRequest: (response) =>
             Effect.gen(function* () {
-              const pending = requests.get(response.requestId);
-              if (!pending || pending.request.status !== "pending")
-                return yield* protocolError("The native question is no longer pending.");
-              yield* native.respond(pending.nativeId, response);
+              const { pending, previous, submitted } = yield* eventPermit.withPermit(
+                Effect.gen(function* () {
+                  const pending = requests.get(response.requestId);
+                  if (!pending || pending.request.status !== "pending")
+                    return yield* protocolError("The native question is no longer pending.");
+                  const previous = pending.request;
+                  const submitted = {
+                    ...previous,
+                    ...(response.decision === undefined ? {} : { decision: response.decision }),
+                    ...(response.answers === undefined ? {} : { answers: response.answers }),
+                  };
+                  // A native response can publish resolution and the terminal
+                  // receipt synchronously. Its first resolution must already
+                  // carry the submitted values, before ingestion can detach.
+                  pending.request = submitted;
+                  return { pending, previous, submitted };
+                }),
+              );
+              // Native callbacks also acquire eventPermit. Never retain it
+              // across the external call. Restore an unobserved submission on
+              // failure, but leave any native settlement or cancellation intact.
+              yield* native.respond(pending.nativeId, response).pipe(
+                Effect.onExit((exit) =>
+                  Exit.isFailure(exit)
+                    ? eventPermit.withPermit(
+                        Effect.sync(() => {
+                          if (pending.request === submitted) pending.request = previous;
+                        }),
+                      )
+                    : Effect.void,
+                ),
+              );
               yield* eventPermit.withPermit(
                 Effect.gen(function* () {
                   if (

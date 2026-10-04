@@ -39,6 +39,8 @@ export class OrchestrationEffectExecutionError extends Schema.TaggedError<Orches
   },
 ) {}
 
+const isProviderRunInterruptError = Schema.is(ProviderTurnControlService.ProviderRunInterruptError);
+
 /**
  * Pure interrupt races with hard process teardown or a dead session produce
  * "not active" protocol errors. Retrying those only delays recovery.
@@ -161,7 +163,14 @@ export const executorLayer: Layer.Layer<
               );
           case "provider-turn.start":
             return providerTurnStart
-              .start({ threadId: effect.threadId, runId: effect.request.runId, willRetry })
+              .start({
+                threadId: effect.threadId,
+                runId: effect.request.runId,
+                willRetry,
+                ...(effect.request.expectedAttemptId === undefined
+                  ? {}
+                  : { expectedAttemptId: effect.request.expectedAttemptId }),
+              })
               .pipe(
                 Effect.mapError(
                   (cause) =>
@@ -172,6 +181,40 @@ export const executorLayer: Layer.Layer<
                     }),
                 ),
               );
+          case "provider-run.interrupt": {
+            const request = effect.request;
+            return providerTurnControl
+              .interruptPendingStart({
+                threadId: effect.threadId,
+                runId: request.runId,
+                expectedAttemptId: request.expectedAttemptId,
+                providerSessionId: request.providerSessionId,
+                providerThreadId: request.providerThreadId,
+              })
+              .pipe(
+                Effect.flatMap((interrupted) =>
+                  Option.isNone(interrupted)
+                    ? Effect.void
+                    : threads
+                        .dispatch({
+                          type: "thread.background-work.settle",
+                          commandId: CommandId.make(`${effect.commandId}:background-work-settled`),
+                          threadId: effect.threadId,
+                          providerThreadId: request.providerThreadId,
+                          providerTurnId: interrupted.value,
+                        })
+                        .pipe(Effect.asVoid),
+                ),
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: effect.request.type,
+                      cause,
+                    }),
+                ),
+              );
+          }
           case "provider-turn.interrupt":
             return providerTurnControl
               .interrupt({
@@ -693,6 +736,12 @@ export const layerWithOptions = (
             }).pipe(Effect.onError((cause) => recoverPostSuccessSettlement(effect, cause)));
           }
 
+          const failure = Cause.findErrorOption(exit.cause);
+          const awaitingNativeReceipt =
+            effect.request.type === "provider-run.interrupt" &&
+            Option.isSome(failure) &&
+            isProviderRunInterruptError(failure.value.cause) &&
+            failure.value.cause.reason === "receipt_pending";
           const error = Cause.pretty(exit.cause);
           const nonRetryable = isNonRetryableProviderTurnControlFailure(effect.request.type, error);
           yield* Effect.logWarning("Orchestration effect execution failed", {
@@ -708,7 +757,7 @@ export const layerWithOptions = (
             ? yield* outbox
                 .succeed({ effectId: effect.id, workerId })
                 .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
-            : effect.attemptCount >= maxAttempts
+            : effect.attemptCount >= maxAttempts && !awaitingNativeReceipt
               ? yield* outbox
                   .fail({ effectId: effect.id, workerId, error })
                   .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
@@ -844,7 +893,3 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
   );
 
 export const runDaemon = runDaemonWithOptions();
-
-const daemonLayer: Layer.Layer<never, never, OrchestrationEffectWorkerV2> = Layer.effectDiscard(
-  runDaemon.pipe(Effect.forkScoped),
-);

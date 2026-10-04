@@ -49,6 +49,7 @@ describe("project thread title", () => {
     });
 
     expect(input.titleSeed).toBe("Image: photo.png");
+    expect(input.creationSource).toBe("mobile");
     expect(input.bootstrap.createThread.title).toBe(input.titleSeed);
     expect(input.message.attachments).toEqual(uploadedAttachments);
   });

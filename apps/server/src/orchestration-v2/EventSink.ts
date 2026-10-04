@@ -6,6 +6,7 @@ import {
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
   OrchestrationV2TurnItemJson,
+  OrchestrationV2ConversationMessageJson,
   ProviderThreadId,
   RunAttemptId,
   RunId,
@@ -77,12 +78,16 @@ export interface EventSinkV2Shape {
     readonly guardPendingUserInputCancellations?: boolean;
     /** Internal history position/group repair; retain the payload current at commit. */
     readonly guardTurnItemPositionRepairs?: boolean;
+    readonly guardLegacyCitationRepairs?: boolean;
+    readonly guardLegacyQuestionInsertions?: boolean;
     readonly commandId?: CommandId;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, EventSinkV2Error>;
   readonly writeWithEffects: (input: {
     readonly guardPendingUserInputCancellations?: boolean;
     readonly guardTurnItemPositionRepairs?: boolean;
+    readonly guardLegacyCitationRepairs?: boolean;
+    readonly guardLegacyQuestionInsertions?: boolean;
     readonly commandId?: CommandId;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     readonly effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
@@ -258,7 +263,7 @@ const baseLayer: Layer.Layer<
             staleNodes.add(event.payload.nodeId);
           }
         }
-        return events.filter((event) => {
+        const cancellationGuarded = events.filter((event) => {
           switch (event.type) {
             case "runtime-request.updated":
               return event.payload.status !== "cancelled" || !staleRequests.has(event.payload.id);
@@ -274,6 +279,49 @@ const baseLayer: Layer.Layer<
               return true;
           }
         });
+        // Native callback settlement reports the original question, without the
+        // answer just committed by the application. Only lifecycle ingestion
+        // opts into this guard; explicit canonical edits do not.
+        return yield* Effect.forEach(
+          cancellationGuarded,
+          (event) =>
+            Effect.gen(function* () {
+              if (
+                event.type !== "turn-item.updated" ||
+                event.payload.type !== "user_input_request" ||
+                event.payload.status !== "completed" ||
+                event.payload.questionAnswer !== undefined ||
+                event.payload.nativeItemRef === null
+              )
+                return event;
+              const incoming = event.payload;
+              const incomingRef = incoming.nativeItemRef;
+              if (incomingRef === null) return event;
+              const [row] = yield* sql<{ payload_json: string }>`
+            SELECT payload_json FROM orchestration_v2_projection_turn_items
+            WHERE thread_id = ${event.threadId} AND turn_item_id = ${incoming.id}`;
+              if (row === undefined) return event;
+              const current = yield* decodePositionedItem(row.payload_json);
+              if (
+                current.type !== "user_input_request" ||
+                current.status !== "completed" ||
+                current.questionAnswer === undefined ||
+                current.responseMode === "message" ||
+                current.requestId !== incoming.requestId ||
+                current.threadId !== incoming.threadId ||
+                current.runId !== incoming.runId ||
+                current.nodeId !== incoming.nodeId ||
+                current.providerThreadId !== incoming.providerThreadId ||
+                current.providerTurnId !== incoming.providerTurnId ||
+                current.nativeItemRef?.driver !== incomingRef.driver ||
+                current.nativeItemRef?.nativeId !== incomingRef.nativeId ||
+                current.nativeItemRef?.strength !== incomingRef.strength
+              )
+                return event;
+              return { ...event, payload: { ...incoming, questionAnswer: current.questionAnswer } };
+            }),
+          { concurrency: 1 },
+        );
       });
 
     const decodePositionedItem = Schema.decodeUnknownEffect(
@@ -327,6 +375,153 @@ const baseLayer: Layer.Layer<
           });
         }
         return repaired;
+      },
+    );
+
+    const decodeHistoricalMessage = Schema.decodeUnknownEffect(
+      Schema.fromJsonString(OrchestrationV2ConversationMessageJson),
+    );
+    const guardLegacyCitationRepairs = Effect.fn("EventSink.guardLegacyCitationRepairs")(function* (
+      events: ReadonlyArray<OrchestrationV2DomainEvent>,
+    ) {
+      const repaired: OrchestrationV2DomainEvent[] = [];
+      for (const event of events) {
+        if (!event.id.startsWith("migration:v1:history:citation:")) {
+          repaired.push(event);
+          continue;
+        }
+        const messageId =
+          event.type === "message.updated"
+            ? event.payload.id
+            : event.type === "turn-item.updated" && event.payload.type === "assistant_message"
+              ? event.payload.messageId
+              : undefined;
+        if (messageId === undefined) continue;
+        const [source] = yield* sql<{ text: string }>`
+            SELECT text FROM projection_thread_messages
+            WHERE thread_id = ${event.threadId} AND message_id = ${messageId} AND role = 'assistant'
+              AND EXISTS (SELECT 1 FROM orchestration_v2_legacy_imports
+                WHERE thread_id = ${event.threadId})`;
+        if (source === undefined) continue;
+        // Entity compaction can remove the original message event. The
+        // retained import ledger and exact inert item identity survive it.
+        const [ownedRow] = yield* sql<{ payload_json: string }>`
+            SELECT payload_json FROM orchestration_v2_projection_turn_items
+            WHERE thread_id = ${event.threadId} AND turn_item_id = ${`migration:v1:turn-item:${messageId}`}`;
+        if (ownedRow === undefined) continue;
+        const owned = yield* decodePositionedItem(ownedRow.payload_json);
+        if (
+          owned.type !== "assistant_message" ||
+          owned.id !== `migration:v1:turn-item:${messageId}` ||
+          owned.threadId !== event.threadId ||
+          owned.messageId !== messageId ||
+          owned.runId !== null ||
+          owned.nodeId !== null ||
+          owned.nativeItemRef !== null ||
+          owned.providerThreadId !== null ||
+          owned.providerTurnId !== null ||
+          owned.parentItemId !== null
+        )
+          continue;
+        if (event.type === "message.updated") {
+          const [row] = yield* sql<{ payload_json: string }>`
+              SELECT payload_json FROM orchestration_v2_projection_messages
+              WHERE thread_id = ${event.threadId} AND message_id = ${messageId}`;
+          if (row === undefined) continue;
+          const current = yield* decodeHistoricalMessage(row.payload_json);
+          if (
+            current.threadId !== event.threadId ||
+            current.id !== messageId ||
+            current.role !== "assistant" ||
+            current.runId !== null ||
+            current.nodeId !== null ||
+            current.text !== source.text ||
+            current.text === event.payload.text
+          )
+            continue;
+          const payload = { ...current, text: event.payload.text };
+          const digest = NodeCrypto.createHash("sha256")
+            .update(row.payload_json)
+            .update(payload.text)
+            .digest("hex");
+          repaired.push({
+            ...event,
+            id: EventId.make(`migration:v1:history:citation:message:${messageId}:${digest}`),
+            occurredAt: current.updatedAt,
+            payload,
+          });
+        } else if (
+          event.type === "turn-item.updated" &&
+          event.payload.type === "assistant_message"
+        ) {
+          if (event.payload.id !== `migration:v1:turn-item:${messageId}`) continue;
+          const current = owned;
+          if (current.text !== source.text || current.text === event.payload.text) continue;
+          const payload = { ...current, text: event.payload.text };
+          const digest = NodeCrypto.createHash("sha256")
+            .update(ownedRow.payload_json)
+            .update(payload.text)
+            .digest("hex");
+          repaired.push({
+            ...event,
+            id: EventId.make(`migration:v1:history:citation:item:${messageId}:${digest}`),
+            occurredAt: current.updatedAt,
+            payload,
+          });
+        }
+      }
+      return repaired;
+    });
+
+    // Generation-two submitted answers are new inert facts beside the original
+    // audit. Reread durable ownership and existing projection in this transaction:
+    // compaction may remove the original insertion event after a user edits it.
+    const guardLegacyQuestionInsertions = Effect.fn("EventSink.guardLegacyQuestionInsertions")(
+      function* (events: ReadonlyArray<OrchestrationV2DomainEvent>) {
+        const accepted: OrchestrationV2DomainEvent[] = [];
+        const prefix = "migration:v1:history:answer:";
+        for (const event of events) {
+          if (event.type !== "turn-item.updated" || !event.payload.id.startsWith(prefix)) {
+            accepted.push(event);
+            continue;
+          }
+          const item = event.payload;
+          const activityId = item.id.slice(prefix.length);
+          const owner = yield* sql<{ turn_id: string | null; ordinal: number }>`
+          SELECT activity.turn_id, position.ordinal FROM projection_thread_activities AS activity
+          JOIN orchestration_v2_legacy_imports AS imported ON imported.thread_id = activity.thread_id
+          JOIN orchestration_v2_turn_item_positions AS position
+            ON position.thread_id = activity.thread_id AND position.turn_item_id = ${item.id}
+          WHERE activity.thread_id = ${event.threadId} AND activity.activity_id = ${activityId}
+            AND activity.kind = 'user-input.answer-submitted'`;
+          const source = owner[0];
+          if (
+            source === undefined ||
+            item.type !== "user_input_request" ||
+            item.questionAnswer === undefined ||
+            item.threadId !== event.threadId ||
+            item.runId !== null ||
+            item.nodeId !== null ||
+            item.providerThreadId !== null ||
+            item.providerTurnId !== null ||
+            item.nativeItemRef !== null ||
+            item.parentItemId !== null ||
+            item.status !== "completed" ||
+            item.requestId !== `migration:v1:answer:${activityId}` ||
+            item.historyTurnId !== (source.turn_id ?? undefined)
+          ) {
+            return yield* new EventSinkWriteError({
+              eventCount: 1,
+              cause: "Historical submitted answer has no matching inert legacy owner.",
+            });
+          }
+          const current = yield* sql<{ turn_item_id: string }>`
+          SELECT turn_item_id FROM orchestration_v2_projection_turn_items
+          WHERE thread_id = ${event.threadId} AND turn_item_id = ${item.id}`;
+          if (current.length > 0) continue;
+          accepted.push({ ...event, payload: { ...item, ordinal: source.ordinal } });
+        }
+        return accepted;
       },
     );
 
@@ -394,10 +589,18 @@ const baseLayer: Layer.Layer<
 
       const storedEvents = yield* sql.withTransaction(
         Effect.gen(function* () {
+          const insertionGuarded =
+            input.guardLegacyQuestionInsertions === true
+              ? yield* guardLegacyQuestionInsertions(input.events)
+              : input.events;
+          const citationGuarded =
+            input.guardLegacyCitationRepairs === true
+              ? yield* guardLegacyCitationRepairs(insertionGuarded)
+              : insertionGuarded;
           const positionGuarded =
             input.guardTurnItemPositionRepairs === true
-              ? yield* guardTurnItemPositionRepairs(input.events)
-              : input.events;
+              ? yield* guardTurnItemPositionRepairs(citationGuarded)
+              : citationGuarded;
           const normalized = yield* normalizeEvents(
             input.guardPendingUserInputCancellations === true
               ? yield* guardUserInputCancellations(positionGuarded)

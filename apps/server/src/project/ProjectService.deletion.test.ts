@@ -3,13 +3,19 @@ import { assert, it } from "@effect/vitest";
 import {
   CommandId,
   EventId,
+  EnvironmentId,
+  RunId,
   type OrchestrationV2AppThread,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  SourceControlRepositoryError,
+  OrchestrationDispatchCommandError,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -24,6 +30,7 @@ import * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
@@ -32,6 +39,18 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
 import * as ProjectService from "./ProjectService.ts";
+import * as ProjectCloneTracker from "./ProjectCloneTracker.ts";
+import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
+import * as Deferred from "effect/Deferred";
+import * as Stream from "effect/Stream";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ManagedProjectFolders from "./ManagedProjectFolders.ts";
+import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import { ProjectHandlersLive } from "../mcp/toolkits/project/handlers.ts";
+import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
+import * as FileSystem from "effect/FileSystem";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
 const eventPersistenceLayer = EventSink.layer.pipe(
@@ -43,6 +62,7 @@ const servicesLayer = Layer.mergeAll(
   ProjectStore.layer,
   IdAllocator.layer,
   ThreadCommandExecutor.layer,
+  Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ discard: () => Effect.void }),
   Layer.succeed(WorkspacePaths.WorkspacePaths, {
     normalizeWorkspaceRoot: (workspaceRoot) => Effect.succeed(workspaceRoot),
     resolveRelativePathWithinRoot: ({ workspaceRoot, relativePath }) =>
@@ -485,3 +505,269 @@ it.effect("deletes a project without force once its imported threads were delete
     }).pipe(Effect.provide(servicesLayer));
   }).pipe(Effect.provide(databaseLayer)),
 );
+
+it.effect("shared V2 deletion stops a real pending clone only after deletion commits", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const temporaryRoot = yield* fs.makeTempDirectoryScoped({ prefix: "scient-delete-clone-" });
+    const destination = `${temporaryRoot}/partial-checkout`;
+    yield* fs.makeDirectory(destination);
+    const projectId = ProjectId.make("project:real-clone-delete");
+    const threadId = ThreadId.make("thread:real-clone-delete");
+    const started = yield* Deferred.make<void>();
+    let interrupted = false;
+    const repository = Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({
+      prepareClone: (input) =>
+        Effect.succeed({
+          destinationPath: input.destinationPath,
+          remoteUrl: input.remoteUrl ?? "",
+          cloneUrl: input.remoteUrl ?? "",
+          repository: null,
+        }),
+      cloneRepository: () =>
+        Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Effect.never),
+          Effect.onInterrupt(() =>
+            Effect.sync(() => {
+              interrupted = true;
+            }),
+          ),
+        ),
+      discardClone: (root) =>
+        fs.remove(root, { recursive: true, force: true }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new SourceControlRepositoryError({
+                operation: "discard-clone",
+                provider: "github",
+                detail: "Fixture checkout cleanup failed.",
+                cause,
+              }),
+          ),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      const service = yield* ProjectService.make;
+      const sink = yield* EventSink.EventSinkV2;
+      yield* tracker.start(
+        {
+          projectId,
+          title: "Clone",
+          createdAt: "2026-10-04T00:00:00.000Z",
+          remoteUrl: "https://fixture.invalid/repository.git",
+          destinationPath: destination,
+        },
+        {
+          createProject: (input) =>
+            service
+              .create({ ...input, commandId: CommandId.make("real-clone-project-create") })
+              .pipe(
+                Effect.asVoid,
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationDispatchCommandError({
+                      message: "Fixture project creation failed.",
+                      cause,
+                    }),
+                ),
+              ),
+          onCloned: () => Effect.void,
+        },
+      );
+      yield* Deferred.await(started);
+      yield* sink.write({ events: [nativeThreadCreated(projectId, threadId)] });
+      yield* service
+        .delete({ projectId, commandId: CommandId.make("clone-delete-rejected"), force: false })
+        .pipe(Effect.flip);
+      assert.isFalse(interrupted);
+      assert.isTrue(yield* fs.exists(destination));
+      assert.isNotNull(yield* tracker.get(projectId));
+      const projection = yield* ProjectionStore.ProjectionStoreV2;
+      const shell = yield* projection.getThreadShell(threadId);
+      if (shell === null) return assert.fail("Expected the actual native caller shell.");
+      // The live caller credential is controlled; deletion, clone ownership,
+      // filesystem cleanup and SQL receipts all use their production services.
+      const dependencies = Layer.mergeAll(
+        Layer.succeed(ProjectService.ProjectService, service),
+        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+          resolveMcpInvocationPolicy: (scope) =>
+            Effect.sync(() => {
+              assert.equal(scope.threadId, threadId);
+              assert.equal(scope.providerSessionId, "clone-delete-session");
+              assert.equal(scope.providerInstanceId, shell.providerInstanceId);
+              return Option.some({
+                runtimeMode: "full-access" as const,
+                interactionMode: "default" as const,
+              });
+            }),
+        }),
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadShell: () =>
+            Effect.succeed({ ...shell, activeRunId: RunId.make("controlled-live-caller") }),
+        }),
+        Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: temporaryRoot,
+        }),
+        Layer.succeed(McpInvocationContext.McpInvocationContext, {
+          environmentId: EnvironmentId.make("clone-delete-environment"),
+          threadId,
+          providerSessionId: "clone-delete-session",
+          providerInstanceId: shell.providerInstanceId,
+          issuedAt: 0,
+          capabilities: new Set(["orchestration" as const]),
+        }),
+        NodeCrypto.layer,
+      );
+      const toolkit = yield* ProjectToolkit.pipe(
+        Effect.provide(ProjectHandlersLive.pipe(Layer.provide(dependencies))),
+      );
+      const result = yield* toolkit
+        .handle("scient_project_delete", { projectId, force: true })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+      assert.isTrue(result.length > 0);
+      assert.isTrue(interrupted);
+      assert.isFalse(yield* fs.exists(destination));
+      assert.isNull(yield* tracker.get(projectId));
+      assert.isNotNull((yield* projection.getThreadProjection(threadId)).thread.deletedAt);
+    }).pipe(
+      Effect.provide(
+        Layer.merge(servicesLayer, ProjectCloneTracker.layer.pipe(Layer.provide(repository))),
+      ),
+    );
+  }).pipe(Effect.provide(databaseLayer)),
+);
+
+for (const cancellationPoint of ["publication", "checkout-cleanup"] as const) {
+  it.effect(
+    `accepted deletion retires its clone after caller cancellation during ${cancellationPoint}`,
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const temporaryRoot = yield* fs.makeTempDirectoryScoped({
+          prefix: "scient-delete-cancel-",
+        });
+        const destination = `${temporaryRoot}/partial-checkout`;
+        yield* fs.makeDirectory(destination);
+        const projectId = ProjectId.make(`project:cancel-clone:${cancellationPoint}`);
+        const commandId = CommandId.make(`delete:cancel-clone:${cancellationPoint}`);
+        const cloneStarted = yield* Deferred.make<void>();
+        const barrierReached = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let cloneInterrupted = false;
+        const waitForCallerCancellation = Deferred.succeed(barrierReached, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+        );
+        const repository = Layer.mock(
+          SourceControlRepositoryService.SourceControlRepositoryService,
+        )({
+          prepareClone: (input) =>
+            Effect.succeed({
+              destinationPath: input.destinationPath,
+              remoteUrl: input.remoteUrl ?? "",
+              cloneUrl: input.remoteUrl ?? "",
+              repository: null,
+            }),
+          cloneRepository: () =>
+            Deferred.succeed(cloneStarted, undefined).pipe(
+              Effect.andThen(Effect.never),
+              Effect.onInterrupt(() =>
+                Effect.sync(() => {
+                  cloneInterrupted = true;
+                }),
+              ),
+            ),
+          discardClone: (root) =>
+            Effect.gen(function* () {
+              if (cancellationPoint === "checkout-cleanup") yield* waitForCallerCancellation;
+              yield* fs.remove(root, { recursive: true, force: true });
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new SourceControlRepositoryError({
+                    operation: "discard-clone",
+                    provider: "github",
+                    detail: "Fixture checkout cleanup failed.",
+                    cause,
+                  }),
+              ),
+            ),
+        });
+        yield* Effect.gen(function* () {
+          const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+          const events = yield* EventStore.EventStoreV2;
+          const gatedEvents = EventStore.EventStoreV2.of({
+            ...events,
+            publishCommitted: (stored) =>
+              Effect.gen(function* () {
+                if (
+                  cancellationPoint === "publication" &&
+                  stored.some(
+                    (event) =>
+                      "aggregateKind" in event &&
+                      event.type === "project.deleted" &&
+                      event.aggregateId === projectId,
+                  )
+                )
+                  yield* waitForCallerCancellation;
+                yield* events.publishCommitted(stored);
+              }),
+          });
+          const gatedSink = EventSink.layer.pipe(
+            Layer.provide(Layer.succeed(EventStore.EventStoreV2, gatedEvents)),
+          );
+          const service = yield* ProjectService.make.pipe(Effect.provide(Layer.fresh(gatedSink)));
+          yield* tracker.start(
+            {
+              projectId,
+              title: "Cancellation fixture",
+              createdAt: "2026-10-04T00:00:00.000Z",
+              remoteUrl: "https://fixture.invalid/repository.git",
+              destinationPath: destination,
+            },
+            {
+              createProject: (input) =>
+                service.create({ ...input, commandId: CommandId.make(`create:${projectId}`) }).pipe(
+                  Effect.asVoid,
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationDispatchCommandError({
+                        message: "Fixture project creation failed.",
+                        cause,
+                      }),
+                  ),
+                ),
+              onCloned: () => Effect.void,
+            },
+          );
+          yield* Deferred.await(cloneStarted);
+          const deleting = yield* service.delete({ projectId, commandId }).pipe(Effect.forkScoped);
+          yield* Deferred.await(barrierReached);
+          const sql = yield* SqlClient.SqlClient;
+          const [project] = yield* sql<{ readonly deleted_at: string | null }>`
+          SELECT deleted_at FROM projection_projects WHERE project_id = ${projectId}`;
+          assert.isDefined(project);
+          assert.isNotNull(project?.deleted_at);
+          const [receipt] = yield* sql<{ readonly status: string }>`
+          SELECT status FROM orchestration_command_receipts WHERE command_id = ${commandId}`;
+          assert.equal(receipt?.status, "accepted");
+          assert.isTrue(yield* fs.exists(destination));
+          assert.isNotNull(yield* tracker.get(projectId));
+          // Signal cancellation synchronously while accepted publication/cleanup
+          // is held. Releasing the causal barrier must still retire the clone.
+          deleting.interruptUnsafe();
+          yield* Deferred.succeed(release, undefined);
+          const exit = yield* Fiber.await(deleting);
+          assert.isTrue(Exit.hasInterrupts(exit));
+          assert.isTrue(cloneInterrupted);
+          assert.isFalse(yield* fs.exists(destination));
+          assert.isNull(yield* tracker.get(projectId));
+        }).pipe(
+          Effect.provide(
+            Layer.merge(servicesLayer, ProjectCloneTracker.layer.pipe(Layer.provide(repository))),
+          ),
+        );
+      }).pipe(Effect.provide(databaseLayer)),
+  );
+}

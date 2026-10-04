@@ -46,7 +46,6 @@ import { useAtomValue } from "@effect/atom-react";
 import { environmentThreadDetails } from "../../state/threads";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { Link } from "@tanstack/react-router";
-import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import {
@@ -277,7 +276,6 @@ import {
   formatUpcomingTimestamp,
 } from "../../timestampFormat";
 import { V2ItemInspector } from "./V2ItemInspector";
-import { useV2ItemSupport } from "../../state/v2ItemSupport";
 import { Collapsible, CollapsibleTrigger, CollapsiblePanel } from "../ui/collapsible";
 import {
   isV2LifecycleItem,
@@ -3121,52 +3119,6 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   );
 }
 
-function AssistantForkButton({
-  projectedItem,
-}: {
-  readonly projectedItem: NonNullable<Extract<TimelineRow, { kind: "message" }>["projectedItem"]>;
-}) {
-  const ctx = use(TimelineRowCtx);
-  const [busy, setBusy] = useState(false);
-  const support = useV2ItemSupport({
-    environmentId: ctx.activeThreadEnvironmentId,
-    sourceThreadId: projectedItem.sourceThreadId,
-    sourceItemId: projectedItem.sourceItemId,
-  });
-  const canFork = canForkProjectedAssistantItem({
-    projectedItem,
-    capabilities: support.providerSession?.capabilities,
-  });
-
-  if (!canFork || projectedItem.item.runId === null) return null;
-  const runId = projectedItem.item.runId;
-
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            type="button"
-            size="xs"
-            variant="ghost"
-            disabled={busy}
-            onClick={() => {
-              setBusy(true);
-              void ctx
-                .onForkFromRun({ sourceThreadId: projectedItem.sourceThreadId, runId })
-                .finally(() => setBusy(false));
-            }}
-            aria-label="Fork from this response"
-          />
-        }
-      >
-        <GitForkIcon className={cn("size-3", busy && "animate-pulse")} />
-      </TooltipTrigger>
-      <TooltipPopup side="top">Fork from this response</TooltipPopup>
-    </Tooltip>
-  );
-}
-
 function AssistantMetaTimelineRow({
   row,
 }: {
@@ -3216,9 +3168,6 @@ function AssistantMessageMeta({
         className,
       )}
     >
-      {projectedItem?.item.type === "assistant_message" ? (
-        <AssistantForkButton projectedItem={projectedItem} />
-      ) : null}
       {projectedItem && projectedItem.item.status !== "completed" ? (
         <span className="rounded-full border border-border/70 px-1.5 py-0.5 font-mono text-3xs text-muted-foreground">
           {projectedItem.item.status}

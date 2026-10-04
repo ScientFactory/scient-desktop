@@ -83,12 +83,16 @@ function makeExecutorLayer(input: {
   readonly events: Ref.Ref<ReadonlyArray<string>>;
   readonly failFirstStart?: Ref.Ref<boolean>;
   readonly rollbackFails?: boolean;
+  readonly pendingInterrupt?: ProviderTurnControlService.ProviderTurnControlServiceV2Shape["interruptPendingStart"];
 }) {
   const record = (event: string) => Ref.update(input.events, (events) => [...events, event]);
   const dependencies = Layer.mergeAll(
     Layer.succeed(
       ProviderTurnControlService.ProviderTurnControlServiceV2,
       ProviderTurnControlService.ProviderTurnControlServiceV2.of({
+        interruptPendingStart:
+          input.pendingInterrupt ??
+          (() => Effect.die("Pending-start interruption is not used in this fixture.")),
         interrupt: () => Effect.void,
         steer: () => Effect.void,
         interruptAndAwaitTerminal: (request) =>
@@ -102,6 +106,8 @@ function makeExecutorLayer(input: {
     Layer.succeed(
       ProviderSessionManager.ProviderSessionManagerV2,
       ProviderSessionManager.ProviderSessionManagerV2.of({
+        resolveMcpInvocationPolicy: () =>
+          Effect.die("MCP invocation policy is not used in this fixture."),
         shutdown: Effect.void,
         open: () => Effect.die("unused open"),
         get: () => Effect.succeed(Option.none()),
@@ -803,5 +809,106 @@ it.effect("safely retries after replacement cleanup succeeds and start fails", (
       "detach",
       "start",
     ]);
+  }),
+);
+
+it.effect(
+  "retries a pending native Stop receipt beyond the attempt budget and settles only the exact accepted turn",
+  () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const workerId = "worker-pending-native-stop";
+      const effect: EffectOutbox.OrchestrationEffectV2 = {
+        ...restartEffect(now, { type: "detach" }),
+        id: "effect:pending-native-stop",
+        request: {
+          type: "provider-run.interrupt",
+          runId,
+          expectedAttemptId: attemptId,
+          providerThreadId,
+          providerSessionId: oldSessionId,
+        },
+        attemptCount: 8,
+      };
+      const receiptReady = yield* Ref.make(false);
+      const retries = yield* Ref.make(0);
+      const failures = yield* Ref.make(0);
+      const successes = yield* Ref.make(0);
+      const events = yield* Ref.make<ReadonlyArray<string>>([]);
+      const executor = makeExecutorLayer({
+        events,
+        pendingInterrupt: (request) =>
+          Effect.gen(function* () {
+            assert.deepEqual(request, {
+              threadId,
+              runId,
+              expectedAttemptId: attemptId,
+              providerThreadId,
+              providerSessionId: oldSessionId,
+            });
+            if (!(yield* Ref.get(receiptReady)))
+              return yield* new ProviderTurnControlService.ProviderRunInterruptError({
+                threadId,
+                runId,
+                reason: "receipt_pending",
+              });
+            yield* Ref.update(events, (current) => [...current, "native-interrupt"]);
+            return Option.some(providerTurnId);
+          }),
+      });
+      const outbox = Layer.mock(EffectOutbox.EffectOutboxV2)({
+        claimNext: () => Effect.succeed(Option.some(effect)),
+        get: () => Effect.succeed(Option.some(effect)),
+        awaitCancellation: () => Effect.never,
+        clearCancellation: () => Effect.void,
+        retry: () => Ref.update(retries, (count) => count + 1).pipe(Effect.as(true)),
+        fail: () => Ref.update(failures, (count) => count + 1).pipe(Effect.as(true)),
+        succeed: () => Ref.update(successes, (count) => count + 1).pipe(Effect.as(true)),
+      });
+      const layer = EffectWorker.layerWithOptions({ workerId, maxAttempts: 1 }).pipe(
+        Layer.provide(Layer.merge(outbox, executor)),
+      );
+      yield* Effect.gen(function* () {
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        assert.isTrue(yield* worker.runOnce);
+        assert.equal(yield* Ref.get(retries), 1);
+        assert.equal(yield* Ref.get(failures), 0);
+        assert.equal(yield* Ref.get(successes), 0);
+        assert.deepEqual(yield* Ref.get(events), []);
+        yield* Ref.set(receiptReady, true);
+        assert.isTrue(yield* worker.runOnce);
+        assert.equal(yield* Ref.get(retries), 1);
+        assert.equal(yield* Ref.get(failures), 0);
+        assert.equal(yield* Ref.get(successes), 1);
+        assert.deepEqual(yield* Ref.get(events), [
+          "native-interrupt",
+          "thread.background-work.settle",
+        ]);
+      }).pipe(Effect.provide(layer));
+    }),
+);
+
+it.effect("a stale pending Stop never settles background work on its former thread binding", () =>
+  Effect.gen(function* () {
+    const events = yield* Ref.make<ReadonlyArray<string>>([]);
+    const effect: EffectOutbox.OrchestrationEffectV2 = {
+      ...restartEffect(yield* DateTime.now, { type: "detach" }),
+      request: {
+        type: "provider-run.interrupt",
+        runId,
+        expectedAttemptId: attemptId,
+        providerThreadId,
+        providerSessionId: oldSessionId,
+      },
+    };
+    const layer = makeExecutorLayer({
+      events,
+      pendingInterrupt: () => Effect.succeed(Option.none()),
+    });
+    yield* Effect.gen(function* () {
+      const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+      yield* executor.execute(effect);
+    }).pipe(Effect.provide(layer));
+    assert.deepEqual(yield* Ref.get(events), []);
   }),
 );

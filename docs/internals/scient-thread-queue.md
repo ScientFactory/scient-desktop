@@ -1,4 +1,4 @@
-# Scient thread queue: architecture, behavior, and retirement
+# Scient thread queue: architecture, behavior, and recovery
 
 This is the maintenance contract for the desktop/web queue. The server owns
 ordering and delivery. The open conversation is only a view and a composer;
@@ -6,7 +6,47 @@ navigation, remounts, and additional windows cannot start a queued turn.
 This document describes the implementation in this checkout. Automated checks
 and manual product acceptance are separate; no visual acceptance is implied.
 
-## Behavioral contract
+## Native V2 cutover
+
+For V2 threads, native queued runs and their user messages are the sole live
+queue authority. `QueuedRunsControl` adapts that projection and native commands
+into the single Scient `ThreadQueueStrip`; it does not render another queue.
+`Orchestrator` owns admission, held state, ordering and delivery; the retained
+V1 ledger/worker description below documents recovery data and older servers.
+Legacy payloads enter native held runs through `LegacyQueueCutover` before
+native delivery. Reading recovery data never executes it.
+
+Native Edit first journals the captured message, context, settings and owned
+attachment bytes, then sends `queued-run.cancel` with its exact message
+`expectedUpdatedAt` and a stable journal command ID. Only accepted cancellation
+installs an ordinary draft; ambiguous outcomes retain the journal and original
+draft for reconciliation. The existing IndexedDB journal, Web Lock and prompt
+stash protect reloads, multiple windows and previous ordinary drafts.
+An exact durable rejection clears the extraction intent and releases its lock;
+it leaves the ordinary draft and server queue unchanged. An arbitrary transport
+or storage error does not prove rejection.
+
+An unheld native queue advances automatically, one message at a time, after
+the current turn finishes successfully and its finalization settles. Ordinary
+completion never requires Resume. Native Stop, interruption and failed starts
+hold delivery. Becoming idle, starting another message, or successfully finishing
+that later message does not implicitly resume a held queue. The head row's Send
+uses `queue.resume(runId)`; Resume explicitly releases the queue. Idle reorder
+remains available, including before a provider session exists. Send releases
+only the held head; the tail stays held until Resume. Provider-start failure
+retains the queued message for Retry.
+Queue limits remain 20 items and 64 MiB, including actual owned attachment bytes.
+
+Pending admission previews belong only above the composer. A durable queued
+receipt keeps the preview there until its native queued run arrives; an immediate
+start receipt promotes it into the conversation. Authoritative messages and
+queue snapshots suppress duplicate previews. Automatic delegated-task deliveries
+remain outside the user queue.
+
+The sections below describe the retained V1 data format and older-server
+behavior. They are recovery documentation, not the current V2 execution path.
+
+## Retained V1 behavioral contract
 
 - Enter during a running turn, or while messages are already eligible to advance, adds a
   message to the current environment and thread. After Stop, ordinary idle Send starts
@@ -58,7 +98,7 @@ and manual product acceptance are separate; no visual acceptance is implied.
   reuses their owned bytes through an internal-only normalization path; client
   commands cannot claim another message's durable attachment IDs.
 
-## Durable server authority
+## Retained V1 server authority
 
 `apps/server/src/scient/threadQueue/` owns the implementation:
 
@@ -97,7 +137,7 @@ its database; thread ownership is explicit in every request and command. A
 receipt cannot be reused for another thread. Deleting a thread clears its queue
 and retains an empty migration tombstone so an old JSON file cannot resurrect it.
 
-## Admission and finalization
+## Retained V1 admission and finalization
 
 1. A mutation runs in a SQL transaction, validates ownership and current state,
    enforces caps, updates the revision, and issues a wakeup hint.
@@ -137,7 +177,7 @@ Hints carry no authority; SQL is always reread. There is no background sender
 poll and no dependency on a mounted ChatView. Client display refreshes ask once
 per second for a revision; unchanged replies do not resend image payloads.
 
-## Failure and restart semantics
+## Retained V1 failure and restart semantics
 
 A rejected pre-admission attempt keeps the item. Known rejected attachment claims
 are cleaned up. If a concurrent mutation changed the revision, the worker
@@ -193,7 +233,7 @@ legacy Stop/failure/restart pauses convert transactionally on read to waiting
 state. Delivery-error pauses remain retryable. No payload or edit journal is
 rewritten by this conversion. No live application data is needed for tests.
 
-## Composer draft ownership and recovery
+## Composer draft compatibility and recovery
 
 The capability foundation adds optional `selectedScientSkillNames`
 and `composerSnapshot` to queue items. The latter is bounded versioned JSON
@@ -256,7 +296,7 @@ it removes local draft recovery data. It is not cloud draft sync.
 Queue attachment ownership participates in existing revert pruning and removal
 cleanup. Bytes still referenced by a queued item or projected message are retained.
 
-## API and compatibility
+## Retained V1 API and compatibility
 
 The authenticated API is `/api/scient/thread-queue/v2/` with `list`, `enqueue`,
 `update`, `remove`, `reorder`, and `control`. List accepts `knownRevision`.
@@ -278,7 +318,7 @@ unchanged. Invalid files are not erased or converted to an empty successful
 import; opening their thread surfaces the failure. Deleted/nonexistent threads
 are not imported.
 
-## Integration seams and retirement
+## Retained V1 integration seams and retirement
 
 Protected upstream seams are the command schema/protocol gate, engine admission
 transaction, decider settings events, provider ingestion, checkpoint reactor,
@@ -286,22 +326,22 @@ reactor/server layer wiring, shared HTTP client errors, and composer wiring.
 There are no new orchestration event types. Review these semantic seams during
 an upstream merge even if Git merges them cleanly.
 
-A native replacement must first preserve the behavioral contract above. Retire
-this implementation only with a migration for waiting items, withdrawn slots,
-receipts, incomplete barriers, and local edit journals. Remove the old sender
-before enabling another sender. Keep deployed Scient migration history intact;
-do not delete or renumber migration 11. Retained v1 files are recovery sources,
-not active authority. Remove this document only after the replacement owns the
-contract and recovery path.
+Native V2 owns live sending and imports waiting payloads as held native runs.
+The old sender is excluded from the V2 runtime. Deployed Scient migration
+history remains intact, including migration 11; retained V1 files, receipts,
+incomplete barriers and local edit journals remain recovery inputs. The native
+hold rule deliberately differs from the older successful-answer release rule
+described above.
 
 ## Verification and manual acceptance
 
-Automated coverage belongs to `Ledger.test.ts`, `Worker.test.ts`, `Store.test.ts`,
-`editSession.test.ts`, `submission.test.ts`, orchestration engine/ingestion/checkpoint tests, migration
-schema tests, and the existing disposition/image-restore tests. The worker test
-uses real SQL, normalization, engine receipts and projections, with no mounted
-client or provider call. Repository format, lint, type, test, build, and desktop
-smoke gates are required before manual review.
+Native qualification includes `NativeQueueHoldPolicy.integration.test.ts`,
+`QueuedStartRecovery.integration.test.ts`, `QueuedMessageBudget.integration.test.ts`,
+`LegacyV1RecoveryAcceptance.integration.test.ts`, complete runtime/worker tests,
+and the mounted queue, shortcut, edit-journal and timeline-consumer tests.
+Historical ledger/worker tests qualify recovery and older-server behavior only.
+Repository format, lint, type, test, build and desktop smoke gates are required
+before manual review.
 
 Manual acceptance should exercise these cases in an isolated candidate:
 
@@ -316,9 +356,10 @@ Manual acceptance should exercise these cases in an isolated candidate:
 4. Drag visible items while another message is being edited. Delete and explicitly
    steer rows using the existing controls.
 5. Stop with multiple messages queued. Visit another task, return, and restart
-   the candidate: nothing should send. Send a new ordinary message; the queue
-   waits through that answer, then advances one message per completed answer.
-   Stop again and repeat. Check failed delivery/Retry separately. Exercise reload
+   the candidate: nothing should send. Send a new ordinary message; the existing
+   queue remains held after that answer. Reorder while idle, then Send the head;
+   only that row is released. Resume the tail and verify automatic FIFO delivery
+   after each successful finalized answer. Check failed delivery/Retry separately. Exercise reload
    during editing, another window, and lost responses; inspect for missing or
    duplicated user messages and retained drafts.
 6. Stash and restore an edit through the usual menu. Reload immediately after

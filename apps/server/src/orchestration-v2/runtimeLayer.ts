@@ -273,6 +273,7 @@ const conversationForkProvided = conversationForkServiceLayer.pipe(
       commandReceiptStoreProvided,
       ProjectStore.layer,
       threadCommandExecutorLayer,
+      legacyV1ThreadImporterProvided,
       ScientForkCheckpointBaselineLive.pipe(Layer.provide(VcsProcess.layer)),
       ScientForkAttachmentCopierLive,
     ),

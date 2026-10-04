@@ -304,6 +304,16 @@ it.effect(
       assert.ok(page.items.every((row) => row.visibility === "inherited"));
       assert.equal((yield* forks.dispatch(command)).sequence, receipt.sequence);
 
+      assert.equal(target.thread.title, "Conversation (2)");
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("archive-numbered-fork"),
+        threadId: command.newThreadId,
+      });
+      const archivedShells = yield* store.getShellSnapshot({ location: "archive" });
+      assert.lengthOf(archivedShells.threads, 0);
+      assert.ok(archivedShells.archivedThreads.some((thread) => thread.id === command.newThreadId));
+
       const runningTarget = ThreadId.make("thread:running-fork");
       yield* forks.dispatch({
         ...command,
@@ -313,6 +323,11 @@ it.effect(
         sourceRunningRunId: secondRunId,
       });
       const runningFork = yield* orchestrator.getThreadProjection(runningTarget);
+      assert.equal(
+        runningFork.thread.title,
+        "Conversation (3)",
+        "Archived siblings reserve automatic fork titles",
+      );
       assert.equal(
         runningFork.turnItems.find((item) => item.type === "approval_request")?.status,
         "cancelled",

@@ -4,6 +4,7 @@ import {
   readQueueEditJournals,
   readQueueEditJournal,
   type QueueEditSession as EditSession,
+  type QueueEditItem,
 } from "./editJournal";
 import * as Schema from "effect/Schema";
 import { usePromptStashStore, type PromptStashEntry } from "../../promptStashStore";
@@ -12,7 +13,6 @@ import {
   ScientThreadQueueOperationError,
   type EnvironmentId,
   type ScopedThreadRef,
-  type ScientThreadQueueItem,
 } from "@t3tools/contracts";
 import { create } from "zustand";
 import {
@@ -23,7 +23,7 @@ import {
   type DraftId,
   type ComposerThreadDraftState,
 } from "../../composerDraftStore";
-import { controlThreadQueue } from "./client";
+import { controlThreadQueue, extractNativeQueuedRun } from "./client";
 import { restoreQueuedAttachments } from "./queueImageRestore";
 import {
   decodeQueueItemComposerContext,
@@ -123,7 +123,7 @@ const starting = new Set<string>();
 const transferring = new Map<string, Promise<EditSession>>();
 async function draftFromItem(
   target: ScopedThreadRef,
-  item: ScientThreadQueueItem,
+  item: QueueEditItem,
   ordinary: ComposerThreadDraftState,
 ) {
   const composer = decodeQueueItemComposerContext(item, target.threadId);
@@ -189,13 +189,21 @@ async function transfer(session: EditSession): Promise<EditSession> {
   const operation = (async () => {
     if (typeof session.originalTarget === "string")
       throw new Error("This recovered draft has no queue item to extract.");
-    await controlThreadQueue(session.originalTarget.environmentId, {
-      threadId: session.originalTarget.threadId,
-      queueItemId: session.queueItemId,
-      editToken: session.editToken,
-      action: "extract",
-      expectedUpdatedAt: session.extractedItem?.updatedAt,
-    });
+    if (session.nativeRun)
+      await extractNativeQueuedRun(session.originalTarget.environmentId, {
+        threadId: session.originalTarget.threadId,
+        runId: session.nativeRun.runId,
+        expectedUpdatedAt: session.nativeRun.expectedUpdatedAt,
+        editToken: session.editToken,
+      });
+    else
+      await controlThreadQueue(session.originalTarget.environmentId, {
+        threadId: session.originalTarget.threadId,
+        queueItemId: session.queueItemId,
+        editToken: session.editToken,
+        action: "extract",
+        expectedUpdatedAt: session.extractedItem?.updatedAt,
+      });
     const result = { item: session.extractedItem };
     const restored = { draft: session.edited, separated: session.composerSeparated };
     const ordinary =
@@ -290,7 +298,11 @@ export function loadQueueEdits() {
     }
   })());
 }
-export async function beginQueueEdit(target: ScopedThreadRef, item: ScientThreadQueueItem) {
+export async function beginQueueEdit(
+  target: ScopedThreadRef,
+  item: QueueEditItem,
+  nativeRun?: EditSession["nativeRun"],
+) {
   await loadQueueEdits();
   const key = composerTargetKey(target);
   const existing = useQueueEditSessions.getState().sessions[key];
@@ -334,6 +346,7 @@ export async function beginQueueEdit(target: ScopedThreadRef, item: ScientThread
       ordinary,
       edited: restored.draft,
       extractedItem: item,
+      ...(nativeRun === undefined ? {} : { nativeRun }),
       composerSeparated: restored.separated,
     };
     await save(session);

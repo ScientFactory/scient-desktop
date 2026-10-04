@@ -146,6 +146,10 @@ export interface CodexAppServerReplayDriver {
   readonly beforeEmitInbound?: (
     entry: Extract<CodexAppServerReplayEntry, { readonly type: "emit_inbound" }>,
   ) => Effect.Effect<void>;
+  /** Resolve fixture-owned runtime values before the unchanged exact matcher. */
+  readonly materializeExpectedOutbound?: (
+    entry: Extract<CodexAppServerReplayEntry, { readonly type: "expect_outbound" }>,
+  ) => Effect.Effect<unknown>;
 }
 
 const encoder = new TextEncoder();
@@ -177,7 +181,7 @@ function normalizeContextHandoffText(value: string): string {
   return `${value.slice(0, headerEndIndex + 2)}<dynamic-summary>${value.slice(userMessageIndex)}`;
 }
 
-function normalizeReplayFrame(value: unknown): unknown {
+function normalizeReplayFrame(value: unknown, strict = false): unknown {
   if (typeof value === "string") {
     return normalizeContextHandoffText(value);
   }
@@ -185,12 +189,12 @@ function normalizeReplayFrame(value: unknown): unknown {
     return value;
   }
   if (Array.isArray(value)) {
-    return value.map(normalizeReplayFrame);
+    return value.map((entry) => normalizeReplayFrame(entry, strict));
   }
 
   const record = value as Record<string, unknown>;
   const normalized = Object.fromEntries(
-    Object.entries(record).map(([key, entry]) => [key, normalizeReplayFrame(entry)]),
+    Object.entries(record).map(([key, entry]) => [key, normalizeReplayFrame(entry, strict)]),
   );
 
   if (
@@ -211,6 +215,7 @@ function normalizeReplayFrame(value: unknown): unknown {
   }
 
   if (
+    !strict &&
     normalized.method === "turn/start" &&
     typeof normalized.params === "object" &&
     normalized.params !== null
@@ -282,9 +287,14 @@ function sameFrame(
   left: unknown,
   right: unknown,
   ignoredConfigKeys: ReadonlySet<string> = new Set(),
+  strict = false,
 ): boolean {
   const normalize = (frame: unknown) =>
-    stableStringify(normalizeThreadRequest(normalizeReplayFrame(frame), ignoredConfigKeys));
+    stableStringify(
+      strict
+        ? normalizeReplayFrame(frame, true)
+        : normalizeThreadRequest(normalizeReplayFrame(frame), ignoredConfigKeys),
+    );
   return normalize(left) === normalize(right);
 }
 
@@ -370,7 +380,10 @@ export function layerReplay(
 export const makeReplayDriver = Effect.fn("effect-codex-app-server/replay.makeReplayDriver")(
   function* (
     transcript: CodexAppServerReplayTranscript,
-    options: Pick<CodexAppServerReplayDriver, "beforeEmitInbound"> = {},
+    options: Pick<
+      CodexAppServerReplayDriver,
+      "beforeEmitInbound" | "materializeExpectedOutbound"
+    > = {},
   ) {
     return {
       transcript,
@@ -491,13 +504,24 @@ const makeReplayClientWithState = Effect.fn(
             return;
           }
 
-          if (!sameFrame(entry.frame, actual, ignoredThreadConfigKeys)) {
+          const expected =
+            driver.materializeExpectedOutbound === undefined
+              ? entry.frame
+              : yield* driver.materializeExpectedOutbound(entry);
+          if (
+            !sameFrame(
+              expected,
+              actual,
+              ignoredThreadConfigKeys,
+              driver.materializeExpectedOutbound !== undefined,
+            )
+          ) {
             yield* failReplay(
               new CodexAppServerReplayFrameMismatchError({
                 scenario: transcript.scenario,
                 cursor: current.cursor,
                 ...(entry.label === undefined ? {} : { label: entry.label }),
-                expected: entry.frame,
+                expected,
                 actual,
               }),
             );

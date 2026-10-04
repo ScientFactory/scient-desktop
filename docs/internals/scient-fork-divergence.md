@@ -712,7 +712,10 @@ Older already-accepted provisioning jobs freeze their snapshot on recovery.
 Upstream V2
 rejects forks from running work; this is the isolated Scient extension.
 
-### Native fork
+### Legacy native fork
+
+This describes the V1 implementation retained for comparison. Current native
+continuity and its ownership checks are described in the V2 mapping below.
 
 A fork's first session is started as a native provider fork when it can
 reproduce the fork exactly: same provider instance as the source, the forked
@@ -727,7 +730,35 @@ a fresh thread; the reactor then records the reason and falls back to the
 portable handoff. Claude and OpenCode stay portable until Scient tracks the
 provider message ids their fork APIs need.
 
-### Orchestration V2 mapping
+### Historical Orchestration V2 mapping
+
+The table below records the V1-to-V2 design comparison at the September 27
+snapshot. It is historical context, not the current execution or migration
+authority. In the aligned runtime, the retained message-boundary RPC enters
+`orchestration-v2/scient-fork/ConversationForkService.ts`; it hydrates the
+source through the shared `LegacyV1ThreadImporter` before planning a boundary.
+`ConversationForkPlan.ts` freezes the retained facts, and the V2 event sink
+commits destination-owned messages, items, context and attachment ownership.
+The ordinary native/MCP run-fork enters `ThreadForkService.ts` and uses that
+same planner. Its local workspace remains the current checkout; selecting a
+Scient checkpoint/worktree is a separate boundary-fork policy.
+
+Copied facts carry causal lineage without borrowing mutable source history or
+provider execution authority (`forkedFrom` is null on the copied prefix).
+Native continuity is optional: the destination's persisted frozen proof must
+identify the exact source instance, thread and inclusive boundary. Codex uses
+a strong native turn; Claude uses a canonical, non-synthetic root assistant
+UUID with matching retained ownership evidence. Other weak references remain
+portable. Admission and first delivery recheck the selected target instance;
+an unavailable native fork falls back to the bounded destination-owned prefix,
+including after the origin is edited or deleted.
+
+Startup copies `state.sqlite` to `statev2.sqlite` once, applies the independent
+Scient ledger, imports historical facts with approvals/questions inert, and
+admits retained queue payloads as held native V2 runs before recovery and the
+effect worker start. Explicit Resume releases imported held work; subsequent
+successful native turns advance that released queue normally. Legacy tables
+and queue JSON remain recovery evidence, not a second execution engine.
 
 | Scient (this branch)                                 | Upstream V2                                                                        |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------- |
@@ -742,10 +773,10 @@ provider message ids their fork APIs need.
 | `scient_thread_read` (read-only history)             | V2 native timeline projection; orchestration inspection is `scient_thread_inspect` |
 | `nativeFork` / `forkFrom`                            | `ProviderAdapter.forkThread`                                                       |
 
-On the V2 day, the transfer and handoff rows translate one-to-one; the
-Scient-only concepts (running-turn cut, reasoning items, workspace mode,
-retain-before for user-message forks) become isolated extensions rather than
-fields in V2's persisted event log.
+The original mapping proposed translating transfer and handoff rows into V2
+concepts. The implemented authority boundary above supersedes that proposal;
+Scient's exact transcript and workspace policies are persisted by the V2
+services rather than executed from the old V1 rows.
 
 Mirrored snapshot: pingdotgg/t3code PR #2829 at `a3fbbe45315e` (2026-09-27).
 Each mirroring module names the upstream file it follows. Only

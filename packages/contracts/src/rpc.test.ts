@@ -2,7 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
-import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
+import { CommandId } from "./baseSchemas.ts";
+import {
+  OrchestrationV2DispatchCommandError,
+  ORCHESTRATION_V2_WS_METHODS,
+} from "./orchestrationV2.ts";
 import { WsRpcGroup, WsSubscribeServerConfigRpc } from "./rpc.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 
@@ -50,6 +54,25 @@ describe("WebSocket RPC contracts", () => {
     expect(decodeDispatchPayload(command)).toEqual(command);
   });
 
+  it("preserves durable native extraction refusal while ambiguous failures remain undecided", () => {
+    for (const commandDisposition of [undefined, "rejected"] as const) {
+      const error = new OrchestrationV2DispatchCommandError({
+        commandId: CommandId.make("client:queue-extract:proof"),
+        commandType: "queued-run.cancel",
+        message: "Queue extraction failed",
+        ...(commandDisposition === undefined ? {} : { commandDisposition }),
+      });
+      expect(decodeDispatchError(encodeDispatchError(error))).toMatchObject({
+        commandId: error.commandId,
+        commandType: error.commandType,
+        ...(commandDisposition === undefined ? {} : { commandDisposition }),
+      });
+      const roundTrip = decodeDispatchError(encodeDispatchError(error));
+      expect("commandDisposition" in roundTrip ? roundTrip.commandDisposition : undefined).toBe(
+        commandDisposition,
+      );
+    }
+  });
   it("preserves every fork disposition through the registered error codec", () => {
     for (const forkDisposition of ["rejected", "abandoned", "ready"] as const) {
       const error = new OrchestrationDispatchCommandError({

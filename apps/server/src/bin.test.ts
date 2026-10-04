@@ -1,3 +1,4 @@
+import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 // @effect-diagnostics nodeBuiltinImport:off - CLI integration exercises Node HTTP and filesystem boundaries.
 import * as NodeHttp from "node:http";
 import * as NodeFS from "node:fs";
@@ -151,6 +152,9 @@ const makeProjectPersistenceLayer = (config: ServerConfig.ServerConfig["Service"
     ThreadManagement.layer.pipe(Layer.provide(replay)),
   ).pipe(
     Layer.provideMerge(ProjectEnrichmentService.layer),
+    Layer.provide(
+      Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ discard: () => Effect.void }),
+    ),
     Layer.provideMerge(RepositoryIdentityResolver.layer),
     Layer.provideMerge(
       ProjectFaviconResolver.layer.pipe(

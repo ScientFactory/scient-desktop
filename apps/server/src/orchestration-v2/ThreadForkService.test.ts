@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   ContextTransferId,
+  CommandId,
   MessageId,
   type ModelSelection,
   type OrchestrationV2AppThread,
@@ -111,8 +112,9 @@ const planFork = (sourceRun: OrchestrationV2Run) =>
     const service = yield* ThreadForkService.ThreadForkServiceV2;
     return yield* service.plan({
       sourceProjection: makeSourceProjection(sourceRun),
+      commandId: CommandId.make("native-fork-plan"),
+      cwd: "/tmp/project",
       sourceRun,
-      sourceProviderThread: undefined,
       canonicalSourcePoint: {
         threadId: sourceThreadId,
         runId: sourceRunId,
@@ -160,22 +162,16 @@ it.effect("keeps a fork awake when its source thread is snoozed", () =>
       relationshipToParent: "fork",
       rootThreadId: sourceThreadId,
     });
-    assert.deepEqual(result.targetThread.forkedFrom, {
-      type: "run",
-      threadId: sourceThreadId,
-      runId: sourceRunId,
-    });
+    assert.isNull(result.targetThread.forkedFrom);
+    assert.deepEqual(result.transfer.sourcePoint, { threadId: sourceThreadId, runId: sourceRunId });
   }),
 );
 
 it.effect("forks from a usage-limited failed run", () =>
   Effect.gen(function* () {
     const result = yield* planFork(makeSourceRun("failed"));
-    assert.deepEqual(result.targetThread.forkedFrom, {
-      type: "run",
-      threadId: sourceThreadId,
-      runId: sourceRunId,
-    });
+    assert.isNull(result.targetThread.forkedFrom);
+    assert.deepEqual(result.transfer.sourcePoint, { threadId: sourceThreadId, runId: sourceRunId });
   }),
 );
 

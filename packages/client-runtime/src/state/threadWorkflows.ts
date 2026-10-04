@@ -154,7 +154,8 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     activeRun,
     queuedRuns,
     isHeld: projection.runs.some((run) => run.status === "queued" && run.queueHeld === true),
-    canReorder: capabilities?.supportsQueuedMessages === true,
+    // Reordering is an app-owned command, available before a native session exists.
+    canReorder: queuedRuns.length > 1,
     canPromoteToSteer:
       hasSteerableProviderTurn &&
       (capabilities?.supportsActiveSteering === true ||

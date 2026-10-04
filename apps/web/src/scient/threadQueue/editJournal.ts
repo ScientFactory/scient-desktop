@@ -1,13 +1,21 @@
-import type { ScopedThreadRef, ScientThreadQueueItem } from "@t3tools/contracts";
+import type { ScopedThreadRef, ScientThreadQueueItem, RunId, MessageId } from "@t3tools/contracts";
 import type { ComposerThreadDraftState, DraftId } from "../../composerDraftStore";
 import { migrateQueueComposerContext } from "./composerSnapshot";
 
+/** Local recovery payload; native run IDs never pass through the legacy queue codec. */
+export type QueueEditItem = Omit<ScientThreadQueueItem, "queueItemId"> & {
+  readonly queueItemId: string;
+};
 export type QueueEditSession = {
   key: string;
   journalKey: string;
   stashed?: boolean;
   transferred?: boolean;
-  extractedItem?: ScientThreadQueueItem | undefined;
+  extractedItem?: QueueEditItem | undefined;
+  /** Native extraction retries target the exact captured revision and command receipt. */
+  nativeRun?:
+    | { readonly runId: RunId; readonly messageId: MessageId; readonly expectedUpdatedAt: string }
+    | undefined;
   composerSeparated?: boolean | undefined;
   originalTarget: ScopedThreadRef | DraftId;
   editTarget: ScopedThreadRef | DraftId;

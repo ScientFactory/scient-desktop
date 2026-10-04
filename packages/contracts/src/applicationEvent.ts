@@ -30,6 +30,8 @@ export type OrchestrationClientOrigin = typeof OrchestrationClientOrigin.Type;
 
 /** Metadata retained by the shared application event source. */
 export const ApplicationEventMetadata = Schema.Struct({
+  /** Assigned by the canonical event source; unchanged workspace updates retain it. */
+  workspaceAuthorityRevision: Schema.optional(NonNegativeInt),
   deferredTurn: Schema.optional(Schema.Boolean),
   providerTurnId: Schema.optional(TrimmedNonEmptyString),
   providerItemId: Schema.optional(ProviderItemId),

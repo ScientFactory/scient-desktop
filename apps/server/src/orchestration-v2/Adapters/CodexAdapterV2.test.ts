@@ -51,6 +51,8 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import packageJson from "../../../package.json" with { type: "json" };
 import * as ServerConfig from "../../config.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
+import * as Logger from "effect/Logger";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
@@ -663,7 +665,7 @@ describe("CodexAdapterV2 process spawning", () => {
           config: {
             "tools.update_plan.enabled": true,
             mcp_servers: {
-              "t3-code": {
+              scient: {
                 url: "http://127.0.0.1:43123/mcp",
                 http_headers: {
                   Authorization: "Bearer secret-codex-token",
@@ -1606,6 +1608,14 @@ function codexReplayPreamble(input: {
           sandboxPolicy: { type: "dangerFullAccess" },
           summary: "detailed",
           additionalContext: {
+            t3_code_runtime: {
+              kind: "application",
+              value: buildRuntimeInstructions({
+                harness: "Codex",
+                model: "gpt-5.4",
+                reasoningEffort: "medium",
+              }),
+            },
             scient_awareness: { kind: "application", value: buildScientAwareness() },
           },
         },
@@ -2692,8 +2702,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   );
 
   for (const outcome of ["saved", "default-path", "missing", "foreign", "failed"] as const) {
-    it.effect(`projects native Codex generated images with ${outcome} materialization`, () =>
-      Effect.scoped(
+    it.effect(`projects native Codex generated images with ${outcome} materialization`, () => {
+      const logs: unknown[] = [];
+      const logger = Logger.make(({ message }) => {
+        logs.push(message);
+      });
+      return Effect.scoped(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
@@ -2956,123 +2970,171 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             return yield* Effect.die("Missing rebuilt image item");
           assert.deepEqual(rebuiltItem.attachments, first.message.attachments);
           assert.equal(rebuiltItem.text, first.message.text);
+          const warnings = logs.filter(
+            (message) =>
+              Array.isArray(message) &&
+              message[0] === "orchestration-v2.codex.generated-image-import-failed",
+          );
+          assert.lengthOf(warnings, outcome === "saved" || outcome === "default-path" ? 0 : 2);
+          if (outcome === "missing" || outcome === "foreign" || outcome === "failed") {
+            const encoded = encodeUnknownJson(warnings);
+            assert.include(
+              encoded,
+              outcome === "missing"
+                ? "ENOENT"
+                : outcome === "foreign"
+                  ? "outside_authorized_root"
+                  : "provider_generation_failed",
+            );
+            assert.notInclude(encoded, home);
+            assert.notInclude(encoded, sourcePath);
+          }
         }).pipe(Effect.provide(imagePersistenceLayer)),
-      ),
-    );
+      ).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+    });
   }
 
-  it.effect("preserves T3 context on the wire and restores it after compaction", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const nativeThreadId = "context-thread";
-        const nativeTurnId = "context-turn";
-        const capabilities = new Set([
-          "preview",
-          "documents:build",
-          "compute:inventory",
-          "skills:read",
-        ] as const);
-        const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
-          nativeThreadId,
-          codexInput: [{ type: "text", text: "work" }],
-          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
-          modelSelection: CODEX_TEST_MODEL_SELECTION,
-          hasT3Mcp: true,
-          mcpCapabilities: capabilities,
-        });
-        assert.include(
-          params.additionalContext?.t3_code_orchestration?.value ?? "",
-          "delegate_task",
-        );
-        assert.include(params.additionalContext?.scient_awareness?.value ?? "", "scient_pdf_build");
-        assert.include(
-          params.additionalContext?.scient_awareness?.value ?? "",
-          "scient_compute_inventory",
-        );
-        assert.include(
-          params.additionalContext?.scient_awareness?.value ?? "",
-          "scient_skill_load",
-        );
-        assert.notInclude(params.additionalContext?.scient_awareness?.value ?? "", "device_list");
-        const entries = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" });
-        const transcript = makeCodexReplayTranscript({
-          scenario: "restore-context",
-          entries: [
-            ...entries.slice(0, 5),
-            {
-              type: "expect_outbound",
-              label: "context turn",
-              frame: { id: 3, method: "turn/start", params },
-            },
-            ...entries.slice(6),
-            {
-              type: "emit_inbound",
-              label: "compacted",
-              frame: {
-                method: "item/completed",
-                params: {
-                  threadId: nativeThreadId,
-                  turnId: nativeTurnId,
-                  item: { type: "contextCompaction", id: "compact-context" },
+  it.effect.each([false, true])(
+    "preserves runtime guidance and restores it after compaction with MCP=%s",
+    (hasMcp) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeThreadId = "context-thread";
+          const nativeTurnId = "context-turn";
+          const capabilities = new Set([
+            "preview",
+            "documents:build",
+            "compute:inventory",
+            "skills:read",
+          ] as const);
+          const modelSelection: ModelSelection = {
+            ...CODEX_TEST_MODEL_SELECTION,
+            options: [{ id: "reasoningEffort", value: "high" }],
+          };
+          const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+            nativeThreadId,
+            codexInput: [{ type: "text", text: "work" }],
+            runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+            modelSelection,
+            hasT3Mcp: hasMcp,
+            mcpCapabilities: capabilities,
+          });
+          assert.include(
+            params.additionalContext?.t3_code_runtime?.value ?? "",
+            "Codex harness, as gpt-5.4 with high reasoning effort",
+          );
+          if (!hasMcp) {
+            assert.deepEqual(Object.keys(params.additionalContext ?? {}), [
+              "t3_code_runtime",
+              "scient_awareness",
+            ]);
+            assert.notInclude(
+              params.additionalContext?.scient_awareness?.value ?? "",
+              "scient_skill_load",
+            );
+          } else {
+            assert.include(
+              params.additionalContext?.t3_code_orchestration?.value ?? "",
+              "delegate_task",
+            );
+            assert.include(
+              params.additionalContext?.scient_awareness?.value ?? "",
+              "scient_pdf_build",
+            );
+            assert.include(
+              params.additionalContext?.scient_awareness?.value ?? "",
+              "scient_compute_inventory",
+            );
+            assert.include(
+              params.additionalContext?.scient_awareness?.value ?? "",
+              "scient_skill_load",
+            );
+            assert.notInclude(
+              params.additionalContext?.scient_awareness?.value ?? "",
+              "device_list",
+            );
+          }
+          const entries = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" });
+          const transcript = makeCodexReplayTranscript({
+            scenario: "restore-context",
+            entries: [
+              ...entries.slice(0, 5),
+              {
+                type: "expect_outbound",
+                label: "context turn",
+                frame: { id: 3, method: "turn/start", params },
+              },
+              ...entries.slice(6),
+              {
+                type: "emit_inbound",
+                label: "compacted",
+                frame: {
+                  method: "item/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    item: { type: "contextCompaction", id: "compact-context" },
+                  },
                 },
               },
-            },
-            {
-              type: "expect_outbound",
-              label: "restore context",
-              frame: {
-                id: 4,
-                method: "thread/inject_items",
-                params: {
-                  threadId: nativeThreadId,
-                  items: Object.entries(params.additionalContext ?? {}).map(([key, entry]) => ({
-                    type: "message",
-                    role: "developer",
-                    content: [{ type: "input_text", text: `<${key}>${entry.value}</${key}>` }],
-                  })),
+              {
+                type: "expect_outbound",
+                label: "restore context",
+                frame: {
+                  id: 4,
+                  method: "thread/inject_items",
+                  params: {
+                    threadId: nativeThreadId,
+                    items: Object.entries(params.additionalContext ?? {}).map(([key, entry]) => ({
+                      type: "message",
+                      role: "developer",
+                      content: [{ type: "input_text", text: `<${key}>${entry.value}</${key}>` }],
+                    })),
+                  },
                 },
               },
-            },
-            { type: "emit_inbound", label: "restored", frame: { id: 4, result: {} } },
-            {
-              type: "emit_inbound",
-              label: "done",
-              frame: {
-                method: "turn/completed",
-                params: {
-                  threadId: nativeThreadId,
-                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+              { type: "emit_inbound", label: "restored", frame: { id: 4, result: {} } },
+              {
+                type: "emit_inbound",
+                label: "done",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                  },
                 },
               },
-            },
-          ],
-        });
-        const harness = yield* makeCodexReplayHarness(transcript);
-        McpProviderSession.setMcpProviderSession({
-          environmentId: EnvironmentId.make("test"),
-          threadId: harness.threadId,
-          providerSessionId: "context-session",
-          providerInstanceId: ProviderInstanceId.make("codex"),
-          endpoint: "http://127.0.0.1:43123/mcp",
-          authorizationHeader: "Bearer test",
-          capabilities,
-        });
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => McpProviderSession.clearMcpProviderSession(harness.threadId)),
-        );
-        yield* harness.runtime.startTurn(
-          makeCodexTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("context-attempt"),
-            text: "work",
-          }),
-        );
-        yield* harness.firstTerminal;
-        assert.equal(harness.terminalEvents()[0]?.status, "completed");
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
-    ),
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          if (hasMcp)
+            McpProviderSession.setMcpProviderSession({
+              environmentId: EnvironmentId.make("test"),
+              threadId: harness.threadId,
+              providerSessionId: "context-session",
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              endpoint: "http://127.0.0.1:43123/mcp",
+              authorizationHeader: "Bearer test",
+              capabilities,
+            });
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => McpProviderSession.clearMcpProviderSession(harness.threadId)),
+          );
+          yield* harness.runtime.startTurn({
+            ...makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("context-attempt"),
+              text: "work",
+            }),
+            modelSelection,
+          });
+          yield* harness.firstTerminal;
+          assert.equal(harness.terminalEvents()[0]?.status, "completed");
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      ),
   );
 
   it.effect("compacts Codex with the native RPC and completes the compaction turn", () =>
@@ -3248,6 +3310,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   sandboxPolicy: { type: "dangerFullAccess" },
                   summary: "detailed",
                   additionalContext: {
+                    t3_code_runtime: {
+                      kind: "application",
+                      value: buildRuntimeInstructions({
+                        harness: "Codex",
+                        model: "gpt-5.4",
+                        reasoningEffort: "medium",
+                      }),
+                    },
                     scient_awareness: { kind: "application", value: buildScientAwareness() },
                   },
                 },
@@ -7316,6 +7386,142 @@ describe("CodexAdapterV2 post-settle continuation", () => {
 
   const errorCauseChainText = (error: unknown): string =>
     error instanceof Error ? `${error.message} ${errorCauseChainText(error.cause)}` : String(error);
+
+  it.effect(
+    "uses the Scient MCP namespace and exact thread credential for native start, resume and fork",
+    () =>
+      Effect.gen(function* () {
+        const scenario = "scient-mcp-native-lifecycle";
+        const threadId = ThreadId.make(`thread-${scenario}`);
+        const targetThreadId = ThreadId.make("scient-mcp-fork-target");
+        const nativeThreadId = "scient-mcp-source-native";
+        const forkNativeId = "scient-mcp-fork-native";
+        const endpoint = "http://127.0.0.1:43123/mcp";
+        for (const [id, token] of [
+          [threadId, "synthetic-source-token"],
+          [targetThreadId, "synthetic-target-token"],
+        ] as const) {
+          McpProviderSession.setMcpProviderSession({
+            environmentId: EnvironmentId.make("scient-mcp-native-test"),
+            threadId: id,
+            providerSessionId: `mcp-${id}`,
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            endpoint,
+            authorizationHeader: `Bearer ${token}`,
+            capabilities: new Set(["orchestration"] as const),
+          });
+        }
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            McpProviderSession.clearMcpProviderSession(threadId);
+            McpProviderSession.clearMcpProviderSession(targetThreadId);
+          }),
+        );
+        const sourceConfig = {
+          "tools.update_plan.enabled": true,
+          mcp_servers: {
+            scient: {
+              url: endpoint,
+              http_headers: { Authorization: "Bearer synthetic-source-token" },
+            },
+          },
+        };
+        const targetConfig = {
+          "tools.update_plan.enabled": true,
+          mcp_servers: {
+            scient: {
+              url: endpoint,
+              http_headers: { Authorization: "Bearer synthetic-target-token" },
+            },
+          },
+        };
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...codexReplayPreamble({
+              nativeThreadId,
+              nativeTurnId: "unused",
+              prompt: "unused",
+            }).slice(0, 3),
+            {
+              type: "expect_outbound",
+              label: "thread/start",
+              frame: { id: 2, method: "thread/start", params: { config: sourceConfig } },
+            },
+            {
+              type: "emit_inbound",
+              label: "thread/start",
+              frame: {
+                id: 2,
+                result: codexReplayThreadResult({ nativeThreadId, forkedFromId: null }),
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "thread/resume",
+              frame: {
+                id: 3,
+                method: "thread/resume",
+                params: { threadId: nativeThreadId, excludeTurns: true, config: sourceConfig },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "thread/resume",
+              frame: { id: 3, result: { thread: { id: nativeThreadId, updatedAt: 1782622440 } } },
+            },
+            {
+              type: "expect_outbound",
+              label: "thread/fork",
+              frame: {
+                id: 4,
+                method: "thread/fork",
+                params: {
+                  threadId: nativeThreadId,
+                  lastTurnId: "scient-mcp-boundary",
+                  config: targetConfig,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "thread/fork",
+              frame: {
+                id: 4,
+                result: codexReplayThreadResult({
+                  nativeThreadId: forkNativeId,
+                  forkedFromId: nativeThreadId,
+                }),
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        const resumed = yield* harness.runtime.resumeThread({
+          providerThread: harness.providerThread,
+        });
+        const boundary = codexReplaySourceTurn({
+          id: "scient-mcp-provider-turn",
+          ordinal: 1,
+          nativeId: "scient-mcp-boundary",
+          providerThreadId: resumed.id,
+          now: yield* DateTime.now,
+        });
+        const forked = yield* harness.runtime.forkThread({
+          sourceProviderThread: resumed,
+          sourceProviderTurns: [boundary],
+          providerTurnId: boundary.id,
+          targetThreadId,
+        });
+        assert.equal(forked.nativeThreadRef?.nativeId, forkNativeId);
+        assert.equal(forked.appThreadId, targetThreadId);
+        assert.equal(forked.forkedFrom?.providerThreadId, resumed.id);
+        assert.equal(
+          McpProviderSession.readMcpProviderSession(threadId)?.authorizationHeader,
+          "Bearer synthetic-source-token",
+        );
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
 
   const codexReplaySourceTurn = (input: {
     readonly id: string;

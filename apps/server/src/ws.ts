@@ -51,7 +51,6 @@ import {
   OrchestrationV2RpcSchemas,
   ORCHESTRATION_PROTOCOL_QUERY_PARAM,
   ORCHESTRATION_PROTOCOL_VERSION,
-  OrchestrationV2DispatchCommandError,
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2ThreadLaunchError,
@@ -178,7 +177,7 @@ import {
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as OrchestrationEventStore from "./persistence/Services/OrchestrationEventStore.ts";
-import { userFacingDispatchErrorMessage } from "./orchestration-v2/UserFacingErrors.ts";
+import { dispatchCommandRpcError } from "./orchestration-v2/DispatchCommandRpcError.ts";
 import {
   observeRpcEffect as instrumentRpcEffect,
   observeRpcStream as instrumentRpcStream,
@@ -1280,7 +1279,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
   },
 );
 
-// SCIENT-FORK:START — one wire tag, two engines.
+// SCIENT-FORK:START — one wire tag, native V2 authority.
 // `ORCHESTRATION_WS_METHODS.dispatchCommand` and `ORCHESTRATION_V2_WS_METHODS.dispatchCommand`
 // are the same string, so `RpcGroup.make` can hold exactly one handler body under it.
 // `ClientOrchestrationCommand` is still the transport for commands `OrchestrationV2Command`
@@ -2258,10 +2257,7 @@ const makeWsRpcLayer = (
       });
 
       const mutateProject = Effect.fn("ws.projects.mutate")(function* (mutation: ProjectMutation) {
-        const result = yield* projectMutationOperation(projectService, mutation);
-        if (mutation.type === "project.delete")
-          yield* projectCloneTracker.discard(mutation.projectId);
-        return result;
+        return yield* projectMutationOperation(projectService, mutation);
       });
 
       const handlers0 = WsConversationRpcGroup.of({
@@ -2305,16 +2301,7 @@ const makeWsRpcLayer = (
                     Effect.map((result) =>
                       ThreadMessageIntake.dispatchCommandReceipt(command, result),
                     ),
-                    Effect.mapError((cause) => {
-                      const detail = userFacingDispatchErrorMessage(cause);
-                      return new OrchestrationV2DispatchCommandError({
-                        commandId: command.commandId,
-                        commandType: command.type,
-                        message: detail ?? "Failed to dispatch orchestration V2 command",
-                        ...(detail === undefined ? {} : { detail }),
-                        cause,
-                      });
-                    }),
+                    Effect.mapError((cause) => dispatchCommandRpcError(command, cause)),
                   ),
                 {
                   "rpc.aggregate": "orchestrationV2",
@@ -2335,7 +2322,6 @@ const makeWsRpcLayer = (
                     : {}),
                 },
               ),
-        // SCIENT-FORK:END
         [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: (input) =>
           observeRpcEffect(
             ORCHESTRATION_V2_WS_METHODS.getWorkflowScript,

@@ -772,6 +772,19 @@ export const ProviderRegistryLive = Layer.effect(
           return next;
         });
 
+        // A passive snapshot must not reuse initialization metadata captured
+        // before this runtime-proven account failure. Invalidate this instance
+        // without deleting credentials or changing another account's runtime.
+        const instance = yield* instanceRegistry.getInstance(input.instanceId);
+        yield* (instance?.invalidateCaches ?? Effect.void).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("provider.authentication-cache-invalidation-failed", {
+              instanceId: input.instanceId,
+              cause,
+            }),
+          ),
+        );
+
         const nextProvider = yield* applyProviderTransientState(matchingProvider);
         return yield* upsertProviders([nextProvider], { persist: false });
       },

@@ -10,10 +10,8 @@ import {
 import type { ConversationSnapshotThread } from "@scientfactory/conversation";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
-import {
-  HistoricalSystemMessage,
-  HISTORICAL_SYSTEM_MESSAGE_TOOL_NAME,
-} from "../../orchestration-v2/legacy/HistoricalSystemMessage.ts";
+import * as Option from "effect/Option";
+import { readHistoricalSystemMessage } from "../../orchestration-v2/legacy/HistoricalSystemMessage.ts";
 
 const historicalActivity = Schema.Struct({
   kind: Schema.String,
@@ -22,7 +20,6 @@ const historicalActivity = Schema.Struct({
   payload: Schema.Unknown,
 });
 const isHistoricalActivity = Schema.is(historicalActivity);
-const decodeHistoricalSystem = Schema.decodeUnknownSync(HistoricalSystemMessage);
 
 /** Durable visible items feed the portable export format, including frozen inherited history. */
 export function conversationSnapshotProjection(
@@ -112,9 +109,10 @@ export function conversationSnapshotProjection(
           updatedAt,
         });
         break;
-      case "dynamic_tool":
-        if (item.toolName === HISTORICAL_SYSTEM_MESSAGE_TOOL_NAME) {
-          const record = decodeHistoricalSystem(item.input);
+      case "dynamic_tool": {
+        const system = readHistoricalSystemMessage(item);
+        if (Option.isSome(system)) {
+          const record = system.value;
           messages.push({
             id: record.messageId,
             role: "system",
@@ -148,6 +146,7 @@ export function conversationSnapshotProjection(
           );
         }
         break;
+      }
       case "command_execution":
         activity(
           "tool.completed",

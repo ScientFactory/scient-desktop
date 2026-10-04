@@ -1,7 +1,9 @@
 import { MessageId, type ScientThreadQueueItem } from "@t3tools/contracts";
+import { deriveTimelineEntriesFromVisibleTurnItems } from "../../session-logic";
 import { describe, expect, it } from "vite-plus/test";
 import {
   pendingQueueAdmissionPreviews,
+  optimisticTimelineMessages,
   settleQueueAdmissionPreview,
   shouldPreviewQueueAdmission,
   type OptimisticUserMessage,
@@ -27,6 +29,19 @@ const item: ScientThreadQueueItem = {
 };
 
 describe("optimistic queue admission presentation", () => {
+  it("keeps real V2 timeline consumption free of pending and accepted queue previews", () => {
+    const timeline = (messages: OptimisticUserMessage[]) =>
+      deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: [],
+        optimisticMessages: optimisticTimelineMessages(messages),
+      });
+    expect(timeline([message])).toEqual([]);
+    expect(timeline(settleQueueAdmissionPreview([message], message.id, true))).toEqual([]);
+    const sent = timeline(settleQueueAdmissionPreview([message], message.id, false));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.id).toBe(message.id);
+  });
+
   it("places ordinary busy follow-ups at the composer but keeps idle Send and explicit Steer in the timeline", () => {
     const input = {
       ordinaryServerSend: true,

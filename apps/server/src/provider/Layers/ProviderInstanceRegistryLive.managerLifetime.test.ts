@@ -1,3 +1,4 @@
+import * as ProviderRegistry from "../Services/ProviderRegistry.ts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId, type OrchestrationV2AppThread, type ThreadId } from "@t3tools/contracts";
@@ -79,6 +80,10 @@ const managerLayer = Effect.fnUntraced(function* (h: NativeHarness) {
         .pipe(Effect.tap(() => Deferred.succeed(revoked, undefined))),
   };
   const dependencies = Layer.mergeAll(
+    Layer.mock(ProviderRegistry.ProviderRegistry)({
+      setProviderAuthenticationFailure: () =>
+        Effect.die("Unexpected authentication control in native lifetime fixtures."),
+    }),
     Layer.succeed(EventSink.EventSinkV2, sink),
     Layer.succeed(ProjectionStore.ProjectionStoreV2, store),
     Layer.succeed(IdAllocator.IdAllocatorV2, allocator),

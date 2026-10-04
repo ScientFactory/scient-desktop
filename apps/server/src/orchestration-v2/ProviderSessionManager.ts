@@ -30,6 +30,7 @@ import * as Stream from "effect/Stream";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
+import type { McpInvocationScope } from "../mcp/McpInvocationContext.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
@@ -45,6 +46,7 @@ import {
   type ProviderAdapterV2SessionRuntime,
 } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { scientSkillDeliveryForProvider } from "../scient/skills/ScientSkillSession.ts";
 
@@ -155,6 +157,13 @@ export interface ProviderSessionManagerV2Shape {
   readonly get: (
     providerSessionId: ProviderSessionId,
   ) => Effect.Effect<Option.Option<ProviderAdapterV2SessionRuntime>, ProviderSessionManagerV2Error>;
+  /** Resolve execution authority only for the live native owner of this MCP credential. */
+  readonly resolveMcpInvocationPolicy: (
+    scope: Pick<McpInvocationScope, "threadId" | "providerInstanceId" | "providerSessionId">,
+  ) => Effect.Effect<
+    Option.Option<Pick<ProviderAdapterV2RuntimePolicy, "runtimeMode" | "interactionMode">>,
+    ProviderSessionManagerV2Error
+  >;
   readonly close: (
     providerSessionId: ProviderSessionId,
   ) => Effect.Effect<void, ProviderSessionManagerV2Error>;
@@ -283,6 +292,7 @@ function providerThreadLoadKey(input: {
   readonly runtimePolicy?: ProviderAdapterV2RuntimePolicy;
 }): string {
   return JSON.stringify({
+    providerThreadId: input.providerThread.id,
     providerThread: providerThreadRuntimeKey(input.providerThread),
     modelSelection: input.modelSelection ?? null,
     runtimePolicy: input.runtimePolicy ?? null,
@@ -301,11 +311,13 @@ export const layerWithOptions = (
   | ProjectionStore.ProjectionStoreV2
   | ProviderEventIngestor.ProviderEventIngestorV2
   | ProviderAdapterRegistry.ProviderAdapterRegistryV2
+  | ProviderRegistry.ProviderRegistry
 > =>
   Layer.effect(
     ProviderSessionManagerV2,
     Effect.gen(function* () {
       const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
+      const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       const fileSystem = yield* FileSystem.FileSystem;
       const mcpSessionRegistry = yield* McpSessionRegistry.McpSessionRegistry;
       /**
@@ -1481,6 +1493,21 @@ export const layerWithOptions = (
         let stoppedByProvider = false;
         return entry.runtime.events.pipe(
           Stream.runForEach((event) => {
+            if (event.type === "authentication.invalidated") {
+              // A single pump owns this observation, independently of run
+              // subscribers. Never accept instance identity from the provider.
+              return Effect.gen(function* () {
+                const current = (yield* Ref.get(sessions)).get(
+                  sessionKey(entry.runtime.providerSessionId),
+                );
+                if (current?.runtime !== entry.runtime || event.driver !== entry.runtime.driver)
+                  return;
+                yield* providerRegistry.setProviderAuthenticationFailure({
+                  instanceId: entry.runtime.instanceId,
+                  message: event.message,
+                });
+              });
+            }
             if (
               event.type === "provider_session.updated" &&
               event.providerSession.status === "stopped"
@@ -1601,6 +1628,77 @@ export const layerWithOptions = (
 
       return ProviderSessionManagerV2.of({
         shutdown,
+        resolveMcpInvocationPolicy: Effect.fn(
+          "ProviderSessionManagerV2.resolveMcpInvocationPolicy",
+        )(function* (
+          invocation: Parameters<ProviderSessionManagerV2Shape["resolveMcpInvocationPolicy"]>[0],
+        ) {
+          const entries = [...(yield* Ref.get(sessions)).values()].filter(
+            (entry) =>
+              entry.runtime.instanceId === invocation.providerInstanceId &&
+              entry.attachedThreadIds.has(invocation.threadId) &&
+              entry.mcpCredentialIdByThread.get(invocation.threadId) ===
+                invocation.providerSessionId,
+          );
+          if (entries.length === 0) return Option.none();
+          const projection = yield* projectionStore
+            .getThreadRecords(invocation.threadId, ["runs", "attempts", "providerThreads"])
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderSessionLookupError({
+                    providerSessionId: ProviderSessionId.make(invocation.providerSessionId),
+                    cause,
+                  }),
+              ),
+            );
+          if (projection.thread.deletedAt !== null || projection.thread.archivedAt !== null)
+            return Option.none();
+          const run = projection.runs
+            .filter((candidate) => ["starting", "running", "waiting"].includes(candidate.status))
+            .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+          if (
+            run === undefined ||
+            !["starting", "running", "waiting"].includes(run.status) ||
+            run.providerInstanceId !== invocation.providerInstanceId ||
+            run.runtimeMode === undefined ||
+            run.interactionMode === undefined
+          )
+            return Option.none();
+          const attempt = projection.attempts.find(
+            (candidate) => candidate.id === run.activeAttemptId,
+          );
+          const nativeThread = projection.providerThreads.find(
+            (candidate) => candidate.id === run.providerThreadId,
+          );
+          if (
+            attempt === undefined ||
+            nativeThread === undefined ||
+            !["pending", "running"].includes(attempt.status) ||
+            attempt.runId !== run.id ||
+            attempt.rootNodeId !== run.rootNodeId ||
+            attempt.providerInstanceId !== invocation.providerInstanceId ||
+            attempt.providerThreadId !== nativeThread?.id ||
+            nativeThread.appThreadId !== invocation.threadId ||
+            nativeThread.providerInstanceId !== invocation.providerInstanceId
+          )
+            return Option.none();
+          const current = yield* Ref.get(sessions);
+          const owner = entries.find(
+            (entry) =>
+              entry.runtime.providerSessionId === nativeThread.providerSessionId &&
+              current.get(sessionKey(entry.runtime.providerSessionId))?.runtime === entry.runtime &&
+              current
+                .get(sessionKey(entry.runtime.providerSessionId))
+                ?.attachedThreadIds.has(invocation.threadId) === true &&
+              current
+                .get(sessionKey(entry.runtime.providerSessionId))
+                ?.mcpCredentialIdByThread.get(invocation.threadId) === invocation.providerSessionId,
+          );
+          return owner === undefined
+            ? Option.none()
+            : Option.some({ runtimeMode: run.runtimeMode, interactionMode: run.interactionMode });
+        }),
         open: (input) =>
           sessionOpen.withLock(
             input.providerSessionId,

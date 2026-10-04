@@ -6,6 +6,8 @@ import {
   EventId,
   IsoDateTime,
   NonNegativeInt,
+  OrchestrationV2AppThread,
+  OrchestrationV2AppThreadJson,
   OrchestrationV2DomainEventJson,
   OrchestrationV2StoredEvent,
   ProjectId,
@@ -117,6 +119,10 @@ const encodeV2EventJson = Schema.encodeEffect(OrchestrationV2DomainEventJson);
 const decodeV2StoredEvent = Schema.decodeUnknownEffect(OrchestrationV2StoredEvent);
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const isThreadState = Schema.is(OrchestrationV2AppThread);
+const threadStateJson = Schema.fromJsonString(OrchestrationV2AppThreadJson);
+const decodeThreadState = Schema.decodeUnknownEffect(threadStateJson);
+const encodeThreadState = Schema.encodeEffect(threadStateJson);
 // SCIENT-FORK:START — V1 row decoding. `aggregateId` is widened to the row's raw
 // text and re-decoded by the V1 contract, which brands project vs thread ids.
 const decodeV1Event = Schema.decodeUnknownEffect(OrchestrationEvent);
@@ -314,7 +320,46 @@ const makeEventStore = Effect.gen(function* () {
             : { ...event.payload, projectIcon: encodeProjectIcon(event.payload.projectIcon) },
         metadataJson: event.metadata,
       }).pipe(
-        Effect.flatMap((row) => decodeProjectEvent(row)),
+        Effect.flatMap((row) =>
+          Effect.gen(function* () {
+            const previous = yield* sql<{
+              readonly workspaceRoot: string;
+              readonly scopeRevision: number | null;
+            }>`
+              SELECT json_extract(source.payload_json, '$.workspaceRoot') AS "workspaceRoot",
+                (
+                  SELECT json_extract(stamped.metadata_json, '$.workspaceAuthorityRevision')
+                  FROM orchestration_events stamped
+                  WHERE stamped.aggregate_kind = 'project' AND stamped.stream_id = ${event.aggregateId}
+                    AND stamped.sequence < ${row.sequence}
+                    AND CASE WHEN json_valid(stamped.metadata_json)
+                      THEN json_type(stamped.metadata_json, '$.workspaceAuthorityRevision') = 'integer'
+                      ELSE 0 END
+                  ORDER BY stamped.sequence DESC LIMIT 1
+                ) AS "scopeRevision"
+              FROM orchestration_events source
+              WHERE source.aggregate_kind = 'project' AND source.stream_id = ${event.aggregateId}
+                AND source.sequence < ${row.sequence}
+                AND CASE WHEN json_valid(source.payload_json)
+                  THEN json_type(source.payload_json, '$.workspaceRoot') = 'text' ELSE 0 END
+              ORDER BY source.sequence DESC LIMIT 1
+            `;
+            const prior = previous[0];
+            const root = event.type === "project.deleted" ? undefined : event.payload.workspaceRoot;
+            const workspaceAuthorityRevision =
+              event.type !== "project.created" &&
+              prior !== undefined &&
+              prior.scopeRevision !== null &&
+              (root === undefined || root === prior.workspaceRoot)
+                ? prior.scopeRevision
+                : row.sequence;
+            const metadata = { ...row.metadata, workspaceAuthorityRevision };
+            yield* sql`UPDATE orchestration_events SET metadata_json = ${yield* encodeJson(metadata)}
+              WHERE sequence = ${row.sequence}`;
+            return yield* decodeProjectEvent({ ...row, metadata });
+          }),
+        ),
+        sql.withTransaction,
         Effect.mapError(
           toPersistenceSqlOrDecodeError(
             "OrchestrationEventStore.appendProjectEvent:insert",
@@ -418,14 +463,53 @@ const makeEventStore = Effect.gen(function* () {
             )
             RETURNING sequence
           `;
+            const sequence = rows[0]?.sequence;
+            let persistedEvent = event;
+            if (sequence !== undefined && isThreadState(event.payload)) {
+              const previous = yield* sql<{
+                readonly sequence: number;
+                readonly payload_json: string;
+              }>`
+                SELECT sequence, payload_json FROM orchestration_events
+                WHERE aggregate_kind = 'thread' AND stream_id = ${event.threadId}
+                  AND application_event_version = 2 AND sequence < ${sequence}
+                  AND CASE WHEN json_valid(payload_json)
+                    THEN json_type(payload_json, '$.lineage.rootThreadId') = 'text' ELSE 0 END
+                ORDER BY sequence DESC LIMIT 1
+              `;
+              const priorRow = previous[0];
+              const prior =
+                priorRow === undefined
+                  ? undefined
+                  : yield* decodeThreadState(priorRow.payload_json);
+              const workspaceAuthorityRevision =
+                event.type !== "thread.created" &&
+                prior !== undefined &&
+                prior.workspaceAuthorityRevision !== undefined &&
+                prior.projectId === event.payload.projectId &&
+                prior.worktreePath === event.payload.worktreePath
+                  ? prior.workspaceAuthorityRevision
+                  : sequence;
+              const payloadJson = yield* encodeThreadState({
+                ...event.payload,
+                workspaceAuthorityRevision,
+              });
+              yield* sql`UPDATE orchestration_events SET payload_json = ${payloadJson}
+                WHERE sequence = ${sequence}`;
+              persistedEvent = yield* decodeV2EventJson({
+                ...encoded,
+                payload: yield* decodeJson(payloadJson),
+              });
+            }
             return yield* decodeV2StoredEvent({
-              sequence: rows[0]?.sequence,
+              sequence,
               commandId: input.commandId ?? null,
-              event,
+              event: persistedEvent,
             });
           }),
         { concurrency: 1 },
       ).pipe(
+        sql.withTransaction,
         Effect.mapError(
           toPersistenceSqlOrDecodeError(
             "OrchestrationEventStore.appendAgentEvents:insert",

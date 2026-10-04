@@ -66,7 +66,9 @@ const QuarantinePayloadEvidence = Schema.fromJsonString(
 );
 const decodeQuarantinePayload = Schema.decodeSync(QuarantinePayloadEvidence);
 
-const SCIENT_MIGRATION_IDS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
+const SCIENT_MIGRATION_IDS = [
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+];
 const SCIENT_MIGRATION_NAMES = [
   "durable-thread-forks",
   "durable-provider-bootstrap",
@@ -86,8 +88,43 @@ const SCIENT_MIGRATION_NAMES = [
   "preserve-legacy-fork-sessions",
   "fork-accepted-turn",
   "import-context-transfers",
+  "workspace-authority-cutover",
+  "legacy-history-repair-generation",
 ];
 const SCIENT_MIGRATIONS_AFTER_BOOTSTRAP = SCIENT_MIGRATION_IDS.slice(2);
+
+it.effect(
+  "adds repair generation zero to completed upstream import rows without changing their completion",
+  () =>
+    withMemory(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* runMigrations();
+        yield* sql`INSERT INTO orchestration_v2_legacy_imports
+      (thread_id, source_updated_at, shell_imported_at, transcript_imported_at, imported_message_count)
+      VALUES ('old-completed', '2026-01-01', '2026-01-02', '2026-01-03', 42)`;
+        yield* runScientMigrations(sql);
+        assert.deepStrictEqual(
+          yield* sql`SELECT thread_id, transcript_imported_at, imported_message_count, history_repair_version
+      FROM orchestration_v2_legacy_imports`,
+          [
+            {
+              thread_id: "old-completed",
+              transcript_imported_at: "2026-01-03",
+              imported_message_count: 42,
+              history_repair_version: 0,
+            },
+          ],
+        );
+        const columns = yield* tableInfo(sql, "orchestration_v2_legacy_imports");
+        const generation = columns.filter((column) => column.name === "history_repair_version");
+        assert.lengthOf(generation, 1);
+        assert.equal(generation[0]?.notnull, 1);
+        assert.deepStrictEqual(yield* runScientMigrations(sql), []);
+        assert.deepStrictEqual(yield* tableInfo(sql, "orchestration_v2_legacy_imports"), columns);
+      }),
+    ),
+);
 
 /** Restore the schema boundary immediately before migration 4. */
 const removePostMigrationThreeAnalysisSchema = (sql: SqlClient.SqlClient) =>
@@ -597,6 +634,8 @@ it.effect("only unapplied migrations run in ascending order", () =>
           [16, "preserve-legacy-fork-sessions"],
           [17, "fork-accepted-turn"],
           [18, "import-context-transfers"],
+          [19, "workspace-authority-cutover"],
+          [20, "legacy-history-repair-generation"],
         ] as const,
       );
 
@@ -845,7 +884,7 @@ it.effect("migration 4 repairs databases that already recorded migration 3", () 
       const executed = yield* runScientMigrations(sql);
       assert.deepStrictEqual(
         executed.map(([id]) => id),
-        [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+        SCIENT_MIGRATION_IDS.slice(3),
       );
 
       const active = yield* sql<{ readonly thread_id: string }>`
@@ -2021,6 +2060,8 @@ it.effect("migration 9 converges a development database that already recorded mi
         [16, "preserve-legacy-fork-sessions"],
         [17, "fork-accepted-turn"],
         [18, "import-context-transfers"],
+        [19, "workspace-authority-cutover"],
+        [20, "legacy-history-repair-generation"],
       ]);
       const columns = yield* sql<{
         readonly name: string;
@@ -2048,14 +2089,17 @@ it.effect("reconciles only the exact former import-17 ledger without losing rece
         VALUES ('import-thread', 'import', NULL, 'pending', '{}',
           '2026-09-28T00:00:00Z', '2026-09-28T00:00:00Z')
       `;
-      yield* sql`DELETE FROM scient_schema_migrations WHERE migration_id = 18`;
+      yield* sql`DELETE FROM scient_schema_migrations WHERE migration_id >= 18`;
       yield* sql`
         UPDATE scient_schema_migrations
         SET name = 'import-context-transfers', created_at = '2026-09-28T01:02:03Z'
         WHERE migration_id = 17
       `;
 
-      assert.deepStrictEqual(yield* runScientMigrations(sql), []);
+      assert.deepStrictEqual(yield* runScientMigrations(sql), [
+        [19, "workspace-authority-cutover"],
+        [20, "legacy-history-repair-generation"],
+      ]);
       const ledger = yield* sql<{
         readonly migration_id: number;
         readonly name: string;
@@ -2092,7 +2136,7 @@ it.effect("does not reconcile a former import-17 row with a mismatched prefix", 
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* runScientMigrations(sql);
-      yield* sql`DELETE FROM scient_schema_migrations WHERE migration_id = 18`;
+      yield* sql`DELETE FROM scient_schema_migrations WHERE migration_id >= 18`;
       yield* sql`UPDATE scient_schema_migrations SET name = 'import-context-transfers' WHERE migration_id = 17`;
       yield* sql`UPDATE scient_schema_migrations SET name = 'unknown-migration' WHERE migration_id = 16`;
 
@@ -2118,7 +2162,7 @@ it.effect("rolls back former import-17 reconciliation if fork migration 17 canno
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* runScientMigrations(sql);
-      yield* sql`DELETE FROM scient_schema_migrations WHERE migration_id = 18`;
+      yield* sql`DELETE FROM scient_schema_migrations WHERE migration_id >= 18`;
       yield* sql`UPDATE scient_schema_migrations SET name = 'import-context-transfers' WHERE migration_id = 17`;
       yield* sql`DROP TABLE scient_context_handoffs`;
 
@@ -2161,7 +2205,9 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (16, 'preserve-legacy-fork-sessions')`;
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (17, 'fork-accepted-turn')`;
       yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (18, 'import-context-transfers')`;
-      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (19, 'future-migration')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (19, 'workspace-authority-cutover')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (20, 'legacy-history-repair-generation')`;
+      yield* sql`INSERT INTO scient_schema_migrations (migration_id, name) VALUES (21, 'future-migration')`;
 
       const error = yield* Effect.flip(runScientMigrations(sql));
       if (error._tag !== "ScientMigrationError") {
@@ -2169,7 +2215,7 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       } else {
         assert.strictEqual(error.kind, "BadState");
         assert.isTrue(
-          error.message.includes("unknown migration 19"),
+          error.message.includes("unknown migration 21"),
           `Unexpected message: ${error.message}`,
         );
       }
@@ -2180,7 +2226,7 @@ it.effect("a ledger from a newer build (unknown future ID) fails closed", () =>
       `;
       assert.deepStrictEqual(
         ledger.map((row) => row.migration_id),
-        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+        [...SCIENT_MIGRATION_IDS, 21],
       );
     }),
   ),

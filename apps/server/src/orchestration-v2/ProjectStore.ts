@@ -15,6 +15,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+import { projectWorkspaceAuthorityKey } from "../scient/projectScope/WorkspaceAuthorityRevision.ts";
 
 export class ProjectStoreV2Error extends Schema.TaggedError<ProjectStoreV2Error>()(
   "ProjectStoreV2Error",
@@ -213,54 +214,85 @@ export const make = Effect.gen(function* () {
       mapError("findActiveByWorkspaceRoot"),
     );
 
-  const apply: ProjectStoreV2["Service"]["apply"] = Effect.fn("ProjectStoreV2.apply")(
-    function* (event) {
-      if (event.type === "project.created") {
-        const payload = event.payload;
-        return yield* upsertRow({
-          projectId: payload.projectId,
-          title: payload.title,
-          workspaceRoot: payload.workspaceRoot,
-          defaultModelSelection: payload.defaultModelSelection,
-          defaultThreadEnvMode: payload.defaultThreadEnvMode ?? null,
-          autoPull: false,
-          faviconPath: payload.faviconPath ?? null,
-          projectIcon: payload.projectIcon ?? null,
-          scripts: payload.scripts,
-          createdAt: payload.createdAt,
-          updatedAt: payload.updatedAt,
-          deletedAt: null,
-        }).pipe(mapError("apply"));
-      }
-      const existing = yield* get(event.payload.projectId, { includeDeleted: true });
-      if (Option.isNone(existing)) return;
-      const row = existing.value;
-      if (event.type === "project.deleted") {
-        return yield* upsertRow({
-          ...row,
-          deletedAt: event.payload.deletedAt,
-          updatedAt: event.payload.deletedAt,
-        }).pipe(mapError("apply"));
-      }
+  const applyRow = Effect.fn("ProjectStoreV2.applyRow")(function* (event: ApplicationProjectEvent) {
+    if (event.type === "project.created") {
       const payload = event.payload;
-      yield* upsertRow({
-        ...row,
-        ...(payload.title === undefined ? {} : { title: payload.title }),
-        ...(payload.workspaceRoot === undefined ? {} : { workspaceRoot: payload.workspaceRoot }),
-        ...(payload.defaultModelSelection === undefined
-          ? {}
-          : { defaultModelSelection: payload.defaultModelSelection }),
-        ...(payload.defaultThreadEnvMode === undefined
-          ? {}
-          : { defaultThreadEnvMode: payload.defaultThreadEnvMode }),
-        ...(payload.autoPull === undefined ? {} : { autoPull: payload.autoPull }),
-        ...(payload.faviconPath === undefined ? {} : { faviconPath: payload.faviconPath }),
-        ...(payload.projectIcon === undefined ? {} : { projectIcon: payload.projectIcon }),
-        ...(payload.scripts === undefined ? {} : { scripts: payload.scripts }),
+      return yield* upsertRow({
+        projectId: payload.projectId,
+        title: payload.title,
+        workspaceRoot: payload.workspaceRoot,
+        defaultModelSelection: payload.defaultModelSelection,
+        defaultThreadEnvMode: payload.defaultThreadEnvMode ?? null,
+        autoPull: false,
+        faviconPath: payload.faviconPath ?? null,
+        projectIcon: payload.projectIcon ?? null,
+        scripts: payload.scripts,
+        createdAt: payload.createdAt,
         updatedAt: payload.updatedAt,
+        deletedAt: null,
       }).pipe(mapError("apply"));
-    },
-  );
+    }
+    const existing = yield* get(event.payload.projectId, { includeDeleted: true });
+    if (Option.isNone(existing)) return;
+    const row = existing.value;
+    if (event.type === "project.deleted") {
+      return yield* upsertRow({
+        ...row,
+        deletedAt: event.payload.deletedAt,
+        updatedAt: event.payload.deletedAt,
+      }).pipe(mapError("apply"));
+    }
+    const payload = event.payload;
+    yield* upsertRow({
+      ...row,
+      ...(payload.title === undefined ? {} : { title: payload.title }),
+      ...(payload.workspaceRoot === undefined ? {} : { workspaceRoot: payload.workspaceRoot }),
+      ...(payload.defaultModelSelection === undefined
+        ? {}
+        : { defaultModelSelection: payload.defaultModelSelection }),
+      ...(payload.defaultThreadEnvMode === undefined
+        ? {}
+        : { defaultThreadEnvMode: payload.defaultThreadEnvMode }),
+      ...(payload.autoPull === undefined ? {} : { autoPull: payload.autoPull }),
+      ...(payload.faviconPath === undefined ? {} : { faviconPath: payload.faviconPath }),
+      ...(payload.projectIcon === undefined ? {} : { projectIcon: payload.projectIcon }),
+      ...(payload.scripts === undefined ? {} : { scripts: payload.scripts }),
+      updatedAt: payload.updatedAt,
+    }).pipe(mapError("apply"));
+  });
+
+  const apply: ProjectStoreV2["Service"]["apply"] = (event) =>
+    Effect.gen(function* () {
+      const previous = yield* get(event.payload.projectId, { includeDeleted: true });
+      yield* applyRow(event);
+      const current = yield* get(event.payload.projectId, { includeDeleted: true });
+      if (Option.isNone(current)) return;
+      const key = projectWorkspaceAuthorityKey(
+        current.value.projectId,
+        current.value.workspaceRoot,
+      );
+      const oldKey = Option.isSome(previous)
+        ? projectWorkspaceAuthorityKey(previous.value.projectId, previous.value.workspaceRoot)
+        : key;
+      const old = yield* sql<{ readonly last_sequence: number }>`
+        SELECT last_sequence FROM orchestration_v2_projection_metadata WHERE projection_name = ${oldKey}
+      `;
+      const revision =
+        event.metadata.workspaceAuthorityRevision ??
+        (oldKey === key ? (old[0]?.last_sequence ?? event.sequence) : event.sequence);
+      if (oldKey !== key) {
+        yield* sql`DELETE FROM orchestration_v2_projection_metadata WHERE projection_name = ${oldKey}`;
+      }
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_metadata
+          (projection_name, schema_version, last_sequence, updated_at)
+        VALUES (${key}, 1, ${revision}, ${event.occurredAt})
+        ON CONFLICT(projection_name) DO UPDATE SET
+          schema_version = excluded.schema_version,
+          last_sequence = excluded.last_sequence,
+          updated_at = excluded.updated_at
+      `;
+    }).pipe(sql.withTransaction, mapError("apply-workspace-authority"));
 
   return ProjectStoreV2.of({
     apply,

@@ -1,3 +1,9 @@
+import * as NetAddress from "effect/unstable/net/NetAddress";
+import { HttpServer } from "effect/unstable/http";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as McpSessionRegistry from "./McpSessionRegistry.ts";
+import * as McpProviderSession from "./McpProviderSession.ts";
+import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -49,7 +55,11 @@ import { McpSchema, McpServer } from "effect/unstable/ai";
 
 import { ClaudeProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
-import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
+import {
+  CodexOrchestratorReplayHarness,
+  withIssuedCodexMcpReplayExpectations,
+} from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
+import * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -71,6 +81,12 @@ import {
   materializeReplayTranscriptWorkspace,
 } from "../orchestration-v2/testkit/ReplayTranscriptNdjson.ts";
 import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistryMock.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
+import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
+import { ProjectToolkit } from "./toolkits/project/tools.ts";
+import { ProjectHandlersLive } from "./toolkits/project/handlers.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -89,6 +105,26 @@ const cancellationPrompt = "Remain active until the parent cancels this delegate
 const createdThreadPrompt = "Complete the newly created ordinary thread.";
 const queuedFollowupPrompt = "Complete the queued follow-up and return the final result.";
 const queuedFollowupResult = "Queued delegated follow-up completed.";
+
+const makeCredentialRegistryLayer = (environmentId: EnvironmentId) =>
+  McpSessionRegistry.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(
+          HttpServer.HttpServer,
+          HttpServer.HttpServer.of({
+            address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 43123),
+            serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
+          }),
+        ),
+        Layer.succeed(ServerEnvironment.ServerEnvironment, {
+          getEnvironmentId: Effect.succeed(environmentId),
+          getDescriptor: Effect.die("No environment descriptor is requested in this fixture."),
+        }),
+      ),
+    ),
+  );
 
 const decodeCreateThreadsResult = Schema.decodeUnknownEffect(OrchestratorMcpCreateThreadsResult);
 const decodeDelegateTaskResult = Schema.decodeUnknownEffect(OrchestratorMcpDelegateTaskResult);
@@ -181,6 +217,7 @@ function makeDeterministicAdapter(input: {
   return {
     instanceId: input.instanceId,
     driver: input.driver,
+    mcpSessionInjection: true,
     getCapabilities: () => Effect.succeed(input.capabilities),
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (sessionInput) =>
@@ -488,7 +525,9 @@ describe("orchestrator MCP toolkit", () => {
               },
               capturedTurns,
               shouldComplete: (turn) =>
-                turn.threadId !== parentThreadId && turn.message.text !== cancellationPrompt,
+                turn.threadId !== parentThreadId &&
+                !turn.threadId.startsWith("thread:mcp-scheduled-") &&
+                turn.message.text !== cancellationPrompt,
               terminalGate: (turn) =>
                 turn.message.text.startsWith("Delegated task") ||
                 turn.message.text.startsWith("Delegated tasks")
@@ -548,6 +587,9 @@ describe("orchestrator MCP toolkit", () => {
                 expect(yield* Ref.get(continuationOffers)).toHaveLength(count);
               }
             });
+          const credentialRegistryLayer = makeCredentialRegistryLayer(
+            EnvironmentId.make("environment:mcp-orchestrator"),
+          );
           const orchestratorLayer = makeOrchestratorV2ReplayLayerWithRegistry(
             {
               name: "orchestrator-mcp-toolkit",
@@ -562,6 +604,7 @@ describe("orchestrator MCP toolkit", () => {
               },
             },
             registryLayer,
+            { configureMcp: true, mcpSessionRegistryLayer: credentialRegistryLayer },
           ).pipe(Layer.provide(continuationProbeLayer));
           const orchestrationLayer = Layer.merge(
             orchestratorLayer,
@@ -622,9 +665,32 @@ describe("orchestrator MCP toolkit", () => {
               runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
             }),
           );
-          const testLayer = Layer.merge(
+          const projectWrites = yield* Ref.make(0);
+          const projectGuardDependencies = Layer.mergeAll(
+            Layer.mock(ProjectService.ProjectService)({
+              update: (input) =>
+                Ref.update(projectWrites, (count) => count + 1).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      new ProjectService.ProjectNotFoundError({ projectId: input.projectId }),
+                    ),
+                  ),
+                ),
+            }),
+            Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+              namedProjectsRoot: "/tmp/mcp-managed-projects",
+            }),
+            Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
+            Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({}),
+          );
+          const projectGuardRegistration = McpServer.toolkit(ProjectToolkit).pipe(
+            Layer.provide(ProjectHandlersLive),
+            Layer.provide(projectGuardDependencies),
+          );
+          const testLayer = Layer.mergeAll(
             McpHttpServer.OrchestratorToolkitRegistrationLive,
             McpHttpServer.ThreadToolkitRegistrationLive,
+            projectGuardRegistration,
           ).pipe(
             Layer.provideMerge(McpServer.McpServer.layer),
             Layer.provideMerge(orchestrationLayer),
@@ -674,14 +740,15 @@ describe("orchestrator MCP toolkit", () => {
             const parentRun = parent.runs[0];
             expect(parentRun?.status).toBe("running");
 
-            const invocation: McpInvocationContext.McpInvocationScope = {
-              environmentId: EnvironmentId.make("environment:mcp-orchestrator"),
-              threadId: parentThreadId,
-              providerSessionId: "mcp-provider-session-parent",
-              providerInstanceId: codexInstanceId,
-              capabilities: new Set(["orchestration"]),
-              issuedAt: 1,
+            const callerScopeFor = (
+              threadId: ThreadId,
+            ): McpInvocationContext.McpInvocationScope => {
+              const config = McpProviderSession.readMcpProviderSession(threadId);
+              if (config === undefined)
+                throw new Error("Expected the live manager-issued credential.");
+              return { ...config, issuedAt: 1 };
             };
+            const invocation = callerScopeFor(parentThreadId);
             const invokeAs = (
               callScope: McpInvocationContext.McpInvocationScope,
               name: string,
@@ -694,7 +761,7 @@ describe("orchestrator MCP toolkit", () => {
                   Effect.provideService(McpSchema.McpServerClient, client),
                 );
             const invoke = (name: string, args: Record<string, unknown>) =>
-              invokeAs(invocation, name, args);
+              invokeAs(callerScopeFor(parentThreadId), name, args);
 
             const pinned = yield* invoke("scient_thread_organize", { action: "pin" });
             expect(pinned.structuredContent).toHaveProperty("sequence");
@@ -1419,6 +1486,13 @@ describe("orchestrator MCP toolkit", () => {
               tasks: [{ scheduledTaskId, boundThreadId: parentThreadId }],
             });
 
+            const fullCallerProject = yield* invoke("scient_project_update", {
+              projectId,
+              title: "Authorized project mutation",
+            });
+            expect(fullCallerProject.structuredContent).toMatchObject({ code: "invalid_request" });
+            expect(yield* Ref.get(projectWrites)).toBe(1);
+
             // Ceilings are checked at the real MCP entry using V2 thread modes,
             // before any scheduled-task write, including rebind and unbind.
             for (const [suffix, runtimeMode, interactionMode, expectedCode] of [
@@ -1440,7 +1514,22 @@ describe("orchestrator MCP toolkit", () => {
                 branch: null,
                 worktreePath: cwd,
               });
-              const callerScope = { ...invocation, threadId: callerThreadId };
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                createdBy: "user",
+                creationSource: "web",
+                commandId: CommandId.make(`command:mcp-scheduled-${suffix}:start`),
+                threadId: callerThreadId,
+                messageId: MessageId.make(`message:mcp-scheduled-${suffix}:start`),
+                text: "Keep the captured caller policy active.",
+                attachments: [],
+                modelSelection: codexSelection,
+                dispatchMode: { type: "start_immediately" },
+              });
+              yield* waitForProjection(orchestrator, callerThreadId, (projection) =>
+                projection.providerTurns.some((turn) => turn.status === "running"),
+              );
+              const callerScope = callerScopeFor(callerThreadId);
               for (const binding of [undefined, false, true]) {
                 const before = yield* Ref.get(scheduledStore);
                 const denied = yield* invokeAs(callerScope, "update_scheduled_task", {
@@ -1471,6 +1560,75 @@ describe("orchestrator MCP toolkit", () => {
                     scheduledTaskId: inherited.id,
                   });
                 }
+              }
+              // Future defaults cannot grant this still-running caller more authority.
+              yield* orchestrator.dispatch({
+                type: "thread.runtime-mode.set",
+                commandId: CommandId.make(`command:mcp-scheduled-${suffix}:future-access`),
+                threadId: callerThreadId,
+                runtimeMode: "full-access",
+              });
+              yield* orchestrator.dispatch({
+                type: "thread.interaction-mode.set",
+                commandId: CommandId.make(`command:mcp-scheduled-${suffix}:future-interaction`),
+                threadId: callerThreadId,
+                interactionMode: "default",
+              });
+              const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+              expect(yield* manager.resolveMcpInvocationPolicy(callerScope)).toEqual(
+                Option.some({ runtimeMode, interactionMode }),
+              );
+              for (const binding of [undefined, false, true]) {
+                const before = yield* Ref.get(scheduledStore);
+                const denied = yield* invokeAs(callerScope, "update_scheduled_task", {
+                  scheduledTaskId,
+                  prompt: "Cannot inherit future thread defaults.",
+                  ...(binding === undefined ? {} : { bindToCurrentThread: binding }),
+                });
+                expect(denied.structuredContent).toMatchObject({ code: expectedCode });
+                expect(yield* Ref.get(scheduledStore)).toEqual(before);
+              }
+              const beforeProjectWrites = yield* Ref.get(projectWrites);
+              const deniedProject = yield* invokeAs(callerScope, "scient_project_update", {
+                projectId,
+                title: "Cannot upgrade the running caller's project authority.",
+              });
+              expect(deniedProject.structuredContent).toMatchObject({ code: "capability_denied" });
+              expect(yield* Ref.get(projectWrites)).toBe(beforeProjectWrites);
+
+              const safeFuture = yield* invokeAs(callerScope, "schedule_task", {
+                prompt: "Unbound work inherits the running caller's captured ceiling.",
+                schedule: { type: "interval", everyMs: 60_000 },
+                bindToCurrentThread: false,
+                clientRequestId: `captured-future-${suffix}`,
+              });
+              expect(safeFuture.structuredContent).toHaveProperty("scheduledTaskId");
+              const futureTask = (yield* Ref.get(scheduledStore)).find(
+                (task) => task.id !== scheduledTaskId,
+              );
+              expect(futureTask).toMatchObject({ runtimeMode, interactionMode, threadId: null });
+              if (futureTask !== undefined)
+                yield* invokeAs(callerScope, "delete_scheduled_task", {
+                  scheduledTaskId: futureTask.id,
+                });
+              const boundFuture = yield* invokeAs(callerScope, "schedule_task", {
+                prompt: "Cannot bind weaker caller work into a stronger current default.",
+                schedule: { type: "interval", everyMs: 60_000 },
+              });
+              expect(boundFuture.structuredContent).toMatchObject({ code: expectedCode });
+              for (const foreignScope of [
+                { ...callerScope, providerSessionId: "foreign-credential" },
+                { ...callerScope, providerInstanceId: claudeInstanceId },
+                { ...callerScope, threadId: parentThreadId },
+              ]) {
+                expect(Option.isNone(yield* manager.resolveMcpInvocationPolicy(foreignScope))).toBe(
+                  true,
+                );
+                const denied = yield* invokeAs(foreignScope, "update_scheduled_task", {
+                  scheduledTaskId,
+                  prompt: "foreign",
+                });
+                expect(denied.structuredContent).toMatchObject({ code: "parent_not_active" });
               }
               // A task's copied modes can be weaker than its bound thread.
               // Bound execution uses the thread, so checking the copy alone fails.
@@ -2245,11 +2403,16 @@ describe("orchestrator MCP toolkit", () => {
               title: "Inherited read thread",
             });
             const forkedProjection = yield* orchestrator.getThreadProjection(forkedThreadId);
-            expect(forkedProjection.messages).toEqual([]);
+            expect(forkedProjection.messages.map((message) => message.text)).toEqual(
+              promptedProjection.messages.map((message) => message.text),
+            );
+            expect(forkedProjection.thread.forkedFrom).toBeNull();
+            expect(forkedProjection.thread.lineage.parentThreadId).toBe(promptedThread.threadId);
             expect(
               forkedProjection.visibleTurnItems.some(
                 (row) =>
-                  row.sourceThreadId === promptedThread.threadId &&
+                  row.sourceThreadId === forkedThreadId &&
+                  row.item.inheritedFrom?.threadId === promptedThread.threadId &&
                   row.item.type === "user_message",
               ),
             ).toBe(true);
@@ -2263,7 +2426,7 @@ describe("orchestrator MCP toolkit", () => {
             expect(
               forkedRead.items.find((item) => item.text === createdThreadPrompt),
             ).toMatchObject({
-              sourceThreadId: promptedThread.threadId,
+              sourceThreadId: forkedThreadId,
               createdBy: "agent",
               creationSource: "mcp",
             });
@@ -3626,6 +3789,24 @@ describe("orchestrator MCP toolkit", () => {
         const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(
           materializeReplayTranscriptWorkspace(rawTranscript, cwd),
         );
+        let replayChildThreadId: ThreadId | undefined;
+        const replayExpectedLabels: Array<string> = [];
+        const replayHarness = withIssuedCodexMcpReplayExpectations((label) => {
+          replayExpectedLabels.push(label);
+          const threadId = label.startsWith("parent.")
+            ? parentThreadId
+            : label.startsWith("child.")
+              ? replayChildThreadId
+              : undefined;
+          return threadId === undefined
+            ? undefined
+            : {
+                threadId,
+                instanceId: codexInstanceId,
+                modelSelection: codexSelection,
+                runtimePolicy: { cwd, runtimeMode: "full-access", interactionMode: "default" },
+              };
+        });
         const orchestratorLayer = makeOrchestratorV2ProviderReplayLayer(
           {
             name: "delegated-task-status/codex",
@@ -3633,7 +3814,13 @@ describe("orchestrator MCP toolkit", () => {
             commands: [],
             runtimePolicyOverride: { cwd },
           },
-          CodexOrchestratorReplayHarness,
+          replayHarness,
+          {
+            configureMcp: true,
+            mcpSessionRegistryLayer: makeCredentialRegistryLayer(
+              EnvironmentId.make("environment:mcp-replay"),
+            ),
+          },
         );
         const orchestrationLayer = Layer.merge(
           orchestratorLayer,
@@ -3648,10 +3835,9 @@ describe("orchestrator MCP toolkit", () => {
         ]);
         const testLayer = McpHttpServer.OrchestratorToolkitRegistrationLive.pipe(
           Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provideMerge(IdAllocator.layer),
           Layer.provideMerge(orchestrationLayer),
-          Layer.provide(
-            CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(transcript),
-          ),
+          Layer.provide(replayHarness.makeProviderAdapterRegistryLayer(transcript)),
           Layer.provide(providerRegistryLayer),
           Layer.provide(unusedScheduledTaskStubLayer),
           Layer.provide(NodeServices.layer),
@@ -3698,6 +3884,12 @@ describe("orchestrator MCP toolkit", () => {
                   stored.event.payload.status === "running",
               ),
               Stream.runHead,
+              Effect.timeout("15 seconds"),
+              Effect.catch(() =>
+                Effect.die(
+                  `Native MCP replay did not reach its required receipt. Expected labels: ${replayExpectedLabels.join(", ")}`,
+                ),
+              ),
               Effect.flatMap(
                 Option.match({
                   onNone: () => Effect.die("Parent provider turn did not start."),
@@ -3706,14 +3898,10 @@ describe("orchestrator MCP toolkit", () => {
               ),
             );
 
-          const invocation: McpInvocationContext.McpInvocationScope = {
-            environmentId: EnvironmentId.make("environment:mcp-replay"),
-            threadId: parentThreadId,
-            providerSessionId: "mcp-provider-session-replay-parent",
-            providerInstanceId: codexInstanceId,
-            capabilities: new Set(["orchestration"]),
-            issuedAt: 1,
-          };
+          const mcpConfig = McpProviderSession.readMcpProviderSession(parentThreadId);
+          if (mcpConfig === undefined)
+            return yield* Effect.die("Parent provider has no issued MCP credential.");
+          const invocation: McpInvocationContext.McpInvocationScope = { ...mcpConfig, issuedAt: 1 };
           const invoke = (name: string, args: Record<string, unknown>) =>
             server
               .callTool({ name, arguments: args })
@@ -3722,6 +3910,17 @@ describe("orchestrator MCP toolkit", () => {
                 Effect.provideService(McpSchema.McpServerClient, client),
               );
 
+          const ids = yield* IdAllocator.IdAllocatorV2;
+          const delegationCommandId = CommandId.make(
+            [
+              "command",
+              "mcp",
+              encodeURIComponent(invocation.providerSessionId),
+              "delegate-task",
+              "delegate-codex-replay-1",
+            ].join(":"),
+          );
+          replayChildThreadId = ids.derive.delegatedTaskThread({ commandId: delegationCommandId });
           const delegationStartSequence =
             yield* orchestrator.getThreadEventSequence(parentThreadId);
           const delegatedCall = yield* invoke("delegate_task", {
@@ -3737,6 +3936,7 @@ describe("orchestrator MCP toolkit", () => {
             delegatedCall.structuredContent,
           ).pipe(Effect.orDie);
           expect(delegatedStart.childRunId).not.toBeNull();
+          expect(delegatedStart.childThreadId).toBe(replayChildThreadId);
           yield* orchestrator
             .streamStoredEventsFrom({
               threadId: parentThreadId,
@@ -3751,6 +3951,12 @@ describe("orchestrator MCP toolkit", () => {
                   stored.event.payload.sourcePoint.runId === delegatedStart.childRunId,
               ),
               Stream.runHead,
+              Effect.timeout("15 seconds"),
+              Effect.catch(() =>
+                Effect.die(
+                  `Native MCP replay did not reach its required receipt. Expected labels: ${replayExpectedLabels.join(", ")}`,
+                ),
+              ),
               Effect.flatMap(
                 Option.match({
                   onNone: () => Effect.die("Delegated result transfer was not created."),
@@ -3806,6 +4012,12 @@ describe("orchestrator MCP toolkit", () => {
                   stored.event.payload.status === "running",
               ),
               Stream.runHead,
+              Effect.timeout("15 seconds"),
+              Effect.catch(() =>
+                Effect.die(
+                  `Native MCP replay did not reach its required receipt. Expected labels: ${replayExpectedLabels.join(", ")}`,
+                ),
+              ),
               Effect.flatMap(
                 Option.match({
                   onNone: () => Effect.die("Follow-up provider turn did not start."),
@@ -3868,7 +4080,7 @@ describe("orchestrator MCP toolkit", () => {
           const interruptCall = yield* invoke("scient_thread_interrupt", {
             threadId: delegated.childThreadId,
             runId: runningFollowup.runId,
-            reason: "Allow the queued replay follow-up to run.",
+            reason: "Interrupt the current replay follow-up.",
             clientRequestId: "interrupt-delegated-child-replay-1",
           });
           const interrupt = yield* decodeThreadInterruptResult(
@@ -3888,9 +4100,70 @@ describe("orchestrator MCP toolkit", () => {
                 (stored) =>
                   stored.event.type === "run.updated" &&
                   stored.event.payload.id === queuedFollowup.runId &&
+                  stored.event.payload.status === "queued" &&
+                  stored.event.payload.queueHeld === true,
+              ),
+              Stream.runHead,
+              Effect.timeout("15 seconds"),
+              Effect.flatMap(
+                Option.match({
+                  onNone: () => Effect.die("Interrupted follow-up did not hold its queue."),
+                  onSome: () => Effect.void,
+                }),
+              ),
+            );
+          yield* orchestrator
+            .streamStoredEventsFrom({
+              threadId: delegated.childThreadId,
+              afterSequence: finalSequence,
+            })
+            .pipe(
+              Stream.filter(
+                (stored) =>
+                  stored.event.type === "run.updated" &&
+                  stored.event.payload.id === runningFollowup.runId &&
+                  stored.event.payload.status === "interrupted",
+              ),
+              Stream.runHead,
+              Effect.timeout("15 seconds"),
+              Effect.flatMap(
+                Option.match({
+                  onNone: () => Effect.die("The native follow-up did not confirm interruption."),
+                  onSome: () => Effect.void,
+                }),
+              ),
+            );
+          const heldProjection = yield* orchestrator.getThreadProjection(delegated.childThreadId);
+          expect(heldProjection.runs.find((run) => run.id === runningFollowup.runId)?.status).toBe(
+            "interrupted",
+          );
+          expect(heldProjection.runs.find((run) => run.id === queuedFollowup.runId)?.status).toBe(
+            "queued",
+          );
+          yield* orchestrator.dispatch({
+            type: "queue.resume",
+            threadId: delegated.childThreadId,
+            commandId: CommandId.make("command:mcp-replay-child:resume"),
+          });
+          yield* orchestrator
+            .streamStoredEventsFrom({
+              threadId: delegated.childThreadId,
+              afterSequence: finalSequence,
+            })
+            .pipe(
+              Stream.filter(
+                (stored) =>
+                  stored.event.type === "run.updated" &&
+                  stored.event.payload.id === queuedFollowup.runId &&
                   stored.event.payload.status === "completed",
               ),
               Stream.runHead,
+              Effect.timeout("15 seconds"),
+              Effect.catch(() =>
+                Effect.die(
+                  `Native MCP replay did not reach its required receipt. Expected labels: ${replayExpectedLabels.join(", ")}`,
+                ),
+              ),
               Effect.flatMap(
                 Option.match({
                   onNone: () => Effect.die("Queued follow-up did not complete."),

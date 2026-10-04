@@ -44,6 +44,8 @@ const harness = Effect.fnUntraced(function* (
   replySettlesTurn = false,
   failSend = false,
   nativeThreadKnown = true,
+  failFirstResponse = false,
+  canReadThreadSnapshot = false,
 ) {
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   let publish: (update: NativeSessionUpdate) => Effect.Effect<void> = () =>
@@ -56,7 +58,10 @@ const harness = Effect.fnUntraced(function* (
     driver: ProviderDriverKind.make("omp"),
     idAllocator,
     defaultCwd: "/workspace",
-    capabilities: AcpProviderCapabilitiesV2,
+    capabilities: {
+      ...AcpProviderCapabilitiesV2,
+      threads: { ...AcpProviderCapabilitiesV2.threads, canReadThreadSnapshot },
+    },
     continuations: {
       offer: () =>
         Effect.sync(() => {
@@ -83,6 +88,8 @@ const harness = Effect.fnUntraced(function* (
           respond: (id: string) =>
             Effect.gen(function* () {
               replies += 1;
+              if (failFirstResponse && replies === 1)
+                return yield* new NativeSessionOperationError({ detail: "Response write failed" });
               if (replySettlesTurn) {
                 yield* publish({ type: "question-resolved", id });
                 yield* publish({ type: "terminal", status: "completed" });
@@ -575,19 +582,66 @@ it.layer(TestLayer)("NativeSessionAdapterV2", (it) => {
         yield* h.runtime.respondToRuntimeRequest({
           requestId: pending.runtimeRequest.id,
           decision: "accept",
+          answers: { choice: "Approved value" },
         });
         yield* h.takeUntil((event) => event.type === "turn.terminal");
         assert.equal(h.replies(), 1);
         assert.equal(h.runtime.providerSession.status, "ready");
-        assert.isTrue(
-          h.recorded.some(
+        const resolved = h.recorded.find(
+          (event) =>
+            event.type === "runtime_request.updated" && event.runtimeRequest.status === "resolved",
+        );
+        if (resolved?.type !== "runtime_request.updated")
+          return assert.fail("Expected resolved native request before terminal");
+        assert.equal(resolved.runtimeRequest.decision, "accept");
+        assert.deepEqual(resolved.runtimeRequest.answers, { choice: "Approved value" });
+      }),
+    ),
+  );
+
+  it.effect(
+    "restores an unobserved failed response and preserves the successful retry decision",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness(true, false, true, true, true);
+          yield* h.start;
+          yield* h.question;
+          const pending = yield* h.takeUntil((event) => event.type === "runtime_request.updated");
+          if (pending.type !== "runtime_request.updated")
+            return assert.fail("Expected native request");
+          const failure = yield* h.runtime
+            .respondToRuntimeRequest({
+              requestId: pending.runtimeRequest.id,
+              decision: "accept",
+            })
+            .pipe(Effect.flip);
+          assert.equal(failure._tag, "ProviderAdapterRuntimeRequestResponseError");
+          const snapshot = yield* h.runtime.readThreadSnapshot({
+            providerThread: h.providerThread,
+          });
+          const stillPending = snapshot.runtimeRequests.find(
+            (request) => request.id === pending.runtimeRequest.id,
+          );
+          assert.ok(stillPending);
+          assert.equal(stillPending.status, "pending");
+          assert.isUndefined(stillPending.decision);
+          yield* h.runtime.respondToRuntimeRequest({
+            requestId: pending.runtimeRequest.id,
+            decision: "decline",
+          });
+          yield* h.takeUntil((event) => event.type === "turn.terminal");
+          assert.equal(h.replies(), 2);
+          const resolved = h.recorded.find(
             (event) =>
               event.type === "runtime_request.updated" &&
               event.runtimeRequest.status === "resolved",
-          ),
-        );
-      }),
-    ),
+          );
+          if (resolved?.type !== "runtime_request.updated")
+            return assert.fail("Expected native resolved receipt");
+          assert.equal(resolved.runtimeRequest.decision, "decline");
+        }),
+      ),
   );
 
   it.effect(

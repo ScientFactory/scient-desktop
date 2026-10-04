@@ -27,6 +27,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import { GrokProviderCapabilitiesV2 } from "./Adapters/GrokAdapterV2.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -82,6 +83,7 @@ interface RestartAdapterState {
   readonly opened: ReadonlyArray<{
     readonly model: string | null;
     readonly cwd: string | null;
+    readonly runtimeMode: ProviderAdapterV2RuntimePolicy["runtimeMode"];
   }>;
   readonly started: ReadonlyArray<{
     readonly model: string;
@@ -96,6 +98,7 @@ function makeRestartAdapter(
   state: Ref.Ref<RestartAdapterState>,
   sessionCapabilities: OrchestrationV2ProviderCapabilities = pooledCapabilities,
   providerInstanceId = initialSelection.instanceId,
+  driver = ProviderDriverKind.make("codex"),
 ): ProviderAdapterV2Shape {
   return {
     instanceId: providerInstanceId,
@@ -123,6 +126,7 @@ function makeRestartAdapter(
                 {
                   model: sessionInput.modelSelection.model,
                   cwd: sessionInput.runtimePolicy.cwd,
+                  runtimeMode: sessionInput.runtimePolicy.runtimeMode,
                 },
               ],
             },
@@ -1190,136 +1194,288 @@ it.live("captures ordinary and queued execution modes before worker delivery", (
   ),
 );
 
-for (const olderRun of [false, true]) {
-  it.live(`restarts active steering with captured modes (older run ${olderRun})`, () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const name = `captured-steer-modes-${olderRun}`;
-        const cwd = yield* checkpointWorkspace(name);
-        const threadId = ThreadId.make(`thread:${name}`);
-        const state = yield* Ref.make<RestartAdapterState>({
-          activeTurn: null,
-          opened: [],
-          started: [],
-          closedSessionCount: 0,
-          failedReplacementOpen: true,
-        });
-        yield* Effect.gen(function* () {
-          const orchestrator = yield* Orchestrator.OrchestratorV2;
-          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-          yield* orchestrator.dispatch({
-            type: "thread.create",
-            commandId: CommandId.make(`${name}:create`),
-            threadId,
-            projectId: ProjectId.make(`project:${name}`),
-            title: name,
-            modelSelection: initialSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: cwd,
-            createdBy: "user",
-            creationSource: "web",
+for (const { olderRun, sameModes } of [
+  { olderRun: false, sameModes: false },
+  { olderRun: true, sameModes: false },
+  { olderRun: true, sameModes: true },
+]) {
+  const requestedMode = sameModes ? "full-access" : "approval-required";
+  const requestedInteraction = sameModes ? "default" : "plan";
+  it.live(
+    `restarts active steering with captured modes (older run ${olderRun}, same modes ${sameModes})`,
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const name = `captured-steer-modes-${olderRun}-${sameModes}`;
+          const cwd = yield* checkpointWorkspace(name);
+          const threadId = ThreadId.make(`thread:${name}`);
+          const state = yield* Ref.make<RestartAdapterState>({
+            activeTurn: null,
+            opened: [],
+            started: [],
+            closedSessionCount: 0,
+            failedReplacementOpen: true,
           });
-          yield* orchestrator.dispatch({
-            type: "message.dispatch",
-            commandId: CommandId.make(`${name}:first`),
-            threadId,
-            messageId: MessageId.make(`${name}:first`),
-            text: "first",
-            attachments: [],
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            dispatchMode: { type: "start_immediately" },
-            createdBy: "user",
-            creationSource: "web",
-          });
-          yield* worker.drain();
-          const original = yield* awaitModesProjection(
-            orchestrator,
-            threadId,
-            (p) => p.providerTurns.some((t) => t.status === "running"),
-            "first captured run did not start",
-          );
-          if (olderRun) {
-            const sink = yield* EventSink.EventSinkV2;
-            const priorRun = original.runs[0]!;
-            yield* sink.write({
-              events: [
-                {
-                  id: EventId.make(`${name}:older-run`),
-                  type: "run.updated",
-                  threadId,
-                  runId: priorRun.id,
-                  ...(priorRun.rootNodeId === null ? {} : { nodeId: priorRun.rootNodeId }),
-                  providerInstanceId,
-                  occurredAt: yield* DateTime.now,
-                  payload: { ...priorRun, runtimeMode: undefined, interactionMode: undefined },
-                },
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make(`${name}:create`),
+              threadId,
+              projectId: ProjectId.make(`project:${name}`),
+              title: name,
+              modelSelection: initialSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+              createdBy: "user",
+              creationSource: "web",
+            });
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`${name}:first`),
+              threadId,
+              messageId: MessageId.make(`${name}:first`),
+              text: "first",
+              attachments: [],
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              dispatchMode: { type: "start_immediately" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+            yield* worker.drain();
+            const original = yield* awaitModesProjection(
+              orchestrator,
+              threadId,
+              (p) => p.providerTurns.some((t) => t.status === "running"),
+              "first captured run did not start",
+            );
+            if (olderRun) {
+              const sink = yield* EventSink.EventSinkV2;
+              const priorRun = original.runs[0]!;
+              yield* sink.write({
+                events: [
+                  {
+                    id: EventId.make(`${name}:older-run`),
+                    type: "run.updated",
+                    threadId,
+                    runId: priorRun.id,
+                    ...(priorRun.rootNodeId === null ? {} : { nodeId: priorRun.rootNodeId }),
+                    providerInstanceId,
+                    occurredAt: yield* DateTime.now,
+                    payload: { ...priorRun, runtimeMode: undefined, interactionMode: undefined },
+                  },
+                ],
+              });
+              // The UI may already have persisted its next-turn settings. They do
+              // not prove what permissions the older native turn was started with.
+              yield* orchestrator.dispatch({
+                type: "thread.runtime-mode.set",
+                commandId: CommandId.make(`${name}:next-mode`),
+                threadId,
+                runtimeMode: requestedMode,
+              });
+              yield* orchestrator.dispatch({
+                type: "thread.interaction-mode.set",
+                commandId: CommandId.make(`${name}:next-interaction`),
+                threadId,
+                interactionMode: requestedInteraction,
+              });
+            }
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`${name}:steer`),
+              threadId,
+              messageId: MessageId.make(`${name}:steer`),
+              text: "second",
+              attachments: [],
+              runtimeMode: requestedMode,
+              interactionMode: requestedInteraction,
+              dispatchMode: { type: "steer_active", targetRunId: original.runs[0]!.id },
+              createdBy: "user",
+              creationSource: "web",
+            });
+            const admitted = yield* orchestrator.getThreadProjection(threadId);
+            assert.equal(admitted.runs[0]?.runtimeMode, requestedMode);
+            assert.equal(admitted.runs[0]?.interactionMode, requestedInteraction);
+            assert.equal(admitted.attempts[0]?.status, "superseded");
+            yield* worker.drain();
+            const restarted = yield* awaitModesProjection(
+              orchestrator,
+              threadId,
+              (p) =>
+                p.attempts.length === 2 &&
+                p.attempts[1]?.status === "running" &&
+                p.providerTurns.some(
+                  (turn) => turn.runAttemptId === p.attempts[1]?.id && turn.status === "running",
+                ),
+              "captured steer restart did not start",
+            );
+            assert.deepEqual(
+              (yield* Ref.get(state)).offeredPolicies?.map((p) => [
+                p.runtimeMode,
+                p.interactionMode,
+              ]),
+              [
+                ["full-access", "default"],
+                [requestedMode, requestedInteraction],
               ],
-            });
-            // The UI may already have persisted its next-turn settings. They do
-            // not prove what permissions the older native turn was started with.
-            yield* orchestrator.dispatch({
-              type: "thread.runtime-mode.set",
-              commandId: CommandId.make(`${name}:next-mode`),
-              threadId,
-              runtimeMode: "approval-required",
-            });
-            yield* orchestrator.dispatch({
-              type: "thread.interaction-mode.set",
-              commandId: CommandId.make(`${name}:next-interaction`),
-              threadId,
-              interactionMode: "plan",
-            });
-          }
-          yield* orchestrator.dispatch({
-            type: "message.dispatch",
-            commandId: CommandId.make(`${name}:steer`),
-            threadId,
-            messageId: MessageId.make(`${name}:steer`),
-            text: "second",
-            attachments: [],
-            runtimeMode: "approval-required",
-            interactionMode: "plan",
-            dispatchMode: { type: "steer_active", targetRunId: original.runs[0]!.id },
-            createdBy: "user",
-            creationSource: "web",
-          });
-          const admitted = yield* orchestrator.getThreadProjection(threadId);
-          assert.equal(admitted.runs[0]?.runtimeMode, "approval-required");
-          assert.equal(admitted.runs[0]?.interactionMode, "plan");
-          assert.equal(admitted.attempts[0]?.status, "superseded");
-          yield* worker.drain();
-          const restarted = yield* awaitModesProjection(
-            orchestrator,
-            threadId,
-            (p) => p.attempts.length === 2 && p.attempts[1]?.status === "running",
-            "captured steer restart did not start",
-          );
-          assert.deepEqual(
-            (yield* Ref.get(state)).offeredPolicies?.map((p) => [p.runtimeMode, p.interactionMode]),
-            [
-              ["full-access", "default"],
-              ["approval-required", "plan"],
-            ],
-          );
-          assert.notEqual(
-            restarted.providerThreads[0]?.providerSessionId,
-            original.providerThreads[0]?.providerSessionId,
-          );
-          assert.equal(restarted.thread.runtimeMode, "approval-required");
-          assert.equal(restarted.thread.interactionMode, "plan");
-        }).pipe(
-          Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
-              { name },
-              ProviderAdapterRegistry.makeSingleLayer(makeRestartAdapter(state)),
-              { runEffectWorker: false },
+            );
+            assert.notEqual(
+              restarted.providerThreads[0]?.providerSessionId,
+              original.providerThreads[0]?.providerSessionId,
+            );
+            assert.equal(restarted.thread.runtimeMode, requestedMode);
+            assert.equal(restarted.thread.interactionMode, requestedInteraction);
+            if (sameModes) {
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`${name}:next-steer`),
+                threadId,
+                messageId: MessageId.make(`${name}:next-steer`),
+                text: "third",
+                attachments: [],
+                runtimeMode: requestedMode,
+                interactionMode: requestedInteraction,
+                dispatchMode: { type: "steer_active", targetRunId: restarted.runs[0]!.id },
+                createdBy: "user",
+                creationSource: "web",
+              });
+              yield* worker.drain();
+              const continued = yield* orchestrator.getThreadProjection(threadId);
+              assert.equal(continued.attempts.length, 2);
+              assert.equal((yield* Ref.get(state)).opened.length, 2);
+              assert.equal((yield* Ref.get(state)).started.length, 2);
+            }
+          }).pipe(
+            Effect.provide(
+              makeOrchestratorV2ReplayLayerWithRegistry(
+                { name },
+                ProviderAdapterRegistry.makeSingleLayer(makeRestartAdapter(state)),
+                { runEffectWorker: false },
+              ),
             ),
-          ),
-        );
-      }),
-    ),
+          );
+        }),
+      ),
   );
 }
+
+it.live("replaces an idle Grok session before a direct send changes its access mode", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const name = "idle-grok-captured-send-mode";
+      const cwd = yield* checkpointWorkspace(name);
+      const threadId = ThreadId.make(`thread:${name}`);
+      const instanceId = ProviderInstanceId.make("grok-captured-send-mode");
+      const selection = { instanceId, model: "complete" };
+      const state = yield* Ref.make<RestartAdapterState>({
+        activeTurn: null,
+        opened: [],
+        started: [],
+        closedSessionCount: 0,
+        failedReplacementOpen: true,
+      });
+      const adapter = makeRestartAdapter(
+        state,
+        GrokProviderCapabilitiesV2,
+        instanceId,
+        ProviderDriverKind.make("grok"),
+      );
+      const registry = ProviderAdapterRegistry.makeSingleLayer(adapter);
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${name}:create`),
+          threadId,
+          projectId: ProjectId.make(`project:${name}`),
+          title: name,
+          modelSelection: selection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        const dispatch = Effect.fn(function* (
+          step: string,
+          runtimeMode: "full-access" | "approval-required",
+        ) {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`${name}:${step}`),
+            threadId,
+            messageId: MessageId.make(`${name}:${step}`),
+            text: step,
+            attachments: [],
+            modelSelection: selection,
+            runtimeMode,
+            interactionMode: "default",
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* worker.drain();
+          const projected = yield* awaitModesProjection(
+            orchestrator,
+            threadId,
+            (p) =>
+              p.runs.some((r) => r.userMessageId === `${name}:${step}` && r.status === "completed"),
+            "idle Grok send did not complete",
+          );
+          yield* worker.drain();
+          return projected;
+        });
+        const first = yield* dispatch("first", "full-access");
+        const original = first.providerThreads.find(
+          (t) => t.id === first.thread.activeProviderThreadId,
+        )!;
+        assert.isNotNull(original.providerSessionId);
+        assert.equal(first.thread.runtimeMode, "full-access");
+        // No thread.runtime-mode.set precedes this legal direct message command.
+        const second = yield* dispatch("second", "approval-required");
+        const replacement = second.providerThreads.find(
+          (t) => t.id === second.thread.activeProviderThreadId,
+        )!;
+        assert.notEqual(replacement.providerSessionId, original.providerSessionId);
+        assert.deepEqual(replacement.nativeThreadRef, original.nativeThreadRef);
+        assert.isUndefined(
+          second.providerSessions.find((s) => s.id === original.providerSessionId),
+        );
+        const sink = yield* EventSink.EventSinkV2;
+        const stored = yield* sink
+          .readByCommandId({ commandId: CommandId.make(`${name}:second`) })
+          .pipe(Stream.runCollect);
+        assert.deepEqual(
+          stored.flatMap((row) =>
+            row.event.type === "provider-session.detached"
+              ? [row.event.payload.providerSessionId]
+              : [],
+          ),
+          [original.providerSessionId],
+        );
+        assert.equal(second.thread.runtimeMode, "approval-required");
+        assert.equal(
+          second.runs.find((r) => r.userMessageId === `${name}:second`)?.runtimeMode,
+          "approval-required",
+        );
+        const captured = yield* Ref.get(state);
+        assert.equal(captured.closedSessionCount, 1);
+        assert.deepEqual(
+          captured.opened.map((p) => p.runtimeMode),
+          ["full-access", "approval-required"],
+        );
+        assert.deepEqual(
+          captured.offeredPolicies?.map((p) => p.runtimeMode),
+          ["full-access", "approval-required"],
+        );
+      }).pipe(Effect.provide(makeOrchestratorV2ReplayLayerWithRegistry({ name }, registry)));
+    }),
+  ),
+);

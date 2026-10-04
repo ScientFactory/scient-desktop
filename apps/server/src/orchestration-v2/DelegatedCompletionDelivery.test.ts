@@ -1,3 +1,4 @@
+import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -44,6 +45,10 @@ import {
 import { worktreeRepairDependenciesTestLayer } from "./ProviderTurnStartService.testkit.ts";
 
 const PlatformTestLayer = Layer.mergeAll(
+  Layer.mock(ProviderRegistry.ProviderRegistry)({
+    setProviderAuthenticationFailure: () =>
+      Effect.die("This queue fixture cannot handle authentication failures"),
+  }),
   Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
   NodeServices.layer,
   Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({

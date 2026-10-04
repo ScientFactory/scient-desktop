@@ -3603,8 +3603,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const rows = yield* sql<PayloadRow>`
           SELECT payload_json FROM orchestration_v2_projection_turn_items
           WHERE thread_id = ${threadId}
-            AND type IN ('user_message','assistant_message','command_execution','error',
+            AND (type IN ('user_message','assistant_message','command_execution','error',
               'run_interrupt_result','file_change','proposed_plan')
+              OR (type = 'user_input_request' AND status = 'completed'
+                AND json_type(payload_json, '$.questionAnswer') = 'object'))
             AND ${runIds === undefined ? sql`1` : sql`run_id IN ${sql.in(runIds)}`}
           ORDER BY ordinal ASC, turn_item_id ASC
         `;
@@ -5865,7 +5867,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             Effect.map((projection) =>
               projection.turnItems.filter(
                 (item) =>
-                  [
+                  ([
                     "user_message",
                     "assistant_message",
                     "command_execution",
@@ -5873,7 +5875,10 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                     "run_interrupt_result",
                     "file_change",
                     "proposed_plan",
-                  ].includes(item.type) &&
+                  ].includes(item.type) ||
+                    (item.type === "user_input_request" &&
+                      item.status === "completed" &&
+                      item.questionAnswer !== undefined)) &&
                   (runIds === undefined || (item.runId !== null && runIds.includes(item.runId))),
               ),
             ),

@@ -1,9 +1,11 @@
 import { assert, it } from "@effect/vitest";
 import { EventId, ThreadId, TurnItemId, TurnId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import * as EventStore from "../EventStore.ts";
@@ -37,6 +39,482 @@ const seed = Effect.gen(function* () {
   yield* sql`INSERT INTO projection_thread_proposed_plans (plan_id, thread_id, plan_markdown, created_at, updated_at)
     VALUES ('old-plan', ${THREAD}, '# Historical plan\n\nRead the dataset.', '2026-01-07T00:00:00.000Z', '2026-01-07T00:00:00.000Z')`;
 });
+
+it.effect(
+  "repairs generation-one completed imports with typed inert submitted answers while preserving their audit and V2 edits",
+  () =>
+    Effect.gen(function* () {
+      yield* seed;
+      const sql = yield* SqlClient.SqlClient;
+      const payload =
+        '{"requestId":"legacy-request","answers":{"dataset":"Use measured data"},"questionTextById":{"dataset":"Which dataset?"},"attachmentsByQuestionId":{}}';
+      yield* sql`INSERT INTO projection_thread_activities (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at)
+      VALUES ('submitted-answer', ${THREAD}, 'answer-turn', 'info', 'user-input.answer-submitted', 'Answer submitted', ${payload}, 9, '2026-01-07T12:00:00.000Z')`;
+      const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const sink = yield* EventSink.EventSinkV2;
+      yield* importer.reconcileShells;
+      yield* importer.ensureTranscript(THREAD);
+      // Model an already completed generation-one database: the generic audit
+      // exists, but that release did not project a typed submitted-answer fact.
+      const answerId = "migration:v1:history:answer:submitted-answer";
+      yield* sql`DELETE FROM orchestration_v2_projection_turn_items WHERE turn_item_id = ${answerId}`;
+      yield* sql`DELETE FROM orchestration_events WHERE event_id = ${answerId}`;
+      yield* sql`UPDATE orchestration_v2_legacy_imports SET history_repair_version = 1 WHERE thread_id = ${THREAD}`;
+      const before = yield* projections.getThreadProjection(THREAD);
+      const audit = before.turnItems.find(
+        (item) => item.id === "migration:v1:history:activity:submitted-answer",
+      );
+      assert.ok(audit);
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("answer-audit-v2-edit"),
+            type: "turn-item.updated",
+            threadId: THREAD,
+            occurredAt: audit.updatedAt,
+            payload: { ...audit, title: "Preserved V2 audit title" },
+          },
+        ],
+      });
+      yield* Effect.gen(function* () {
+        yield* (yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter).ensureTranscript(THREAD);
+      }).pipe(Effect.provide(Layer.fresh(LegacyV1ThreadImporter.layer)));
+      const repaired = yield* projections.getThreadProjection(THREAD);
+      const item = repaired.turnItems.find((item) => item.id === answerId);
+      assert.ok(item?.type === "user_input_request");
+      assert.equal(item.historyTurnId, "answer-turn");
+      assert.deepEqual(item.questionAnswer?.answers, { dataset: "Use measured data" });
+      assert.equal(item.questions[0]?.question, "Which dataset?");
+      assert.equal(item.runId, null);
+      assert.equal(item.nodeId, null);
+      assert.equal(item.nativeItemRef, null);
+      assert.deepEqual(repaired.runtimeRequests, []);
+      assert.deepEqual(repaired.providerSessions, []);
+      assert.equal(
+        repaired.turnItems.find((item) => item.id === audit.id)?.title,
+        "Preserved V2 audit title",
+      );
+      const sequence = yield* (yield* EventStore.EventStoreV2).latestSequence();
+      yield* Effect.gen(function* () {
+        yield* (yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter).ensureTranscript(THREAD);
+      }).pipe(Effect.provide(Layer.fresh(LegacyV1ThreadImporter.layer)));
+      assert.equal(yield* (yield* EventStore.EventStoreV2).latestSequence(), sequence);
+      yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+      assert.deepEqual(
+        (yield* projections.getThreadProjection(THREAD)).turnItems,
+        repaired.turnItems,
+      );
+    }).pipe(Effect.provide(TestLayer)),
+);
+
+const seedCodexCitation = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`UPDATE projection_thread_messages SET text = 'Recommendation citeturn3view1', turn_id = 'cited-turn'
+    WHERE thread_id = ${THREAD} AND message_id = 'answer'`;
+  yield* sql`INSERT INTO projection_thread_activities (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at)
+    VALUES ('citation-search', ${THREAD}, 'cited-turn', 'tool', 'tool.completed', 'Web search',
+      '{"itemType":"web_search","citationSources":[{"id":"turn3view1","url":"https://example.com/guideline","title":"Guideline"}]}', 8, '2026-01-07T06:00:00.000Z'),
+      ('other-turn-search', ${THREAD}, 'unrelated-turn', 'tool', 'tool.completed', 'Other search',
+      '{"itemType":"web_search","citationSources":[{"id":"turn3view1","url":"https://wrong.example.com/","title":"Other turn"}]}', 9, '2026-01-07T07:00:00.000Z')`;
+});
+
+for (const completed of [false, true]) {
+  it.effect(
+    `renders retained Codex citations for ${completed ? "old completed" : "new"} imports and preserves V2 replay`,
+    () =>
+      Effect.gen(function* () {
+        yield* seed;
+        yield* seedCodexCitation;
+        const sql = yield* SqlClient.SqlClient;
+        const migration = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        yield* migration.reconcileShells;
+        const sink = yield* EventSink.EventSinkV2;
+        const preview = (yield* projections.getThreadProjection(THREAD)).turnItems.find(
+          (row) => row.type === "assistant_message",
+        );
+        if (preview?.type !== "assistant_message") return assert.fail("Expected shell assistant");
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("citation-existing-title-edit"),
+              type: "turn-item.updated",
+              threadId: THREAD,
+              occurredAt: preview.updatedAt,
+              payload: { ...preview, title: "Existing V2 presentation" },
+            },
+          ],
+        });
+        if (completed)
+          yield* sql`UPDATE orchestration_v2_legacy_imports
+        SET transcript_imported_at = '2026-02-01T00:00:00.000Z' WHERE thread_id = ${THREAD}`;
+        const original =
+          yield* sql`SELECT * FROM projection_thread_messages WHERE thread_id = ${THREAD} ORDER BY message_id`;
+        yield* migration.ensureTranscript(THREAD);
+        const projection = yield* projections.getThreadProjection(THREAD);
+        const message = projection.messages.find((row) => row.id === "answer");
+        const item = projection.turnItems.find((row) => row.type === "assistant_message");
+        assert.equal(
+          message?.text,
+          'Recommendation [1](<https://example.com/guideline> "Guideline")',
+        );
+        if (item?.type !== "assistant_message") return assert.fail("Expected historical assistant");
+        assert.equal(item.text, message?.text);
+        assert.equal(item.title, "Existing V2 presentation");
+        assert.equal(item.runId, null);
+        assert.equal(item.nativeItemRef, null);
+        assert.deepEqual(projection.runtimeRequests, []);
+        assert.deepEqual(projection.providerSessions, []);
+        assert.deepEqual(
+          yield* sql`SELECT * FROM projection_thread_messages WHERE thread_id = ${THREAD} ORDER BY message_id`,
+          original,
+        );
+        const sequence = yield* (yield* EventStore.EventStoreV2).latestSequence();
+        yield* Effect.gen(function* () {
+          yield* (yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter).ensureTranscript(THREAD);
+        }).pipe(Effect.provide(Layer.fresh(LegacyV1ThreadImporter.layer)));
+        assert.equal(yield* (yield* EventStore.EventStoreV2).latestSequence(), sequence);
+        yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+        const replayed = yield* projections.getThreadProjection(THREAD);
+        assert.deepEqual(replayed.messages, projection.messages);
+        assert.deepEqual(replayed.turnItems, projection.turnItems);
+      }).pipe(Effect.provide(TestLayer)),
+  );
+}
+
+it.live("retains V2 message and item edits racing a completed Codex citation repair", () =>
+  Effect.gen(function* () {
+    yield* seed;
+    yield* seedCodexCitation;
+    const sql = yield* SqlClient.SqlClient;
+    const migration = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sink = yield* EventSink.EventSinkV2;
+    yield* migration.reconcileShells;
+    yield* sql`UPDATE orchestration_v2_legacy_imports
+      SET transcript_imported_at = '2026-02-01T00:00:00.000Z' WHERE thread_id = ${THREAD}`;
+    const before = yield* projections.getThreadProjection(THREAD);
+    const message = before.messages.find((row) => row.id === "answer");
+    const item = before.turnItems.find((row) => row.type === "assistant_message");
+    if (message === undefined || item?.type !== "assistant_message")
+      return assert.fail("Expected legacy answer");
+    const ready = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const intercepted = EventSink.EventSinkV2.of({
+      ...sink,
+      write: (input) =>
+        Effect.gen(function* () {
+          if (input.guardLegacyCitationRepairs === true) {
+            yield* Deferred.succeed(ready, undefined);
+            yield* Deferred.await(release);
+          }
+          return yield* sink.write(input);
+        }),
+    });
+    const repair = Effect.gen(function* () {
+      yield* (yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter).ensureTranscript(THREAD);
+    }).pipe(
+      Effect.provide(Layer.fresh(LegacyV1ThreadImporter.layer)),
+      Effect.provideService(EventSink.EventSinkV2, intercepted),
+    );
+    const fiber = yield* Effect.forkChild(repair);
+    yield* Deferred.await(ready);
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make("raced-citation-message-edit"),
+          type: "message.updated",
+          threadId: THREAD,
+          occurredAt: message.updatedAt,
+          payload: { ...message, text: "Authoritative V2 message edit" },
+        },
+        {
+          id: EventId.make("raced-citation-item-edit"),
+          type: "turn-item.updated",
+          threadId: THREAD,
+          occurredAt: item.updatedAt,
+          payload: { ...item, text: "Authoritative V2 item edit", title: "Preserved title" },
+        },
+      ],
+    });
+    yield* Deferred.succeed(release, undefined);
+    yield* Fiber.join(fiber);
+    const repaired = yield* projections.getThreadProjection(THREAD);
+    assert.equal(
+      repaired.messages.find((row) => row.id === message.id)?.text,
+      "Authoritative V2 message edit",
+    );
+    assert.deepEqual(
+      repaired.turnItems.find((row) => row.id === item.id),
+      { ...item, text: "Authoritative V2 item edit", title: "Preserved title" },
+    );
+    yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+    const replayed = yield* projections.getThreadProjection(THREAD);
+    assert.deepEqual(replayed.messages, repaired.messages);
+    assert.deepEqual(replayed.turnItems, repaired.turnItems);
+  }).pipe(Effect.provide(TestLayer), Effect.timeout("5 seconds")),
+);
+
+it.effect("does not apply historical citation repair to an unowned native assistant item", () =>
+  Effect.gen(function* () {
+    yield* seed;
+    yield* seedCodexCitation;
+    const migration = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sink = yield* EventSink.EventSinkV2;
+    yield* migration.reconcileShells;
+    const legacy = (yield* projections.getThreadProjection(THREAD)).turnItems.find(
+      (item) => item.type === "assistant_message",
+    );
+    if (legacy?.type !== "assistant_message") return assert.fail("Expected legacy assistant");
+    // Even an item referencing the historical message is not migration-owned
+    // unless its own exact historical identity is retained.
+    const native = { ...legacy, id: TurnItemId.make("native-assistant-citation-item") };
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make("native-citation-item-created"),
+          type: "turn-item.updated",
+          threadId: THREAD,
+          occurredAt: native.updatedAt,
+          payload: native,
+        },
+      ],
+    });
+    const before = yield* projections.getThreadProjection(THREAD);
+    const sequence = yield* (yield* EventStore.EventStoreV2).latestSequence();
+    assert.deepEqual(
+      yield* sink.write({
+        guardLegacyCitationRepairs: true,
+        events: [
+          {
+            id: EventId.make("migration:v1:history:citation:unowned-native"),
+            type: "turn-item.updated",
+            threadId: THREAD,
+            occurredAt: native.updatedAt,
+            payload: { ...native, text: "Must not replace native text" },
+          },
+        ],
+      }),
+      [],
+    );
+    assert.equal(yield* (yield* EventStore.EventStoreV2).latestSequence(), sequence);
+    assert.deepEqual((yield* projections.getThreadProjection(THREAD)).turnItems, before.turnItems);
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect(
+  "repairs old completed citations after compaction removed the original message event",
+  () =>
+    Effect.gen(function* () {
+      yield* seed;
+      yield* seedCodexCitation;
+      const sql = yield* SqlClient.SqlClient;
+      const migration = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      yield* migration.reconcileShells;
+      const message = (yield* projections.getThreadProjection(THREAD)).messages.find(
+        (row) => row.id === "answer",
+      );
+      if (message === undefined) return assert.fail("Expected imported message");
+      const updatedAt = DateTime.makeUnsafe("2026-03-01T00:00:00.000Z");
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("non-text-edit-before-citation-compaction"),
+            type: "message.updated",
+            threadId: THREAD,
+            occurredAt: updatedAt,
+            payload: { ...message, updatedAt },
+          },
+        ],
+      });
+      yield* sql`UPDATE orchestration_v2_legacy_imports SET transcript_imported_at = '2026-02-01T00:00:00.000Z'
+      WHERE thread_id = ${THREAD}`;
+      yield* maintenance.compactEventStore;
+      assert.deepEqual(
+        yield* sql`SELECT event_id FROM orchestration_events WHERE event_id = 'migration:v1:message:answer'`,
+        [],
+      );
+      yield* maintenance.rebuild;
+      yield* migration.ensureTranscript(THREAD);
+      const repaired = yield* projections.getThreadProjection(THREAD);
+      const answer = repaired.messages.find((row) => row.id === "answer");
+      assert.equal(answer?.text, 'Recommendation [1](<https://example.com/guideline> "Guideline")');
+      assert.deepEqual(answer?.updatedAt, updatedAt);
+      const item = repaired.turnItems.find((row) => row.type === "assistant_message");
+      if (item?.type !== "assistant_message")
+        return assert.fail("Expected repaired assistant item");
+      assert.equal(item.text, answer?.text);
+      const sequence = yield* (yield* EventStore.EventStoreV2).latestSequence();
+      yield* Effect.gen(function* () {
+        yield* (yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter).ensureTranscript(THREAD);
+      }).pipe(Effect.provide(Layer.fresh(LegacyV1ThreadImporter.layer)));
+      assert.equal(yield* (yield* EventStore.EventStoreV2).latestSequence(), sequence);
+      yield* maintenance.rebuild;
+      const replayed = yield* projections.getThreadProjection(THREAD);
+      assert.deepEqual(replayed.messages, repaired.messages);
+      assert.deepEqual(replayed.turnItems, repaired.turnItems);
+    }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect(
+  "repairs old completed history once across fresh startup importers without rescanning it",
+  () =>
+    Effect.gen(function* () {
+      yield* seed;
+      const sql = yield* SqlClient.SqlClient;
+      const migration = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const sink = yield* EventSink.EventSinkV2;
+      yield* migration.reconcileShells;
+      yield* migration.ensureTranscript(THREAD);
+      const before = yield* projections.getThreadProjection(THREAD);
+      const tool = before.turnItems.find(
+        (item) => item.type === "dynamic_tool" && item.toolName === "read_file",
+      );
+      if (tool?.type !== "dynamic_tool") return assert.fail("Expected imported tool");
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("startup-history-v2-edit"),
+            type: "turn-item.updated",
+            threadId: THREAD,
+            occurredAt: tool.updatedAt,
+            payload: { ...tool, output: "Authoritative V2 edit" },
+          },
+        ],
+      });
+      const edited = yield* projections.getThreadProjection(THREAD);
+      yield* sql`UPDATE orchestration_v2_legacy_imports SET history_repair_version = 0 WHERE thread_id = ${THREAD}`;
+      const [oldMarker] = yield* sql<{ transcript_imported_at: string | null }>`
+      SELECT transcript_imported_at FROM orchestration_v2_legacy_imports WHERE thread_id = ${THREAD}`;
+      const statements: string[] = [];
+      const tracer = Tracer.make({
+        span(options) {
+          const span = new Tracer.NativeSpan(options);
+          const end = span.end.bind(span);
+          span.end = (time, exit) => {
+            end(time, exit);
+            const text = span.attributes.get("db.query.text");
+            if (typeof text === "string") statements.push(text);
+          };
+          return span;
+        },
+      });
+      // These are the actual startup operations, composed against the same SQL
+      // and EventSink with a new importer lifetime on each invocation.
+      const startup = Effect.gen(function* () {
+        const fresh = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+        const pending = yield* fresh.pendingThreadCount;
+        yield* fresh.reconcileShells;
+        yield* fresh.importPendingTranscripts;
+        yield* fresh.ensureTranscript(THREAD);
+        return pending;
+      }).pipe(Effect.provide(Layer.fresh(LegacyV1ThreadImporter.layer)), Effect.withTracer(tracer));
+      assert.equal(yield* startup, 1);
+      assert.equal(statements.filter((text) => text.includes("WITH history AS")).length, 1);
+      const [current] = yield* sql<{
+        transcript_imported_at: string | null;
+        history_repair_version: number;
+      }>`
+      SELECT transcript_imported_at, history_repair_version FROM orchestration_v2_legacy_imports WHERE thread_id = ${THREAD}`;
+      assert.equal(
+        current?.history_repair_version,
+        LegacyV1ThreadImporter.LEGACY_HISTORY_REPAIR_VERSION,
+      );
+      assert.equal(current?.transcript_imported_at, oldMarker?.transcript_imported_at);
+      assert.deepEqual(
+        (yield* projections.getThreadProjection(THREAD)).turnItems,
+        edited.turnItems,
+      );
+      statements.length = 0;
+      const sequence = yield* (yield* EventStore.EventStoreV2).latestSequence();
+      assert.equal(yield* startup, 0);
+      assert.equal(statements.filter((text) => text.includes("WITH history AS")).length, 0);
+      assert.isTrue(statements.some((text) => text.includes("history_repair_version")));
+      assert.equal(yield* (yield* EventStore.EventStoreV2).latestSequence(), sequence);
+      yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+      assert.deepEqual(
+        (yield* projections.getThreadProjection(THREAD)).turnItems,
+        edited.turnItems,
+      );
+    }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect(
+  "retries a failed repair-generation commit without overwriting committed V2 history edits",
+  () =>
+    Effect.gen(function* () {
+      yield* seed;
+      const sql = yield* SqlClient.SqlClient;
+      const migration = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const sink = yield* EventSink.EventSinkV2;
+      yield* migration.reconcileShells;
+      yield* migration.ensureTranscript(THREAD);
+      yield* sql`UPDATE orchestration_v2_legacy_imports SET history_repair_version = 0 WHERE thread_id = ${THREAD}`;
+      yield* sql`INSERT INTO projection_thread_messages (message_id, thread_id, role, text, is_streaming, created_at, updated_at)
+      VALUES ('generation-reason', ${THREAD}, 'reasoning', 'Previously omitted reasoning', 0, '2026-01-03T06:00:00.000Z', '2026-01-03T07:00:00.000Z')`;
+      const [oldMarker] = yield* sql<{ transcript_imported_at: string | null }>`
+      SELECT transcript_imported_at FROM orchestration_v2_legacy_imports WHERE thread_id = ${THREAD}`;
+      yield* sql`CREATE TRIGGER reject_repair_generation BEFORE UPDATE OF history_repair_version ON orchestration_v2_legacy_imports
+      WHEN NEW.history_repair_version > 0
+      BEGIN SELECT RAISE(ABORT, 'controlled failed repair generation commit'); END`;
+      const repair = Effect.gen(function* () {
+        yield* (yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter).ensureTranscript(THREAD);
+      }).pipe(Effect.provide(Layer.fresh(LegacyV1ThreadImporter.layer)));
+      assert.equal((yield* Effect.exit(repair))._tag, "Failure");
+      const [failedMarker] = yield* sql<{
+        transcript_imported_at: string | null;
+        history_repair_version: number;
+      }>`
+      SELECT transcript_imported_at, history_repair_version FROM orchestration_v2_legacy_imports WHERE thread_id = ${THREAD}`;
+      assert.equal(failedMarker?.history_repair_version, 0);
+      assert.equal(failedMarker?.transcript_imported_at, oldMarker?.transcript_imported_at);
+      const partial = yield* projections.getThreadProjection(THREAD);
+      const reason = partial.turnItems.find(
+        (item) => item.id === "migration:v1:history:reasoning:generation-reason",
+      );
+      if (reason?.type !== "reasoning")
+        return assert.fail("Expected committed repair before failed stamp");
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("edit-after-generation-commit-failure"),
+            type: "turn-item.updated",
+            threadId: THREAD,
+            occurredAt: reason.updatedAt,
+            payload: { ...reason, text: "User edited repaired history" },
+          },
+        ],
+      });
+      const edited = yield* projections.getThreadProjection(THREAD);
+      yield* sql`DROP TRIGGER reject_repair_generation`;
+      yield* repair;
+      assert.deepEqual(
+        (yield* projections.getThreadProjection(THREAD)).turnItems,
+        edited.turnItems,
+      );
+      const [current] = yield* sql<{ history_repair_version: number }>`
+      SELECT history_repair_version FROM orchestration_v2_legacy_imports WHERE thread_id = ${THREAD}`;
+      assert.equal(
+        current?.history_repair_version,
+        LegacyV1ThreadImporter.LEGACY_HISTORY_REPAIR_VERSION,
+      );
+      const sequence = yield* (yield* EventStore.EventStoreV2).latestSequence();
+      yield* repair;
+      assert.equal(yield* (yield* EventStore.EventStoreV2).latestSequence(), sequence);
+      yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+      assert.deepEqual(
+        (yield* projections.getThreadProjection(THREAD)).turnItems,
+        edited.turnItems,
+      );
+    }).pipe(Effect.provide(TestLayer)),
+);
 
 it.effect("preserves completed and interrupted reasoning as inert historical V2 items", () =>
   Effect.gen(function* () {
@@ -118,6 +596,7 @@ it.live("preserves a V2 edit interleaved between reasoning position repair read 
     yield* sql`INSERT INTO projection_thread_messages (message_id, thread_id, role, text, is_streaming, created_at, updated_at)
       VALUES ('raced-reason', ${THREAD}, 'reasoning', 'Missing historical reasoning', 0, '2026-01-03T06:00:00.000Z', '2026-01-03T07:00:00.000Z')`;
     yield* sql`UPDATE projection_thread_activities SET turn_id = 'raced-history-turn' WHERE activity_id = 'tool-call'`;
+    yield* sql`UPDATE orchestration_v2_legacy_imports SET history_repair_version = 0 WHERE thread_id = ${THREAD}`;
     const repairReady = yield* Deferred.make<void>();
     const releaseRepair = yield* Deferred.make<void>();
     const intercepted = EventSink.EventSinkV2.of({
@@ -214,6 +693,7 @@ it.effect(
         ],
       });
       const before = yield* projections.getThreadProjection(THREAD);
+      yield* sql`UPDATE orchestration_v2_legacy_imports SET history_repair_version = 0 WHERE thread_id = ${THREAD}`;
       const markerBefore =
         yield* sql`SELECT * FROM orchestration_v2_legacy_imports WHERE thread_id = ${THREAD}`;
       // Add the source row after old hydration to model a completed import made
@@ -248,7 +728,10 @@ it.effect(
       assert.deepEqual(repaired.providerSessions, before.providerSessions);
       assert.deepEqual(
         yield* sql`SELECT * FROM orchestration_v2_legacy_imports WHERE thread_id = ${THREAD}`,
-        markerBefore,
+        markerBefore.map((row) => ({
+          ...row,
+          history_repair_version: LegacyV1ThreadImporter.LEGACY_HISTORY_REPAIR_VERSION,
+        })),
       );
       yield* sink.write({
         events: [
@@ -300,8 +783,10 @@ it.effect(
       );
       const marker = yield* sql<{
         transcript_imported_at: string | null;
-      }>`SELECT transcript_imported_at FROM orchestration_v2_legacy_imports WHERE thread_id = ${THREAD}`;
+        history_repair_version: number;
+      }>`SELECT transcript_imported_at, history_repair_version FROM orchestration_v2_legacy_imports WHERE thread_id = ${THREAD}`;
       assert.equal(marker[0]?.transcript_imported_at, null);
+      assert.equal(marker[0]?.history_repair_version, 0);
       yield* sql`DROP TRIGGER reject_reasoning`;
       yield* migration.ensureTranscript(THREAD);
       const complete = yield* projections.getThreadProjection(THREAD);
@@ -500,8 +985,10 @@ it.effect(
       assert.equal(failed._tag, "Failure");
       const marker = yield* sql<{
         transcript_imported_at: string | null;
-      }>`SELECT transcript_imported_at FROM orchestration_v2_legacy_imports WHERE thread_id = ${THREAD}`;
+        history_repair_version: number;
+      }>`SELECT transcript_imported_at, history_repair_version FROM orchestration_v2_legacy_imports WHERE thread_id = ${THREAD}`;
       assert.equal(marker[0]?.transcript_imported_at, null);
+      assert.equal(marker[0]?.history_repair_version, 0);
       assert.deepEqual(
         (yield* projections.getThreadProjection(THREAD)).turnItems.map((item) => item.id),
         [...expectedIds.slice(0, 101), "migration:v1:turn-item:answer"],
@@ -645,6 +1132,7 @@ it.effect(
       const repair = Effect.gen(function* () {
         yield* (yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter).ensureTranscript(THREAD);
       }).pipe(Effect.provide(Layer.fresh(LegacyV1ThreadImporter.layer)));
+      yield* sql`UPDATE orchestration_v2_legacy_imports SET history_repair_version = 0 WHERE thread_id = ${THREAD}`;
       yield* repair;
       const repaired = yield* projections.getThreadProjection(THREAD);
       for (const item of repaired.turnItems) {
@@ -672,4 +1160,166 @@ it.effect(
       yield* repair;
       assert.equal(yield* (yield* EventStore.EventStoreV2).latestSequence(), sequence);
     }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect(
+  "retains edited submitted answers through interrupted generation stamp, compaction and startup retry",
+  () =>
+    Effect.gen(function* () {
+      yield* seed;
+      const sql = yield* SqlClient.SqlClient;
+      const migration = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      yield* migration.reconcileShells;
+      yield* migration.ensureTranscript(THREAD);
+      yield* sql`UPDATE orchestration_v2_legacy_imports SET history_repair_version = 1 WHERE thread_id = ${THREAD}`;
+      yield* sql`INSERT INTO projection_thread_activities (activity_id, thread_id, tone, kind, summary, payload_json, created_at)
+      VALUES ('generation-answer', ${THREAD}, 'info', 'user-input.answer-submitted', 'Answered', '{"requestId":"legacy-generation-answer","answers":{"dataset":"Original answer"},"attachmentsByQuestionId":{}}', '2026-01-07T12:00:00.000Z')`;
+      yield* sql`CREATE TRIGGER reject_answer_generation BEFORE UPDATE OF history_repair_version ON orchestration_v2_legacy_imports
+      WHEN NEW.history_repair_version > 1 BEGIN SELECT RAISE(ABORT, 'interrupted answer generation stamp'); END`;
+      const repair = Effect.gen(function* () {
+        yield* (yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter).ensureTranscript(THREAD);
+      }).pipe(Effect.provide(Layer.fresh(LegacyV1ThreadImporter.layer)));
+      assert.equal((yield* Effect.exit(repair))._tag, "Failure");
+      const answerId = TurnItemId.make("migration:v1:history:answer:generation-answer");
+      const partial = (yield* projections.getThreadProjection(THREAD)).turnItems.find(
+        (item) => item.id === answerId,
+      );
+      if (partial?.type !== "user_input_request" || partial.questionAnswer === undefined)
+        return assert.fail("Expected committed answer before failed generation stamp");
+      const edited = {
+        ...partial,
+        title: "V2 edited submitted answer",
+        questionAnswer: {
+          ...partial.questionAnswer,
+          answers: { dataset: "Preserved V2 answer" },
+          attachmentsByQuestionId: {},
+        },
+      };
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("answer-edited-after-interrupted-stamp"),
+            type: "turn-item.updated",
+            threadId: THREAD,
+            occurredAt: partial.updatedAt,
+            payload: edited,
+          },
+        ],
+      });
+      yield* maintenance.compactEventStore;
+      // The current compactor retains turn-item history; replay must still select the newer V2 answer.
+      assert.equal(
+        (yield* sql`SELECT event_id FROM orchestration_events WHERE event_id = ${answerId}`).length,
+        1,
+      );
+      yield* maintenance.rebuild;
+      yield* sql`DROP TRIGGER reject_answer_generation`;
+      yield* repair;
+      assert.deepEqual(
+        (yield* projections.getThreadProjection(THREAD)).turnItems.find(
+          (item) => item.id === answerId,
+        ),
+        edited,
+      );
+      const [marker] = yield* sql<{
+        history_repair_version: number;
+      }>`SELECT history_repair_version FROM orchestration_v2_legacy_imports WHERE thread_id = ${THREAD}`;
+      assert.equal(
+        marker?.history_repair_version,
+        LegacyV1ThreadImporter.LEGACY_HISTORY_REPAIR_VERSION,
+      );
+      yield* maintenance.rebuild;
+      assert.deepEqual(
+        (yield* projections.getThreadProjection(THREAD)).turnItems.find(
+          (item) => item.id === answerId,
+        ),
+        edited,
+      );
+    }).pipe(Effect.provide(TestLayer)),
+);
+
+it.live(
+  "does not overwrite a submitted answer concurrently committed before its missing-only repair transaction",
+  () =>
+    Effect.gen(function* () {
+      yield* seed;
+      const sql = yield* SqlClient.SqlClient;
+      const migration = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const sink = yield* EventSink.EventSinkV2;
+      yield* migration.reconcileShells;
+      yield* migration.ensureTranscript(THREAD);
+      yield* sql`UPDATE orchestration_v2_legacy_imports SET history_repair_version = 1 WHERE thread_id = ${THREAD}`;
+      yield* sql`INSERT INTO projection_thread_activities (activity_id, thread_id, tone, kind, summary, payload_json, created_at)
+      VALUES ('raced-answer', ${THREAD}, 'info', 'user-input.answer-submitted', 'Answered', '{"requestId":"legacy-raced-answer","answers":{"dataset":"Legacy answer"},"attachmentsByQuestionId":{}}', '2026-01-07T12:00:00.000Z')`;
+      const ready = yield* Deferred.make<Parameters<EventSink.EventSinkV2Shape["write"]>[0]>();
+      const release = yield* Deferred.make<void>();
+      const intercepted = EventSink.EventSinkV2.of({
+        ...sink,
+        write: (input) =>
+          Effect.gen(function* () {
+            if (
+              input.guardLegacyQuestionInsertions &&
+              input.events.some(
+                (event) =>
+                  event.type === "turn-item.updated" &&
+                  event.payload.id === "migration:v1:history:answer:raced-answer",
+              )
+            ) {
+              yield* Deferred.succeed(ready, input);
+              yield* Deferred.await(release);
+            }
+            return yield* sink.write(input);
+          }),
+      });
+      const repair = Effect.gen(function* () {
+        yield* (yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter).ensureTranscript(THREAD);
+      }).pipe(
+        Effect.provide(Layer.fresh(LegacyV1ThreadImporter.layer)),
+        Effect.provideService(EventSink.EventSinkV2, intercepted),
+      );
+      const fiber = yield* Effect.forkChild(repair);
+      const input = yield* Deferred.await(ready);
+      const event = input.events.find(
+        (event) =>
+          event.type === "turn-item.updated" &&
+          event.payload.id === "migration:v1:history:answer:raced-answer",
+      );
+      if (
+        event?.type !== "turn-item.updated" ||
+        event.payload.type !== "user_input_request" ||
+        event.payload.questionAnswer === undefined
+      )
+        return assert.fail("Expected actual repair answer payload");
+      const edited = {
+        ...event.payload,
+        title: "Concurrent V2 answer",
+        questionAnswer: {
+          ...event.payload.questionAnswer,
+          answers: { dataset: "Concurrent choice" },
+          attachmentsByQuestionId: {},
+        },
+      };
+      yield* sink.write({
+        events: [{ ...event, id: EventId.make("concurrent-answer-owner"), payload: edited }],
+      });
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(fiber);
+      assert.deepEqual(
+        (yield* projections.getThreadProjection(THREAD)).turnItems.find(
+          (item) => item.id === edited.id,
+        ),
+        edited,
+      );
+      yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+      assert.deepEqual(
+        (yield* projections.getThreadProjection(THREAD)).turnItems.find(
+          (item) => item.id === edited.id,
+        ),
+        edited,
+      );
+    }).pipe(Effect.provide(TestLayer), Effect.timeout("10 seconds")),
 );

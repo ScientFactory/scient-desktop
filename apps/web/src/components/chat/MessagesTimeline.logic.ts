@@ -1324,6 +1324,13 @@ export function deriveMessagesTimelineRows(input: {
     : new Map<MessageId, number>();
   const nextRows: MessagesTimelineRow[] = [];
   const nativeSubagentRows = new Map<string, number>();
+  const hasVisibleForkMarker =
+    input.hasForkBaseline === true &&
+    (input.forkBaselineAssistantMessageId === null ||
+      timelineEntries.some(
+        (entry) =>
+          entry.kind === "message" && entry.message.id === input.forkBaselineAssistantMessageId,
+      ));
   if (input.hasForkBaseline === true && input.forkBaselineAssistantMessageId === null) {
     nextRows.push({ kind: "fork-marker", id: "conversation-fork-marker" });
   }
@@ -1516,6 +1523,18 @@ export function deriveMessagesTimelineRows(input: {
     if (
       timelineEntry.kind === "event" &&
       timelineEntry.projectedItem.item.type === "run_interrupt_request"
+    ) {
+      continue;
+    }
+    // The Scient baseline separator already represents this local incoming
+    // fork. Keep outgoing and inherited fork records as distinct history.
+    if (
+      hasVisibleForkMarker &&
+      timelineEntry.kind === "event" &&
+      timelineEntry.projectedItem.visibility === "local" &&
+      timelineEntry.projectedItem.item.type === "fork" &&
+      timelineEntry.projectedItem.item.source.type === "run" &&
+      timelineEntry.projectedItem.item.targetThreadId === timelineEntry.projectedItem.item.threadId
     ) {
       continue;
     }

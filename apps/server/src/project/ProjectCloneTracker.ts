@@ -429,7 +429,9 @@ export const make = Effect.gen(function* () {
     start: (input, hooks) => locked(start(input, hooks)),
     cancel: (projectId) => locked(cancel(projectId)),
     retry: (projectId) => locked(retry(projectId)),
-    discard: (projectId) => locked(discard(projectId)),
+    // Retire the exact clone through filesystem and map cleanup even if its
+    // caller disconnects while waiting for the action lock or native shutdown.
+    discard: (projectId) => locked(discard(projectId)).pipe(Effect.uninterruptible),
     get,
     stream,
   });

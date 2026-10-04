@@ -349,6 +349,9 @@ export const layer: Layer.Layer<
                 payload: input.event.appThread,
               }),
             ];
+          case "authentication.invalidated":
+            // Private manager control event, never part of canonical run history.
+            return [];
           case "provider_session.updated":
             return [
               yield* makeDomainEvent(input, {

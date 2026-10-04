@@ -11,6 +11,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import { ProviderSessionManagerV2 } from "../../../orchestration-v2/ProviderSessionManager.ts";
 import * as Stream from "effect/Stream";
 
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
@@ -42,6 +43,15 @@ it.effect("attributes a launched thread's first message to the calling thread", 
     } as OrchestrationV2ThreadShell;
     let launchedSender: ThreadId | undefined;
     const dependencies = Layer.mergeAll(
+      Layer.mock(ProviderSessionManagerV2)({
+        resolveMcpInvocationPolicy: () =>
+          Effect.succeed(
+            Option.some({
+              runtimeMode: "full-access" as const,
+              interactionMode: "default" as const,
+            }),
+          ),
+      }),
       NodeCrypto.layer,
       Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
@@ -105,6 +115,15 @@ it.effect("launches a scratch thread into the Scratch project", () =>
     } as OrchestrationV2ThreadShell;
     const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
     const dependencies = Layer.mergeAll(
+      Layer.mock(ProviderSessionManagerV2)({
+        resolveMcpInvocationPolicy: () =>
+          Effect.succeed(
+            Option.some({
+              runtimeMode: "full-access" as const,
+              interactionMode: "default" as const,
+            }),
+          ),
+      }),
       NodeCrypto.layer,
       Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
@@ -194,6 +213,15 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
       deletedAt: null,
     };
     const dependencies = Layer.mergeAll(
+      Layer.mock(ProviderSessionManagerV2)({
+        resolveMcpInvocationPolicy: () =>
+          Effect.succeed(
+            Option.some({
+              runtimeMode: "full-access" as const,
+              interactionMode: "default" as const,
+            }),
+          ),
+      }),
       NodeCrypto.layer,
       Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
