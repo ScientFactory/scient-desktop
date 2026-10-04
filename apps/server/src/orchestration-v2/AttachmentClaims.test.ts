@@ -314,3 +314,42 @@ describe("AttachmentClaims", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 });
+
+it.effect("claims generic files without consuming or mutating their retry source", () =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const pendingId = ChatAttachmentId.make(`${createPendingAttachmentId()!}-txt`);
+    const attachment = {
+      type: "file" as const,
+      id: pendingId,
+      name: 'notes "final" ü.txt',
+      mimeType: "TEXT/PLAIN",
+      sizeBytes: 6,
+    };
+    const pendingPath = NodePath.join(config.attachmentsDir, `${pendingId}.txt`);
+    NodeFS.writeFileSync(pendingPath, "report");
+    const first = yield* claimPendingAttachments({
+      threadId: "generic-files",
+      attachments: [attachment],
+    });
+    const second = yield* claimPendingAttachments({
+      threadId: "generic-files",
+      attachments: [attachment],
+    });
+    expect(first.attachments[0]).toMatchObject({
+      type: "file",
+      name: attachment.name,
+      mimeType: "text/plain",
+      sizeBytes: 6,
+    });
+    expect(parseThreadSegmentFromAttachmentId(first.attachments[0]!.id)).toBe("generic-files");
+    expect(first.claimedPaths[0]).not.toBe(second.claimedPaths[0]);
+    NodeFS.writeFileSync(first.claimedPaths[0]!, "edited");
+    expect(NodeFS.readFileSync(pendingPath, "utf8")).toBe("report");
+    expect(NodeFS.readFileSync(second.claimedPaths[0]!, "utf8")).toBe("report");
+    yield* releaseClaimedAttachments(first.claimedPaths);
+    expect(NodeFS.existsSync(first.claimedPaths[0]!)).toBe(false);
+    expect(NodeFS.readFileSync(pendingPath, "utf8")).toBe("report");
+    expect(NodeFS.readFileSync(second.claimedPaths[0]!, "utf8")).toBe("report");
+  }).pipe(Effect.provide(testLayer)),
+);
