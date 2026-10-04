@@ -677,7 +677,10 @@ export function makeNativeSessionAdapterV2(
                   type: "dynamic_tool",
                   title: update.name,
                   toolName: update.name,
-                  status: update.status,
+                  status:
+                    running.interrupted && update.status === "failed"
+                      ? "interrupted"
+                      : update.status,
                   input: update.input ?? (previous?.type === "dynamic_tool" ? previous.input : {}),
                   ...(update.output === undefined ? {} : { output: update.output }),
                   completedAt: update.status === "running" ? null : now,
