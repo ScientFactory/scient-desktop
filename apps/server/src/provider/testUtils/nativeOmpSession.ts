@@ -40,6 +40,7 @@ const decodeSettings = Schema.decodeEffect(OmpSettings);
 /** Real native OMP conversation ownership for isolated transport and CLI fixtures. */
 export const nativeOmpSession = Effect.fnUntraced(function* (input: {
   readonly root: string;
+  readonly cwd?: string;
   readonly stateDir: string;
   readonly attachmentsDir: string;
   readonly target: OmpTarget;
@@ -75,7 +76,7 @@ export const nativeOmpSession = Effect.fnUntraced(function* (input: {
       idAllocator: allocator,
       serverConfig: {
         ...config,
-        cwd: input.root,
+        cwd: input.cwd ?? input.root,
         stateDir: input.stateDir,
         attachmentsDir: input.attachmentsDir,
       },
@@ -84,7 +85,7 @@ export const nativeOmpSession = Effect.fnUntraced(function* (input: {
       continuations: input.continuations ?? { offer: () => Effect.void },
     });
     const policy = {
-      cwd: input.root,
+      cwd: input.cwd ?? input.root,
       runtimeMode: "full-access" as const,
       interactionMode: "default" as const,
     };
