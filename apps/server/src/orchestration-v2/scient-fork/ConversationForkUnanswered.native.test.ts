@@ -41,6 +41,7 @@ const layer = nativeImportRuntimeTestLayer(
 
 const withUnansweredHistory = <A, E, R>(
   test: (source: OrchestrationV2ThreadProjection) => Effect.Effect<A, E, R>,
+  unanswered: ReadonlyArray<number> = [2],
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -49,7 +50,7 @@ const withUnansweredHistory = <A, E, R>(
       const snapshot = {
         ...fixture.input.snapshot,
         messages: fixture.input.snapshot.messages
-          .filter((message) => message.id !== "src-assistant-2")
+          .filter((message) => !unanswered.some((turn) => message.id === `src-assistant-${turn}`))
           .map((message, index) => ({ ...message, n: index + 1 })),
       };
       const validated = { ...fixture.input, snapshot };
@@ -194,4 +195,104 @@ it.live(
         );
       }),
     ),
+);
+
+it.live(
+  "a user fork after an unanswered turn keeps the last answer baseline and excludes the draft",
+  () =>
+    withUnansweredHistory((source) =>
+      Effect.gen(function* () {
+        const question = source.messages.find((message) => message.text === "Question 3");
+        assert.ok(question);
+        const targetId = ThreadId.make("unanswered-user-fork");
+        const command = {
+          type: "thread.fork" as const,
+          commandId: CommandId.make("unanswered-user-fork"),
+          originThreadId: source.thread.id,
+          newThreadId: targetId,
+          sourceUserMessageId: question.id,
+          workspaceMode: "local" as const,
+        };
+        const forks = yield* ConversationForkService;
+        const receipt = yield* forks.dispatch(command);
+        const store = yield* ProjectionStoreV2;
+        const child = yield* store.getThreadProjection(targetId);
+        assert.deepEqual(
+          child.messages.map((message) => message.text),
+          ["Question 1", "Answer 1", "Question 2"],
+        );
+        const lastAnswer = child.messages.find((message) => message.text === "Answer 1");
+        assert.ok(lastAnswer);
+        assert.equal(child.thread.forkLineage?.baselineAssistantMessageId, lastAnswer.id);
+        const unansweredPrompt = child.turnItems.find(
+          (item) => item.type === "user_message" && item.text === "Question 2",
+        );
+        assert.ok(unansweredPrompt?.historyTurnId);
+        assert.deepEqual(
+          child.turnItems
+            .filter((item) => item.historyTurnId === unansweredPrompt.historyTurnId)
+            .map((item) => item.type),
+          ["user_message", "reasoning", "dynamic_tool"],
+        );
+        assert.isFalse(
+          child.turnItems.some(
+            (item) => item.type === "reasoning" && item.text === "Thinking about 3",
+          ),
+        );
+        assert.deepEqual(child.runs, []);
+        assert.deepEqual(child.runtimeRequests, []);
+        assert.equal((yield* forks.dispatch(command)).sequence, receipt.sequence);
+        assert.deepEqual(
+          (yield* store.getThreadProjection(source.thread.id)).turnItems,
+          source.turnItems,
+        );
+      }),
+    ),
+);
+
+it.live("a user fork with only unanswered inherited requests has no invented answer baseline", () =>
+  withUnansweredHistory(
+    (source) =>
+      Effect.gen(function* () {
+        const question = source.messages.find((message) => message.text === "Question 3");
+        assert.ok(question);
+        const targetId = ThreadId.make("unanswered-empty-baseline");
+        yield* (yield* ConversationForkService).dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make("unanswered-empty-baseline"),
+          originThreadId: source.thread.id,
+          newThreadId: targetId,
+          sourceUserMessageId: question.id,
+          workspaceMode: "local",
+        });
+        const child = yield* (yield* ProjectionStoreV2).getThreadProjection(targetId);
+        assert.deepEqual(
+          child.messages.map((message) => message.text),
+          ["Question 1", "Question 2"],
+        );
+        assert.isNull(child.thread.forkLineage?.baselineAssistantMessageId);
+        assert.isFalse(child.turnItems.some((item) => item.type === "assistant_message"));
+        assert.equal(new Set(child.turnItems.map((item) => item.historyTurnId)).size, 2);
+        assert.deepEqual(
+          child.turnItems.map((item) => item.type),
+          [
+            "user_message",
+            "reasoning",
+            "dynamic_tool",
+            "user_message",
+            "reasoning",
+            "dynamic_tool",
+          ],
+        );
+        assert.isTrue(
+          child.turnItems.every(
+            (item) => item.runId === null && item.nodeId === null && item.nativeItemRef === null,
+          ),
+        );
+        assert.deepEqual(child.runs, []);
+        assert.deepEqual(child.runtimeRequests, []);
+        assert.deepEqual(child.providerSessions, []);
+      }),
+    [1, 2],
+  ),
 );
