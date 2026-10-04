@@ -756,3 +756,14 @@ required. Independent review matches the exact final test and production blobs
 (`d3-ws-protocol-qualified-handoff-round2.md`,
 `d3-ws-protocol-independent-review-round2.md`). Installed-client upgrade and
 remote/mobile acceptance remain separate from this controlled endpoint proof.
+
+The broader maintainer review also confirms two stale explanations already in
+this candidate. Accepted fork navigation uses dialog-subtree removal followed
+by a layout commit, preserving source-leaving and retry guards even if an
+animation callback never arrives. Current V2 conversation export is supported;
+offline recovery of the untouched original V1 database is a separate procedure.
+The two paragraphs now match those boundaries. Independent source review:
+`docs-boundaries-independent-integration-review-3911b36.md`. The incoming
+architecture-documentation batch still needs semantic composition and its
+remaining migration guidance refresh; these corrections do not qualify that
+whole guide or runtime acceptance.
