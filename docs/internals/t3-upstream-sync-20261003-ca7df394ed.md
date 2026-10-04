@@ -767,3 +767,19 @@ The two paragraphs now match those boundaries. Independent source review:
 architecture-documentation batch still needs semantic composition and its
 remaining migration guidance refresh; these corrections do not qualify that
 whole guide or runtime acceptance.
+
+The desktop smoke gate previously reported success after its launched process
+exited early with code7 and no fatal text. The actual CLI reproduces that false
+pass. The repaired gate requires survival until requested shutdown, accepts only
+the intended graceful exit, rejects forced termination, and evaluates output
+after stream closure. Incomplete inherited pipes cause a bounded failure. The
+original eight-second survival and two-second grace limits are unchanged.
+Eleven real controlled subprocess cases pass, including early exits, launch
+failure, late fatal output and exact descendant cleanup; scoped lint and
+formatting pass without warnings. Independent review matches both integrated
+blobs (`desktop-smoke-gate-qualified-handoff.md`,
+`desktop-smoke-gate-independent-frozen-review.md`). Desktop compilation passes
+but excludes these standalone JavaScript files; actual execution and lint
+qualify them. This proves gate honesty on macOS controlled children, not
+Electron/backend/renderer readiness or Windows execution. Fresh built-app and
+packaged smoke remain required.
