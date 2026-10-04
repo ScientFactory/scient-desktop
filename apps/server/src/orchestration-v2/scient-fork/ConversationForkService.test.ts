@@ -302,6 +302,19 @@ it.effect(
         limit: 100,
       });
       assert.ok(page.items.every((row) => row.visibility === "inherited"));
+      const oldActivity = target.turnItems.find((item) => item.type === "command_execution");
+      assert.ok(oldActivity);
+      const anchored = yield* store.getTimelinePage(command.newThreadId, {
+        itemId: oldActivity.id,
+        view: "activity",
+        limit: 1,
+      });
+      assert.deepEqual(
+        anchored.items.map((row) => row.item),
+        [oldActivity],
+      );
+      assert.equal(anchored.items[0]?.visibility, "inherited");
+
       assert.equal((yield* forks.dispatch(command)).sequence, receipt.sequence);
 
       assert.equal(target.thread.title, "Conversation (2)");

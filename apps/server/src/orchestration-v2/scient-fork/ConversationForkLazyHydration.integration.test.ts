@@ -82,6 +82,8 @@ const seedUnopenedHistory = Effect.fn("LazyHydration.seedUnopenedHistory")(funct
   });
   yield* sql`INSERT INTO projection_threads (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode, created_at, updated_at)
     VALUES (${source}, ${projectId}, 'Unopened history', '{"instanceId":"codex","model":"fixture"}', 'full-access', 'default', ${now}, ${now})`;
+  if (suffix === "archived")
+    yield* sql`UPDATE projection_threads SET archived_at = '2026-01-02T00:00:00.000Z' WHERE thread_id = ${source}`;
   yield* sql`INSERT INTO projection_thread_messages (message_id, thread_id, role, text, turn_id, is_streaming, created_at, updated_at)
     VALUES ('lazy-question', ${source}, 'user', 'Original question', 'same-turn', 0, '2026-01-01T00:00:01.000Z', '2026-01-01T00:00:01.000Z'),
       ('lazy-answer', ${source}, 'assistant', 'Clicked answer', 'same-turn', 0, '2026-01-01T00:00:02.000Z', '2026-01-01T00:00:02.000Z'),
@@ -157,7 +159,7 @@ function assertFrozenHistory(child: OrchestrationV2ThreadProjection) {
   assert.deepEqual(child.providerSessions, []);
 }
 
-it.live.each(["options-first", "dispatch-only"] as const)(
+it.live.each(["options-first", "dispatch-only", "archived"] as const)(
   "hydrates an unopened migrated source through %s before freezing exact history",
   (entry) =>
     Effect.scoped(
@@ -165,6 +167,10 @@ it.live.each(["options-first", "dispatch-only"] as const)(
         const { source, target, command } = yield* seedUnopenedHistory(entry);
         const forks = yield* ConversationForkService;
         const store = yield* ProjectionStore.ProjectionStoreV2;
+        if (entry === "archived") {
+          assert.isNotNull((yield* store.getThreadProjection(source)).thread.archivedAt);
+        }
+
         if (entry === "options-first") {
           const options = yield* forks.getOptions(command);
           assert.equal(options.available, true);
@@ -178,6 +184,9 @@ it.live.each(["options-first", "dispatch-only"] as const)(
         const receipt = yield* forks.dispatch(command);
         const child = yield* store.getThreadProjection(target);
         assertFrozenHistory(child);
+        assert.isNull(child.thread.archivedAt);
+        if (entry === "archived")
+          assert.isNotNull((yield* store.getThreadProjection(source)).thread.archivedAt);
         const sql = yield* SqlClient.SqlClient;
         const [marker] = yield* sql<{ transcript_imported_at: string | null }>`
           SELECT transcript_imported_at FROM orchestration_v2_legacy_imports WHERE thread_id = ${source}`;

@@ -18,6 +18,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { ServerConfig } from "../../config.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ConversationImporter } from "../../scient/conversationImport/ConversationImporter.ts";
@@ -204,6 +205,14 @@ it.live(
         const replayed = yield* Fiber.join(replay);
         assert.deepEqual(replayed, completed);
         const ready = yield* store.getThreadProjection(command.newThreadId);
+        const sql = yield* SqlClient.SqlClient;
+        assert.isAbove((yield* sql`SELECT * FROM effect_sql_migrations`).length, 0);
+        assert.isAbove((yield* sql`SELECT * FROM scient_schema_migrations`).length, 0);
+        assert.deepEqual(
+          yield* sql`SELECT thread_id FROM scient_thread_lineage WHERE thread_id = ${command.newThreadId}`,
+          [],
+        );
+
         assert.equal(ready.thread.conversationFork?.status, "ready");
         assert.deepEqual(ready.messages, pending.messages);
         assert.deepEqual(ready.turnItems, pending.turnItems);
