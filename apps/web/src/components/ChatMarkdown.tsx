@@ -2224,7 +2224,7 @@ function useChatMarkdownState({
   const { resolvedTheme } = useTheme();
   const [localMediaPreview, setLocalMediaPreview] = useState<ExpandedImagePreview | null>(null);
   const markdownRef = useRef<HTMLDivElement>(null);
-  useStreamingBlockEntrance(markdownRef, isStreaming);
+  useStreamingBlockEntrance(markdownRef, isStreaming, messageId);
   const expandMedia = onImageExpand ?? setLocalMediaPreview;
   const mediaRequestId = useRef(0);
   useEffect(() => {

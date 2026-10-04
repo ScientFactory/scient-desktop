@@ -23,7 +23,8 @@ animation setting; reduced motion skips it. A first prompt being placed is revea
 and fades in on the same curve (clip and opacity only, never a transform, so the reveal's
 measurements hold), and the "Working for" header shows faint and darkens from left to right once per prompt (a mask sweep)
 (`chat/timelineEntranceMotion.ts`; played entrances never replay on row remount). While an
-answer streams, each new block fades in top-down (`chat/useStreamingBlockEntrance.ts`). The
+answer streams, each block (the first included) fades in top-down once, counted per message so
+remounted rows never replay (`chat/useStreamingBlockEntrance.ts`). The
 timeline's working state (`chat/timelineWorkingState.ts`) is held back until a send's prompt
 is listed and bridged from the server's acknowledgement until a session starts the turn.
 Preserve the existing first-message framing. Eligible sends, and queued prompts the server delivers while

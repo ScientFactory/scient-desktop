@@ -144,7 +144,7 @@ it("plays the entrance for a first prompt being placed, and for no other prompt"
   expect(animationsOf(bubble(later.message.id))).toHaveLength(0);
 });
 
-it("fades each new paragraph of a streaming answer in, once, and nothing else", async () => {
+it("fades each paragraph of a streaming answer in, once, and nothing else", async () => {
   const prompt = entry(1, "Question");
   const answer = (text: string, streaming: boolean) => ({
     ...entry(2, text),
@@ -154,12 +154,18 @@ it("fades each new paragraph of a streaming answer in, once, and nothing else", 
     Array.from(host!.querySelectorAll('[data-message-role="assistant"] .chat-markdown p'));
   render("motion:stream", [prompt, answer("First paragraph.", true)], working);
   await expect.poll(() => paragraphs().length).toBe(1);
-  // Text already shown when the message mounts does not animate.
-  expect(animationsOf(paragraphs()[0])).toHaveLength(0);
+  // The first paragraph arrives with the answer's row: it enters too.
+  expect(animationsOf(paragraphs()[0])).toHaveLength(1);
+  render("motion:stream", [prompt, answer("First paragraph.\n\nSecond paragraph.", true)], working);
+  await expect.poll(() => paragraphs().length).toBe(2);
+  expect(animationsOf(paragraphs()[1])).toHaveLength(1);
+  // Remounted mid-stream (a thread switch and back): nothing replays.
+  render("motion:elsewhere-stream", [entry(70, "Elsewhere")]);
+  await frames(4);
   render("motion:stream", [prompt, answer("First paragraph.\n\nSecond paragraph.", true)], working);
   await expect.poll(() => paragraphs().length).toBe(2);
   expect(animationsOf(paragraphs()[0])).toHaveLength(0);
-  expect(animationsOf(paragraphs()[1])).toHaveLength(1);
+  expect(animationsOf(paragraphs()[1])).toHaveLength(0);
   // A finished message's changes never animate.
   render(
     "motion:stream",
