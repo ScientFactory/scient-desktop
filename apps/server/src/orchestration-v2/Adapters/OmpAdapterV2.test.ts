@@ -283,7 +283,10 @@ const harness = Effect.fnUntraced(function* (
     predicate: (event: ProviderAdapterV2Event) => boolean,
   ) {
     while (true) {
-      const event = yield* Queue.take(projected);
+      const event = yield* Queue.take(projected).pipe(
+        Effect.timeout("3 seconds"),
+        TestClock.withLive,
+      );
       recorded.push(event);
       if (predicate(event)) return event;
     }
@@ -400,6 +403,58 @@ const modelHarness = Effect.fnUntraced(function* (
   const terminal = () => h.takeUntil((event) => event.type === "turn.terminal");
   const mutations = () => peer.state.log.filter((entry) => entry.startsWith("set_"));
   return { ...h, peer, start, terminal, mutations };
+});
+
+const ordinaryToolsHarness = Effect.fnUntraced(function* (
+  environment: Readonly<Record<string, string>> = {},
+) {
+  const h = yield* imageHarness(1_048_576, { environment });
+  yield* h.runtime.startTurn(h.input);
+  yield* h.peer.promptDelivered();
+  yield* h.peer.emit([{ type: "agent_start" }]);
+  const latestTools = () => [
+    ...new Map(
+      h.recorded.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+          ? [[event.turnItem.id, event.turnItem] as const]
+          : [],
+      ),
+    ).values(),
+  ];
+  const tool = (id: string) =>
+    latestTools().find((item) => item.nativeItemRef?.nativeId?.endsWith(`:${id}`));
+  const untilTool = (id: string, status?: string) =>
+    h.takeUntil(
+      (event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.type === "dynamic_tool" &&
+        event.turnItem.nativeItemRef?.nativeId?.endsWith(`:${id}`) === true &&
+        (status === undefined || event.turnItem.status === status),
+    );
+  const stop = Effect.gen(function* () {
+    const turn = h.recorded.find((event) => event.type === "provider_turn.updated");
+    if (!turn || turn.type !== "provider_turn.updated")
+      return yield* Effect.die("Missing tool turn");
+    yield* h.runtime.interruptTurn({
+      providerThread: h.input.providerThread,
+      providerTurnId: turn.providerTurn.id,
+    });
+    return yield* h.takeUntil((event) => event.type === "turn.terminal");
+  });
+  return { ...h, tool, latestTools, untilTool, stop: () => stop };
+});
+const nativeToolStart = (id: string, name: string, args: unknown) => ({
+  type: "tool_execution_start",
+  toolCallId: id,
+  toolName: name,
+  args,
+});
+const nativeToolEnd = (id: string, name: string, result: unknown, isError = false) => ({
+  type: "tool_execution_end",
+  toolCallId: id,
+  toolName: name,
+  result,
+  isError,
 });
 
 const encodeDiagnostic = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
@@ -711,6 +766,8 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
               input === undefined ? "Couldn't verify image support" : "does not support images",
             );
             assert.lengthOf(h.peer.state.prompts, 0);
+            assert.isFalse(h.peer.state.log.some((entry) => entry.startsWith("set_")));
+            assert.deepEqual(h.peer.state.model, { provider: "test", id: "initial" });
             yield* h.takeUntil((event) => event.type === "turn.terminal");
             yield* h.send(2, "Text still works", []);
             assert.lengthOf(h.peer.state.prompts, 1);
@@ -1283,6 +1340,238 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
           );
           assert.deepEqual(h.peer.state.model, { provider: "vendor", id: "a" });
           assert.equal(h.peer.state.thinkingLevel, "high");
+        }),
+      ),
+  );
+
+  for (const trigger of ["stop", "process-exit"] as const) {
+    it.effect(
+      `terminalizes native OMP ordinary calls before ${trigger} receipts and retains partial output`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const h = yield* ordinaryToolsHarness();
+            yield* h.peer.emit([
+              nativeToolStart("shell", "bash", { command: "sleep 10" }),
+              { type: "tool_stream_update", toolCallId: "shell", update: { text: "partial text" } },
+            ]);
+            yield* h.takeUntil(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "dynamic_tool" &&
+                event.turnItem.output === "partial text",
+            );
+            if (trigger === "stop") yield* h.stop();
+            else {
+              yield* h.peer.close();
+              yield* h.takeUntil((event) => event.type === "turn.terminal");
+            }
+            const terminal = h.recorded.findIndex((event) => event.type === "turn.terminal");
+            const finalTools = h.recorded.flatMap((event, index) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "dynamic_tool" &&
+              event.turnItem.status !== "running"
+                ? [{ item: event.turnItem, index }]
+                : [],
+            );
+            assert.equal(finalTools.length, 1);
+            assert.isBelow(finalTools[0]!.index, terminal);
+            assert.equal(h.tool("shell")?.status, trigger === "stop" ? "interrupted" : "failed");
+            assert.deepEqual(h.tool("shell")?.input, { command: "sleep 10" });
+            assert.equal(h.tool("shell")?.output, "partial text");
+            assert.equal(h.recorded.filter((event) => event.type === "turn.terminal").length, 1);
+          }),
+        ),
+    );
+  }
+
+  it.effect("keeps native OMP failed calls terminal across duplicate frames and Stop", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* ordinaryToolsHarness();
+        yield* h.peer.emit([
+          nativeToolStart("shell", "bash", { command: "false" }),
+          nativeToolEnd(
+            "shell",
+            "bash",
+            { content: [{ type: "text", text: "exit code 1" }] },
+            true,
+          ),
+        ]);
+        yield* h.untilTool("shell", "failed");
+        yield* h.peer.emit([
+          { type: "tool_stream_update", toolCallId: "shell", update: { text: "late" } },
+          nativeToolStart("shell", "bash", { command: "echo late" }),
+          nativeToolEnd("shell", "bash", {}),
+          nativeToolStart("barrier", "read", { path: "barrier.txt" }),
+        ]);
+        yield* h.untilTool("barrier", "running");
+        yield* h.stop();
+        assert.equal(
+          h.recorded.filter(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.nativeItemRef?.nativeId?.endsWith(":shell"),
+          ).length,
+          2,
+        );
+        assert.equal(h.tool("shell")?.status, "failed");
+        assert.deepEqual(h.tool("shell")?.input, { command: "false" });
+        assert.equal(h.tool("shell")?.output, "exit code 1");
+      }),
+    ),
+  );
+
+  it.effect("bounds native OMP tool output while retaining its command through Stop", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* ordinaryToolsHarness();
+        yield* h.peer.emit([
+          nativeToolStart("shell", "bash", { command: "printf large" }),
+          {
+            type: "tool_execution_update",
+            toolCallId: "shell",
+            toolName: "bash",
+            partialResult: { content: [{ type: "text", text: "z".repeat(128 * 1024) }] },
+          },
+        ]);
+        const event = yield* h.takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            typeof event.turnItem.output === "string",
+        );
+        assert.isBelow(Buffer.byteLength(encodeDiagnostic(event)), 16 * 1024);
+        assert.deepEqual(h.tool("shell")?.input, { command: "printf large" });
+        assert.equal(h.runtime.providerSession.status, "running");
+        yield* h.stop();
+        assert.equal(h.tool("shell")?.status, "interrupted");
+        assert.deepEqual(h.tool("shell")?.input, { command: "printf large" });
+      }),
+    ),
+  );
+
+  it.effect("redacts complete native OMP credentials before clipping tool input and output", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const secret = "opaque-fixture-credential-abcdefghijk";
+        const h = yield* ordinaryToolsHarness({ SYNTHETIC_API_KEY: secret });
+        const command =
+          "x".repeat(4096 - '{"command":"'.length - secret.length + 1) +
+          secret +
+          "y".repeat(128 * 1024);
+        const output = "z".repeat(240 - secret.length + 1) + secret + "w".repeat(128 * 1024);
+        yield* h.peer.emit([
+          nativeToolStart("shell", "bash", { command }),
+          {
+            type: "tool_execution_update",
+            toolCallId: "shell",
+            toolName: "bash",
+            partialResult: { content: [{ type: "text", text: output }] },
+          },
+        ]);
+        yield* h.takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            typeof event.turnItem.output === "string",
+        );
+        const encoded = encodeDiagnostic(h.latestTools());
+        assert.notInclude(encoded, secret.slice(0, -1));
+        assert.include(encoded, "[REDACTED]");
+        assert.isBelow(Buffer.byteLength(encoded), 16 * 1024);
+        yield* h.stop();
+        assert.notInclude(encodeDiagnostic(h.latestTools()), secret.slice(0, -1));
+      }),
+    ),
+  );
+
+  it.effect("preserves native OMP pre-execution stream identity and adopts finalized input", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* ordinaryToolsHarness();
+        yield* h.peer.emit([
+          {
+            type: "tool_stream_update",
+            toolCallId: "early",
+            toolName: "edit",
+            update: { text: "patch preview" },
+          },
+        ]);
+        yield* h.untilTool("early", "running");
+        const id = h.tool("early")?.id;
+        yield* h.peer.emit([
+          nativeToolStart("early", "edit", { path: "src/app.ts" }),
+          nativeToolEnd("early", "edit", {}),
+        ]);
+        yield* h.untilTool("early", "completed");
+        assert.equal(h.tool("early")?.id, id);
+        assert.equal(h.latestTools().length, 1);
+        assert.deepEqual(h.tool("early")?.input, { path: "src/app.ts" });
+        assert.equal(h.tool("early")?.output, "patch preview");
+        assert.equal(h.tool("early")?.toolName, "edit");
+        yield* h.stop();
+      }),
+    ),
+  );
+
+  it.effect(
+    "fails lost native OMP ordinary calls without closing detached subagents or reusing later turn ownership",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* ordinaryToolsHarness();
+          yield* h.peer.emit([
+            nativeToolStart("same-id", "read", { path: "first.txt" }),
+            {
+              type: "subagent_lifecycle",
+              payload: {
+                id: "child",
+                agent: "task",
+                detached: true,
+                status: "started",
+                description: "Detached task",
+              },
+            },
+          ]);
+          yield* h.takeUntil(
+            (event) => event.type === "subagent.updated" && event.subagent.status === "running",
+          );
+          h.peer.state.pendingAsyncWork = true;
+          yield* h.peer.finish();
+          yield* h.takeUntil((event) => event.type === "turn.terminal");
+          assert.equal(h.tool("same-id")?.status, "failed");
+          assert.equal(
+            h.recorded.filter(
+              (event) => event.type === "subagent.updated" && event.subagent.status !== "running",
+            ).length,
+            0,
+          );
+          yield* h.runtime.startTurn({
+            ...h.input,
+            runId: RunId.make("later-tool-run"),
+            attemptId: RunAttemptId.make("later-tool-attempt"),
+            runOrdinal: 2,
+            providerTurnOrdinal: 2,
+            rootNodeId: NodeId.make("later-tool-node"),
+          });
+          yield* h.peer.promptDelivered();
+          yield* h.peer.emit([
+            { type: "agent_start" },
+            nativeToolStart("same-id", "read", { path: "second.txt" }),
+            nativeToolEnd("same-id", "read", {}),
+          ]);
+          yield* h.untilTool("same-id", "completed");
+          const terminals = h
+            .latestTools()
+            .filter((tool) => tool.nativeItemRef?.nativeId?.endsWith(":same-id"));
+          assert.equal(terminals.length, 2);
+          assert.equal(new Set(terminals.map((tool) => tool.id)).size, 2);
+          assert.equal(new Set(terminals.map((tool) => tool.providerTurnId)).size, 2);
+          assert.deepEqual(
+            terminals.map((tool) => tool.input),
+            [{ path: "first.txt" }, { path: "second.txt" }],
+          );
         }),
       ),
   );

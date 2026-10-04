@@ -53,6 +53,7 @@ export const scriptedOmpRpc = (input: {
   readonly lateModels?: ReadonlyArray<FakeModel>;
   readonly maxFrameBytes?: number;
   readonly version?: string;
+  readonly environment?: Readonly<Record<string, string>>;
   readonly eventFilterError?: string;
   readonly readyDelay?: Effect.Effect<void>;
   readonly promptError?: string;
@@ -75,6 +76,8 @@ export const scriptedOmpRpc = (input: {
 }) => {
   let finish: Effect.Effect<void> = Effect.void;
   let promptDelivered: Effect.Effect<void> = Effect.void;
+  let emit: (frames: ReadonlyArray<unknown>) => Effect.Effect<void> = () => Effect.void;
+  let close: Effect.Effect<void> = Effect.void;
   let lastPromptId: string | undefined;
   const state = {
     models: [...input.models],
@@ -101,6 +104,9 @@ export const scriptedOmpRpc = (input: {
       const encoder = new TextEncoder();
       const decoder = new TextDecoder();
       const line = (value: unknown) => encoder.encode(`${encodeJson(value)}\n`);
+      emit = (frames) =>
+        Effect.forEach(frames, (frame) => Queue.offer(stdout, line(frame)), { discard: true });
+      close = Queue.end(stdout).pipe(Effect.asVoid);
       const respond = (frame: Frame, data?: unknown, error?: string) =>
         line({
           id: frame.id,
@@ -278,7 +284,7 @@ export const scriptedOmpRpc = (input: {
       );
       return {
         ...client,
-        redaction: makeOmpRedaction({}, []),
+        redaction: makeOmpRedaction(input.environment ?? {}, []),
         version: input.version ?? "18.3.1",
         runtimeVersion: input.version ?? "18.3.1",
         shutdown: Effect.sync(() => {
@@ -294,5 +300,12 @@ export const scriptedOmpRpc = (input: {
           }),
       };
     });
-  return { state, makeProcess, finish: () => finish, promptDelivered: () => promptDelivered };
+  return {
+    state,
+    makeProcess,
+    finish: () => finish,
+    promptDelivered: () => promptDelivered,
+    emit: (frames: ReadonlyArray<unknown>) => emit(frames),
+    close: () => close,
+  };
 };

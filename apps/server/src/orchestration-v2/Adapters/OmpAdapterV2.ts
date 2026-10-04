@@ -67,6 +67,7 @@ import {
   nativeSessionFailure,
   NativeSessionOperationError,
   type NativeSession,
+  type NativeSessionUpdate,
   type NativeSessionAdapterV2Options,
 } from "./NativeSessionAdapterV2.ts";
 
@@ -91,6 +92,31 @@ export interface OmpAdapterV2Options extends Pick<
 const JsonString = Schema.fromJsonString(Schema.String);
 const encodeJsonString = Schema.encodeSync(JsonString);
 const encodeJsonStringEffect = Schema.encodeEffect(JsonString);
+
+const encodeToolJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const nativeToolText = (value: unknown): string | undefined => {
+  if (typeof value === "string") return value;
+  if (!isRecord(value)) return undefined;
+  for (const key of ["text", "message", "output", "content"] as const)
+    if (typeof value[key] === "string") return value[key];
+  if (!Array.isArray(value.content)) return undefined;
+  const parts = value.content.flatMap((part) =>
+    isRecord(part) && typeof part.text === "string" ? [part.text] : [],
+  );
+  return parts.length ? parts.join("") : undefined;
+};
+const boundedToolText = (value: string) =>
+  Buffer.byteLength(value) <= 4096 ? value : `${Array.from(value).slice(0, 1024).join("")}…`;
+const boundedToolInput = (value: unknown) => {
+  const serialized = encodeToolJson(value);
+  return Buffer.byteLength(serialized) <= 4096
+    ? value
+    : {
+        truncated: true,
+        originalBytes: Buffer.byteLength(serialized),
+        preview: Array.from(serialized).slice(0, 1024).join(""),
+      };
+};
 
 export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
   const target = options.target ?? ompTarget;
@@ -287,6 +313,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
               : undefined;
           });
         let nextWarningOrdinal = 0;
+        const ordinaryTools = new Map<string, Extract<NativeSessionUpdate, { type: "tool" }>>();
         const applyUpdate = (update: OmpSessionUpdate): Effect.Effect<void> => {
           switch (update.type) {
             case "assistant-delta":
@@ -308,19 +335,29 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                 id: update.messageId,
                 ...(update.status === undefined ? {} : { status: update.status }),
               });
-            case "tool":
-              return onUpdate({
+            case "tool": {
+              const previous = ordinaryTools.get(update.toolCallId);
+              if (previous && previous.status !== "running") return Effect.void;
+              const rawOutput = nativeToolText(update.data) ?? update.detail;
+              const item: Extract<NativeSessionUpdate, { type: "tool" }> = {
                 type: "tool",
                 id: update.toolCallId,
-                name: update.name,
+                name: update.name === "tool" && previous ? previous.name : update.name,
                 status: update.status === "inProgress" ? "running" : update.status,
                 ...(update.input === undefined
-                  ? {}
-                  : { input: client.redaction.log(update.input) }),
-                ...(update.detail === undefined
-                  ? {}
-                  : { output: client.redaction.text(update.detail) }),
-              });
+                  ? previous?.input === undefined
+                    ? {}
+                    : { input: previous.input }
+                  : { input: boundedToolInput(client.redaction.log(update.input)) }),
+                ...(rawOutput === undefined
+                  ? previous?.output === undefined
+                    ? {}
+                    : { output: previous.output }
+                  : { output: boundedToolText(client.redaction.text(rawOutput)) }),
+              };
+              ordinaryTools.set(item.id, item);
+              return onUpdate(item);
+            }
             case "question":
               return onUpdate({
                 ...update,
@@ -359,20 +396,34 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                   )
                 : Effect.void;
             case "turn-outcome":
-              return onUpdate({
-                type: "terminal",
-                status:
-                  update.stopReason === "abort"
-                    ? "cancelled"
-                    : update.outcome === "completed" || update.outcome === "local"
-                      ? "completed"
-                      : "failed",
-                ...(update.detail === undefined
-                  ? {}
-                  : { detail: client.redaction.text(update.detail) }),
-                ...(update.stopReason === undefined ? {} : { stopReason: update.stopReason }),
-                broken: update.source === "process" || update.source === "unconfirmed",
-              });
+              return Effect.forEach(
+                [...ordinaryTools.values()].filter((tool) => tool.status === "running"),
+                (tool) => {
+                  if (update.outcome !== "completed" && update.outcome !== "local")
+                    return Effect.void;
+                  const failed = { ...tool, status: "failed" as const };
+                  ordinaryTools.set(tool.id, failed);
+                  return onUpdate(failed);
+                },
+                { discard: true },
+              ).pipe(
+                Effect.andThen(
+                  onUpdate({
+                    type: "terminal",
+                    status:
+                      update.stopReason === "abort"
+                        ? "cancelled"
+                        : update.outcome === "completed" || update.outcome === "local"
+                          ? "completed"
+                          : "failed",
+                    ...(update.detail === undefined
+                      ? {}
+                      : { detail: client.redaction.text(update.detail) }),
+                    ...(update.stopReason === undefined ? {} : { stopReason: update.stopReason }),
+                    broken: update.source === "process" || update.source === "unconfirmed",
+                  }),
+                ),
+              );
             case "process-exited":
               return onUpdate({
                 type: "terminal",
@@ -443,7 +494,9 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                 output: client.redaction.text(update.instructions ?? update.url),
               });
             case "assistant-started":
+              return Effect.void;
             case "turn-started":
+              ordinaryTools.clear();
               return Effect.void;
             case "model-changed":
               return update.model ? onUpdate({ type: "model", model: update.model }) : Effect.void;
