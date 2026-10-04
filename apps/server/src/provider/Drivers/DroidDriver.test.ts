@@ -6,7 +6,7 @@ import * as NodeURL from "node:url";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { DroidSettings, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { DroidSettings, ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -209,13 +209,20 @@ it.effect("starts every Droid process with the agent environment contract", () =
       .pipe(Effect.exit);
     // A conversation session.
     const threadId = ThreadId.make("droid-spawn-env");
-    yield* instance.adapter.startSession({
-      threadId,
-      provider: instance.driverKind,
-      cwd: directory,
-      runtimeMode: "approval-required",
-    });
-    yield* instance.adapter.stopSession(threadId);
+    yield* Effect.scoped(
+      instance.orchestrationAdapter
+        .openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(`${threadId}-native-session`),
+          modelSelection: createModelSelection(instanceId, "default"),
+          runtimePolicy: {
+            cwd: directory,
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+          },
+        })
+        .pipe(Effect.asVoid),
+    );
     // Assisted sign-in, offered when no Factory API key is configured.
     expect(instance.connectionActions).toBeDefined();
     yield* Effect.scoped(
@@ -317,13 +324,20 @@ it.effect("gives no Droid process a custom-model key, on any spawn path", () =>
       })
       .pipe(Effect.exit);
     const threadId = ThreadId.make("droid-key-canary");
-    yield* instance.adapter.startSession({
-      threadId,
-      provider: instance.driverKind,
-      cwd: directory,
-      runtimeMode: "approval-required",
-    });
-    yield* instance.adapter.stopSession(threadId);
+    yield* Effect.scoped(
+      instance.orchestrationAdapter
+        .openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(`${threadId}-native-session`),
+          modelSelection: createModelSelection(instanceId, "default"),
+          runtimePolicy: {
+            cwd: directory,
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+          },
+        })
+        .pipe(Effect.asVoid),
+    );
     yield* Effect.scoped(
       instance
         .connectionActions!.start("droid_device_pairing")
