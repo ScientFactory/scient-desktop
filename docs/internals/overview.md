@@ -86,8 +86,11 @@ from getting ahead of the event log.
 The [effect worker](../../apps/server/src/orchestration-v2/EffectWorker.ts) performs side effects
 after intent has been recorded, then feeds results back into orchestration. A command acknowledgement
 therefore means the intent committed, not that the provider, checkpoint, or other follow-up work
-finished. Keep external I/O out of command decisions and the database transaction. Effects tied to
-a lost provider process cannot simply replay; recovery retires them before admitting new work.
+finished. Admission also validates attachment sources and reads their actual file sizes; Scient
+boundary forks freeze a Git checkpoint before committing fork intent. Provider execution and durable
+provisioning follow committed outbox intent. External process calls do not run inside the EventSink
+SQL transaction. Effects tied to a lost provider process cannot simply replay; recovery retires them
+before admitting new work.
 
 ## Shared client runtime
 
@@ -208,9 +211,10 @@ not imply a failed answer. Tool outcomes retain their existing tool-specific pre
 
 [`serverRuntimeStartup.ts`][startup] starts keybindings and settings, reconciles legacy thread
 shells and admits old queued payloads as held V2 runs, reconciles lost provider runtimes, then starts
-the V2 effect worker and awareness relay. Auto-bootstrap follows recovery. Command readiness
-(`Accepting commands`) precedes the HTTP listener; welcome and ready publication wait for
-`markHttpListening`. Heartbeat and headless/browser presentation follow the startup gates.
+the V2 effect worker and awareness relay. Auto-bootstrap, heartbeat, and headless/browser presentation
+follow recovery. Startup then waits for `markHttpListening` and auxiliary readiness, publishes
+welcome, activates the server, logs `Accepting commands`, signals command readiness, and publishes
+ready. The HTTP listener can exist while command readiness is still gated.
 
 ## Related
 
