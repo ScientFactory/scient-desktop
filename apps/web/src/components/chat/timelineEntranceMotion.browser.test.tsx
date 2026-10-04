@@ -178,3 +178,31 @@ it("reveals each paragraph of a streaming answer top-down, in turn, once, and no
   await expect.poll(() => paragraphs().length).toBe(3);
   expect(animationsOf(paragraphs()[2])).toHaveLength(0);
 });
+
+it("closes a finished turn's working header gradually, so the answer slides up", async () => {
+  const prompt = entry(1, "Question");
+  const answer = (streaming: boolean) => ({
+    ...entry(2, "The answer."),
+    message: { ...entry(2, "The answer.").message, role: "assistant" as const, streaming },
+  });
+  render("motion:exit", [prompt, answer(true)], working);
+  const answerTop = () =>
+    host!.querySelector('[data-message-role="assistant"]')!.getBoundingClientRect().top;
+  const header = () => host!.querySelector('[data-timeline-row-kind="working"]');
+  await expect.poll(() => header()).not.toBeNull();
+  await frames(8);
+  const before = answerTop();
+  render("motion:exit", [prompt, answer(false)], { isWorking: false });
+  // Mid-exit: still in place, the answer part of the way up.
+  await new Promise((resolve) => setTimeout(resolve, 140));
+  await frames(2);
+  expect(header()).not.toBeNull();
+  const midway = answerTop();
+  expect(midway).toBeLessThan(before - 2);
+  // Then it is gone, and the answer rests where it would without it.
+  await expect.poll(() => header()).toBeNull();
+  await frames(6);
+  const after = answerTop();
+  expect(midway).toBeGreaterThan(after + 2);
+  expect(before - after).toBeGreaterThan(20);
+});

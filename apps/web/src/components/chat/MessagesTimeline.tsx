@@ -1,6 +1,14 @@
 import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-presentation";
 import { useBoundedAnswerFollow } from "./useBoundedAnswerFollow";
 import { useEntranceMotion } from "./timelineEntranceMotion";
+import {
+  findWorkingRow,
+  nextWorkingRowExit,
+  WORKING_ROW_EXIT_MS,
+  withExitingWorkingRow,
+  type WorkingRowExitState,
+} from "./workingRowExit";
+import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { deriveTerminalAssistantMessageIds } from "@scientfactory/conversation/work-log-grouping";
 import { countUnreadBelow, unreadMessagesForThread } from "./unreadTimelineMessages";
 import {
@@ -884,7 +892,35 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     liveAgentTaskIds,
     worktreeSetup,
   ]);
-  const rows = useStableRows(rawRows, listIdentityKey);
+  const stableRows = useStableRows(rawRows, listIdentityKey);
+  // A finished turn's working header closes its space instead of leaving in one
+  // frame, which would snap the answer below it up.
+  const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+  const currentWorkingRow = useMemo(() => findWorkingRow(stableRows), [stableRows]);
+  const [workingRowExit, setWorkingRowExit] = useState<WorkingRowExitState>(() => ({
+    threadKey: listIdentityKey,
+    last: currentWorkingRow,
+    exiting: null,
+  }));
+  const nextExit = nextWorkingRowExit(workingRowExit, {
+    threadKey: listIdentityKey,
+    current: currentWorkingRow,
+    animate: !prefersReducedMotion,
+  });
+  if (nextExit !== workingRowExit) setWorkingRowExit(nextExit);
+  const exitingWorkingRow = nextExit.exiting;
+  useEffect(() => {
+    if (!exitingWorkingRow) return;
+    const timeout = window.setTimeout(
+      () => setWorkingRowExit((state) => (state.exiting ? { ...state, exiting: null } : state)),
+      WORKING_ROW_EXIT_MS,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [exitingWorkingRow]);
+  const rows = useMemo(
+    () => withExitingWorkingRow(stableRows, exitingWorkingRow),
+    [stableRows, exitingWorkingRow],
+  );
   // A finished reveal (revealed or cancelled) no longer holds off idle end pinning.
   const [finishedRevealPromptId, setFinishedRevealPromptId] = useState<string | null>(null);
   const onRevealFinished = useCallback((promptId: string) => {
@@ -3080,8 +3116,26 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
   ) : (
     "Working..."
   );
+  const rootRef = useRef<HTMLDivElement>(null);
+  const exiting = Boolean(row.exiting);
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!exiting || !root || typeof root.animate !== "function") return;
+    // Fade out while the space closes; the negative margin takes the row's
+    // bottom padding along, so nothing is left to snap when it leaves.
+    root.animate(
+      [
+        { height: `${root.getBoundingClientRect().height}px`, opacity: 1, marginBottom: "0px" },
+        { height: "0px", opacity: 0, marginBottom: "-6px" },
+      ],
+      { duration: WORKING_ROW_EXIT_MS, easing: WORKING_HEADER_EASING, fill: "forwards" },
+    );
+  }, [exiting]);
   return (
-    <div className="border-b border-border/60 pb-2 pt-1">
+    <div
+      ref={rootRef}
+      className={cn("border-b border-border/60 pb-2 pt-1", exiting && "overflow-hidden")}
+    >
       <div
         ref={headerRef}
         className="flex h-6 min-w-0 items-baseline gap-2 px-1 text-sm leading-relaxed text-muted-foreground tabular-nums"

@@ -442,6 +442,8 @@ export type MessagesTimelineRow =
       kind: "working";
       id: string;
       createdAt: string | null;
+      /** The turn finished: the header fades out and closes its space before it leaves. */
+      exiting?: boolean;
     }
   | {
       kind: "thinking";
