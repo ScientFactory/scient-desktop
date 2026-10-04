@@ -212,6 +212,8 @@ export function runOrchestratorV2ProviderReplayScenario<
     // as server startup does after a crash or restart.
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
+    /** Existing conservative byte-policy fixtures can opt out of Scient preset budgets. */
+    readonly contextHandoffPolicy?: "scient" | "byte";
   } = {},
 ): Effect.Effect<
   OrchestratorV2ScenarioResult,
@@ -268,6 +270,8 @@ export function makeOrchestratorV2ProviderReplayLayer<
     // as server startup does after a crash or restart.
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
+    /** Existing conservative byte-policy fixtures can opt out of Scient preset budgets. */
+    readonly contextHandoffPolicy?: "scient" | "byte";
     readonly replayGate?: ProviderReplayGate;
   } = {},
 ): Layer.Layer<
@@ -336,6 +340,8 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     // as server startup does after a crash or restart.
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
+    /** Existing conservative byte-policy fixtures can opt out of Scient preset budgets. */
+    readonly contextHandoffPolicy?: "scient" | "byte";
   } = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
@@ -386,6 +392,8 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
       ? {}
       : { continueThreadsAfterServerUpdate: options.continueThreadsAfterServerUpdate }),
   }).pipe(Layer.orDie);
+  const handoffSettingsLayer =
+    options.contextHandoffPolicy === "byte" ? Layer.empty : serverSettingsLayer;
   const storesLayer = Layer.mergeAll(
     EventStore.layer,
     ProjectionStore.layer,
@@ -417,7 +425,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     Layer.provide(Layer.mergeAll(checkpointStoreLayer, IdAllocator.layer)),
   );
   const contextHandoffServiceProvided = ContextHandoffService.layer.pipe(
-    Layer.provide(Layer.mergeAll(IdAllocator.layer, serverSettingsLayer)),
+    Layer.provide(Layer.mergeAll(IdAllocator.layer, handoffSettingsLayer)),
   );
   const persistenceLayer = Layer.mergeAll(
     storesLayer,
@@ -468,7 +476,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     Layer.provide(
       Layer.mergeAll(
         contextHandoffServiceProvided,
-        serverSettingsLayer,
+        handoffSettingsLayer,
         eventSinkProvided,
         IdAllocator.layer,
         storesLayer,
