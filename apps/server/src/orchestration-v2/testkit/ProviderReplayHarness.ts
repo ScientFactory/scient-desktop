@@ -314,6 +314,8 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
       | V2DatabaseImportError
     >;
     readonly runEffectWorker?: boolean;
+    /** Inject a fault around the production copier without replacing native provisioning. */
+    readonly forkAttachmentCopierLayer?: typeof ScientForkAttachmentCopierLive;
     /** Exercise production session credential issuance; disabled for recorded transports. */
     readonly configureMcp?: boolean;
     readonly mcpSessionRegistryLayer?: Layer.Layer<McpSessionRegistry.McpSessionRegistry>;
@@ -549,7 +551,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
         threadCommandExecutorLayer,
         legacyImporterProvided,
         ScientForkCheckpointBaselineLive,
-        ScientForkAttachmentCopierLive,
+        options.forkAttachmentCopierLayer ?? ScientForkAttachmentCopierLive,
       ),
     ),
     Layer.provide(Layer.mergeAll(checkpointStoreLayer, serverConfigLayer, VcsProcess.layer)),

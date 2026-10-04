@@ -171,12 +171,13 @@ export const deleteNativeProject = Effect.gen(function* () {
 /** Full native runtime for import continuation and fork tests; transports remain synthetic. */
 export function nativeImportRuntimeTestLayer(
   registryLayer: Layer.Layer<ProviderAdapterRegistryV2>,
+  options: Parameters<typeof makeOrchestratorV2ReplayLayerWithRegistry>[2] = {},
 ) {
   const database = SqlitePersistence.SqlitePersistenceMemory;
   const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
     { name: "scient-import-continuation" },
     registryLayer,
-    { databaseLayer: database, configureMcp: false },
+    { databaseLayer: database, configureMcp: false, ...options },
   ).pipe(
     Layer.provideMerge(database),
     Layer.provideMerge(NodeServices.layer),
