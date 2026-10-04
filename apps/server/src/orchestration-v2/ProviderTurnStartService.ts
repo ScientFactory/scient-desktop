@@ -1,3 +1,6 @@
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { ServerSettingsService } from "../serverSettings.ts";
+import { resolveNativeModelContextWindow } from "./scient-fork/NativeModelContextWindow.ts";
 import { makeScientContextHandoffPolicy } from "./ScientContextHandoffPolicy.ts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
@@ -105,6 +108,8 @@ export const layer: Layer.Layer<
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
     const handoffPolicy = yield* makeScientContextHandoffPolicy();
+    const modelWindowSql = yield* Effect.serviceOption(SqlClient.SqlClient);
+    const modelWindowSettings = yield* Effect.serviceOption(ServerSettingsService);
     const eventSink = yield* EventSink.EventSinkV2;
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -984,10 +989,19 @@ export const layer: Layer.Layer<
         sameSelection ||
         (previousSelection !== undefined &&
           session.canReuseContextUsage?.(previousSelection, run.modelSelection) === true);
-      const knownModelWindow = session.getModelContextWindow?.(
+      const reportedModelWindow = session.getModelContextWindow?.(
         run.modelSelection,
         resolvedRuntimePolicy.cwd,
       );
+      const knownModelWindow =
+        Option.isSome(modelWindowSql) && Option.isSome(modelWindowSettings)
+          ? yield* resolveNativeModelContextWindow({
+              sql: modelWindowSql.value,
+              settings: yield* modelWindowSettings.value.getSettings,
+              modelSelection: run.modelSelection,
+              reported: reportedModelWindow,
+            })
+          : reportedModelWindow;
       // Persist before delivery. Keep this native transcript's measured
       // occupancy. A different model drops compaction telemetry and uses the
       // new window when that window is known.

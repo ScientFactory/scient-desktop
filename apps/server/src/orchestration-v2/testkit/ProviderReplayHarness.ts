@@ -483,6 +483,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
       Layer.mergeAll(
         contextHandoffServiceProvided,
         handoffSettingsLayer,
+        databaseLayer,
         eventSinkProvided,
         IdAllocator.layer,
         storesLayer,

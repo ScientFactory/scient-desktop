@@ -39,6 +39,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Schema from "effect/Schema";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as Scope from "effect/Scope";
 import { makeSqlitePersistenceLive } from "../../persistence/Layers/Sqlite.ts";
 import { LegacyV1ThreadImporter } from "../../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 
@@ -136,9 +137,10 @@ class ImportPeer extends Context.Service<
 const withImporter = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   options: {
-    readonly modelContextWindow?: (model: string) => number;
+    readonly modelContextWindow?: (model: string) => number | undefined;
     readonly sourceTraces?: boolean;
     readonly initialTime?: number;
+    readonly projectScope?: Scope.Scope;
     readonly runtimeOptions?: Parameters<typeof nativeImportRuntimeTestLayer>[1];
     readonly nativeIdFactory?: () => string;
     readonly beforeFresh?: () => Effect.Effect<void, NativeSessionOperationError>;
@@ -288,7 +290,11 @@ const withImporter = <A, E, R>(
           ),
       };
     });
-    return yield* createProjects.pipe(
+    const projectCreation =
+      options.projectScope === undefined
+        ? createProjects
+        : createProjects.pipe(Effect.provideService(Scope.Scope, options.projectScope));
+    return yield* projectCreation.pipe(
       Effect.andThen(effect),
       Effect.provideService(ImportPeer, {
         prompts,
@@ -2468,4 +2474,155 @@ it.live("native steering reaches an accepted carrying turn before its long send 
       },
     );
   }).pipe(Effect.scoped, Effect.timeout("30 seconds")),
+);
+
+it.live(
+  "native fork capacity persists across SQLite reopen and isolates selection and configuration",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const directory = yield* fs.makeTempDirectoryScoped({
+          prefix: "native-model-window-restart-",
+        });
+        const database = makeSqlitePersistenceLive(
+          NodePath.join(directory, "capacity.sqlite"),
+        ).pipe(Layer.provide(NodeServices.layer));
+        const config = yield* ServerConfig;
+        const runtimeOptions = {
+          databaseLayer: database,
+          serverConfigLayer: Layer.succeed(ServerConfig, config),
+        };
+        const projectScope = yield* Scope.Scope;
+        const selected = { instanceId: PROVIDER_ID, model: "reported-capacity-model" };
+        const original = yield* withImporter(
+          Effect.gen(function* () {
+            const fixture = importFixture({ turns: 20 });
+            const snapshot = {
+              ...fixture.input.snapshot,
+              messages: fixture.input.snapshot.messages.map((message) => ({
+                ...message,
+                text: `${message.text} ${"x".repeat(4_000)}`,
+              })),
+            };
+            const expanded = {
+              ...fixture,
+              input: {
+                ...fixture.input,
+                snapshot,
+                package: {
+                  ...fixture.input.package,
+                  contentDigest: conversationContentDigest(snapshot),
+                },
+              },
+            };
+            const { lease } = yield* leaseFor(expanded);
+            const sourceId = (yield* importOnce(lease)).result.threadId;
+            const store = yield* ProjectionStoreV2;
+            const source = yield* store.getThreadProjection(sourceId);
+            yield* (yield* ServerSettingsService).updateSettings({
+              scientFork: { contextHandoffSize: "maximum" },
+            });
+            const threadId = ThreadId.make("reported-capacity-fork");
+            yield* (yield* ConversationForkService).dispatch({
+              type: "thread.fork",
+              commandId: CommandId.make(threadId),
+              originThreadId: sourceId,
+              newThreadId: threadId,
+              sourceAssistantMessageId: source.messages.at(-1)!.id,
+              workspaceMode: "local",
+            });
+            yield* continueImport(
+              threadId,
+              MessageId.make("reported-window-send"),
+              "Continue",
+              selected,
+            );
+            const delivered = (yield* store.getThreadProjection(threadId)).contextHandoffs.at(
+              -1,
+            )!.delivery!;
+            assert.isAbove(delivered.omittedItemIds!.length, 0);
+            assert.isBelow(delivered.itemIds.length, source.turnItems.length);
+            const rows = yield* (yield* SqlClient.SqlClient)<{
+              readonly max_tokens: number;
+            }>`SELECT max_tokens FROM scient_model_context_windows WHERE provider_instance_id = ${PROVIDER_ID}`;
+            assert.isTrue(rows.some((row) => row.max_tokens === 20_000));
+            return {
+              sourceId,
+              answerId: source.messages.at(-1)!.id,
+              messages: source.messages,
+              items: source.turnItems,
+              included: delivered.itemIds.length,
+            };
+          }),
+          { runtimeOptions, projectScope, modelContextWindow: () => 20_000 },
+        );
+        yield* withImporter(
+          Effect.gen(function* () {
+            const settings = yield* ServerSettingsService;
+            yield* settings.updateSettings({ scientFork: { contextHandoffSize: "maximum" } });
+            const store = yield* ProjectionStoreV2;
+            const deliver = (
+              suffix: string,
+              selection: import("@t3tools/contracts").ModelSelection,
+            ) =>
+              Effect.gen(function* () {
+                const threadId = ThreadId.make(`capacity-reopen:${suffix}`);
+                yield* (yield* ConversationForkService).dispatch({
+                  type: "thread.fork",
+                  commandId: CommandId.make(threadId),
+                  originThreadId: original.sourceId,
+                  newThreadId: threadId,
+                  sourceAssistantMessageId: original.answerId,
+                  workspaceMode: "local",
+                });
+                yield* continueImport(
+                  threadId,
+                  MessageId.make(`capacity-reopen:${suffix}`),
+                  "Continue",
+                  selection,
+                );
+                return (yield* store.getThreadProjection(threadId)).contextHandoffs.at(-1)!
+                  .delivery!;
+              });
+            const cached = yield* deliver("same-selection", selected);
+            assert.isAbove(cached.omittedItemIds!.length, 0);
+            assert.isBelow(cached.itemIds.length, original.items.length);
+            assert.isAtMost(Math.abs(cached.itemIds.length - original.included), 1);
+            const otherModel = yield* deliver("other-model", {
+              ...selected,
+              model: "unknown-other-model",
+            });
+            assert.equal(otherModel.itemIds.length, original.items.length);
+            assert.deepEqual(otherModel.omittedItemIds, []);
+            const otherInstance = yield* deliver("other-instance", {
+              ...selected,
+              instanceId: ProviderInstanceId.make("claude"),
+            });
+            assert.equal(otherInstance.itemIds.length, original.items.length);
+            assert.deepEqual(otherInstance.omittedItemIds, []);
+            const current = yield* settings.getSettings;
+            yield* settings.updateSettings({
+              providers: {
+                codex: { ...current.providers.codex, homePath: "/synthetic/different-runtime" },
+              },
+            });
+            const otherConfiguration = yield* deliver("other-configuration", selected);
+            assert.equal(otherConfiguration.itemIds.length, original.items.length);
+            assert.deepEqual(otherConfiguration.omittedItemIds, []);
+            const source = yield* store.getThreadProjection(original.sourceId);
+            assert.deepEqual(source.messages, original.messages);
+            assert.deepEqual(source.turnItems, original.items);
+          }),
+          { runtimeOptions, modelContextWindow: () => undefined },
+        );
+      }).pipe(
+        Effect.provide(
+          ServerConfig.layerTest(process.cwd(), { prefix: "native-capacity-proof-" }).pipe(
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+        Effect.timeout("90 seconds"),
+      ),
+    ),
 );

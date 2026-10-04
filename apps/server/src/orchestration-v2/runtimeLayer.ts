@@ -1,3 +1,4 @@
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -151,6 +152,7 @@ const providerTurnStartServiceProvided = providerTurnStartServiceLayer.pipe(
     Layer.mergeAll(
       contextHandoffServiceProvided,
       contextHandoffSettings,
+      Layer.effect(SqlClient.SqlClient, SqlClient.SqlClient),
       eventSinkProvided,
       idAllocatorLayer,
       projectionStoreLayer,
