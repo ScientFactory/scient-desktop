@@ -1,5 +1,7 @@
 # Core Graph And Data Model
 
+Historical V2 design reference; [the maintained architecture](../internals/overview.md) describes the live engine and compatibility boundaries.
+
 ## Overview
 
 V2 models orchestration as a graph with a small number of durable entity types:

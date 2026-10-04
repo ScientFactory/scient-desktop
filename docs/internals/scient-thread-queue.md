@@ -11,10 +11,10 @@ and manual product acceptance are separate; no visual acceptance is implied.
 For V2 threads, native queued runs and their user messages are the sole live
 queue authority. `QueuedRunsControl` adapts that projection and native commands
 into the single Scient `ThreadQueueStrip`; it does not render another queue.
-`Orchestrator` owns admission, held state, ordering and delivery; the retained
-V1 ledger/worker description below documents recovery data and older servers.
+`Orchestrator` owns admission, held state, ordering and delivery.
 Legacy payloads enter native held runs through `LegacyQueueCutover` before
-native delivery. Reading recovery data never executes it.
+native delivery. Reading recovery data never executes it. The V1 Scient
+ledger and worker are superseded; do not build new queue behavior on them.
 
 Native Edit first journals the captured message, context, settings and owned
 attachment bytes, then sends `queued-run.cancel` with its exact message
@@ -35,6 +35,9 @@ uses `queue.resume(runId)`; Resume explicitly releases the queue. Idle reorder
 remains available, including before a provider session exists. Send releases
 only the held head; the tail stays held until Resume. Provider-start failure
 retains the queued message for Retry.
+Holds follow the exact attempt's original failure or interruption boundary.
+Delayed checkpoint or cleanup echoes from an older attempt cannot override a
+newer explicit Send/Resume or hold work admitted after that terminal boundary.
 Queue limits remain 20 items and 64 MiB, including actual owned attachment bytes.
 
 Pending admission previews belong only above the composer. A durable queued
@@ -43,216 +46,70 @@ start receipt promotes it into the conversation. Authoritative messages and
 queue snapshots suppress duplicate previews. Automatic delegated-task deliveries
 remain outside the user queue.
 
-The sections below describe the retained V1 data format and older-server
-behavior. They are recovery documentation, not the current V2 execution path.
+## Native admission and execution
 
-## Retained V1 behavioral contract
+`message.dispatch` enters V2 through `ThreadMessageIntake` and `Orchestrator`. The command is
+serialized for its thread and chooses immediate execution, a queued run, or explicit steering
+according to current state and `CommandPolicy`. Queue admission is not provider acceptance.
+`EventSink` commits the user message, run/attempt/node state, command receipt, and outbox work
+transactionally; no client-side remove or mounted queue pump owns delivery.
 
-- Enter during a running turn, or while messages are already eligible to advance, adds a
-  message to the current environment and thread. After Stop, ordinary idle Send starts
-  new work while the existing queue waits for its successful completion. Otherwise idle Send uses
-  the existing immediate-send path. The server accepts an ordinary Send as either
-  an immediate turn or a durable queue entry in the existing event/receipt
-  transaction. Busy/completion-boundary races never require a second Send.
-  It never silently becomes steering.
-- A normal follow-up submitted while work is running appears above the composer
-  as **Queuing…**, rather than briefly appearing as a sent conversation message.
-  The server receipt determines its final placement. An accepted queued preview
-  remains there until the queue snapshot or delivered message arrives; if the
-  turn finished and the server sent it immediately, it enters the conversation.
-  Draft content is still cleared only after acceptance, and pending previews
-  expose no queue editing, steering, deletion, or reordering actions.
-- Each waiting message starts individually after the preceding turn's answer
-  ingestion **and** checkpoint finalization settles. A failed checkpoint does not
-  make a successfully delivered answer unsuccessful. A session's `ready` status
-  alone is insufficient. Provider thinking, tool work, and intermediate output
-  do not advance the queue.
-- Explicit Cmd/Ctrl+Enter and a row's Steer action retain their existing meaning.
-  They request immediate provider adoption. Provider support or rejection is
-  independent of queue admission. Ordinary queued delivery never steers.
-- Edit durably copies text, attachments, settings, and context into the existing
-  local recovery journal, then atomically removes the old queue entry using the
-  existing edit-token receipt. It becomes an ordinary composer draft. The previous
-  ordinary draft is saved through the existing stash menu.
-- The edited draft has no reserved slot and never submits itself. Other queued
-  messages continue normally. Send starts the draft when idle and eligible, or
-  adds it to the queue tail when work is active or earlier entries are eligible.
-  Stash and restoration preserve the full draft without resurrecting a queue slot.
-- Stop preserves every waiting item, with no automatic delivery.
-  A new ordinary message can start work once the session is inactive. Starting that
-  work, becoming idle, reconnecting, or restarting the server never releases the queue.
-  Only a later successfully finalized answer makes the next waiting item eligible.
-  An unsuccessful answer waits for later successful work in the same way.
-- When idle after Stop or an unsuccessful answer, the first waiting row offers
-  **Send**. This explicitly requests that existing message as a new ordinary
-  turn through the server-owned worker. The remaining items wait for its answer
-  and checkpoint settlement; reorder first to choose another message. Stop and
-  reorder cancel an unadmitted Send request. Older connected servers do not
-  advertise `threadQueueExplicitSend`, so their clients do not offer this action.
-- Retry applies to a pre-admission delivery error. It cannot bypass an active
-  finalization barrier or the requirement for a successful answer after Stop.
-  No Retry or additional confirmation is needed after later successful completion.
-- Limits remain 20 items, 64 MiB serialized
-  queue data per thread, and the existing provider input/attachment limits.
-  Normalized image and file attachments count toward the byte cap. The worker
-  reuses their owned bytes through an internal-only normalization path; client
-  commands cannot claim another message's durable attachment IDs.
+Each queued run names its durable user message and captured model selection, runtime mode,
+interaction mode, selected Scient skills, and typed context. Ordinary native submissions do not
+accept a composer edit snapshot; imported messages may retain an opaque legacy one.
+`QueuedRunOrder` defines delivery order; automatic delegated completions are not ordinary user
+rows. `QueuedMessageBudget` enforces the 20-item/64-MiB cap under thread serialization. It counts
+serialized messages and the actual file size of each owned attachment reference, including a
+promoted run whose native acceptance is still pending. Missing or foreign-thread bytes fail closed.
 
-## Retained V1 server authority
+The native commands are `queued-run.reorder`, `queued-run.cancel`, `queued-run.edit`,
+`queued-message.promote-to-steer`, and `queue.resume`. Their predicates and receipts belong to
+V2. The effect worker starts an admitted run through `ProviderTurnStartService`; provider events
+flow through `ProviderEventIngestor` and `RunExecutionService`. Finalization settles checkpoint
+work separately from provider success. A capture failure does not turn an answer into a failure.
+Only an eligible unheld head can advance after finalization; session-idle state alone cannot
+release a held queue.
 
-`apps/server/src/scient/threadQueue/` owns the implementation:
+Stop and process-loss recovery preserve waiting messages. Stale outbox starts are guarded by
+attempt identity; a provider-start failure restores held retryable queue work. Native admission
+and recovery never promise exactly-once execution inside an external provider. Do not replay an
+ambiguous accepted provider start simply because a client lost its response.
 
-| File            | Responsibility                                                             |
-| --------------- | -------------------------------------------------------------------------- |
-| `Ledger.ts`     | Typed SQL document, caps, revisions, admission checks, completion barriers |
-| `operations.ts` | Enqueue, edit, requeue, stash, delete, reorder, resume, Send, steer        |
-| `Worker.ts`     | Scoped background sender and restart reconciliation                        |
-| `signals.ts`    | Runtime-local wakeup hints keyed by SQL client identity                    |
-| `http.ts`       | Authentication, authorization, transactional mutation, revision reads      |
-| `migration.ts`  | Transactional, one-time import of legacy queue payloads                    |
-| `Store.ts`      | Read-only v1 JSON compatibility reader                                     |
+## Legacy recovery boundary
 
-Scient migration **11**, `thread-queue`, belongs to the independent
-`scient_schema_migrations` registry. It does not add an upstream numbered
-migration. Its tables share the orchestration database and transaction:
+Startup imports retained queue JSON and `scient_thread_queue` data through V2
+`legacy/LegacyQueueCutover`, `HeldQueueAdmission`, and `LegacyQueueCompatibility`.
+Imported messages become native held runs with deterministic identities before runtime recovery
+and worker startup. Explicit Send/Resume releases them; reading or cloning a recovery payload does
+not execute it. The legacy queue HTTP compatibility surface translates into V2 and is not a
+second live ledger or sender.
 
-- `scient_thread_queue`: one document and monotonically increasing revision per
-  thread. The document contains ordered items, migration completion, the delivery
-  barrier (`blocked`), active turn ID, `awaitingCompletion`, and a delivery-error
-  pause reason. `awaitingCompletion` distinguishes waiting after interruption from
-  a retryable delivery failure. It remains true while recovery work runs; only
-  successful finalization clears it.
-- `scient_queue_receipts`: stable message IDs, owning thread IDs, and the last
-  committed edit token. Receipts survive consumption and deletion so a lost
-  response cannot recreate an already accepted message.
-- `scient_queue_finalization`: independent answer/checkpoint markers by thread
-  and durable turn ID. Duplicate markers are harmless; answer failure is sticky
-  for that turn, while checkpoint failure only records that its attempt settled.
-  Stop writes `successful = 0` in the same transaction as the waiting state,
-  revoking that turn's eligibility even if a late success arrives. Existing durable
-  turn identities are reused; no second execution-ID system or new SQL table is needed.
-
-Environment ownership comes from the authenticated environment connection and
-its database; thread ownership is explicit in every request and command. A
-receipt cannot be reused for another thread. Deleting a thread clears its queue
-and retains an empty migration tombstone so an old JSON file cannot resurrect it.
-
-## Retained V1 admission and finalization
-
-1. A mutation runs in a SQL transaction, validates ownership and current state,
-   enforces caps, updates the revision, and issues a wakeup hint.
-2. The worker rereads SQL, chooses the first waiting item (or an explicitly
-   requested steer), and checks the target session. It normalizes attachments
-   using the existing attachment pipeline.
-3. Its `thread.turn.start` carries internal `queueItemId` and `queueRevision`.
-   The command ID is `queue:<itemId>:<revision>`; the message ID is
-   the original submission message ID, or `queue:<itemId>` for legacy items. The revision permits a fresh attempt after a rejected stale
-   claim while command receipts deduplicate the same attempt.
-4. Inside the engine's existing event/receipt transaction, `observeQueueCommand`
-   checks the revision, item state, order, session and barrier. It consumes the
-   item and closes the barrier atomically with the user message and start events.
-   Competing edits, deletes, reorderings, workers, and direct starts cannot both
-   win admission. There is no later client-side remove operation.
-5. Provider session adoption records the active turn ID. Final answer ingestion
-   signals only after final assistant segments, images, and plans are persisted.
-   The checkpoint reactor signals after checkpoint capture or its valid skip
-   path. Both matching markers are required to release delivery. A stale turn's
-   completion cannot release a newer turn.
-6. A successful answer with a settled checkpoint wakes the next item. An
-   unsuccessful answer leaves the queue waiting for later successful work; a
-   pre-admission error remains retryable.
-
-New queue entries capture model/options, runtime mode, and interaction mode.
-Admission applies those settings through the existing orchestration events
-before the provider starts. Legacy entries without settings use the thread's
-current settings. Explicit steering uses the active thread's settings.
-
-The worker starts once per scoped server service. It subscribes before its
-initial database scan and processes wakeup hints from a deduplicated mailbox.
-Committing a ready session also wakes its queue: a previous attempt may have
-skipped an eligible item while the session was still busy. This notification
-occurs after the projection transaction commits and does not change queue state
-or bypass the answer/checkpoint barrier, Stop recovery, pause, or FIFO rules.
-Hints carry no authority; SQL is always reread. There is no background sender
-poll and no dependency on a mounted ChatView. Client display refreshes ask once
-per second for a revision; unchanged replies do not resend image payloads.
-
-## Retained V1 failure and restart semantics
-
-A rejected pre-admission attempt keeps the item. Known rejected attachment claims
-are cleaned up. If a concurrent mutation changed the revision, the worker
-rereads after its wakeup; otherwise a failure pauses the queue visibly.
-
-After durable admission the item is represented by the orchestration message,
-not a second waiting copy. A provider-side failure leaves remaining items waiting; it
-cannot safely be interpreted as proof that the provider never received the
-message. Scient does **not** promise exactly-once execution inside an external
-provider or blindly replay an ambiguous accepted start.
-
-At server restart, each persisted incomplete barrier is transactionally converted
-into `awaitingCompletion`, retaining all items and invalidating the previous turn.
-It does not replay a start or consume a waiting item. A later admitted start can
-run normally; its successful answer and checkpoint completion release one item.
-Queues already eligible before shutdown can still advance in the background.
-
-The lifecycle transitions are:
-
-| Event                                                     | `blocked` | `awaitingCompletion` | Queue items                          |
-| --------------------------------------------------------- | --------- | -------------------- | ------------------------------------ |
-| Stop, failed active session, or incomplete server restart | false     | true                 | Preserved                            |
-| New ordinary/automation start admitted                    | true      | Preserved            | Preserved                            |
-| Provider adopts that start                                | true      | Preserved            | Preserved; eligible turn ID recorded |
-| Session becomes ready, or only one finalizer finishes     | Unchanged | Unchanged            | Preserved                            |
-| Answer succeeds and checkpoint settles                    | false     | false                | Next item becomes eligible           |
-| Answer fails after checkpoint settles                     | false     | true                 | Preserved                            |
-| Aborted turn for the eligible turn                        | false     | true                 | Preserved                            |
-| Worker admits the next eligible item                      | true      | Preserved            | Exactly that item consumed           |
-
-An aborted turn records an unsuccessful answer and settled checkpoint, so it
-ends the barrier without advancing delivery or remaining blocked indefinitely.
-The eligible-turn check still applies: an abort naming any
-other turn cannot release the current one.
-
-Stop clears the eligible turn ID and cancels any unadmitted Send or Steer request,
-retaining that message in its slot. Finalization also cancels an unadmitted
-Steer aimed at the completed turn. New explicit actions remain available.
-A late running notification while waiting with no admitted start also invalidates that notification's turn ID; it cannot rearm
-an interrupted pending start. Running notifications for failed/invalidated or
-already completed turn IDs are ignored by the ledger. New work enters through
-`thread.turn.start`, whether sent by the composer or another server caller.
-Turn IDs retain their existing meaning: a new execution has a new turn
-ID; reopening an interrupted execution's session is not a new answer.
-
-Ordinary Send admission checks both the actual session and the durable barrier.
-Only an inactive task waiting for completion can start an ordinary message ahead
-of its retained queue. Of competing recovery sends, one starts and the other is
-accepted into the queue. Edited composer drafts use this same rule.
-
-Earlier candidate documents without `awaitingCompletion` retain compatibility:
-legacy Stop/failure/restart pauses convert transactionally on read to waiting
-state. Delivery-error pauses remain retryable. No payload or edit journal is
-rewritten by this conversion. No live application data is needed for tests.
+Preserve Scient migration 11 (`thread-queue`) and the independent
+`scient_schema_migrations` history. Old queue documents, receipts, incomplete barriers, files,
+and edit journals are recovery inputs. Source bytes and idempotent import evidence must survive;
+invalid payloads must surface an error rather than be erased or converted into an empty success.
+Never reinterpret the older V1 successful-answer release rule as permission to unhold V2 work.
 
 ## Composer draft compatibility and recovery
 
-The capability foundation adds optional `selectedScientSkillNames`
-and `composerSnapshot` to queue items. The latter is bounded versioned JSON
-(4 MiB per item, also within the existing thread-byte cap), retained opaquely by
-the server and decoded by the client with the existing draft-context codecs.
-It contains raw composer text and terminal/preview/review selections;
-images and delivery settings remain in their existing fields. It is edit data,
-not provider input or authority. Delivery uses `text`, the same typed message
-`context` as immediate turns, attachments, and independently captured Skill
-selections. The worker never interprets the edit snapshot. There is no second
-queue or database migration.
+New native `message.dispatch` submissions preserve canonical `text`, typed `context`, attachments,
+and selected Scient skills. Neither the dispatch schema nor the native client operation accepts
+`composerSnapshot`. Imported messages may retain that opaque legacy edit data, which the client
+can decode with the existing draft-context codecs; it is never provider input or authority.
+The native persisted-message schema permits an optional unbounded snapshot string. Its queue
+admission budget counts serialized messages and actual attachment bytes together, enforcing
+20 items/64 MiB in aggregate. There is no separate native 4 MiB snapshot limit. The retained legacy
+`ScientThreadQueueItem` schema instead limits snapshot string length to `4 * 1024 * 1024`;
+that is not a byte limit or the native submission contract.
 
-`threadQueueMessageContext` advertises typed queue support separately from
-`inlineMessageContext`: older hosts can understand immediate context without
-preserving queued records. Clients use the existing legacy-context serializer
-when queue support is absent. Image IDs and capture metadata survive queueing
-and editing; the normal attachment pipeline rebinds client IDs at admission.
+Current web send paths check `inlineMessageContext` and use the existing
+legacy-context serializer when that capability is absent. The environment also
+advertises `threadQueueMessageContext`, but the current client does not consult
+it to select a separate queued-message fallback. Image IDs and capture metadata
+survive queueing and editing; the normal attachment pipeline rebinds client IDs
+at admission.
 
-New edit snapshots use version 2. Version 1 snapshots and older edit journals
+The retained snapshot codec uses version 2. Version 1 snapshots and older edit journals
 migrate saved element picks into preview annotations and terminal placeholders
 into references. Migration reuses the ordinary composer's conversion helpers;
 malformed selections are reported rather than discarded, and reading a journal
@@ -265,15 +122,17 @@ snapshots leave the item untouched. Legacy items/journals without separated
 context cannot safely infer `$name` selections: an affected edit is retained
 with an explanation to compose a new selected-Skill message. Plain legacy text
 remains editable, and already queued delivery does not require an edit snapshot.
-An update replaces/removes optional context and selection fields rather than
-retaining stale data or selection intent from the previous version.
+Native `queued-run.edit` retains context and selected skills when their fields are omitted.
+Explicit `context: null` clears context; an explicit empty skill-selection list clears selections.
+Every accepted native edit discards the previous composer snapshot. This command differs from
+the strip's cancellation/extraction followed by a new ordinary submission.
 
 `editSession.ts` keeps both complete drafts in the existing IndexedDB journal,
-including attachment bytes. Before extraction, the client saves the queue item's
-snapshot and bytes. The server checks its update timestamp or existing edit token,
-removes the item transactionally, and records the token in the existing receipt.
-A matching extraction retry succeeds without removing another entry. A legacy
-accepted-requeue fingerprint cannot be mistaken for an extraction receipt.
+including attachment bytes. Before extraction, the client saves the queued message's
+snapshot and bytes. Native cancellation checks `expectedUpdatedAt`; its durable
+command receipt reconciles retries before installing the ordinary draft. Legacy edit
+journals retain their original recovery identities and are handled by compatibility
+code, not by restoring a V1 sender.
 
 Extraction installs the edited content into the ordinary draft identity. Async
 callbacks retain their captured draft targets. Journal persistence resamples the
@@ -296,42 +155,18 @@ it removes local draft recovery data. It is not cloud draft sync.
 Queue attachment ownership participates in existing revert pruning and removal
 cleanup. Bytes still referenced by a queued item or projected message are retained.
 
-## Retained V1 API and compatibility
+## Implementation owners
 
-The authenticated API is `/api/scient/thread-queue/v2/` with `list`, `enqueue`,
-`update`, `remove`, `reorder`, and `control`. List accepts `knownRevision`.
-Mutations return the authoritative snapshot. Expected queue conflicts/capacity
-errors use a typed 409 response; unexpected storage errors use the existing
-internal-error channel. Read and operate scopes remain distinct.
-
-Old unversioned queue endpoints are removed. Client turn starts must advertise
-`queueProtocolVersion: 2`; the shared updated client runtime supplies it. This
-prevents an old client-owned queue pump from dispatching copied queue contents.
-Older connected clients must update before sending. Internal queue admission
-fields are absent from the client command schema.
-
-At startup, the server discovers valid v1 files, including unopened threads,
-and imports each existing thread transactionally. First HTTP access also imports
-if necessary. Hashed filenames and older safe thread filenames are accepted;
-ownership, schema, duplicate IDs, and size are checked. Source bytes are retained
-unchanged. Invalid files are not erased or converted to an empty successful
-import; opening their thread surfaces the failure. Deleted/nonexistent threads
-are not imported.
-
-## Retained V1 integration seams and retirement
-
-Protected upstream seams are the command schema/protocol gate, engine admission
-transaction, decider settings events, provider ingestion, checkpoint reactor,
-reactor/server layer wiring, shared HTTP client errors, and composer wiring.
-There are no new orchestration event types. Review these semantic seams during
-an upstream merge even if Git merges them cleanly.
-
-Native V2 owns live sending and imports waiting payloads as held native runs.
-The old sender is excluded from the V2 runtime. Deployed Scient migration
-history remains intact, including migration 11; retained V1 files, receipts,
-incomplete barriers and local edit journals remain recovery inputs. The native
-hold rule deliberately differs from the older successful-answer release rule
-described above.
+| Owner                                                     | Responsibility                                             |
+| --------------------------------------------------------- | ---------------------------------------------------------- |
+| `apps/server/src/orchestration-v2/Orchestrator.ts`        | Admission, command predicates, held state, and advancement |
+| `apps/server/src/orchestration-v2/QueuedRunOrder.ts`      | Native delivery order and automatic-completion separation  |
+| `apps/server/src/orchestration-v2/QueuedMessageBudget.ts` | Serialized-message and owned-byte limits                   |
+| `apps/server/src/orchestration-v2/EffectWorker.ts`        | Durable execution after admission                          |
+| `apps/server/src/orchestration-v2/legacy/`                | Legacy queue cutover and recovery readers                  |
+| `apps/web/src/components/chat/QueuedRunsControl.tsx`      | Native projection and command adapter for the strip        |
+| `apps/web/src/scient/threadQueue/ThreadQueueStrip.tsx`    | Queue presentation                                         |
+| `apps/web/src/scient/threadQueue/editSession.ts`          | Local draft journal and edit recovery                      |
 
 ## Verification and manual acceptance
 
@@ -339,7 +174,8 @@ Native qualification includes `NativeQueueHoldPolicy.integration.test.ts`,
 `QueuedStartRecovery.integration.test.ts`, `QueuedMessageBudget.integration.test.ts`,
 `LegacyV1RecoveryAcceptance.integration.test.ts`, complete runtime/worker tests,
 and the mounted queue, shortcut, edit-journal and timeline-consumer tests.
-Historical ledger/worker tests qualify recovery and older-server behavior only.
+V1 ledger/worker tests are not evidence for native queue execution. Retained-reader tests qualify
+only their import/recovery boundary.
 Repository format, lint, type, test, build and desktop smoke gates are required
 before manual review.
 

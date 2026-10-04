@@ -44,6 +44,15 @@ Scient does not add a second provider registry, model catalog, session router, c
 account system. A driver that omits the optional lifecycle capabilities keeps the inherited T3 setup
 and maintenance behavior.
 
+Conversation execution is native orchestration V2. `ProviderInstanceRegistry` owns the configured
+instance; `ProviderAdapterRegistryV2` reads its `orchestrationAdapter` dynamically. Live scopes,
+idle release, MCP credentials and instance shutdown belong to `ProviderSessionManagerV2`;
+`ProviderTurnStartService`, `ProviderTurnControlService` and the effect worker execute turns.
+Discovery, account flows, installation, and external maintenance stay on the existing provider
+host and Scient lifecycle managers. Lifecycle changes must close/reconcile the exact V2 instance
+sessions, not construct a second V1 adapter or call the retired `ProviderService`/session reaper.
+See [production composition](../../apps/server/src/orchestration-v2/runtimeLayer.ts).
+
 Official Antigravity ACP implements these same optional lifecycle capabilities
 through T3's auth controller and paired-executable installer. It does not also
 run the generic managed-runtime engine: its executable/harness validation and
@@ -60,7 +69,7 @@ The UI derives a provider's next action from several independent facts:
 | Dimension       | Examples                                                                      | Authority                                                                                   |
 | --------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | Enablement      | enabled, disabled                                                             | Provider settings and the canonical provider instance.                                      |
-| Runtime source  | custom, system, Scient-managed, missing, unknown                              | Provider runtime resolution on the server.                                                  |
+| Runtime source  | custom, system, Scient-managed, registry, missing, unknown                    | Provider runtime resolution on the server.                                                  |
 | Runtime support | fully assisted, external runtime supported, manual/advanced only, unsupported | App-owned artifact policy, qualified catalog availability, host mode, and target.           |
 | Authentication  | not required, unauthenticated, authenticated, unknown                         | Provider-specific passive probe.                                                            |
 | Entitlement     | subscription or billing mode, usable models, no eligible models               | Provider-reported account and model state.                                                  |
@@ -170,6 +179,18 @@ The generic source order is:
 Codex keeps a bespoke capability-health resolver because its complete package and app-server
 companion requirements differ from a simple version probe. Claude, Antigravity, Grok, Droid, and
 Cursor use the shared resolver while retaining provider-specific package and environment policy.
+
+ACP Registry agents use their recorded installation rather than this generic source order.
+`AcpRegistryManagedRuntimeActions` reports verified app-owned binary, npm and uvx installations
+as `registry`, with their installer, location and version. Registry packages pin the registry's
+exact top-level version; transitive dependencies may vary. An explicit executable override is
+`custom` and remains external. Registry actions offer install or remove when supported, rather
+than the qualified catalog's generic update/repair policy.
+
+Removing a registry installation requires other configured instances using it to be removed first.
+Removal preserves credentials and external tools; passive status refresh does not reinstall
+removed files. Unverified installations report `unknown` without mutation, and older binary
+caches may lack installer metadata. See [ACP Registry agents](../user/providers-acp.md).
 
 Managed state schema v2 writes the selected managed version and explicit selection in one atomic
 state update. Legacy state did not record selection, so an upgrade never silently takes over a
@@ -431,7 +452,7 @@ presentation rules; provider views retain their real authentication and recovery
 - Diagnostics and raw server paths stay behind a low-prominence disclosure and out of the fast
   composer path.
 
-Provider dispatch is intentionally explicit and exhaustive. With eight built-in providers, one
+Provider dispatch is intentionally explicit and exhaustive. With eleven built-in drivers, one
 switch is easier to audit than a dynamic registry and prevents a new provider from silently
 inheriting unsupported lifecycle behavior.
 
@@ -450,6 +471,7 @@ policy and protocol differences, not universal platform qualification.
 | Grok                     | ACP browser login or explicit device code. A pasted code appears only when the exact live ACP operation advertises it. Passive probes never start authentication.                                                                                                | Available for Grok-owned account credentials; it never claims to remove an environment-provided API key.                                     | Custom, system, and Scient-managed sources. External updates remain manual pending installation-source qualification.                                                                                                                                                                                                                                                                                                             |
 | Droid                    | ACP device pairing only when the initialized peer advertises it and an external Factory API key is not controlling authentication. Droid may open a browser without giving Scient a URL.                                                                         | Visible only when the exact ACP peer advertises logout; there is no terminal-automation fallback.                                            | Custom, system, and Scient-managed sources. Recognized package and standard native installs support user-requested updates; unknown sources remain manual. Native discovery uses Factory’s LATEST channel.                                                                                                                                                                                                                        |
 | Cursor                   | Bundled SDK browser login, with an instance-owned credential and a fresh account/model check; configured credentials override browser auth.                                                                                                                      | Stops instance sessions and forgets the saved credential; revocation belongs to the Cursor API-key dashboard.                                | CLI management is separate from V2 SDK execution. Explicit external CLI targets retain native update; private CLI copies retain qualified install/update/repair/removal. The default SDK is manual-only for maintenance and needs no CLI installation.                                                                                                                                                                            |
+| ACP Registry             | Uses the configured agent's advertised authentication methods; installation does not prove account readiness.                                                                                                                                                    | No universal sign-out is advertised; capabilities belong to the agent.                                                                       | Verified app-owned installations report `registry`; supported actions are install/remove. Shared-instance removal guards and recorded installation identity protect ownership; executable overrides remain external. No generic managed update/repair is advertised.                                                                                                                                                              |
 | OpenCode                 | No single assisted account flow. OpenCode manages credentials for multiple unrelated upstream providers.                                                                                                                                                         | No universal sign-out is advertised.                                                                                                         | System, custom, or remote runtime use. No Scient-managed lifecycle or system-to-managed handoff is currently advertised; inherited updater behavior remains authoritative.                                                                                                                                                                                                                                                        |
 | Pi                       | API-key and custom-endpoint setup through Custom models; subscription login remains Pi-native. Discovery does not prove authentication or quota.                                                                                                                 | No universal sign-out is advertised.                                                                                                         | Custom, system, and Scient-managed sources. Qualified private install, repair, update and removal; recognized current Pi package installs support user-requested updates. Legacy and unknown installations remain manual.                                                                                                                                                                                                         |
 | Oh My Pi                 | No assisted account flow. Model sign-in stays in the user's Oh My Pi home; API-key and custom endpoints come through Custom models. Discovery reads version, models, and commands in an isolated probe and never calls login.                                    | No sign-out is advertised.                                                                                                                   | Custom, system, and Scient-managed sources. Qualified private install, repair, update and removal on macOS arm64/x64, Linux glibc arm64/x64 and Windows arm64/x64 through the shared pipeline; every catalog release and every activation passes an RPC-v2 handshake and state probe. System installations are manual only: a version advisory from the installing channel with a copyable `omp update`, which Scient never runs. |
@@ -508,7 +530,8 @@ Most lifecycle implementation lives under `apps/server/src/scient`, `apps/web/sr
 actions, additive contracts and RPCs, transient registry overlays, one reservation around T3's
 maintenance runner, server composition, and small Settings/composer entry points.
 
-T3 remains authoritative for provider instances, adapters, sessions, model discovery, process
-ownership, provider enablement, external update commands, and surrounding UI. Upstream refreshes
+The canonical provider host remains authoritative for instances, discovery, enablement, external
+update commands, and surrounding UI. V2 adapters and `ProviderSessionManager` own live process
+and conversation execution; lifecycle operations coordinate with those same owners. Upstream refreshes
 should preserve the narrow Scient seams and reconcile their surrounding context instead of moving
 the lifecycle into a parallel host architecture.

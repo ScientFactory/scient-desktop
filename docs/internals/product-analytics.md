@@ -154,9 +154,10 @@ summary. `usage.refresh.requested` is an explicit refresh request, not success;
 `usage.availability` describes a settled non-Limits view's summary availability,
 not completeness of all token reporting. Limits sources retain separate coverage.
 
-`provider.turn.usage` uses ProviderService's existing instance-aware completion
-and model association. Its upstream `provider.turn.completed` input is mapped to
-usage, never a second successful outcome. Counts are normalized main-agent
+`provider.turn.usage` uses V2 `ProviderEventIngestor`'s instance-aware terminal provider-turn
+facts and the run's model association supplied by `RunExecutionService`. Its
+`provider.turn.completed` telemetry input is mapped to usage, never a second successful outcome.
+Provider terminal outcome and later checkpoint finalization remain separate. Counts are normalized main-agent
 input/output, optional cache read/write and reasoning subsets, with
 complete/partial/unavailable status. Each count is an integer from 0 to one
 billion; invalid values are omitted rather than clamped. Unknown counts are not

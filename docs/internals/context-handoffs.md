@@ -12,7 +12,8 @@ answer, then the original request, and fills the remaining budget from newest to
 items are delivered in their original order. Oversized items are omitted rather than shortened.
 The default cap is 16,000 tokens with a 64,000-byte ceiling; delivery reduces the budget for the
 selected model's context window, native occupancy, current input, attachments and reserved headroom.
-The implementation uses a conservative byte-based token estimate rather than a provider tokenizer.
+The implementation conservatively charges one UTF-8 byte per estimated token rather than using
+a provider tokenizer; the default token allowance can therefore constrain bytes below the ceiling.
 
 Historical messages retain item/run/thread/provider attribution. The handoff records omitted item
 IDs and counts and tells the agent that history is context, not a new request or execution authority.
@@ -21,11 +22,22 @@ maxCharsPerItem:4000})`; paginate using `afterPosition=nextPosition`, or fetch a
 with `textOffset=nextTextOffset`. Native tool/reasoning state and attachment bytes are not replayed
 by this textual history delivery. Submitted callback answers are inert historical facts.
 
-Fork merge-back summaries remain a separate path. `ContextHandoffServiceV2.prepareForkDelta`
-summarizes user/assistant text, commands and prior handoffs with whitespace normalization and a
-240-character maximum per text-bearing item; file changes carry filenames and checkpoints carry
-file counts. This rule does not apply to portable provider history selection or exact fork-prefix
-preservation. Neither a portable handoff nor a merge-back summary claims native session parity.
+Fork merge-back delivery uses the same whole-item selection and budget. New
+`ContextHandoffServiceV2.prepareForkDelta` records contain intact historical messages as well as a
+compact display summary. `ContextHandoffDelivery` delivers the history, so the former
+240-character per-item summary rule is not the provider-delivery rule. Old records without a
+`history` payload remain readable: their preformatted summary is included whole only when it fits,
+otherwise the recovery pointer remains. Neither path claims native session parity.
+
+Selection considers newer items first after the latest-request/latest-answer/original-request
+anchors; delivery restores chronological order. `ContextHandoffBudget.ts` counts the larger of the
+encoded native-history and inline-text representations, including attribution, escaping, and
+wrappers. `ContextHandoffDelivery.ts` deduplicates previously delivered item IDs and persists
+`pending` before injection or inline send, then `injected` or `inline` after acceptance. Ambiguous
+pending delivery requires replacing the native thread before retry; insufficient allowance fails
+without truncating the current request. See
+[ContextHandoffBudget](../../apps/server/src/orchestration-v2/ContextHandoffBudget.ts) and
+[ContextHandoffDelivery](../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts).
 
 Legacy V1 data is hydrated into V2 app history before continuation or boundary inspection. Imported queued
 future messages remain app-owned native held runs until explicitly released. Migrated transcripts
