@@ -48,6 +48,8 @@ import { formatClaudeResumeCompactionQuestion } from "@t3tools/shared/claudeComp
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
+import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
+import { CLAUDE_SCIENT_TOOL_PROJECTION } from "../../provider/ScientToolProjection.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { PreviewControlsToolkit } from "../../mcp/toolkits/previewControls/tools.ts";
 import { EnvironmentToolkit } from "../../mcp/toolkits/environment/tools.ts";
@@ -498,7 +500,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       readOnlySandbox: false,
     });
 
-    assert.deepEqual(overrides, {});
+    assert.deepEqual(overrides, { scientAwareness: buildScientAwareness() });
   });
 
   it("preserves an explicit allowlist when no MCP session exists", () => {
@@ -508,7 +510,10 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       allowedTools: ["Read"],
     });
 
-    assert.deepEqual(overrides, { allowedTools: ["Read"] });
+    assert.deepEqual(overrides, {
+      scientAwareness: buildScientAwareness(),
+      allowedTools: ["Read"],
+    });
   });
 
   it("pre-approves all t3-code tools when attaching an MCP session without an allowlist", () => {
@@ -520,6 +525,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       });
 
       assert.deepEqual(overrides, {
+        scientAwareness: buildScientAwareness(new Set(["preview"]), CLAUDE_SCIENT_TOOL_PROJECTION),
         allowedTools: [ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD],
         mcpServers: T3_MCP_SERVERS,
       });
@@ -536,6 +542,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       });
 
       assert.deepEqual(overrides, {
+        scientAwareness: buildScientAwareness(new Set(["preview"]), CLAUDE_SCIENT_TOOL_PROJECTION),
         allowedTools: ["Read", "mcp__scient__*"],
         mcpServers: T3_MCP_SERVERS,
       });
@@ -552,6 +559,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       });
 
       assert.deepEqual(overrides, {
+        scientAwareness: buildScientAwareness(new Set(["preview"]), CLAUDE_SCIENT_TOOL_PROJECTION),
         allowedTools: [
           ...ClaudeAdapterV2.CLAUDE_READ_ONLY_ALLOWED_TOOLS,
           ...ClaudeAdapterV2.CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS,
@@ -687,6 +695,7 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
         allowedTools: ["Read"],
       });
       assert.deepEqual(overrides, {
+        scientAwareness: buildScientAwareness(new Set(["preview"]), CLAUDE_SCIENT_TOOL_PROJECTION),
         allowedTools: ["Read", "mcp__scient__*"],
         mcpServers: {
           scient: {
@@ -719,6 +728,8 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
       assert.equal(systemPrompt.type, "preset");
       assert.equal(systemPrompt.preset, "claude_code");
       assert.include(systemPrompt.append ?? "", "Use `delegate_task`");
+      assert.include(systemPrompt.append ?? "", "mcp__scient__preview_status");
+      assert.notInclude(systemPrompt.append ?? "", "scient_pdf_build");
       const logged = ClaudeAdapterV2.loggedClaudeQueryOptions(options);
       assert.equal(logged.hasMcpServers, true);
       assert.notInclude(JSON.stringify(logged), "secret-claude-token");
@@ -925,111 +936,158 @@ describe("ClaudeAdapterV2 session permissions", () => {
 });
 
 describe("ClaudeAdapterV2 Auto-accept edits", () => {
-  it.effect("asks before a command instead of allowing it", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const idAllocator = yield* IdAllocator.IdAllocatorV2;
-        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "t3-claude-accept-edits-",
-        });
-        let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
-        const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
-          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
-          settings: DEFAULT_CLAUDE_SETTINGS,
-          environment: {},
-          attachmentsDir,
-          fileSystem,
-          path: yield* Path.Path,
-          idAllocator,
-          queryRunner: {
-            allocateSessionId: Effect.succeed("native-thread-claude-accept-edits"),
-            open: (input) =>
-              Effect.sync(() => {
-                openedOptions = input.options;
-                return {
-                  messages: Stream.never,
-                  offer: () => Effect.void,
-                  setModel: () => Effect.void,
-                  interrupt: Effect.void,
-                  close: Effect.void,
-                };
+  for (const granted of [false, true]) {
+    it.effect(
+      `asks before a command and delivers actual session awareness with grants ${granted}`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const fileSystem = yield* FileSystem.FileSystem;
+            const idAllocator = yield* IdAllocator.IdAllocatorV2;
+            const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+              prefix: "t3-claude-accept-edits-",
+            });
+            let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+            const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+              instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+              settings: DEFAULT_CLAUDE_SETTINGS,
+              environment: {},
+              attachmentsDir,
+              fileSystem,
+              path: yield* Path.Path,
+              idAllocator,
+              queryRunner: {
+                allocateSessionId: Effect.succeed("native-thread-claude-accept-edits"),
+                open: (input) =>
+                  Effect.sync(() => {
+                    openedOptions = input.options;
+                    return {
+                      messages: Stream.never,
+                      offer: () => Effect.void,
+                      setModel: () => Effect.void,
+                      interrupt: Effect.void,
+                      close: Effect.void,
+                    };
+                  }),
+                forkSession: () => Effect.die("unused"),
+                subagentLaunchToolUseId: () => Effect.succeed(null),
+                assertComplete: Effect.void,
+              },
+            });
+            const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "auto-accept-edits",
+              interactionMode: "default",
+              cwd: "/workspace",
+            });
+            const threadId = ThreadId.make("thread-claude-accept-edits");
+            const capabilities = new Set([
+              "documents:build",
+              "compute:inventory",
+              "skills:read",
+            ] as const);
+            if (granted) {
+              McpProviderSession.setMcpProviderSession({
+                environmentId: EnvironmentId.make("claude-native-awareness"),
+                threadId,
+                providerSessionId: "claude-native-awareness",
+                providerInstanceId: CLAUDE_TEST_MODEL_SELECTION.instanceId,
+                endpoint: "http://127.0.0.1:43123/mcp",
+                authorizationHeader: "Bearer synthetic-claude",
+                capabilities,
+              });
+              yield* Effect.addFinalizer(() =>
+                Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+              );
+            }
+            const runtime = yield* adapter.openSession({
+              threadId,
+              providerSessionId: ProviderSessionId.make("provider-session-claude-accept-edits"),
+              modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+              runtimePolicy,
+            });
+            const providerThread = yield* runtime.ensureThread({
+              threadId,
+              modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+              runtimePolicy,
+            });
+            const now = yield* DateTime.now;
+            yield* runtime.startTurn(
+              makeClaudeTestTurnInput({
+                threadId,
+                providerThread,
+                now,
+                attemptId: RunAttemptId.make("attempt-claude-accept-edits"),
+                text: "Run node.",
+                attachments: [],
+                runtimePolicy,
               }),
-            forkSession: () => Effect.die("unused"),
-            subagentLaunchToolUseId: () => Effect.succeed(null),
-            assertComplete: Effect.void,
-          },
-        });
-        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
-          runtimeMode: "auto-accept-edits",
-          interactionMode: "default",
-          cwd: "/workspace",
-        });
-        const threadId = ThreadId.make("thread-claude-accept-edits");
-        const runtime = yield* adapter.openSession({
-          threadId,
-          providerSessionId: ProviderSessionId.make("provider-session-claude-accept-edits"),
-          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
-          runtimePolicy,
-        });
-        const providerThread = yield* runtime.ensureThread({
-          threadId,
-          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
-          runtimePolicy,
-        });
-        const now = yield* DateTime.now;
-        yield* runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId,
-            providerThread,
-            now,
-            attemptId: RunAttemptId.make("attempt-claude-accept-edits"),
-            text: "Run node.",
-            attachments: [],
-            runtimePolicy,
-          }),
-        );
-        assert.equal(openedOptions?.permissionMode, "acceptEdits");
-        const canUseTool = openedOptions?.canUseTool;
-        assert.isFunction(canUseTool);
+            );
+            assert.equal(openedOptions?.permissionMode, "acceptEdits");
+            const systemPrompt = openedOptions?.systemPrompt;
+            if (
+              typeof systemPrompt !== "object" ||
+              systemPrompt === null ||
+              !("type" in systemPrompt) ||
+              systemPrompt.type !== "preset"
+            )
+              return yield* Effect.die("Missing native Claude system prompt");
+            assert.include(
+              systemPrompt.append ?? "",
+              buildScientAwareness(
+                granted ? capabilities : undefined,
+                CLAUDE_SCIENT_TOOL_PROJECTION,
+              ),
+            );
+            assert.equal(
+              (systemPrompt.append ?? "").includes("mcp__scient__scient_pdf_build"),
+              granted,
+            );
+            assert.equal(
+              (systemPrompt.append ?? "").includes("mcp__scient__scient_skill_load"),
+              granted,
+            );
+            assert.notInclude(systemPrompt.append ?? "", "preview_status");
+            const canUseTool = openedOptions?.canUseTool;
+            assert.isFunction(canUseTool);
 
-        const requestEvent = yield* runtime.events.pipe(
-          Stream.filter((event) => event.type === "runtime_request.updated"),
-          Stream.runHead,
-          Effect.forkScoped,
-        );
-        const command = { command: "node -e 'console.log(42)'" };
-        const decision = yield* Effect.promise(() =>
-          canUseTool!("Bash", command, {
-            signal: new AbortController().signal,
-            toolUseID: "tool-bash-accept-edits",
-            requestId: "request-bash-accept-edits",
-          }),
-        ).pipe(Effect.forkScoped);
-        // Without a callback that asks, the command is allowed before any
-        // request is raised.
-        const first = yield* Effect.raceFirst(
-          Fiber.join(requestEvent).pipe(
-            Effect.map((event) => ({ type: "request", event }) as const),
-          ),
-          Fiber.join(decision).pipe(
-            Effect.map((result) => ({ type: "decision", result }) as const),
-          ),
-        );
-        assert.equal(first.type, "request", "the command ran without asking");
-        if (first.type !== "request") return;
-        const event = first.event;
-        if (Option.isNone(event) || event.value.type !== "runtime_request.updated") return;
-        assert.equal(event.value.runtimeRequest.kind, "command");
+            const requestEvent = yield* runtime.events.pipe(
+              Stream.filter((event) => event.type === "runtime_request.updated"),
+              Stream.runHead,
+              Effect.forkScoped,
+            );
+            const command = { command: "node -e 'console.log(42)'" };
+            const decision = yield* Effect.promise(() =>
+              canUseTool!("Bash", command, {
+                signal: new AbortController().signal,
+                toolUseID: "tool-bash-accept-edits",
+                requestId: "request-bash-accept-edits",
+              }),
+            ).pipe(Effect.forkScoped);
+            // Without a callback that asks, the command is allowed before any
+            // request is raised.
+            const first = yield* Effect.raceFirst(
+              Fiber.join(requestEvent).pipe(
+                Effect.map((event) => ({ type: "request", event }) as const),
+              ),
+              Fiber.join(decision).pipe(
+                Effect.map((result) => ({ type: "decision", result }) as const),
+              ),
+            );
+            assert.equal(first.type, "request", "the command ran without asking");
+            if (first.type !== "request") return;
+            const event = first.event;
+            if (Option.isNone(event) || event.value.type !== "runtime_request.updated") return;
+            assert.equal(event.value.runtimeRequest.kind, "command");
 
-        yield* runtime.respondToRuntimeRequest({
-          requestId: event.value.runtimeRequest.id,
-          decision: "accept",
-        });
-        assert.equal((yield* Fiber.join(decision))?.behavior, "allow");
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
-    ),
-  );
+            yield* runtime.respondToRuntimeRequest({
+              requestId: event.value.runtimeRequest.id,
+              decision: "accept",
+            });
+            assert.equal((yield* Fiber.join(decision))?.behavior, "allow");
+          }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+        ),
+    );
+  }
 });
 
 describe("ClaudeAdapterV2 approval cancellation", () => {

@@ -1,3 +1,4 @@
+import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import {
   type ChatAttachment,
   type ModelSelection,
@@ -132,6 +133,8 @@ export interface AcpAdapterV2RuntimeInput {
    */
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
   readonly mcpServers: ReadonlyArray<EffectAcpSchema.McpServer>;
+  /** Product guidance composed from this exact injected session. */
+  readonly scientAwareness?: string;
   readonly acpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   /** Scoped credentials for terminal fallback when an ACP agent drops `mcpServers`. */
   readonly processEnvironment?: NodeJS.ProcessEnv;
@@ -680,6 +683,7 @@ interface AcpMcpContext {
   readonly servers: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly acpServers: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly processEnvironment?: NodeJS.ProcessEnv;
+  readonly scientAwareness?: string;
   readonly endpoint?: string;
   readonly authorization?: string;
 }
@@ -714,6 +718,7 @@ function acpMcpContext(
       },
     ],
     acpServers: [{ type: "acp", name: "t3-code", serverId: "t3-code" }],
+    scientAwareness: buildScientAwareness(session.capabilities),
     endpoint: session.endpoint,
     authorization: session.authorizationHeader,
     processEnvironment: {
@@ -2035,6 +2040,7 @@ export function makeAcpAdapterV2(
             cwd: input.runtimePolicy.cwd ?? process.cwd(),
             runtimePolicy: input.runtimePolicy,
             mcpServers: mcpContext.servers,
+            scientAwareness: mcpContext.scientAwareness ?? buildScientAwareness(),
             acpMcpServers: mcpContext.acpServers,
             ...(mcpContext.processEnvironment === undefined
               ? {}

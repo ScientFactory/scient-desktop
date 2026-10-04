@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   GrokSettings,
+  EnvironmentId,
   MessageId,
   NodeId,
   ProviderInstanceId,
@@ -28,6 +29,9 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as ServerConfig from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
+import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import {
@@ -56,15 +60,18 @@ const harness = Effect.fn("GrokNativeSelection.harness")(function* (
   generation: "1" | "2",
   preference: { readonly model: string; readonly options?: NonNullable<ModelSelection["options"]> },
   environment: Record<string, string> = {},
+  capabilities?: ReadonlySet<McpCapability>,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const directory = yield* fs.makeTempDirectoryScoped({ prefix: "scient-grok-native-peer-" });
   const requestsPath = path.join(directory, "requests.ndjson");
+  const argvLogPath = path.join(directory, "native-argv.txt");
   const binary = writeFakeCli({
     directory,
     name: "grok-native",
     source: execScriptSource({
+      argvLogPath,
       scriptPath: yield* path.fromFileUrl(
         new URL("../../../scripts/grok-v1-mock-agent.ts", import.meta.url),
       ),
@@ -78,6 +85,20 @@ const harness = Effect.fn("GrokNativeSelection.harness")(function* (
     interactionMode: "default",
     cwd: directory,
   });
+  if (capabilities !== undefined) {
+    McpProviderSession.setMcpProviderSession({
+      environmentId: EnvironmentId.make("grok-awareness"),
+      threadId,
+      providerSessionId: "grok-awareness",
+      providerInstanceId: instanceId,
+      endpoint: "http://127.0.0.1:43123/mcp",
+      authorizationHeader: "Bearer synthetic-grok-awareness",
+      capabilities,
+    });
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+    );
+  }
   const adapter = makeGrokAdapterV2({
     instanceId,
     settings: yield* decodeSettings({ binaryPath: binary }),
@@ -99,7 +120,7 @@ const harness = Effect.fn("GrokNativeSelection.harness")(function* (
     providerSessionId: ProviderSessionId.make("grok-native-session"),
     modelSelection,
     runtimePolicy,
-    configureMcp: false,
+    configureMcp: capabilities !== undefined,
   });
   const now = yield* DateTime.now;
   const appThread: ProviderAdapterV2TurnInput["appThread"] = {
@@ -162,10 +183,41 @@ const harness = Effect.fn("GrokNativeSelection.harness")(function* (
       .trim()
       .split("\n")
       .map((line) => decodeRequest(line));
-  return { send, requests };
+  return {
+    send,
+    requests,
+    arguments: () => NodeFS.readFileSync(argvLogPath, "utf8").trimEnd().split("\t"),
+  };
 });
 
 it.layer(layer, { excludeTestServices: true })("native Grok model selection", (it) => {
+  for (const granted of [false, true]) {
+    it.effect(
+      `delivers exact Scient awareness through native Grok rules with grants ${granted}`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const capabilities = granted
+              ? new Set<McpCapability>(["documents:build", "compute:inventory", "skills:read"])
+              : undefined;
+            const h = yield* harness("1", { model: "default" }, {}, capabilities);
+            yield* h.send;
+            const args = h.arguments();
+            const rules = args[args.indexOf("--rules") + 1];
+            assert.equal(rules, buildScientAwareness(capabilities));
+            assert.include(rules ?? "", "Scient renders LaTeX math");
+            assert.equal((rules ?? "").includes("scient_pdf_build"), granted);
+            assert.equal((rules ?? "").includes("scient_skill_load"), granted);
+            assert.notInclude(rules ?? "", "preview_status");
+            assert.notInclude(rules ?? "", "device_list");
+            assert.lengthOf(
+              h.requests().filter((request) => request.method === "session/prompt"),
+              1,
+            );
+          }),
+        ),
+    );
+  }
   it.effect("uses V1 response shape even when advertised protocol version is 2", () =>
     Effect.scoped(
       Effect.gen(function* () {

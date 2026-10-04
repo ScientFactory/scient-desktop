@@ -1,8 +1,11 @@
+import * as NodeCrypto from "node:crypto";
 import {
   CommandId,
+  EventId,
   type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
+  OrchestrationV2TurnItemJson,
   ProviderThreadId,
   RunAttemptId,
   RunId,
@@ -72,11 +75,14 @@ export type EventSinkV2Error = typeof EventSinkV2Error.Type;
 export interface EventSinkV2Shape {
   readonly write: (input: {
     readonly guardPendingUserInputCancellations?: boolean;
+    /** Internal historical-position repair; retain the payload current at commit. */
+    readonly guardTurnItemPositionRepairs?: boolean;
     readonly commandId?: CommandId;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, EventSinkV2Error>;
   readonly writeWithEffects: (input: {
     readonly guardPendingUserInputCancellations?: boolean;
+    readonly guardTurnItemPositionRepairs?: boolean;
     readonly commandId?: CommandId;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     readonly effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
@@ -270,6 +276,44 @@ const baseLayer: Layer.Layer<
         });
       });
 
+    const decodePositionedItem = Schema.decodeUnknownEffect(
+      Schema.fromJsonString(OrchestrationV2TurnItemJson),
+    );
+    const guardTurnItemPositionRepairs = Effect.fn("EventSink.guardTurnItemPositionRepairs")(
+      function* (events: ReadonlyArray<OrchestrationV2DomainEvent>) {
+        const repaired: OrchestrationV2DomainEvent[] = [];
+        for (const event of events) {
+          if (
+            event.type !== "turn-item.updated" ||
+            !event.id.startsWith("migration:v1:history:position:")
+          ) {
+            repaired.push(event);
+            continue;
+          }
+          const rows = yield* sql<{ payload_json: string; ordinal: number }>`
+          SELECT items.payload_json, positions.ordinal
+          FROM orchestration_v2_projection_turn_items AS items
+          JOIN orchestration_v2_turn_item_positions AS positions
+            ON positions.thread_id = items.thread_id AND positions.turn_item_id = items.turn_item_id
+          WHERE items.thread_id = ${event.threadId} AND items.turn_item_id = ${event.payload.id}`;
+          const current = rows[0];
+          if (current === undefined) continue;
+          const item = yield* decodePositionedItem(current.payload_json);
+          if (item.ordinal === current.ordinal) continue;
+          const digest = NodeCrypto.createHash("sha256").update(current.payload_json).digest("hex");
+          repaired.push({
+            ...event,
+            id: EventId.make(
+              `migration:v1:history:position:v2:${item.id}:${current.ordinal}:${digest}`,
+            ),
+            occurredAt: item.updatedAt,
+            payload: { ...item, ordinal: current.ordinal },
+          });
+        }
+        return repaired;
+      },
+    );
+
     const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
       const runOrdinals = new Map(
         events.flatMap((event) =>
@@ -334,10 +378,14 @@ const baseLayer: Layer.Layer<
 
       const storedEvents = yield* sql.withTransaction(
         Effect.gen(function* () {
+          const positionGuarded =
+            input.guardTurnItemPositionRepairs === true
+              ? yield* guardTurnItemPositionRepairs(input.events)
+              : input.events;
           const normalized = yield* normalizeEvents(
             input.guardPendingUserInputCancellations === true
-              ? yield* guardUserInputCancellations(input.events)
-              : input.events,
+              ? yield* guardUserInputCancellations(positionGuarded)
+              : positionGuarded,
           );
           const committed = yield* eventStore.append({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),

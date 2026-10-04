@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { OpencodeClient, ToolPart } from "@opencode-ai/sdk/v2";
 import {
   CheckpointId,
+  EnvironmentId,
   NodeId,
   OpenCodeSettings,
   ProjectId,
@@ -32,6 +33,8 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import type { OpenCodeRuntimeShape } from "../../provider/opencodeRuntime.ts";
 import * as IdAllocator from "../IdAllocator.ts";
@@ -146,6 +149,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
   suffix: string,
   nativeSessionId: string,
   client: object,
+  external = true,
 ) {
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const instanceId = ProviderInstanceId.make(`opencode-${suffix}`);
@@ -161,7 +165,8 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     settings: OPEN_CODE_TEST_SETTINGS,
     environment: {},
     runtime: {
-      connectToOpenCodeServer: () => Effect.succeed({ url: "http://test.invalid", external: true }),
+      connectToOpenCodeServer: () =>
+        Effect.succeed({ url: "http://test.invalid", external, exitCode: null }),
       createOpenCodeSdkClient: () => client,
     } as unknown as OpenCodeRuntimeShape,
     idAllocator,
@@ -237,6 +242,79 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
+  for (const external of [false, true]) {
+    it.effect(
+      `delivers Scient system guidance through native OpenCode prompt with external ${external}`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const suffix = `awareness-${external}`;
+            const threadId = ThreadId.make(`thread-opencode-${suffix}`);
+            const capabilities = new Set([
+              "documents:build",
+              "skills:read",
+              "compute:inventory",
+            ] as const);
+            McpProviderSession.setMcpProviderSession({
+              environmentId: EnvironmentId.make(suffix),
+              threadId,
+              providerSessionId: suffix,
+              providerInstanceId: ProviderInstanceId.make(`opencode-${suffix}`),
+              endpoint: "http://127.0.0.1:43123/mcp",
+              authorizationHeader: "Bearer synthetic-opencode",
+              capabilities,
+            });
+            yield* Effect.addFinalizer(() =>
+              Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+            );
+            const nativeEvents = asyncEventStream();
+            let installed = false;
+            const h = yield* makeOpenCodeRuntimeHarness(
+              suffix,
+              "awareness-native",
+              {
+                event: {
+                  subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+                    options.signal?.addEventListener("abort", () => nativeEvents.close(), {
+                      once: true,
+                    });
+                    return { stream: nativeEvents.stream };
+                  },
+                },
+                mcp: {
+                  add: async () => {
+                    installed = true;
+                    return { data: true };
+                  },
+                },
+                session: {
+                  create: async () => ({
+                    data: { id: "awareness-native", time: { created: 1, updated: 1 } },
+                  }),
+                  promptAsync: async (input: { system?: string }) => {
+                    assert.include(
+                      input.system ?? "",
+                      buildScientAwareness(external ? undefined : capabilities),
+                    );
+                    assert.equal((input.system ?? "").includes("scient_pdf_build"), !external);
+                    assert.equal((input.system ?? "").includes("scient_skill_load"), !external);
+                    assert.notInclude(input.system ?? "", "preview_status");
+                    assert.notInclude(input.system ?? "", "device_list");
+                    return { data: true };
+                  },
+                  abort: async () => ({ data: true }),
+                  children: async () => ({ data: [] }),
+                },
+              },
+              external,
+            );
+            yield* h.startTurn();
+            assert.equal(installed, !external);
+          }).pipe(Effect.provide(IdAllocator.layer)),
+        ),
+    );
+  }
+
   for (const ending of ["completed", "failed", "unresolved", "unavailable", "reconnect"] as const) {
     it.effect(`normalizes OpenCode step usage for ${ending} turns`, () =>
       Effect.gen(function* () {

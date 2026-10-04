@@ -1,3 +1,4 @@
+import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 /**
  * The OpenCode 2 runtime behind the `opencode` driver. It talks to the
  * instance's `opencode serve` process through the HTTP client and reads that
@@ -3236,6 +3237,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
         if (added) state.mcp = wanted;
       }
       const instructions = [
+        buildScientAwareness(state.mcp !== undefined ? mcpSession?.capabilities : undefined),
         buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
         t3OrchestrationSystemPrompt(state.mcp !== undefined),
       ]

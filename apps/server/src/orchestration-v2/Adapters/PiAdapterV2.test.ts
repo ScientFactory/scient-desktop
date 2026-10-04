@@ -32,6 +32,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as ServerConfig from "../../config.ts";
+import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import {
@@ -525,6 +526,18 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("delivers core awareness through the native extension without a grant", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      yield* openRuntime(fake);
+      const spawn = fake.lastSpawn();
+      assert.equal(spawn.env.SCIENT_PI_AWARENESS, buildScientAwareness());
+      assert.isUndefined(spawn.env.T3_MCP_URL);
+      assert.isTrue(spawn.args.includes("--extension"));
+      assert.isTrue(spawn.args.some((arg) => arg.endsWith("pi-t3-mcp-extension.ts")));
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("injects the T3 MCP extension and bearer when a session exists", () =>
     Effect.gen(function* () {
       McpProviderSession.setMcpProviderSession({
@@ -548,6 +561,7 @@ describe("PiAdapterV2", () => {
       assert.equal(spawn.env.T3_MCP_URL, "http://127.0.0.1:43123/mcp");
       assert.equal(spawn.env.T3_MCP_BEARER_TOKEN, "secret-pi-token");
       assert.equal(spawn.env.T3_PI_RUNTIME_MODE, "full-access");
+      assert.equal(spawn.env.SCIENT_PI_AWARENESS, buildScientAwareness(new Set(["preview"])));
     }).pipe(
       Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(THREAD_ID))),
       Effect.scoped,

@@ -47,6 +47,7 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
+import { encodePiModelSlug } from "../pi/PiModel.ts";
 import {
   EMPTY_PI_MODEL_CAPABILITIES,
   thinkingCapabilitiesForPiModel,
@@ -113,7 +114,8 @@ function parseDiscoveredModels(
     const provider = recordString(model, "provider");
     const id = recordString(model, "id");
     if (provider === undefined || id === undefined) continue;
-    const slug = `${provider}/${id}`;
+    const slug = encodePiModelSlug(provider, id);
+    if (slug === undefined) continue;
     if (seen.has(slug)) continue;
     seen.add(slug);
     parsed.push({

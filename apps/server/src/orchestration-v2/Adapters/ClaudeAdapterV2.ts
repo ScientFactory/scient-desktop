@@ -1,3 +1,5 @@
+import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
+import { CLAUDE_SCIENT_TOOL_PROJECTION } from "../../provider/ScientToolProjection.ts";
 import { mergeSubagentPresentation } from "./SubagentPresentation.ts";
 import {
   claudeTaskPresentation,
@@ -791,6 +793,7 @@ export function makeClaudeQueryOptions(input: {
   readonly settings?: ClaudeSettings;
   readonly sdkSettings?: string | ClaudeSdkSettings;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly scientAwareness?: string;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly allowedTools?: ReadonlyArray<string>;
@@ -883,6 +886,8 @@ export function makeClaudeQueryOptions(input: {
       type: "preset" as const,
       preset: "claude_code" as const,
       append:
+        (input.scientAwareness ?? buildScientAwareness()) +
+        "\n\n" +
         buildRuntimeInstructions({ harness: "Claude Code" }) +
         (input.mcpServers === undefined ? "" : T3_CODE_ORCHESTRATION_INSTRUCTIONS),
     },
@@ -942,6 +947,7 @@ export function claudeMcpQueryOverrides(input: {
   readonly allowedTools?: ReadonlyArray<string>;
 }): {
   readonly allowedTools?: ReadonlyArray<string>;
+  readonly scientAwareness: string;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
 } {
   const session =
@@ -949,12 +955,16 @@ export function claudeMcpQueryOverrides(input: {
       ? undefined
       : McpProviderSession.readMcpProviderSession(input.threadId);
   if (session === undefined) {
-    return input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools };
+    return {
+      scientAwareness: buildScientAwareness(),
+      ...(input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools }),
+    };
   }
   const mcpAllowedTools = input.readOnlySandbox
     ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS
     : [CLAUDE_T3_MCP_TOOL_WILDCARD];
   return {
+    scientAwareness: buildScientAwareness(session.capabilities, CLAUDE_SCIENT_TOOL_PROJECTION),
     allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
     mcpServers: {
       scient: {
@@ -1539,6 +1549,7 @@ function claudeRuntimeQueryPolicyKey(policy: ClaudeRuntimeQueryPolicy): string {
 export function claudeEffectiveQueryPolicyKey(
   queryPolicy: ClaudeRuntimeQueryPolicy,
   mcpOverrides: {
+    readonly scientAwareness?: string;
     readonly allowedTools?: ReadonlyArray<string>;
     readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
   },
@@ -1551,6 +1562,7 @@ export function claudeEffectiveQueryPolicyKey(
         : { allowedTools: mcpOverrides.allowedTools }),
     }),
     mcpServers: mcpOverrides.mcpServers,
+    scientAwareness: mcpOverrides.scientAwareness,
   });
 }
 

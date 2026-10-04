@@ -1,3 +1,4 @@
+import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { ProviderDriverKind, type DroidSettings } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -80,6 +81,7 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
         const runtime = yield* options.makeRuntime({
           ...input,
           droidSettings: options.settings,
+          systemPrompt: input.scientAwareness ?? buildScientAwareness(),
           environment: { ...options.environment, ...input.processEnvironment },
           childProcessSpawner: options.childProcessSpawner,
           ownDetachedProcessGroup: true,

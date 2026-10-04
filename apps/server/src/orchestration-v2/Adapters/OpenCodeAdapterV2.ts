@@ -1,3 +1,4 @@
+import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import type {
   Event as OpenCodeEvent,
   Message as OpenCodeMessage,
@@ -3222,6 +3223,7 @@ export function makeOpenCodeAdapterV2(
                 return;
               }
               const systemPrompt = [
+                buildScientAwareness(hasT3Mcp ? mcpSession?.capabilities : undefined),
                 orchestrationSystemPrompt,
                 buildRuntimeInstructions({
                   harness: "OpenCode",

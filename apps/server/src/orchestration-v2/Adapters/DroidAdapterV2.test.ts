@@ -6,6 +6,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   DroidSettings,
+  EnvironmentId,
   MessageId,
   NodeId,
   ProjectId,
@@ -27,6 +28,10 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as ServerConfig from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
+import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
+import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
 import { makeDroidAcpRuntime } from "../../provider/acp/DroidAcpSupport.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import * as ProviderAdapter from "../ProviderAdapter.ts";
@@ -55,20 +60,21 @@ const harness = Effect.fnUntraced(function* (
   locked = false,
   truncated = false,
   approveSpec = false,
+  capabilities?: ReadonlySet<McpCapability>,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const crypto = yield* Crypto.Crypto;
   const config = yield* ServerConfig.ServerConfig;
-  const binary = NodePath.join(config.stateDir, "droid");
   const requestsPath = NodePath.join(
     config.stateDir,
     `requests-${yield* crypto.randomUUIDv4}.jsonl`,
   );
-  yield* fs.writeFileString(
-    binary,
-    `#!/bin/sh\nexec '${process.execPath.replaceAll("'", "'\\''")}' '${mockAgentPath.replaceAll("'", "'\\''")}'\n`,
-  );
-  yield* fs.chmod(binary, 0o755);
+  const argvLogPath = NodePath.join(config.stateDir, `argv-${yield* crypto.randomUUIDv4}.txt`);
+  const binary = writeFakeCli({
+    directory: config.stateDir,
+    name: "droid",
+    source: execScriptSource({ scriptPath: mockAgentPath, argvLogPath }),
+  });
   const instanceId = ProviderInstanceId.make("droid-v2-test");
   const threadId = ThreadId.make("droid-v2-thread");
   const modelSelection = { instanceId, model: "default" };
@@ -77,6 +83,20 @@ const harness = Effect.fnUntraced(function* (
     runtimeMode: "approval-required" as const,
     interactionMode: "default" as const,
   };
+  if (capabilities !== undefined) {
+    McpProviderSession.setMcpProviderSession({
+      environmentId: EnvironmentId.make("droid-awareness"),
+      threadId,
+      providerSessionId: "droid-awareness",
+      providerInstanceId: instanceId,
+      endpoint: "http://127.0.0.1:43123/mcp",
+      authorizationHeader: "Bearer synthetic-droid-awareness",
+      capabilities,
+    });
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+    );
+  }
   const adapter = makeDroidAdapterV2({
     instanceId,
     settings: yield* decodeDroidSettings({ enabled: true, binaryPath: binary }),
@@ -198,10 +218,40 @@ const harness = Effect.fnUntraced(function* (
       .trim()
       .split("\n")
       .map((line) => decodeRequest(line));
-  return { send, terminal, requests, recorded, approval, runtime };
+  return {
+    arguments: () => NodeFS.readFileSync(argvLogPath, "utf8").trimEnd().split("\t"),
+    send,
+    terminal,
+    requests,
+    recorded,
+    approval,
+    runtime,
+  };
 });
 
 it.layer(testLayer, { excludeTestServices: true })("DroidAdapterV2", (it) => {
+  for (const granted of [false, true]) {
+    it.effect(
+      `delivers exact Scient awareness in native Droid system prompt with grants ${granted}`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const capabilities = granted
+              ? new Set<McpCapability>(["preview", "documents:build", "skills:read"])
+              : undefined;
+            const h = yield* harness(false, false, false, capabilities);
+            yield* h.send(1, "approval-required");
+            assert.equal((yield* h.terminal).status, "completed");
+            const args = h.arguments();
+            const prompt = args[args.indexOf("--append-system-prompt") + 1];
+            assert.equal(prompt, buildScientAwareness(capabilities));
+            assert.equal((prompt ?? "").includes("preview_status"), granted);
+            assert.equal((prompt ?? "").includes("scient_pdf_build"), granted);
+            assert.notInclude(prompt ?? "", "device_list");
+          }),
+        ),
+    );
+  }
   it.effect("requires explicit specification approval in full access", () =>
     Effect.scoped(
       Effect.gen(function* () {

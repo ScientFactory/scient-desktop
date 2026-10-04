@@ -50,10 +50,17 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import packageJson from "../../../package.json" with { type: "json" };
 import * as ServerConfig from "../../config.ts";
+import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
 import * as IdAllocator from "../IdAllocator.ts";
+import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as EventSink from "../EventSink.ts";
+import * as EventStore from "../EventStore.ts";
+import * as ProjectionStore from "../ProjectionStore.ts";
+import * as ProviderEventIngestor from "../ProviderEventIngestor.ts";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as Orchestrator from "../Orchestrator.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
@@ -78,6 +85,21 @@ const replayTranscriptJson = Schema.fromJsonString(CodexReplay.CodexAppServerRep
 const encodeReplayTranscriptJson = Schema.encodeEffect(replayTranscriptJson);
 const decodeReplayTranscriptJson = Schema.decodeUnknownEffect(replayTranscriptJson);
 const encodeStringJson = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
+const imageStoresLayer = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
+  Layer.provide(SqlitePersistenceMemory),
+);
+const imageSinkLayer = EventSink.layer.pipe(
+  Layer.provide(Layer.merge(imageStoresLayer, SqlitePersistenceMemory)),
+);
+const imagePersistenceLayer = Layer.mergeAll(
+  imageStoresLayer,
+  imageSinkLayer,
+  ProviderEventIngestor.layer.pipe(
+    Layer.provide(Layer.mergeAll(imageStoresLayer, imageSinkLayer, IdAllocator.layer)),
+  ),
+  IdAllocator.layer,
+  NodeServices.layer,
+);
 
 describe("Codex context usage compatibility", () => {
   const previous: ModelSelection = {
@@ -1583,6 +1605,9 @@ function codexReplayPreamble(input: {
           approvalsReviewer: "user",
           sandboxPolicy: { type: "dangerFullAccess" },
           summary: "detailed",
+          additionalContext: {
+            scient_awareness: { kind: "application", value: buildScientAwareness() },
+          },
         },
       },
     },
@@ -1639,6 +1664,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: (threadId: string) => Effect.Effect<unknown>,
     configureMcp?: boolean,
+    settings?: CodexSettings,
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1678,10 +1704,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       };
       const adapter = CodexAdapterV2.makeCodexAdapterV2({
         instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
-        settings: DEFAULT_CODEX_SETTINGS,
+        settings: settings ?? DEFAULT_CODEX_SETTINGS,
         environment: {},
         clientFactory,
         fileSystem,
+        path: yield* Path.Path,
         idAllocator,
         serverConfig,
         continuationRequests: {
@@ -1745,6 +1772,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         subagentUpdates,
         hasPendingBackgroundWork,
         firstTerminal: Deferred.await(firstTerminal),
+        serverConfig,
       };
     });
 
@@ -2518,22 +2546,309 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  for (const outcome of ["saved", "default-path", "missing", "foreign", "failed"] as const) {
+    it.effect(`projects native Codex generated images with ${outcome} materialization`, () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const home = yield* fs.makeTempDirectoryScoped({ prefix: "scient-codex-images-" });
+          const nativeThreadId = `images-${outcome}`;
+          const nativeTurnId = `image-turn-${outcome}`;
+          const imageId = "generated-image";
+          const imageRoot = path.join(home, "generated_images", nativeThreadId);
+          yield* fs.makeDirectory(imageRoot, { recursive: true });
+          const sourcePath = path.join(outcome === "foreign" ? home : imageRoot, `${imageId}.png`);
+          const bytes = new Uint8Array([
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0,
+          ]);
+          if (outcome !== "missing") yield* fs.writeFile(sourcePath, bytes);
+          const imageEvent: CodexReplay.CodexAppServerReplayEntry = {
+            type: "emit_inbound",
+            label: "native generated image",
+            frame: {
+              method: "item/completed",
+              params: {
+                threadId: nativeThreadId,
+                turnId: nativeTurnId,
+                item: {
+                  type: "imageGeneration",
+                  id: imageId,
+                  status: outcome === "failed" ? "failed" : "completed",
+                  result: "not-projected-inline-base64",
+                  ...(outcome === "default-path" ? {} : { savedPath: sourcePath }),
+                },
+              },
+            },
+          };
+          const replayContext = "Repeat generated image receipt after source removal";
+          const initialImages = yield* Deferred.make<void>();
+          const durableReplay = yield* Deferred.make<void>();
+          let receivedImages = 0;
+          const transcript = makeCodexReplayTranscript({
+            scenario: `images-${outcome}`,
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Draw an image" }),
+              imageEvent,
+              { ...imageEvent, label: "duplicate native image receipt" },
+              ...(outcome !== "saved"
+                ? []
+                : [
+                    {
+                      type: "expect_outbound" as const,
+                      label: "causal receipt replay trigger",
+                      frame: {
+                        id: 4,
+                        method: "thread/inject_items",
+                        params: {
+                          threadId: nativeThreadId,
+                          items: historyResponseItems([], replayContext),
+                        },
+                      },
+                    },
+                    { type: "emit_inbound" as const, frame: { id: 4, result: {} } },
+                    { ...imageEvent, label: "native replay after source removal" },
+                  ]),
+              {
+                type: "emit_inbound",
+                label: "final text",
+                frame: {
+                  method: "item/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    item: {
+                      type: "agentMessage",
+                      id: "image-final-answer",
+                      text: "The image is ready.",
+                      phase: "final_answer",
+                    },
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "completed",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                  },
+                },
+              },
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(
+            transcript,
+            (event) => {
+              if (event.type !== "message.updated" || event.message.text === "The image is ready.")
+                return Effect.void;
+              receivedImages += 1;
+              return receivedImages === 2
+                ? Deferred.succeed(initialImages, undefined)
+                : receivedImages === 3
+                  ? Deferred.succeed(durableReplay, undefined)
+                  : Effect.void;
+            },
+            undefined,
+            undefined,
+            false,
+            { ...DEFAULT_CODEX_SETTINGS, homePath: home },
+          );
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`image-attempt-${outcome}`),
+              text: "Draw an image",
+            }),
+          );
+          if (outcome === "saved") {
+            yield* Deferred.await(initialImages);
+            yield* fs.remove(sourcePath);
+            if (harness.runtime.injectHistory === undefined)
+              return yield* Effect.die("Missing native replay trigger");
+            yield* harness.runtime.injectHistory({
+              providerThread: harness.providerThread,
+              context: replayContext,
+              messages: [],
+            });
+            yield* Deferred.await(durableReplay);
+          }
+          yield* harness.firstTerminal;
+          const imageMessages = harness.events.filter(
+            (event) =>
+              event.type === "message.updated" &&
+              event.message.role === "assistant" &&
+              event.message.text !== "The image is ready.",
+          );
+          assert.lengthOf(imageMessages, outcome === "saved" ? 3 : 2);
+          const first = imageMessages[0];
+          const replay = imageMessages[1];
+          if (first?.type !== "message.updated" || replay?.type !== "message.updated")
+            return yield* Effect.die("Missing image messages");
+          assert.equal(first.message.id, replay.message.id);
+          assert.deepEqual(first.message.attachments, replay.message.attachments);
+          for (const receipt of imageMessages)
+            if (receipt.type === "message.updated") {
+              assert.equal(receipt.message.id, first.message.id);
+              assert.deepEqual(receipt.message.attachments, first.message.attachments);
+            }
+          const turnItem = harness.events.find(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "assistant_message" &&
+              event.turnItem.messageId === first.message.id,
+          );
+          if (
+            turnItem?.type !== "turn_item.updated" ||
+            turnItem.turnItem.type !== "assistant_message"
+          )
+            return yield* Effect.die("Missing image assistant item");
+          assert.deepEqual(turnItem.turnItem.attachments, first.message.attachments);
+          assert.equal(turnItem.turnItem.text, first.message.text);
+          assert.equal(first.message.streaming, false);
+          if (outcome === "saved" || outcome === "default-path") {
+            assert.equal(first.message.text, "");
+            assert.lengthOf(first.message.attachments, 1);
+            const attachment = first.message.attachments[0];
+            if (attachment?.type !== "image") return yield* Effect.die("Missing image attachment");
+            const durablePath = resolveAttachmentPath({
+              attachmentsDir: harness.serverConfig.attachmentsDir,
+              attachment,
+            });
+            if (!durablePath) return yield* Effect.die("Missing durable attachment path");
+            assert.deepEqual(yield* fs.readFile(durablePath), bytes);
+            assert.notEqual(durablePath, sourcePath);
+          } else {
+            assert.isEmpty(first.message.attachments);
+            assert.include(first.message.text, "Scient could not attach it");
+            assert.notInclude(first.message.text, sourcePath);
+          }
+          assert.isTrue(
+            harness.events.some(
+              (event) =>
+                event.type === "message.updated" && event.message.text === "The image is ready.",
+            ),
+          );
+          assert.isFalse(
+            harness.events.some(
+              (event) =>
+                event.type === "message.updated" &&
+                event.message.text.includes("not-projected-inline-base64"),
+            ),
+          );
+          assert.equal(harness.terminalEvents()[0]?.status, "completed");
+          const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+          const sink = yield* EventSink.EventSinkV2;
+          const store = yield* EventStore.EventStoreV2;
+          const projections = yield* ProjectionStore.ProjectionStoreV2;
+          const ids = yield* IdAllocator.IdAllocatorV2;
+          const now = yield* DateTime.now;
+          const appThread = makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`image-attempt-${outcome}`),
+            text: "Draw an image",
+          }).appThread;
+          yield* sink.write({
+            events: [
+              {
+                id: yield* ids.allocate.event({ threadId: harness.threadId }),
+                threadId: harness.threadId,
+                type: "thread.created",
+                occurredAt: now,
+                payload: appThread,
+              },
+            ],
+          });
+          for (const event of harness.events) {
+            if (
+              event.type !== "message.updated" &&
+              event.type !== "turn_item.updated" &&
+              event.type !== "node.updated"
+            )
+              continue;
+            yield* ingestor.ingestNormalized({
+              providerSessionId: harness.runtime.providerSession.id,
+              providerInstanceId: CODEX_TEST_MODEL_SELECTION.instanceId,
+              threadId: harness.threadId,
+              event,
+            });
+          }
+          const projected = yield* projections.getThreadProjection(harness.threadId);
+          assert.lengthOf(
+            projected.messages.filter((message) => message.id === first.message.id),
+            1,
+          );
+          assert.deepEqual(
+            projected.messages.find((message) => message.id === first.message.id)?.attachments,
+            first.message.attachments,
+          );
+          const projectedItem = projected.turnItems.find(
+            (item) => item.type === "assistant_message" && item.messageId === first.message.id,
+          );
+          if (projectedItem?.type !== "assistant_message")
+            return yield* Effect.die("Missing persisted image item");
+          assert.deepEqual(projectedItem.attachments, first.message.attachments);
+          const stored = yield* store.read({ threadId: harness.threadId }).pipe(Stream.runCollect);
+          const rebuilt = yield* Effect.gen(function* () {
+            const replayed = yield* ProjectionStore.ProjectionStoreV2;
+            for (const row of stored) yield* replayed.apply(row.event);
+            return yield* replayed.getThreadProjection(harness.threadId);
+          }).pipe(Effect.provide(ProjectionStore.layerMemory));
+          assert.deepEqual(
+            rebuilt.messages.find((message) => message.id === first.message.id)?.attachments,
+            first.message.attachments,
+          );
+          const rebuiltItem = rebuilt.turnItems.find(
+            (item) => item.type === "assistant_message" && item.messageId === first.message.id,
+          );
+          if (rebuiltItem?.type !== "assistant_message")
+            return yield* Effect.die("Missing rebuilt image item");
+          assert.deepEqual(rebuiltItem.attachments, first.message.attachments);
+          assert.equal(rebuiltItem.text, first.message.text);
+        }).pipe(Effect.provide(imagePersistenceLayer)),
+      ),
+    );
+  }
+
   it.effect("preserves T3 context on the wire and restores it after compaction", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const nativeThreadId = "context-thread";
         const nativeTurnId = "context-turn";
+        const capabilities = new Set([
+          "preview",
+          "documents:build",
+          "compute:inventory",
+          "skills:read",
+        ] as const);
         const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
           nativeThreadId,
           codexInput: [{ type: "text", text: "work" }],
           runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
           modelSelection: CODEX_TEST_MODEL_SELECTION,
           hasT3Mcp: true,
+          mcpCapabilities: capabilities,
         });
         assert.include(
           params.additionalContext?.t3_code_orchestration?.value ?? "",
           "delegate_task",
         );
+        assert.include(params.additionalContext?.scient_awareness?.value ?? "", "scient_pdf_build");
+        assert.include(
+          params.additionalContext?.scient_awareness?.value ?? "",
+          "scient_compute_inventory",
+        );
+        assert.include(
+          params.additionalContext?.scient_awareness?.value ?? "",
+          "scient_skill_load",
+        );
+        assert.notInclude(params.additionalContext?.scient_awareness?.value ?? "", "device_list");
         const entries = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" });
         const transcript = makeCodexReplayTranscript({
           scenario: "restore-context",
@@ -2595,7 +2910,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           providerInstanceId: ProviderInstanceId.make("codex"),
           endpoint: "http://127.0.0.1:43123/mcp",
           authorizationHeader: "Bearer test",
-          capabilities: new Set(["preview"] as const),
+          capabilities,
         });
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => McpProviderSession.clearMcpProviderSession(harness.threadId)),
@@ -2787,6 +3102,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   approvalsReviewer: "user",
                   sandboxPolicy: { type: "dangerFullAccess" },
                   summary: "detailed",
+                  additionalContext: {
+                    scient_awareness: { kind: "application", value: buildScientAwareness() },
+                  },
                 },
               },
             },

@@ -1,3 +1,6 @@
+import { materializeGeneratedImageAttachment } from "../../generatedImageAttachments.ts";
+import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
+import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
 import { historyResponseItems } from "../ContextHandoffBudget.ts";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
@@ -700,6 +703,7 @@ export function buildCodexTurnStartParams(input: {
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly modelSelection: ModelSelection;
   readonly hasT3Mcp?: boolean;
+  readonly mcpCapabilities?: ReadonlySet<McpCapability>;
   readonly browserToolsAvailable?: boolean;
   readonly deviceToolsAvailable?: boolean;
   /** ChatGPT token sharing does not accept service tiers. */
@@ -733,12 +737,13 @@ export function buildCodexTurnStartParams(input: {
       input.hasT3Mcp === true
         ? buildCodexAdditionalContext(
             { model: input.modelSelection.model, reasoningEffort: effort ?? "medium" },
-            new Set([
-              ...((input.browserToolsAvailable ?? true) ? (["preview"] as const) : []),
-              ...(input.deviceToolsAvailable ? (["device"] as const) : []),
-            ]),
+            input.mcpCapabilities ??
+              new Set([
+                ...((input.browserToolsAvailable ?? true) ? (["preview"] as const) : []),
+                ...(input.deviceToolsAvailable ? (["device"] as const) : []),
+              ]),
           )
-        : undefined;
+        : { scient_awareness: { kind: "application" as const, value: buildScientAwareness() } };
     const collaborationMode: CodexSchema.ClientRequest__CollaborationMode | undefined =
       input.runtimePolicy.interactionMode !== "plan" && developerInstructions === undefined
         ? undefined
@@ -1412,6 +1417,7 @@ export const createCodexAdapterV2 = (
     const continuationRequests = yield* ProviderContinuationRequests;
     const fileSystem = yield* FileSystem.FileSystem;
     const hostEnvironment = yield* HostProcessEnvironment;
+    const path = yield* Path.Path;
     const idAllocator = yield* IdAllocatorV2;
     const serverConfig = yield* ServerConfig;
     const homeLayout = yield* resolveCodexHomeLayout(config);
@@ -1441,6 +1447,7 @@ export const createCodexAdapterV2 = (
       environment: mergeProviderInstanceEnvironment(environment, hostEnvironment),
       clientFactory,
       fileSystem,
+      path,
       idAllocator,
       serverConfig,
       continuationRequests,
@@ -1468,6 +1475,7 @@ export interface CodexAdapterV2Options {
    */
   readonly resolveRuntime?: Effect.Effect<CodexEffectiveRuntime, ProviderSetupError, Scope.Scope>;
   readonly fileSystem: FileSystem.FileSystem;
+  readonly path: Path.Path;
   readonly idAllocator: IdAllocatorV2Shape;
   readonly serverConfig: ServerConfig["Service"];
   /**
@@ -1481,7 +1489,7 @@ export interface CodexAdapterV2Options {
 }
 
 export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): ProviderAdapterV2Shape {
-  const { clientFactory, fileSystem, idAllocator, serverConfig } = adapterOptions;
+  const { clientFactory, fileSystem, path, idAllocator, serverConfig } = adapterOptions;
   const continuationRequests = adapterOptions.continuationRequests;
 
   return ProviderAdapterV2.of({
@@ -4123,6 +4131,94 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             }
             const { context, settled } = resolved;
 
+            if (payload.item.type === "imageGeneration") {
+              const image = payload.item;
+              const layout = yield* resolveCodexHomeLayout(
+                resolvedRuntime?.config ?? adapterOptions.settings,
+              ).pipe(Effect.provideService(Path.Path, path));
+              const homes = Array.from(
+                new Set(
+                  [layout.effectiveHomePath, layout.sharedHomePath].filter(
+                    (home): home is string => home !== undefined,
+                  ),
+                ),
+              );
+              const nativeThreadId = context.providerThread.nativeThreadRef?.nativeId;
+              const imported = yield* Effect.gen(function* () {
+                if (image.failure != null || image.status === "failed")
+                  return yield* toProtocolError("Codex image generation failed.");
+                if (
+                  !nativeThreadId ||
+                  /[\\/]/u.test(nativeThreadId) ||
+                  path.basename(nativeThreadId) !== nativeThreadId ||
+                  nativeThreadId === "." ||
+                  nativeThreadId === ".."
+                )
+                  return yield* toProtocolError(
+                    "Generated image has no valid provider-thread identity.",
+                  );
+                const roots = homes.map((home) =>
+                  path.join(home, "generated_images", nativeThreadId),
+                );
+                const candidates = image.savedPath
+                  ? [image.savedPath]
+                  : roots.map((root) => path.join(root, `${image.id}.png`));
+                return yield* Effect.tryPromise({
+                  try: async () => {
+                    for (const sourcePath of candidates) {
+                      try {
+                        return await materializeGeneratedImageAttachment({
+                          threadId: context.projectionThreadId,
+                          sourcePath,
+                          provenanceKey: `${adapterOptions.instanceId}\0${nativeThreadId}\0${image.id}`,
+                          allowedSourceRoots: roots,
+                          attachmentsDir: serverConfig.attachmentsDir,
+                          allowDurableFallbackWhenSourceUnavailable: true,
+                        });
+                      } catch {
+                        /* Another authorized home may hold the image. */
+                      }
+                    }
+                    throw new Error("Generated image could not be imported.");
+                  },
+                  catch: () => toProtocolError("Generated image could not be imported."),
+                });
+              }).pipe(Effect.result);
+              const text =
+                imported._tag === "Success"
+                  ? ""
+                  : "Codex generated an image, but Scient could not attach it. The image may still be available in Codex's generated images.";
+              const artifacts = yield* buildAgentMessageArtifacts(
+                context,
+                { id: image.id, text },
+                true,
+              );
+              yield* emitProviderEvent({
+                type: "node.updated",
+                driver: CODEX_PROVIDER,
+                node: artifacts.node,
+              });
+              yield* emitProviderEvent({
+                type: "message.updated",
+                driver: CODEX_PROVIDER,
+                message: {
+                  ...artifacts.message,
+                  attachments: imported._tag === "Success" ? [imported.success] : [],
+                },
+              });
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CODEX_PROVIDER,
+                turnItem: {
+                  ...artifacts.turnItem,
+                  ...(artifacts.turnItem.type === "assistant_message"
+                    ? { attachments: imported._tag === "Success" ? [imported.success] : [] }
+                    : {}),
+                },
+              });
+              return;
+            }
+
             if (payload.item.type === "reasoning") {
               yield* completeReasoning(payload.turnId, payload.item);
               return;
@@ -5484,6 +5580,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 runtimePolicy: turnInput.runtimePolicy,
                 modelSelection: turnInput.modelSelection,
                 hasT3Mcp: mcpSession !== undefined,
+                ...(mcpSession === undefined ? {} : { mcpCapabilities: mcpSession.capabilities }),
                 browserToolsAvailable: mcpSession?.capabilities.has("preview") ?? false,
                 deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
                 omitServiceTier: adapterOptions.resolveRuntime !== undefined,

@@ -16,7 +16,7 @@ import type { EventSinkV2Shape } from "../EventSink.ts";
 
 interface HistoryRow {
   readonly item_id: string;
-  readonly source: "message" | "system" | "activity" | "approval" | "plan";
+  readonly source: "message" | "reasoning" | "system" | "activity" | "approval" | "plan";
   readonly created_at: string;
   readonly updated_at: string;
   readonly ordinal: number;
@@ -51,10 +51,23 @@ const SystemMessage = Schema.Struct({
   attachments: Schema.NullOr(Schema.fromJsonString(Schema.Unknown)),
   context: Schema.NullOr(Schema.fromJsonString(Schema.Unknown)),
 });
+const Reasoning = Schema.Struct({
+  text: Schema.String,
+  isStreaming: Schema.Literals([0, 1]),
+});
+class LegacyHistoryPositionError extends Schema.TaggedError<LegacyHistoryPositionError>()(
+  "LegacyHistoryPositionError",
+  { threadId: Schema.String },
+) {
+  override get message(): string {
+    return "Historical items exceed the reserved transcript position range.";
+  }
+}
 const decodeActivity = Schema.decodeUnknownEffect(Schema.fromJsonString(Activity));
 const decodeApproval = Schema.decodeUnknownEffect(Schema.fromJsonString(Approval));
 const decodePlan = Schema.decodeUnknownEffect(Schema.fromJsonString(Plan));
 const decodeSystem = Schema.decodeUnknownEffect(Schema.fromJsonString(SystemMessage));
+const decodeReasoning = Schema.decodeUnknownEffect(Schema.fromJsonString(Reasoning));
 const decodeTurnItem = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2TurnItemJson),
 );
@@ -72,6 +85,11 @@ export const prepareLegacyHistory = Effect.fn("LegacyScientHistory.prepare")(fun
       SELECT 'migration:v1:turn-item:' || message_id AS item_id, 'message' AS source,
         created_at, updated_at, 0 AS source_order, 0 AS ordering, '{}' AS record_json
       FROM projection_thread_messages WHERE thread_id = ${threadId} AND role IN ('user', 'assistant')
+      UNION ALL
+      SELECT 'migration:v1:history:reasoning:' || message_id, 'reasoning', created_at, updated_at, 0, 0,
+        CASE WHEN ${includeDetails} = 1 THEN json_object('text', text, 'isStreaming', is_streaming)
+        ELSE '{}' END
+      FROM projection_thread_messages WHERE thread_id = ${threadId} AND role = 'reasoning'
       UNION ALL
       SELECT 'migration:v1:history:system:' || message_id, 'system', created_at, updated_at, 1, 0,
         CASE WHEN ${includeDetails} = 1 THEN
@@ -106,6 +124,24 @@ export const prepareLegacyHistory = Effect.fn("LegacyScientHistory.prepare")(fun
   // occupy the new artifact slots, and the ordinal index is unique per thread.
   yield* sql`DELETE FROM orchestration_v2_turn_item_positions WHERE thread_id = ${threadId}
     AND (turn_item_id LIKE 'migration:v1:turn-item:%' OR turn_item_id LIKE 'migration:v1:history:%')`;
+  // Completed imports may already have native runless notices after the old
+  // prefix. Move only the colliding suffix, preserving its order and payloads.
+  const suffix = yield* sql<{ turn_item_id: string; ordinal: number }>`
+    SELECT turn_item_id, ordinal FROM orchestration_v2_turn_item_positions
+    WHERE thread_id = ${threadId} AND ordinal < 1000000 ORDER BY ordinal`;
+  let previousOrdinal = rows.length;
+  const moved = suffix.flatMap((position) => {
+    const ordinal = Math.max(position.ordinal, previousOrdinal + 1);
+    previousOrdinal = ordinal;
+    return ordinal === position.ordinal ? [] : [{ ...position, ordinal }];
+  });
+  if (previousOrdinal >= 1000000) {
+    return yield* new LegacyHistoryPositionError({ threadId });
+  }
+  for (const position of moved.toReversed()) {
+    yield* sql`UPDATE orchestration_v2_turn_item_positions SET ordinal = ${position.ordinal}
+      WHERE thread_id = ${threadId} AND turn_item_id = ${position.turn_item_id}`;
+  }
   for (const row of rows) {
     yield* sql`INSERT INTO orchestration_v2_turn_item_positions (thread_id, turn_item_id, ordinal)
       VALUES (${threadId}, ${row.item_id}, ${row.ordinal})`;
@@ -131,29 +167,34 @@ export const importLegacyHistory = Effect.fn("LegacyScientHistory.import")(funct
     (yield* sql<{ plan_id: string }>`SELECT plan_id FROM orchestration_v2_projection_plans
       WHERE thread_id = ${threadId}`).map((row) => row.plan_id),
   );
-  const messages = yield* sql<{ payload_json: string; ordinal: number }>`
+  const positionedItems = yield* sql<{ payload_json: string; ordinal: number }>`
     SELECT items.payload_json, positions.ordinal
     FROM orchestration_v2_projection_turn_items AS items
     JOIN orchestration_v2_turn_item_positions AS positions
       ON positions.thread_id = items.thread_id AND positions.turn_item_id = items.turn_item_id
     WHERE items.thread_id = ${threadId}
-      AND items.turn_item_id LIKE 'migration:v1:turn-item:%'
+      AND positions.ordinal < 1000000
       AND items.ordinal <> positions.ordinal
+    ORDER BY positions.ordinal DESC
   `;
-  for (const message of messages) {
-    const item = yield* decodeTurnItem(message.payload_json);
+  for (const positioned of positionedItems) {
+    const item = yield* decodeTurnItem(positioned.payload_json);
     events.push({
-      id: EventId.make(`migration:v1:history:position:${item.id}:${message.ordinal}`),
+      id: EventId.make(`migration:v1:history:position:${item.id}:${positioned.ordinal}`),
       type: "turn-item.updated",
       threadId,
       occurredAt: item.updatedAt,
-      payload: { ...item, ordinal: message.ordinal },
+      payload: { ...item, ordinal: positioned.ordinal },
     });
     if (events.length === 100) {
-      yield* eventSink.write({ events });
+      yield* eventSink.write({ events, guardTurnItemPositionRepairs: true });
       events = [];
       yield* Effect.yieldNow;
     }
+  }
+  if (events.length > 0) {
+    yield* eventSink.write({ events, guardTurnItemPositionRepairs: true });
+    events = [];
   }
   for (const row of rows) {
     if (row.source === "message") continue;
@@ -176,6 +217,18 @@ export const importLegacyHistory = Effect.fn("LegacyScientHistory.import")(funct
     };
     let item: OrchestrationV2TurnItem;
     switch (row.source) {
+      case "reasoning": {
+        const record = yield* decodeReasoning(row.record_json);
+        item = {
+          ...base,
+          type: "reasoning",
+          title: null,
+          text: record.text,
+          streaming: false,
+          status: record.isStreaming === 1 ? "interrupted" : "completed",
+        };
+        break;
+      }
       case "activity": {
         const record = yield* decodeActivity(row.record_json);
         const identity = toolIdentity(record.payload);

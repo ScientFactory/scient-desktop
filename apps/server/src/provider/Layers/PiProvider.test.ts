@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { checkPiProviderStatus, MINIMUM_PI_VERSION } from "./PiProvider.ts";
+import { decodePiModelSlug, encodePiModelSlug } from "../pi/PiModel.ts";
 
 /**
  * Deliberately outside the valid pid range: PiRpc's group kill must never land
@@ -253,6 +254,13 @@ describe("PiProvider", () => {
                         name: "Claude",
                         reasoning: true,
                       },
+                      {
+                        provider: "team/provider %",
+                        id: "org/model with space%2F",
+                        name: "Private canonical model",
+                        reasoning: false,
+                      },
+                      { provider: "", id: "invalid", name: "Invalid provider" },
                     ],
                   };
                 case "get_commands":
@@ -293,6 +301,18 @@ describe("PiProvider", () => {
       assert.equal(model?.capabilities?.optionDescriptors?.[0]?.id, "thinking");
       // Discovery's session preference is not an existing conversation's applied state.
       assert.equal(model?.capabilities?.optionDescriptors?.[0]?.currentValue, undefined);
+      const privateModel = snapshot.models.find(
+        (entry) => entry.name === "Private canonical model",
+      );
+      assert.equal(
+        privateModel?.slug,
+        encodePiModelSlug("team/provider %", "org/model with space%2F"),
+      );
+      assert.deepEqual(decodePiModelSlug(privateModel?.slug ?? ""), {
+        provider: "team/provider %",
+        modelId: "org/model with space%2F",
+      });
+      assert.isFalse(snapshot.models.some((entry) => entry.name === "Invalid provider"));
 
       assert.deepEqual(
         snapshot.slashCommands?.map((command) => [command.name, command.description]),

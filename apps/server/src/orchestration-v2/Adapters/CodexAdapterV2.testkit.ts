@@ -13,6 +13,7 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../../config.ts";
+import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { ProviderAdapterOpenSessionError } from "../ProviderAdapter.ts";
 import { ProviderAdapterDriverCreateError } from "../ProviderAdapterDriver.ts";
@@ -237,13 +238,33 @@ const decodeCodexAppServerReplayTranscript = Schema.decodeUnknownEffect(
   CodexReplay.CodexAppServerReplayTranscript,
 );
 
-/** Adapt the upstream capture's host identity; all protocol expectations remain exact. */
+/** Adapt recorded request expectations for Scient identity and always-on core guidance.
+ * Native response/event frames and the structural matcher remain unchanged.
+ */
 function materializeScientClientIdentity(transcript: ProviderReplayTranscript) {
   return {
     ...transcript,
     entries: transcript.entries.map((entry) => {
       if (entry.type !== "expect_outbound" || !Predicate.isObject(entry.frame)) return entry;
       const frame = entry.frame;
+      if (
+        frame.method === "turn/start" &&
+        Predicate.isObject(frame.params) &&
+        frame.params.additionalContext === undefined
+      ) {
+        return {
+          ...entry,
+          frame: {
+            ...frame,
+            params: {
+              ...frame.params,
+              additionalContext: {
+                scient_awareness: { kind: "application", value: buildScientAwareness() },
+              },
+            },
+          },
+        };
+      }
       if (frame.method !== "initialize" || !Predicate.isObject(frame.params)) return entry;
       const params = frame.params;
       if (!Predicate.isObject(params.clientInfo)) return entry;

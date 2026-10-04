@@ -42,6 +42,9 @@ import type {
   ProviderAdapterV2SessionRuntime,
 } from "../ProviderAdapter.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
+import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
+import { t3OrchestrationSystemPrompt } from "../../provider/T3OrchestrationInstructions.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
 import * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
@@ -139,6 +142,7 @@ const noOpenRequests: ReadonlyArray<ProviderReplayEntry> = [
  */
 const withInstructions = (
   entries: ReadonlyArray<ProviderReplayEntry>,
+  expectedInstructions = "<any>",
 ): ReadonlyArray<ProviderReplayEntry> => {
   const first = entries.findIndex(
     (entry) =>
@@ -172,7 +176,7 @@ const withInstructions = (
         out("session.instructions.entry.put", {
           sessionID: SESSION,
           key: "t3-code",
-          value: "<any>",
+          value: expectedInstructions,
         }),
         reply("session.instructions.entry.put", null),
         ...entries.slice(at),
@@ -313,25 +317,32 @@ const colorForm = {
  */
 const resumed = (
   entries: ReadonlyArray<ProviderReplayEntry>,
-  options?: { readonly external?: boolean; readonly supervised?: boolean },
+  options?: {
+    readonly external?: boolean;
+    readonly supervised?: boolean;
+    readonly instructions?: string;
+  },
 ) =>
   Effect.gen(function* () {
     const runtime = yield* openCode2ReplayRuntime(
-      withInstructions([
-        ...opening,
-        out("session.get", { sessionID: SESSION }),
-        replyData("session.get", sessionInfo()),
-        ...noOpenRequests,
-        ...(options?.supervised === true
-          ? [
-              out("agent.list", "<any>"),
-              reply("agent.list", agentList),
-              out("session.update", { sessionID: SESSION, permissions: supervisedRules }),
-              reply("session.update", null),
-            ]
-          : []),
-        ...entries,
-      ]),
+      withInstructions(
+        [
+          ...opening,
+          out("session.get", { sessionID: SESSION }),
+          replyData("session.get", sessionInfo()),
+          ...noOpenRequests,
+          ...(options?.supervised === true
+            ? [
+                out("agent.list", "<any>"),
+                reply("agent.list", agentList),
+                out("session.update", { sessionID: SESSION, permissions: supervisedRules }),
+                reply("session.update", null),
+              ]
+            : []),
+          ...entries,
+        ],
+        options?.instructions,
+      ),
       options?.external === undefined ? undefined : { external: options.external },
     );
     const thread = yield* runtime.resumeThread({
@@ -398,6 +409,75 @@ const history = {
 };
 
 describe("OpenCode2 adapter", () => {
+  for (const external of [false, true]) {
+    it.effect(
+      `writes exact Scient awareness through native OpenCode2 instructions with external ${external}`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const capabilities = new Set([
+              "documents:build",
+              "skills:read",
+              "compute:inventory",
+            ] as const);
+            McpProviderSession.setMcpProviderSession({
+              environmentId: EnvironmentId.make("opencode2-awareness"),
+              threadId,
+              providerSessionId: "opencode2-awareness",
+              providerInstanceId: instanceId,
+              endpoint: "http://127.0.0.1:3773/mcp",
+              authorizationHeader: "Bearer thread-credential",
+              capabilities,
+            });
+            yield* Effect.addFinalizer(() =>
+              Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+            );
+            const server = "t3-code-thread_opencode2-adapter";
+            const instructions = [
+              buildScientAwareness(external ? undefined : capabilities),
+              buildRuntimeInstructions({ harness: "OpenCode", model: bigPickle.model }),
+              t3OrchestrationSystemPrompt(!external),
+            ]
+              .filter(Boolean)
+              .join("\n\n");
+            const { runtime, thread } = yield* resumed(
+              [
+                ...(external
+                  ? []
+                  : [
+                      out("mcp.add", {
+                        server,
+                        "location[directory]": WORK,
+                        config: {
+                          type: "remote",
+                          url: "http://127.0.0.1:3773/mcp",
+                          headers: { Authorization: "Bearer thread-credential" },
+                          oauth: false,
+                        },
+                      }),
+                      reply("mcp.add", null),
+                    ]),
+                out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+                promptAccepted,
+                event("session.execution.succeeded", { sessionID: SESSION }),
+                ...(external
+                  ? []
+                  : [
+                      out("mcp.remove", { server, "location[directory]": WORK }),
+                      reply("mcp.remove", null),
+                    ]),
+              ],
+              { external, instructions },
+            );
+            const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+            yield* runtime.startTurn(turnInput(thread));
+            assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+            yield* runtime.unloadThread!({ providerThread: thread });
+          }),
+        ),
+    );
+  }
+
   it.effect("switches the session's model and variant before a turn that changed them", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([

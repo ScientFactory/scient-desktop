@@ -1,3 +1,4 @@
+import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 /**
  * PiAdapterV2 — orchestrator-v2 adapter for the Pi coding agent
  * (https://pi.dev), driving `pi --mode rpc` over stdio JSONL via `PiRpc.ts`.
@@ -433,7 +434,10 @@ export function makePiAdapterV2(
       }
       const launch = buildPiRpcLaunch({
         launchArgs: resolvedLaunchArgs.args,
-        environment: options.environment,
+        environment: {
+          ...options.environment,
+          SCIENT_PI_AWARENESS: buildScientAwareness(mcpSession?.capabilities),
+        },
         mcpSession,
         extensionPath,
         runtimeMode: input.runtimePolicy.runtimeMode,

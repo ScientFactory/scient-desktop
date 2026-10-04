@@ -2,6 +2,7 @@ import * as NodeModule from "node:module";
 import * as NodeVM from "node:vm";
 import { assert, describe, it } from "@effect/vitest";
 
+import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { PI_T3_MCP_EXTENSION_SOURCE } from "./piT3McpExtensionSource.ts";
 
 type RequestHook = (
@@ -55,4 +56,45 @@ describe("Pi upstream output-budget workaround", () => {
       hook({ payload: { max_tokens: 231_969 } }, { model: { provider: "anthropic" } }),
     );
   });
+});
+
+describe("native Pi Scient awareness channel", () => {
+  for (const mcpAvailable of [false, true]) {
+    it(`appends exact awareness through before_agent_start with MCP ${mcpAvailable}`, async () => {
+      type Hook = (event: { systemPrompt: string }) => { systemPrompt: string };
+      const handlers = new Map<string, Hook>();
+      const capabilities = mcpAvailable
+        ? new Set(["documents:build", "compute:inventory", "skills:read"] as const)
+        : undefined;
+      const env: Record<string, string> = {
+        SCIENT_PI_AWARENESS: buildScientAwareness(capabilities),
+        ...(mcpAvailable
+          ? { T3_MCP_URL: "http://127.0.0.1:43123/mcp", T3_MCP_BEARER_TOKEN: "synthetic-token" }
+          : {}),
+      };
+      const source = NodeModule.stripTypeScriptTypes(
+        PI_T3_MCP_EXTENSION_SOURCE.replace('import { Type } from "typebox";', "").replace(
+          "export default async function",
+          "async function",
+        ),
+      );
+      await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
+        process: { env },
+        pi: { on: (name: string, handler: Hook) => handlers.set(name, handler) },
+      });
+      const hook = handlers.get("before_agent_start");
+      assert.isDefined(hook);
+      if (!hook) throw new Error("Missing native system prompt hook");
+      const prompt = hook({ systemPrompt: "Native model instructions" }).systemPrompt;
+      assert.include(prompt, `Native model instructions\n\n${buildScientAwareness(capabilities)}`);
+      assert.equal(prompt.includes("scient_pdf_build"), mcpAvailable);
+      assert.equal(prompt.includes("scient_skill_load"), mcpAvailable);
+      assert.notInclude(prompt, "preview_status");
+      assert.notInclude(prompt, "device_list");
+      assert.notInclude(prompt, "synthetic-token");
+      assert.isUndefined(env.SCIENT_PI_AWARENESS);
+      assert.isTrue(handlers.has("tool_call"));
+      if (!mcpAvailable) assert.notInclude(prompt, "delegate_task");
+    });
+  }
 });

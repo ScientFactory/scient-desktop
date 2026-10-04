@@ -248,6 +248,11 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
 
   const endpoint = env(URL_ENV);
   const token = env(TOKEN_ENV);
+  const awareness = env("SCIENT_PI_AWARENESS") ?? "";
+  delete process.env.SCIENT_PI_AWARENESS;
+  pi.on("before_agent_start", (event) => ({
+    systemPrompt: [event.systemPrompt, awareness, endpoint && token ? ORCHESTRATION_INSTRUCTIONS : ""].filter(Boolean).join("\\n\\n"),
+  }));
   if (endpoint === undefined || token === undefined) {
     pi.on("session_start", async (_event, ctx) => {
       ctx.ui.notify(
@@ -318,11 +323,5 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     }
   });
 
-  // Deliver orchestration guidance through pi's real system-prompt channel.
-  // Wrapping the first user message instead would stop it from starting
-  // with "/" and silently break slash-command expansion.
-  pi.on("before_agent_start", (event) => ({
-    systemPrompt: event.systemPrompt + "\\n\\n" + ORCHESTRATION_INSTRUCTIONS,
-  }));
 }
 `;
