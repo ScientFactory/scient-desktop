@@ -383,17 +383,33 @@ const PROMPT_ENTRANCE_KEYFRAMES: Keyframe[] = [
   { opacity: 1, clipPath: "inset(0 0 0 0)" },
 ];
 const PROMPT_ENTRANCE_TIMING: KeyframeAnimationOptions = { duration: 300, delay: 100 };
-// The working line draws in from the left while it fades to its color; its label fades in.
-const WORKING_LINE_KEYFRAMES: Keyframe[] = [
-  { opacity: 0, transform: "scaleX(0)" },
-  { opacity: 1, transform: "scaleX(1)" },
+// The working header (label and line) shows at once, faint, and a soft edge
+// darkens it to full color from left to right. Masking only: nothing moves.
+const WORKING_HEADER_MASK = "linear-gradient(to right, #000 40%, rgb(0 0 0 / 0.3) 60%)";
+const WORKING_HEADER_KEYFRAMES: Keyframe[] = [
+  {
+    maskImage: WORKING_HEADER_MASK,
+    maskSize: "250% 100%",
+    maskPosition: "100% 0",
+    webkitMaskImage: WORKING_HEADER_MASK,
+    webkitMaskSize: "250% 100%",
+    webkitMaskPosition: "100% 0",
+  },
+  {
+    maskImage: WORKING_HEADER_MASK,
+    maskSize: "250% 100%",
+    maskPosition: "0% 0",
+    webkitMaskImage: WORKING_HEADER_MASK,
+    webkitMaskSize: "250% 100%",
+    webkitMaskPosition: "0% 0",
+  },
 ];
-const FADE_IN_KEYFRAMES: Keyframe[] = [{ opacity: 0 }, { opacity: 1 }];
-const WORKING_LINE_TIMING: KeyframeAnimationOptions = { duration: 400, delay: 150 };
-const WORKING_LABEL_TIMING: KeyframeAnimationOptions = { duration: 200, delay: 150 };
+const WORKING_HEADER_TIMING: KeyframeAnimationOptions = { duration: 800, delay: 100 };
 // After a first prompt's entrance (100ms delay + 300ms) settles.
-const WORKING_LINE_AFTER_ENTRANCE_TIMING: KeyframeAnimationOptions = { duration: 400, delay: 400 };
-const WORKING_LABEL_AFTER_ENTRANCE_TIMING: KeyframeAnimationOptions = { duration: 200, delay: 400 };
+const WORKING_HEADER_AFTER_ENTRANCE_TIMING: KeyframeAnimationOptions = {
+  duration: 800,
+  delay: 400,
+};
 function TimelineListFooter({ composerInset }: { readonly composerInset: number }) {
   return (
     <div aria-hidden>
@@ -3037,17 +3053,12 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
     workingLineKey,
     enteringPromptId,
   } = use(TimelineRowActivityCtx);
-  // The line draws in once per prompt, after a first prompt's entrance settles.
-  const lineTiming = enteringPromptId ? WORKING_LINE_AFTER_ENTRANCE_TIMING : WORKING_LINE_TIMING;
-  const lineRef = useEntranceMotion(
-    workingLineKey ? `working-line:${workingLineKey}` : null,
-    WORKING_LINE_KEYFRAMES,
-    lineTiming,
-  );
-  const labelRef = useEntranceMotion(
-    workingLineKey ? `working-label:${workingLineKey}` : null,
-    FADE_IN_KEYFRAMES,
-    enteringPromptId ? WORKING_LABEL_AFTER_ENTRANCE_TIMING : WORKING_LABEL_TIMING,
+  // The header appears faint and darkens from left to right, once per prompt,
+  // after a first prompt's entrance settles.
+  const headerRef = useEntranceMotion(
+    workingLineKey ? `working-header:${workingLineKey}` : null,
+    WORKING_HEADER_KEYFRAMES,
+    enteringPromptId ? WORKING_HEADER_AFTER_ENTRANCE_TIMING : WORKING_HEADER_TIMING,
   );
   // One span for every label so the setup-to-working handoff swaps text in
   // place instead of remounting the row.
@@ -3064,16 +3075,8 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
     "Working..."
   );
   return (
-    <div className="relative border-b border-transparent pb-2 pt-1">
-      <div
-        ref={lineRef}
-        aria-hidden
-        className="absolute inset-x-0 -bottom-px h-px origin-left bg-border/60"
-      />
-      <div
-        ref={labelRef}
-        className="flex h-6 min-w-0 items-baseline gap-2 px-1 text-sm leading-relaxed text-muted-foreground tabular-nums"
-      >
+    <div ref={headerRef} className="border-b border-border/60 pb-2 pt-1">
+      <div className="flex h-6 min-w-0 items-baseline gap-2 px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">
         <span
           ref={shimmer ? observeVisibleAnimation : undefined}
           className="relative shrink-0 overflow-hidden whitespace-nowrap"

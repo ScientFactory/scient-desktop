@@ -21,7 +21,7 @@ Send motion (Scient): the draft hero composer's move to the thread always animat
 (`DRAFT_HERO_TRANSITION_DURATION_MS`, decelerating curve), not only with the opt-in panel
 animation setting; reduced motion skips it. A first prompt being placed is revealed top-down
 and fades in on the same curve (clip and opacity only, never a transform, so the reveal's
-measurements hold), and the "Working for" line draws in from the left once per prompt
+measurements hold), and the "Working for" header shows faint and darkens from left to right once per prompt (a mask sweep)
 (`chat/timelineEntranceMotion.ts`; played entrances never replay on row remount). While an
 answer streams, each new block fades in top-down (`chat/useStreamingBlockEntrance.ts`). The
 timeline's working state (`chat/timelineWorkingState.ts`) is held back until a send's prompt

@@ -93,16 +93,17 @@ const animationsOf = (element: Element | null | undefined) =>
     : [];
 const working = { isWorking: true, runningTurnId: TurnId.make("turn-1") };
 
-it("draws the working line in once per prompt, not again when its row remounts", async () => {
+it("darkens the working header in once per prompt, not again when its row remounts", async () => {
   const prompt = entry(1, "First question");
   render("motion:working", [prompt], working);
-  const line = () =>
-    host!.querySelector('[data-timeline-row-kind="working"] [aria-hidden].origin-left');
+  const line = () => host!.querySelector('[data-timeline-row-kind="working"] .border-b');
   await expect.poll(() => line()).not.toBeNull();
   expect(animationsOf(line())).toHaveLength(1);
-  // The line keeps the old border's place: one pixel at the row's bottom edge.
-  const row = line()!.parentElement!;
-  expect(line()!.getBoundingClientRect().bottom).toBeCloseTo(row.getBoundingClientRect().bottom, 0);
+  // Shown at once (faint, not hidden), at its full size: masking only, nothing moves.
+  expect(line()!.getBoundingClientRect().width).toBeGreaterThan(100);
+  expect(getComputedStyle(line()!).opacity).toBe("1");
+  const style = getComputedStyle(line()!);
+  expect(`${style.maskImage} ${style.webkitMaskImage}`).toContain("linear-gradient");
   // The list remounts the row (thread switch and back): no replay.
   render("motion:other", [entry(50, "Elsewhere")]);
   await frames(4);
