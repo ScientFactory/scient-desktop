@@ -6224,6 +6224,17 @@ function ChatViewContent(props: ChatViewProps) {
     [timelineMessages],
   );
   const latestPromptRef = useRef<{ threadKey: string | null; id: string | null } | null>(null);
+  // Prompts seen waiting in this thread's queue: when one arrives, it is a queued
+  // delivery. The server keeps a queued prompt's message id (or derives one from its item).
+  const queuedPromptIdsRef = useRef(new Set<string>());
+  useLayoutEffect(() => {
+    for (const item of threadQueue.items) {
+      if (item.messageId) queuedPromptIdsRef.current.add(item.messageId);
+      queuedPromptIdsRef.current.add(`queue:${item.queueItemId}`);
+    }
+    for (const message of optimisticUserMessages)
+      if (message.queueAdmission) queuedPromptIdsRef.current.add(message.id);
+  }, [threadQueue.items, optimisticUserMessages]);
   // Runs before the timeline measures the new row, so the reader's end state
   // is still the one from before the prompt arrived.
   useLayoutEffect(() => {
@@ -6235,6 +6246,7 @@ function ChatViewContent(props: ChatViewProps) {
         previous,
         threadKey: routeThreadKey,
         latestPromptId,
+        wasQueued: queuedPromptIdsRef.current.has(latestPromptId),
         sentHere: locallySentPromptIdsRef.current.has(latestPromptId),
         readerAtEnd: isAtEndRef.current,
       })

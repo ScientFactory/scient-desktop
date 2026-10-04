@@ -84,7 +84,8 @@ describe("shouldRevealArrivedPrompt", () => {
   const arrived = {
     previous,
     threadKey: "thread",
-    latestPromptId: "queue:item-2",
+    latestPromptId: "qitem_2",
+    wasQueued: true,
     sentHere: false,
     readerAtEnd: true,
   };
@@ -98,8 +99,10 @@ describe("shouldRevealArrivedPrompt", () => {
     expect(shouldRevealArrivedPrompt({ ...arrived, readerAtEnd: false })).toBe(false);
     expect(shouldRevealArrivedPrompt({ ...arrived, threadKey: "other" })).toBe(false);
     expect(shouldRevealArrivedPrompt({ ...arrived, latestPromptId: "p1" })).toBe(false);
-    // A direct send from another window is not a queued delivery.
-    expect(shouldRevealArrivedPrompt({ ...arrived, latestPromptId: "p2" })).toBe(false);
+    // A direct send from another window was never seen waiting in the queue.
+    expect(shouldRevealArrivedPrompt({ ...arrived, latestPromptId: "p2", wasQueued: false })).toBe(
+      false,
+    );
     // Opening a thread, or its first prompt, is not an arrival.
     expect(shouldRevealArrivedPrompt({ ...arrived, previous: null })).toBe(false);
     expect(shouldRevealArrivedPrompt({ ...arrived, previous: { ...previous, id: null } })).toBe(

@@ -81,13 +81,15 @@ export function useBoundedAnswerFollow({
   /** Called once when the reveal for `promptMessageId` ends (revealed or cancelled). */
   onFinished?: (promptMessageId: string) => void;
 }) {
-  const intent = useRef<{ prompt: string | null; stopped: boolean }>({
+  const intent = useRef<{ prompt: string | null; stopped: boolean; sawRunning: boolean }>({
     prompt: null,
     stopped: false,
+    sawRunning: false,
   });
   useLayoutEffect(() => {
     if (intent.current.prompt !== promptMessageId)
-      intent.current = { prompt: promptMessageId, stopped: false };
+      intent.current = { prompt: promptMessageId, stopped: false, sawRunning: false };
+    if (responseRunning) intent.current.sawRunning = true;
     if (!promptMessageId || suspended || intent.current.stopped) return;
     const promptIndex = rows.findIndex(
       (row) => row.kind === "message" && row.message.id === promptMessageId,
@@ -105,9 +107,12 @@ export function useBoundedAnswerFollow({
     const viewport = list?.getScrollableNode();
     const promptRow = rows[promptIndex]!;
     const answerRow = rows[answerIndex] ?? promptRow;
-    // A followed response has settled once the thread is done, answer or not.
+    // A followed response has settled once the thread worked on it and is done,
+    // answer or not; right after the send it may not have started yet.
     const answerSettled = followResponse
-      ? !responseRunning && (answerRow.kind !== "message" || !answerRow.message.streaming)
+      ? (intent.current.sawRunning || answerIndex >= 0) &&
+        !responseRunning &&
+        (answerRow.kind !== "message" || !answerRow.message.streaming)
       : answerIndex >= 0 &&
         !responseRunning &&
         answerRow.kind === "message" &&

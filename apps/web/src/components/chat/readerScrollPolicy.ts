@@ -268,8 +268,6 @@ export function resolveReadingRow(
 }
 
 /** The server delivers a queued prompt under this message id prefix (threadQueue Worker). */
-const QUEUED_PROMPT_ID_PREFIX = "queue:";
-
 /**
  * Whether a newly arrived prompt gets the same reveal as a direct send: only
  * a queued prompt the server delivered (not one sent from another window),
@@ -280,13 +278,15 @@ export function shouldRevealArrivedPrompt(input: {
   previous: { threadKey: string | null; id: string | null } | null;
   threadKey: string | null;
   latestPromptId: string | null;
+  /** Whether this window saw the prompt waiting in the thread's queue. */
+  wasQueued: boolean;
   sentHere: boolean;
   readerAtEnd: boolean;
 }) {
   const { previous } = input;
   return (
     input.latestPromptId !== null &&
-    input.latestPromptId.startsWith(QUEUED_PROMPT_ID_PREFIX) &&
+    input.wasQueued &&
     previous !== null &&
     previous.threadKey === input.threadKey &&
     previous.id !== null &&

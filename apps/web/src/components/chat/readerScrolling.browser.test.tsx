@@ -468,6 +468,25 @@ it("follows a later prompt's whole response at the end until the prompt reaches 
   expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(false);
 });
 
+it("keeps following a later prompt whose turn has not started yet when it arrives", async () => {
+  const key = "geometry:follow-startup";
+  const { node, extra, promptTextTop, toEnd, rows } = await sendLaterPrompt(key, true);
+  // Sent, but the provider has not picked the turn up yet: nothing is running.
+  const idle = { ...extra, isWorking: false, runningTurnId: null };
+  render(key, rows(0), idle);
+  await expect.poll(toEnd).toBeLessThanOrEqual(1);
+  await frames(12);
+  // The turn starts and its steps arrive: they are still followed.
+  const start = node.scrollTop;
+  for (let tools = 1; tools <= 6; tools++) {
+    render(key, rows(tools), extra);
+    await expect
+      .poll(() => toEnd() <= 1 || promptTextTop() <= CHAT_TIMELINE_ANCHOR_OFFSET + 1)
+      .toBe(true);
+  }
+  expect(node.scrollTop).toBeGreaterThan(start);
+});
+
 it("keeps the reveal of a first prompt as it was: traces do not move it", async () => {
   const key = "geometry:follow-first";
   const { extra, toEnd, rows } = await sendLaterPrompt(key, false);
