@@ -101,7 +101,9 @@ The disposable script, compiler configuration, and synthetic profiles are not de
 
 No full application/browser migration rehearsal or live provider resumption was claimed.
 
-## Remaining integration prerequisites
+## Historical integration prerequisites
+
+The list below records the verifier's original handoff. It is superseded by the later integration checkpoints: native held-run admission, shared compilation and the literal merge are implemented, and file-backed recovery/native FIFO have been exercised. Final whole-candidate gates and repaired-app acceptance remain open in the alignment receipt.
 
 1. **Native queue cutover qualification:** server-only held admission now preserves SQL/JSON payloads, native ordering and receipts. The compatibility HTTP service now calls V2 commands. Qualify final production startup and delivery after the remaining integration changes; focused admission checks alone do not close this gate. Ordinary `message.dispatch` is not used as an import shortcut.
 2. **Shared compiler gate:** resolve the current imported-dependency diagnostics as part of the integration owner's work; the scoped checks above do not waive them.
