@@ -583,14 +583,13 @@ latest message is new: when its latest step or answer is below you, **Scroll
 to end** appears. The same holds after you stop the turn or it fails, and
 when it finishes without writing an answer.
 
-Sending at the bottom (by that same rule) gently reveals your message and its
-answer. The first message retains its existing placement
-near the top. Movement stops when your sent message's first line reaches the top
-of the reading area; only the bubble's padding may pass above it. It then stays there
-while the rest grows below the screen. When progress notes, reasoning or tool
+Sending at the bottom (by that same rule) glides your message up to the top of
+the reading area right away, with room left below it for the answer, the same
+way for the first message and every later one. Your message then stays there
+while the answer grows below it and past the screen. When progress notes, reasoning or tool
 activity push the message the agent is writing below the screen, the reveal
 continues just far enough to show that message's first lines, never its end. A
-queued message that is sent while you are at the bottom is revealed the same way.
+queued message that is sent while you are at the bottom is placed the same way.
 If you were reading earlier content, sending leaves that position alone.
 Scrolling back up cancels both pending placement and limited answer following,
 including during an upload; clicking, selecting text, or scrolling down does not.

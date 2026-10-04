@@ -387,6 +387,69 @@ it("keeps existing first-message framing and short-answer space through completi
   expect(readTimelinePosition("geometry:anchor")?.messageId).toBe(saved.messageId);
 });
 
+it("raises a follow-up prompt sent at the end to the top before its answer exists", async () => {
+  const answer = (index: number, text?: string) => ({
+    ...entry(index, text),
+    message: { ...entry(index, text).message, role: "assistant" as const },
+  });
+  const history = Array.from({ length: 10 }, (_, i) => (i % 2 ? answer(i) : entry(i)));
+  render("geometry:follow-up", history);
+  await expect.poll(() => readTimelinePosition("geometry:follow-up")?.atEnd).toBe(true);
+  const node = listRef.current!.getScrollableNode()!;
+  const onIsAtEndChange = vi.fn();
+  const onReleaseUnusedAnchor = vi.fn();
+  let positioned = false;
+  const prompt = entry(10, "Short follow-up");
+  const extra = {
+    anchorMessageId: prompt.message.id,
+    onAnchorReady: (_id: MessageId, index: number) => {
+      if (positioned) return;
+      positioned = true;
+      void listRef.current!.scrollToIndex({
+        index,
+        viewPosition: 0,
+        viewOffset: 24,
+        animated: false,
+      });
+    },
+    onIsAtEndChange,
+    onReleaseUnusedAnchor,
+  };
+  render("geometry:follow-up", [...history, prompt], extra);
+  await expect.poll(() => positioned).toBe(true);
+  await frames(12);
+  const promptTop = () => {
+    const state = listRef.current!.getState();
+    return state.elementAtIndex(10)!.getBoundingClientRect().top - node.getBoundingClientRect().top;
+  };
+  // The prompt rests at the top of the reading area, not just above the composer.
+  expect(Math.abs(promptTop() - 24)).toBeLessThanOrEqual(2);
+  expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(true);
+  expect(onReleaseUnusedAnchor).not.toHaveBeenCalled();
+  // A short answer grows into the reserved space without moving the prompt.
+  render("geometry:follow-up", [...history, prompt, answer(11, "Short answer")], extra);
+  await frames(8);
+  expect(Math.abs(promptTop() - 24)).toBeLessThanOrEqual(2);
+  expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(true);
+  // Once the answer runs past the screen the space is no longer needed, and
+  // releasing it does not move the reader.
+  const settled = node.scrollTop;
+  render(
+    "geometry:follow-up",
+    [...history, prompt, answer(11, "Long answer\n\n".repeat(100))],
+    extra,
+  );
+  await frames(8);
+  expect(onReleaseUnusedAnchor).toHaveBeenCalled();
+  render("geometry:follow-up", [...history, prompt, answer(11, "Long answer\n\n".repeat(100))], {
+    ...extra,
+    anchorMessageId: null,
+  });
+  await frames(8);
+  expect(Math.abs(node.scrollTop - settled)).toBeLessThanOrEqual(1);
+  expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(false);
+});
+
 it("preserves the original near-bottom tolerance for lines hidden by the composer", async () => {
   render(
     "geometry:strict-edge",

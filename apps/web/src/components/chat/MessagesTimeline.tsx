@@ -63,7 +63,6 @@ const EMPTY_AGENT_PANEL_MODEL = emptyAgentPanelModel();
 const NOOP_OPEN_AGENTS = () => {};
 const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
 const NOOP_OPEN_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
-import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { getProjectFaviconCacheKey } from "@t3tools/shared/projectFavicon";
@@ -1152,14 +1151,17 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     },
     [anchorMessageId, onAnchorReady],
   );
+  // Any prompt sent at the end is anchored, not only the thread's first: the
+  // space reserved below it lets it rise to the top before its answer exists.
   const anchoredEndSpace = useMemo(() => {
-    const config = resolveChatListAnchoredEndSpace(
-      rows,
-      anchorMessageId,
-      (row) => (row.kind === "message" && row.message.role === "user" ? row.message.id : null),
-      { anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET },
+    if (anchorMessageId === null) return undefined;
+    const anchorIndex = rows.findIndex(
+      (row) =>
+        row.kind === "message" && row.message.role === "user" && row.message.id === anchorMessageId,
     );
-    return config ? { ...config, onReady: handleAnchorReady } : undefined;
+    return anchorIndex < 0
+      ? undefined
+      : { anchorIndex, anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET, onReady: handleAnchorReady };
   }, [anchorMessageId, handleAnchorReady, rows]);
   const timelineListFooter = useMemo(
     () => <TimelineListFooter composerInset={anchoredEndSpace ? 0 : contentInsetEndAdjustment} />,

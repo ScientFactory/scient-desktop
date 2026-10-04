@@ -6177,15 +6177,25 @@ function ChatViewContent(props: ChatViewProps) {
   const captureSendReadingPosition = useCallback(
     () => ({
       atEnd: isDraftHeroState || (readerAtEndNow() ?? isAtEndRef.current),
-      firstMessage:
-        activeLatestTurn === null && !timelineMessages.some((message) => message.role === "user"),
       threadKey: routeThreadKey,
       navigationGeneration: anchorUserScrollGenerationRef.current,
     }),
-    [isDraftHeroState, routeThreadKey, timelineMessages, activeLatestTurn, readerAtEndNow],
+    [isDraftHeroState, routeThreadKey, readerAtEndNow],
+  );
+  // A prompt sent at the end rises to the top of the reading area, on space
+  // reserved below it; the bounded reveal then shows its answer's start.
+  const placePromptAtTop = useCallback(
+    (messageId: MessageId) => {
+      cancelTimelinePositioning();
+      setReadingFollowPromptId(messageId);
+      timelineScrollModeRef.current = "anchoring-new-turn";
+      setTimelinePositioningPending(true);
+      setTimelineAnchor({ threadKey: activeThreadKey, messageId });
+    },
+    [activeThreadKey, cancelTimelinePositioning],
   );
   // Prompts this window sent frame themselves; a queued prompt the server
-  // delivered gets the same reveal when the reader is at the end.
+  // delivered gets the same placement when the reader is at the end.
   const locallySentPromptIdsRef = useRef(new Set<string>());
   const frameSubmittedMessage = useCallback(
     (messageId: MessageId, snapshot: ReturnType<typeof captureSendReadingPosition>) => {
@@ -6198,21 +6208,9 @@ function ChatViewContent(props: ChatViewProps) {
         })
       )
         return;
-      if (!snapshot.firstMessage) {
-        // One bounded controller reveals the prompt and then its answer. Retain
-        // existing tail space until it can disappear without clamping the viewport.
-        cancelTimelinePositioning();
-        setReadingFollowPromptId(messageId);
-        return;
-      }
-      cancelPositionRestoreRef.current?.();
-      setReadingFollowPromptId(messageId);
-      timelineScrollModeRef.current = "anchoring-new-turn";
-      setTimelinePositioningPending(true);
-      positionedTimelineAnchorRef.current = null;
-      setTimelineAnchor({ threadKey: activeThreadKey, messageId });
+      placePromptAtTop(messageId);
     },
-    [activeThreadKey, cancelTimelinePositioning],
+    [placePromptAtTop],
   );
   const latestPromptId = useMemo(
     () => timelineMessages.findLast((message) => message.role === "user")?.id ?? null,
@@ -6235,9 +6233,8 @@ function ChatViewContent(props: ChatViewProps) {
       })
     )
       return;
-    cancelTimelinePositioning();
-    setReadingFollowPromptId(latestPromptId as MessageId);
-  }, [routeThreadKey, latestPromptId, cancelTimelinePositioning]);
+    placePromptAtTop(latestPromptId as MessageId);
+  }, [routeThreadKey, latestPromptId, placePromptAtTop]);
   useEffect(() => {
     let removeListeners: (() => void) | null = null;
     let frame: number | null = null;

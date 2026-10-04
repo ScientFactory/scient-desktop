@@ -17,9 +17,14 @@ answer keeps its latest content as the end. One rule,
 `readerAtReadingEnd`, decides being at the end for the end control, sending,
 navigation, saved positions and idle end keeping: at most the answer's last three
 lines hidden, in its own line height, never less than the inherited 40-pixel band.
-Preserve the existing first-message framing. Eligible sends, and queued prompts the server delivers (`queue:` ids) while
-the reader is at the end, reveal the prompt and the start of its response's latest
-message through `chat/useBoundedAnswerFollow.ts`: capped at the prompt's first line
+Every eligible send, not only the first message, and every queued prompt the server
+delivers while the reader is at the end, is anchored at the top margin on Legend's
+anchored end space (`ChatView` `placePromptAtTop`; `MessagesTimeline`
+resolves the anchor by message id instead of the shared first-prompt-only
+`resolveChatListAnchoredEndSpace`, which mobile keeps). Upstream deliberately does not
+push follow-ups to the top; keep this divergence. Eligible sends, and queued prompts
+the server delivers (`queue:` ids) while the reader is at the end, then reveal the
+start of the response's latest message through `chat/useBoundedAnswerFollow.ts`: capped at the prompt's first line
 reaching the top margin, past it only to show a message pushed below the fold, never
 past that message's top. Scrolling up by any means (wheel, keys, touch, scrollbar)
 cancels pending placement and bounded following; scrolling down, clicks and selection do not. `onIsAtEndChange` reacts to
