@@ -460,12 +460,19 @@ export function makePiAdapterV2(
             }),
         ),
       );
+      let nativeCommandNames = new Set<string>(["compact"]);
       const discoverSkillNames = connection
         .request({ type: "get_commands" }, PI_SKILL_DISCOVERY_TIMEOUT_MS)
         .pipe(
-          Effect.map(
-            (data) => new Set(parsePiDiscoveredCommands(data).skills.map((skill) => skill.name)),
-          ),
+          Effect.map((data) => {
+            const commands = parsePiDiscoveredCommands(data);
+            nativeCommandNames = new Set([
+              "compact",
+              ...commands.slashCommands.map((command) => command.name),
+              ...commands.skills.map((skill) => `skill:${skill.name}`),
+            ]);
+            return new Set(commands.skills.map((skill) => skill.name));
+          }),
         );
       let skillNames: Set<string> | null = null;
 
@@ -2295,6 +2302,15 @@ export function makePiAdapterV2(
           );
         }
         const expandedText = skillNames === null ? text : expandPiSkillReference(text, skillNames);
+        const command = /^\/([^\s]+)(?:[ \t]|$)/u.exec(expandedText)?.[1];
+        if (attachments.length > 0 && command !== undefined && nativeCommandNames.has(command))
+          return yield* protocolError("Pi native commands do not support attachments.");
+        if (attachments.some((attachment) => attachment.mimeType.startsWith("image/"))) {
+          const state = yield* request({ type: "get_state" });
+          const inputs = recordField(recordField(state, "model"), "input");
+          if (Array.isArray(inputs) && !inputs.includes("image"))
+            return yield* protocolError("The selected Pi model has no image support.");
+        }
         const images: Array<{ type: "image"; data: string; mimeType: string }> = [];
         const extraLines: Array<string> = [];
         for (const attachment of attachments) {
@@ -2302,7 +2318,8 @@ export function makePiAdapterV2(
             attachmentsDir: options.serverConfig.attachmentsDir,
             attachment,
           });
-          if (path === null) continue;
+          if (path === null || !(yield* options.fileSystem.exists(path)))
+            return yield* protocolError(`Pi attachment ${attachment.name} is unavailable.`);
           if (attachment.mimeType.startsWith("image/")) {
             const bytes = yield* options.fileSystem.readFile(path);
             images.push({
@@ -2424,6 +2441,8 @@ export function makePiAdapterV2(
             // wrapping the user text: a wrapped first message would no
             // longer start with "/" and slash commands would stop expanding.
             const compactCommand = parsePiCompactCommand(turnInput.message.text);
+            if (compactCommand !== null && turnInput.message.attachments.length > 0)
+              return yield* protocolError("Pi native commands do not support attachments.");
             const payload =
               compactCommand === null
                 ? yield* resolvePromptPayload(turnInput.message.text, turnInput.message.attachments)
@@ -2558,6 +2577,8 @@ export function makePiAdapterV2(
             )
               return yield* protocolError("Pi steer belongs to another runtime owner");
             const compactCommand = parsePiCompactCommand(steerInput.message.text);
+            if (compactCommand !== null && steerInput.message.attachments.length > 0)
+              return yield* protocolError("Pi native commands do not support attachments.");
             const payload =
               compactCommand === null
                 ? yield* resolvePromptPayload(
