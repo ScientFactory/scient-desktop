@@ -1189,6 +1189,51 @@ describe("orchestration v2 provider switching", () => {
                     yield* waitForRun(sourceOrdinal, status);
                     if (!queued) {
                       yield* dispatch("target", "Continue", targetSelection);
+                    } else {
+                      // Scient holds ordinary queued work after failure/interruption.
+                      // Prove the unchanged payload before explicitly resuming this handoff.
+                      const cursor = yield* orchestrator.getThreadEventSequence(threadId);
+                      const pull = yield* Stream.toPull(
+                        orchestrator.streamStoredEventsFrom({ threadId, afterSequence: cursor }),
+                      );
+                      const initial = yield* orchestrator.getThreadProjection(threadId);
+                      const held = yield* Stream.concat(
+                        Stream.succeed(initial),
+                        Stream.fromPull(Effect.succeed(pull)).pipe(
+                          Stream.mapEffect(() => orchestrator.getThreadProjection(threadId)),
+                        ),
+                      ).pipe(
+                        Stream.filter((projection) =>
+                          projection.runs.some(
+                            (run) =>
+                              run.ordinal === sourceOrdinal + 1 &&
+                              run.status === "queued" &&
+                              run.queueHeld === true,
+                          ),
+                        ),
+                        Stream.runHead,
+                        Effect.timeout("15 seconds"),
+                      );
+                      assert.isTrue(held._tag === "Some");
+                      if (held._tag !== "Some") return yield* Effect.die("Expected held handoff");
+                      const head = held.value.runs.find(
+                        (run) => run.ordinal === sourceOrdinal + 1,
+                      )!;
+                      assert.equal(head.providerInstanceId, targetSelection.instanceId);
+                      assert.equal(
+                        held.value.messages.find((message) => message.id === head.userMessageId)
+                          ?.text,
+                        "Continue",
+                      );
+                      assert.isFalse(
+                        (yield* Ref.get(capturedTurns)).some((turn) => turn.text === "Continue"),
+                      );
+                      yield* orchestrator.dispatch({
+                        type: "queue.resume",
+                        commandId: CommandId.make("command:handoff:resume-target"),
+                        threadId,
+                        runId: head.id,
+                      });
                     }
                     yield* waitForRun(sourceOrdinal + 1, "completed");
                     const projection = yield* orchestrator.getThreadProjection(threadId);
