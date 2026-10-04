@@ -37,6 +37,10 @@ interface Frame {
   readonly level?: string;
   readonly message?: string;
   readonly events?: ReadonlyArray<string> | null;
+  readonly confirmed?: boolean;
+  readonly value?: string;
+  readonly cancelled?: boolean;
+  readonly isError?: boolean;
   readonly images?: ReadonlyArray<{ readonly data: string; readonly mimeType: string }>;
 }
 

@@ -1052,6 +1052,10 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
             h.peer.state.prompts.map((prompt) => prompt.frame.type),
             ["prompt", "steer", "prompt"],
           );
+          assert.equal(
+            h.peer.state.frames.some((frame) => frame.type === "follow_up"),
+            false,
+          );
           assert.equal(h.runtime.providerSession.model, "vendor/b");
         }),
       ),
@@ -1611,6 +1615,244 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         }),
       ),
   );
+
+  it.effect(
+    "switches native OMP model and reasoning between settled turns with no hidden follow-up",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* modelHarness();
+          yield* h.start(1, "vendor/b", "low");
+          yield* h.peer.finish();
+          yield* h.terminal();
+          assert.equal(h.runtime.providerSession.model, "vendor/b");
+          yield* h.start(2, "vendor/a", "high");
+          yield* h.peer.finish();
+          yield* h.terminal();
+          assert.equal(h.runtime.providerSession.model, "vendor/a");
+          assert.equal(h.peer.state.thinkingLevel, "high");
+          assert.deepEqual(
+            h.peer.state.prompts.map((prompt) => prompt.frame.type),
+            ["prompt", "prompt"],
+          );
+          assert.equal(
+            h.peer.state.frames.some((frame) => frame.type === "follow_up"),
+            false,
+          );
+          assert.deepEqual(h.mutations(), [
+            "set_model vendor/b",
+            "set_model vendor/a",
+            "set_thinking_level high",
+          ]);
+        }),
+      ),
+  );
+
+  it.effect("excludes native OMP user echoes and waits for a terminal idle agent end", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* modelHarness();
+        yield* h.start(1, "vendor/a", "high", "USER_TEXT_SHOULD_NOT_ECHO");
+        yield* h.peer.promptDelivered();
+        yield* h.peer.emit([
+          { type: "agent_start" },
+          {
+            type: "message_start",
+            message: {
+              role: "user",
+              content: [{ type: "text", text: "USER_TEXT_SHOULD_NOT_ECHO" }],
+            },
+          },
+          {
+            type: "message_end",
+            message: {
+              role: "user",
+              content: [{ type: "text", text: "USER_TEXT_SHOULD_NOT_ECHO" }],
+            },
+          },
+          { type: "agent_end", messages: [], isTerminal: false },
+          nativeToolStart("idle-barrier", "read", { path: "barrier.txt" }),
+        ]);
+        yield* h.takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.input !== null,
+        );
+        assert.equal(
+          h.recorded.some((event) => event.type === "turn.terminal"),
+          false,
+        );
+        assert.equal(h.runtime.providerSession.status, "running");
+        yield* h.peer.emit([
+          nativeToolEnd("idle-barrier", "read", {}),
+          { type: "message_start", message: { role: "assistant", content: [] } },
+          {
+            type: "message_update",
+            message: { role: "assistant", content: [] },
+            assistantMessageEvent: { type: "text_delta", delta: "assistant answer" },
+          },
+          {
+            type: "message_end",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "assistant answer" }],
+              stopReason: "stop",
+            },
+          },
+        ]);
+        yield* h.peer.finish();
+        const terminal = yield* h.terminal();
+        if (terminal.type !== "turn.terminal")
+          return yield* Effect.die("Missing native idle terminal");
+        assert.equal(terminal.status, "completed");
+        assert.equal(h.runtime.providerSession.status, "ready");
+        const assistant = h.recorded.filter((event) => event.type === "message.updated");
+        assert.isTrue(assistant.length > 0);
+        assert.isTrue(
+          assistant.every(
+            (event) =>
+              event.type !== "message.updated" ||
+              !event.message.text.includes("USER_TEXT_SHOULD_NOT_ECHO"),
+          ),
+        );
+        assert.isTrue(
+          assistant.some(
+            (event) =>
+              event.type === "message.updated" && event.message.text === "assistant answer",
+          ),
+        );
+        assert.equal(h.recorded.filter((event) => event.type === "turn.terminal").length, 1);
+      }),
+    ),
+  );
+
+  for (const method of ["confirm", "select", "input"] as const) {
+    it.effect(
+      `answers native OMP ${method} while prompt acceptance is still pending and Stops once`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const peer = scriptedOmpRpc({
+              models: [],
+              initial: { provider: "test", id: "selected" },
+              silentReply: (frame) => frame.type === "prompt",
+            });
+            const h = yield* harness(false, { makeProcess: peer.makeProcess });
+            yield* h.runtime.startTurn(h.input);
+            yield* peer.promptDelivered();
+            yield* peer.emit([
+              { type: "agent_start" },
+              {
+                type: "extension_ui_request",
+                id: "native-dialog",
+                method,
+                title: "Choose",
+                message: "Continue?",
+                ...(method === "select" ? { options: ["one", "two"] } : {}),
+              },
+            ]);
+            const pending = yield* h.takeUntil(
+              (event) =>
+                event.type === "runtime_request.updated" &&
+                event.runtimeRequest.status === "pending",
+            );
+            if (pending.type !== "runtime_request.updated")
+              return yield* Effect.die("Missing native dialog");
+            if (method === "select") {
+              const invalid = yield* h.runtime
+                .respondToRuntimeRequest({
+                  requestId: pending.runtimeRequest.id,
+                  decision: "accept",
+                  answers: { "native-dialog": "not offered" },
+                })
+                .pipe(Effect.result);
+              assert.equal(invalid._tag, "Failure");
+              assert.equal(
+                peer.state.frames.filter((frame) => frame.type === "extension_ui_response").length,
+                0,
+              );
+            }
+            yield* h.runtime
+              .respondToRuntimeRequest({
+                requestId: pending.runtimeRequest.id,
+                decision: "accept",
+                ...(method === "confirm"
+                  ? {}
+                  : { answers: { "native-dialog": method === "select" ? "two" : "typed answer" } }),
+              })
+              .pipe(Effect.timeout("2 seconds"), TestClock.withLive);
+            const replies = peer.state.frames.filter(
+              (frame) => frame.type === "extension_ui_response",
+            );
+            assert.equal(replies.length, 1);
+            assert.equal(replies[0]?.id, "native-dialog");
+            if (method === "confirm") assert.equal(replies[0]?.confirmed, true);
+            else assert.equal(replies[0]?.value, method === "select" ? "two" : "typed answer");
+            const repeated = yield* h.runtime
+              .respondToRuntimeRequest({ requestId: pending.runtimeRequest.id, decision: "accept" })
+              .pipe(Effect.result);
+            assert.equal(repeated._tag, "Failure");
+            const turn = h.recorded.find((event) => event.type === "provider_turn.updated");
+            if (turn?.type !== "provider_turn.updated")
+              return yield* Effect.die("Missing native dialog turn");
+            yield* h.runtime
+              .interruptTurn({
+                providerThread: h.input.providerThread,
+                providerTurnId: turn.providerTurn.id,
+              })
+              .pipe(Effect.timeout("2 seconds"), TestClock.withLive);
+            const terminal = yield* h.takeUntil((event) => event.type === "turn.terminal");
+            if (terminal.type !== "turn.terminal")
+              return yield* Effect.die("Missing native dialog Stop");
+            assert.equal(terminal.status, "interrupted");
+            assert.equal(peer.state.shutdowns, 1);
+            assert.equal(
+              peer.state.frames.some((frame) => frame.type === "abort"),
+              false,
+            );
+            assert.equal(h.recorded.filter((event) => event.type === "turn.terminal").length, 1);
+          }),
+        ),
+    );
+  }
+
+  for (const accepted of [true, false] as const) {
+    it.effect(
+      `retains an unknown native OMP outcome on process loss with accepted=${accepted}`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const peer = scriptedOmpRpc({
+              models: [],
+              initial: { provider: "test", id: "selected" },
+              ...(accepted ? {} : { silentReply: (frame) => frame.type === "prompt" }),
+            });
+            const h = yield* harness(false, { makeProcess: peer.makeProcess });
+            yield* h.runtime.startTurn(h.input);
+            yield* peer.promptDelivered();
+            yield* peer.emit([
+              { type: "agent_start" },
+              nativeToolStart("unconfirmed-tool", "bash", { command: "could still have run" }),
+            ]);
+            yield* h.takeUntil(
+              (event) =>
+                event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool",
+            );
+            yield* peer.close();
+            const terminal = yield* h.takeUntil((event) => event.type === "turn.terminal");
+            if (terminal.type !== "turn.terminal")
+              return yield* Effect.die("Missing unknown native outcome");
+            assert.equal(terminal.status, "failed");
+            assert.equal(terminal.failure?.class, "unknown");
+            assert.include(terminal.failure?.message ?? "", "outcome is unknown");
+            assert.equal(terminal.threadDisposition, "broken");
+            assert.equal(h.recorded.filter((event) => event.type === "turn.terminal").length, 1);
+            assert.equal(h.runtime.providerSession.status, "error");
+          }),
+        ),
+    );
+  }
 
   for (const granted of [true, false] as const) {
     it.effect(`loads native OMP private Scient bootstrap with a tool credential=${granted}`, () =>

@@ -425,8 +425,13 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                             ? "completed"
                             : "failed",
                       ...(update.detail === undefined
-                        ? {}
+                        ? update.outcome === "unknown"
+                          ? {
+                              detail: `${target.name} stopped before confirming this turn; its outcome is unknown.`,
+                            }
+                          : {}
                         : { detail: client.redaction.text(update.detail) }),
+                      ...(update.outcome === "unknown" ? { failureClass: "unknown" as const } : {}),
                       ...(update.stopReason === undefined ? {} : { stopReason: update.stopReason }),
                       broken: update.source === "process" || update.source === "unconfirmed",
                     }),
@@ -441,7 +446,8 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                 return onUpdate({
                   type: "terminal",
                   status: "failed",
-                  detail: `${target.name} exited before its turn could be confirmed.`,
+                  detail: `${target.name} exited before confirming this turn; its outcome is unknown.`,
+                  failureClass: "unknown",
                   broken: true,
                 }).pipe(
                   Effect.andThen(
@@ -988,16 +994,29 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                   ),
                   Effect.catch((cause) =>
                     (cause._tag === "OmpRpcCommandError" ? restore : Effect.void).pipe(
-                      Effect.andThen(runtime.commandFailed(nativeTurnId)),
+                      Effect.andThen(
+                        cause._tag === "OmpRpcCommandError"
+                          ? runtime.commandFailed(nativeTurnId)
+                          : Effect.void,
+                      ),
                       Effect.andThen(
                         onUpdate({
                           type: "terminal",
                           status: "failed",
-                          detail: client.redaction.text(cause.message),
-                          broken:
-                            cause._tag === "OmpRpcProcessExitedError" ||
-                            cause._tag === "OmpRpcProtocolViolationError",
+                          detail:
+                            cause._tag === "OmpRpcCommandError"
+                              ? client.redaction.text(cause.message)
+                              : `${client.redaction.text(cause.message)} ${target.name} did not confirm this turn; its outcome is unknown.`,
+                          ...(cause._tag === "OmpRpcCommandError"
+                            ? {}
+                            : { failureClass: "unknown" as const }),
+                          broken: cause._tag !== "OmpRpcCommandError",
                         }),
+                      ),
+                      Effect.andThen(
+                        cause._tag === "OmpRpcCommandError"
+                          ? Effect.void
+                          : Scope.close(scope, Exit.void).pipe(Effect.forkDetach, Effect.asVoid),
                       ),
                     ),
                   ),

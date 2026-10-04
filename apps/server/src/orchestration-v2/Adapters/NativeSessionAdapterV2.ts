@@ -2,6 +2,7 @@ import {
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderCapabilities,
+  type OrchestrationV2ProviderFailureClass,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
@@ -84,6 +85,7 @@ export type NativeSessionUpdate =
       readonly detail?: string;
       readonly broken?: boolean;
       readonly stopReason?: string;
+      readonly failureClass?: OrchestrationV2ProviderFailureClass;
     };
 
 export class NativeSessionOperationError extends Schema.TaggedError<NativeSessionOperationError>()(
@@ -431,7 +433,7 @@ export function makeNativeSessionAdapterV2(
                     failureItemOrdinal: running.nextOrdinal++,
                     failure: makeProviderFailure({
                       message: update.detail ?? "The native provider turn failed.",
-                      class: "provider_error",
+                      class: update.failureClass ?? "provider_error",
                     }),
                   }
                 : { ...terminal, type: "turn.terminal", status, failure: null },
