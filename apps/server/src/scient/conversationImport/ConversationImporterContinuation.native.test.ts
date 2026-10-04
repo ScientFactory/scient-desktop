@@ -32,6 +32,9 @@ import { AcpProviderCapabilitiesV2 } from "../../orchestration-v2/Adapters/AcpAd
 import { makeNativeSessionAdapterV2 } from "../../orchestration-v2/Adapters/NativeSessionAdapterV2.ts";
 import * as Option from "effect/Option";
 import * as Clock from "effect/Clock";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as Schema from "effect/Schema";
+import { LegacyV1ThreadImporter } from "../../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 
 import { ServerConfig } from "../../config.ts";
 import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
@@ -67,6 +70,8 @@ import {
   parseConversationMarkdown,
 } from "@scientfactory/conversation";
 import { conversationSnapshotProjection } from "../conversationExport/conversationSnapshotProjection.ts";
+
+const encodeHistoryFixtureJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const attemptDirectory = (name = "attempt") =>
   Effect.map(ServerConfig, (config) =>
@@ -1484,6 +1489,162 @@ it.live.each(["document", "conversation"] as const)(
           (yield* store.getThreadProjection(result.threadId)).messages,
           source.messages,
         );
+      }),
+    ),
+);
+
+it.live.each(["portable import", "legacy SQL"] as const)(
+  "turnless %s artifacts reach native continuation, provider switch and refork exactly once",
+  (origin) =>
+    withImporter(
+      Effect.gen(function* () {
+        const store = yield* ProjectionStoreV2;
+        const unique = "Turnless retained evidence";
+        let sourceId: ThreadId;
+        if (origin === "portable import") {
+          const fixture = importFixture({ turns: 2, workLog: true });
+          const snapshot = {
+            ...fixture.input.snapshot,
+            workLog: fixture.input.snapshot.workLog.map((entry, index) =>
+              index !== 0 || entry._tag !== "tool"
+                ? entry
+                : {
+                    ...entry,
+                    turnId: null,
+                    title: unique,
+                    output: {
+                      ...entry.output!,
+                      text: "Turnless output with omissions",
+                      omittedLines: 4,
+                      omittedChars: 17,
+                    },
+                  },
+            ),
+          };
+          const input = {
+            ...fixture.input,
+            snapshot: { ...snapshot, contentDigest: conversationContentDigest(snapshot) },
+          };
+          const { lease } = yield* leaseFor({ ...fixture, input });
+          sourceId = (yield* importOnce(lease)).result.threadId;
+        } else {
+          sourceId = ThreadId.make("turnless-legacy-native-source");
+          const sql = yield* SqlClient.SqlClient;
+          const model = yield* encodeHistoryFixtureJson({
+            instanceId: PROVIDER_ID,
+            model: "fixture",
+          });
+          yield* sql`INSERT INTO projection_threads (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode, created_at, updated_at)
+        VALUES (${sourceId}, ${PROJECT_ID}, 'Legacy turnless history', ${model}, 'full-access', 'default', '2026-09-28T09:00:00.000Z', '2026-09-28T09:00:00.000Z')`;
+          yield* sql`INSERT INTO projection_thread_messages (message_id, thread_id, role, text, turn_id, is_streaming, created_at, updated_at)
+        VALUES ('turnless-legacy-user', ${sourceId}, 'user', 'Question 1', 'legacy-turn', 0, '2026-09-28T09:00:01.000Z', '2026-09-28T09:00:01.000Z'),
+          ('turnless-legacy-reason', ${sourceId}, 'reasoning', 'Turnless visible legacy reasoning', NULL, 0, '2026-09-28T09:00:02.000Z', '2026-09-28T09:00:02.000Z'),
+          ('turnless-legacy-answer', ${sourceId}, 'assistant', 'Answer 2', 'legacy-turn', 0, '2026-09-28T09:00:04.000Z', '2026-09-28T09:00:04.000Z')`;
+          const payload = yield* encodeHistoryFixtureJson({
+            output: "Turnless output with omissions",
+            omittedLines: 4,
+            omittedChars: 17,
+          });
+          yield* sql`INSERT INTO projection_thread_activities (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at)
+        VALUES ('turnless-legacy-tool', ${sourceId}, NULL, 'tool', 'tool.completed', ${unique}, ${payload}, '2026-09-28T09:00:03.000Z')`;
+          const legacy = yield* LegacyV1ThreadImporter;
+          yield* legacy.reconcileShells;
+          yield* legacy.ensureTranscript(sourceId);
+        }
+        const source = yield* store.getThreadProjection(sourceId);
+        const artifact = source.turnItems.find(
+          (item) => item.type === "dynamic_tool" && item.title === unique,
+        );
+        assert.ok(artifact);
+        assert.isUndefined(artifact.historyTurnId);
+        const reason = source.turnItems.find((item) => item.type === "reasoning");
+        if (origin === "legacy SQL") {
+          assert.ok(reason);
+          assert.isUndefined(reason.historyTurnId);
+        }
+        const fork = (projection: typeof source, id: string) =>
+          Effect.gen(function* () {
+            const target = ThreadId.make(id);
+            yield* (yield* ConversationForkService).dispatch({
+              type: "thread.fork",
+              commandId: CommandId.make(id),
+              originThreadId: projection.thread.id,
+              newThreadId: target,
+              sourceAssistantMessageId: projection.messages.find(
+                (message) => message.text === "Answer 2",
+              )!.id,
+              workspaceMode: "local",
+            });
+            return yield* store.getThreadProjection(target);
+          });
+        const child = yield* fork(source, `turnless-${origin}-child`);
+        const refork = yield* fork(child, `turnless-${origin}-refork`);
+        assert.deepEqual((yield* store.getThreadProjection(sourceId)).turnItems, source.turnItems);
+        assert.deepEqual((yield* store.getThreadProjection(sourceId)).messages, source.messages);
+        assert.deepEqual(
+          refork.turnItems
+            .filter((item) => item.inheritedFrom !== undefined)
+            .map((item) => item.type),
+          child.turnItems
+            .filter((item) => item.inheritedFrom !== undefined)
+            .map((item) => item.type),
+        );
+        const copies = refork.turnItems.filter(
+          (item) => item.type === "dynamic_tool" || item.type === "reasoning",
+        );
+        assert.isTrue(
+          copies.every(
+            (item) =>
+              item.runId === null &&
+              item.nodeId === null &&
+              item.providerThreadId === null &&
+              item.providerTurnId === null &&
+              item.nativeItemRef === null,
+          ),
+        );
+        assert.deepEqual(refork.runtimeRequests, []);
+        assert.deepEqual(refork.runs, []);
+        for (const [threadId, messageId, selection] of [
+          [sourceId, `turnless-${origin}-initial`, undefined],
+          [
+            sourceId,
+            `turnless-${origin}-switch`,
+            { instanceId: ProviderInstanceId.make("claude"), model: "claude-sonnet" },
+          ],
+          [refork.thread.id, `turnless-${origin}-refork-send`, undefined],
+        ] as const) {
+          yield* continueImport(threadId, MessageId.make(messageId), "Continue", selection);
+          const prompt = (yield* ImportPeer).prompts.at(-1)!;
+          assert.equal(prompt.split(`${unique}\n`).length - 1, 1);
+          assert.include(prompt, "Turnless output with omissions");
+          assert.equal(prompt.split("Turnless output with omissions").length - 1, 1);
+          assert.include(prompt, origin === "portable import" ? '"lines":4' : '"omittedLines":4');
+          assert.include(prompt, origin === "portable import" ? '"chars":17' : '"omittedChars":17');
+          assert.isBelow(prompt.indexOf(unique), prompt.lastIndexOf("User message:"));
+          assert.isBelow(prompt.indexOf("Question 1"), prompt.indexOf(unique));
+          assert.isBelow(prompt.indexOf(unique), prompt.indexOf("Answer 2"));
+          if (origin === "legacy SQL") {
+            assert.equal(prompt.split("Turnless visible legacy reasoning").length - 1, 1);
+            assert.isBelow(
+              prompt.indexOf("Turnless visible legacy reasoning"),
+              prompt.indexOf(unique),
+            );
+          }
+          const sent = yield* store.getThreadProjection(threadId);
+          const handoff = sent.contextHandoffs.at(-1)!;
+          assert.equal(handoff.history?.omittedItems, 0);
+          assert.equal(
+            handoff.history?.messages.filter((message) => message.text.includes(unique)).length,
+            1,
+          );
+          assert.isTrue(
+            handoff.delivery?.itemIds.some((id) =>
+              handoff.history?.messages.some(
+                (message) => message.itemId === id && message.text.includes(unique),
+              ),
+            ) ?? false,
+          );
+        }
       }),
     ),
 );

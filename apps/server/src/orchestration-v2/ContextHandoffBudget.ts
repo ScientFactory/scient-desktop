@@ -150,6 +150,26 @@ export function handoffBudget(input: {
   );
 }
 
+/** Grouping is optional; importer identities and exact frozen copies own inert text. */
+function hasPortableArtifactOwner(item: OrchestrationV2TurnItem): boolean {
+  return (
+    item.historyTurnId !== undefined ||
+    item.inheritedFrom !== undefined ||
+    item.id.startsWith("migration:v1:history:") ||
+    (item.id.startsWith("server:conversation-import:") && item.id.includes(":item:"))
+  );
+}
+
+function hasArtifactExecutionAuthority(item: OrchestrationV2TurnItem): boolean {
+  return (
+    item.runId !== null ||
+    item.nodeId !== null ||
+    item.providerThreadId !== null ||
+    item.providerTurnId !== null ||
+    item.nativeItemRef !== null
+  );
+}
+
 export function historicalMessage(
   item: OrchestrationV2TurnItem,
 ): OrchestrationV2HistoricalMessage | null {
@@ -175,17 +195,12 @@ export function historicalMessage(
       break;
     case "reasoning":
       // Imports and exact forks freeze visible text without retaining execution authority.
-      if (
-        item.runId !== null ||
-        (item.historyTurnId === undefined && item.inheritedFrom?.runId == null) ||
-        item.nativeItemRef !== null
-      )
-        return null;
+      if (hasArtifactExecutionAuthority(item) || !hasPortableArtifactOwner(item)) return null;
       text = item.text;
       break;
     case "dynamic_tool":
-      if (item.runId !== null || item.nativeItemRef !== null) return null;
-      if (item.historyTurnId !== undefined && isImportedActivity(item.input)) {
+      if (hasArtifactExecutionAuthority(item)) return null;
+      if (hasPortableArtifactOwner(item) && isImportedActivity(item.input)) {
         text = `${item.input.summary}\n${JSON.stringify(item.input.payload)}`;
       } else if (item.inheritedFrom?.runId != null) {
         text = [

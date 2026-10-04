@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   ContextHandoffId,
   MessageId,
+  NodeId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -204,6 +205,31 @@ describe("handoff budget", () => {
     assert.isNull(historicalMessage({ ...activity, runId: RunId.make("live-run") }));
     assert.isNull(historicalMessage({ ...activity, historyTurnId: undefined }));
     assert.isNull(historicalMessage({ ...activity, input: { command: "foreign tool call" } }));
+    const turnless = {
+      ...activity,
+      historyTurnId: undefined,
+      id: TurnItemId.make("server:conversation-import:owned:item:work-log"),
+    };
+    assert.include(historicalMessage(turnless)!.text, "retained output");
+    assert.isNull(historicalMessage({ ...turnless, nodeId: NodeId.make("live-node") }));
+    assert.isNull(
+      historicalMessage({
+        ...turnless,
+        nativeItemRef: {
+          driver: ProviderDriverKind.make("codex"),
+          nativeId: "live-tool",
+          strength: "strong",
+        },
+      }),
+    );
+    assert.equal(
+      historicalMessage({
+        ...reasoning,
+        historyTurnId: undefined,
+        id: TurnItemId.make("migration:v1:history:reasoning:owned"),
+      })?.text,
+      "Selected portable reasoning",
+    );
   });
 
   it("retains short conversations verbatim in role and order", () => {
