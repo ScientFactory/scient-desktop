@@ -58,6 +58,8 @@ import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts"
 import * as Logger from "effect/Logger";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
+import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/T3OrchestrationInstructions.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
 import * as IdAllocator from "../IdAllocator.ts";
@@ -3025,19 +3027,50 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     });
   }
 
-  it.effect.each([false, true])(
-    "preserves runtime guidance and restores it after compaction with MCP=%s",
-    (hasMcp) =>
+  for (const scenario of [
+    {
+      name: "preserves runtime guidance and restores it after compaction with MCP=false",
+      hasMcp: false,
+      mode: "default",
+      grants: false,
+    },
+    {
+      name: "preserves runtime guidance and restores it after compaction with MCP=true",
+      hasMcp: true,
+      mode: "default",
+      grants: true,
+    },
+    {
+      name: "keeps native plan instructions separate from granted Scient awareness",
+      hasMcp: true,
+      mode: "plan",
+      grants: true,
+    },
+    {
+      name: "delivers native Scient identity with no capability grants in default mode",
+      hasMcp: true,
+      mode: "default",
+      grants: false,
+    },
+    {
+      name: "delivers native Scient identity with no capability grants in plan mode",
+      hasMcp: true,
+      mode: "plan",
+      grants: false,
+    },
+  ] as const) {
+    it.effect(scenario.name, () =>
       Effect.scoped(
         Effect.gen(function* () {
           const nativeThreadId = "context-thread";
           const nativeTurnId = "context-turn";
-          const capabilities = new Set([
-            "preview",
-            "documents:build",
-            "compute:inventory",
-            "skills:read",
-          ] as const);
+          const { hasMcp } = scenario;
+          const runtimePolicy = { ...CODEX_TEST_RUNTIME_POLICY, interactionMode: scenario.mode };
+          const capabilities = new Set<McpCapability>(
+            scenario.grants
+              ? ["preview", "documents:build", "compute:inventory", "skills:read"]
+              : [],
+          );
           const modelSelection: ModelSelection = {
             ...CODEX_TEST_MODEL_SELECTION,
             options: [{ id: "reasoningEffort", value: "high" }],
@@ -3045,7 +3078,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
             nativeThreadId,
             codexInput: [{ type: "text", text: "work" }],
-            runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+            runtimePolicy,
             modelSelection,
             hasT3Mcp: hasMcp,
             mcpCapabilities: capabilities,
@@ -3063,7 +3096,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               params.additionalContext?.scient_awareness?.value ?? "",
               "scient_skill_load",
             );
-          } else {
+          } else if (scenario.grants) {
             assert.include(
               params.additionalContext?.t3_code_orchestration?.value ?? "",
               "delegate_task",
@@ -3084,6 +3117,54 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               params.additionalContext?.scient_awareness?.value ?? "",
               "device_list",
             );
+          }
+          const awareness = params.additionalContext?.scient_awareness?.value ?? "";
+          assert.include(awareness, "## Scient");
+          assert.include(awareness, "workspace-relative Markdown images");
+          assert.include(awareness, "diagram declaration before its contents");
+          assert.include(awareness, "Create workspace files for standalone deliverables");
+          assert.include(awareness, "clickable project-relative Markdown links");
+          if (scenario.grants) {
+            assert.include(awareness, "Scient browser");
+            assert.include(awareness, "preview_open");
+            assert.include(awareness, "another browser system only when");
+          } else {
+            for (const absent of [
+              "Scient browser",
+              "preview_status",
+              "preview_open",
+              "device_open",
+              "scient_skill_load",
+              "scient_pdf_build",
+              "scient_compute_inventory",
+            ])
+              assert.notInclude(awareness, absent);
+          }
+          if (hasMcp) {
+            assert.equal(
+              (params.additionalContext?.t3_code_orchestration?.value ?? "") +
+                (params.additionalContext?.t3_code_workspace?.value ?? ""),
+              T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+            );
+            assert.equal(params.additionalContext?.t3_code_orchestration?.kind, "application");
+            assert.deepEqual(Object.keys(params.additionalContext ?? {}), [
+              "t3_code_orchestration",
+              "t3_code_workspace",
+              "t3_code_runtime",
+              "scient_awareness",
+            ]);
+            assert.include(
+              params.additionalContext?.t3_code_workspace?.value ?? "",
+              "Choose the workspace",
+            );
+            const modeInstructions =
+              params.collaborationMode?.settings.developer_instructions ?? "";
+            assert.match(modeInstructions, /^<collaboration_mode>[\s\S]*<\/collaboration_mode>$/);
+            assert.notMatch(
+              modeInstructions,
+              /runtime_info|pull_request_linking|preview_|device_|## Scient/,
+            );
+            assert.equal(params.collaborationMode?.mode, scenario.mode);
           }
           const entries = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" });
           const transcript = makeCodexReplayTranscript({
@@ -3161,12 +3242,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               text: "work",
             }),
             modelSelection,
+            runtimePolicy,
           });
           yield* harness.firstTerminal;
           assert.equal(harness.terminalEvents()[0]?.status, "completed");
         }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
       ),
-  );
+    );
+  }
 
   it.effect.each([
     { compact: false, completed: false },
