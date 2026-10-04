@@ -287,6 +287,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                 })
               : undefined;
           });
+        let nextWarningOrdinal = 0;
         const applyUpdate = (update: OmpSessionUpdate): Effect.Effect<void> => {
           switch (update.type) {
             case "assistant-delta":
@@ -303,7 +304,11 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                 reasoning: true,
               });
             case "assistant-completed":
-              return onUpdate({ type: "text-completed", id: update.messageId });
+              return onUpdate({
+                type: "text-completed",
+                id: update.messageId,
+                ...(update.status === undefined ? {} : { status: update.status }),
+              });
             case "tool":
               return onUpdate({
                 type: "tool",
@@ -387,7 +392,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
             case "warning":
               return onUpdate({
                 type: "tool",
-                id: "native-warning",
+                id: `native-warning-${++nextWarningOrdinal}`,
                 name: `${target.name} warning`,
                 status: "completed",
                 output: client.redaction.text(update.message),

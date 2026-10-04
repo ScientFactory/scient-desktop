@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -35,13 +37,21 @@ import * as ServerConfig from "../../config.ts";
 import { makeOmpRedaction, type OmpRpcProcess } from "../../provider/omp/OmpRpcProcess.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { makeOmpAdapterV2 } from "./OmpAdapterV2.ts";
+import { makeOmpRpcClient } from "effect-omp-rpc/client";
+import {
+  makeOmpCaptureReplay,
+  type OmpCaptureName,
+  type OmpCaptureReplay,
+} from "../../provider/omp/OmpCaptureReplay.testFixtures.ts";
+import * as TestClock from "effect/testing/TestClock";
+import * as Fiber from "effect/Fiber";
 import { scriptedOmpRpc } from "../../provider/testUtils/scriptedOmpRpc.ts";
 import { ompTarget, type OmpTarget } from "../../provider/omp/OmpTarget.ts";
 import {
   scientAgentTarget,
   scientAgentProcessEnvironment,
 } from "../../provider/scient/ScientAgentTarget.ts";
-import type { ProviderAdapterV2Event } from "../ProviderAdapter.ts";
+import type { ProviderAdapterV2Event, ProviderAdapterV2Error } from "../ProviderAdapter.ts";
 const decodeOmpSettings = Schema.decodeEffect(OmpSettings);
 
 const TestLayer = Layer.mergeAll(
@@ -62,6 +72,7 @@ const success = (command: string): OmpRpcResponse => ({
 const harness = Effect.fnUntraced(function* (
   ignoreModelWrite = false,
   behavior?: {
+    readonly model?: string;
     readonly initialNativeThreadId?: string;
     readonly ignoreFreshWrite?: boolean;
     readonly misreportResume?: boolean;
@@ -94,7 +105,7 @@ const harness = Effect.fnUntraced(function* (
   let model = { provider: "test", id: "initial" };
   const instanceId = ProviderInstanceId.make(scientific ? "scient-v2-test" : "omp-v2-test");
   const threadId = ThreadId.make(`omp-v2-${yield* (yield* Crypto.Crypto).randomUUIDv4}`);
-  const modelSelection = { instanceId, model: "test/selected" };
+  const modelSelection = { instanceId, model: behavior?.model ?? "test/selected" };
   const runtimePolicy = {
     cwd: config.stateDir,
     runtimeMode: "full-access" as const,
@@ -293,6 +304,7 @@ const harness = Effect.fnUntraced(function* (
     promptDelivered,
     notifications,
     recorded,
+    projected,
     takeUntil,
   };
 });
@@ -354,6 +366,94 @@ const attachedImagePaths = (message: string | undefined) =>
     .split("\n")
     .filter((line) => line.startsWith('"') && line.includes("attachments"))
     .map((value) => decodeImagePath(value));
+
+const capturedTurn = Effect.fnUntraced(function* (name: OmpCaptureName, interrupt = false) {
+  const path = yield* Path.Path;
+  let replay: OmpCaptureReplay | undefined;
+  const h = yield* harness(false, {
+    model: "scient-stub/stub-model",
+    makeProcess: (options) =>
+      Effect.gen(function* () {
+        if (!options.sessionDir)
+          return yield* Effect.die("Missing native capture session directory");
+        let ordinal = 0;
+        replay = yield* makeOmpCaptureReplay(name, (command) => {
+          if (command.type === "new_session") ordinal++;
+          if (command.type !== "get_state") return undefined;
+          const sessionFile = path.join(options.sessionDir!, `capture-session-${ordinal}.jsonl`);
+          NodeFS.writeFileSync(sessionFile, "{}\n");
+          return {
+            id: command.id,
+            type: "response",
+            command: command.type,
+            success: true,
+            data: {
+              sessionId: `capture-session-${ordinal}`,
+              sessionFile,
+              model: { provider: "scient-stub", id: "stub-model" },
+              thinkingLevel: "off",
+              isStreaming: false,
+              hasPendingAsyncWork: false,
+              isSettled: true,
+            },
+          };
+        });
+        const client = yield* makeOmpRpcClient(replay.io);
+        return {
+          ...client,
+          version: "18.3.1",
+          runtimeVersion: "18.3.1",
+          redaction: makeOmpRedaction({}, []),
+          shutdown: replay.io.close!.pipe(Effect.as({ code: 0, forced: false, stderrTail: "" })),
+        };
+      }),
+  });
+  if (!replay) return yield* Effect.die("Missing actual capture transport");
+  yield* h.runtime.startTurn({ ...h.input, message: { ...h.input.message, text: "Say hello." } });
+  let interrupting: Fiber.Fiber<void, ProviderAdapterV2Error> | undefined;
+  while (true) {
+    const event = yield* h.takeUntil(() => true);
+    if (
+      interrupt &&
+      !interrupting &&
+      event.type === "message.updated" &&
+      event.message.text.length > 0
+    ) {
+      const turn = h.recorded.find((event) => event.type === "provider_turn.updated");
+      if (turn?.type !== "provider_turn.updated")
+        return yield* Effect.die("Missing native capture turn");
+      interrupting = yield* h.runtime
+        .interruptTurn({
+          providerThread: h.input.providerThread,
+          providerTurnId: turn.providerTurn.id,
+        })
+        .pipe(Effect.forkScoped);
+    }
+    if (event.type === "turn.terminal") break;
+  }
+  if (interrupting) yield* Fiber.join(interrupting);
+  yield* replay.releaseLateFrames;
+  yield* Effect.sleep("50 millis").pipe(TestClock.withLive);
+  const late = yield* Queue.clear(h.projected);
+  const latestItems = [
+    ...new Map(
+      h.recorded.flatMap((event) =>
+        event.type === "turn_item.updated" ? [[event.turnItem.id, event.turnItem] as const] : [],
+      ),
+    ).values(),
+  ];
+  return {
+    ...h,
+    replay,
+    late,
+    latestItems,
+    terminal: h.recorded.filter((event) => event.type === "turn.terminal"),
+    assistant: latestItems.filter((item) => item.type === "assistant_message"),
+    warnings: latestItems.flatMap((item) =>
+      item.type === "dynamic_tool" && item.toolName === "Oh My Pi warning" ? [item] : [],
+    ),
+  };
+});
 
 it.layer(TestLayer)("OmpAdapterV2", (it) => {
   it.effect(
@@ -604,6 +704,172 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         }),
       ),
   );
+
+  for (const scenario of [
+    {
+      name: "success-text",
+      text: "Hello",
+      statuses: ["completed"],
+      warningCount: 0,
+      status: "completed",
+    },
+    {
+      name: "retry-recovered",
+      text: "Recovered after retry",
+      statuses: ["completed"],
+      warningCount: 0,
+      status: "completed",
+    },
+    {
+      name: "success-reasoning",
+      text: "Hello",
+      statuses: ["completed"],
+      warningCount: 0,
+      status: "completed",
+      reasoning: true,
+    },
+    {
+      name: "auth-401",
+      text: "",
+      statuses: ["failed"],
+      warningCount: 0,
+      status: "failed",
+      error: "401 Incorrect API key provided",
+    },
+    {
+      name: "provider-model-not-found",
+      text: "",
+      statuses: ["failed"],
+      warningCount: 0,
+      status: "failed",
+      error: "404 The model `stub-model` does not exist",
+    },
+    {
+      name: "retry-recovered-session",
+      text: "Recovered after session retry",
+      statuses: ["failed", "completed"],
+      warningCount: 1,
+      status: "completed",
+    },
+    {
+      name: "retry-exhausted",
+      text: "",
+      statuses: ["failed", "failed", "failed"],
+      warningCount: 2,
+      status: "failed",
+      error:
+        "429 Rate limit reached for requests. Please try again in 0.1s. retry-after-ms=100\nRate limit reached for requests. Please try again in 0.1s. (type=rate_limit_error param=rate_limit_exceeded)",
+    },
+    {
+      name: "length-stop",
+      text: "This answer is cut",
+      statuses: ["completed"],
+      warningCount: 0,
+      status: "completed",
+      stopReason: "length",
+    },
+    {
+      name: "stream-error-after-partial",
+      text: "Partial answer",
+      statuses: ["failed"],
+      warningCount: 0,
+      status: "failed",
+      error:
+        "The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
+    },
+    {
+      name: "stream-error-event",
+      text: "Partial answer",
+      statuses: ["failed"],
+      warningCount: 0,
+      status: "failed",
+      error: "The server had an error while processing your request.",
+    },
+    {
+      name: "tool-call",
+      text: "The file says: stub fixture content.",
+      statuses: ["completed", "completed"],
+      warningCount: 0,
+      status: "completed",
+      tool: true,
+    },
+    {
+      name: "user-abort",
+      text: "tick0 ",
+      statuses: ["interrupted"],
+      warningCount: 0,
+      status: "interrupted",
+      interrupt: true,
+    },
+  ] as const) {
+    it.effect(
+      `projects the native OMP ${scenario.name} capture without duplicate or late outcomes`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const h = yield* capturedTurn(scenario.name, "interrupt" in scenario);
+            assert.deepEqual(
+              h.terminal.map((event) => event.status),
+              [scenario.status],
+            );
+            assert.equal(h.assistant.map((item) => item.text).join(""), scenario.text);
+            assert.deepEqual(
+              h.assistant.map((item) => item.status),
+              [...scenario.statuses],
+            );
+            assert.isTrue(
+              h.assistant.every((item) => item.title === null && item.streaming === false),
+            );
+            assert.lengthOf(h.warnings, scenario.warningCount);
+            if (scenario.name === "retry-recovered-session")
+              assert.include(h.warnings[0]?.output ?? "", "attempt 1 of 2");
+            if ("reasoning" in scenario)
+              assert.isTrue(
+                h.latestItems.some((item) => item.type === "reasoning" && item.text.length > 0),
+              );
+            if ("error" in scenario) {
+              const failure = h.terminal[0]?.failure;
+              assert.include(failure?.message ?? "", scenario.error);
+              if (scenario.name !== "auth-401" && scenario.name !== "provider-model-not-found")
+                assert.equal(failure?.message, scenario.error);
+              assert.equal(failure?.class, "provider_error");
+              assert.equal(h.terminal[0]?.threadDisposition, "reusable");
+              assert.equal(h.runtime.providerSession.lastError, failure?.message);
+              assert.equal(h.runtime.providerSession.status, "ready");
+            } else assert.isNull(h.terminal[0]?.failure);
+            if ("stopReason" in scenario)
+              assert.lengthOf(
+                h.latestItems.filter(
+                  (item) =>
+                    item.type === "notification" &&
+                    item.source.kind === "output_truncated" &&
+                    item.source.stopReason === scenario.stopReason,
+                ),
+                1,
+              );
+            if ("tool" in scenario)
+              assert.isTrue(
+                h.latestItems.some(
+                  (item) =>
+                    item.type === "dynamic_tool" &&
+                    item.toolName === "read" &&
+                    item.status === "completed",
+                ),
+              );
+            if (!("interrupt" in scenario)) assert.deepEqual(h.late, []);
+            assert.isFalse(
+              h.late.some(
+                (event) =>
+                  event.type !== "provider_session.updated" &&
+                  event.type !== "provider_thread.updated",
+              ),
+            );
+            if (scenario.status === "completed")
+              assert.equal(h.runtime.providerSession.status, "ready");
+          }),
+        ),
+    );
+  }
 
   it.effect("runs Scient Agent through its independent native target and runtime version", () =>
     Effect.scoped(

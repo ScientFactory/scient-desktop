@@ -42,7 +42,11 @@ export type NativeSessionUpdate =
       readonly delta: string;
       readonly reasoning?: boolean;
     }
-  | { readonly type: "text-completed"; readonly id: string }
+  | {
+      readonly type: "text-completed";
+      readonly id: string;
+      readonly status?: "completed" | "failed";
+    }
   | {
       readonly type: "tool";
       readonly id: string;
@@ -598,7 +602,11 @@ export function makeNativeSessionAdapterV2(
                 const common = {
                   ...base,
                   title: null,
-                  status: streaming ? ("running" as const) : ("completed" as const),
+                  status: streaming
+                    ? ("running" as const)
+                    : update.type === "text-completed"
+                      ? (update.status ?? "completed")
+                      : ("completed" as const),
                   completedAt: streaming ? null : now,
                   text,
                   streaming,
