@@ -79,6 +79,8 @@ export const REVIEWED_TEST_SUPPORT = {
 // Published packages' runtime exports are added from package.json below. At the
 // initial revision every packages/* workspace is private: its exports resolve
 // imports, but must not make unused internals live just by existing in a barrel.
+// apps/mobile/eas.json submit.production ships these native targets.
+export const MOBILE_PLATFORMS = ["ios", "android"];
 const sourcePattern = /(?:\.[cm]?[jt]sx?|\.astro)$/u;
 const declarationPattern = /\.d\.[cm]?ts$/u;
 const assetPattern =
@@ -115,7 +117,9 @@ function inventory(root) {
   const files = new Set();
   const manifests = [];
   function walk(directory) {
-    for (const entry of NodeFS.readdirSync(directory, { withFileTypes: true })) {
+    for (const entry of NodeFS.readdirSync(directory, { withFileTypes: true }).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    )) {
       const path = NodePath.join(directory, entry.name);
       if (entry.isDirectory() && !ignoredDirectories.has(entry.name)) walk(path);
       else if (entry.isFile()) {
@@ -193,7 +197,9 @@ export function discoverProductionInputs(root) {
   }
   const pages = NodePath.join(root, "apps/marketing/src/pages");
   function walk(directory) {
-    for (const entry of NodeFS.readdirSync(directory, { withFileTypes: true })) {
+    for (const entry of NodeFS.readdirSync(directory, { withFileTypes: true }).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    )) {
       const path = NodePath.join(directory, entry.name);
       if (entry.isDirectory()) walk(path);
       else if (entry.isFile() && isSource(entry.name) && !isHelper(entry.name))
@@ -449,19 +455,32 @@ function resolver(root, files, manifests) {
     manifests.filter((manifest) => manifest.name).map((manifest) => [manifest.name, manifest]),
   );
   const configs = new Map();
+  const directories = new Map();
+  const resolutions = new Map();
   function options(file) {
     const directory = NodePath.dirname(NodePath.join(root, file));
-    const config = ts.findConfigFile(directory, ts.sys.fileExists);
+    if (!directories.has(directory))
+      directories.set(directory, ts.findConfigFile(directory, ts.sys.fileExists));
+    const config = directories.get(directory);
     if (!configs.has(config)) {
       const read = config && ts.readConfigFile(config, ts.sys.readFile);
       if (read?.error)
         throw new Error(ts.flattenDiagnosticMessageText(read.error.messageText, "\n"));
-      configs.set(
-        config,
-        config
-          ? ts.parseJsonConfigFileContent(read.config, ts.sys, NodePath.dirname(config)).options
-          : {},
-      );
+      const parsed = config
+        ? ts.parseJsonConfigFileContent(
+            read.config,
+            ts.sys,
+            NodePath.dirname(config),
+            undefined,
+            config,
+          )
+        : { options: {}, errors: [] };
+      const errors = parsed.errors.filter((error) => ![18002, 18003].includes(error.code));
+      if (errors.length)
+        throw new Error(
+          `Invalid tsconfig ${slash(NodePath.relative(root, config))}: ${errors.map((error) => ts.flattenDiagnosticMessageText(error.messageText, "\n")).join("; ")}`,
+        );
+      configs.set(config, parsed.options);
     }
     return {
       moduleResolution: ts.ModuleResolutionKind.Bundler,
@@ -469,38 +488,43 @@ function resolver(root, files, manifests) {
       ...configs.get(config),
     };
   }
-  function candidates(path, mobile) {
+  function candidates(path, platform) {
     const normalized = slash(NodePath.normalize(path));
-    const stem = normalized.replace(sourcePattern, "");
-    const extensions = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".astro"];
-    const bases = sourcePattern.test(normalized) ? [stem] : [normalized, `${normalized}/index`];
-    // Union of Android/iOS/native: one check covers all shipped mobile targets.
-    const variants = mobile
-      ? bases.flatMap((base) =>
-          [".ios", ".android", ".native"].flatMap((platform) =>
-            extensions.map((ext) => `${base}${platform}${ext}`),
-          ),
-        )
-      : [];
-    return [
-      ...new Set([
-        ...variants,
-        normalized,
-        ...bases.flatMap((base) => extensions.map((ext) => `${base}${ext}`)),
-      ]),
-    ].filter((candidate) => files.has(candidate));
+    const extension = normalized.match(sourcePattern)?.[0];
+    // Vite/TS source substitution for emitted JS imports; an explicit source
+    // extension otherwise names that file. Metro tries platform/native/generic
+    // for each extension, selecting one winner per shipped platform.
+    const extensions = extension
+      ? ({
+          ".js": [".ts", ".tsx", ".js", ".jsx"],
+          ".mjs": [".mts", ".mjs"],
+          ".cjs": [".cts", ".cjs", ".ts"],
+        }[extension] ?? [extension])
+      : [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".astro"];
+    if (files.has(normalized)) return [normalized];
+    const bases = extension
+      ? [normalized.slice(0, -extension.length)]
+      : [normalized, `${normalized}/index`];
+    for (const base of bases)
+      for (const ext of extensions)
+        for (const variant of platform && !/\.(?:ios|android|native)$/u.test(base)
+          ? [`.${platform}`, ".native", ""]
+          : [""]) {
+          const candidate = `${base}${variant}${ext}`;
+          if (files.has(candidate)) return [candidate];
+        }
+    return [];
   }
-  function resolve(file, original) {
+  function resolve(file, original, platform) {
     // raw source is data, whereas ?worker and ?url refer to executable assets.
     if (/[?&]raw(?:[=&]|$)/u.test(original)) return { targets: [], local: false };
     const specifier = original.replace(/[?#].*$/u, "");
     if (assetPattern.test(specifier)) return { targets: [], local: false };
     if (specifier.split("/").some((part) => ignoredDirectories.has(part)))
       return { targets: [], local: false };
-    const mobile = file.startsWith("apps/mobile/");
     if (specifier.startsWith("."))
       return {
-        targets: candidates(NodePath.join(NodePath.dirname(file), specifier), mobile),
+        targets: candidates(NodePath.join(NodePath.dirname(file), specifier), platform),
         local: true,
       };
     const name = specifier.startsWith("@")
@@ -511,20 +535,50 @@ function resolver(root, files, manifests) {
       const subpath = specifier === name ? "." : `.${specifier.slice(name.length)}`;
       return {
         targets: exportTargets(manifest, subpath).flatMap((target) =>
-          candidates(NodePath.join(manifest.directory, target), mobile),
+          candidates(NodePath.join(manifest.directory, target), platform),
         ),
         local: true,
       };
     }
-    const resolved = ts.resolveModuleName(
-      specifier,
-      NodePath.join(root, file),
-      options(file),
-      ts.sys,
-    ).resolvedModule;
+    const compilerOptions = options(file);
+    const paths = compilerOptions.paths ?? {};
+    const patterns = Object.keys(paths)
+      .filter((pattern) =>
+        pattern.includes("*")
+          ? specifier.startsWith(pattern.split("*")[0]) && specifier.endsWith(pattern.split("*")[1])
+          : pattern === specifier,
+      )
+      .sort(
+        (a, b) =>
+          (b.includes("*") ? b.indexOf("*") : Infinity) -
+          (a.includes("*") ? a.indexOf("*") : Infinity),
+      );
+    if (patterns.length) {
+      const pattern = patterns[0];
+      const [prefix, suffix] = pattern.split("*");
+      const match = pattern.includes("*")
+        ? specifier.slice(prefix.length, suffix ? -suffix.length : undefined)
+        : "";
+      for (const path of paths[pattern]) {
+        const base = compilerOptions.baseUrl ?? compilerOptions.pathsBasePath ?? root;
+        const targets = candidates(
+          slash(NodePath.relative(root, NodePath.resolve(base, path.replaceAll("*", match)))),
+          platform,
+        );
+        if (targets.length) return { targets, local: true };
+      }
+      return { targets: [], local: true };
+    }
+    const key = `${file}\0${specifier}`;
+    if (!resolutions.has(key))
+      resolutions.set(
+        key,
+        ts.resolveModuleName(specifier, NodePath.join(root, file), compilerOptions, ts.sys)
+          .resolvedModule,
+      );
+    const resolved = resolutions.get(key);
     const relative = resolved && slash(NodePath.relative(root, resolved.resolvedFileName));
-    const targets = relative ? candidates(relative, mobile) : [];
-    const paths = options(file).paths ?? {};
+    const targets = relative ? candidates(relative, platform) : [];
     const alias = Object.keys(paths).some((pattern) =>
       pattern.includes("*")
         ? specifier.startsWith(pattern.split("*")[0]) && specifier.endsWith(pattern.split("*")[1])
@@ -532,7 +586,7 @@ function resolver(root, files, manifests) {
     );
     return { targets, local: alias };
   }
-  return { resolve, candidates };
+  return { resolve, candidates, options };
 }
 
 function readAllowlist(root, path, tests) {
@@ -611,12 +665,13 @@ export function inspectLivecode({
 } = {}) {
   root = NodePath.resolve(root);
   const { files, manifests } = inventory(root);
-  const { resolve, candidates } = resolver(root, files, manifests);
-  const graph = new Map();
-  const subjectGraph = new Map();
+  const { resolve, candidates, options } = resolver(root, files, manifests);
+  const contexts = [null, ...MOBILE_PLATFORMS];
+  const graphs = new Map(contexts.map((platform) => [platform, new Map()]));
+  const subjectGraphs = new Map(contexts.map((platform) => [platform, new Map()]));
   const helpers = new Set([...files].filter(isHelper));
   const diagnostics = [];
-  const unresolvedWorkers = [];
+  const unresolvedEdges = [];
   for (const input of discoverProductionInputs(root))
     if (!entries.includes(input))
       diagnostics.push({
@@ -625,6 +680,7 @@ export function inspectLivecode({
         message: "Production input is missing from the explicit entry list",
       });
   for (const file of [...files].sort()) {
+    options(file);
     const parsed = runtimeImports(file, NodeFS.readFileSync(NodePath.join(root, file), "utf8"));
     if (
       parsed.imports.some((entry) =>
@@ -633,30 +689,35 @@ export function inspectLivecode({
     )
       helpers.add(file);
     diagnostics.push(...parsed.diagnostics);
-    const targets = new Set();
-    const subjectTargets = new Set();
-    const mockTargets = new Set(
-      parsed.mocked.flatMap((specifier) => resolve(file, specifier).targets),
-    );
-    for (const imported of parsed.imports) {
-      if (imported.kind === "mock") continue;
-      const resolved = resolve(file, imported.specifier);
-      for (const target of resolved.targets) {
-        if (imported.kind !== "actual" && mockTargets.has(target)) continue;
-        targets.add(target);
-        if (imported.kind !== "url") subjectTargets.add(target);
+    for (const platform of contexts) {
+      const targets = new Set();
+      const subjectTargets = new Set();
+      const mockTargets = new Set(
+        parsed.mocked.flatMap((specifier) => resolve(file, specifier, platform).targets),
+      );
+      for (const imported of parsed.imports) {
+        if (imported.kind === "mock") continue;
+        const resolved = resolve(file, imported.specifier, platform);
+        for (const target of resolved.targets) {
+          if (imported.kind !== "actual" && mockTargets.has(target)) continue;
+          targets.add(target);
+          if (imported.kind !== "url") subjectTargets.add(target);
+        }
+        if (imported.kind !== "url" && resolved.local && !resolved.targets.length)
+          unresolvedEdges.push({
+            platform,
+            worker: imported.kind === "worker",
+            kind: "error",
+            file,
+            line: imported.line,
+            message: `Unresolved local runtime import: ${imported.specifier}`,
+          });
       }
-      if (imported.kind !== "url" && resolved.local && !resolved.targets.length)
-        (imported.kind === "worker" ? unresolvedWorkers : diagnostics).push({
-          kind: "error",
-          file,
-          line: imported.line,
-          message: `Unresolved local runtime import: ${imported.specifier}`,
-        });
+      graphs.get(platform).set(file, targets);
+      subjectGraphs.get(platform).set(file, subjectTargets);
     }
-    graph.set(file, targets);
-    subjectGraph.set(file, subjectTargets);
   }
+
   const productionEntries = new Set(entries);
   // Only externally published public surfaces are independent roots. Private
   // workspace exports remain ordinary graph edges, including /testing exports.
@@ -670,7 +731,7 @@ export function inspectLivecode({
         ? [...files].filter(
             (file) => file.startsWith(path.split("*")[0]) && file.endsWith(path.split("*")[1]),
           )
-        : candidates(path, false);
+        : candidates(path, null);
       for (const match of matches) productionEntries.add(match);
       if (!matches.length && isSource(path))
         diagnostics.push({
@@ -682,32 +743,71 @@ export function inspectLivecode({
   }
   const reachable = new Set();
   const productionParents = {};
-  const pending = [...productionEntries].map((file) => ({ file, from: null }));
+  const reachedContexts = new Set();
+  const pending = [...productionEntries].sort().flatMap((file) =>
+    (file.startsWith("apps/mobile/") ? MOBILE_PLATFORMS : [null]).map((platform) => ({
+      file,
+      platform,
+      from: null,
+    })),
+  );
   for (const entry of productionEntries)
     if (!files.has(entry))
       diagnostics.push({ kind: "error", file: entry, message: "Missing production entry point" });
   while (pending.length) {
-    const { file, from } = pending.pop();
-    if (reachable.has(file) || !files.has(file)) continue;
+    const { file, platform, from } = pending.pop();
+    const key = `${platform}:${file}`;
+    if (reachedContexts.has(key) || !files.has(file)) continue;
+    reachedContexts.add(key);
+    if (!reachable.has(file)) productionParents[file] = from;
     reachable.add(file);
-    productionParents[file] = from;
     if (from && helpers.has(file))
       diagnostics.push({
         kind: "warning",
         file,
         message: `Production imports test support from ${from}`,
       });
-    pending.push(...[...graph.get(file)].map((target) => ({ file: target, from: file })));
+    pending.push(
+      ...[...graphs.get(platform).get(file)]
+        .sort()
+        .map((target) => ({ file: target, platform, from: file })),
+    );
   }
-  diagnostics.push(...unresolvedWorkers.filter((diagnostic) => reachable.has(diagnostic.file)));
+  for (const { platform, worker, ...diagnostic } of unresolvedEdges) {
+    const defaultContext = diagnostic.file.startsWith("apps/mobile/")
+      ? platform !== null
+      : platform === null;
+    if ((defaultContext && !worker) || reachedContexts.has(`${platform}:${diagnostic.file}`)) {
+      if (
+        !diagnostics.some(
+          (entry) =>
+            entry.file === diagnostic.file &&
+            entry.line === diagnostic.line &&
+            entry.message === diagnostic.message,
+        )
+      )
+        diagnostics.push(diagnostic);
+    }
+  }
   const testFiles = new Set([...files].filter((file) => testPattern.test(file)));
   const allowed = readAllowlist(root, allowlist, testFiles);
   const tests = [...testFiles].sort().map((test) => {
-    const { subjects, imports, supportReason, subjectWitnesses } = subjectsOf(
+    const platforms = test.startsWith("apps/mobile/") ? MOBILE_PLATFORMS : [null];
+    const frontiers = platforms.map((platform) =>
+      subjectsOf(test, subjectGraphs.get(platform), helpers, {}),
+    );
+    const combined = new Map([[test, new Set(frontiers.flatMap((frontier) => frontier.imports))]]);
+    const { subjects, imports, supportReason } = subjectsOf(
       test,
-      subjectGraph,
-      helpers,
+      combined,
+      new Set(),
       supportMetadata,
+    );
+    const subjectWitnesses = Object.fromEntries(
+      imports.map((subject) => [
+        subject,
+        frontiers.find((frontier) => frontier.subjectWitnesses[subject]).subjectWitnesses[subject],
+      ]),
     );
     const deadSubjects = subjects.filter((subject) => !reachable.has(subject));
     const liveSubjects = subjects.filter((subject) => reachable.has(subject));
@@ -736,7 +836,9 @@ export function inspectLivecode({
     schemaVersion: 1,
     productionEntries: [...productionEntries].sort(),
     reachableFiles: [...reachable].sort(),
-    productionParents,
+    productionParents: Object.fromEntries(
+      Object.entries(productionParents).sort(([a], [b]) => a.localeCompare(b)),
+    ),
     summary: {
       sourceFiles: files.size,
       reachableFiles: reachable.size,
@@ -747,7 +849,18 @@ export function inspectLivecode({
       noSubject: tests.filter((test) => test.status === "no-subject").length,
     },
     tests,
-    diagnostics,
+    diagnostics: diagnostics
+      .filter(
+        (entry, index) =>
+          diagnostics.findIndex((other) => JSON.stringify(other) === JSON.stringify(entry)) ===
+          index,
+      )
+      .sort(
+        (a, b) =>
+          a.file.localeCompare(b.file) ||
+          (a.line ?? 0) - (b.line ?? 0) ||
+          a.message.localeCompare(b.message),
+      ),
   };
 }
 

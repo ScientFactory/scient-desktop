@@ -385,7 +385,92 @@ describe("production subject reachability", () => {
     f.write("apps/mobile/src/widget.test.ts", "import './widget';");
     const result = inspectLivecode({ root: f.root, entries: ["apps/mobile/index.ts"] });
     expect(result.tests[0].status).toBe("live");
-    expect(result.tests[0].subjects).toHaveLength(3);
+    expect(result.tests[0].subjects).toHaveLength(2);
+    expect(result.reachableFiles).not.toContain("apps/mobile/src/widget.native.tsx");
+  });
+
+  it("resolves mobile platform winners without retaining unused generic dependencies", () => {
+    const f = fixture();
+    f.write("apps/mobile/index.ts", "import './src/widget';");
+    f.write("apps/mobile/src/widget.tsx", "import './genericOnly';");
+    f.write("apps/mobile/src/widget.ios.tsx", "import './iosOnly';");
+    f.write("apps/mobile/src/widget.android.tsx", "export * from './widget.native';");
+    f.write("apps/mobile/src/widget.native.tsx", "import '@fixture/shared';");
+    for (const name of ["genericOnly", "iosOnly"])
+      f.write(`apps/mobile/src/${name}.ts`, "export const value = true;");
+    f.write("packages/native/package.json", {
+      name: "@fixture/shared",
+      private: true,
+      exports: "./src/index.ts",
+    });
+    f.write("packages/native/src/index.ts", "import './feature';");
+    f.write("packages/native/src/feature.ts", "export const generic = true;");
+    f.write("packages/native/src/feature.android.ts", "export const android = true;");
+    f.write("packages/native/src/feature.ios.ts", "export const ios = true;");
+    f.write("apps/mobile/src/generic.test.ts", "import './widget.tsx';");
+    const result = inspectLivecode({ root: f.root, entries: ["apps/mobile/index.ts"] });
+    expect(result.tests[0].status).toBe("dead");
+    expect(result.reachableFiles).not.toContain("apps/mobile/src/widget.tsx");
+    expect(result.reachableFiles).not.toContain("apps/mobile/src/genericOnly.ts");
+    expect(result.reachableFiles).toContain("apps/mobile/src/widget.native.tsx");
+    expect(result.reachableFiles).toContain("packages/native/src/feature.android.ts");
+    expect(result.reachableFiles).not.toContain("packages/native/src/feature.ios.ts");
+    expect(result.reachableFiles).not.toContain("packages/native/src/feature.ts");
+  });
+
+  it("selects one extension and file before directory, and validates inherited config errors", () => {
+    const f = fixture();
+    f.write("apps/server/src/main.ts", "import './widget';");
+    for (const name of ["widget.ts", "widget.tsx", "widget.js", "widget/index.ts"])
+      f.write(`apps/server/src/${name}`, "export const value = true;");
+    expect(f.inspect().reachableFiles.filter((file) => file.includes("widget"))).toEqual([
+      "apps/server/src/widget.ts",
+    ]);
+    f.write("apps/server/src/widget.test.ts", "import './widget.tsx';");
+    expect(f.test("widget").status).toBe("dead");
+    f.write("tsconfig.base.json", { compilerOptions: { target: "invalid-target" } });
+    f.write("apps/server/tsconfig.json", { extends: "../../tsconfig.base.json" });
+    expect(runLivecode(["--strict"], f.options).output).toContain("Invalid tsconfig");
+    expect(runLivecode(["--strict"], f.options).exitCode).toBe(1);
+    f.write("apps/server/tsconfig.json", { extends: "./missing-config.json" });
+    expect(runLivecode(["--strict"], f.options).output).toContain("missing-config.json");
+  });
+
+  it("honors blocked exact package subpaths and the most specific wildcard", () => {
+    const f = fixture();
+    f.write("packages/private/package.json", {
+      name: "@fixture/private",
+      private: true,
+      exports: {
+        "./*": "./src/*.ts",
+        "./feature/*": "./src/special/*.ts",
+        "./feature/blocked": null,
+      },
+    });
+    f.write("packages/private/src/special/one.ts", "export const value = true;");
+    f.write("packages/private/src/feature/one.ts", "export const unused = true;");
+    f.write("packages/private/src/special/blocked.ts", "export const blocked = true;");
+    f.write("apps/server/src/main.ts", "import '@fixture/private/feature/one';");
+    expect(f.inspect().reachableFiles).toContain("packages/private/src/special/one.ts");
+    expect(f.inspect().reachableFiles).not.toContain("packages/private/src/feature/one.ts");
+    f.write("apps/server/src/main.ts", "import '@fixture/private/feature/blocked';");
+    expect(runLivecode(["--strict"], f.options).exitCode).toBe(1);
+    expect(f.inspect().reachableFiles).not.toContain("packages/private/src/special/blocked.ts");
+  });
+
+  it("serializes published roots and parent witnesses independently of filesystem creation order", () => {
+    const a = fixture();
+    const b = fixture();
+    const files = [
+      ["packages/a/package.json", { name: "a", exports: "./src/index.ts" }],
+      ["packages/b/package.json", { name: "b", exports: "./src/index.ts" }],
+      ["packages/a/src/index.ts", "import 'b';"],
+      ["packages/b/src/index.ts", "export const value = true;"],
+      ["apps/server/src/subject.test.ts", "import 'b';"],
+    ];
+    for (const [path, code] of files) a.write(path, code);
+    for (const [path, code] of [...files].reverse()) b.write(path, code);
+    expect(JSON.stringify(a.inspect())).toBe(JSON.stringify(b.inspect()));
   });
 
   it("follows Astro frontmatter/client imports and executable URLs without treating URL existence checks as imports", () => {
