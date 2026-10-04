@@ -20,6 +20,7 @@ import {
   loadQueueEdits,
   useQueueEditSessions,
 } from "../scient/threadQueue/editSession";
+import { nativeQueueEditItem } from "../scient/threadQueue/nativeQueueEditItem";
 import { composerTargetKey } from "../composerDraftStore";
 import {
   useMarkdownPersistenceGuards,
@@ -5008,29 +5009,7 @@ function ChatViewContent(props: ChatViewProps) {
       const updatedAt = DateTime.formatIso(message.updatedAt);
       void beginQueueEdit(
         routeThreadRef,
-        {
-          queueItemId: run.id,
-          threadId: activeThread.id,
-          messageId: message.id,
-          text: message.text,
-          attachments: message.attachments,
-          createdAt: DateTime.formatIso(message.createdAt),
-          updatedAt,
-          modelSelection: run.modelSelection,
-          runtimeMode: run.runtimeMode ?? serverProjection.thread.runtimeMode,
-          interactionMode: run.interactionMode ?? serverProjection.thread.interactionMode,
-          ...(message.context === undefined ? {} : { context: message.context }),
-          ...(message.composerSnapshot === undefined
-            ? {}
-            : { composerSnapshot: message.composerSnapshot }),
-          ...(message.selectedScientSkillNames === undefined
-            ? {}
-            : { selectedScientSkillNames: message.selectedScientSkillNames }),
-          ...(run.legacyQueue?.titleSeed === undefined
-            ? {}
-            : { titleSeed: run.legacyQueue.titleSeed }),
-          ...(run.sourcePlanRef === undefined ? {} : { sourceProposedPlan: run.sourcePlanRef }),
-        },
+        nativeQueueEditItem(run, message, serverProjection.thread),
         { runId: run.id, messageId: message.id, expectedUpdatedAt: updatedAt },
       )
         .then(() => scheduleComposerFocus())

@@ -7,6 +7,7 @@ import {
   ProviderInstanceId,
   RunId,
   MessageId,
+  PlanId,
   ScientThreadQueueOperationError,
   type ScientThreadQueueItem,
   type ScientThreadQueueSnapshot,
@@ -33,6 +34,8 @@ import * as editJournal from "./editJournal";
 import { collectSelectedScientSkillNames } from "@t3tools/shared/composerInlineTokens";
 import { usePromptStashStore } from "../../promptStashStore";
 import { buildMessageContext, terminalContextReference } from "../../lib/composerContextRecords";
+import * as DateTime from "effect/DateTime";
+import { nativeQueueEditItem } from "./nativeQueueEditItem";
 import {
   ensureInlineContextReferences,
   toKindScopedComposerContextId,
@@ -111,6 +114,120 @@ beforeEach(async () => {
   vi.mocked(extractNativeQueuedRun).mockReset();
 });
 describe("queue extraction into an ordinary draft", () => {
+  it.each([
+    {
+      label: "imported captured policy",
+      native: false,
+      legacy: true,
+      expectedRuntime: "approval-required",
+      expectedInteraction: "plan",
+      expectedPlan: "legacy-plan",
+    },
+    {
+      label: "native policy takes precedence",
+      native: true,
+      legacy: true,
+      expectedRuntime: "full-access",
+      expectedInteraction: "default",
+      expectedPlan: "native-plan",
+    },
+    {
+      label: "older native run uses thread defaults",
+      native: false,
+      legacy: false,
+      expectedRuntime: "full-access",
+      expectedInteraction: "default",
+      expectedPlan: undefined,
+    },
+  ] as const)(
+    "journals and recovers $label when native extraction transfers the draft",
+    async (scenario) => {
+      const run = {
+        id: RunId.make("imported-native-run"),
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("captured-provider"),
+          model: "captured-model",
+        },
+        ...(scenario.native
+          ? {
+              runtimeMode: "full-access" as const,
+              interactionMode: "default" as const,
+              sourcePlanRef: { threadId: target.threadId, planId: PlanId.make("native-plan") },
+            }
+          : {}),
+        ...(scenario.legacy
+          ? {
+              legacyQueue: {
+                queueItemId: "retained-legacy-item",
+                runtimeMode: "approval-required" as const,
+                interactionMode: "plan" as const,
+                titleSeed: "Captured title",
+                sourceProposedPlan: {
+                  threadId: target.threadId,
+                  planId: PlanId.make("legacy-plan"),
+                },
+              },
+            }
+          : {}),
+      };
+      const message = {
+        id: MessageId.make("captured-message"),
+        text: "captured prompt",
+        attachments: [],
+        createdAt: DateTime.makeUnsafe(item.createdAt),
+        updatedAt: DateTime.makeUnsafe(item.updatedAt),
+        selectedScientSkillNames: [],
+      };
+      const queued = nativeQueueEditItem(run, message, {
+        id: target.threadId,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      useComposerDraftStore.getState().setPrompt(target, "ordinary draft survives in stash");
+      vi.mocked(extractNativeQueuedRun).mockResolvedValueOnce({ sequence: 1 });
+      const nativeRun = {
+        runId: run.id,
+        messageId: message.id,
+        expectedUpdatedAt: queued.updatedAt,
+      };
+      await beginQueueEdit(target, queued, nativeRun);
+      const session = useQueueEditSessions.getState().sessions[composerTargetKey(target)]!;
+      const journal = (await readQueueEditJournal(session.journalKey))!;
+      expect(vi.mocked(extractNativeQueuedRun)).toHaveBeenCalledWith(target.environmentId, {
+        threadId: target.threadId,
+        runId: run.id,
+        expectedUpdatedAt: queued.updatedAt,
+        editToken: session.editToken,
+      });
+      expect(journal.transferred).toBe(true);
+      expect(journal.extractedItem?.sourceProposedPlan?.planId).toBe(scenario.expectedPlan);
+      expect(journal.extractedItem?.selectedScientSkillNames).toEqual([]);
+      expect(journal.extractedItem?.context).toBeUndefined();
+      expect(journal.extractedItem?.titleSeed).toBe(scenario.legacy ? "Captured title" : undefined);
+      expect(journal.ordinary.prompt).toBe("ordinary draft survives in stash");
+      expect(journal.edited.runtimeMode).toBe(scenario.expectedRuntime);
+      expect(journal.edited.interactionMode).toBe(scenario.expectedInteraction);
+      expect(useComposerDraftStore.getState().getComposerDraft(target)?.runtimeMode).toBe(
+        scenario.expectedRuntime,
+      );
+      await stashRecoveredDraft(session);
+      const entry = usePromptStashStore
+        .getState()
+        .entries.find((candidate) => candidate.queueEditSide === "edited")!;
+      await restoreQueueEditStash(entry, other, other.environmentId);
+      const recoveredSession = useQueueEditSessions.getState().sessions[composerTargetKey(other)]!;
+      const recoveredJournal = (await readQueueEditJournal(recoveredSession.journalKey))!;
+      expect(recoveredJournal.extractedItem?.sourceProposedPlan?.planId).toBe(
+        scenario.expectedPlan,
+      );
+      expect(useComposerDraftStore.getState().getComposerDraft(other)?.runtimeMode).toBe(
+        scenario.expectedRuntime,
+      );
+      expect(useComposerDraftStore.getState().getComposerDraft(other)?.interactionMode).toBe(
+        scenario.expectedInteraction,
+      );
+    },
+  );
   it("uses journaled bytes after extraction even when another attachment download would fail", async () => {
     const attachment = {
       type: "file" as const,

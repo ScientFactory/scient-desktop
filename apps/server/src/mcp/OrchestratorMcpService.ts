@@ -1282,6 +1282,10 @@ const make = Effect.gen(function* () {
             : input.bindToCurrentThread
               ? scope.threadId
               : null;
+        if (threadId !== null && threadId !== existing.threadId) {
+          yield* resolveRuntimeMode(policy.runtimeMode, parent.thread.runtimeMode);
+          yield* resolveInteractionMode(policy.interactionMode, parent.thread.interactionMode);
+        }
         // Rebinding changes where runs execute, so the workspace strategy must
         // follow: unbinding a root-strategy task would otherwise run loose
         // prompts in the shared project checkout.

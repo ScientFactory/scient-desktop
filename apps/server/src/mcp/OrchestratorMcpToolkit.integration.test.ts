@@ -1607,10 +1607,19 @@ describe("orchestrator MCP toolkit", () => {
                 (task) => task.id !== scheduledTaskId,
               );
               expect(futureTask).toMatchObject({ runtimeMode, interactionMode, threadId: null });
-              if (futureTask !== undefined)
+              if (futureTask !== undefined) {
+                const beforeRebind = yield* Ref.get(scheduledStore);
+                const deniedRebind = yield* invokeAs(callerScope, "update_scheduled_task", {
+                  scheduledTaskId: futureTask.id,
+                  bindToCurrentThread: true,
+                  prompt: "Cannot rebind captured restricted work to broader future defaults.",
+                });
+                expect(deniedRebind.structuredContent).toMatchObject({ code: expectedCode });
+                expect(yield* Ref.get(scheduledStore)).toEqual(beforeRebind);
                 yield* invokeAs(callerScope, "delete_scheduled_task", {
                   scheduledTaskId: futureTask.id,
                 });
+              }
               const boundFuture = yield* invokeAs(callerScope, "schedule_task", {
                 prompt: "Cannot bind weaker caller work into a stronger current default.",
                 schedule: { type: "interval", everyMs: 60_000 },

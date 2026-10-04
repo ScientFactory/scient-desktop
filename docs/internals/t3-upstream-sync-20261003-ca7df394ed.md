@@ -4,12 +4,14 @@
 
 **Status: integration corrections under final qualification.** The literal upstream
 merge and owned-main catch-up are committed locally. Historical automated
-checkpoints below do not establish the current dirty candidate's readiness.
+checkpoints below do not establish the current candidate's readiness. The
+integration corrections are committed at `5635539d0bf60bf25d419a8a4b11662159fbdb8d`;
+the subsequent test-only transport-baseline correction is `55af36534ce14ee3dfcda9ba678b9f14310524f5`.
 The existing review checkout is clean and detached at `b3e914849e` on the
 latest read-only inventory (it was independently refreshed after `6030c9fcf9`);
 its owning status now reports stopped, and its previously recorded processes
 are gone. A later independently launched review app is running directly from
-the dirty alignment checkout; its owning status was verified and it is preserved.
+the alignment checkout; its owning status was verified and it is preserved.
 This pass has not changed or restarted either review runtime. Current server and web compilers
 pass; combined migration/recovery qualification and whole-candidate gates are
 in progress. Scient Browser is available again. DEV-001, DEV-002 and queue/edit
@@ -227,6 +229,60 @@ All databases, transports and attachments used for local qualification are
 synthetic/disposable. No live profile or provider credentials were copied.
 
 Relevant checkpoints, each superseded when its path changes:
+
+The immutable review of `5635539d0bf60bf25d419a8a4b11662159fbdb8d`
+identified five additional defects. Each was confirmed in the working tree;
+none is waived by the earlier package results. Their corrections and final
+requalification are tracked here:
+
+| Finding                                             | Correction and current proof                                                                                                                                                                                                                                                                                                                                                                     |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Scheduled-task rebinding permission ceiling         | A new destination binding is checked against the caller's captured runtime and interaction policy before persistence. The registered MCP toolkit with real SQLite reproduced the failure before the fix, then both complete toolkit scenarios passed (`final-scheduled-rebind-baseline-red.txt`, `final-pdf-scheduled-rebind-round1.txt`).                                                       |
+| Portable resume/fork history preparation exhaustion | Apply final-attempt settlement to all pre-start history reads, retaining current-attempt fencing and intermediate retry. Runtime qualification pending.                                                                                                                                                                                                                                          |
+| Steering completion-race skill selection            | Redispatch the durable message's selection, preserving omitted and explicitly empty values. Runtime qualification pending.                                                                                                                                                                                                                                                                       |
+| Imported queued-item extraction policy              | Resolve captured modes and source plan through the native run and legacy payload before transfer to the ordinary draft. The complete IndexedDB/extraction/stash-recovery file passes 19 cases; native precedence, legacy fallback, explicit empty skills and source-plan retention are covered (`pdf-worker-and-queue-extraction-handoff.md`). Web typechecking and scoped formatting/lint pass. |
+| Premature queued-plan completion                    | Consume the exact source-plan revision only with the owned native acceptance receipt; queue admission, extraction and pre-start failure must leave it reusable. Implementation and transaction qualification pending.                                                                                                                                                                            |
+
+Two subsequent owner-observed regressions were also confirmed:
+
+- PDF validation resolved its worker relative to the old fixed `bin.mjs`
+  entry. The new lazy CLI chunk selected a missing source worker. Resolution
+  now uses the emitted sibling worker for bundled modules. Seven focused
+  cases pass, including actual development-worker acceptance and malformed
+  output rejection (`final-pdf-scheduled-rebind-round1.txt`). The existing
+  hashed bundle separately reproduced the owner's exact error, while the
+  corrected resolver with that bundle's actual worker accepted a valid PDF
+  and rejected malformed bytes (`pdf-bundled-worker-red-green.txt`). A fresh
+  rebuilt-app export remains required.
+- Provider settings hid untouched disabled slots. Supported default settings
+  rows are visible again, preserving their enabled state and exact environment
+  instance ownership. All 26 component routing cases pass, including selecting
+  and enabling a formerly hidden default instance without changing other settings
+  (`final-provider-settings-roster-round2.txt`). Scoped formatting/lint pass with
+  three existing warnings. Rebuilt-app qualification remains required.
+
+- Current-candidate uncached typechecking passes all 32 packages with no hard
+  errors or Effect warnings (`final-candidate-typecheck-round1.txt`), before
+  the subsequent test-only replay repairs. Complete contracts qualification
+  passes 741 tests across 54 files (`final-candidate-core-tests-round1.txt`);
+  client-runtime passes 2,158 across 130, and web unit passes 10,250 across 865
+  (`final-candidate-core-tests-round2.txt`). The initial client performance
+  failure compared the historical baseline with newly captured mode fields.
+  Its fixture now uses the recorded former command shape, keeps all byte and
+  ratio limits unchanged, and asserts the new fields on the current command.
+  Scoped formatting/lint and client typechecking also pass after that correction.
+- The remaining 27 package suites pass 6,728 tests across 616 passing files,
+  with 46 intentionally skipped cases (`final-candidate-other-tests-round2.txt`,
+  `final-candidate-other-tests-round3.txt`, and their deduplicated summary).
+  The combined server run remains incomplete: Codex MCP and OpenCode replay
+  mismatches were exposed, and the owned worker was stopped after a stalled
+  OpenCode replay. Source confirmation found missing expected native permission
+  confirmation frames in that old OpenCode fixture. Strict replay repair and
+  the complete server rerun remain required; this interrupted run is not a pass.
+- A separate clean review worktree is prepared at the committed integration
+  snapshot. Final build, packaging, Chromium layout, immutable technical review
+  and actual repaired-app acceptance remain required. The user's existing
+  review app is preserved throughout these checks.
 
 - The complete uncached static gate passes all 32 package TypeScript/Effect
   checks (`final-typecheck-round2.txt`), with no hard errors or Effect warnings.
