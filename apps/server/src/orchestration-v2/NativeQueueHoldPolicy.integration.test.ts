@@ -11,6 +11,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   RunAttemptId,
+  ProviderTurnId,
+  TurnItemId,
   ThreadId,
   VcsProcessExitError,
   type OrchestrationV2ThreadProjection,
@@ -22,6 +24,7 @@ import { createAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts
 import * as DateTime from "effect/DateTime";
 import { EventSinkV2 } from "./EventSink.ts";
 import { EffectOutboxV2 } from "./EffectOutbox.ts";
+import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 import type * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
@@ -43,6 +46,7 @@ import { OrchestratorV2, type OrchestratorV2Error } from "./Orchestrator.ts";
 import {
   ProviderAdapterOpenSessionError,
   type ProviderAdapterV2TurnInput,
+  type ProviderAdapterV2Event,
 } from "./ProviderAdapter.ts";
 import { makeLayer } from "./ProviderAdapterRegistry.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
@@ -65,10 +69,13 @@ const withNativeQueue = <A, E, R>(
     readonly threadId: ThreadId;
     readonly orchestrator: OrchestratorV2["Service"];
     readonly offers: ReadonlyArray<string>;
+    readonly injectEvent: (event: ProviderAdapterV2Event) => Effect.Effect<void>;
     readonly preparationReady: Effect.Effect<void>;
     readonly releasePreparation: Effect.Effect<void>;
     readonly preparationAttempts: () => number;
     readonly nativeInterruptions: () => number;
+    readonly interruptEntered: Effect.Effect<void>;
+    readonly releaseInterrupt: Effect.Effect<void>;
     readonly takeOffer: Effect.Effect<NativeOffer, Cause.TimeoutError>;
     readonly waitFor: (
       predicate: (projection: OrchestrationV2ThreadProjection) => boolean,
@@ -89,6 +96,8 @@ const withNativeQueue = <A, E, R>(
     readonly holdPreparation?: boolean;
     readonly refusePreparation?: boolean;
     readonly failCheckpointDiff?: boolean;
+    readonly injectEvents?: boolean;
+    readonly holdInterrupt?: boolean;
   } = {},
 ) =>
   Effect.scoped(
@@ -97,7 +106,10 @@ const withNativeQueue = <A, E, R>(
       const allocator = yield* IdAllocatorV2;
       const scope = yield* Scope.Scope;
       const offered = yield* Queue.unbounded<NativeOffer>();
+      const injected = yield* Queue.unbounded<ProviderAdapterV2Event>();
       const firstSendReleased = yield* Deferred.make<void>();
+      const interruptEntered = yield* Deferred.make<void>();
+      const interruptReleased = yield* Deferred.make<void>();
       const preparationReady = yield* Deferred.make<void>();
       const preparationReleased = yield* Deferred.make<void>();
       let preparationAttempts = 0;
@@ -190,6 +202,10 @@ const withNativeQueue = <A, E, R>(
             interrupt: Effect.sync(() => {
               nativeInterruptions += 1;
             }).pipe(
+              Effect.andThen(Deferred.succeed(interruptEntered, undefined)),
+              Effect.andThen(
+                options.holdInterrupt ? Deferred.await(interruptReleased) : Effect.void,
+              ),
               Effect.andThen(
                 publish({ type: "terminal", status: "cancelled" } satisfies NativeSessionUpdate),
               ),
@@ -208,7 +224,7 @@ const withNativeQueue = <A, E, R>(
           runtimePolicyOverride: { cwd },
         },
         makeLayer([
-          options.holdFirstSend || options.synchronousFailSend !== undefined
+          options.holdFirstSend || options.synchronousFailSend !== undefined || options.injectEvents
             ? {
                 ...adapter,
                 openSession: (input) =>
@@ -230,6 +246,9 @@ const withNativeQueue = <A, E, R>(
                                 event.providerTurn.status === "running"
                               ? Deferred.await(firstSendReleased).pipe(Effect.as(event))
                               : Effect.succeed(event),
+                        ),
+                        Stream.merge(
+                          options.injectEvents ? Stream.fromQueue(injected) : Stream.empty,
                         ),
                       ),
                     })),
@@ -330,12 +349,15 @@ const withNativeQueue = <A, E, R>(
           threadId,
           orchestrator,
           offers,
+          injectEvent: (event) => Queue.offer(injected, event).pipe(Effect.asVoid),
           preparationReady: Deferred.await(preparationReady),
           releasePreparation: Deferred.succeed(preparationReleased, undefined).pipe(Effect.asVoid),
           preparationAttempts: () => preparationAttempts,
           takeOffer,
           waitFor,
           nativeInterruptions: () => nativeInterruptions,
+          interruptEntered: Deferred.await(interruptEntered),
+          releaseInterrupt: Deferred.succeed(interruptReleased, undefined).pipe(Effect.asVoid),
         });
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, idAllocatorLayer))),
@@ -1689,4 +1711,277 @@ it.live(
       ),
     );
   },
+);
+
+it.live("foreign and previous native terminals cannot release a newer run or its queue", () =>
+  withNativeQueue(
+    "native-stale-terminals",
+    ({ orchestrator, threadId, takeOffer, injectEvent, offers, waitFor }) =>
+      Effect.gen(function* () {
+        yield* send(orchestrator, threadId, "previous");
+        const previous = yield* takeOffer;
+        const old = yield* waitFor((projection) =>
+          projection.providerTurns.some(
+            (turn) => turn.runAttemptId === previous.input.attemptId && turn.status === "running",
+          ),
+        );
+        const oldTurn = old.providerTurns.find(
+          (turn) => turn.runAttemptId === previous.input.attemptId,
+        )!;
+        yield* previous.settle("completed");
+        yield* waitFor(
+          (projection) =>
+            projection.runs.find((run) => run.id === previous.input.runId)?.status === "completed",
+        );
+        yield* send(orchestrator, threadId, "current");
+        const current = yield* takeOffer;
+        yield* send(orchestrator, threadId, "waiting", true);
+        const running = yield* waitFor((projection) =>
+          projection.providerTurns.some(
+            (turn) => turn.runAttemptId === current.input.attemptId && turn.status === "running",
+          ),
+        );
+        const turn = running.providerTurns.find(
+          (turn) => turn.runAttemptId === current.input.attemptId,
+        )!;
+        for (const [index, terminal] of [
+          { ...turn, id: ProviderTurnId.make("foreign-native-turn") },
+          oldTurn,
+        ].entries()) {
+          yield* injectEvent({
+            type: "turn.terminal",
+            driver: current.input.providerThread.driver,
+            providerThreadId: terminal.providerThreadId,
+            providerTurnId: terminal.id,
+            runOrdinal: index === 0 ? current.input.runOrdinal : previous.input.runOrdinal,
+            status: "completed",
+            failure: null,
+            threadDisposition: "reusable",
+          });
+          const now = yield* DateTime.now;
+          const marker = TurnItemId.make(`native-stale-terminal-observed:${index}`);
+          // A subsequent owned item is the ingestion receipt for the rejected
+          // terminal; assertions never rely on a delay or an unconsumed stream.
+          yield* injectEvent({
+            type: "turn_item.updated",
+            driver: current.input.providerThread.driver,
+            turnItem: {
+              id: marker,
+              threadId,
+              runId: current.input.runId,
+              nodeId: current.input.rootNodeId,
+              providerThreadId: turn.providerThreadId,
+              providerTurnId: turn.id,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 100 + index,
+              status: "completed",
+              title: null,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "system_notice",
+              message: "Owned ingestion receipt",
+            },
+          });
+          const after = yield* waitFor((projection) =>
+            projection.turnItems.some((item) => item.id === marker),
+          );
+          assert.equal(after.runs.find((run) => run.id === current.input.runId)?.status, "running");
+          assert.equal(
+            after.runs.find(
+              (run) => run.userMessageId === MessageId.make(`${threadId}:message:waiting`),
+            )?.status,
+            "queued",
+          );
+          assert.equal(
+            after.providerTurns.find((entry) => entry.id === turn.id)?.status,
+            "running",
+          );
+          assert.deepEqual(offers, ["previous", "current"]);
+        }
+        yield* current.settle("completed");
+        const queued = yield* takeOffer;
+        yield* queued.settle("completed");
+        yield* waitFor((projection) => projection.runs.every((run) => run.status === "completed"));
+      }),
+    { injectEvents: true },
+  ),
+);
+
+it.live(
+  "native queue promotion rejects a failed target and receipts cannot be replayed by another thread",
+  () =>
+    withNativeQueue(
+      "native-failed-steer-receipt",
+      ({ orchestrator, threadId, takeOffer, waitFor, offers }) =>
+        Effect.gen(function* () {
+          yield* send(orchestrator, threadId, "foreground");
+          const foreground = yield* takeOffer;
+          yield* send(orchestrator, threadId, "waiting", true);
+          yield* foreground.settle("failed");
+          const before = yield* waitFor(
+            (projection) =>
+              projection.runs.find((run) => run.id === foreground.input.runId)?.status === "failed",
+          );
+          const queued = before.runs.find((run) => run.status === "queued")!;
+          assert.equal(
+            (yield* Effect.result(
+              orchestrator.dispatch({
+                type: "queued-message.promote-to-steer",
+                threadId,
+                commandId: CommandId.make(`${threadId}:stale-steer`),
+                queuedRunId: queued.id,
+                targetRunId: foreground.input.runId,
+              }),
+            ))._tag,
+            "Failure",
+          );
+          const after = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(after.runs, before.runs);
+          assert.deepEqual(after.messages, before.messages);
+          assert.deepEqual(offers, ["foreground"]);
+          const foreign = ThreadId.make(`${threadId}:foreign`);
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`${foreign}:create`),
+            threadId: foreign,
+            projectId: before.thread.projectId,
+            title: "Foreign",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdBy: "user",
+            creationSource: "web",
+          });
+          const reused = yield* Effect.result(
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              threadId: foreign,
+              commandId: CommandId.make(`${threadId}:send:waiting`),
+              messageId: MessageId.make(`${foreign}:message`),
+              text: "waiting",
+              attachments: [],
+              createdBy: "user",
+              creationSource: "web",
+              dispatchMode: { type: "start_immediately" },
+            }),
+          );
+          assert.equal(reused._tag, "Failure");
+          if (reused._tag === "Failure")
+            assert.equal(reused.failure._tag, "OrchestratorCommandIdConflictError");
+          assert.lengthOf((yield* orchestrator.getThreadProjection(foreign)).messages, 0);
+          assert.deepEqual(
+            (yield* orchestrator.getThreadProjection(threadId)).messages,
+            before.messages,
+          );
+        }),
+    ),
+);
+
+it.live("distinct repeated native Stops share one interruption and retain the held queue", () =>
+  withNativeQueue(
+    "native-repeated-stops",
+    ({
+      orchestrator,
+      threadId,
+      takeOffer,
+      waitFor,
+      interruptEntered,
+      releaseInterrupt,
+      nativeInterruptions,
+    }) =>
+      Effect.gen(function* () {
+        yield* send(orchestrator, threadId, "foreground");
+        const foreground = yield* takeOffer;
+        yield* send(orchestrator, threadId, "waiting", true);
+        yield* waitFor((projection) =>
+          projection.providerTurns.some(
+            (turn) => turn.runAttemptId === foreground.input.attemptId && turn.status === "running",
+          ),
+        );
+        const stop = (name: string) =>
+          orchestrator.dispatch({
+            type: "run.interrupt",
+            threadId,
+            runId: foreground.input.runId,
+            holdQueue: true,
+            commandId: CommandId.make(`${threadId}:${name}`),
+          });
+        yield* stop("first-stop");
+        yield* interruptEntered;
+        yield* stop("second-stop");
+        assert.equal(nativeInterruptions(), 1);
+        yield* releaseInterrupt;
+        const stopped = yield* waitFor(
+          (projection) =>
+            projection.runs.find((run) => run.id === foreground.input.runId)?.status ===
+            "interrupted",
+        );
+        yield* (yield* OrchestrationEffectWorkerV2).drain();
+        assert.equal(nativeInterruptions(), 1);
+        assert.isTrue(stopped.runs.find((run) => run.status === "queued")?.queueHeld);
+        assert.equal(
+          stopped.messages.find(
+            (message) => message.id === MessageId.make(`${threadId}:message:waiting`),
+          )?.text,
+          "waiting",
+        );
+      }),
+    { holdInterrupt: true },
+  ),
+);
+
+it.live("native immediate admission preserves committed composer modes in its durable run", () =>
+  withNativeQueue("native-composer-admission", ({ orchestrator, threadId, takeOffer, waitFor }) =>
+    Effect.gen(function* () {
+      yield* orchestrator.dispatch({
+        type: "thread.runtime-mode.set",
+        threadId,
+        commandId: CommandId.make(`${threadId}:supervised`),
+        runtimeMode: "approval-required",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.interaction-mode.set",
+        threadId,
+        commandId: CommandId.make(`${threadId}:plan`),
+        interactionMode: "plan",
+      });
+      yield* send(orchestrator, threadId, "foreground");
+      const foreground = yield* takeOffer;
+      const admitted = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(admitted.thread.runtimeMode, "approval-required");
+      assert.equal(admitted.thread.interactionMode, "plan");
+      const run = admitted.runs.find((run) => run.id === foreground.input.runId)!;
+      assert.equal(run.runtimeMode, "approval-required");
+      assert.equal(run.interactionMode, "plan");
+      assert.equal(foreground.input.runtimePolicy.runtimeMode, "approval-required");
+      assert.equal(foreground.input.runtimePolicy.interactionMode, "plan");
+      yield* foreground.settle("completed");
+      yield* waitFor(
+        (projection) =>
+          projection.runs.find((entry) => entry.id === run.id)?.status === "completed",
+      );
+      yield* orchestrator.dispatch({
+        type: "thread.runtime-mode.set",
+        threadId,
+        commandId: CommandId.make(`${threadId}:unrestricted`),
+        runtimeMode: "full-access",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.interaction-mode.set",
+        threadId,
+        commandId: CommandId.make(`${threadId}:default`),
+        interactionMode: "default",
+      });
+      const changed = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(
+        changed.runs.find((entry) => entry.id === run.id)?.runtimeMode,
+        "approval-required",
+      );
+      assert.equal(changed.runs.find((entry) => entry.id === run.id)?.interactionMode, "plan");
+    }),
+  ),
 );
