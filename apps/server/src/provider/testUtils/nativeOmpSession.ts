@@ -7,6 +7,7 @@ import {
   RunId,
   type ModelSelection,
   type OrchestrationV2AppThread,
+  type OrchestrationV2ProviderThread,
   type ProviderInstanceId,
   type ProviderTurnId,
   type ThreadId,
@@ -48,6 +49,7 @@ export const nativeOmpSession = Effect.fnUntraced(function* (input: {
   readonly homePath?: string;
   readonly environment: NodeJS.ProcessEnv;
   readonly modelSelection: ModelSelection;
+  readonly resumeProviderThread?: OrchestrationV2ProviderThread;
   readonly nativeEventLogger?: EventNdjsonLogger;
   readonly continuations?: Parameters<typeof makeOmpAdapterV2>[0]["continuations"];
   readonly makeProcess: Parameters<typeof makeOmpAdapterV2>[0]["makeProcess"];
@@ -95,11 +97,16 @@ export const nativeOmpSession = Effect.fnUntraced(function* (input: {
       modelSelection: input.modelSelection,
       runtimePolicy: policy,
     });
-    const providerThread = yield* runtime.ensureThread({
-      threadId: input.threadId,
-      modelSelection: input.modelSelection,
-      runtimePolicy: policy,
-    });
+    const providerThread = yield* input.resumeProviderThread
+      ? runtime.resumeThread({
+          threadId: input.threadId,
+          providerThread: input.resumeProviderThread,
+        })
+      : runtime.ensureThread({
+          threadId: input.threadId,
+          modelSelection: input.modelSelection,
+          runtimePolicy: policy,
+        });
     const now = yield* DateTime.now;
     const appThread: OrchestrationV2AppThread = {
       id: input.threadId,
