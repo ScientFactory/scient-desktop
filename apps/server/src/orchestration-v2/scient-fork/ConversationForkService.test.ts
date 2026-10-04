@@ -276,8 +276,20 @@ it.effect(
         sourceAssistantMessageId: MessageId.make("fork-answer-0"),
         workspaceMode: "local" as const,
       };
+      const plain = yield* orchestrator.getThreadProjection(threadId);
+      assert.isUndefined(plain.thread.forkLineage);
+      assert.notProperty(plain.thread, "conversationForkBoundaries");
       const receipt = yield* forks.dispatch(command);
       const target = yield* orchestrator.getThreadProjection(command.newThreadId);
+      assert.equal(target.thread.forkLineage?.originThreadId, threadId);
+      assert.equal(
+        target.thread.forkLineage?.baselineAssistantMessageId,
+        target.messages.findLast((message) => message.role === "assistant")?.id,
+      );
+      assert.notProperty(target.thread, "conversationForkBoundaries");
+      const shell = yield* store.getShellSnapshot();
+      assert.ok(shell.threads.some((thread) => thread.id === command.newThreadId));
+      assert.ok(shell.threads.every((thread) => !("conversationForkBoundaries" in thread)));
       assert.equal(target.thread.sectionId, ThreadSectionId.make("section:research"));
       assert.equal(target.thread.conversationFork?.status, "ready");
       assert.equal(target.thread.forkedFrom, null);
