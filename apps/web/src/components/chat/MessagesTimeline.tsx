@@ -32,6 +32,7 @@ import {
   type EnvironmentId,
   type MessageId,
   type OrchestrationV2TurnItem,
+  type OrchestrationV2ContextTransfer,
   type RunAttemptId,
   type ScopedThreadRef,
   type ServerProvider,
@@ -446,6 +447,7 @@ interface MessagesTimelineProps {
 
   listRef: React.RefObject<LegendListRef | null>;
   timelineEntries: ReadonlyArray<TimelineEntry>;
+  contextTransfers?: ReadonlyArray<OrchestrationV2ContextTransfer> | undefined;
   latestRun: TimelineLatestRun | null;
   runningRunId?: RunId | null;
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
@@ -542,6 +544,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   isCompacting = false,
   listRef,
   timelineEntries,
+  contextTransfers,
   latestRun,
   runningRunId = null,
   turnDiffSummaries,
@@ -877,6 +880,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     const projection = deriveMessagesTimelineRowsWithState(
       {
         timelineEntries,
+        contextTransfers,
         latestRun,
         runningRunId,
         expandedRunIds,
@@ -907,6 +911,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     listIdentityKey,
     workspaceRoot,
     timelineEntries,
+    contextTransfers,
     latestRun,
     runningRunId,
     expandedRunIds,

@@ -34,6 +34,7 @@ import {
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
+import { materializeCodexOwnerReload } from "../testkit/CodexReplayOwnerReload.ts";
 import {
   materializeReplayTranscriptWorkspace,
   readProviderReplayTranscript,
@@ -84,27 +85,6 @@ const waitCompleted = Effect.fn("NativeFork.waitCompleted")(function* (
   );
   return complete.value;
 });
-
-// A settled run reloads its native thread before the next turn; record the
-// actual app-server exchange without changing the frozen-boundary assertions.
-const resumeFrames = (id: number, nativeThreadId: string, cwd: string, response: unknown) => [
-  {
-    type: "expect_outbound" as const,
-    label: "thread/resume/settled",
-    frame: {
-      id,
-      method: "thread/resume",
-      params: {
-        threadId: nativeThreadId,
-        excludeTurns: true,
-        cwd,
-        model: "gpt-5.4",
-        config: { "tools.update_plan.enabled": true },
-      },
-    },
-  },
-  { type: "emit_inbound" as const, label: "thread/resume/settled", frame: response },
-];
 
 const createSource = Effect.fn("NativeFork.createSource")(function* (cwd: string) {
   const orchestrator = yield* OrchestratorV2;
@@ -305,7 +285,12 @@ for (const scenario of [
                     .replaceAll("native-fork-user-item", "native-source-later-user-item")
                     .replaceAll("native-fork-agent-item", "native-source-later-agent-item"),
                 );
-                return { ...entry, frame };
+                return typeof frame === "object" &&
+                  frame !== null &&
+                  "id" in frame &&
+                  typeof frame.id === "number"
+                  ? { ...entry, frame: { ...frame, id: frame.id - 1 } }
+                  : { ...entry, frame };
               });
             const forkAndTarget = entries.slice(forkIndex).map((entry) => {
               if (entry.type !== "expect_outbound" && entry.type !== "emit_inbound") return entry;
@@ -314,23 +299,16 @@ for (const scenario of [
                 frame !== null &&
                 "id" in frame &&
                 typeof frame.id === "number"
-                ? { ...entry, frame: { ...frame, id: frame.id + 2 } }
+                ? { ...entry, frame: { ...frame, id: frame.id + 1 } }
                 : entry;
             });
             const sourceStart = entries.find(
               (entry) => entry.type === "emit_inbound" && entry.label === "thread/start/source",
             );
             assert.ok(sourceStart?.type === "emit_inbound");
-            const resumeResponse = decodeFrame(
-              encodeFrame(sourceStart.frame).replace('"id":2', '"id":4'),
-            );
-            entries.splice(
-              forkIndex,
-              entries.length - forkIndex,
-              ...resumeFrames(4, "native-source-thread", cwd, resumeResponse),
-              ...laterTurn,
-              ...forkAndTarget,
-            );
+            entries.splice(forkIndex, entries.length - forkIndex, ...laterTurn, ...forkAndTarget);
+            const resumed = materializeCodexOwnerReload(replayTranscript, 2);
+            entries.splice(0, entries.length, ...resumed.entries);
             yield* orchestrator.dispatch({
               type: "message.dispatch",
               commandId: CommandId.make("append-source-after-freeze"),
@@ -736,6 +714,33 @@ for (const scenario of [
               );
             }
           }
+          if (scenario === "changed-instance") {
+            const localHandoffs = target.visibleTurnItems.filter(
+              (row) => row.visibility === "local" && row.item.type === "handoff",
+            );
+            assert.lengthOf(localHandoffs, 1);
+            const handoff = localHandoffs[0]?.item;
+            assert.ok(handoff?.type === "handoff");
+            const transfer = target.contextTransfers.find((candidate) => candidate.type === "fork");
+            assert.ok(transfer?.resolution?.strategy === "portable_context");
+            assert.equal(transfer.targetThreadId, handoff.threadId);
+            assert.equal(transfer.targetRunId, handoff.runId);
+            assert.equal(transfer.resolution.contextHandoffId, handoff.contextHandoffId);
+            const reloaded = yield* orchestrator.getThreadProjection(targetId);
+            assert.deepEqual(
+              reloaded.turnItems.find((item) => item.id === handoff.id),
+              handoff,
+            );
+            assert.deepEqual(
+              reloaded.contextTransfers.find((candidate) => candidate.id === transfer.id),
+              transfer,
+            );
+            assert.equal(
+              reloaded.contextHandoffs.find((context) => context.id === handoff.contextHandoffId)
+                ?.delivery?.status,
+              "injected",
+            );
+          }
           assert.include(target.messages.at(-1)?.text ?? "", "fork native ok");
           const repeated = yield* forks.dispatch(forkCommand);
           assert.equal(repeated.sequence, receipt.sequence);
@@ -926,7 +931,7 @@ it.live("a failed first turn retries the persisted clone instead of forking agai
         );
         const retryFrames = entries.slice(forkIndex + 2).map((entry) => {
           if (entry.type !== "expect_outbound" && entry.type !== "emit_inbound") return entry;
-          const frame: unknown = decodeFrame(encodeFrame(entry.frame).replace('"id":5', '"id":8'));
+          const frame: unknown = decodeFrame(encodeFrame(entry.frame).replace('"id":5', '"id":7'));
           return { ...entry, frame };
         });
         const forkResponse = entries[forkIndex + 1];
@@ -951,6 +956,14 @@ it.live("a failed first turn retries the persisted clone instead of forking agai
           creationSource: "web",
         });
         const failed = yield* waitCompleted(targetId, "failed");
+        assert.isFalse(
+          failed.providerTurns.some((turn) => turn.acceptedAt !== undefined),
+          "A rejected native request creates no accepted history delivery receipt",
+        );
+        assert.isTrue(
+          failed.providerTurns.every((turn) => turn.nativeAcceptance === "pending"),
+          "The native request rejection is definite, not an uncertain transport failure",
+        );
         assert.equal(failed.contextTransfers[0]?.status, "consumed");
         assert.equal(failed.contextTransfers[0]?.resolution?.strategy, "native_fork");
         assert.equal(failed.providerThreads[0]?.nativeThreadRef?.nativeId, "native-fork-thread");
@@ -975,17 +988,11 @@ it.live("a failed first turn retries the persisted clone instead of forking agai
           coverage: `Context handoff (delta_since_target_last_seen):\n${handoffCoverage({ threadId: targetId, coveredRunOrdinals: { from: 1, to: 1 }, items: missed })}`,
         });
         entries.push(
-          ...resumeFrames(
-            6,
-            "native-fork-thread",
-            cwd,
-            decodeFrame(encodeFrame(forkResponse.frame).replace('"id":4', '"id":6')),
-          ),
           {
             type: "expect_outbound",
             label: "thread/inject_items/rejected-turn",
             frame: {
-              id: 7,
+              id: 6,
               method: "thread/inject_items",
               params: {
                 threadId: "native-fork-thread",
@@ -996,10 +1003,14 @@ it.live("a failed first turn retries the persisted clone instead of forking agai
           {
             type: "emit_inbound",
             label: "thread/inject_items/rejected-turn",
-            frame: { id: 7, result: {} },
+            frame: { id: 6, result: {} },
           },
           ...retryFrames,
         );
+        const resumed = materializeCodexOwnerReload(transcript, 3, {
+          beforeEntryLabel: "thread/inject_items/rejected-turn",
+        });
+        entries.splice(0, entries.length, ...resumed.entries);
         yield* orchestrator.dispatch({
           type: "message.dispatch",
           commandId: CommandId.make("first-turn-retry"),

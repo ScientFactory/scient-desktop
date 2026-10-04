@@ -126,7 +126,7 @@ it.live(
         );
         assert.deepEqual(
           projection.turnItems.map((item) => item.type),
-          ["user_message", "assistant_message"],
+          ["user_message", "assistant_message", "fork"],
         );
         assert.notEqual(projection.messages.at(-1)?.id, "answer");
         assert.equal(

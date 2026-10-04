@@ -11865,6 +11865,9 @@ function ChatViewContent(props: ChatViewProps) {
                 isPreparingWorktree={!paintOnlyDisplayedTimeline && isPreparingWorktree}
                 listRef={legendListRef}
                 timelineEntries={displayedTimeline.entries}
+                contextTransfers={
+                  paintOnlyDisplayedTimeline ? undefined : serverProjection?.contextTransfers
+                }
                 providerStatuses={
                   environmentById.get(
                     displayedThreadRef?.environmentId ?? activeThread.environmentId,

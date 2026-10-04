@@ -2140,7 +2140,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${event.payload.threadId},
                 ${event.payload.runId},
                 ${event.payload.nodeId},
-                ${event.payload.providerThreadId},
+                ${event.payload.providerThreadId ?? null},
                 ${event.payload.providerTurnId},
                 ${event.payload.parentItemId},
                 ${event.payload.ordinal},

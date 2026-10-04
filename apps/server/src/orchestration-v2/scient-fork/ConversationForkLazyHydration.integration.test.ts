@@ -10,6 +10,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   TurnId,
+  TurnItemId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -118,8 +119,28 @@ const seedUnopenedHistory = Effect.fn("LazyHydration.seedUnopenedHistory")(funct
 });
 
 function assertFrozenHistory(child: OrchestrationV2ThreadProjection) {
-  assert.equal(child.turnItems.length, 7);
-  assert.isTrue(child.turnItems.every((item) => item.historyTurnId === TurnId.make("same-turn")));
+  const source = child.thread.conversationFork?.sourceThreadId;
+  assert.ok(source);
+  const prefix = child.turnItems.filter((item) => item.inheritedFrom?.threadId === source);
+  assert.equal(prefix.length, 7);
+  assert.isTrue(prefix.every((item) => item.historyTurnId === TurnId.make("same-turn")));
+  const boundaries = child.turnItems.filter((item) => item.inheritedFrom === undefined);
+  assert.lengthOf(boundaries, 1);
+  if (boundaries[0]?.type !== "fork") return assert.fail("Expected hydrated exact boundary");
+  assert.equal(boundaries[0].id, TurnItemId.make(`turn-item:fork:${child.thread.id}`));
+  assert.equal(boundaries[0].ordinal, prefix.at(-1)!.ordinal + 1);
+  assert.equal(boundaries[0].targetThreadId, child.thread.id);
+  assert.deepEqual(boundaries[0].source, {
+    type: "message",
+    threadId: source,
+    messageId: MessageId.make("lazy-answer"),
+    position: "after",
+  });
+  assert.isNull(boundaries[0].runId);
+  assert.isNull(boundaries[0].nodeId);
+  assert.isNull(boundaries[0].providerTurnId);
+  assert.isNull(boundaries[0].nativeItemRef);
+  assert.isUndefined(boundaries[0].providerThreadId);
   assert.isFalse(
     child.turnItems.some(
       (item) => item.type === "user_message" && item.text === "Excluded next turn",

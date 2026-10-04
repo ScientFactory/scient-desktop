@@ -272,7 +272,14 @@ it.live("a user fork with only unanswered inherited requests has no invented ans
         );
         assert.isNull(child.thread.forkLineage?.baselineAssistantMessageId);
         assert.isFalse(child.turnItems.some((item) => item.type === "assistant_message"));
-        assert.equal(new Set(child.turnItems.map((item) => item.historyTurnId)).size, 2);
+        const inheritedItems = child.turnItems.filter((item) => item.inheritedFrom !== undefined);
+        assert.equal(new Set(inheritedItems.map((item) => item.historyTurnId)).size, 2);
+        assert.deepEqual(
+          child.turnItems
+            .filter((item) => item.inheritedFrom === undefined)
+            .map((item) => item.type),
+          ["fork"],
+        );
         assert.deepEqual(
           child.turnItems.map((item) => item.type),
           [
@@ -282,6 +289,7 @@ it.live("a user fork with only unanswered inherited requests has no invented ans
             "user_message",
             "reasoning",
             "dynamic_tool",
+            "fork",
           ],
         );
         assert.isTrue(

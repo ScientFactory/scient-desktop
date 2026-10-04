@@ -1242,6 +1242,38 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
       yield* emitProviderTurn(state, turn, turn.providerTurn);
     });
 
+    const confirmPromptBoundary = (
+      state: ThreadState,
+      turn: ActiveTurn,
+      response: { readonly id: string; readonly sessionID: string },
+      offeredId: string,
+      expectedAttemptId: ProviderAdapter.ProviderAdapterV2TurnInput["attemptId"],
+    ) =>
+      lock.withPermit(
+        Effect.gen(function* () {
+          yield* markTurnAccepted(state, turn);
+          if (response.id !== offeredId || response.sessionID !== state.sessionId) return;
+          // Only the native response can confirm a client-chosen message boundary.
+          // The ordered event feed may already have settled this exact turn.
+          const latest = state.providerTurns.get(String(turn.providerTurn.id)) ?? turn.providerTurn;
+          if (
+            latest.runAttemptId !== expectedAttemptId ||
+            latest.nodeId !== turn.input.rootNodeId ||
+            latest.providerThreadId !== state.providerThread.id ||
+            latest.nativeTurnRef?.nativeId !== offeredId ||
+            latest.nativeTurnRef.driver !== driver
+          )
+            return;
+          turn.providerTurn = {
+            ...latest,
+            nativeTurnRef: ref(response.id),
+            nativeAcceptance: "accepted",
+            acceptedAt: latest.acceptedAt ?? (yield* DateTime.now),
+          };
+          yield* emitProviderTurn(state, turn, turn.providerTurn);
+        }),
+      );
+
     const makeTurn = (
       owner: TurnOwner,
       providerTurn: OrchestrationV2ProviderTurn,
@@ -3115,6 +3147,43 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
         ),
       );
 
+    // OpenCode's cut is exclusive; frozen evidence ends at the included turn.
+    // Resolve the next native prompt from complete history, never from later app turns.
+    const forkBoundaryAfter = Effect.fnUntraced(function* (
+      sessionId: string,
+      providerThreadId: OrchestrationV2ProviderThread["id"],
+      selected: OrchestrationV2ProviderTurn,
+    ) {
+      const messageId = promptOf(selected);
+      if (
+        selected.providerThreadId !== providerThreadId ||
+        selected.nativeTurnRef?.driver !== driver ||
+        selected.nativeTurnRef.strength !== "strong" ||
+        messageId === undefined ||
+        selected.status !== "completed"
+      ) {
+        return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+          driver,
+          detail: "This OpenCode fork has no confirmed completed native prompt boundary.",
+        });
+      }
+      const history = yield* paginate(
+        { sessionID: Session.ID.make(sessionId), order: "desc" as const, limit: 100 },
+        client.message.list,
+      ).pipe(Stream.runCollect);
+      const prompts = history.flatMap((message) =>
+        message.type === "user" || message.type === "synthetic" ? [String(message.id)] : [],
+      );
+      const index = prompts.indexOf(messageId);
+      if (index < 0 || new Set(prompts).size !== prompts.length) {
+        return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+          driver,
+          detail: "The confirmed OpenCode fork boundary is absent or ambiguous in native history.",
+        });
+      }
+      return index === 0 ? null : prompts[index - 1]!;
+    });
+
     /** The session's history as V2 messages, read after any change T3 made to it. */
     const snapshotOf = Effect.fnUntraced(function* (
       providerThread: OrchestrationV2ProviderThread,
@@ -3532,7 +3601,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
             : { skills: skills.map((id) => ({ id: Skill.ID.make(id) })) }),
         })
         .pipe(
-          Effect.tap(() => markTurnAccepted(state, turn)),
+          Effect.tap((response) =>
+            confirmPromptBoundary(state, turn, response, id, turnInput.attemptId),
+          ),
           Effect.asVoid,
         );
     });
@@ -4189,14 +4260,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
             });
           }
           const before =
-            selected === undefined
-              ? null
-              : yield* boundaryAfter(
-                  forkInput.sourceProviderTurns ?? [],
-                  source.id,
-                  selected,
-                  yield* userMessages(sourceId),
-                );
+            selected === undefined ? null : yield* forkBoundaryAfter(sourceId, source.id, selected);
           // A fork copies the source's history, model, location and rules; its
           // message ids are new, so it has no turns T3 could cut at yet.
           const forked = yield* client.session.fork({

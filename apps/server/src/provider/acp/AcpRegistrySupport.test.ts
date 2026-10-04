@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { AcpRegistrySettings } from "@t3tools/contracts";
+import { AcpRegistrySettings, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import {
   HostProcessArchitecture,
   HostProcessEnvironment,
@@ -22,11 +22,14 @@ import * as NodeCrypto from "node:crypto";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
+import * as ServerSettings from "../../serverSettings.ts";
+import { makeAcpRegistryManagedRuntimeActions } from "../../scient/providerLifecycle/AcpRegistryManagedRuntimeActions.ts";
 
 const registryUrl = "https://registry.test/registry.json";
 const archiveUrl = "https://registry.test/example-agent.bin";
 const decodeAcpRegistrySettings = Schema.decodeSync(AcpRegistrySettings);
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const encodeUnknownJsonEffect = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 function makeAgent(
   distribution: AcpRegistrySupport.AcpRegistryAgent["distribution"],
@@ -1103,7 +1106,7 @@ describe("AcpRegistrySupport", () => {
       });
       const inspection = yield* resolver.inspect(settings());
 
-      expect(inspection).toMatchObject({ status: "ready", agentId: agent.id });
+      expect(inspection).toMatchObject({ status: "unprepared", agentId: agent.id });
       expect(requests).toBe(0);
     }).pipe(
       Effect.scoped,
@@ -1168,7 +1171,12 @@ describe("AcpRegistrySupport", () => {
       const resolved = yield* resolver.resolve(settings(), "/workspace", providerEnvironment);
 
       expect(hostInspection).toMatchObject({ status: "missing_runner", runner: "npm" });
-      expect(instanceInspection).toMatchObject({ status: "ready", distribution: "npx" });
+      expect(instanceInspection).toMatchObject({ status: "unprepared", distribution: "npx" });
+      expect(yield* resolver.inspect(settings(), providerEnvironment)).toMatchObject({
+        status: "ready",
+        distribution: "npx",
+        installation: { installer: toolchain.npmPath },
+      });
       expect(resolved.spawn).toMatchObject({
         command: toolchain.executablePath,
         env: { PATH: expect.stringMatching(new RegExp(`^${toolchain.globalBin}:`, "u")) },
@@ -1270,7 +1278,7 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
-  it.effect("keeps managed package installs when removing the same agent's binaries", () =>
+  it.effect("retains unproven package directories when removing app-owned binaries", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -1303,6 +1311,419 @@ describe("AcpRegistrySupport", () => {
       Effect.provide(resolverLayer(() => Effect.die("unexpected HTTP request"))),
     ),
   );
+
+  it.effect(
+    "records binary provenance only after a verified download and rejects a changed receipt",
+    () => {
+      const bytes = new TextEncoder().encode("#!/bin/sh\necho verified\n");
+      const agent = makeAgent({
+        binary: {
+          "linux-x86_64": {
+            archive: archiveUrl,
+            cmd: "bin/example-agent",
+            sha256: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
+          },
+        },
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-registry-binary-facts-" });
+        const catalog = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: root,
+          toolsDir: `${root}/tools`,
+          registryUrl,
+        });
+        yield* catalog.resolve(settings(), root);
+        const ready = yield* catalog.inspect(settings());
+        if (ready.status !== "ready" || !ready.installation)
+          return yield* Effect.die("Expected verified binary installation");
+        expect(ready.installation).toMatchObject({
+          distribution: "binary",
+          installer: archiveUrl,
+          version: "1.2.3",
+        });
+        const receipt = `${ready.installation.installRoot}/.scient-acp-install.json`;
+        const original = yield* fs.readFileString(receipt);
+        yield* fs.writeFileString(receipt, "invalid receipt");
+        expect((yield* catalog.inspect(settings()).pipe(Effect.result))._tag).toBe("Failure");
+        expect(
+          (yield* catalog
+            .uninstallManagedBinary({ agentId: agent.id, expectedInstallation: ready.installation })
+            .pipe(Effect.result))._tag,
+        ).toBe("Failure");
+        expect(Uint8Array.from(yield* fs.readFile(ready.installation.executablePath))).toEqual(
+          bytes,
+        );
+        const wrongOwner = yield* encodeUnknownJsonEffect({
+          agentId: "other-agent",
+          agentVersion: "1.2.3",
+          archive: archiveUrl,
+          installRoot: ready.installation.installRoot,
+          executablePath: ready.installation.executablePath,
+        });
+        yield* fs.writeFileString(receipt, wrongOwner);
+        expect((yield* catalog.inspect(settings()).pipe(Effect.result))._tag).toBe("Failure");
+        yield* fs.writeFileString(receipt, original);
+        expect(
+          yield* catalog.uninstallManagedBinary({
+            agentId: agent.id,
+            expectedInstallation: ready.installation,
+          }),
+        ).toEqual({ agentId: agent.id, removed: true });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          resolverLayer((request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response(request.url === archiveUrl ? bytes : makeRegistry(agent)),
+              ),
+            ),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "retains readiness but does not invent installer provenance for an old confined binary",
+    () => {
+      const agent = makeAgent({
+        binary: { "linux-x86_64": { archive: archiveUrl, cmd: "bin/example-agent" } },
+      });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "scient-registry-legacy-binary-",
+        });
+        const executable = `${root}/tools/example-agent/1.2.3/linux-x86_64/bin/example-agent`;
+        yield* fs.makeDirectory(`${root}/acp-registry`, { recursive: true });
+        yield* fs.writeFileString(`${root}/acp-registry/registry.json`, makeRegistry(agent));
+        yield* fs.makeDirectory(`${root}/tools/example-agent/1.2.3/linux-x86_64/bin`, {
+          recursive: true,
+        });
+        yield* fs.writeFileString(executable, "#!/bin/sh\n");
+        yield* fs.chmod(executable, 0o755);
+        const catalog = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: root,
+          toolsDir: `${root}/tools`,
+          registryUrl,
+        });
+        const ready = yield* catalog.inspect(settings());
+        expect(ready).toMatchObject({
+          status: "ready",
+          installation: { executablePath: executable },
+        });
+        if (ready.status !== "ready" || !ready.installation)
+          return yield* Effect.die("Expected confined legacy binary facts");
+        expect(ready.installation).not.toHaveProperty("installer");
+        expect(
+          yield* catalog.uninstallManagedBinary({
+            agentId: agent.id,
+            expectedInstallation: ready.installation,
+          }),
+        ).toEqual({ agentId: agent.id, removed: true });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          resolverLayer(() => Effect.die("Read-only legacy inspection/removal must not download")),
+        ),
+      );
+    },
+  );
+
+  for (const distribution of ["npx", "uvx"] as const) {
+    it.effect(
+      `publishes and removes the exact owned ${distribution} installation without its runner`,
+      () => {
+        const agent = makeAgent(
+          distribution === "npx"
+            ? { npx: { package: "@example/acp@1.2.3" } }
+            : { uvx: { package: "fast-agent-acp==0.10.1" } },
+        );
+        return Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-registry-owned-" });
+          const tools =
+            distribution === "npx"
+              ? yield* makeFakeNpmToolchain(root)
+              : yield* makeFakeUvToolchain(root);
+          const catalog = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+            cacheDir: root,
+            toolsDir: `${root}/tools`,
+            registryUrl,
+          });
+          const config = settings({ distribution });
+          yield* catalog.resolve(config, root, tools.environment);
+          const originalLog = yield* fs.readFileString(tools.logPath);
+          const ready = yield* catalog.inspect(config, { PATH: "" });
+          expect(ready.status).toBe("ready");
+          if (ready.status !== "ready" || !ready.installation)
+            return yield* Effect.die("Expected a verified installation receipt");
+          expect(ready.installation).toMatchObject({
+            agentId: agent.id,
+            distribution,
+            version: agent.version,
+            executablePath: tools.executablePath,
+            packageVersion: distribution === "npx" ? "1.2.3" : "0.10.1",
+          });
+          expect(yield* fs.readFileString(tools.logPath)).toBe(originalLog);
+          const outside = `${root}/external-package`;
+          yield* fs.writeFileString(outside, "external bytes");
+          const stale = yield* catalog
+            .uninstallManagedBinary({
+              agentId: agent.id,
+              expectedInstallation: { ...ready.installation, version: "changed" },
+            })
+            .pipe(Effect.result);
+          expect(stale._tag).toBe("Failure");
+          expect(yield* fs.exists(tools.executablePath)).toBe(true);
+          expect(
+            yield* catalog.uninstallManagedBinary({ agentId: agent.id }, Effect.succeed(true)),
+          ).toEqual({ agentId: agent.id, removed: false });
+          expect(yield* fs.exists(tools.executablePath)).toBe(true);
+          expect(
+            yield* catalog.uninstallManagedBinary({
+              agentId: agent.id,
+              expectedInstallation: ready.installation,
+            }),
+          ).toEqual({ agentId: agent.id, removed: true });
+          expect(yield* fs.exists(ready.installation.installRoot)).toBe(false);
+          expect(yield* fs.readFileString(outside)).toBe("external bytes");
+          expect(yield* catalog.inspect(config, { PATH: "" })).toMatchObject({
+            status: "missing_runner",
+          });
+          expect(yield* catalog.inspect(config, tools.environment)).toMatchObject({
+            status: "unprepared",
+          });
+          expect(yield* fs.readFileString(tools.logPath)).toBe(originalLog);
+          expect(yield* catalog.uninstallManagedBinary({ agentId: agent.id })).toEqual({
+            agentId: agent.id,
+            removed: false,
+          });
+          yield* catalog.resolve(config, root, tools.environment);
+          expect(yield* catalog.inspect(config, { PATH: "" })).toMatchObject({ status: "ready" });
+          expect(
+            (yield* fs.readFileString(tools.logPath)).match(
+              distribution === "npx" ? /^install --global /gmu : /^tool install /gmu,
+            ),
+          ).toHaveLength(2);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            resolverLayer((request) =>
+              Effect.succeed(
+                HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent))),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  it.effect("refuses shared or changed registry actions before deleting owned files", () => {
+    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+    const instanceId = ProviderInstanceId.make("registry-owner");
+    const siblingId = ProviderInstanceId.make("registry-sibling");
+    const config = settings({ distribution: "npx" });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-registry-actions-" });
+      const toolchain = yield* makeFakeNpmToolchain(root);
+      const catalog = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir: root,
+        toolsDir: `${root}/tools`,
+        registryUrl,
+      });
+      yield* catalog.resolve(config, root, toolchain.environment);
+      const service = yield* ServerSettings.ServerSettingsService;
+      const actions = yield* makeAcpRegistryManagedRuntimeActions({
+        instanceId,
+        settings: config,
+        instanceEnvironment: [],
+        environment: { PATH: "" },
+        cwd: root,
+      }).pipe(Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog));
+      expect(yield* actions.getSummary).toMatchObject({
+        source: "registry",
+        actions: ["remove"],
+        installation: { distribution: "npx", executablePath: toolchain.executablePath },
+      });
+      expect((yield* actions.plan("remove").pipe(Effect.result))._tag).toBe("Failure");
+      expect(yield* fs.exists(toolchain.executablePath)).toBe(true);
+      yield* service.updateProviderInstance({ operation: "remove", instanceId: siblingId });
+      const plan = yield* actions.plan("remove");
+      yield* service.updateProviderInstance({
+        operation: "upsert",
+        instanceId,
+        instance: {
+          driver: ProviderDriverKind.make("acpRegistry"),
+          config,
+          environment: [{ name: "PATH", value: "/changed", sensitive: false }],
+        },
+      });
+      expect(
+        (yield* actions.run("remove", plan.catalogRevision, () => Effect.void).pipe(Effect.result))
+          ._tag,
+      ).toBe("Failure");
+      expect(yield* fs.exists(toolchain.executablePath)).toBe(true);
+      yield* service.updateProviderInstance({
+        operation: "upsert",
+        instanceId,
+        instance: { driver: ProviderDriverKind.make("acpRegistry"), config },
+      });
+      yield* actions.run("remove", plan.catalogRevision, () => Effect.void);
+      expect(yield* fs.exists(toolchain.executablePath)).toBe(false);
+      expect(yield* actions.getSummary).toMatchObject({ actions: [], source: "unknown" });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          resolverLayer((request) =>
+            Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+          ),
+          ServerSettings.layerTest({
+            providerInstances: {
+              [instanceId]: { driver: ProviderDriverKind.make("acpRegistry"), config },
+              [siblingId]: { driver: ProviderDriverKind.make("acpRegistry"), config },
+            },
+          }),
+        ),
+      ),
+    );
+  });
+
+  for (const race of ["reserved", "replaced"] as const) {
+    it.effect(
+      `does not remove or report success when the reviewed binary is ${race} before removal`,
+      () => {
+        const bytes = new TextEncoder().encode("#!/bin/sh\n");
+        const agent = makeAgent({
+          binary: {
+            "linux-x86_64": {
+              archive: archiveUrl,
+              cmd: "bin/example-agent",
+              sha256: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
+            },
+          },
+        });
+        const instanceId = ProviderInstanceId.make("registry-owner");
+        const config = settings();
+        return Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({
+            prefix: "scient-registry-reserved-remove-",
+          });
+          const catalog = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+            cacheDir: root,
+            toolsDir: `${root}/tools`,
+            registryUrl,
+          });
+          yield* catalog.resolve(config, root);
+          const actions = yield* makeAcpRegistryManagedRuntimeActions({
+            instanceId,
+            settings: config,
+            instanceEnvironment: [],
+            environment: {},
+            cwd: root,
+          }).pipe(Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog));
+          const summary = yield* actions.getSummary;
+          const plan = yield* actions.plan("remove");
+          if (!summary.installation) return yield* Effect.die("Expected installation");
+          const receiptPath = `${summary.installation.installRoot}/.scient-acp-install.json`;
+          const originalReceipt = yield* fs.readFileString(receiptPath);
+          const result = yield* actions
+            .run("remove", plan.catalogRevision, (progress) =>
+              progress.status === "removing"
+                ? race === "reserved"
+                  ? catalog.prepare({ agentId: agent.id }).pipe(Effect.asVoid, Effect.orDie)
+                  : fs
+                      .writeFileString(
+                        receiptPath,
+                        originalReceipt.replace(archiveUrl, "https://registry.test/replaced.bin"),
+                      )
+                      .pipe(Effect.orDie)
+                : Effect.void,
+            )
+            .pipe(Effect.result);
+          expect(result._tag).toBe("Failure");
+          if (result._tag === "Failure")
+            expect(result.failure.message).toContain(
+              race === "reserved" ? "It was not removed" : "changed before removal",
+            );
+          expect(summary.installation).toBeDefined();
+          if (!summary.installation) return yield* Effect.die("Expected installation");
+          expect(Uint8Array.from(yield* fs.readFile(summary.installation.executablePath))).toEqual(
+            bytes,
+          );
+          if (race === "reserved")
+            expect(yield* catalog.uninstallManagedBinary({ agentId: agent.id })).toEqual({
+              agentId: agent.id,
+              removed: false,
+            });
+          else
+            expect(yield* fs.readFileString(receiptPath)).toBe(
+              originalReceipt.replace(archiveUrl, "https://registry.test/replaced.bin"),
+            );
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(
+              resolverLayer((request) =>
+                Effect.succeed(
+                  HttpClientResponse.fromWeb(
+                    request,
+                    new Response(request.url === archiveUrl ? bytes : makeRegistry(agent)),
+                  ),
+                ),
+              ),
+              ServerSettings.layerTest({
+                providerInstances: {
+                  [instanceId]: { driver: ProviderDriverKind.make("acpRegistry"), config },
+                },
+              }),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  it.effect("refuses foreign symlink installation roots without changing their bytes", () => {
+    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-registry-symlink-" });
+      const toolchain = yield* makeFakeNpmToolchain(root);
+      const catalog = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir: root,
+        toolsDir: `${root}/tools`,
+        registryUrl,
+      });
+      yield* catalog.resolve(settings(), root, toolchain.environment);
+      const ownedRoot = `${root}/tools/example-agent/1.2.3/npm`;
+      const foreignRoot = `${root}/foreign`;
+      yield* fs.rename(ownedRoot, foreignRoot);
+      yield* fs.symlink(foreignRoot, ownedRoot);
+      expect(
+        (yield* catalog.inspect(settings(), toolchain.environment).pipe(Effect.result))._tag,
+      ).toBe("Failure");
+      expect(
+        (yield* catalog.uninstallManagedBinary({ agentId: agent.id }).pipe(Effect.result))._tag,
+      ).toBe("Failure");
+      expect(yield* fs.readFileString(`${foreignRoot}/bin/example-agent`)).toBe("#!/bin/sh\n");
+      expect(yield* fs.exists(ownedRoot)).toBe(true);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        resolverLayer((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
 
   it.effect("keeps a binary prepared by another client while an uninstall is waiting", () => {
     const agent = makeAgent({
