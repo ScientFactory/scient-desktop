@@ -165,11 +165,41 @@ export function historicalMessage(
     case "proposed_plan":
       text = item.markdown;
       break;
+    case "user_input_request": {
+      // Message-mode replies already have an ordinary user message. A native
+      // callback reply only exists on this durable item, and is inert history.
+      const answer = item.questionAnswer;
+      if (item.status !== "completed" || answer === undefined || item.responseMode === "message")
+        return null;
+      text = [
+        "Submitted answers to historical questions:",
+        ...Object.entries(answer.answers).map(([id, value]) => {
+          const question =
+            answer.questionTextById?.[id] ??
+            item.questions.find((candidate) => candidate.id === id)?.question ??
+            id;
+          const attachments = (answer.attachmentsByQuestionId[id] ?? []).map((attachment) => ({
+            id: attachment.id,
+            name: attachment.name,
+            mimeType: attachment.mimeType,
+            contentReattached: false,
+          }));
+          return [
+            `Question: ${question}`,
+            `Answer: ${typeof value === "string" ? value : JSON.stringify(value)}`,
+            ...(attachments.length === 0
+              ? []
+              : [`Attachment references (bytes not replayed): ${JSON.stringify(attachments)}`]),
+          ].join("\n");
+        }),
+      ].join("\n\n");
+      break;
+    }
     default:
       return null;
   }
   return {
-    role: item.type === "user_message" ? "user" : "assistant",
+    role: item.type === "user_message" || item.type === "user_input_request" ? "user" : "assistant",
     text,
     threadId: item.threadId,
     runId: item.runId,

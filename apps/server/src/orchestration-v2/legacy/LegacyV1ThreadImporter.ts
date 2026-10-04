@@ -21,6 +21,7 @@ import {
   ThreadLinkedPullRequest,
   ThreadPullRequestLink,
   TurnItemId,
+  TurnId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -79,6 +80,7 @@ interface LegacyRepairRow extends LegacyThreadRow {
 
 interface LegacyMessageRow {
   readonly message_id: string;
+  readonly turn_id: string | null;
   readonly thread_id: string;
   readonly role: "user" | "assistant";
   readonly text: string;
@@ -298,6 +300,7 @@ function messageEvents(row: LegacyMessageRow): ReadonlyArray<OrchestrationV2Doma
   };
   const baseTurnItem = {
     id: TurnItemId.make(`${IMPORT_EVENT_PREFIX}:turn-item:${row.message_id}`),
+    ...(row.turn_id === null ? {} : { historyTurnId: TurnId.make(row.turn_id) }),
     threadId,
     runId: null,
     nodeId: null,
@@ -369,6 +372,7 @@ const make = Effect.gen(function* () {
     sql<LegacyMessageRow>`
       SELECT
         message_id,
+        turn_id,
         thread_id,
         role,
         text,
@@ -392,6 +396,7 @@ const make = Effect.gen(function* () {
       const latest = yield* sql<LegacyMessageRow>`
         SELECT
           message.message_id,
+          message.turn_id,
           message.thread_id,
           message.role,
           message.text,
@@ -422,6 +427,7 @@ const make = Effect.gen(function* () {
       const latestUser = yield* sql<LegacyMessageRow>`
         SELECT
           message.message_id,
+          message.turn_id,
           message.thread_id,
           message.role,
           message.text,

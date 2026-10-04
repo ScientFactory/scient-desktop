@@ -75,7 +75,7 @@ export type EventSinkV2Error = typeof EventSinkV2Error.Type;
 export interface EventSinkV2Shape {
   readonly write: (input: {
     readonly guardPendingUserInputCancellations?: boolean;
-    /** Internal historical-position repair; retain the payload current at commit. */
+    /** Internal history position/group repair; retain the payload current at commit. */
     readonly guardTurnItemPositionRepairs?: boolean;
     readonly commandId?: CommandId;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
@@ -299,15 +299,31 @@ const baseLayer: Layer.Layer<
           const current = rows[0];
           if (current === undefined) continue;
           const item = yield* decodePositionedItem(current.payload_json);
-          if (item.ordinal === current.ordinal) continue;
-          const digest = NodeCrypto.createHash("sha256").update(current.payload_json).digest("hex");
+          // Only legacy runless items may acquire missing historical grouping.
+          // Reread inside this transaction; never replace a V2 edit or explicit association.
+          const historyTurnId =
+            item.historyTurnId ??
+            (item.runId === null &&
+            (item.id.startsWith("migration:v1:turn-item:") ||
+              item.id.startsWith("migration:v1:history:"))
+              ? event.payload.historyTurnId
+              : undefined);
+          if (item.ordinal === current.ordinal && historyTurnId === item.historyTurnId) continue;
+          const digest = NodeCrypto.createHash("sha256")
+            .update(current.payload_json)
+            .update(historyTurnId ?? "")
+            .digest("hex");
           repaired.push({
             ...event,
             id: EventId.make(
               `migration:v1:history:position:v2:${item.id}:${current.ordinal}:${digest}`,
             ),
             occurredAt: item.updatedAt,
-            payload: { ...item, ordinal: current.ordinal },
+            payload: {
+              ...item,
+              ordinal: current.ordinal,
+              ...(historyTurnId === undefined ? {} : { historyTurnId }),
+            },
           });
         }
         return repaired;

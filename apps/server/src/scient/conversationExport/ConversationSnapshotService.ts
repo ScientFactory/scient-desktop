@@ -56,6 +56,7 @@ export class ConversationSnapshotReadError extends Schema.TaggedError<Conversati
   "ConversationSnapshotReadError",
   { cause: Schema.Defect() },
 ) {}
+const isConversationSnapshotReadError = Schema.is(ConversationSnapshotReadError);
 
 export type ConversationSnapshotError =
   | ConversationThreadNotFoundError
@@ -103,11 +104,16 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const snapshot = yield* query.getThreadSnapshot(threadId);
           const project = yield* projects.get(snapshot.projection.thread.projectId);
+          const thread = yield* Effect.try({
+            try: () =>
+              conversationSnapshotProjection(
+                snapshot.projection,
+                Option.getOrNull(project)?.workspaceRoot ?? null,
+              ),
+            catch: (cause) => new ConversationSnapshotReadError({ cause }),
+          });
           return {
-            thread: conversationSnapshotProjection(
-              snapshot.projection,
-              Option.getOrNull(project)?.workspaceRoot ?? null,
-            ),
+            thread,
             deletedAt: snapshot.projection.thread.deletedAt,
             sequence: snapshot.snapshotSequence,
             threadSequence: yield* events.latestSequence({ threadId }),
@@ -118,7 +124,9 @@ const make = Effect.gen(function* () {
         Effect.mapError((cause) =>
           isThreadNotFound(cause)
             ? new ConversationThreadNotFoundError({ threadId })
-            : new ConversationSnapshotReadError({ cause }),
+            : isConversationSnapshotReadError(cause)
+              ? cause
+              : new ConversationSnapshotReadError({ cause }),
         ),
       );
 

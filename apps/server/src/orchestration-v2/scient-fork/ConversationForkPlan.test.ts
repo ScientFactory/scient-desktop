@@ -18,10 +18,16 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import {
+  HistoricalSystemMessage,
+  HISTORICAL_SYSTEM_MESSAGE_TOOL_NAME,
+} from "../legacy/HistoricalSystemMessage.ts";
 import { emptyProjection } from "../ProjectionStore.ts";
 import { planConversationFork } from "./ConversationForkPlan.ts";
 
 const now = DateTime.makeUnsafe("2026-10-03T00:00:00.000Z");
+const decodeHistoricalSystemMessage = Schema.decodeUnknownEffect(HistoricalSystemMessage);
 const threadId = ThreadId.make("fork-source");
 const targetThreadId = ThreadId.make("fork-destination");
 const instanceId = ProviderInstanceId.make("codex-one");
@@ -495,4 +501,72 @@ it.effect("rejects nested, unknown, and mismatched assistant-node ownership", ()
       }
     }
   }),
+);
+
+it.effect(
+  "owns historical system message identity, attachments and context, and rejects malformed reserved history",
+  () =>
+    Effect.gen(function* () {
+      const projection = makeProjection();
+      const systemAttachment = {
+        ...attachment,
+        id: "system-source-22222222-2222-2222-2222-222222222222-pdf",
+      };
+      const context = {
+        version: 1 as const,
+        records: [
+          {
+            version: 1 as const,
+            kind: "file" as const,
+            contextId: ComposerContextId.make("system-file"),
+            label: systemAttachment.name,
+            attachmentId: systemAttachment.id,
+            name: systemAttachment.name,
+            mimeType: systemAttachment.mimeType,
+            sizeBytes: systemAttachment.sizeBytes,
+          },
+        ],
+      };
+      const commandItem = projection.turnItems[1]!;
+      assert.ok(commandItem.type === "command_execution");
+      const systemItem: Extract<OrchestrationV2TurnItem, { readonly type: "dynamic_tool" }> = {
+        ...commandItem,
+        type: "dynamic_tool",
+        toolName: HISTORICAL_SYSTEM_MESSAGE_TOOL_NAME,
+        input: {
+          messageId: MessageId.make("historical-system"),
+          text: "System history",
+          attachments: [systemAttachment],
+          context,
+        },
+      };
+      projection.visibleTurnItems[1] = { ...projection.visibleTurnItems[1]!, item: systemItem };
+      const input = {
+        projection,
+        targetThreadId,
+        source: { kind: "assistant-response" as const, messageId: MessageId.make("answer-one") },
+      };
+      const plan = yield* planConversationFork(input);
+      const copiedItem = plan.items[1]!;
+      assert.ok(copiedItem.type === "dynamic_tool");
+      const record = yield* decodeHistoricalSystemMessage(copiedItem.input);
+      assert.notEqual(record.messageId, "historical-system");
+      assert.equal(record.text, "System history");
+      const ownedId = plan.attachmentCopies.find(({ source }) => source.id === systemAttachment.id)
+        ?.target.id;
+      assert.ok(ownedId);
+      assert.equal(record.attachments?.[0]?.id, ownedId);
+      assert.deepEqual(record.context, {
+        ...context,
+        records: [{ ...context.records[0]!, attachmentId: ownedId }],
+      });
+      projection.visibleTurnItems[1] = {
+        ...projection.visibleTurnItems[1]!,
+        item: { ...systemItem, input: {} },
+      };
+      const invalid = yield* Effect.result(planConversationFork(input));
+      assert.equal(invalid._tag, "Failure");
+      if (invalid._tag === "Failure")
+        assert.include(invalid.failure.message, "invalid historical data");
+    }),
 );

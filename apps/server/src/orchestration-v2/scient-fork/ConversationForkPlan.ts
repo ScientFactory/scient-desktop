@@ -20,6 +20,10 @@ import { remapComposerContextAttachments } from "@t3tools/shared/composerContext
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { attachmentFileExtension, createDeterministicAttachmentId } from "../../attachmentStore.ts";
+import {
+  HISTORICAL_SYSTEM_MESSAGE_TOOL_NAME,
+  HistoricalSystemMessage,
+} from "../legacy/HistoricalSystemMessage.ts";
 
 export type ConversationForkSource =
   | { readonly kind: "assistant-response"; readonly messageId: MessageId }
@@ -38,6 +42,7 @@ export class ConversationForkPlanError extends Schema.TaggedError<ConversationFo
 const itemJson = Schema.fromJsonString(OrchestrationV2TurnItemJson);
 const messageJson = Schema.fromJsonString(OrchestrationV2ConversationMessageJson);
 const attachmentJson = Schema.fromJsonString(ChatAttachment);
+const decodeHistoricalSystemMessage = Schema.decodeUnknownEffect(HistoricalSystemMessage);
 
 /** Freeze the visible conversation prefix; no source execution or pending request is adopted. */
 export const planConversationFork = Effect.fn("ScientConversationFork.plan")(function* (input: {
@@ -144,6 +149,7 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
   const attachmentMap = new Map<string, ChatAttachment>();
   const attachmentCopies: ThreadForkAttachmentCopy[] = [];
   const sourceAttachments: ChatAttachment[] = [];
+  const systemMessages = new Map<TurnItemId, typeof HistoricalSystemMessage.Type>();
   const collectAttachments = (attachments: ReadonlyArray<ChatAttachment>) => {
     for (const source of attachments) {
       if (attachmentMap.has(source.id)) continue;
@@ -176,6 +182,21 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
         );
       if (!collectAttachments(item.attachments ?? []))
         return yield* reject("The destination cannot own retained attachment files.");
+    }
+    if (item.type === "dynamic_tool" && item.toolName === HISTORICAL_SYSTEM_MESSAGE_TOOL_NAME) {
+      const system = yield* decodeHistoricalSystemMessage(item.input).pipe(
+        Effect.mapError(() => reject("The retained system message has invalid historical data.")),
+      );
+      systemMessages.set(item.id, system);
+      if (!messageIds.has(system.messageId)) {
+        messageIds.set(
+          system.messageId,
+          MessageId.make(`scient-fork:${targetThreadId}:message:${messageIds.size}`),
+        );
+      }
+      if (!collectAttachments(system.attachments ?? [])) {
+        return yield* reject("The destination cannot own retained system attachments.");
+      }
     }
     if (item.type === "user_input_request" && item.questionAnswer) {
       const answerMessageId = item.questionAnswer.messageId;
@@ -286,6 +307,27 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
       base.nodeId = nodeId;
     }
     switch (original.type) {
+      case "dynamic_tool": {
+        const system = systemMessages.get(original.id);
+        return system === undefined
+          ? { ...original, ...base }
+          : {
+              ...original,
+              ...base,
+              input: {
+                ...system,
+                messageId: messageIds.get(system.messageId)!,
+                attachments:
+                  system.attachments === null ? null : remapAttachments(system.attachments),
+                context:
+                  system.context === null
+                    ? null
+                    : remapComposerContextAttachments(system.context, sourceAttachments, [
+                        ...attachmentMap.values(),
+                      ]),
+              },
+            };
+      }
       case "user_message":
         return {
           ...original,

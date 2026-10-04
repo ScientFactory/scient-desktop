@@ -148,6 +148,10 @@ function makeLegacyImportSummary(items: ReadonlyArray<OrchestrationV2TurnItem>):
         return [{ label: "User", body: item.text }];
       case "assistant_message":
         return [{ label: "Assistant", body: item.text }];
+      case "user_input_request": {
+        const message = historicalMessage(item);
+        return message === null ? [] : [{ label: "User", body: message.text }];
+      }
       default:
         return [];
     }

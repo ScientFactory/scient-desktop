@@ -4,6 +4,7 @@ import {
   OrchestrationV2TurnItemJson,
   PlanId,
   TurnItemId,
+  TurnId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2TurnItem,
   type ThreadId,
@@ -16,6 +17,7 @@ import type { EventSinkV2Shape } from "../EventSink.ts";
 
 interface HistoryRow {
   readonly item_id: string;
+  readonly turn_id: string | null;
   readonly source: "message" | "reasoning" | "system" | "activity" | "approval" | "plan";
   readonly created_at: string;
   readonly updated_at: string;
@@ -82,41 +84,41 @@ export const prepareLegacyHistory = Effect.fn("LegacyScientHistory.prepare")(fun
   const includeDetails = includeArtifactDetails ? 1 : 0;
   const rows = yield* sql<HistoryRow>`
     WITH history AS (
-      SELECT 'migration:v1:turn-item:' || message_id AS item_id, 'message' AS source,
+      SELECT 'migration:v1:turn-item:' || message_id AS item_id, turn_id, 'message' AS source,
         created_at, updated_at, 0 AS source_order, 0 AS ordering, '{}' AS record_json
       FROM projection_thread_messages WHERE thread_id = ${threadId} AND role IN ('user', 'assistant')
       UNION ALL
-      SELECT 'migration:v1:history:reasoning:' || message_id, 'reasoning', created_at, updated_at, 0, 0,
+      SELECT 'migration:v1:history:reasoning:' || message_id, turn_id, 'reasoning', created_at, updated_at, 0, 0,
         CASE WHEN ${includeDetails} = 1 THEN json_object('text', text, 'isStreaming', is_streaming)
         ELSE '{}' END
       FROM projection_thread_messages WHERE thread_id = ${threadId} AND role = 'reasoning'
       UNION ALL
-      SELECT 'migration:v1:history:system:' || message_id, 'system', created_at, updated_at, 1, 0,
+      SELECT 'migration:v1:history:system:' || message_id, turn_id, 'system', created_at, updated_at, 1, 0,
         CASE WHEN ${includeDetails} = 1 THEN
           json_object('messageId', message_id, 'text', text, 'attachments', attachments_json, 'context', context_json)
         ELSE '{}' END
       FROM projection_thread_messages WHERE thread_id = ${threadId} AND role = 'system'
       UNION ALL
-      SELECT 'migration:v1:history:activity:' || activity_id, 'activity', created_at, created_at, 2, COALESCE(sequence, 0),
+      SELECT 'migration:v1:history:activity:' || activity_id, turn_id, 'activity', created_at, created_at, 2, COALESCE(sequence, 0),
         CASE WHEN ${includeDetails} = 1 THEN
           json_object('activityId', activity_id, 'turnId', turn_id, 'tone', tone, 'kind', kind,
             'summary', summary, 'sequence', sequence, 'payload', payload_json)
         ELSE '{}' END
       FROM projection_thread_activities WHERE thread_id = ${threadId}
       UNION ALL
-      SELECT 'migration:v1:history:approval:' || request_id, 'approval', created_at, COALESCE(resolved_at, created_at), 3, 0,
+      SELECT 'migration:v1:history:approval:' || request_id, turn_id, 'approval', created_at, COALESCE(resolved_at, created_at), 3, 0,
         CASE WHEN ${includeDetails} = 1 THEN
           json_object('requestId', request_id, 'turnId', turn_id, 'status', status, 'decision', decision, 'resolvedAt', resolved_at)
         ELSE '{}' END
       FROM projection_pending_approvals WHERE thread_id = ${threadId}
       UNION ALL
-      SELECT 'migration:v1:history:plan:' || plan_id, 'plan', created_at, updated_at, 4, 0,
+      SELECT 'migration:v1:history:plan:' || plan_id, turn_id, 'plan', created_at, updated_at, 4, 0,
         CASE WHEN ${includeDetails} = 1 THEN
           json_object('planId', plan_id, 'turnId', turn_id, 'markdown', plan_markdown, 'implementedAt', implemented_at)
         ELSE '{}' END
       FROM projection_thread_proposed_plans WHERE thread_id = ${threadId}
     )
-    SELECT item_id, source, created_at, updated_at, record_json,
+    SELECT item_id, turn_id, source, created_at, updated_at, record_json,
       ROW_NUMBER() OVER (ORDER BY created_at, source_order, ordering, item_id) AS ordinal
     FROM history ORDER BY ordinal
   `;
@@ -174,17 +176,27 @@ export const importLegacyHistory = Effect.fn("LegacyScientHistory.import")(funct
       ON positions.thread_id = items.thread_id AND positions.turn_item_id = items.turn_item_id
     WHERE items.thread_id = ${threadId}
       AND positions.ordinal < 1000000
-      AND items.ordinal <> positions.ordinal
     ORDER BY positions.ordinal DESC
   `;
+  const historicalTurns = new Map(
+    rows.flatMap((row) =>
+      row.turn_id === null ? [] : [[row.item_id, TurnId.make(row.turn_id)] as const],
+    ),
+  );
   for (const positioned of positionedItems) {
     const item = yield* decodeTurnItem(positioned.payload_json);
+    const historyTurnId = item.historyTurnId ?? historicalTurns.get(item.id);
+    if (item.ordinal === positioned.ordinal && historyTurnId === item.historyTurnId) continue;
     events.push({
       id: EventId.make(`migration:v1:history:position:${item.id}:${positioned.ordinal}`),
       type: "turn-item.updated",
       threadId,
       occurredAt: item.updatedAt,
-      payload: { ...item, ordinal: positioned.ordinal },
+      payload: {
+        ...item,
+        ordinal: positioned.ordinal,
+        ...(historyTurnId === undefined ? {} : { historyTurnId }),
+      },
     });
     if (events.length === 100) {
       yield* eventSink.write({ events, guardTurnItemPositionRepairs: true });
@@ -204,6 +216,7 @@ export const importLegacyHistory = Effect.fn("LegacyScientHistory.import")(funct
       id: TurnItemId.make(row.item_id),
       threadId,
       runId: null,
+      ...(row.turn_id === null ? {} : { historyTurnId: TurnId.make(row.turn_id) }),
       nodeId: null,
       providerThreadId: null,
       providerTurnId: null,
