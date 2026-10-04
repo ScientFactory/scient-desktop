@@ -113,6 +113,8 @@ export const nativeSessionFailure = (cause: unknown): NativeSessionOperationErro
       });
 
 export interface NativeSession {
+  /** Join an observed process-loss receipt before owner release can cancel the active turn. */
+  readonly beforeOwnerClose?: Effect.Effect<void>;
   readonly getModelContextWindow?: ProviderAdapter.ProviderAdapterV2SessionRuntime["getModelContextWindow"];
   readonly nativeId: string;
   /** A local session identity is not authority to resume a provider conversation. */
@@ -860,15 +862,19 @@ export function makeNativeSessionAdapterV2(
           );
         const native = yield* options.open(input, onUpdate);
         yield* Effect.addFinalizer(() =>
-          eventPermit.withPermit(
-            Effect.gen(function* () {
-              yield* finish({ type: "terminal", status: "cancelled" });
-              yield* stopBackgroundTasks("cancelled", yield* DateTime.now);
-              for (const pending of requests.values())
-                yield* settleRequest(pending, "cancelled", yield* DateTime.now);
-              yield* updateSession("stopped");
-              yield* Queue.end(events);
-            }),
+          (native.beforeOwnerClose ?? Effect.void).pipe(
+            Effect.andThen(
+              eventPermit.withPermit(
+                Effect.gen(function* () {
+                  yield* finish({ type: "terminal", status: "cancelled" });
+                  yield* stopBackgroundTasks("cancelled", yield* DateTime.now);
+                  for (const pending of requests.values())
+                    yield* settleRequest(pending, "cancelled", yield* DateTime.now);
+                  yield* updateSession("stopped");
+                  yield* Queue.end(events);
+                }),
+              ),
+            ),
           ),
         );
         const validateThreadOwner = (

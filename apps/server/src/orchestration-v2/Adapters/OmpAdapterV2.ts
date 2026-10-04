@@ -40,7 +40,11 @@ import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { ompCommandDecision } from "../../provider/omp/OmpCommandPolicy.ts";
 import { writeOmpExtensionFiles } from "../../provider/omp/OmpExtensionBootstrap.ts";
 import { ompScientExtensionSource } from "../../provider/omp/OmpScientExtension.ts";
-import { makeOmpRedaction } from "../../provider/omp/OmpRpcProcess.ts";
+import {
+  makeOmpRedaction,
+  type OmpRpcProcess,
+  type OmpProcessExit,
+} from "../../provider/omp/OmpRpcProcess.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import {
   decodeOmpModelSlug,
@@ -222,9 +226,21 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                 detail: `${target.name} session directory escaped Scient's state directory.`,
               }),
             );
-          yield* Effect.acquireRelease(
+          let ownedShutdown: OmpRpcProcess["shutdown"] | undefined;
+          const sessionLock = yield* Effect.acquireRelease(
             acquireOmpSessionLock(target, path.join(root, ".session.lock"), locks),
-            (lock) => releaseOmpSessionLock(lock, locks),
+            (lock) =>
+              Effect.gen(function* () {
+                if (ownedShutdown !== undefined) {
+                  const exit = yield* ownedShutdown.pipe(Effect.option);
+                  if (
+                    Option.isNone(exit) ||
+                    (exit.value.code === null && exit.value.exited !== true)
+                  )
+                    return;
+                }
+                yield* releaseOmpSessionLock(lock, locks);
+              }),
           );
           // The owned lock excludes another writer while crash-left prompt files are removed.
           for (const name of yield* fs.readDirectory(root)) {
@@ -313,7 +329,28 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
               Effect.provideService(Path.Path, path),
             );
           redaction = client.redaction;
-          yield* Effect.addFinalizer(() => client.shutdown.pipe(Effect.ignore));
+          let confirmedExit: OmpProcessExit | undefined;
+          const shutdownObserved = Effect.suspend(() =>
+            confirmedExit !== undefined
+              ? Effect.succeed(confirmedExit)
+              : client.shutdown.pipe(
+                  Effect.tap((exit) =>
+                    Effect.sync(() => {
+                      if (exit.code !== null || exit.exited === true) confirmedExit = exit;
+                    }),
+                  ),
+                ),
+          );
+          ownedShutdown = shutdownObserved;
+          yield* Effect.addFinalizer(() => shutdownObserved.pipe(Effect.ignore));
+          const stopOwnedProcess = Effect.gen(function* () {
+            const exit = yield* shutdownObserved;
+            if (exit.code === null && exit.exited !== true)
+              return yield* new NativeSessionOperationError({
+                detail: `${target.name} shutdown could not confirm process exit; its conversation remains locked.`,
+              });
+            yield* releaseOmpSessionLock(sessionLock, locks);
+          });
           let catalog: Effect.Success<ReturnType<typeof client.getModels>>["models"] = [];
           let catalogCurrent = false;
           let closed = false;
@@ -397,6 +434,21 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                     rpcProtocolVersion: OMP_RPC_PROTOCOL_V2,
                   })
                 : undefined;
+            });
+          let processLossPublished: Effect.Effect<void> | undefined;
+          const publishProcessLoss = (publish: Effect.Effect<void>) =>
+            Effect.gen(function* () {
+              const published = yield* Deferred.make<void>();
+              const previous = processLossPublished;
+              processLossPublished =
+                previous === undefined
+                  ? Deferred.await(published)
+                  : previous.pipe(Effect.andThen(Deferred.await(published)));
+              yield* stopOwnedProcess.pipe(
+                Effect.ignore,
+                Effect.andThen(publish),
+                Effect.ensuring(Deferred.succeed(published, undefined)),
+              );
             });
           let nextWarningOrdinal = 0;
           const ordinaryTools = new Map<string, Extract<NativeSessionUpdate, { type: "tool" }>>();
@@ -485,8 +537,9 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                       ),
                     )
                   : Effect.void;
-              case "turn-outcome":
-                return Effect.forEach(
+              case "turn-outcome": {
+                const broken = update.source === "process" || update.source === "unconfirmed";
+                const publish = Effect.forEach(
                   [...ordinaryTools.values()].filter((tool) => tool.status === "running"),
                   (tool) => {
                     if (update.outcome !== "completed" && update.outcome !== "local")
@@ -515,7 +568,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                         : { detail: client.redaction.text(update.detail) }),
                       ...(update.outcome === "unknown" ? { failureClass: "unknown" as const } : {}),
                       ...(update.stopReason === undefined ? {} : { stopReason: update.stopReason }),
-                      broken: update.source === "process" || update.source === "unconfirmed",
+                      broken,
                     }),
                   ),
                   Effect.andThen(
@@ -524,14 +577,18 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                       : Effect.void,
                   ),
                 );
+                return broken ? publishProcessLoss(publish) : publish;
+              }
               case "process-exited":
-                return onUpdate({
-                  type: "terminal",
-                  status: "failed",
-                  detail: `${target.name} exited before confirming this turn; its outcome is unknown.`,
-                  failureClass: "unknown",
-                  broken: true,
-                }).pipe(
+                return publishProcessLoss(
+                  onUpdate({
+                    type: "terminal",
+                    status: "failed",
+                    detail: `${target.name} exited before confirming this turn; its outcome is unknown.`,
+                    failureClass: "unknown",
+                    broken: true,
+                  }),
+                ).pipe(
                   Effect.andThen(closeSession(Exit.void).pipe(Effect.forkDetach, Effect.asVoid)),
                 );
               case "error":
@@ -1124,7 +1181,11 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                   "steer",
                 );
               }).pipe(Effect.provideService(Scope.Scope, scope), Effect.mapError(safeFailure)),
-            interrupt: closeSession(Exit.void).pipe(Effect.mapError(safeFailure)),
+            beforeOwnerClose: Effect.suspend(() => processLossPublished ?? Effect.void),
+            interrupt: stopOwnedProcess.pipe(
+              Effect.andThen(closeSession(Exit.void)),
+              Effect.mapError(safeFailure),
+            ),
             resume,
             respond: (id, response) =>
               Effect.gen(function* () {
