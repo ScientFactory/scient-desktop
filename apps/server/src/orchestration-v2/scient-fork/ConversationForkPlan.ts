@@ -164,7 +164,18 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
       end = lastInBoundary < 0 ? clicked : lastInBoundary;
     }
   }
-  const retained = rows.slice(0, end + 1);
+  const selectedRun = projection.runs.find((run) => run.id === boundaryRunId);
+  const runOrdinals = new Map(projection.runs.map((run) => [run.id, run.ordinal]));
+  // A later request can be recorded before the selected answer finishes.
+  // Durable run ownership prevents that overlap from extending this prefix.
+  const retained = rows
+    .slice(0, end + 1)
+    .filter(
+      ({ item }) =>
+        selectedRun === undefined ||
+        item.runId === null ||
+        (runOrdinals.get(item.runId) ?? Infinity) <= selectedRun.ordinal,
+    );
   const messageIds = new Map<MessageId, MessageId>();
   const itemIds = new Map<TurnItemId, TurnItemId>();
   const attachmentMap = new Map<string, ChatAttachment>();
