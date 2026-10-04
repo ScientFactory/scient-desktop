@@ -2762,6 +2762,79 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
     ),
   );
 
+  it.effect("refuses foreign native OMP history and rejects unregistered host tools", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* imageHarness();
+        const before = h.peer.state.frames.length;
+        const refused = yield* Effect.result(
+          h.runtime.resumeThread({
+            providerThread: {
+              ...h.input.providerThread,
+              providerInstanceId: ProviderInstanceId.make("foreign-owner"),
+            },
+          }),
+        );
+        assert.equal(refused._tag, "Failure");
+        assert.equal(
+          h.peer.state.frames
+            .slice(before)
+            .some((frame) => frame.type === "switch_session" || frame.type === "prompt"),
+          false,
+        );
+        yield* h.runtime.startTurn(h.input);
+        yield* h.peer.promptDelivered();
+        yield* h.peer.emit([
+          { type: "agent_start" },
+          {
+            type: "host_tool_call",
+            id: "unregistered-host",
+            toolCallId: "unregistered-call",
+            toolName: "scient_forbidden",
+            arguments: { query: "private" },
+          },
+        ]);
+        yield* h.takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            typeof event.turnItem.output === "string" &&
+            event.turnItem.output.includes("host-tool call"),
+        );
+        const results = h.peer.state.frames.filter((frame) => frame.type === "host_tool_result");
+        assert.lengthOf(results, 1);
+        const actual: unknown = results[0];
+        assert.deepEqual(actual, {
+          type: "host_tool_result",
+          id: "unregistered-host",
+          isError: true,
+          result: {
+            content: [
+              {
+                type: "text",
+                text: "Scient has not registered host tools for this Oh My Pi session.",
+              },
+            ],
+          },
+        });
+        assert.equal(
+          h.peer.state.frames.some((frame) => frame.type === "set_host_tools"),
+          false,
+        );
+        yield* h.peer.finish();
+        const terminal = yield* h.takeUntil((event) => event.type === "turn.terminal");
+        assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
+        yield* h.peer.close();
+        yield* h.takeUntil(
+          (event) =>
+            event.type === "provider_session.updated" && event.providerSession.status === "error",
+        );
+        yield* Scope.close(yield* Effect.scope, Exit.void);
+        assert.equal(h.peer.state.shutdowns, 1);
+      }),
+    ),
+  );
+
   it.effect(
     "sanitizes native OMP browser URLs and refuses unsafe schemes without answering them",
     () =>
