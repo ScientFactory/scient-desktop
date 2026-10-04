@@ -55,16 +55,17 @@ screenshot capture and stream tuning.
 
 The `device_*` toolkit is deliberately four tools: list, open, screenshot, and
 close. Driving happens through the `agent-device` CLI, which has the semantic
-snapshot model agents need and stays current with its own releases. T3 prepends
-a shim directory to the provider's PATH. The CLI installs on the environment
-server even when that server cannot run simulators. Hosts start on demand.
-
-That environment is fixed when the provider subprocess spawns, so
+snapshot model agents need and stays current with its own releases. Hosts start
+on demand. V2
 [`prepareMcpSession`](../../apps/server/src/orchestration-v2/ProviderSessionManager.ts)
-starts agent-device only when device support and agent access have both been
-enabled, the session has the `device` capability, and the machine can run at
-least one platform. Starting it later from `device_open` would leave the
-already-running agent without the CLI.
+grants the session's `device` capability according to device agent-access settings;
+it does not install the CLI, prepare a shim, or populate a provider PATH.
+
+The live [`device_open` handler](../../apps/server/src/mcp/toolkits/device/handlers.ts)
+checks device access, opens the device session, resolves the CLI through `devices.agentCli`,
+and prepares its launcher shim. It returns the command path and target arguments for
+the agent to use. Pre-spawn CLI/PATH preparation from the superseded V1 provider
+service is not implemented by the V2 session manager at this revision.
 
 How to drive a device is returned from `device_open`, not kept in an
 always-loaded prompt or skill: it costs nothing in threads that never open a
