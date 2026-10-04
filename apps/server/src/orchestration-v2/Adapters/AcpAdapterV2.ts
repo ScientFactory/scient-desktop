@@ -560,6 +560,7 @@ export interface AcpAdapterV2Options {
      * by exactly that on this receipt.
      */
     readonly onDeferredFinalizeScheduled?: (debounce: Duration.Input) => Effect.Effect<void>;
+    readonly afterPromptRpcSucceeded?: () => Effect.Effect<void>;
     readonly afterPromptSettledWithBackgroundWork?: () => Effect.Effect<void>;
     readonly afterNativeResponseTransportClosed?: () => Effect.Effect<void>;
     readonly afterHardTeardownTransportDrained?: () => Effect.Effect<void>;
@@ -7232,6 +7233,7 @@ export function makeAcpAdapterV2(
                 Effect.tap(() =>
                   Deferred.succeed(context.promptWireSettled, undefined).pipe(Effect.asVoid),
                 ),
+                Effect.tap(() => options.testHooks?.afterPromptRpcSucceeded?.() ?? Effect.void),
                 Effect.flatMap((result) =>
                   runRuntimeCallbackAtGeneration(
                     promptGeneration,
@@ -7929,11 +7931,11 @@ export function makeAcpAdapterV2(
                 Effect.gen(function* () {
                   yield* awaitRuntimeTeardown();
                   useProviderThreadIdentity(snapshotInput.providerThread);
-                  yield* restartRuntimeAfterTeardownIfRequired(
-                    snapshotInput.providerThread.appThreadId,
-                  );
                   const sessionId = yield* nativeThreadId(driver, snapshotInput.providerThread);
                   if ((yield* Ref.get(activeSessionId)) !== sessionId) {
+                    yield* restartRuntimeAfterTeardownIfRequired(
+                      snapshotInput.providerThread.appThreadId,
+                    );
                     if (!capabilities.threads.canReadThreadSnapshot) {
                       return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                         driver,
