@@ -44,6 +44,7 @@ export const nativeOmpSession = Effect.fnUntraced(function* (input: {
   readonly environment: NodeJS.ProcessEnv;
   readonly modelSelection: ModelSelection;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  readonly continuations?: Parameters<typeof makeOmpAdapterV2>[0]["continuations"];
   readonly makeProcess: Parameters<typeof makeOmpAdapterV2>[0]["makeProcess"];
 }) {
   const scope = yield* Scope.make();
@@ -73,7 +74,7 @@ export const nativeOmpSession = Effect.fnUntraced(function* (input: {
       },
       makeProcess: input.makeProcess,
       ...(input.nativeEventLogger ? { nativeEventLogger: input.nativeEventLogger } : {}),
-      continuations: { offer: () => Effect.void },
+      continuations: input.continuations ?? { offer: () => Effect.void },
     });
     const policy = {
       cwd: input.root,

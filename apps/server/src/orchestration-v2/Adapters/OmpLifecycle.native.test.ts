@@ -33,9 +33,11 @@ const fixture = Effect.fnUntraced(function* () {
   const threadId = ThreadId.make("native-lifecycle-thread");
   const instanceId = ProviderInstanceId.make("native-lifecycle-instance");
   let sessionRoot = "";
+  let launchPrivateFiles: string[] = [];
   const open = (
     makeProcess: Parameters<typeof nativeOmpSession>[0]["makeProcess"],
     id = threadId,
+    continuations?: Parameters<typeof nativeOmpSession>[0]["continuations"],
   ) =>
     nativeOmpSession({
       root,
@@ -47,8 +49,12 @@ const fixture = Effect.fnUntraced(function* () {
       binaryPath: "synthetic-omp",
       environment: { HOME: root },
       modelSelection: { instanceId, model: "test/selected" },
+      ...(continuations ? { continuations } : {}),
       makeProcess: (options) => {
         sessionRoot = options.sessionDir ?? "";
+        launchPrivateFiles = NodeFS.readdirSync(sessionRoot)
+          .filter((name) => name.startsWith("scient-extension-"))
+          .map((name) => NodePath.join(sessionRoot, name));
         return makeProcess(options);
       },
     });
@@ -56,7 +62,8 @@ const fixture = Effect.fnUntraced(function* () {
   const released = Effect.gen(function* () {
     while (NodeFS.existsSync(lock())) yield* Effect.sleep("5 millis");
   }).pipe(Effect.timeout("2 seconds"));
-  return { root, open, lock, released };
+  const privateFiles = () => [...launchPrivateFiles];
+  return { root, open, lock, released, privateFiles };
 });
 
 const observe = Effect.fnUntraced(function* (
@@ -92,7 +99,15 @@ describe("native OMP lifecycle", () => {
       Effect.gen(function* () {
         const f = yield* fixture();
         const p = peer();
-        const s = yield* f.open(p.makeProcess);
+        let continuations = 0;
+        const s = yield* f.open(p.makeProcess, undefined, {
+          offer: () =>
+            Effect.sync(() => {
+              continuations++;
+            }),
+        });
+        const privateFiles = f.privateFiles();
+        expect(privateFiles).toHaveLength(2);
         const seen = yield* observe(s);
         yield* s.start({ text: "Stop before the agent starts" });
         yield* p.promptDelivered();
@@ -108,6 +123,57 @@ describe("native OMP lifecycle", () => {
         expect(p.state.shutdowns).toBe(1);
         expect(p.state.frames.some((frame) => frame.type === "abort")).toBe(false);
         expect(NodeFS.existsSync(f.lock())).toBe(false);
+        for (const path of privateFiles) expect(NodeFS.existsSync(path)).toBe(false);
+        const accepted = seen.events.filter(
+          (event) =>
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.nativeAcceptance === "accepted",
+        ).length;
+        const replacementPeer = peer();
+        const replacement = yield* f.open(replacementPeer.makeProcess);
+        const replacementSeen = yield* observe(replacement);
+        expect(NodeFS.existsSync(f.lock())).toBe(true);
+        yield* replacement.start({ text: "Immediate same-owner replacement" });
+        yield* replacementPeer.promptDelivered();
+        yield* p.emit([
+          { type: "agent_start" },
+          {
+            type: "subagent_lifecycle",
+            payload: { id: "late-child", status: "completed", message: "old wake" },
+          },
+          { type: "agent_end", messages: [], isTerminal: true },
+        ]);
+        yield* replacementPeer.emit([
+          { type: "agent_start" },
+          {
+            type: "tool_execution_start",
+            toolCallId: "replacement-barrier",
+            toolName: "read",
+            args: { path: "replacement.txt" },
+          },
+        ]);
+        yield* replacementSeen.take(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool",
+        );
+        expect(replacement.runtime.providerSession.status).toBe("running");
+        expect(replacementSeen.events.some((event) => event.type === "turn.terminal")).toBe(false);
+        expect(seen.events.filter((event) => event.type === "turn.terminal")).toHaveLength(1);
+        expect(
+          seen.events.filter(
+            (event) =>
+              event.type === "provider_turn.updated" &&
+              event.providerTurn.nativeAcceptance === "accepted",
+          ),
+        ).toHaveLength(accepted);
+        expect(continuations).toBe(0);
+        expect(p.state.shutdowns).toBe(1);
+        yield* replacementPeer.finish();
+        expect(yield* replacementSeen.terminal()).toMatchObject({ status: "completed" });
+        yield* replacement.close;
+        yield* replacementSeen.ended;
+        expect(
+          replacementSeen.events.filter((event) => event.type === "turn.terminal"),
+        ).toHaveLength(1);
       }),
     ),
   );
