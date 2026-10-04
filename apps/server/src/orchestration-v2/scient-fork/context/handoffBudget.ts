@@ -1,15 +1,12 @@
 /**
  * How much retained conversation a context handoff may carry.
  *
- * SCIENT-OWNED mirror of upstream Orchestration V2's `ContextHandoffBudget`
- * (`handoffBudget`, `attachmentTokenAllowance`, the reserve and the unknown
- * window default). On the day V2 lands, this becomes one Scient override of
- * V2's cap instead of a second budgeting system.
+ * SCIENT-OWNED pure policy shared by native V2 fork/import/recovery delivery
+ * and the retained portable helper. Ordinary provider switches keep their
+ * separate generic V2 byte allowance.
  *
- * Upstream reference: pingdotgg/t3code PR #2829 at a3fbbe45315e (2026-09-27),
- * `apps/server/src/orchestration-v2/ContextHandoffBudget.ts`.
- * `attachmentTokenAllowance` is copied verbatim; diff the rest against that
- * file when V2 lands.
+ * The model-window formula follows upstream Orchestration V2; Scient owns the
+ * estimated-token presets, environment override and selected-model policy.
  *
  * Deliberate differences from V2:
  * - V2 counts one UTF-8 byte as one token. Scient estimates `ceil(bytes / 3)`,

@@ -283,7 +283,8 @@ export function makeOrchestratorV2ProviderReplayLayer<
   | LegacyV1ThreadImporter.LegacyV1ThreadImporter
   | ProjectionStore.ProjectionStoreV2
   | ProjectStore.ProjectStoreV2
-  | ServerConfig.ServerConfig,
+  | ServerConfig.ServerConfig
+  | ServerSettings.ServerSettingsService,
   | Error
   | MigrationError
   | PlatformError.PlatformError
@@ -304,6 +305,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   options: {
     /** Preserve one disposable profile across file-backed restart and recovery tests. */
     readonly serverConfigLayer?: Layer.Layer<ServerConfig.ServerConfig>;
+    readonly serverSettingsLayer?: Layer.Layer<ServerSettings.ServerSettingsService>;
     readonly databaseLayer?: Layer.Layer<
       SqlClient.SqlClient,
       | MigrationError
@@ -342,7 +344,8 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   | LegacyV1ThreadImporter.LegacyV1ThreadImporter
   | ProjectionStore.ProjectionStoreV2
   | ProjectStore.ProjectStoreV2
-  | ServerConfig.ServerConfig,
+  | ServerConfig.ServerConfig
+  | ServerSettings.ServerSettingsService,
   | Error
   | MigrationError
   | PlatformError.PlatformError
@@ -369,12 +372,14 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   const continuationRequestsLayer =
     options.runContinuationWorker === true ? ProviderContinuationRequests.layer : Layer.empty;
   const providedRegistryLayer = registryLayer.pipe(Layer.provide(continuationRequestsLayer));
-  const serverSettingsLayer = ServerSettings.layerTest({
-    responseStreamingMode: "turn",
-    ...(options.continueThreadsAfterServerUpdate === undefined
-      ? {}
-      : { continueThreadsAfterServerUpdate: options.continueThreadsAfterServerUpdate }),
-  }).pipe(Layer.orDie);
+  const serverSettingsLayer =
+    options.serverSettingsLayer ??
+    ServerSettings.layerTest({
+      responseStreamingMode: "turn",
+      ...(options.continueThreadsAfterServerUpdate === undefined
+        ? {}
+        : { continueThreadsAfterServerUpdate: options.continueThreadsAfterServerUpdate }),
+    }).pipe(Layer.orDie);
   const storesLayer = Layer.mergeAll(
     EventStore.layer,
     ProjectionStore.layer,
@@ -456,6 +461,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   const providerTurnStartServiceProvided = ProviderTurnStartService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        serverSettingsLayer,
         contextHandoffServiceProvided,
         eventSinkProvided,
         IdAllocator.layer,
@@ -576,6 +582,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     checkpointStoreLayer,
     legacyImporterProvided,
     serverConfigLayer,
+    serverSettingsLayer,
     conversationForkProvided,
     storesLayer,
     orchestratorProvided,

@@ -79,6 +79,7 @@ export interface ContextHandoffServiceV2Shape {
     readonly toProviderInstanceId: ProviderInstanceId;
     readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
     readonly runs?: ReadonlyArray<OrchestrationV2Run>;
+    readonly purpose?: "scient_fork" | "scient_history" | "session_recovery";
     readonly strategy: Extract<
       OrchestrationV2ContextHandoff["strategy"],
       "delta_since_target_last_seen" | "full_thread_summary"
@@ -265,13 +266,15 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
             ),
           );
         const coverage = handoffCoverage({ ...input, coveredRunOrdinals: { from: 1, to: 1 } });
+        // Keep the original whole items until delivery knows the selected model.
+        // Only this Scient path defers selection; generic switches remain capped.
         const selected = selectHistory({
           messages: input.items.flatMap((item) => {
             const message = historicalMessage(item);
             return message === null ? [] : [message];
           }),
           coverage,
-          budget: tokenCap,
+          budget: Number.POSITIVE_INFINITY,
         });
         return {
           id: handoffId,
@@ -282,6 +285,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           toProviderThreadId: input.toProviderThreadId,
           coveredRunOrdinals: { from: 1, to: 1 },
           strategy: "manual_context",
+          budgetPolicy: "scient",
           status: "ready",
           summaryMessageId: null,
           summaryText: makeLegacyImportSummary(input.items),
@@ -378,13 +382,15 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           coveredRunOrdinals: input.coveredRunOrdinals,
           items: input.deltaItems,
         });
+        // Keep the original whole items until delivery knows the selected model.
+        // Only this Scient path defers selection; generic switches remain capped.
         const selected = selectHistory({
           messages: input.deltaItems.flatMap((item) => {
             const message = historicalMessage(item);
             return message === null ? [] : [message];
           }),
           coverage,
-          budget: tokenCap,
+          budget: Number.POSITIVE_INFINITY,
         });
         return {
           id: handoffId,
@@ -395,6 +401,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           toProviderThreadId: input.toProviderThreadId,
           coveredRunOrdinals: input.coveredRunOrdinals,
           strategy: "fork_delta_summary",
+          budgetPolicy: "scient",
           status: "ready",
           summaryMessageId: null,
           summaryText: makeForkDeltaSummary(input),
@@ -423,6 +430,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
       readonly toProviderInstanceId: ProviderInstanceId;
       readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
       readonly runs?: ReadonlyArray<OrchestrationV2Run>;
+      readonly purpose?: "scient_fork" | "scient_history" | "session_recovery";
       readonly strategy: Extract<
         OrchestrationV2ContextHandoff["strategy"],
         "delta_since_target_last_seen" | "full_thread_summary"
@@ -463,7 +471,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
               ];
         }),
         coverage,
-        budget: tokenCap,
+        budget: input.purpose === undefined ? tokenCap : Number.POSITIVE_INFINITY,
       });
       return {
         id: handoffId,
@@ -474,6 +482,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
         toProviderThreadId: input.toProviderThreadId,
         coveredRunOrdinals: input.coveredRunOrdinals,
         strategy: input.strategy,
+        ...(input.purpose === undefined ? {} : { budgetPolicy: "scient" as const }),
         status: "ready",
         summaryMessageId: null,
         summaryText: renderHistory(selected.messages, selected.context),

@@ -24,6 +24,7 @@ import { frozenForkPortableReason } from "./scient-fork/ConversationForkNativeSo
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import * as ProviderAuthService from "../provider/Services/ProviderAuthService.ts";
 // SCIENT-FORK:START — explicit Scient skill selection for this turn.
 import { prepareScientV2SkillTurn } from "../scient/skills/ScientV2SkillTurn.ts";
@@ -35,6 +36,10 @@ import {
   DEFAULT_HANDOFF_TOKEN_CAP,
   handoffTokenCapConfig,
   handoffBudget,
+  scientHandoffByteBudget,
+  hasScientContextHistory,
+  scientHandoffTokenCapOverride,
+  estimateScientHandoffTokens,
   attachmentTokenAllowance,
   contextUsageForHandoff,
   historicalMessage,
@@ -91,6 +96,7 @@ export class ProviderTurnStartServiceV2 extends Context.Service<
 export const layer: Layer.Layer<
   ProviderTurnStartServiceV2,
   never,
+  | ServerSettingsService
   | EventSink.EventSinkV2
   | ContextHandoffService.ContextHandoffServiceV2
   | IdAllocator.IdAllocatorV2
@@ -117,6 +123,7 @@ export const layer: Layer.Layer<
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
+    const serverSettings = yield* ServerSettingsService;
 
     // These callbacks outlive startup while a run drains background work. Build
     // them outside start's scope so they cannot retain its full thread history.
@@ -717,6 +724,7 @@ export const layer: Layer.Layer<
               threadId: projection.thread.id,
               targetRunId: run.id,
               transferId: nativeForkTransfer.id,
+              purpose: "scient_fork",
               fromProviderThreadIds: [],
               toProviderThreadId: providerThread.id,
               fromProviderInstanceId:
@@ -876,6 +884,7 @@ export const layer: Layer.Layer<
           threadId: projection.thread.id,
           targetRunId: run.id,
           transferId,
+          ...(hasScientContextHistory(projection) ? { purpose: "session_recovery" as const } : {}),
           fromProviderThreadIds: [providerThread.id],
           toProviderThreadId: providerThread.id,
           fromProviderInstanceId: providerThread.providerInstanceId,
@@ -1182,6 +1191,19 @@ export const layer: Layer.Layer<
       const tokenCap = yield* handoffTokenCapConfig.pipe(
         Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
       );
+      const usesScientBudget =
+        hasScientContextHistory(projection) ||
+        effectiveHandoffs.some(
+          (handoff) =>
+            handoff.budgetPolicy === "scient" ||
+            projection.contextTransfers.some(
+              (transfer) =>
+                transfer.id === handoff.transferId &&
+                (transfer.type === "fork" || transfer.type === "merge_back") &&
+                transfer.targetThreadId === projection.thread.id &&
+                transfer.targetProviderInstanceId === run.providerInstanceId,
+            ),
+        );
       const settledHandoffs = projection.contextHandoffs.filter(
         (handoff) =>
           handoff.toProviderThreadId === providerThread.id &&
@@ -1255,7 +1277,11 @@ export const layer: Layer.Layer<
                   : 0;
               return (
                 sum +
-                (historical === null ? 0 : Buffer.byteLength(historical.text)) +
+                (historical === null
+                  ? 0
+                  : usesScientBudget
+                    ? estimateScientHandoffTokens(historical.text)
+                    : Buffer.byteLength(historical.text)) +
                 nativeAttachments
               );
             }, 0)
@@ -1285,6 +1311,7 @@ export const layer: Layer.Layer<
                     threadId: projection.thread.id,
                     targetRunId: run.id,
                     transferId: null,
+                    ...(usesScientBudget ? { purpose: "session_recovery" as const } : {}),
                     fromProviderThreadIds: [providerThread.id],
                     toProviderThreadId: providerThread.id,
                     fromProviderInstanceId: run.providerInstanceId,
@@ -1304,10 +1331,8 @@ export const layer: Layer.Layer<
             deferInline: compact,
             providerThread: runningProviderThread,
             budget: Effect.gen(function* () {
-              return handoffBudget({
-                tokenCap,
+              const allowance = {
                 modelContextWindow,
-                // The note is sent with the user text, so it spends the same allowance.
                 userText: restartNote === "" ? userText : `${restartNote}\n\n${userText}`,
                 attachments: message.attachments,
                 providerThread: budgetProviderThread,
@@ -1315,7 +1340,19 @@ export const layer: Layer.Layer<
                   budgetProviderThread.contextUsage?.usedTokens === undefined
                     ? yield* nativeContextEstimate
                     : 0,
-              });
+              };
+              if (usesScientBudget) {
+                const settings = yield* serverSettings.getSettings;
+                const override = yield* scientHandoffTokenCapOverride.pipe(
+                  Effect.orElseSucceed(() => Option.none<number>()),
+                );
+                return scientHandoffByteBudget({
+                  ...allowance,
+                  size: settings.scientFork.contextHandoffSize,
+                  environmentOverride: Option.getOrUndefined(override),
+                });
+              }
+              return handoffBudget({ ...allowance, tokenCap });
             }),
             alreadyDeliveredItemIds: deliveredItemIds,
             ...(session.injectHistory === undefined
