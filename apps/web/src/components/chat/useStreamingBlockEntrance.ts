@@ -28,8 +28,18 @@ const BLOCK_REVEAL_KEYFRAMES: Keyframe[] = [
 const REVEAL_MS_PER_LINE = 200;
 const MIN_REVEAL_MS = 450;
 const MAX_REVEAL_MS = 1800;
-// Steady through the middle, settling gently at the end.
-const REVEAL_EASING = "cubic-bezier(0.3, 0.1, 0.3, 1)";
+// Steady: the follow scroll keeps the same pace, so the two move as one.
+const REVEAL_EASING = "linear";
+
+/**
+ * When the streamed text being revealed now will be fully shown
+ * (performance.now() time). The follow scroll paces itself to arrive then,
+ * moving continuously with the reveal instead of hopping to each block.
+ */
+let latestRevealEndsAt = 0;
+export function streamingRevealEndsAt() {
+  return latestRevealEndsAt;
+}
 
 function revealDuration(block: HTMLElement) {
   const lineHeight = Number.parseFloat(getComputedStyle(block).lineHeight) || 22;
@@ -89,6 +99,7 @@ export function useStreamingBlockEntrance(
         const delay = Math.max(0, revealEndsAt - now);
         const duration = revealDuration(block);
         revealEndsAt = now + delay + duration;
+        latestRevealEndsAt = Math.max(latestRevealEndsAt, revealEndsAt);
         block.animate(BLOCK_REVEAL_KEYFRAMES, {
           duration,
           delay,

@@ -25,7 +25,8 @@ measurements hold), and the "Working for" label shows faint and darkens from lef
 mask sweep; its line just appears)
 (`chat/timelineEntranceMotion.ts`; played entrances never replay on row remount). While an
 answer streams, each block (the first included) is revealed top-down line by line, one block
-after the other (about 200ms a line), counted per message so remounted rows never replay (`chat/useStreamingBlockEntrance.ts`). The
+after the other (about 200ms a line, linear), counted per message so remounted rows never replay;
+the follow scroll paces itself to arrive as the last revealed line shows (`streamingRevealEndsAt`) (`chat/useStreamingBlockEntrance.ts`). The
 timeline's working state (`chat/timelineWorkingState.ts`) is held back until a send's prompt
 is listed and bridged from the server's acknowledgement until a session starts the turn.
 Preserve the existing first-message framing. Eligible sends, and queued prompts the server delivers while

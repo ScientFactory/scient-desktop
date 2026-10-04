@@ -7,6 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
 import { readerAtReadingEnd, withReadingEnd } from "./readerScrollPolicy";
+import { streamingRevealEndsAt } from "./useStreamingBlockEntrance";
 import { MessagesTimeline } from "./MessagesTimeline";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
@@ -485,6 +486,47 @@ it("keeps following a later prompt whose turn has not started yet when it arrive
       .toBe(true);
   }
   expect(node.scrollTop).toBeGreaterThan(start);
+});
+
+it("scrolls continuously with streamed paragraphs, at the pace they are revealed", async () => {
+  const key = "geometry:follow-paced";
+  const { node, extra, toEnd, rows } = await sendLaterPrompt(key, true);
+  render(key, rows(0), extra);
+  await expect.poll(toEnd).toBeLessThanOrEqual(1);
+  const paragraph =
+    "A paragraph that wraps over a few lines, arriving whole as providers stream it. ";
+  const answer = (count: number) => ({
+    ...entry(11),
+    message: {
+      ...entry(11).message,
+      role: "assistant" as const,
+      streaming: true,
+      text: Array.from({ length: count }, () => paragraph.repeat(3)).join("\n\n"),
+    },
+  });
+  render(key, [...rows(0), answer(1)], extra);
+  await frames(2);
+  render(key, [...rows(0), answer(2)], extra);
+  const positions: number[] = [];
+  const times: number[] = [];
+  const started = performance.now();
+  const revealEnd = streamingRevealEndsAt();
+  expect(revealEnd - started).toBeGreaterThan(400);
+  while (performance.now() - started < 2200) {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    positions.push(node.scrollTop);
+    times.push(performance.now());
+  }
+  const steps = positions.slice(1).map((value, index) => value - positions[index]!);
+  const total = positions.at(-1)! - positions[0]!;
+  const quarter = started + (revealEnd - started) / 4;
+  const atQuarter = positions[times.findIndex((time) => time >= quarter)]! - positions[0]!;
+  // One continuous glide at the reveal's pace: a quarter of the way through the
+  // reveal it has covered about a quarter of the way, not rushed ahead.
+  expect(total).toBeGreaterThan(60);
+  expect(atQuarter / total).toBeLessThan(0.45);
+  expect(Math.max(...steps)).toBeLessThan(12);
+  expect(steps.every((step) => step >= -0.5)).toBe(true);
 });
 
 it("keeps the reveal of a first prompt as it was: traces do not move it", async () => {

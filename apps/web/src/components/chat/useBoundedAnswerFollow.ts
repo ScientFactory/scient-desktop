@@ -3,6 +3,7 @@ import type { LegendListRef } from "@legendapp/list/react";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 import { CHAT_TIMELINE_ANCHOR_OFFSET } from "./timelineScrollAnchoring";
 import { isTimelineScrollTarget } from "./timelineScrollTarget";
+import { streamingRevealEndsAt } from "./useStreamingBlockEntrance";
 
 /** How much of a newly arrived message the reveal shows: its first lines. */
 const FIRST_LINES_PX = 48;
@@ -13,6 +14,8 @@ const REVEAL_PACE = { maxPxPerMs: 1.2, easeMs: 90 };
 /** The gap the timeline keeps between its last row and the composer at the end. */
 const END_GAP = 16;
 const FOLLOW_PACE = { maxPxPerMs: 0.6, easeMs: 180 };
+/** Below this, a reveal is nearly done: finish with the usual easing. */
+const MIN_PACED_REVEAL_MS = 50;
 
 /**
  * How far the reveal may scroll now. Growth is revealed only while the sent
@@ -218,9 +221,14 @@ export function useBoundedAnswerFollow({
       // A followed response moves at a calmer pace, so bursts of steps read as one drift.
       const pace = followResponse ? FOLLOW_PACE : REVEAL_PACE;
       const eased = delta * (1 - Math.exp(-elapsed / pace.easeMs));
-      viewport.scrollTop += reducedMotion
-        ? delta
-        : Math.min(delta, Math.max(0.5, Math.min(elapsed * pace.maxPxPerMs, eased)));
+      // While streamed text is being revealed line by line, keep its pace: a
+      // steady speed that arrives as its last line shows, not a hop per block.
+      const revealLeft = streamingRevealEndsAt() - now;
+      const step =
+        followResponse && revealLeft > MIN_PACED_REVEAL_MS
+          ? Math.max(0.5, (delta * elapsed) / revealLeft)
+          : Math.max(0.5, Math.min(elapsed * pace.maxPxPerMs, eased));
+      viewport.scrollTop += reducedMotion ? delta : Math.min(delta, step);
       revealTop = Math.max(revealTop, viewport.scrollTop);
       if (Math.abs(viewport.scrollTop - before) > 0.1) frame = requestAnimationFrame(tick);
     };
