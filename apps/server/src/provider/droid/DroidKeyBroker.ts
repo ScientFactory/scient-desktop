@@ -266,6 +266,7 @@ interface TurnBudget {
   readonly breached: Deferred.Deferred<DroidRequestLimitBreach>;
   /** The turn's first upstream status Droid answers by retrying. */
   readonly retrying: Deferred.Deferred<number>;
+  retryNoticeClaimed: boolean;
 }
 
 const newBudget = (): TurnBudget => ({
@@ -274,6 +275,7 @@ const newBudget = (): TurnBudget => ({
   breach: undefined,
   breached: Deferred.makeUnsafe<DroidRequestLimitBreach>(),
   retrying: Deferred.makeUnsafe<number>(),
+  retryNoticeClaimed: false,
 });
 
 /** Keeps one current Scient run budget per thread across native process replacement. */
@@ -883,6 +885,17 @@ export const makeDroidKeyBroker = Effect.fn("DroidKeyBroker.make")(function* (in
       }),
     turnBreached: Effect.suspend(() => Deferred.await(budget.breached)),
     currentBreach: () => budget.breach,
-    turnRetrying: Effect.suspend(() => Deferred.await(budget.retrying)),
+    turnRetrying: Effect.suspend(() => {
+      const current = budget;
+      return Deferred.await(current.retrying).pipe(
+        Effect.flatMap((status) =>
+          Effect.suspend(() => {
+            if (current.retryNoticeClaimed) return Effect.never;
+            current.retryNoticeClaimed = true;
+            return Effect.succeed(status);
+          }),
+        ),
+      );
+    }),
   } satisfies DroidKeyBroker;
 });

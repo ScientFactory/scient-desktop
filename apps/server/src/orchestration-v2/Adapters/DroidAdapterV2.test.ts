@@ -2319,20 +2319,21 @@ it.layer(testLayer, { excludeTestServices: true })(
   },
 );
 
-const nativeModelApi = Effect.fnUntraced(function* (mode: "length" | "retry") {
+const nativeModelApi = Effect.fnUntraced(function* (mode: "length" | "retry" | "retry-length") {
   let requests = 0;
-  let finish = "length";
+  let finish = mode === "retry" ? "stop" : "length";
+  let retrying = mode !== "length";
   const server = NodeHttp.createServer(async (request, response) => {
     for await (const _chunk of request);
     requests++;
-    if (mode === "retry" && requests % 3 !== 0) {
+    if (retrying && requests % 3 !== 0) {
       response.writeHead(429);
       response.end("Synthetic rate limit");
       return;
     }
     response.writeHead(200, { "content-type": "text/event-stream" });
     response.end(
-      `data: ${encodeJson({ choices: [{ index: 0, delta: { content: "partial" }, finish_reason: mode === "retry" ? "stop" : finish }] })}\n\ndata: [DONE]\n\n`,
+      `data: ${encodeJson({ choices: [{ index: 0, delta: { content: "partial" }, finish_reason: finish }] })}\n\ndata: [DONE]\n\n`,
     );
   });
   yield* Effect.acquireRelease(
@@ -2354,6 +2355,14 @@ const nativeModelApi = Effect.fnUntraced(function* (mode: "length" | "retry") {
     requests: () => requests,
     recover: () => {
       finish = "stop";
+      retrying = false;
+    },
+    stopRetries: () => {
+      retrying = false;
+    },
+    retryAgain: () => {
+      retrying = true;
+      finish = "stop";
     },
   };
 });
@@ -2362,7 +2371,9 @@ const nativeModelPrompt = `
   onPrompt = async message => {
     state.cancelled = false;
     const selected = models.find(model => model.id === state.model);
-    for (let index = 0; index < Number(process.env.MODEL_REQUESTS); index++) {
+    const hold = process.env.HOLD_FIRST_MODEL_LEG === "1" && !fs.existsSync(__CONTROL_PATH__);
+    const requestLimit = hold ? Math.min(3, Number(process.env.MODEL_REQUESTS)) : Number(process.env.MODEL_REQUESTS);
+    for (let index = 0; index < requestLimit; index++) {
       if (state.cancelled) break;
       const response = await fetch(selected.baseUrl + "/chat/completions", {method: "POST", headers: {authorization: "Bearer " + selected.apiKey}, body: JSON.stringify({model: selected.model, stream: true})});
       const text = await response.text();
@@ -2370,7 +2381,7 @@ const nativeModelPrompt = `
       if (response.status === 200) update({sessionUpdate: "agent_message_chunk", content: {type: "text", text: "Partial model output."}});
       await new Promise(resolve => setTimeout(resolve, 10));
     }
-    if (process.env.HOLD_FIRST_MODEL_LEG === "1" && !fs.existsSync(__CONTROL_PATH__)) {
+    if (hold) {
       fs.writeFileSync(__CONTROL_PATH__, "held");
       update({sessionUpdate: "agent_message_chunk", content: {type: "text", text: "Held model leg."}});
       while (!state.cancelled) await new Promise(resolve => setTimeout(resolve, 5));
@@ -2381,6 +2392,65 @@ const nativeModelPrompt = `
 it.layer(testLayer, { excludeTestServices: true })(
   "Droid native model endpoint supervision",
   (it) => {
+    it.effect(
+      "consumes the retry notice once across same-run process replacement without resetting its budget",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const api = yield* nativeModelApi("retry-length");
+            const f = yield* customModelFixture("high", api.origin);
+            const h = yield* harness(false, false, false, undefined, {
+              liveClock: true,
+              body: f.body + nativeModelPrompt,
+              model: f.model,
+              makeRuntime: f.factory,
+              environment: { MODEL_REQUESTS: "8", HOLD_FIRST_MODEL_LEG: "1" },
+            });
+            const runId = RunId.make("droid-run-1");
+            yield* h.send(1, "full-access", "default", "retry first leg", f.model);
+            yield* h.waitForMessage("Held model leg.");
+            assert.equal(api.requests(), 3);
+            const retries = () =>
+              notices(h).filter((item) => item.summary.includes("Droid is retrying"));
+            assert.lengthOf(retries(), 1);
+            assert.equal(retries()[0]?.runId, runId);
+            yield* h.runtime.interruptTurn({
+              providerThread: h.providerThread,
+              providerTurnId: nativeTurn(h, 1).id,
+              requestRuntimeRestart: true,
+            });
+            assert.equal((yield* h.terminal).status, "interrupted");
+            api.stopRetries();
+            yield* h.send(
+              2,
+              "full-access",
+              "default",
+              "replacement leg",
+              f.model,
+              [],
+              undefined,
+              runId,
+            );
+            assert.equal((yield* h.terminal).status, "completed");
+            assert.equal(new Set(h.ownedPids()).size, 2);
+            // The first leg consumed two retries and one length response. Four
+            // more length responses reach the original five-response limit.
+            assert.equal(api.requests(), 7);
+            assert.lengthOf(retries(), 1);
+            assert.isTrue(notices(h).some((item) => item.summary.includes("5 times in a row")));
+            api.retryAgain();
+            yield* h.send(3, "full-access", "default", "new run retry", f.model);
+            assert.equal((yield* h.terminal).status, "completed");
+            assert.equal(api.requests(), 9);
+            assert.deepEqual(
+              retries().map((item) => item.runId),
+              [runId, RunId.make("droid-run-3")],
+            );
+            assert.lengthOf(terminals(h), 3);
+          }),
+        ),
+    );
+
     it.effect("reports actual endpoint retries once per owned native turn", () =>
       Effect.scoped(
         Effect.gen(function* () {
