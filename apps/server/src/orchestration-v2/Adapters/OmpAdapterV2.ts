@@ -10,6 +10,7 @@ import * as SchemaIssue from "effect/SchemaIssue";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Scope from "effect/Scope";
 import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
@@ -21,6 +22,7 @@ import {
   isRecord,
   type OmpRpcImage,
 } from "effect-omp-rpc/schema";
+import type { OmpRpcFrameTrace, OmpRpcNotification } from "effect-omp-rpc/client";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { ompTarget, type OmpTarget } from "../../provider/omp/OmpTarget.ts";
 import {
@@ -37,6 +39,8 @@ import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { ompCommandDecision } from "../../provider/omp/OmpCommandPolicy.ts";
 import { writeOmpExtensionFiles } from "../../provider/omp/OmpExtensionBootstrap.ts";
 import { ompScientExtensionSource } from "../../provider/omp/OmpScientExtension.ts";
+import { makeOmpRedaction } from "../../provider/omp/OmpRpcProcess.ts";
+import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import {
   decodeOmpModelSlug,
   encodeOmpModelSlug,
@@ -89,6 +93,7 @@ export interface OmpAdapterV2Options extends Pick<
   readonly crypto: Crypto.Crypto;
   readonly serverConfig: ServerConfig["Service"];
   readonly makeProcess: OmpProcessFactory;
+  readonly nativeEventLogger?: EventNdjsonLogger;
 }
 const JsonString = Schema.fromJsonString(Schema.String);
 const encodeJsonString = Schema.encodeSync(JsonString);
@@ -160,6 +165,19 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
     },
     open: (input, onUpdate) =>
       Effect.gen(function* () {
+        let redaction = makeOmpRedaction(options.environment, [
+          readMcpProviderSession(input.threadId)?.authorizationHeader,
+        ]);
+        const safeFailure = (cause: unknown) => {
+          const failure = nativeSessionFailure(cause);
+          return new NativeSessionOperationError({
+            detail: redaction.text(failure.detail),
+            ...(failure.breaksSession === undefined
+              ? {}
+              : { breaksSession: failure.breaksSession }),
+            ...(failure.cause === undefined ? {} : { cause: redaction.log(failure.cause) }),
+          });
+        };
         const sessionScope = yield* Scope.make();
         yield* Effect.addFinalizer((exit) => Scope.close(sessionScope, exit));
         return yield* Effect.gen(function* () {
@@ -216,6 +234,33 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
             Effect.provideService(FileSystem.FileSystem, fs),
             Effect.provideService(Path.Path, path),
           );
+          const writeNative = (record: {
+            readonly kind: "notification" | "command" | "response";
+            readonly method: string;
+            readonly payload: unknown;
+          }) =>
+            options.nativeEventLogger
+              ? Effect.gen(function* () {
+                  const observedAt = DateTime.formatIso(yield* DateTime.now);
+                  yield* options.nativeEventLogger!.write(
+                    {
+                      observedAt,
+                      event: {
+                        id: yield* options.crypto.randomUUIDv4,
+                        kind: record.kind,
+                        provider: target.driverKind,
+                        providerInstanceId: options.instanceId,
+                        providerSessionId: input.providerSessionId,
+                        threadId: input.threadId,
+                        createdAt: observedAt,
+                        method: record.method,
+                        payload: record.payload,
+                      },
+                    },
+                    input.threadId,
+                  );
+                }).pipe(Effect.ignoreCause)
+              : Effect.void;
           const client = yield* options
             .makeProcess({
               target,
@@ -225,12 +270,26 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
               sessionDir: root,
               extraArgs: ["--extension", extension.extensionPath],
               secrets: [mcp?.authorizationHeader],
+              ...(options.nativeEventLogger
+                ? {
+                    onFrame: ({ direction, frame }: OmpRpcFrameTrace) =>
+                      writeNative({
+                        kind: direction === "outbound" ? "command" : "response",
+                        method:
+                          frame.type === "response" && typeof frame.command === "string"
+                            ? frame.command
+                            : String(frame.type),
+                        payload: frame,
+                      }),
+                  }
+                : {}),
             })
             .pipe(
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, options.spawner),
               Effect.provideService(FileSystem.FileSystem, fs),
               Effect.provideService(Path.Path, path),
             );
+          redaction = client.redaction;
           yield* Effect.addFinalizer(() => client.shutdown.pipe(Effect.ignore));
           let catalog: Effect.Success<ReturnType<typeof client.getModels>>["models"] = [];
           let catalogCurrent = false;
@@ -324,13 +383,13 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                 return onUpdate({
                   type: "text",
                   id: update.messageId,
-                  delta: client.redaction.text(update.delta),
+                  delta: client.redaction.exact(update.delta),
                 });
               case "reasoning-delta":
                 return onUpdate({
                   type: "text",
                   id: `${update.messageId}:reasoning`,
-                  delta: client.redaction.text(update.delta),
+                  delta: client.redaction.exact(update.delta),
                   reasoning: true,
                 });
               case "assistant-completed":
@@ -392,7 +451,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                         resumeCursor: cursor,
                       });
                     }).pipe(
-                      Effect.mapError(nativeSessionFailure),
+                      Effect.mapError(safeFailure),
                       Effect.catch((error) =>
                         onUpdate({
                           type: "terminal",
@@ -533,6 +592,17 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
             scope,
             continuationIdPrefix: yield* options.crypto.randomUUIDv4,
             onUpdate: applyUpdate,
+            ...(options.nativeEventLogger
+              ? {
+                  onNativeNotification: (notification: OmpRpcNotification) =>
+                    writeNative({
+                      kind: "notification",
+                      method:
+                        notification._tag === "Event" ? notification.event.type : notification._tag,
+                      payload: client.redaction.log(notification),
+                    }),
+                }
+              : {}),
           });
           const ready = yield* client.ready.pipe(Effect.timeout("8 seconds"));
           if (!ready.supportedProtocolVersions?.includes(OMP_RPC_PROTOCOL_V2))
@@ -568,7 +638,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                 });
               yield* refreshCursor(next.sessionFile, next.sessionId);
               fresh = true;
-            }).pipe(Effect.mapError(nativeSessionFailure));
+            }).pipe(Effect.mapError(safeFailure));
           const resume = (requestedId: string, resumeCursor?: unknown) =>
             Effect.gen(function* () {
               const validated = yield* parseOmpSessionCursor(resumeCursor, {
@@ -623,7 +693,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                   detail: `${target.name} resumed a different conversation than the cursor requested.`,
                 });
               yield* refreshCursor(real, resumed.sessionId);
-            }).pipe(Effect.timeout("2 minutes"), Effect.mapError(nativeSessionFailure));
+            }).pipe(Effect.timeout("2 minutes"), Effect.mapError(safeFailure));
           // Eager native ids are unvalidated history. Activate only via
           // resumeThread, where a refused cursor follows portable fallback.
           yield* ensureFresh();
@@ -1022,10 +1092,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                   ),
                   Effect.forkIn(scope),
                 );
-              }).pipe(
-                Effect.provideService(Scope.Scope, scope),
-                Effect.mapError(nativeSessionFailure),
-              ),
+              }).pipe(Effect.provideService(Scope.Scope, scope), Effect.mapError(safeFailure)),
             steer: (steerInput) =>
               Effect.gen(function* () {
                 const prompt = yield* payload(steerInput.message);
@@ -1035,11 +1102,8 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                   true,
                   "steer",
                 );
-              }).pipe(
-                Effect.provideService(Scope.Scope, scope),
-                Effect.mapError(nativeSessionFailure),
-              ),
-            interrupt: Scope.close(scope, Exit.void).pipe(Effect.mapError(nativeSessionFailure)),
+              }).pipe(Effect.provideService(Scope.Scope, scope), Effect.mapError(safeFailure)),
+            interrupt: Scope.close(scope, Exit.void).pipe(Effect.mapError(safeFailure)),
             resume,
             respond: (id, response) =>
               Effect.gen(function* () {
@@ -1075,12 +1139,12 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                       : { id, value },
                 );
                 runtime.removeQuestion(id);
-              }).pipe(Effect.mapError(nativeSessionFailure)),
+              }).pipe(Effect.mapError(safeFailure)),
           };
           return native;
         }).pipe(
           Effect.timeout("2 minutes"),
-          Effect.mapError(nativeSessionFailure),
+          Effect.mapError(safeFailure),
           Effect.provideService(Scope.Scope, sessionScope),
           Effect.onExit((exit) =>
             Exit.isFailure(exit) ? Scope.close(sessionScope, exit) : Effect.void,

@@ -26,6 +26,7 @@ import * as ServerConfig from "../../config.ts";
 import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
 import type { ProviderAdapterV2TurnInput } from "../../orchestration-v2/ProviderAdapter.ts";
 import { makeOmpAdapterV2 } from "../../orchestration-v2/Adapters/OmpAdapterV2.ts";
+import type { EventNdjsonLogger } from "../Layers/EventNdjsonLogger.ts";
 import type { OmpTarget } from "../omp/OmpTarget.ts";
 
 const decodeSettings = Schema.decodeEffect(OmpSettings);
@@ -42,6 +43,7 @@ export const nativeOmpSession = Effect.fnUntraced(function* (input: {
   readonly homePath?: string;
   readonly environment: NodeJS.ProcessEnv;
   readonly modelSelection: ModelSelection;
+  readonly nativeEventLogger?: EventNdjsonLogger;
   readonly makeProcess: Parameters<typeof makeOmpAdapterV2>[0]["makeProcess"];
 }) {
   const scope = yield* Scope.make();
@@ -70,6 +72,7 @@ export const nativeOmpSession = Effect.fnUntraced(function* (input: {
         attachmentsDir: input.attachmentsDir,
       },
       makeProcess: input.makeProcess,
+      ...(input.nativeEventLogger ? { nativeEventLogger: input.nativeEventLogger } : {}),
       continuations: { offer: () => Effect.void },
     });
     const policy = {
