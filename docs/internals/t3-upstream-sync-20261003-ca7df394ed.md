@@ -4,13 +4,15 @@
 
 **Status: integration corrections under final qualification.** The literal upstream
 merge, owned-main catch-up and native execution corrections are committed locally
-through `c2ff7e742d8c4057159bb2626898754889d34466`, including qualified stash
+through `c4aad71535abbd98c38659711b2cc47b1ab2fe5d`, including qualified stash
 provenance, queue reservation, historical task transport, direct Node/bundle
 compatibility, native retry history, persisted fork boundaries and fork handoff
-presentation. Registry provenance/removal and OMP production-process corrections are now
-qualified in their scopes and await the final composition gates. Scoped proof is recorded below; historical passing gates do not establish readiness
-of the combined candidate. The complete server run exposed failures and was
-interrupted for repair; it is not a passing suite.
+presentation, Registry provenance/removal and OMP production-process corrections.
+Scoped proof is recorded below; historical passing gates do not establish readiness
+of the combined candidate. The completed server gate at that checkpoint reports
+11,928 passed, 21 failed and 152 skipped cases across 890 files. Its seven failing
+files are under repair; this is not a passing suite. All 32 package typechecks
+pass at that checkpoint, while final composition and repaired-app gates remain open.
 
 The clean detached review candidate at `3564658e28` and MAIN reference at
 `33ab8e307a` run in isolated profiles. The owner is now using the review app;
@@ -648,3 +650,42 @@ All21 cases in the complete native hold-policy file pass, including four actual 
 The original E2/B3 gate now qualifies47 cases across three complete files:25 adapter,20 process and two actual default-process/native SQL cases. The test executable is deliberately simulated, but production executable version admission, process factory, stdio/RPC, provider manager, EventSink, SQLite, interruption and saved-transcript Resume are exercised. Normal successful completion drains the unheld queue; Stop confirms the owned child is gone, retains the original transcript prefix once, and Resume delivers each queued user/assistant exactly once through the replacement process. Every opened peer PID exits. The previous actual-process red result was caused by the durable queue-ordering defect corrected above.
 
 OMP locks now release only after observing the exact owned child exit, including signal termination without a numeric exit code. An uncertain shutdown keeps the lock; a later observation may confirm that same child exited. Finalizers retain exact-token guards against a replacement owner. A separately confirmed native kill-await gap now has a finite deadline: two seconds of stdin grace, three for the native kill and three for exit lookup. Deadline expiry is not exit proof. Removing only this deadline makes the controlled-clock regression fail at its original bound and cleanly tear down; restoring it passes. Canonical server TypeScript/Effect, six-path formatting and lint pass without errors or warnings. The constructor still relies on the existing scoped process/spawner cleanup before handing over its process; compounded OS kill failure in interrupted construction is not newly qualified. Exact source manifests, causal red/green logs and native-process evidence are in the final E2 OMP handoff. This proves local host integration with controlled peers, not live vendor/account compatibility.
+
+### Final review and composed-gate repairs
+
+The immutable full-diff review at `c4aad71535` found one confirmed P2: OpenCode 2
+marked the offered turn accepted before checking its typed prompt response and
+exact owner. Foreign response IDs or sessions could therefore consume a source
+plan without native acceptance evidence. The adapter now validates response,
+registered session, provider thread, active turn and latest attempt/root/native
+cursor before promotion. A genuine native execution event remains independent
+acceptance evidence; terminal-before-response status and usage are retained.
+
+The causal baseline fails both foreign-response cases through the actual adapter
+and SQLite EventSink, while exact acknowledgement and displaced-attempt guards
+pass. The corrected complete four-file batch passes 132 unique cases; the final
+four-case SQL file also passes after a test-only nullable-node correction.
+Canonical server TypeScript/Effect and three-file formatting/lint pass without
+errors or warnings. The permission fixture now uses one subscriber to route
+actual request and terminal events, avoiding competing consumers of its unicast
+queue. Existing permission, retry, fork and usage assertions remain. Independent
+source review finds no remaining confirmed defect in the bounded adapter repair.
+Exact manifests and causal logs are recorded in `oc2-ack-final-handoff.md`.
+Combined qualification and vendor/manual acceptance remain separate.
+
+The complete server checkpoint exposed outdated fixture assumptions for explicit
+Resume after setup failure, attempt-specific queue-release command IDs, newly
+registered Scient migrations, Cursor CLI setup copy and Grok's Scient guidance.
+The startup-failure observer also discarded guarded writes in its mock; production
+already commits failure before refreshing pull requests. Historical boundary
+declarations must name the existing inert migration guards and hydration readers.
+These corrections retain attachment bytes, checkpoint workspace, native ownership,
+permission argv and ordering assertions. Their focused requalification is pending.
+The new controlled OMP subprocess fixture also needs exact seam classification;
+earlier static checks stopped there before provenance qualification.
+
+Answer-attention Addendum 7 remains open during isolated repair: one canonical
+completed-answer selector, SQL/in-memory text and ID ordering parity, and actual
+web/mobile read watermarks based on loaded foreground answers. Final acceptance
+also covers navigation, explicit mark-unread, failed visit retry and authoritative
+null metadata. No historical passing hook test is substituted for these consumers.
