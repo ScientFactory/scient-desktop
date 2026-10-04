@@ -99,11 +99,12 @@ admission budget counts serialized messages and actual attachment bytes together
 `ScientThreadQueueItem` schema instead limits snapshot string length to `4 * 1024 * 1024`;
 that is not a byte limit or the native submission contract.
 
-`threadQueueMessageContext` advertises typed queue support separately from
-`inlineMessageContext`: older hosts can understand immediate context without
-preserving queued records. Clients use the existing legacy-context serializer
-when queue support is absent. Image IDs and capture metadata survive queueing
-and editing; the normal attachment pipeline rebinds client IDs at admission.
+Current web send paths check `inlineMessageContext` and use the existing
+legacy-context serializer when that capability is absent. The environment also
+advertises `threadQueueMessageContext`, but the current client does not consult
+it to select a separate queued-message fallback. Image IDs and capture metadata
+survive queueing and editing; the normal attachment pipeline rebinds client IDs
+at admission.
 
 The retained snapshot codec uses version 2. Version 1 snapshots and older edit journals
 migrate saved element picks into preview annotations and terminal placeholders
