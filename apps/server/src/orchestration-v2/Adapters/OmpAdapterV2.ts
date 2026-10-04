@@ -235,7 +235,6 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
           catalogCurrent = true;
           return available;
         });
-        yield* refreshCatalog().pipe(Effect.ignore);
 
         const home = expandHomePath(
           options.homePath?.trim() ||
@@ -464,10 +463,13 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
               detail: `${target.name} did not offer RPC protocol v2.`,
             }),
           );
+        yield* refreshCatalog().pipe(Effect.ignore);
         yield* extension.discardUnconsumed;
         yield* client.setSubagentSubscription("progress");
         if (compareSemverVersions(client.runtimeVersion, "18.3.1") >= 0)
-          yield* client.setEventFilter(OMP_KNOWN_EVENT_TYPES);
+          yield* client
+            .setEventFilter(OMP_KNOWN_EVENT_TYPES)
+            .pipe(Effect.catchTag("OmpRpcCommandError", () => Effect.void));
         const ensureFresh = () =>
           Effect.gen(function* () {
             if (fresh) return;
@@ -541,7 +543,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                 detail: `${target.name} resumed a different conversation than the cursor requested.`,
               });
             yield* refreshCursor(real, resumed.sessionId);
-          }).pipe(Effect.mapError(nativeSessionFailure));
+          }).pipe(Effect.timeout("2 minutes"), Effect.mapError(nativeSessionFailure));
         // Eager native ids are unvalidated history. Activate only via
         // resumeThread, where a refused cursor follows portable fallback.
         yield* ensureFresh();

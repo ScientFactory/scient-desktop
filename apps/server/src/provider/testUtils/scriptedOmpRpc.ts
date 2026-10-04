@@ -52,6 +52,9 @@ export const scriptedOmpRpc = (input: {
   /** Registered only when the bridge's refreshModels runs. */
   readonly lateModels?: ReadonlyArray<FakeModel>;
   readonly maxFrameBytes?: number;
+  readonly version?: string;
+  readonly eventFilterError?: string;
+  readonly readyDelay?: Effect.Effect<void>;
   readonly modelsError?: string;
   readonly modelsResponse?: unknown;
   readonly reportThinkingLevel?: () => boolean;
@@ -63,6 +66,7 @@ export const scriptedOmpRpc = (input: {
   readonly beforeReply?: (frame: Frame) => ReadonlyArray<Record<string, unknown>>;
   /** Holds a command's answer until the returned effect completes. */
   readonly holdReply?: (frame: Frame) => Effect.Effect<void>;
+  readonly silentReply?: (frame: Frame) => boolean;
   /** OMP selects another model than the one requested (a fallback). */
   readonly substitute?: Readonly<
     Record<string, { readonly provider: string; readonly id: string }>
@@ -80,6 +84,9 @@ export const scriptedOmpRpc = (input: {
     prompts: [] as Array<{ readonly frame: Frame; readonly bytes: number }>,
     pendingAsyncWork: false,
     sessionOrdinal: 0,
+    frames: [] as Array<Frame>,
+    shutdowns: 0,
+    sessionFile: undefined as string | undefined,
   };
   const find = (provider: string, id: string) =>
     state.models.find((model) => model.provider === provider && model.id === id);
@@ -126,6 +133,7 @@ export const scriptedOmpRpc = (input: {
         ),
       );
       const reply = (frame: Frame, bytes: number): Uint8Array => {
+        state.frames.push(frame);
         if (
           frame.type !== "get_state" &&
           frame.type !== "negotiate_protocol" &&
@@ -145,17 +153,17 @@ export const scriptedOmpRpc = (input: {
           case "negotiate_protocol":
             return respond(frame, { protocolVersion: 2 });
           case "set_event_filter":
-            return respond(frame, { events: frame.events ?? null });
+            return respond(frame, { events: frame.events ?? null }, input.eventFilterError);
           case "new_session":
             state.sessionOrdinal++;
+            state.sessionFile = undefined;
             return respond(frame, {});
           case "get_state": {
             NodeFS.mkdirSync(sessionDir, { recursive: true });
-            const sessionFile = NodePath.join(
-              sessionDir,
-              `models-session-${state.sessionOrdinal}.jsonl`,
-            );
-            NodeFS.writeFileSync(sessionFile, "{}\n");
+            const sessionFile =
+              state.sessionFile ??
+              NodePath.join(sessionDir, `models-session-${state.sessionOrdinal}.jsonl`);
+            if (!NodeFS.existsSync(sessionFile)) NodeFS.writeFileSync(sessionFile, "{}\n");
             return respond(frame, {
               model: state.model,
               ...(input.reportThinkingLevel?.() === false
@@ -168,6 +176,9 @@ export const scriptedOmpRpc = (input: {
               isSettled: !state.pendingAsyncWork,
             });
           }
+          case "switch_session":
+            state.sessionFile = (frame as Frame & { readonly sessionPath?: string }).sessionPath;
+            return respond(frame, { cancelled: false });
           case "get_available_models":
             return respond(
               frame,
@@ -230,7 +241,9 @@ export const scriptedOmpRpc = (input: {
                 { discard: true },
               ).pipe(
                 Effect.andThen(input.holdReply?.(frame) ?? Effect.void),
-                Effect.andThen(Queue.offer(stdout, answer)),
+                Effect.andThen(
+                  input.silentReply?.(frame) ? Effect.void : Queue.offer(stdout, answer),
+                ),
                 Effect.andThen(
                   frame.type === "prompt" ? Queue.offer(delivered, undefined) : Effect.void,
                 ),
@@ -239,22 +252,29 @@ export const scriptedOmpRpc = (input: {
             { discard: true },
           ),
       });
-      yield* Queue.offer(
-        stdout,
-        line({
-          type: "ready",
-          protocolVersion: 1,
-          supportedProtocolVersions: [1, 2],
-          maxFrameBytes: input.maxFrameBytes ?? 1_048_576,
-          maxReassembledFrameBytes: 67_108_864,
-        }),
+      yield* (input.readyDelay ?? Effect.void).pipe(
+        Effect.andThen(
+          Queue.offer(
+            stdout,
+            line({
+              type: "ready",
+              protocolVersion: 1,
+              supportedProtocolVersions: [1, 2],
+              maxFrameBytes: input.maxFrameBytes ?? 1_048_576,
+              maxReassembledFrameBytes: 67_108_864,
+            }),
+          ),
+        ),
+        Effect.forkScoped,
       );
       return {
         ...client,
         redaction: makeOmpRedaction({}, []),
-        version: "18.3.1",
-        runtimeVersion: "18.3.1",
-        shutdown: Queue.end(stdout).pipe(Effect.as(cleanExit)),
+        version: input.version ?? "18.3.1",
+        runtimeVersion: input.version ?? "18.3.1",
+        shutdown: Effect.sync(() => {
+          state.shutdowns++;
+        }).pipe(Effect.andThen(Queue.end(stdout)), Effect.as(cleanExit)),
         // The custom-model bridge's barrier: registers late models.
         refreshModels: () =>
           Effect.sync(() => {

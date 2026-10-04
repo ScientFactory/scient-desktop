@@ -32,7 +32,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { OmpRpcNotification } from "effect-omp-rpc/client";
-import type { OmpRpcResponse } from "effect-omp-rpc/schema";
+import { OMP_KNOWN_EVENT_TYPES, type OmpRpcResponse } from "effect-omp-rpc/schema";
 import * as ServerConfig from "../../config.ts";
 import { makeOmpRedaction, type OmpRpcProcess } from "../../provider/omp/OmpRpcProcess.ts";
 import * as IdAllocator from "../IdAllocator.ts";
@@ -870,6 +870,109 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         ),
     );
   }
+
+  for (const scenario of [
+    { version: "18.3.1", rejected: false, filters: 1 },
+    { version: "18.3.1", rejected: true, filters: 1 },
+    { version: "18.2.8", rejected: false, filters: 0 },
+  ] as const) {
+    it.effect(
+      `keeps native OMP ${scenario.version} startup healthy with event filter rejected=${scenario.rejected}`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const h = yield* imageHarness(1_048_576, {
+              version: scenario.version,
+              ...(scenario.rejected
+                ? { eventFilterError: "Unknown command: set_event_filter" }
+                : {}),
+            });
+            const filters = h.peer.state.frames.filter(
+              (frame) => frame.type === "set_event_filter",
+            );
+            assert.equal(filters.length, scenario.filters);
+            if (filters.length) assert.deepEqual(filters[0]?.events, [...OMP_KNOWN_EVENT_TYPES]);
+            assert.equal(h.runtime.providerSession.status, "ready");
+            yield* h.send(1, "Quiet text turn", []);
+            assert.equal(
+              h.recorded.some(
+                (event) =>
+                  event.type === "turn_item.updated" &&
+                  event.turnItem.type === "dynamic_tool" &&
+                  event.turnItem.title?.toLowerCase().includes("warning"),
+              ),
+              false,
+            );
+          }),
+        ),
+    );
+  }
+
+  it.effect(
+    "bounds native OMP startup before catalog discovery when a live peer stays silent",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const launched = yield* Deferred.make<void>();
+          const peer = scriptedOmpRpc({
+            models: [],
+            initial: { provider: "test", id: "selected" },
+            readyDelay: Effect.never,
+          });
+          const opening = yield* harness(false, {
+            makeProcess: (options) =>
+              peer
+                .makeProcess(options)
+                .pipe(Effect.tap(() => Deferred.succeed(launched, undefined))),
+          }).pipe(Effect.exit, Effect.forkScoped);
+          yield* Deferred.await(launched);
+          yield* TestClock.adjust("8 seconds");
+          const result = opening.pollUnsafe();
+          assert.notEqual(result, undefined);
+          if (!result) return yield* Effect.die("Startup did not settle at its deadline");
+          assert.equal(Exit.isSuccess(result) && Exit.isFailure(result.value), true);
+        }),
+      ),
+  );
+
+  it.effect("bounds a silent native OMP resume and permits fresh owned state afterward", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const switching = yield* Deferred.make<void>();
+        const peer = scriptedOmpRpc({
+          models: [],
+          initial: { provider: "test", id: "selected" },
+          holdReply: (frame) =>
+            frame.type === "switch_session"
+              ? Deferred.succeed(switching, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+          silentReply: (frame) => frame.type === "switch_session",
+        });
+        const h = yield* harness(false, { makeProcess: peer.makeProcess });
+        const resuming = yield* h.runtime
+          .resumeThread({ providerThread: h.input.providerThread })
+          .pipe(Effect.exit, Effect.forkScoped);
+        yield* Deferred.await(switching);
+        yield* TestClock.adjust("2 minutes");
+        const result = resuming.pollUnsafe();
+        assert.notEqual(result, undefined);
+        if (!result) return yield* Effect.die("Resume did not settle at its deadline");
+        assert.equal(Exit.isSuccess(result) && Exit.isFailure(result.value), true);
+        assert.equal(h.runtime.providerSession.status, "ready");
+        // Interrupted client write cannot contaminate a new_session command.
+        const fresh = yield* h.runtime.ensureThread({
+          threadId: h.input.threadId,
+          modelSelection: h.input.modelSelection,
+          runtimePolicy: h.input.runtimePolicy,
+          existingProviderThread: { ...h.input.providerThread, nativeThreadRef: null },
+        });
+        assert.notEqual(
+          fresh.nativeThreadRef?.nativeId,
+          h.input.providerThread.nativeThreadRef?.nativeId,
+        );
+      }),
+    ),
+  );
 
   it.effect("runs Scient Agent through its independent native target and runtime version", () =>
     Effect.scoped(
