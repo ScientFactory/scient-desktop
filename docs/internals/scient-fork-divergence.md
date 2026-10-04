@@ -129,6 +129,13 @@ inherited prefix.
 
 ### Client operation identity and eligibility
 
+User-message forks prepare images before creating the command or destination draft. Unsupported
+non-image attachments fail. Unreadable images may be omitted only with explicit user consent;
+without a confirmation callback the fork refuses to proceed. The client stages the destination's
+text and prepared images in the composer store and flushes draft persistence before saving and
+dispatching the attempt. An uncertain outcome retains the draft; a dispatched attempt discards
+it only on confirmed rejection or abandonment.
+
 `orchestration.getForkOptions` is a read-authorized, capability-gated query
 (`threadForkRecovery`). It resolves either a specified user/assistant message
 or, when neither is supplied, the latest completed assistant boundary. It
@@ -216,6 +223,17 @@ Server paths above are relative to `apps/server/src/`. Extend these live service
 `ProviderService`. Files with V2-looking names are not sufficient evidence of production reachability;
 check `runtimeLayer.ts` and callers. Legacy SQL tables and Scient migration IDs remain compatibility
 boundaries; their historical execution machinery is superseded.
+
+### Live Scient migration preflight
+
+[`Sqlite.ts`](../../apps/server/src/persistence/Layers/Sqlite.ts) still invokes the independent
+[`scientMigrator.ts`](../../apps/server/src/orchestration-v2/scient-fork/scientMigrator.ts) runner.
+Keep `scient_schema_migrations` separate from upstream's ledger and preserve its immutable ID/name
+manifest. Before applying migrations, the runner transactionally reconciles legacy `applied_at`
+ledgers into the canonical shape without losing their timestamps, applies the explicitly coded
+former-import-17 compatibility repair, and validates the recorded ledger. Gaps, changed names,
+and future IDs fail before migration: accepted rows must be a contiguous prefix of the manifest.
+These bounded compatibility repairs do not authorize general renumbering or ledger rewriting.
 
 ## Provider context delivery
 
