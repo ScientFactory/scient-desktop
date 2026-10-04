@@ -6194,6 +6194,21 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [activeThreadKey, cancelTimelinePositioning],
   );
+  // A placement whose prompt left the timeline (a failed send removes its row)
+  // ends, instead of holding back the reveal and saved positions.
+  const placedPromptSeenRef = useRef<MessageId | null>(null);
+  useLayoutEffect(() => {
+    if (timelineAnchorMessageId === null || timelineScrollModeRef.current !== "anchoring-new-turn")
+      return;
+    if (timelineMessages.some((message) => message.id === timelineAnchorMessageId)) {
+      placedPromptSeenRef.current = timelineAnchorMessageId;
+      return;
+    }
+    if (placedPromptSeenRef.current !== timelineAnchorMessageId) return;
+    placedPromptSeenRef.current = null;
+    cancelTimelinePositioning();
+    setTimelineAnchor(releaseChatTimelineAnchor);
+  }, [timelineAnchorMessageId, timelineMessages, cancelTimelinePositioning]);
   // Prompts this window sent frame themselves; a queued prompt the server
   // delivered gets the same placement when the reader is at the end.
   const locallySentPromptIdsRef = useRef(new Set<string>());
