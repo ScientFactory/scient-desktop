@@ -1321,6 +1321,7 @@ export const layer: Layer.Layer<
               });
             }),
             alreadyDeliveredItemIds: deliveredItemIds,
+            sharedForkWorkspace: projection.thread.conversationFork?.workspaceMode === "local",
             sourceOmissions:
               (projection.thread.conversationImport ?? projection.thread.forkLineage?.sourceImport)
                 ?.omissions ?? [],

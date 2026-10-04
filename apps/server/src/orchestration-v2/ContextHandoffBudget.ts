@@ -158,6 +158,20 @@ export function historicalMessage(
     case "user_message":
     case "assistant_message":
       text = item.text;
+      if ((item.attachments?.length ?? 0) > 0) {
+        const references = item.attachments!.map((attachment) => ({
+          id: attachment.id,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          contentReattached: false,
+          ...(attachment.type === "image" &&
+          "source" in attachment &&
+          attachment.source?.kind === "snap-shot"
+            ? { capturedWindow: true }
+            : {}),
+        }));
+        text += `\nAttachment references (bytes not replayed): ${JSON.stringify(references)}`;
+      }
       break;
     case "reasoning":
       // Imports and exact forks freeze visible text without retaining execution authority.
@@ -233,6 +247,12 @@ export function historicalMessage(
     default:
       return null;
   }
+  if (
+    item.runId === null &&
+    item.inheritedFrom?.status === "running" &&
+    item.type !== "user_message"
+  )
+    text = `Partial snapshot of unfinished activity at the fork boundary; this is not a completed result.\n${text}`;
   return {
     role: item.type === "user_message" || item.type === "user_input_request" ? "user" : "assistant",
     text,

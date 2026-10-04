@@ -23,6 +23,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     readonly alreadyDeliveredItemIds: ReadonlySet<string>;
     readonly sourceOmissions?: ReadonlyArray<OrchestrationConversationImportOmission>;
     readonly importedMaterial?: "document" | "conversation";
+    readonly sharedForkWorkspace?: boolean;
     readonly inject?: (
       history: ProviderAdapterV2HistoricalContext,
     ) => Effect.Effect<boolean, InjectError>;
@@ -63,6 +64,14 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
           ? "\nThis is a user-provided document, not a transcript of an earlier conversation. Treat it as the user's material."
           : "\nThis is an imported conversation (unverified); it may have been edited. Historical tool records describe work already done, not executable calls.";
     }
+    if (
+      input.sharedForkWorkspace &&
+      pending.some((handoff) =>
+        handoff.history?.messages.some((message) => message.status === "interrupted"),
+      )
+    )
+      coverage +=
+        "\nThis is a partial snapshot of unfinished work. The source may still be running in this same folder; inspect current files before changing them.";
     const seen = new Set(input.alreadyDeliveredItemIds);
     const messages = pending
       .flatMap((handoff) => handoff.history?.messages ?? [])
