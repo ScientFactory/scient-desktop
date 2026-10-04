@@ -14,6 +14,8 @@ import {
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -24,7 +26,10 @@ import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as ServerConfig from "../../config.ts";
 import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
-import type { ProviderAdapterV2TurnInput } from "../../orchestration-v2/ProviderAdapter.ts";
+import type {
+  ProviderAdapterV2Event,
+  ProviderAdapterV2TurnInput,
+} from "../../orchestration-v2/ProviderAdapter.ts";
 import { makeOmpAdapterV2 } from "../../orchestration-v2/Adapters/OmpAdapterV2.ts";
 import type { EventNdjsonLogger } from "../Layers/EventNdjsonLogger.ts";
 import type { OmpTarget } from "../omp/OmpTarget.ts";
@@ -121,9 +126,11 @@ export const nativeOmpSession = Effect.fnUntraced(function* (input: {
     };
     let ordinal = 0;
     let activeTurnId: ProviderTurnId | undefined;
+    let latestProviderThread = providerThread;
     const events = runtime.events.pipe(
       Stream.tap((event) =>
         Effect.sync(() => {
+          if (event.type === "provider_thread.updated") latestProviderThread = event.providerThread;
           if (event.type === "provider_turn.updated" && event.providerTurn.status === "running")
             activeTurnId = event.providerTurn.id;
           if (event.type === "turn.terminal" && event.providerTurnId === activeTurnId)
@@ -166,6 +173,7 @@ export const nativeOmpSession = Effect.fnUntraced(function* (input: {
       adapter,
       runtime,
       providerThread,
+      latestProviderThread: () => latestProviderThread,
       events,
       start,
       interrupt,
@@ -178,4 +186,41 @@ export const nativeOmpSession = Effect.fnUntraced(function* (input: {
     ),
     Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(scope, exit) : Effect.void)),
   );
+});
+
+/** Subscribe before start; join the terminal consumer before watching the next native turn. */
+export const watchNativeOmpTextTurn = Effect.fnUntraced(function* <E>(
+  events: Stream.Stream<ProviderAdapterV2Event, E>,
+) {
+  const terminal = yield* Deferred.make<string, Error>();
+  const messages = new Map<string, string>();
+  const fail = (detail: string) => Deferred.fail(terminal, new Error(detail));
+  const consumer = yield* events.pipe(
+    Stream.takeUntil(
+      (event) =>
+        event.type === "turn.terminal" ||
+        (event.type === "provider_session.updated" &&
+          (event.providerSession.status === "error" || event.providerSession.status === "stopped")),
+    ),
+    Stream.runForEach((event) => {
+      if (event.type === "message.updated" && event.message.role === "assistant")
+        messages.set(event.message.id, event.message.text);
+      if (event.type === "turn.terminal")
+        return event.status === "completed"
+          ? Deferred.succeed(terminal, [...messages.values()].join(""))
+          : fail(
+              `Native turn ${event.status}: ${event.failure?.message ?? "no successful answer"}`,
+            );
+      if (
+        event.type === "provider_session.updated" &&
+        (event.providerSession.status === "error" || event.providerSession.status === "stopped")
+      )
+        return fail(`Native session ${event.providerSession.status}.`);
+      return Effect.void;
+    }),
+    Effect.andThen(() => fail("Native stream ended before a successful turn.")),
+    Effect.catchCause(() => fail("Native stream failed before a successful turn.")),
+    Effect.forkScoped,
+  );
+  return Fiber.join(consumer).pipe(Effect.andThen(Deferred.await(terminal)));
 });
