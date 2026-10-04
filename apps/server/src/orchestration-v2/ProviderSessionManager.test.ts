@@ -419,6 +419,7 @@ function makeTestLayer(input: {
     readonly configureMcp?: boolean;
   }) => Effect.Effect<void>;
   readonly failReleaseEventWrites?: boolean;
+  readonly onAuthenticationFailure?: ProviderRegistry.ProviderRegistry["Service"]["setProviderAuthenticationFailure"];
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly hangSessionScopeClose?: boolean;
   readonly beforeUnload?: Effect.Effect<void>;
@@ -481,8 +482,10 @@ function makeTestLayer(input: {
           registryLayer,
           Layer.succeed(ProviderRegistry.ProviderRegistry, {
             ...makeProviderRegistryMock(),
-            setProviderAuthenticationFailure: () =>
-              Effect.die("Unexpected authentication invalidation in scripted manager test."),
+            setProviderAuthenticationFailure:
+              input.onAuthenticationFailure ??
+              (() =>
+                Effect.die("Unexpected authentication invalidation in scripted manager test.")),
           }),
           configuredEventSinkLayer,
           IdAllocator.layer,
@@ -3896,3 +3899,95 @@ for (const driver of [
       }),
   );
 }
+
+it.effect(
+  "forwards only the owned native authentication control signal to the provider registry",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const failures = yield* Ref.make<
+        ReadonlyArray<{ readonly instanceId: ProviderInstanceId; readonly message: string }>
+      >([]);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:owned-native-auth");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const subscription = yield* runtime.subscribeEvents!;
+        const consumed = yield* subscription.events.pipe(
+          Stream.filter((event) => event.type === "turn.terminal"),
+          Stream.runHead,
+          Effect.forkScoped,
+        );
+        const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+        assert.ok(queue);
+        // Ordinary status and another driver's private signal confer no authority.
+        yield* Queue.offer(queue, {
+          type: "provider_session.updated",
+          driver: CODEX_DRIVER,
+          providerSession: {
+            ...runtime.providerSession,
+            status: "ready",
+            lastError: "Sign-in telemetry",
+            updatedAt: now,
+          },
+        });
+        yield* Queue.offer(queue, {
+          type: "authentication.invalidated",
+          driver: ProviderDriverKind.make("claudeAgent"),
+          message: "Foreign runtime",
+        });
+        yield* Queue.offer(queue, {
+          type: "authentication.invalidated",
+          driver: CODEX_DRIVER,
+          message: "OAuth access token has been revoked.",
+        });
+        yield* Queue.offer(queue, {
+          type: "turn.terminal",
+          driver: CODEX_DRIVER,
+          providerThreadId: idAllocator.derive.providerThread({
+            driver: CODEX_DRIVER,
+            nativeThreadId: "native-auth",
+          }),
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: CODEX_DRIVER,
+            nativeTurnId: "native-auth",
+          }),
+          runOrdinal: 1,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        assert.isTrue(Option.isSome(yield* Fiber.join(consumed)));
+        assert.deepEqual(yield* Ref.get(failures), [
+          {
+            instanceId: modelSelection.instanceId,
+            message: "OAuth access token has been revoked.",
+          },
+        ]);
+      }).pipe(
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 60_000,
+            onAuthenticationFailure: (failure) =>
+              Ref.update(failures, (current) => [...current, failure]).pipe(Effect.as([])),
+          }),
+        ),
+      );
+    }),
+);
