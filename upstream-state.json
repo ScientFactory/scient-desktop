@@ -45,5 +45,25 @@
     }
   ],
   "lastRefreshOwnedMain": "af07bfc0bd1838e9f2e569cde6e3263e49951225",
-  "lastRefreshOwnedMainMerge": null
+  "lastRefreshOwnedMainMerge": null,
+  "ownedIntegrationMerges": [
+    {
+      "id": "scient-v2-reviewed-seam-composition",
+      "merge": "7ef738fb31cf7595142254dc8fe6dfd47523aa35",
+      "parents": [
+        "c4aad71535abbd98c38659711b2cc47b1ab2fe5d",
+        "e6702d37711cf85e802ce209d24e7da842405d1f"
+      ],
+      "reviewRecord": "docs/internals/t3-upstream-sync-20261003-ca7df394ed.md"
+    },
+    {
+      "id": "scient-v2-reviewed-seam-integration",
+      "merge": "7a4fedcbbe0067e3336cf70d6a8633b0c40c46b0",
+      "parents": [
+        "d7b4042e3d4b0c797cd7d883bc2d6d6af6395ef2",
+        "7ef738fb31cf7595142254dc8fe6dfd47523aa35"
+      ],
+      "reviewRecord": "docs/internals/t3-upstream-sync-20261003-ca7df394ed.md"
+    }
+  ]
 }

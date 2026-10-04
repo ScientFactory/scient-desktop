@@ -726,3 +726,33 @@ the final hash repair and merge; it does not certify this combined candidate.
 Independent source and evidence review:
 `full-seam-batch-independent-integration-review-7ef738.md`. Other cleanup lanes,
 full runtime/build/archive checks and manual acceptance remain open.
+
+The composed provenance gate rejects both new owned merges because their second
+parents are newer than the frozen owned-main base. Exact reviewed owned merge
+receipts now record the ordered parents of `7ef738fb31` and `7a4fedcbbe`, with this
+committed maintainer record. The checker validates full IDs, unique receipts,
+actual ordered two-parent identity, inspected-history ancestry and a regular
+committed review record. It exempts only those exact edges; nested unapproved
+donor merges remain rejected. Official target, integration cursor, original base,
+historical donor exceptions and workflow admission modes remain unchanged.
+The complete eighteen-case provenance suite passes, including actual temporary
+Git histories proving reviewed-edge acceptance, exact-parent displacement, nested
+foreign rejection and untracked/symlink report refusal. Scripts compilation,
+scoped formatting/lint/diff and the actual provenance gate against original
+owned main and exact official target pass (`owned-merge-provenance-*-round1.txt`).
+The earlier static-round10 failure is retained as causal evidence. Final composed
+gates remain required after later integrations.
+
+The original D3 requirement now has actual WebSocket endpoint proof rather than
+only a URL predicate test. Absent, older, newer and malformed query protocols
+receive the exact HTTP 426 upgrade response before the live authentication service
+or V2 intake runs; a current HTTP header does not substitute for the required
+query. The positive control reaches actual authentication and an authenticated
+`server.getConfig` WebSocket RPC. The unchanged production admission gate already
+enforced this order. The complete server route file passes 242 cases, with scoped
+formatting/lint and whitespace checks clean. Round1 compilation passed before
+the final same-typed future-version test row; final combined compilation remains
+required. Independent review matches the exact final test and production blobs
+(`d3-ws-protocol-qualified-handoff-round2.md`,
+`d3-ws-protocol-independent-review-round2.md`). Installed-client upgrade and
+remote/mobile acceptance remain separate from this controlled endpoint proof.
