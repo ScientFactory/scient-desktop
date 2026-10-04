@@ -44,6 +44,15 @@ Scient does not add a second provider registry, model catalog, session router, c
 account system. A driver that omits the optional lifecycle capabilities keeps the inherited T3 setup
 and maintenance behavior.
 
+Conversation execution is native orchestration V2. `ProviderInstanceRegistry` owns the configured
+instance; `ProviderAdapterRegistryV2` reads its `orchestrationAdapter` dynamically. Live scopes,
+idle release, MCP credentials and instance shutdown belong to `ProviderSessionManagerV2`;
+`ProviderTurnStartService`, `ProviderTurnControlService` and the effect worker execute turns.
+Discovery, account flows, installation, and external maintenance stay on the existing provider
+host and Scient lifecycle managers. Lifecycle changes must close/reconcile the exact V2 instance
+sessions, not construct a second V1 adapter or call the retired `ProviderService`/session reaper.
+See [production composition](../../apps/server/src/orchestration-v2/runtimeLayer.ts).
+
 Official Antigravity ACP implements these same optional lifecycle capabilities
 through T3's auth controller and paired-executable installer. It does not also
 run the generic managed-runtime engine: its executable/harness validation and
@@ -431,7 +440,7 @@ presentation rules; provider views retain their real authentication and recovery
 - Diagnostics and raw server paths stay behind a low-prominence disclosure and out of the fast
   composer path.
 
-Provider dispatch is intentionally explicit and exhaustive. With eight built-in providers, one
+Provider dispatch is intentionally explicit and exhaustive. With eleven built-in drivers, one
 switch is easier to audit than a dynamic registry and prevents a new provider from silently
 inheriting unsupported lifecycle behavior.
 
@@ -508,7 +517,8 @@ Most lifecycle implementation lives under `apps/server/src/scient`, `apps/web/sr
 actions, additive contracts and RPCs, transient registry overlays, one reservation around T3's
 maintenance runner, server composition, and small Settings/composer entry points.
 
-T3 remains authoritative for provider instances, adapters, sessions, model discovery, process
-ownership, provider enablement, external update commands, and surrounding UI. Upstream refreshes
+The canonical provider host remains authoritative for instances, discovery, enablement, external
+update commands, and surrounding UI. V2 adapters and `ProviderSessionManager` own live process
+and conversation execution; lifecycle operations coordinate with those same owners. Upstream refreshes
 should preserve the narrow Scient seams and reconcile their surrounding context instead of moving
 the lifecycle into a parallel host architecture.
