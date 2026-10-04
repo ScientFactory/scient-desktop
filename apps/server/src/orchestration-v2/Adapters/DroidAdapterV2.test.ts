@@ -23,6 +23,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -42,6 +43,14 @@ import * as ProviderAdapter from "../ProviderAdapter.ts";
 import { makeDroidAdapterV2 } from "./DroidAdapterV2.ts";
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeDroidSettings = Schema.decodeEffect(DroidSettings);
+const decodeElicitationCapabilities = Schema.decodeUnknownSync(
+  Schema.Struct({
+    elicitation: Schema.Struct({ form: Schema.Record(Schema.String, Schema.Unknown) }),
+  }),
+);
+const isDelayedModelWrite = Schema.is(
+  Schema.Struct({ configId: Schema.Literal("model"), value: Schema.Literal("droid-other") }),
+);
 const decodeRequest = Schema.decodeUnknownSync(
   Schema.fromJsonString(
     Schema.Struct({
@@ -70,6 +79,8 @@ const harness = Effect.fnUntraced(function* (
     readonly body: string;
     readonly idleMillis?: number;
     readonly blockPromptWrite?: boolean;
+    readonly blockModelWrite?: boolean;
+    readonly slowToolLogging?: boolean;
     readonly environment?: Record<string, string>;
     readonly model?: string;
     readonly sensitiveValues?: ReadonlyArray<string>;
@@ -128,6 +139,8 @@ const harness = Effect.fnUntraced(function* (
   const writeBlocked = yield* Deferred.make<void>();
   const releaseWrite = yield* Deferred.make<void>();
   const nativeTerminated = yield* Deferred.make<void>();
+  const toolLogBlocked = yield* Deferred.make<void>();
+  const releaseToolLog = yield* Deferred.make<void>();
   const rejectedAuthentication: string[] = [];
   const adapter = makeDroidAdapterV2({
     instanceId,
@@ -158,10 +171,30 @@ const harness = Effect.fnUntraced(function* (
           (input.onTermination?.(error) ?? Effect.void).pipe(
             Effect.andThen(Deferred.succeed(nativeTerminated, undefined)),
           ),
-        ...(scenario?.blockPromptWrite
+        ...(scenario?.slowToolLogging
+          ? {
+              protocolLogging: {
+                ...input.protocolLogging,
+                logger: (event) =>
+                  event.direction === "incoming" &&
+                  event.stage === "raw" &&
+                  typeof event.payload === "string" &&
+                  event.payload.includes('"tool_call"')
+                    ? Deferred.succeed(toolLogBlocked, undefined).pipe(
+                        Effect.andThen(Deferred.await(releaseToolLog)),
+                      )
+                    : (input.protocolLogging?.logger?.(event) ?? Effect.void),
+              },
+            }
+          : {}),
+        ...(scenario?.blockPromptWrite || scenario?.blockModelWrite
           ? {
               requestLogger: (event) =>
-                event.method === "session/prompt" && event.status === "started"
+                event.status === "started" &&
+                ((scenario?.blockPromptWrite && event.method === "session/prompt") ||
+                  (scenario?.blockModelWrite &&
+                    event.method === "session/set_config_option" &&
+                    isDelayedModelWrite(event.payload)))
                   ? Deferred.succeed(writeBlocked, undefined).pipe(
                       Effect.andThen(Deferred.await(releaseWrite)),
                     )
@@ -310,6 +343,8 @@ const harness = Effect.fnUntraced(function* (
             return yield* Effect.die("Turn ended before readiness");
         }
       }),
+    toolLogBlocked,
+    releaseToolLog,
     rejectedAuthentication,
     arguments: () => NodeFS.readFileSync(argvLogPath, "utf8").trimEnd().split("\t"),
     send,
@@ -1419,6 +1454,301 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
       ),
     );
   }
+  it.effect(
+    "starts a fresh native inactivity window after idle silence and model preparation",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness(false, false, false, undefined, {
+            idleMillis: 60000,
+            blockModelWrite: true,
+            body: `function onPrompt(message) { reply(message, { stopReason: "end_turn" }); }`,
+          });
+          yield* h.send(1, "full-access");
+          assert.equal((yield* h.terminal).status, "completed");
+          yield* TestClock.adjust("2 minutes");
+          const preparing = yield* h
+            .send(2, "full-access", "default", "Second message", "droid-other")
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(h.writeBlocked);
+          yield* TestClock.adjust("20 seconds");
+          yield* livePause(100);
+          assert.lengthOf(terminals(h), 1);
+          assert.lengthOf(
+            (yield* h.readLog!()).filter((message) => message.method === "session/prompt"),
+            1,
+          );
+          yield* Deferred.succeed(h.releaseWrite, undefined);
+          yield* Fiber.join(preparing);
+          assert.equal((yield* h.terminal).status, "completed");
+          assert.deepEqual(
+            terminals(h).map((event) => event.status),
+            ["completed", "completed"],
+          );
+        }),
+      ),
+  );
+
+  it.effect("advertises native Droid form elicitation and preserves the selected answer", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, {
+          body: `async function onPrompt(message) {
+          const response = await request("session/elicitation", {
+            mode: "form", message: "Turn scope", requestedSchema: {
+              type: "object", title: "Turn scope", properties: { scope: {
+                type: "string", title: "Scope", description: "Which scope should Droid use?",
+                oneOf: [{ const: "workspace", title: "Workspace" }, { const: "session", title: "Session" }]
+              } }, required: ["scope"]
+            }
+          });
+          update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: JSON.stringify(response.result.action) } });
+          reply(message, { stopReason: "end_turn" });
+        }`,
+        });
+        yield* h.send(1, "full-access");
+        const request = yield* h.approval;
+        assert.equal(request.kind, "user_input");
+        yield* untilRecorded(
+          h,
+          (event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
+        );
+        const item = h.recorded
+          .flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "user_input_request"
+              ? [event.turnItem]
+              : [],
+          )
+          .at(-1);
+        assert.deepEqual(item?.questions, [
+          {
+            id: "scope",
+            header: "Scope",
+            question: "Which scope should Droid use?",
+            options: [
+              { label: "workspace", description: "Workspace" },
+              { label: "session", description: "Session" },
+            ],
+          },
+        ]);
+        const initialize = (yield* h.readLog!()).find((message) => message.method === "initialize");
+        const capabilities = decodeElicitationCapabilities(initialize?.params?.clientCapabilities);
+        assert.deepEqual(capabilities.elicitation.form, {});
+        yield* h.runtime.respondToRuntimeRequest({
+          requestId: request.id,
+          answers: { scope: "workspace" },
+        });
+        assert.equal((yield* h.terminal).status, "completed");
+        assert.equal(
+          h.recorded
+            .flatMap((event) => (event.type === "message.updated" ? [event.message.text] : []))
+            .at(-1),
+          '{"action":"accept","content":{"scope":"workspace"}}',
+        );
+        const wireAnswer = (yield* h.readLog!()).find(
+          (message) => message.id === 1000 && message.method === undefined,
+        );
+        assert.equal(
+          encodeJson(wireAnswer?.result),
+          encodeJson({
+            action: { action: "accept", content: { scope: "workspace" } },
+          }),
+        );
+        assert.lengthOf(terminals(h), 1);
+      }),
+    ),
+  );
+
+  it.effect("answers native Droid session approval with its offered allow-once option", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, {
+          body: `async function onPrompt(message) {
+          const response = await request("session/request_permission", {
+            toolCall: { toolCallId: "run", title: "Run", kind: "execute", status: "pending" },
+            options: [{ optionId: "once", name: "Allow", kind: "allow_once" }, { optionId: "no", name: "Reject", kind: "reject_once" }]
+          });
+          update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: JSON.stringify(response.result) } });
+          reply(message, { stopReason: "end_turn" });
+        }`,
+        });
+        yield* h.send(1, "approval-required");
+        const request = yield* h.approval;
+        yield* h.runtime.respondToRuntimeRequest({
+          requestId: request.id,
+          decision: "acceptForSession",
+        });
+        assert.equal((yield* h.terminal).status, "completed");
+        assert.deepEqual(
+          (yield* h.readLog!())
+            .filter((message) => message.result?.outcome)
+            .map((message) => message.result?.outcome),
+          [{ outcome: "selected", optionId: "once" }],
+        );
+        assert.isTrue(
+          h.recorded.some(
+            (event) =>
+              event.type === "message.updated" &&
+              event.message.text === '{"outcome":{"outcome":"selected","optionId":"once"}}',
+          ),
+        );
+        assert.lengthOf(terminals(h), 1);
+      }),
+    ),
+  );
+
+  for (const acknowledgesCancel of [true, false]) {
+    it.effect(
+      `settles native Droid command and TaskOutput rows before Stop with acknowledgement=${acknowledgesCancel}`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const h = yield* harness(false, false, false, undefined, {
+              body: `const pending = [];
+            function onPrompt(message) {
+              pending.push(message);
+              update({ sessionUpdate: "tool_call", toolCallId: "run", title: "Run the tests", kind: "execute", status: "pending" });
+              update({ sessionUpdate: "tool_call", toolCallId: "wait", title: "TaskOutput", kind: "other", status: "pending", rawInput: { task_id: "t-1", block: true, timeout: 600000 } });
+            }
+            onCancel = () => { ${acknowledgesCancel ? 'for (const message of pending.splice(0)) reply(message, { stopReason: "cancelled" });' : ""} };`,
+            });
+            yield* h.send(1, "full-access");
+            yield* untilRecorded(
+              h,
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.nativeItemRef?.nativeId === "wait",
+            );
+            const active = h.recorded.find(
+              (event) =>
+                event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+            );
+            if (active?.type !== "provider_turn.updated")
+              return yield* Effect.die("Missing native turn");
+            yield* h.runtime.interruptTurn({
+              providerThread: h.providerThread,
+              providerTurnId: active.providerTurn.id,
+              requestRuntimeRestart: true,
+            });
+            assert.equal((yield* h.terminal).status, "interrupted");
+            const rows = new Map(
+              h.recorded.flatMap((event) =>
+                event.type === "turn_item.updated" &&
+                ["run", "wait"].includes(event.turnItem.nativeItemRef?.nativeId ?? "")
+                  ? [[event.turnItem.nativeItemRef?.nativeId, event.turnItem] as const]
+                  : [],
+              ),
+            );
+            assert.equal(rows.get("run")?.status, "interrupted");
+            assert.equal(rows.get("run")?.title, "Ran command");
+            assert.equal(rows.get("wait")?.status, "interrupted");
+            assert.equal(rows.get("wait")?.title, "Waiting for a sub-agent (up to 10 min)");
+            const order = h.recorded.flatMap((event) =>
+              event.type === "turn_item.updated" &&
+              ["run", "wait"].includes(event.turnItem.nativeItemRef?.nativeId ?? "") &&
+              event.turnItem.status === "interrupted"
+                ? [event.turnItem.nativeItemRef?.nativeId]
+                : event.type === "turn.terminal"
+                  ? ["terminal"]
+                  : [],
+            );
+            assert.deepEqual(order, ["run", "wait", "terminal"]);
+            assert.lengthOf(terminals(h), 1);
+            for (const pid of h.ownedPids()) assert.throws(() => process.kill(pid, 0));
+          }),
+        ),
+    );
+  }
+
+  it.effect(
+    "fails an ordinary native Droid tool before its turn receipt even when logging stalls",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness(false, false, false, undefined, {
+            slowToolLogging: true,
+            body: `function onPrompt(message) {
+          update({ sessionUpdate: "tool_call", toolCallId: "run", title: "Run the tests", kind: "execute", status: "pending" });
+          fail(message, { code: -32603, message: "Internal error: Agent error", data: "500 upstream error" });
+        }`,
+          });
+          yield* h.send(1, "full-access");
+          yield* Deferred.await(h.toolLogBlocked);
+          assert.lengthOf(terminals(h), 0);
+          yield* Deferred.succeed(h.releaseToolLog, undefined);
+          assert.equal((yield* h.terminal).status, "failed");
+          const story = h.recorded.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.nativeItemRef?.nativeId === "run"
+              ? [event.turnItem.status]
+              : event.type === "turn.terminal"
+                ? [`turn ${event.status}`]
+                : [],
+          );
+          assert.deepEqual(story, ["pending", "failed", "turn failed"]);
+          assert.lengthOf(terminals(h), 1);
+        }),
+      ),
+  );
+
+  it.effect("leaves a replacement native Droid turn alone when an earlier Stop arrives late", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, {
+          body: `function onPrompt(message) {
+          if (state.prompts === 1) return reply(message, { stopReason: "end_turn" });
+          update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Second turn running." } });
+        }`,
+        });
+        yield* h.send(1, "full-access");
+        assert.equal((yield* h.terminal).status, "completed");
+        const earlier = h.recorded.find(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+        );
+        if (earlier?.type !== "provider_turn.updated")
+          return yield* Effect.die("Missing earlier native turn");
+        yield* h.runtime.interruptTurn({
+          providerThread: h.providerThread,
+          providerTurnId: earlier.providerTurn.id,
+        });
+        assert.lengthOf(terminals(h), 1);
+        assert.isFalse(
+          (yield* h.readLog!()).some((message) => message.method === "session/cancel"),
+        );
+        for (const pid of h.ownedPids()) assert.doesNotThrow(() => process.kill(pid, 0));
+        const capturedStop = {
+          providerThread: h.providerThread,
+          providerTurnId: earlier.providerTurn.id,
+          requestRuntimeRestart: true,
+        };
+        yield* h.send(2, "full-access");
+        yield* untilRecorded(
+          h,
+          (event) =>
+            event.type === "message.updated" && event.message.text === "Second turn running.",
+        );
+        yield* h.runtime.interruptTurn(capturedStop);
+        assert.lengthOf(terminals(h), 1);
+        assert.lengthOf(h.ownedPids(), 1);
+        for (const pid of h.ownedPids()) assert.doesNotThrow(() => process.kill(pid, 0));
+        const current = h.recorded.findLast(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+        );
+        if (current?.type !== "provider_turn.updated")
+          return yield* Effect.die("Missing replacement turn");
+        assert.notEqual(current.providerTurn.id, earlier.providerTurn.id);
+        yield* h.runtime.interruptTurn({
+          providerThread: h.providerThread,
+          providerTurnId: current.providerTurn.id,
+          requestRuntimeRestart: true,
+        });
+        assert.equal((yield* h.terminal).status, "interrupted");
+        assert.lengthOf(terminals(h), 2);
+      }),
+    ),
+  );
 });
 
 // Real stdio, controlled host clock: native peer stays alive and deliberately

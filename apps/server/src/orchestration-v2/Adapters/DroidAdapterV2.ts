@@ -117,6 +117,7 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
       return notification;
     },
     createToolPresentation: makeDroidToolPresentation,
+    allowOnceForSessionApproval: true,
     supportsImagePrompts: true,
     supportsCompaction: true,
     terminalizeRunOwnedItemsOnFailure: true,

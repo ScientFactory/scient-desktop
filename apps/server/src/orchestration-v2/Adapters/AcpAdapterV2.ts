@@ -321,6 +321,8 @@ export interface AcpAdapterV2Flavor {
   readonly approvalOptions?: (
     request: EffectAcpSchema.RequestPermissionRequest,
   ) => ReadonlyArray<ProviderApprovalOption>;
+  /** Scient remembers the session grant when this agent only accepts allow-once on the wire. */
+  readonly allowOnceForSessionApproval?: boolean;
   /**
    * Activate saved sessions with `session/resume` before `session/load` when
    * the agent supports both. Antigravity's load replays history slowly.
@@ -5672,7 +5674,11 @@ export function makeAcpAdapterV2(
                 if (decision === "cancel") {
                   return { outcome: { outcome: "cancelled" } } as const;
                 }
-                const optionId = selectPermissionOptionId(params, decision);
+                const optionId =
+                  selectPermissionOptionId(params, decision) ??
+                  (decision === "acceptForSession" && flavor.allowOnceForSessionApproval === true
+                    ? selectPermissionOptionId(params, "accept")
+                    : undefined);
                 return optionId === undefined
                   ? ({ outcome: { outcome: "cancelled" } } as const)
                   : ({ outcome: { outcome: "selected", optionId } } as const);
@@ -5784,15 +5790,30 @@ export function makeAcpAdapterV2(
                   const enumValues = Array.isArray(record?.enum)
                     ? record.enum.filter((value): value is string => typeof value === "string")
                     : [];
+                  const namedOptions = Array.isArray(record?.oneOf)
+                    ? record.oneOf.flatMap((choice) => {
+                        const option = unknownRecord(choice);
+                        return typeof option?.const === "string"
+                          ? [
+                              {
+                                label: option.const,
+                                description: nonEmptyText(option.title, option.const),
+                              },
+                            ]
+                          : [];
+                      })
+                    : [];
                   const options =
-                    enumValues.length > 0
-                      ? enumValues.map((value) => ({ label: value, description: value }))
-                      : record?.type === "boolean"
-                        ? [
-                            { label: "true", description: "Yes" },
-                            { label: "false", description: "No" },
-                          ]
-                        : [];
+                    namedOptions.length > 0
+                      ? namedOptions
+                      : enumValues.length > 0
+                        ? enumValues.map((value) => ({ label: value, description: value }))
+                        : record?.type === "boolean"
+                          ? [
+                              { label: "true", description: "Yes" },
+                              { label: "false", description: "No" },
+                            ]
+                          : [];
                   return {
                     id,
                     header: nonEmptyText(record?.title, `Question ${index + 1}`),
