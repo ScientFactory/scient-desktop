@@ -18,11 +18,13 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { OmpRpcNotification } from "effect-omp-rpc/client";
@@ -61,6 +63,8 @@ const harness = Effect.fnUntraced(function* (
     readonly ignoreFreshWrite?: boolean;
     readonly misreportResume?: boolean;
     readonly target?: OmpTarget;
+    readonly shutdownUncertain?: boolean;
+    readonly shutdownSignalConfirmed?: boolean;
   },
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -123,7 +127,12 @@ const harness = Effect.fnUntraced(function* (
           version: scientific ? "0.1.0" : "18.3.1",
           runtimeVersion: scientific ? "18.4.8" : "18.3.1",
           redaction: makeOmpRedaction({}, []),
-          shutdown: Effect.succeed({ code: 0, forced: false, stderrTail: "" }),
+          shutdown: Effect.succeed({
+            code: behavior?.shutdownUncertain || behavior?.shutdownSignalConfirmed ? null : 0,
+            exited: behavior?.shutdownSignalConfirmed === true,
+            forced: behavior?.shutdownUncertain === true,
+            stderrTail: "",
+          }),
           ready: Effect.succeed({
             type: "ready",
             protocolVersion: 2,
@@ -287,6 +296,131 @@ const harness = Effect.fnUntraced(function* (
 });
 
 it.layer(TestLayer)("OmpAdapterV2", (it) => {
+  it.effect("retains an unobserved writer lock through manager scope finalization", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeScope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(nativeScope, Exit.void));
+        const h = yield* harness(false, { shutdownUncertain: true }).pipe(
+          Effect.provideService(Scope.Scope, nativeScope),
+        );
+        assert.ok(h.processSessionDir);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const lockPath = path.join(h.processSessionDir, ".session.lock");
+        const token = yield* fs.readFileString(lockPath);
+        yield* Scope.close(nativeScope, Exit.void);
+        assert.equal(yield* fs.readFileString(lockPath), token);
+        yield* fs.remove(lockPath);
+      }),
+    ),
+  );
+  it.effect(
+    "releases a confirmed signal exit and protects a replacement from the delayed finalizer",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeScope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(nativeScope, Exit.void));
+          const h = yield* harness(false, { shutdownSignalConfirmed: true }).pipe(
+            Effect.provideService(Scope.Scope, nativeScope),
+          );
+          assert.ok(h.processSessionDir);
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const lockPath = path.join(h.processSessionDir, ".session.lock");
+          yield* h.runtime.startTurn(h.input);
+          yield* Deferred.await(h.promptDelivered);
+          const offered = yield* h.takeUntil(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+          );
+          if (offered.type !== "provider_turn.updated")
+            return yield* Effect.die("No owned native turn");
+          yield* h.runtime.interruptTurn({
+            providerThread: h.input.providerThread,
+            providerTurnId: offered.providerTurn.id,
+          });
+          assert.isFalse(yield* fs.exists(lockPath));
+          yield* fs.writeFileString(lockPath, "replacement-token\n");
+          yield* Scope.close(nativeScope, Exit.void);
+          assert.equal(yield* fs.readFileString(lockPath), "replacement-token\n");
+          yield* fs.remove(lockPath);
+        }),
+      ),
+  );
+  for (const uncertain of [false, true]) {
+    it.effect(
+      uncertain
+        ? "retains the exact conversation lock when shutdown cannot prove exit"
+        : "releases its conversation lock after confirmed Stop while its manager scope remains open",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const h = yield* harness(false, { shutdownUncertain: uncertain });
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            assert.ok(h.processSessionDir);
+            const lockPath = path.join(h.processSessionDir, ".session.lock");
+            const token = yield* fs.readFileString(lockPath);
+            yield* h.runtime.startTurn(h.input);
+            yield* Deferred.await(h.promptDelivered);
+            const offered = yield* h.takeUntil(
+              (event) =>
+                event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+            );
+            if (offered.type !== "provider_turn.updated")
+              return yield* Effect.die("No owned native turn");
+            const result = yield* Effect.result(
+              h.runtime.interruptTurn({
+                providerThread: h.input.providerThread,
+                providerTurnId: offered.providerTurn.id,
+              }),
+            );
+            if (uncertain) {
+              assert.equal(result._tag, "Failure");
+              assert.equal(yield* fs.readFileString(lockPath), token);
+            } else {
+              assert.equal(result._tag, "Success");
+              assert.isFalse(yield* fs.exists(lockPath));
+            }
+          }),
+        ),
+    );
+  }
+  for (const uncertain of [false, true]) {
+    it.effect(
+      uncertain
+        ? "preserves the original process failure and lock when EOF cannot confirm exit"
+        : "releases the exact exited writer on unexpected EOF before publishing failure",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const h = yield* harness(false, { shutdownUncertain: uncertain });
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            assert.ok(h.processSessionDir);
+            const lockPath = path.join(h.processSessionDir, ".session.lock");
+            const token = yield* fs.readFileString(lockPath);
+            yield* h.runtime.startTurn(h.input);
+            yield* Deferred.await(h.promptDelivered);
+            yield* Queue.end(h.notifications);
+            const failed = yield* h.takeUntil(
+              (event) =>
+                event.type === "provider_turn.updated" && event.providerTurn.status === "failed",
+            );
+            if (failed.type !== "provider_turn.updated")
+              return yield* Effect.die("No owned failed turn");
+            assert.equal(failed.threadId, h.input.threadId);
+            assert.equal(failed.providerTurn.nodeId, h.input.rootNodeId);
+            assert.equal(failed.providerTurn.runAttemptId, h.input.attemptId);
+            if (uncertain) assert.equal(yield* fs.readFileString(lockPath), token);
+            else assert.isFalse(yield* fs.exists(lockPath));
+          }),
+        ),
+    );
+  }
+
   it.effect("runs Scient Agent through its independent native target and runtime version", () =>
     Effect.scoped(
       Effect.gen(function* () {

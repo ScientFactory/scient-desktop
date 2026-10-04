@@ -36,6 +36,7 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import { makeAcpRegistryManagedRuntimeActions } from "../../scient/providerLifecycle/AcpRegistryManagedRuntimeActions.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -551,6 +552,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       };
       const effectiveConfig = { ...config, enabled } satisfies AcpRegistrySettings;
       const processEnvironment = mergeProviderInstanceEnvironment(environment, hostEnvironment);
+      const managedRuntimeActions = yield* makeAcpRegistryManagedRuntimeActions({
+        instanceId,
+        settings: effectiveConfig,
+        environment: processEnvironment,
+        instanceEnvironment: environment,
+        cwd: serverConfig.cwd,
+      });
       const orchestrationAdapter = yield* AcpRegistryAdapterV2Driver.create({
         instanceId,
         displayName,
@@ -592,7 +600,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             (yield* confirmedAuthentication.get)
               ? { ...input, auth: { ...input.auth, status: "authenticated" as const } }
               : input;
-          return yield* Option.isNone(runtimeCoordinator)
+          const enriched = yield* Option.isNone(runtimeCoordinator)
             ? Effect.succeed(provider)
             : Effect.all({
                 commands: runtimeCoordinator.value.getAvailableCommands(instanceId),
@@ -613,6 +621,17 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                   return applyAcpRegistryUrlAuthAction(withConfiguration, authAction);
                 }),
               );
+          const summary = yield* Effect.result(managedRuntimeActions.getSummary);
+          return {
+            ...enriched,
+            connection: {
+              methods: enriched.connection?.methods ?? [],
+              canDisconnect: enriched.connection?.canDisconnect ?? false,
+              operation: enriched.connection?.operation ?? null,
+              ...enriched.connection,
+              ...(Result.isSuccess(summary) ? { runtime: summary.success } : {}),
+            },
+          } satisfies ServerProvider;
         });
       const checkProvider = checkAcpRegistryProviderReadiness(readinessInput).pipe(
         Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
@@ -849,6 +868,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         accentColor,
         enabled,
         auth,
+        managedRuntimeActions,
         snapshot: {
           ...snapshot,
           refresh: snapshot.refresh.pipe(

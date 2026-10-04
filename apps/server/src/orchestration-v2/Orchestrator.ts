@@ -79,6 +79,7 @@ import { isRestartNoteSource } from "./RestartBackgroundNote.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 import { threadShellFromProjection } from "@t3tools/shared/orchestrationV2ThreadShell";
 import { EventSinkV2 } from "./EventSink.ts";
+import { EventStoreV2 } from "./EventStore.ts";
 import { sourcePlanFingerprint } from "./SourcePlan.ts";
 import { planHeldQueueAdmission } from "./legacy/HeldQueueAdmission.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
@@ -669,6 +670,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const commandPolicy = yield* CommandPolicyV2;
   const contextHandoffService = yield* ContextHandoffServiceV2;
   const eventSink = yield* EventSinkV2;
+  const eventStore = yield* EventStoreV2;
   const commandReceipts = yield* CommandReceiptStoreV2;
   const idAllocator = yield* IdAllocatorV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
@@ -10284,6 +10286,73 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       run.activeAttemptId !== terminal.activeAttemptId
     )
       return;
+    const queued = projection.runs.filter(
+      (candidate) =>
+        candidate.status === "queued" &&
+        candidate.queueHeld !== true &&
+        !isAutomaticCompletionRun(projection, candidate),
+    );
+    const queueBoundaries = new Map<RunId, number>();
+    let terminalSequence = stored.sequence;
+    if (queued.length > 0) {
+      // Only this rare terminal reaction reads historical run facts. Resume,
+      // admission, and the original exact-attempt terminal transition remain
+      // durable across restart; checkpoint/cleanup echoes confer no new hold.
+      const throughSequence = yield* eventStore.latestSequence({ threadId });
+      const queuedIds = new Set(queued.map((candidate) => candidate.id));
+      const admissionSequences = new Map<RunId, number>();
+      const releaseReceipts = new Map<CommandId, number>();
+      yield* Stream.concat(
+        eventStore.read({ threadId, eventType: "run.created", throughSequence }),
+        eventStore.read({ threadId, eventType: "run.updated", throughSequence }),
+      ).pipe(
+        Stream.runForEach((entry) =>
+          Effect.gen(function* () {
+            const event = entry.event;
+            if (event.type !== "run.created" && event.type !== "run.updated") return;
+            const payload = event.payload;
+            if (
+              event.type === "run.updated" &&
+              payload.id === terminal.id &&
+              payload.activeAttemptId === terminal.activeAttemptId &&
+              payload.rootNodeId === terminal.rootNodeId &&
+              payload.providerThreadId === terminal.providerThreadId &&
+              (payload.status === "failed" || payload.status === "interrupted")
+            )
+              terminalSequence = Math.min(terminalSequence, entry.sequence);
+            if (!queuedIds.has(payload.id) || payload.status !== "queued") return;
+            if (event.type === "run.created") {
+              admissionSequences.set(
+                payload.id,
+                Math.min(admissionSequences.get(payload.id) ?? entry.sequence, entry.sequence),
+              );
+              return;
+            }
+            if (payload.queueHeld !== false || entry.commandId == null) return;
+            let released = releaseReceipts.get(entry.commandId);
+            if (released === undefined) {
+              const receipt = yield* commandReceipts.getByCommandId(entry.commandId);
+              released =
+                Option.isSome(receipt) &&
+                receipt.value.status === "accepted" &&
+                receipt.value.threadId === threadId &&
+                receipt.value.commandType === "queue.resume"
+                  ? receipt.value.resultSequence
+                  : 0;
+              releaseReceipts.set(entry.commandId, released);
+            }
+            if (released >= entry.sequence)
+              queueBoundaries.set(
+                payload.id,
+                Math.max(queueBoundaries.get(payload.id) ?? 0, entry.sequence),
+              );
+          }),
+        ),
+      );
+      for (const [runId, sequence] of admissionSequences) {
+        queueBoundaries.set(runId, Math.max(queueBoundaries.get(runId) ?? 0, sequence));
+      }
+    }
     const now = yield* DateTime.now;
     const rootNode = projection.nodes.find((node) => node.id === run.rootNodeId);
     const attempt = projection.attempts.find((entry) => entry.id === run.activeAttemptId);
@@ -10301,13 +10370,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       attempt?.status === "failed" &&
       rootNode !== undefined &&
       !nativeReceipt;
-    const events: Array<Omit<OrchestrationV2DomainEvent, "id">> = projection.runs
-      .filter(
-        (candidate) =>
-          candidate.status === "queued" &&
-          candidate.queueHeld !== true &&
-          !isAutomaticCompletionRun(projection, candidate),
-      )
+    const events: Array<Omit<OrchestrationV2DomainEvent, "id">> = queued
+      .filter((candidate) => (queueBoundaries.get(candidate.id) ?? 0) <= terminalSequence)
       .map((candidate) => ({
         type: "run.updated",
         threadId,
@@ -10636,6 +10700,7 @@ export const layer: Layer.Layer<
   | CommandReceiptStoreV2
   | ContextHandoffServiceV2
   | EventSinkV2
+  | EventStoreV2
   | IdAllocatorV2
   | ProjectStore.ProjectStoreV2
   | ProviderAdapterRegistryV2

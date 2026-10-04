@@ -324,14 +324,24 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
   // paths (healthy or unavailable) retain independent executable authority.
   const affectedRuntimeInstances = (provider: ProviderDriverKind, target: ProviderInstanceId) =>
     providerRegistry.getProviders.pipe(
-      Effect.map((providers) =>
-        providers.filter((candidate) => {
+      Effect.map((providers) => {
+        const targetRuntime = providers.find((candidate) => candidate.instanceId === target)
+          ?.connection?.runtime;
+        return providers.filter((candidate) => {
           if (candidate.instanceId === target) return true;
           if (candidate.driver !== provider) return false;
-          const source = candidate.connection?.runtime?.source;
+          const runtime = candidate.connection?.runtime;
+          const source = runtime?.source;
+          if (provider === ProviderDriverKind.make("acpRegistry"))
+            return (
+              source !== "custom" &&
+              runtime !== undefined &&
+              targetRuntime !== undefined &&
+              runtime.target === targetRuntime.target
+            );
           return source === "system" || source === "missing" || source === "scient_managed";
-        }),
-      ),
+        });
+      }),
     );
 
   const closeRuntimeInstances = (provider: ProviderDriverKind, target: ProviderInstanceId) =>
