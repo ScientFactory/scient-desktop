@@ -132,39 +132,40 @@ it("plays the entrance for a first prompt being placed, and for no other prompt"
   expect(animationsOf(bubble(later.message.id))).toHaveLength(0);
 });
 
-it("inks each paragraph of a streaming answer in line by line, in turn, once, and nothing else", async () => {
+it("reveals a streaming answer line by line after a short wait, once, and nothing else", async () => {
   const prompt = entry(1, "Question");
   const answer = (text: string, streaming: boolean) => ({
     ...entry(2, text),
     message: { ...entry(2, text).message, role: "assistant" as const, streaming },
   });
-  const paragraphs = () =>
-    Array.from(host!.querySelectorAll('[data-message-role="assistant"] .chat-markdown p'));
-  render("motion:stream", [prompt, answer("First paragraph.", true)], working);
-  await expect.poll(() => paragraphs().length).toBe(1);
-  // The first paragraph arrives with the answer's row: it enters too.
-  expect(animationsOf(paragraphs()[0])).toHaveLength(1);
+  const text = () =>
+    host!.querySelector<HTMLElement>('[data-message-role="assistant"] .chat-markdown');
+  const front = () => Number.parseFloat(text()?.style.getPropertyValue("--reveal-front") || "0");
   render("motion:stream", [prompt, answer("First paragraph.\n\nSecond paragraph.", true)], working);
-  await expect.poll(() => paragraphs().length).toBe(2);
-  expect(animationsOf(paragraphs()[1])).toHaveLength(1);
-  // Inked in through the line mask, after the first: one after the other, top to bottom.
-  expect(paragraphs()[1]!.classList.contains("streamed-ink")).toBe(true);
-  expect(Number(animationsOf(paragraphs()[1])[0]!.effect!.getTiming().delay)).toBeGreaterThan(150);
-  // Remounted mid-stream (a thread switch and back): nothing replays.
+  await expect.poll(() => text()?.classList.contains("streamed-reveal")).toBe(true);
+  // The first lines wait a moment, so the next paragraphs are in hand.
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  expect(front()).toBe(0);
+  // Then the lines appear at a steady pace.
+  await expect.poll(front, { timeout: 3000 }).toBeGreaterThan(10);
+  const reached = front();
+  // Remounted mid-reveal (a thread switch and back): it continues, no replay.
   render("motion:elsewhere-stream", [entry(70, "Elsewhere")]);
   await frames(4);
   render("motion:stream", [prompt, answer("First paragraph.\n\nSecond paragraph.", true)], working);
-  await expect.poll(() => paragraphs().length).toBe(2);
-  expect(animationsOf(paragraphs()[0])).toHaveLength(0);
-  expect(animationsOf(paragraphs()[1])).toHaveLength(0);
-  // A finished message's changes never animate.
-  render(
-    "motion:stream",
-    [prompt, answer("First paragraph.\n\nSecond paragraph.\n\nThird paragraph.", false)],
-    { isWorking: false },
-  );
-  await expect.poll(() => paragraphs().length).toBe(3);
-  expect(animationsOf(paragraphs()[2])).toHaveLength(0);
+  await expect.poll(() => text()?.classList.contains("streamed-reveal")).toBe(true);
+  expect(front()).toBeGreaterThanOrEqual(reached);
+  // Once the answer is done, the reveal finishes and the mask goes.
+  render("motion:stream", [prompt, answer("First paragraph.\n\nSecond paragraph.", false)], {
+    isWorking: false,
+  });
+  await expect
+    .poll(() => text()?.classList.contains("streamed-reveal"), { timeout: 4000 })
+    .toBe(false);
+  // A finished answer that was never revealed here simply shows.
+  render("motion:finished", [prompt, answer("Already done.", false)], { isWorking: false });
+  await frames(4);
+  expect(text()?.classList.contains("streamed-reveal")).toBe(false);
 });
 
 it("closes a finished turn's working header gradually, so the answer slides up", async () => {

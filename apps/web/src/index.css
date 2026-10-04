@@ -652,33 +652,36 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   margin-left: var(--live-activity-focus-width);
 }
 
-/* A streamed block, while it is inked in (chat/useStreamingBlockEntrance.ts):
-   a soft edge moves from the top down; the text above it is full strength,
-   the text below it waits, readable and only a little lighter. */
-@property --ink-y {
-  syntax: "<number>";
-  inherits: false;
-  initial-value: 0;
-}
-
-.streamed-ink {
-  --ink-faint: rgb(0 0 0 / 0.65);
-  --ink-edge: 1.5em;
-  --ink-front: calc(var(--ink-y) * (100% + var(--ink-edge)));
+/* A streaming answer while it is revealed (chat/useStreamingBlockEntrance.ts):
+   lines appear at the front, a little lighter, and the full tone follows one
+   line behind; below the front nothing shows yet. Soft edges, nothing moves. */
+.streamed-reveal {
+  --reveal-light: rgb(0 0 0 / 0.65);
+  --reveal-edge: calc(var(--reveal-line, 1.5em) * 0.6);
+  --reveal-ink: calc(var(--reveal-front, 0px) - var(--reveal-line, 1.5em));
   -webkit-mask-image: linear-gradient(
     to bottom,
-    #000 calc(var(--ink-front) - var(--ink-edge)),
-    var(--ink-faint) var(--ink-front)
+    #000 calc(var(--reveal-ink) - var(--reveal-edge)),
+    var(--reveal-light) var(--reveal-ink),
+    var(--reveal-light) calc(var(--reveal-front, 0px) - var(--reveal-edge)),
+    transparent var(--reveal-front, 0px)
   );
   mask-image: linear-gradient(
     to bottom,
-    #000 calc(var(--ink-front) - var(--ink-edge)),
-    var(--ink-faint) var(--ink-front)
+    #000 calc(var(--reveal-ink) - var(--reveal-edge)),
+    var(--reveal-light) var(--reveal-ink),
+    var(--reveal-light) calc(var(--reveal-front, 0px) - var(--reveal-edge)),
+    transparent var(--reveal-front, 0px)
   );
   -webkit-mask-repeat: no-repeat;
   mask-repeat: no-repeat;
-  /* List markers sit outside the box; leave them unmasked. */
+  /* List markers sit outside the box; reveal them with their lines' tone. */
   mask-clip: no-clip;
+  /* The answer takes only the room of the lines shown, growing as they
+     appear, so what follows it stays right below them (not below a gap). */
+  max-height: var(--reveal-front, 0px);
+  overflow-x: visible;
+  overflow-y: clip;
 }
 
 @property --assistant-citation-highlight-opacity {

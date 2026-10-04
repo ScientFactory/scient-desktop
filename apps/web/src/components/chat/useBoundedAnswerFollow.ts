@@ -3,7 +3,7 @@ import type { LegendListRef } from "@legendapp/list/react";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 import { CHAT_TIMELINE_ANCHOR_OFFSET } from "./timelineScrollAnchoring";
 import { isTimelineScrollTarget } from "./timelineScrollTarget";
-import { streamingRevealEndsAt } from "./useStreamingBlockEntrance";
+import { streamingRevealedHeight } from "./useStreamingBlockEntrance";
 
 /** How much of a newly arrived message the reveal shows: its first lines. */
 const FIRST_LINES_PX = 48;
@@ -16,8 +16,6 @@ const END_GAP = 16;
 /** A followed response's drift: a calm top speed, gentle acceleration and braking. */
 const FOLLOW_MAX_SPEED = 1; // px per ms
 const FOLLOW_ACCELERATION = 0.004; // px per ms², so ~250ms to top speed
-/** Below this, a reveal is about done and no longer sets the pace. */
-const FOLLOW_REVEAL_PACING_MIN_MS = 120;
 
 /**
  * How far the reveal may scroll now. Growth is revealed only while the sent
@@ -182,12 +180,22 @@ export function useBoundedAnswerFollow({
       };
       // How far the conversation's real end is below its resting place above
       // the composer, never past the scroll range (nor into reserved space).
+      // How much of the answer has been revealed so far, while it is being revealed.
+      const revealedHeight = () =>
+        answerRow.kind === "message" ? streamingRevealedHeight(answerRow.message.id) : null;
       const endBelow = () => {
         const toMax = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop;
         const last = rows.at(-1);
         const endBox = last ? rowRect(last.id) : null;
         const restingBottom = viewportRect.top + viewport.clientHeight - composerInset - END_GAP;
-        return endBox ? Math.min(toMax, endBox.rect.bottom - restingBottom) : toMax;
+        const end = endBox ? Math.min(toMax, endBox.rect.bottom - restingBottom) : toMax;
+        // While the answer is revealed line by line, keep up with the lines
+        // shown so far, never the text still hidden below them.
+        const revealed = revealedHeight();
+        const text =
+          revealed === null ? null : answerBox?.element?.querySelector(".streamed-reveal");
+        if (revealed === null || !text) return end;
+        return Math.min(end, text.getBoundingClientRect().top + revealed - restingBottom);
       };
       const answerBox = rowRect(answerRow.id);
       if (!answerBox) {
@@ -215,10 +223,13 @@ export function useBoundedAnswerFollow({
         viewportBottom: viewportRect.top + viewport.clientHeight - composerInset,
         ...(followResponse ? { endBelow: endBelow() } : {}),
       });
+      const revealing = followResponse && revealedHeight() !== null;
       if (delta <= 0.5) {
         // Nothing to reveal now. Later messages may still arrive while the
         // thread works; the reveal ends once the settled response is shown.
-        if (answerSettled) finish();
+        // While its lines are still being revealed, keep up with them.
+        if (revealing) frame = requestAnimationFrame(tick);
+        else if (answerSettled) finish();
         return;
       }
       const before = viewport.scrollTop;
@@ -240,14 +251,8 @@ export function useBoundedAnswerFollow({
         // The view's own position, unless something else moved it.
         if (motion.position === null || Math.abs(viewport.scrollTop - motion.position) > 1.5)
           motion.position = viewport.scrollTop;
-        // Braking that arrives (not a creep that never does); while text is
-        // still being revealed, no faster than needed to arrive as it finishes.
-        const revealLeft = streamingRevealEndsAt() - now;
-        const cruise = Math.min(
-          FOLLOW_MAX_SPEED,
-          Math.sqrt(2 * FOLLOW_ACCELERATION * delta),
-          revealLeft > FOLLOW_REVEAL_PACING_MIN_MS ? delta / revealLeft : Infinity,
-        );
+        // Braking that arrives, not a creep that never does.
+        const cruise = Math.min(FOLLOW_MAX_SPEED, Math.sqrt(2 * FOLLOW_ACCELERATION * delta));
         const change = cruise - motion.velocity;
         const limit = FOLLOW_ACCELERATION * elapsed;
         motion.velocity = Math.max(0, motion.velocity + Math.max(-limit, Math.min(limit, change)));
@@ -258,7 +263,7 @@ export function useBoundedAnswerFollow({
         // Keep going while there is distance left and the view can still move
         // (the browser may round the position to whole pixels, so allow that).
         const stalled = motion.position - viewport.scrollTop > 2;
-        if (delta - step > 0.5 && !stalled) frame = requestAnimationFrame(tick);
+        if ((delta - step > 0.5 || revealing) && !stalled) frame = requestAnimationFrame(tick);
         else {
           motion.velocity = 0;
           motion.position = viewport.scrollTop;

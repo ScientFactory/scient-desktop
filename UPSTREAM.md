@@ -24,12 +24,11 @@ and fades in on the same curve (clip and opacity only, never a transform, so the
 measurements hold), and the "Working for" label carries the thinking traces' live shine (ActivityShimmerOverlay)
 for as long as the turn works; its line just appears
 (`chat/timelineEntranceMotion.ts`; played entrances never replay on row remount). While an
-answer streams, each block (the first included) shows at once at 65% strength and a soft edge
-inks it in from the top down (about 300ms a line, `.streamed-ink` mask, registered `--ink-y`),
-one block after the other, counted per message so remounted rows never replay;
-each block starts 150ms after it arrives. A followed response's scroll is velocity-based: it
-accelerates gently, cruises at most 1px/ms, brakes into place, and while text is being revealed
-goes no faster than needed to arrive as it finishes (`streamingRevealEndsAt`) (`chat/useStreamingBlockEntrance.ts`). The
+answer streams it is revealed as one flow (`chat/useStreamingBlockEntrance.ts`, `.streamed-reveal`):
+after a 1s buffer, lines appear top-down at ~4 lines/s (faster when >8 lines wait), at 65%, with
+the full tone one line behind; the answer is clipped to its revealed lines, and the follow scroll
+keeps up with them (`streamingRevealedHeight`). Revealed height is kept per message, so remounted
+rows continue rather than replay (`chat/useStreamingBlockEntrance.ts`). The
 timeline's working state (`chat/timelineWorkingState.ts`) is held back until a send's prompt
 is listed and bridged from the server's acknowledgement until a session starts the turn.
 Preserve the existing first-message framing. Eligible sends, and queued prompts the server delivers while

@@ -7,7 +7,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
 import { readerAtReadingEnd, withReadingEnd } from "./readerScrollPolicy";
-import { streamingRevealEndsAt } from "./useStreamingBlockEntrance";
 import { MessagesTimeline } from "./MessagesTimeline";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
@@ -488,7 +487,7 @@ it("keeps following a later prompt whose turn has not started yet when it arrive
   expect(node.scrollTop).toBeGreaterThan(start);
 });
 
-it("scrolls continuously with streamed paragraphs, at the pace they are revealed", async () => {
+it("scrolls continuously with the line-by-line reveal, never ahead of it", async () => {
   const key = "geometry:follow-paced";
   const { node, extra, toEnd, rows } = await sendLaterPrompt(key, true);
   render(key, rows(0), extra);
@@ -506,27 +505,32 @@ it("scrolls continuously with streamed paragraphs, at the pace they are revealed
   });
   render(key, [...rows(0), answer(1)], extra);
   await frames(2);
-  render(key, [...rows(0), answer(2)], extra);
+  render(key, [...rows(0), answer(3)], extra);
+  const text = () => host!.querySelector<HTMLElement>(".streamed-reveal");
+  await expect.poll(() => text()).not.toBeNull();
+  const revealed = () => Number.parseFloat(text()?.style.getPropertyValue("--reveal-front") || "0");
   const positions: number[] = [];
-  const times: number[] = [];
   const started = performance.now();
-  const revealEnd = streamingRevealEndsAt();
-  expect(revealEnd - started).toBeGreaterThan(400);
-  while (performance.now() - started < 2200) {
+  let aheadOfReveal = 0;
+  while (performance.now() - started < 2600) {
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     positions.push(node.scrollTop);
-    times.push(performance.now());
+    const element = text();
+    if (element) {
+      // The view never runs ahead into hidden text: its reading bottom stays
+      // within the usual end gap (and the row's own spacing) of the lines shown.
+      const shownBottom = element.getBoundingClientRect().top + revealed();
+      const readingBottom =
+        node.getBoundingClientRect().top + node.clientHeight - base.contentInsetEndAdjustment;
+      aheadOfReveal = Math.max(aheadOfReveal, readingBottom - shownBottom - 64);
+    }
   }
   const steps = positions.slice(1).map((value, index) => value - positions[index]!);
-  const total = positions.at(-1)! - positions[0]!;
-  const quarter = started + (revealEnd - started) / 4;
-  const atQuarter = positions[times.findIndex((time) => time >= quarter)]! - positions[0]!;
-  // One continuous glide at the reveal's pace: a quarter of the way through the
-  // reveal it has covered about a quarter of the way, not rushed ahead.
-  expect(total).toBeGreaterThan(60);
-  expect(atQuarter / total).toBeLessThan(0.45);
+  // It moved, smoothly and only forward, and kept behind the revealed lines.
+  expect(positions.at(-1)! - positions[0]!).toBeGreaterThan(40);
   expect(Math.max(...steps)).toBeLessThan(12);
   expect(steps.every((step) => step >= -0.5)).toBe(true);
+  expect(aheadOfReveal).toBeLessThanOrEqual(0);
 });
 
 it("keeps the reveal of a first prompt as it was: traces do not move it", async () => {

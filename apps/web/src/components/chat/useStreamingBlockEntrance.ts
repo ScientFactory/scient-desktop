@@ -1,110 +1,114 @@
-import { type RefObject, useLayoutEffect } from "react";
-
-/** The text blocks a streamed answer arrives in (providers send whole paragraphs). */
-const STREAMED_BLOCK_SELECTOR = "p, li, h1, h2, h3, h4, h5, h6, blockquote, table, hr";
-
-// Each block shows at once, a little lighter, and a soft edge inks it in from
-// the top down, the text staying full strength above it, one block after the
-// other. Masking only (`.streamed-ink`): nothing moves.
-const INK_MS_PER_LINE = 300;
-/** A long block inks faster per line, so it never takes longer than this. */
-const MAX_INK_MS = 2400;
-const REVEAL_LEAD_MS = 150;
-const INK_KEYFRAMES: Keyframe[] = [{ "--ink-y": 0 }, { "--ink-y": 1 }];
-
-function blockLines(block: HTMLElement) {
-  const lineHeight = Number.parseFloat(getComputedStyle(block).lineHeight) || 22;
-  return Math.max(1, Math.round(block.getBoundingClientRect().height / lineHeight));
-}
+import { type RefObject, useLayoutEffect, useRef } from "react";
 
 /**
- * When the streamed text being revealed now will be fully shown
- * (performance.now() time). The follow scroll paces itself to arrive then,
- * moving continuously with the reveal instead of hopping to each block.
+ * A streaming answer is revealed as one continuous flow, even though providers
+ * send it a paragraph at a time: lines appear top to bottom at a steady pace,
+ * a little lighter, and the full tone follows one line behind. The first lines
+ * wait a moment, so the next paragraphs are usually in hand and the flow never
+ * stops and starts. Masking only (`.streamed-reveal`): nothing moves.
  */
-let latestRevealEndsAt = 0;
-export function streamingRevealEndsAt() {
-  return latestRevealEndsAt;
-}
+const REVEAL_BUFFER_MS = 1000;
+const REVEAL_LINES_PER_SECOND = 4;
+/** More than this many lines waiting and the reveal speeds up to catch up. */
+const REVEAL_MAX_LAG_LINES = 8;
 
 /**
- * How many blocks of each streaming message have entered. Kept outside the
- * component: the list remounts rows that scroll out of view and back, and a
- * block that already entered never replays. Bounded, oldest dropped first.
+ * How far each streaming message has been revealed, in pixels from its top.
+ * Kept outside the component: the list remounts rows that scroll out of view
+ * and back, and text already revealed never replays. Bounded, oldest first.
  */
-const enteredBlockCounts = new Map<string, number>();
+const revealedHeights = new Map<string, number>();
 const MAX_TRACKED_MESSAGES = 100;
 
-function streamedBlocks(root: HTMLElement): HTMLElement[] {
-  return Array.from(root.querySelectorAll<HTMLElement>(STREAMED_BLOCK_SELECTOR)).filter((block) => {
-    // A block inside another (a paragraph in a list item) enters with it.
-    const outer = block.parentElement?.closest(STREAMED_BLOCK_SELECTOR);
-    return !outer || !root.contains(outer);
-  });
+function rememberRevealed(messageId: string, height: number) {
+  revealedHeights.delete(messageId);
+  revealedHeights.set(messageId, height);
+  if (revealedHeights.size > MAX_TRACKED_MESSAGES) {
+    const oldest = revealedHeights.keys().next().value;
+    if (oldest !== undefined) revealedHeights.delete(oldest);
+  }
 }
 
 /**
- * While a message streams, each block that arrives (a paragraph, list item,
- * heading…) shows at once, a little lighter, and is inked in from the top down,
- * one block after the other, instead of appearing in one frame; the
- * first one too, which arrives with the message's row. Blocks that
- * already entered never replay; finished messages and reduced motion are left
- * alone.
+ * How much of a message is revealed so far (pixels from its top), while it is
+ * still being revealed; null once it is all shown. The follow scroll keeps up
+ * with this edge rather than the text still hidden below it.
+ */
+export function streamingRevealedHeight(messageId: string): number | null {
+  return revealedHeights.get(messageId) ?? null;
+}
+
+/**
+ * Reveals a streaming message line by line (see above). A message that was
+ * never revealed here (finished before it mounted), and reduced motion, are
+ * shown as they are.
  */
 export function useStreamingBlockEntrance(
   rootRef: RefObject<HTMLElement | null>,
   isStreaming: boolean,
   messageId: string | null | undefined,
 ) {
+  const streamingRef = useRef(isStreaming);
+  useLayoutEffect(() => {
+    streamingRef.current = isStreaming;
+  });
   useLayoutEffect(() => {
     const root = rootRef.current;
     if (
-      !isStreaming ||
       !root ||
-      typeof MutationObserver === "undefined" ||
+      !messageId ||
+      typeof window === "undefined" ||
       window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
     )
       return;
-    // Without a message id, only blocks arriving from now on enter.
-    let entered = messageId
-      ? (enteredBlockCounts.get(messageId) ?? 0)
-      : streamedBlocks(root).length;
-    // Blocks ink in one after the other: a block waits for the one before it.
-    let revealEndsAt = 0;
-    const enterNewBlocks = () => {
-      const blocks = streamedBlocks(root);
-      for (const block of blocks.slice(entered)) {
-        if (typeof block.animate !== "function") continue;
-        const now = performance.now();
-        // A short lead: the follow scroll is already moving when it starts showing.
-        const delay = Math.max(REVEAL_LEAD_MS, revealEndsAt - now);
-        const lines = blockLines(block);
-        const duration = Math.min(MAX_INK_MS, lines * INK_MS_PER_LINE);
-        revealEndsAt = now + delay + duration;
-        latestRevealEndsAt = Math.max(latestRevealEndsAt, revealEndsAt);
-        block.classList.add("streamed-ink");
-        const ink = block.animate(INK_KEYFRAMES, {
-          duration,
-          delay,
-          easing: "linear",
-          fill: "backwards",
-        });
-        const inked = () => block.classList.remove("streamed-ink");
-        ink.finished.then(inked, inked);
-      }
-      entered = Math.max(entered, blocks.length);
-      if (!messageId) return;
-      enteredBlockCounts.delete(messageId);
-      enteredBlockCounts.set(messageId, entered);
-      if (enteredBlockCounts.size > MAX_TRACKED_MESSAGES) {
-        const oldest = enteredBlockCounts.keys().next().value;
-        if (oldest !== undefined) enteredBlockCounts.delete(oldest);
-      }
+    const known = revealedHeights.get(messageId);
+    // A finished message never revealed here is simply shown.
+    if (!isStreaming && known === undefined) return;
+    const lineHeight = Number.parseFloat(getComputedStyle(root).lineHeight) || 22;
+    let front = known ?? 0;
+    // Text arriving with the message waits briefly; a remounted reveal continues.
+    const startsAt = performance.now() + (known === undefined ? REVEAL_BUFFER_MS : 0);
+    let last = performance.now();
+    let frame: number | null = null;
+    const apply = () => {
+      root.style.setProperty("--reveal-front", `${front}px`);
+      root.style.setProperty("--reveal-line", `${lineHeight}px`);
     };
-    // Before the first paint: the blocks this row arrived with enter too.
-    enterNewBlocks();
-    const observer = new MutationObserver(enterNewBlocks);
-    observer.observe(root, { childList: true, subtree: true });
-    return () => observer.disconnect();
+    const clear = () => {
+      root.classList.remove("streamed-reveal");
+      root.style.removeProperty("--reveal-front");
+      root.style.removeProperty("--reveal-line");
+    };
+    root.classList.add("streamed-reveal");
+    apply();
+    rememberRevealed(messageId, front);
+    const tick = (now: number) => {
+      frame = null;
+      const elapsed = Math.min(50, now - last);
+      last = now;
+      const height = root.scrollHeight;
+      // The full tone trails the appearing text by a line; both finish together.
+      const end = height + lineHeight;
+      if (now >= startsAt && front < end) {
+        const waitingLines = (height - front) / lineHeight;
+        const speed =
+          ((REVEAL_LINES_PER_SECOND * lineHeight) / 1000) *
+          Math.max(1, waitingLines / REVEAL_MAX_LAG_LINES);
+        front = Math.min(end, front + speed * elapsed);
+        apply();
+      }
+      if (!streamingRef.current && front >= end) {
+        revealedHeights.delete(messageId);
+        clear();
+        return;
+      }
+      rememberRevealed(messageId, front);
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => {
+      if (frame !== null) cancelAnimationFrame(frame);
+      clear();
+    };
   }, [rootRef, isStreaming, messageId]);
 }
