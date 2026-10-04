@@ -6,6 +6,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   DroidSettings,
+  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   MessageId,
   NodeId,
@@ -17,6 +18,7 @@ import {
   ThreadId,
   type OrchestrationV2AppThread,
   type ChatAttachment,
+  type ModelSelection,
 } from "@t3tools/contracts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Crypto from "effect/Crypto";
@@ -26,6 +28,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as PubSub from "effect/PubSub";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import type * as Duration from "effect/Duration";
@@ -37,7 +41,15 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
-import { makeDroidAcpRuntime } from "../../provider/acp/DroidAcpSupport.ts";
+import {
+  droidCustomModelId,
+  makeDroidCustomModelsRuntimeFactory,
+} from "../../provider/droid/DroidCustomModels.ts";
+import type { ResolvedModelConnection } from "../../customModels.ts";
+import {
+  makeDroidAcpRuntime,
+  type DroidAcpRuntimeFactory,
+} from "../../provider/acp/DroidAcpSupport.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import * as ProviderAdapter from "../ProviderAdapter.ts";
 import { makeDroidAdapterV2 } from "./DroidAdapterV2.ts";
@@ -74,6 +86,8 @@ const harness = Effect.fnUntraced(function* (
     readonly liveClock?: boolean;
     readonly environment?: Record<string, string>;
     readonly model?: string;
+    readonly options?: ModelSelection["options"];
+    readonly makeRuntime?: DroidAcpRuntimeFactory;
     readonly sensitiveValues?: ReadonlyArray<string>;
     readonly onPeer?: (peer: Effect.Success<ReturnType<typeof scriptedDroid>>) => void;
   },
@@ -109,6 +123,7 @@ const harness = Effect.fnUntraced(function* (
   const modelSelection = {
     instanceId,
     model: scenario?.model ?? (scripted ? "droid-native" : "default"),
+    ...(scenario?.options === undefined ? {} : { options: scenario.options }),
   };
   const runtimePolicy = {
     cwd: config.stateDir,
@@ -156,7 +171,7 @@ const harness = Effect.fnUntraced(function* (
     },
     sensitiveEnvironmentValues: scenario?.sensitiveValues ?? [],
     makeRuntime: (input) =>
-      makeDroidAcpRuntime({
+      (scenario?.makeRuntime ?? makeDroidAcpRuntime)({
         ...input,
         onTermination: (error) =>
           (input.onTermination?.(error) ?? Effect.void).pipe(
@@ -249,12 +264,13 @@ const harness = Effect.fnUntraced(function* (
     text = "Say hello",
     model = modelSelection.model,
     attachments: ReadonlyArray<ChatAttachment> = [],
+    options: ModelSelection["options"] = undefined,
   ) =>
     runtime.startTurn({
       appThread,
       threadId,
       providerThread,
-      modelSelection: { ...modelSelection, model },
+      modelSelection: { instanceId, model, ...(options === undefined ? {} : { options }) },
       runtimePolicy: { ...runtimePolicy, runtimeMode: mode, interactionMode },
       runId: RunId.make(`droid-run-${ordinal}`),
       runOrdinal: ordinal,
@@ -1881,4 +1897,237 @@ it.layer(testLayer, { excludeTestServices: true })("Droid native lifecycle", (it
       }),
     ),
   );
+});
+
+const customModelFixture = Effect.fnUntraced(function* (
+  defaultReasoningLevel: "high" | "minimal" = "high",
+) {
+  const instanceId = ProviderInstanceId.make("droid-v2-test");
+  const connections: ReadonlyArray<
+    ResolvedModelConnection & {
+      readonly apiKey: Redacted.Redacted<string>;
+      readonly credentialError?: never;
+    }
+  > = [
+    {
+      id: "fixture",
+      name: "Fixture",
+      protocol: "openai-completions",
+      baseUrl: "http://127.0.0.1:9/v1",
+      credentialId: "synthetic-key-id",
+      apiKey: Redacted.make("synthetic-native-custom-model-key"),
+      models: [
+        {
+          id: "model",
+          modelId: "fixture-model",
+          name: "Fixture",
+          contextWindow: 128000,
+          maxOutputTokens: 8192,
+          images: false,
+          reasoning: true,
+          instanceIds: [instanceId],
+          defaultReasoningLevel,
+          reasoningMetadata: {
+            status: "known",
+            source: "provider",
+            supported: true,
+            mode: "effort",
+            levels: ["minimal", "low", "medium", "high"],
+            defaultLevel: "medium",
+            stale: false,
+            checkedAt: "2026-10-04T00:00:00.000Z",
+          },
+        },
+      ],
+    },
+  ];
+  const changes = yield* PubSub.unbounded<typeof DEFAULT_SERVER_SETTINGS>();
+  const snapshot = () => ({
+    ...DEFAULT_SERVER_SETTINGS,
+    customModels: { revision: 0, connections },
+  });
+  const factory = yield* makeDroidCustomModelsRuntimeFactory(
+    {
+      committedCustomModels: () => snapshot().customModels,
+      resolveCustomModels: () => Effect.sync(() => connections),
+      subscribeChanges: PubSub.subscribe(changes).pipe(Effect.map(Stream.fromSubscription)),
+    },
+    instanceId,
+    makeDroidAcpRuntime,
+    () => Effect.succeed("overlay-hooks-allowed" as const),
+  );
+  const model = droidCustomModelId("fixture", "model");
+  const body = `
+    const settingsIndex = process.argv.indexOf("--settings");
+    const models = JSON.parse(fs.readFileSync(process.argv[settingsIndex + 1], "utf8")).customModels;
+    const originalOptions = options;
+    state.effort = "high";
+    options = () => [...originalOptions().map(option => option.id === "model" ? {...option, options: [...option.options, ...models.map(model => ({value: model.id, name: model.displayName}))]} : option),
+      ...(state.model.startsWith("custom:") ? [{id: "reasoning_effort", name: "Reasoning", category: "thought_level", type: "select", currentValue: state.effort, options: ["minimal", "low", "medium", "high"].map(value => ({value, name: value}))}] : [])];
+    onConfig = message => {if (message.params.configId === "reasoning_effort") state.effort = process.env.REPLACE_DEFAULT === "1" && message.params.value === "minimal" ? "low" : message.params.value;};
+    function onPrompt(message) {
+      update({sessionUpdate: "agent_message_chunk", content: {type: "text", text: state.model + ":" + state.effort}});
+      reply(message, {stopReason: "end_turn"});
+    }
+  `;
+  return { factory, model, body };
+});
+const notices = (h: Effect.Success<ReturnType<typeof harness>>) =>
+  h.recorded.flatMap((event) => {
+    if (event.type !== "turn_item.updated") return [];
+    const item = event.turnItem;
+    const summary =
+      item.type === "system_notice"
+        ? item.message
+        : item.type === "notification"
+          ? item.summary
+          : undefined;
+    return summary === undefined
+      ? []
+      : [{ id: item.id, runId: item.runId, providerTurnId: item.providerTurnId, summary }];
+  });
+
+it.layer(testLayer, { excludeTestServices: true })("Droid native custom model selection", (it) => {
+  it.effect(
+    "rejects text-only custom images before reading the file and reports loaded capacity",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const f = yield* customModelFixture();
+          const h = yield* harness(false, false, false, undefined, {
+            liveClock: true,
+            body: f.body,
+            model: f.model,
+            makeRuntime: f.factory,
+          });
+          assert.equal(
+            h.runtime.getModelContextWindow?.({ instanceId: h.runtime.instanceId, model: f.model }),
+            128000,
+          );
+          assert.isUndefined(
+            h.runtime.getModelContextWindow?.({
+              instanceId: h.runtime.instanceId,
+              model: "droid-native",
+            }),
+          );
+          assert.isUndefined(
+            h.runtime.getModelContextWindow?.({
+              instanceId: ProviderInstanceId.make("foreign"),
+              model: f.model,
+            }),
+          );
+          const rejected = yield* h
+            .send(1, "full-access", "default", "image", f.model, [
+              {
+                type: "image",
+                id: "absent-native-custom-image",
+                name: "absent.png",
+                mimeType: "image/png",
+                sizeBytes: 4,
+              },
+            ])
+            .pipe(Effect.result);
+          assert.equal(rejected._tag, "Failure");
+          if (rejected._tag === "Failure")
+            assert.include(
+              String(
+                rejected.failure._tag === "ProviderAdapterTurnStartError"
+                  ? rejected.failure.cause
+                  : rejected.failure,
+              ),
+              "does not support image",
+            );
+          assert.isFalse(
+            (yield* h.readLog!()).some((message) => message.method === "session/prompt"),
+          );
+          yield* h.send(2, "full-access", "default", "recover", f.model);
+          assert.equal((yield* h.terminal).status, "completed");
+        }),
+      ),
+  );
+  it.effect("preserves explicit and inherited native effort over the saved default", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* customModelFixture();
+        const h = yield* harness(false, false, false, undefined, {
+          liveClock: true,
+          body: f.body,
+          model: f.model,
+          makeRuntime: f.factory,
+          options: [{ id: "reasoningEffort", value: "low" }],
+        });
+        for (const [index, explicit] of [true, false, false].entries()) {
+          yield* h.send(
+            index + 1,
+            index === 2 ? "approval-required" : "full-access",
+            "default",
+            "effort",
+            f.model,
+            [],
+            explicit ? [{ id: "reasoningEffort", value: "low" }] : undefined,
+          );
+          assert.equal((yield* h.terminal).status, "completed");
+        }
+        assert.deepEqual(
+          [
+            ...new Map(
+              h.recorded.flatMap((event) =>
+                event.type === "message.updated" && event.message.role === "assistant"
+                  ? [[event.message.id, event.message.text] as const]
+                  : [],
+              ),
+            ).values(),
+          ],
+          Array(3).fill(f.model + ":low"),
+        );
+        assert.lengthOf(notices(h), 0);
+      }),
+    ),
+  );
+  for (const selected of ["unchanged", "effort", "model", "first-message"] as const) {
+    it.effect(`reports a replaced default only for the native prompt selection: ${selected}`, () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const f = yield* customModelFixture("minimal");
+          const initial = selected === "first-message" ? "droid-native" : f.model;
+          const h = yield* harness(false, false, false, undefined, {
+            liveClock: true,
+            body: f.body,
+            model: initial,
+            makeRuntime: f.factory,
+            environment: { REPLACE_DEFAULT: "1" },
+          });
+          const model = selected === "model" ? "droid-native" : f.model;
+          const effort = selected === "effort" ? "high" : "minimal";
+          for (const ordinal of [1, 2, 3]) {
+            yield* h.send(
+              ordinal,
+              "full-access",
+              "default",
+              "selected",
+              model,
+              [],
+              selected === "model" || ordinal === 3
+                ? undefined
+                : [{ id: "reasoningEffort", value: effort }],
+            );
+            assert.equal((yield* h.terminal).status, "completed");
+          }
+          assert.deepEqual(
+            notices(h).map((item) => item.summary),
+            selected === "effort" || selected === "model"
+              ? []
+              : ["Droid uses Low for this model instead of the configured default Minimal."],
+          );
+          assert.isTrue(
+            h.recorded.some(
+              (event) =>
+                event.type === "message.updated" &&
+                event.message.text === model + ":" + (selected === "effort" ? "high" : "low"),
+            ),
+          );
+        }),
+      ),
+    );
+  }
 });

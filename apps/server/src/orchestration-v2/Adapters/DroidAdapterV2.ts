@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import * as EffectAcpErrors from "effect-acp/errors";
 import {
   applyDroidModelAndEffort,
+  droidReplacedDefaultNotice,
   confirmDroidAutonomy,
   findSelectDroidConfigOption,
   makeDroidCredentialRedactor,
@@ -82,6 +83,14 @@ const isAcpProcessExitedError = Schema.is(EffectAcpErrors.AcpProcessExitedError)
 
 export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
   const runtimes = new WeakMap<object, DroidAcpRuntime>();
+  const effortNotices = new WeakMap<
+    object,
+    {
+      pending?: string | undefined;
+      notified?: string | undefined;
+      emit: (notice: { id: string; message: string }) => Effect.Effect<void>;
+    }
+  >();
   const redact = makeDroidCredentialRedactor({
     environment: options.environment,
     sensitiveValues: options.sensitiveEnvironmentValues,
@@ -118,6 +127,10 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
     },
     createToolPresentation: makeDroidToolPresentation,
     supportsImagePrompts: true,
+    modelSupportsImages: (runtime, selection) =>
+      runtimes.get(runtime)?.getImageSupport?.(selection.model),
+    modelContextWindow: (runtime, selection) =>
+      runtimes.get(runtime)?.getContextWindow?.(selection.model),
     supportsCompaction: true,
     terminalizeRunOwnedItemsOnFailure: true,
     terminateRuntimeProcessGroupOnInterrupt: true,
@@ -259,12 +272,33 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
               currentWatch = watch;
               const result = yield* Effect.gen(function* () {
                 const outcome = yield* Effect.raceFirst(
-                  runtime.prompt(request, dispatch).pipe(
-                    Effect.map((response) => ({
-                      _tag: "Completed" as const,
-                      response,
-                    })),
-                  ),
+                  runtime
+                    .prompt(request, {
+                      ...dispatch,
+                      onSend: (dispatch?.onSend ?? Effect.void).pipe(
+                        Effect.andThen(
+                          Effect.suspend(() => {
+                            const notice = effortNotices.get(wrapped);
+                            const message = notice?.pending;
+                            if (
+                              notice === undefined ||
+                              message === undefined ||
+                              message === notice.notified
+                            )
+                              return Effect.void;
+                            notice.pending = undefined;
+                            notice.notified = message;
+                            return notice.emit({ id: "droid-effort", message });
+                          }),
+                        ),
+                      ),
+                    })
+                    .pipe(
+                      Effect.map((response) => ({
+                        _tag: "Completed" as const,
+                        response,
+                      })),
+                    ),
                   Effect.gen(function* () {
                     while (true) {
                       yield* Effect.sleep(tickMillis);
@@ -345,6 +379,7 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
           },
         };
         runtimes.set(wrapped, runtime);
+        effortNotices.set(wrapped, { emit: input.onProviderNotice ?? (() => Effect.void) });
         return wrapped;
       }),
     beforeTurnStart: (runtime, policy) =>
@@ -366,11 +401,32 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
     applyModelSelection: ({ runtime, modelSelection }) =>
       Effect.gen(function* () {
         const droid = runtimes.get(runtime) ?? runtime;
-        yield* applyDroidModelAndEffort({
-          runtime: droid,
-          requestedModel: modelSelection.model === "default" ? undefined : modelSelection.model,
-          requestedEffort: getModelSelectionStringOptionValue(modelSelection, "reasoningEffort"),
-        });
+        const requestedModel =
+          modelSelection.model === "default" ? undefined : modelSelection.model;
+        const requestedEffort = getModelSelectionStringOptionValue(
+          modelSelection,
+          "reasoningEffort",
+        );
+        const currentModel = findSelectDroidConfigOption(yield* runtime.getConfigOptions, {
+          category: "model",
+          id: "model",
+        })?.currentValue;
+        if (
+          requestedEffort === undefined &&
+          (requestedModel === undefined || requestedModel === currentModel)
+        ) {
+          // An omitted choice on the same model preserves the conversation's
+          // native effort; only a new model gets its saved default.
+          yield* validateDroidReasoningState(droid);
+        } else {
+          const replaced = yield* applyDroidModelAndEffort({
+            runtime: droid,
+            requestedModel,
+            requestedEffort,
+          });
+          const notice = effortNotices.get(runtime);
+          if (notice) notice.pending = replaced && droidReplacedDefaultNotice(replaced);
+        }
         const model = findSelectDroidConfigOption(yield* runtime.getConfigOptions, {
           category: "model",
           id: "model",

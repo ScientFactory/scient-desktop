@@ -150,6 +150,10 @@ export interface AcpAdapterV2RuntimeInput {
     AcpSessionRuntime.AcpSessionRuntimeOptions["protocolLogging"]
   >;
   readonly onTermination: NonNullable<AcpSessionRuntime.AcpSessionRuntimeOptions["onTermination"]>;
+  readonly onProviderNotice?: (notice: {
+    readonly id: string;
+    readonly message: string;
+  }) => Effect.Effect<void>;
   readonly onOutgoingResponseFailure?: AcpSessionRuntime.AcpSessionRuntimeOptions["onOutgoingResponseFailure"];
   readonly onOutgoingResponse?: AcpSessionRuntime.AcpSessionRuntimeOptions["onOutgoingResponse"];
 }
@@ -227,6 +231,14 @@ export interface AcpAdapterV2ToolPresentation {
 export interface AcpAdapterV2Flavor {
   /** Interprets provider-specific prompt errors before they cross into orchestration. */
   readonly promptFailure?: (cause: unknown) => OrchestrationV2ProviderFailure;
+  readonly modelSupportsImages?: (
+    runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+    selection: ModelSelection,
+  ) => boolean | undefined;
+  readonly modelContextWindow?: (
+    runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+    selection: ModelSelection,
+  ) => number | undefined;
   readonly driver: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly clientCapabilitiesMeta?: Record<string, boolean>;
@@ -2110,6 +2122,38 @@ export function makeAcpAdapterV2(
                   updated,
                 ] as const;
               }).pipe(Effect.flatten),
+            onProviderNotice: (notice) =>
+              runRuntimeCallbackAtGeneration(
+                runtimeGeneration,
+                Effect.gen(function* () {
+                  const context = yield* Ref.get(activeTurn);
+                  if (context === null || context.finalized || context.interrupted) return;
+                  const now = yield* DateTime.now;
+                  const nativeItemId = `${context.providerTurnId}:provider-notice:${notice.id}`;
+                  yield* emitProviderEvent({
+                    type: "turn_item.updated",
+                    driver,
+                    turnItem: {
+                      id: idAllocator.derive.turnItemFromProviderItem({ driver, nativeItemId }),
+                      threadId: context.input.threadId,
+                      runId: context.input.runId,
+                      nodeId: context.input.rootNodeId,
+                      providerThreadId: context.input.providerThread.id,
+                      providerTurnId: context.providerTurnId,
+                      nativeItemRef: null,
+                      parentItemId: null,
+                      ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+                      startedAt: now,
+                      updatedAt: now,
+                      completedAt: now,
+                      type: "system_notice",
+                      status: "completed",
+                      title: null,
+                      message: notice.message,
+                    },
+                  });
+                }),
+              ).pipe(Effect.asVoid),
             onOutgoingResponse: (requestId) =>
               Ref.modify(nativeResponseAcknowledgements, (current) => {
                 const entry = current.get(requestId);
@@ -6762,6 +6806,15 @@ export function makeAcpAdapterV2(
           const imageAttachments = turnInput.message.attachments.filter(
             isProviderNativeImageAttachment,
           );
+          if (
+            imageAttachments.length > 0 &&
+            flavor.modelSupportsImages?.(runtime, turnInput.modelSelection) === false
+          ) {
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+              driver,
+              detail: "The selected model does not support image prompts.",
+            });
+          }
           if (imageAttachments.length > 0 && !supportsImagePrompts) {
             return yield* new ProviderAdapter.ProviderAdapterProtocolError({
               driver,
@@ -7352,6 +7405,14 @@ export function makeAcpAdapterV2(
           instanceId: options.instanceId,
           driver,
           providerSessionId: input.providerSessionId,
+          ...(flavor.modelContextWindow === undefined
+            ? {}
+            : {
+                getModelContextWindow: (selection: ModelSelection) =>
+                  selection.instanceId === options.instanceId
+                    ? flavor.modelContextWindow?.(runtime, selection)
+                    : undefined,
+              }),
           get providerSession() {
             return { ...providerSession, model: appliedSessionModel };
           },
