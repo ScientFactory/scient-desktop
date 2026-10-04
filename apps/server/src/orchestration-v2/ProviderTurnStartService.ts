@@ -1118,7 +1118,13 @@ export const layer: Layer.Layer<
         },
       ];
       const deliveredAttemptIds = new Set(
-        projection.providerTurns.map((turn) => turn.runAttemptId),
+        projection.providerTurns
+          // Pending/unknown offers are not native delivery receipts. Older
+          // canonical rows predate this field and retain their legacy meaning.
+          .filter(
+            (turn) => turn.nativeAcceptance === undefined || turn.nativeAcceptance === "accepted",
+          )
+          .map((turn) => turn.runAttemptId),
       );
       const missedRuns = projection.runs.filter(
         (source) =>
