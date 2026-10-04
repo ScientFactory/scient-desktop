@@ -187,6 +187,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
         environment: processEnv,
         spawner,
         fileSystem,
+        path: yield* Path.Path,
         idAllocator: yield* IdAllocator.IdAllocatorV2,
         serverConfig,
         makeConnection,

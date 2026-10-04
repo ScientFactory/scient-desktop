@@ -280,6 +280,14 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   }
 
   const client = createMcpClient(endpoint, token);
+  const registeredToolNames = new Set<string>();
+  // Pi obtains the native error flag from this hook, not execute's return value.
+  pi.on("tool_result", (event) => {
+    if (!registeredToolNames.has(event.toolName)) return;
+    const details = event.details;
+    if (typeof details === "object" && details !== null &&
+        "result" in details && isMcpToolError(details.result)) return { isError: true };
+  });
   let started: Promise<void> | undefined;
 
   const ensureStarted = () => {
@@ -292,6 +300,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
         const name = tool.name;
         const registeredName = \`mcp__t3-code__\${name}\`;
         const description = tool.description ?? name;
+        registeredToolNames.add(registeredName);
         pi.registerTool({
           name: registeredName,
           label: name,

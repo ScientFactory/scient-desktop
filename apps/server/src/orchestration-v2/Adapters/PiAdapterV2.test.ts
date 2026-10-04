@@ -29,6 +29,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -420,6 +421,7 @@ const makeAdapter = Effect.fnUntraced(function* (
               : fake.spawner.spawn(command),
           ),
     fileSystem,
+    path: yield* Path.Path,
     idAllocator,
     serverConfig,
   });

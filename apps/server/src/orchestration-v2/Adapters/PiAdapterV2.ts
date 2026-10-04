@@ -6,8 +6,8 @@ import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
  * Design intent: honor the user's Pi customizations. The process is spawned
  * with no `--no-*` flags, so the user's extensions, skills, prompt templates,
  * AGENTS.md / SYSTEM.md context, settings.json, custom models, and auth all
- * load exactly as they do in the `pi` TUI. Sessions are stored by Pi itself
- * (default `~/.pi/agent/sessions/`), and the session file path is the durable
+ * load exactly as they do in the `pi` TUI. Pi writes sessions into the
+ * configured instance's private session directory; the file path is the durable
  * `nativeThreadRef`, so a thread started in T3 can be resumed from the TUI
  * and vice versa.
  *
@@ -56,11 +56,17 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import {
+  allocateFreshPiSessionFile,
+  piInstanceStateRoot,
+} from "../../provider/pi/PiSessionFile.ts";
+import { randomUuidV4 } from "../RandomUuid.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
@@ -238,6 +244,7 @@ export interface PiAdapterV2Options {
   readonly environment: NodeJS.ProcessEnv;
   readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly fileSystem: FileSystem.FileSystem;
+  readonly path: Path.Path;
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly serverConfig: ServerConfig.ServerConfig["Service"];
   readonly makeConnection?: typeof makePiRpcConnection;
@@ -451,9 +458,34 @@ export function makePiAdapterV2(
         extensionPath,
         runtimeMode: input.runtimePolicy.runtimeMode,
       });
+      // Pi lazily creates its default session file. An owned empty file lets
+      // Pi write the native header before an empty thread is published.
+      const initialSessionFile =
+        input.initialNativeThreadId ??
+        (yield* piInstanceStateRoot({
+          stateDir: options.serverConfig.stateDir,
+          instanceId: options.instanceId,
+        }).pipe(
+          Effect.flatMap((stateRoot) =>
+            randomUuidV4.pipe(
+              Effect.flatMap((fileId) => allocateFreshPiSessionFile({ stateRoot, fileId })),
+            ),
+          ),
+          Effect.map((fresh) => fresh.sessionFile),
+          Effect.provideService(Path.Path, options.path),
+          Effect.provideService(FileSystem.FileSystem, options.fileSystem),
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapter.ProviderAdapterOpenSessionError({
+                driver: PI_PROVIDER,
+                providerSessionId: input.providerSessionId,
+                cause,
+              }),
+          ),
+        ));
       const connection: PiRpcConnection = yield* (options.makeConnection ?? makePiRpcConnection)({
         command: options.settings.binaryPath || "pi",
-        args: launch.args,
+        args: [...launch.args, "--session", initialSessionFile],
         cwd,
         env: launch.env,
       }).pipe(
@@ -3324,6 +3356,8 @@ function piQuestion(
         ? question
         : `${question}\n\nCurrent value:\n${prefill.slice(0, 2_000)}`,
     options,
+    multiSelect: false,
+    allowCustomAnswer: method === "input" || method === "editor",
   };
 }
 
@@ -3353,6 +3387,7 @@ function piUiResponse(
 export type PiAdapterV2DriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
+  | Path.Path
   | IdAllocator.IdAllocatorV2
   | ServerConfig.ServerConfig;
 
@@ -3373,6 +3408,7 @@ export const PiAdapterV2Driver: ProviderAdapterDriver<PiSettings, PiAdapterV2Dri
         environment: mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
         spawner,
         fileSystem,
+        path: yield* Path.Path,
         idAllocator,
         serverConfig,
       });
