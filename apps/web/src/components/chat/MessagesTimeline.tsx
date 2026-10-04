@@ -376,10 +376,11 @@ function TimelineLoadEarlierHeader({
     </div>
   );
 }
-// A thread's first prompt rises into place as the composer lands.
+// A thread's first prompt is revealed from the top down as the composer lands.
+// Clip and opacity only: a transform would shift where the reveal measures it.
 const PROMPT_ENTRANCE_KEYFRAMES: Keyframe[] = [
-  { opacity: 0, transform: "translateY(16px)" },
-  { opacity: 1, transform: "none" },
+  { opacity: 0, clipPath: "inset(0 0 100% 0)" },
+  { opacity: 1, clipPath: "inset(0 0 0 0)" },
 ];
 const PROMPT_ENTRANCE_TIMING: KeyframeAnimationOptions = { duration: 300, delay: 100 };
 // The working line draws in from the left while it fades to its color; its label fades in.

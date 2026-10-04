@@ -184,6 +184,12 @@ import {
 } from "./chat/timelineScrollAnchoring";
 import { useScientThreadFork, type ForkSource } from "./scient-fork/useScientThreadFork";
 import {
+  nextTurnStartWait,
+  resolveTimelineWorking,
+  TURN_START_BRIDGE_MS,
+  type TurnStartWait,
+} from "./chat/timelineWorkingState";
+import {
   ScientForkDialog,
   type ForkWorktreeAvailability,
   type ScientForkSource,
@@ -3710,6 +3716,53 @@ function ChatViewContent(props: ChatViewProps) {
     localDispatchStartedAt,
     latestUserMessageAt,
   );
+  // The timeline's working state stays continuous through a send: not ahead of
+  // its prompt, and not dropping out between the server's acknowledgement and a
+  // session picking the turn up.
+  const sessionWorking = phase === "running" || isConnecting;
+  const latestTurnCompletedAt = activeLatestTurn?.completedAt ?? null;
+  const [turnStartWait, setTurnStartWait] = useState<TurnStartWait>(() => ({
+    threadKey: routeThreadKey,
+    sendBusy: isSendBusy,
+    sendStartedAt: localDispatchStartedAt,
+    turnCompletedAt: latestTurnCompletedAt,
+    awaiting: false,
+  }));
+  const nextWait = nextTurnStartWait(turnStartWait, {
+    threadKey: routeThreadKey,
+    sendBusy: isSendBusy,
+    sendStartedAt: localDispatchStartedAt,
+    turnCompletedAt: latestTurnCompletedAt,
+    sessionWorking,
+    failed: Boolean(threadError),
+  });
+  if (nextWait !== turnStartWait) setTurnStartWait(nextWait);
+  const awaitingTurnStart = nextWait.awaiting;
+  useEffect(() => {
+    if (!awaitingTurnStart) return;
+    // Bounded: a turn no session picks up is a failed start, not work.
+    const timeout = window.setTimeout(
+      () => setTurnStartWait((wait) => (wait.awaiting ? { ...wait, awaiting: false } : wait)),
+      TURN_START_BRIDGE_MS,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [awaitingTurnStart]);
+  const timelineWorking = resolveTimelineWorking({
+    isWorking: isOriginWorking,
+    onlySendBusy:
+      isSendBusy &&
+      !sessionWorking &&
+      !isRevertingCheckpoint &&
+      !isCompacting &&
+      !isPreparingWorktree,
+    sentPromptShown:
+      localDispatchStartedAt === null ||
+      (latestUserMessageAt !== null && latestUserMessageAt >= localDispatchStartedAt) ||
+      optimisticUserMessages.some(
+        (message) => !message.queueAdmission && message.createdAt >= localDispatchStartedAt,
+      ),
+    awaitingTurnStart,
+  });
   useEffect(() => {
     attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
   }, [attachmentPreviewHandoffByMessageId]);
@@ -9341,6 +9394,9 @@ function ChatViewContent(props: ChatViewProps) {
             settleQueueAdmissionPreview(existing, messageIdForSend, queued),
           );
           if (queued) {
+            // Queued after all: its delivery is a queued arrival, not this send.
+            locallySentPromptIdsRef.current.delete(messageIdForSend);
+            queuedPromptIdsRef.current.add(messageIdForSend);
             resetLocalDispatch();
             void threadQueue.refresh();
           } else {
@@ -10938,7 +10994,7 @@ function ChatViewContent(props: ChatViewProps) {
                       ...(activeProject ? { onRunShellCommand: runShellCommand } : {}),
                     }
                   : {})}
-                isWorking={!paintOnlyDisplayedTimeline && isOriginWorking}
+                isWorking={!paintOnlyDisplayedTimeline && timelineWorking}
                 isPreparingWorktree={!paintOnlyDisplayedTimeline && isPreparingWorktree}
                 isCompacting={!paintOnlyDisplayedTimeline && isCompacting}
                 activeTurnStartedAt={paintOnlyDisplayedTimeline ? null : activeWorkStartedAt}

@@ -87,6 +87,7 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import { parseComposerCitationHref } from "@t3tools/shared/composerCitations";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
+import { useStreamingBlockEntrance } from "./chat/useStreamingBlockEntrance";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
 import remarkGfm from "remark-gfm";
 import { remarkGithubAlerts } from "../markdown-github-alerts";
@@ -2223,6 +2224,7 @@ function useChatMarkdownState({
   const { resolvedTheme } = useTheme();
   const [localMediaPreview, setLocalMediaPreview] = useState<ExpandedImagePreview | null>(null);
   const markdownRef = useRef<HTMLDivElement>(null);
+  useStreamingBlockEntrance(markdownRef, isStreaming);
   const expandMedia = onImageExpand ?? setLocalMediaPreview;
   const mediaRequestId = useRef(0);
   useEffect(() => {

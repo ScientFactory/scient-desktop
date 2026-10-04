@@ -19,11 +19,16 @@ navigation, saved positions and idle end keeping: at most the answer's last thre
 lines hidden, in its own line height, never less than the inherited 40-pixel band.
 Send motion (Scient): the draft hero composer's move to the thread always animates
 (`DRAFT_HERO_TRANSITION_DURATION_MS`, decelerating curve), not only with the opt-in panel
-animation setting; reduced motion skips it. A first prompt being placed rises and fades in
-on the same curve, and the "Working for" line draws in from the left once per prompt
-(`chat/timelineEntranceMotion.ts`; played entrances never replay on row remount).
-Preserve the existing first-message framing. Eligible sends, and queued prompts the server delivers (`queue:` ids) while
-the reader is at the end, reveal the prompt and the start of its response's latest
+animation setting; reduced motion skips it. A first prompt being placed is revealed top-down
+and fades in on the same curve (clip and opacity only, never a transform, so the reveal's
+measurements hold), and the "Working for" line draws in from the left once per prompt
+(`chat/timelineEntranceMotion.ts`; played entrances never replay on row remount). While an
+answer streams, each new block fades in top-down (`chat/useStreamingBlockEntrance.ts`). The
+timeline's working state (`chat/timelineWorkingState.ts`) is held back until a send's prompt
+is listed and bridged from the server's acknowledgement until a session starts the turn.
+Preserve the existing first-message framing. Eligible sends, and queued prompts the server delivers while
+the reader is at the end (a prompt this window saw waiting in the queue: the server keeps a
+queued prompt's `qitem_` message id, else derives `queue:<item>`), reveal the prompt and the start of its response's latest
 message through `chat/useBoundedAnswerFollow.ts` (for a later prompt, `followResponse`
 follows the whole response's end, traces and tools included, at a calmer pace): capped at the prompt's first line
 reaching the top margin, past it only to show a message pushed below the fold, never

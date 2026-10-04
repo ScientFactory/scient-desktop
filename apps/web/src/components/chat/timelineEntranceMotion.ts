@@ -3,9 +3,17 @@ import { DRAFT_HERO_TRANSITION_EASING } from "./draftHeroTransition";
 
 /**
  * Entrances already played. The list remounts rows that scroll out of view
- * and back; a played entrance never replays.
+ * and back; a played entrance never replays. Bounded: the oldest are dropped,
+ * long after their rows could still be entering.
  */
 const playedEntrances = new Set<string>();
+const MAX_PLAYED_ENTRANCES = 200;
+function markPlayed(key: string) {
+  playedEntrances.add(key);
+  if (playedEntrances.size <= MAX_PLAYED_ENTRANCES) return;
+  const oldest = playedEntrances.values().next().value;
+  if (oldest !== undefined) playedEntrances.delete(oldest);
+}
 
 /**
  * A ref callback that plays an entrance on the element the first time `key`
@@ -20,7 +28,7 @@ export function useEntranceMotion(
   return useCallback(
     (element: HTMLElement | null) => {
       if (!element || key === null || playedEntrances.has(key)) return;
-      playedEntrances.add(key);
+      markPlayed(key);
       if (
         typeof element.animate !== "function" ||
         window.matchMedia?.("(prefers-reduced-motion: reduce)").matches

@@ -80,7 +80,17 @@ afterEach(() => {
 });
 
 const animationsOf = (element: Element | null | undefined) =>
-  element ? element.getAnimations().filter((animation) => animation.playState !== "finished") : [];
+  element
+    ? element
+        .getAnimations()
+        // Script entrances only, not the stylesheet's own transitions.
+        .filter(
+          (animation) =>
+            !(animation instanceof CSSTransition) &&
+            !(animation instanceof CSSAnimation) &&
+            animation.playState !== "finished",
+        )
+    : [];
 const working = { isWorking: true, runningTurnId: TurnId.make("turn-1") };
 
 it("draws the working line in once per prompt, not again when its row remounts", async () => {
@@ -118,8 +128,43 @@ it("plays the entrance for a first prompt being placed, and for no other prompt"
     host!.querySelector(`[data-message-id="${id}"] .group.flex.flex-col.items-end`);
   await expect.poll(() => bubble(first.message.id)).not.toBeNull();
   expect(animationsOf(bubble(first.message.id))).toHaveLength(1);
+  // Its row remounts while it is still being placed: no replay.
+  render("motion:elsewhere", [entry(60, "Elsewhere")]);
+  await frames(4);
+  render("motion:first", [first], {
+    anchorMessageId: first.message.id,
+    timelinePositioningPending: true,
+  });
+  await expect.poll(() => bubble(first.message.id)).not.toBeNull();
+  expect(animationsOf(bubble(first.message.id))).toHaveLength(0);
   const later = entry(2, "Later question");
   render("motion:first", [first, later], { anchorMessageId: first.message.id });
   await expect.poll(() => bubble(later.message.id)).not.toBeNull();
   expect(animationsOf(bubble(later.message.id))).toHaveLength(0);
+});
+
+it("fades each new paragraph of a streaming answer in, once, and nothing else", async () => {
+  const prompt = entry(1, "Question");
+  const answer = (text: string, streaming: boolean) => ({
+    ...entry(2, text),
+    message: { ...entry(2, text).message, role: "assistant" as const, streaming },
+  });
+  const paragraphs = () =>
+    Array.from(host!.querySelectorAll('[data-message-role="assistant"] .chat-markdown p'));
+  render("motion:stream", [prompt, answer("First paragraph.", true)], working);
+  await expect.poll(() => paragraphs().length).toBe(1);
+  // Text already shown when the message mounts does not animate.
+  expect(animationsOf(paragraphs()[0])).toHaveLength(0);
+  render("motion:stream", [prompt, answer("First paragraph.\n\nSecond paragraph.", true)], working);
+  await expect.poll(() => paragraphs().length).toBe(2);
+  expect(animationsOf(paragraphs()[0])).toHaveLength(0);
+  expect(animationsOf(paragraphs()[1])).toHaveLength(1);
+  // A finished message's changes never animate.
+  render(
+    "motion:stream",
+    [prompt, answer("First paragraph.\n\nSecond paragraph.\n\nThird paragraph.", false)],
+    { isWorking: false },
+  );
+  await expect.poll(() => paragraphs().length).toBe(3);
+  expect(animationsOf(paragraphs()[2])).toHaveLength(0);
 });
