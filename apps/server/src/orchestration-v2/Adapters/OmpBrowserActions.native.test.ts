@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import type { OmpRpcFrameTrace } from "effect-omp-rpc/client";
 import { ompTarget } from "../../provider/omp/OmpTarget.ts";
 import { nativeOmpSession } from "../../provider/testUtils/nativeOmpSession.ts";
 import { scriptedOmpRpc } from "../../provider/testUtils/scriptedOmpRpc.ts";
@@ -29,6 +30,7 @@ it.live(
         const instanceId = ProviderInstanceId.make("native-browser-instance");
         const peer = scriptedOmpRpc({ models: [], initial: { provider: "test", id: "selected" } });
         const logs: unknown[] = [];
+        let frameTrace: ((trace: OmpRpcFrameTrace) => Effect.Effect<void>) | undefined;
         const session = yield* nativeOmpSession({
           root,
           stateDir: NodePath.join(root, "state"),
@@ -39,7 +41,10 @@ it.live(
           binaryPath: "synthetic-omp",
           environment: { HOME: root },
           modelSelection: { instanceId, model: "test/selected" },
-          makeProcess: peer.makeProcess,
+          makeProcess: (options) => {
+            frameTrace = options.onFrame;
+            return peer.makeProcess(options);
+          },
           nativeEventLogger: {
             filePath: "synthetic-browser-log",
             write: (value) =>
@@ -64,19 +69,27 @@ it.live(
               if (predicate(event)) return event;
             }
           }).pipe(Effect.timeout("3 seconds"));
+        // The RPC decoder currently traces only response/ready frames. Exercise the
+        // configured raw-frame callback explicitly, then send the same browser frame
+        // through JSONL to qualify the interpreted notification and canonical item.
+        const browser = (frame: OmpRpcFrameTrace["frame"]) =>
+          Effect.suspend(() => {
+            if (!frameTrace) return Effect.die("Native frame logger is not configured");
+            return frameTrace({ direction: "inbound", frame }).pipe(
+              Effect.andThen(peer.emit([frame])),
+            );
+          });
         yield* session.start({ text: "Open the browser" });
         yield* peer.promptDelivered();
-        yield* peer.emit([
-          { type: "agent_start" },
-          {
-            type: "extension_ui_request",
-            method: "open_url",
-            url: "https://user:password@example.com/authorize?state=oauth-state#fragment",
-            launchUrl: "http://127.0.0.1:43199/launch?code=launch-code#private",
-            instructions:
-              "Open https://user:password@example.com/authorize?code=instruction-code#instruction-fragment then wait for browser approval.",
-          },
-        ]);
+        yield* peer.emit([{ type: "agent_start" }]);
+        yield* browser({
+          type: "extension_ui_request",
+          method: "open_url",
+          url: "https://user:password@example.com/authorize?state=oauth-state#fragment",
+          launchUrl: "http://127.0.0.1:43199/launch?code=launch-code#private",
+          instructions:
+            "Open https://user:password@example.com/authorize?code=instruction-code#instruction-fragment then wait for browser approval.",
+        });
         const receipt = yield* take(
           (event) =>
             event.type === "turn_item.updated" &&
@@ -107,6 +120,83 @@ it.live(
           "instruction-fragment",
         ])
           expect(persisted.includes(secret), secret).toBe(false);
+        const punctuated =
+          "https://example.com/authorize?state=left(right)&code=browser-code-canary#browser-fragment-canary";
+        yield* browser({
+          type: "extension_ui_request",
+          method: "open_url",
+          url: punctuated,
+          launchUrl: punctuated,
+          instructions: `Open ${punctuated} then wait. פתיחה ☃`,
+        });
+        const punctuationReceipt = yield* take(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.id !== receipt.turnItem.id &&
+            event.turnItem.title === "Oh My Pi requests a URL",
+        );
+        if (
+          punctuationReceipt.type !== "turn_item.updated" ||
+          punctuationReceipt.turnItem.type !== "dynamic_tool"
+        )
+          return yield* Effect.die("Missing punctuation browser receipt");
+        expect(punctuationReceipt.turnItem.input).toEqual({
+          kind: "open-url",
+          url: "https://example.com/authorize",
+          launchUrl: "https://example.com/authorize",
+        });
+        expect(punctuationReceipt.turnItem.output).toBe(
+          "Open https://example.com/authorize then wait. פתיחה ☃",
+        );
+        const publicUrl = "https://example.com/authorize(public)";
+        yield* browser({
+          type: "extension_ui_request",
+          method: "open_url",
+          url: publicUrl,
+          launchUrl: publicUrl,
+          instructions: `Open ${publicUrl} then wait. פתיחה ☃`,
+        });
+        const publicReceipt = yield* take(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.id !== receipt.turnItem.id &&
+            event.turnItem.id !== punctuationReceipt.turnItem.id &&
+            event.turnItem.title === "Oh My Pi requests a URL",
+        );
+        if (
+          publicReceipt.type !== "turn_item.updated" ||
+          publicReceipt.turnItem.type !== "dynamic_tool"
+        )
+          return yield* Effect.die("Missing public browser receipt");
+        expect(publicReceipt.turnItem.input).toEqual({
+          kind: "open-url",
+          url: publicUrl,
+          launchUrl: publicUrl,
+        });
+        expect(publicReceipt.turnItem.output).toBe(`Open ${publicUrl} then wait. פתיחה ☃`);
+        for (const secret of ["left(right)", "browser-code-canary", "browser-fragment-canary"])
+          expect(encodeJson({ events, logs }).includes(secret), secret).toBe(false);
+        for (const kind of ["response", "notification"]) {
+          const browserLogs = logs.filter((record) => {
+            if (typeof record !== "object" || record === null || !("event" in record)) return false;
+            const event = record.event;
+            return (
+              typeof event === "object" &&
+              event !== null &&
+              "kind" in event &&
+              event.kind === kind &&
+              "method" in event &&
+              event.method === "extension_ui_request"
+            );
+          });
+          expect(browserLogs, kind).toHaveLength(3);
+          expect(encodeJson(browserLogs)).toContain(publicUrl);
+          expect(encodeJson(browserLogs)).toContain("פתיחה ☃");
+          for (const secret of ["left(right)", "browser-code-canary", "browser-fragment-canary"])
+            expect(encodeJson(browserLogs).includes(secret), `${kind}: ${secret}`).toBe(false);
+        }
         expect(peer.state.frames.some((frame) => frame.type === "extension_ui_response")).toBe(
           false,
         );

@@ -253,35 +253,37 @@ export const scriptedOmpRpc = (input: {
             return respond(frame, {});
         }
       };
-      const client = yield* makeOmpRpcClient({
-        ...(options.onFrame ? { onFrame: options.onFrame } : {}),
-        stdout: Stream.fromQueue(stdout),
-        write: (bytes) =>
-          Effect.forEach(
-            decoder
-              .decode(bytes)
-              .split("\n")
-              .filter((text) => text.trim().length > 0),
-            (text) => {
-              const frame = decodeJson(text) as Frame;
-              const answer = reply(frame, Buffer.byteLength(text) + 1);
-              return Effect.forEach(
-                (input.beforeReply?.(frame) ?? []).map(line),
-                (bytes) => Queue.offer(stdout, bytes),
-                { discard: true },
-              ).pipe(
-                Effect.andThen(input.holdReply?.(frame) ?? Effect.void),
-                Effect.andThen(
-                  input.silentReply?.(frame) ? Effect.void : Queue.offer(stdout, answer),
-                ),
-                Effect.andThen(
-                  frame.type === "prompt" ? Queue.offer(delivered, undefined) : Effect.void,
-                ),
-              );
-            },
-            { discard: true },
-          ),
-      });
+      const client = yield* makeOmpRpcClient(
+        {
+          stdout: Stream.fromQueue(stdout),
+          write: (bytes) =>
+            Effect.forEach(
+              decoder
+                .decode(bytes)
+                .split("\n")
+                .filter((text) => text.trim().length > 0),
+              (text) => {
+                const frame = decodeJson(text) as Frame;
+                const answer = reply(frame, Buffer.byteLength(text) + 1);
+                return Effect.forEach(
+                  (input.beforeReply?.(frame) ?? []).map(line),
+                  (bytes) => Queue.offer(stdout, bytes),
+                  { discard: true },
+                ).pipe(
+                  Effect.andThen(input.holdReply?.(frame) ?? Effect.void),
+                  Effect.andThen(
+                    input.silentReply?.(frame) ? Effect.void : Queue.offer(stdout, answer),
+                  ),
+                  Effect.andThen(
+                    frame.type === "prompt" ? Queue.offer(delivered, undefined) : Effect.void,
+                  ),
+                );
+              },
+              { discard: true },
+            ),
+        },
+        options.onFrame ? { onFrame: options.onFrame } : {},
+      );
       yield* (input.readyDelay ?? Effect.void).pipe(
         Effect.andThen(
           Queue.offer(

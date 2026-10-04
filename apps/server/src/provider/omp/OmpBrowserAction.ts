@@ -12,14 +12,20 @@ export const browserActionUrl = (value: string | undefined): string | undefined 
 };
 
 export const browserActionText = (value: string) =>
-  value.replace(/https?:\/\/[^\s<>"')\]]+/giu, (url) => browserActionUrl(url) ?? "[invalid URL]");
+  // Query punctuation is part of the URL: splitting there can leave an OAuth tail intact.
+  value.replace(/https?:\/\/[^\s<>]+/giu, (url) => browserActionUrl(url) ?? "[invalid URL]");
 
 const safeBrowserValue = (value: unknown): unknown => {
   if (typeof value === "string") return browserActionText(value);
   if (Array.isArray(value)) return value.map(safeBrowserValue);
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(
-    Object.entries(value).map(([key, item]) => [key, safeBrowserValue(item)]),
+    Object.entries(value).map(([key, item]) => [
+      key,
+      (key === "url" || key === "launchUrl") && typeof item === "string"
+        ? (browserActionUrl(item) ?? "[invalid URL]")
+        : safeBrowserValue(item),
+    ]),
   );
 };
 
