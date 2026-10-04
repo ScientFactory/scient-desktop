@@ -9,6 +9,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  TurnItemId,
   type RunId,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -54,7 +55,12 @@ const frameJson = Schema.fromJsonString(Schema.Unknown);
 const encodeFrame = Schema.encodeEffect(frameJson);
 const decodeFrame = Schema.decodeEffect(frameJson);
 
-for (const recovery of ["missed native receipt", "portable resume fallback"] as const) {
+for (const recovery of [
+  "missed native receipt",
+  "portable resume fallback",
+  "recovery projection",
+  "displaced recovery owner",
+] as const) {
   it.live(
     `${recovery}: history preparation failure never becomes an orphan running attempt and retains the queued payload for explicit retry`,
     () =>
@@ -173,6 +179,41 @@ for (const recovery of ["missed native receipt", "portable resume fallback"] as 
             const queued = admitted.runs.find((run) => run.userMessageId === queuedMessageId);
             assert.ok(foreground);
             assert.ok(queued);
+            const recoveryRead =
+              recovery === "recovery projection" || recovery === "displaced recovery owner";
+            if (recoveryRead) {
+              const now = yield* DateTime.now;
+              yield* eventSink.write({
+                events: [
+                  {
+                    id: yield* allocator.allocate.event({ threadId }),
+                    type: "turn-item.updated",
+                    threadId,
+                    runId: foreground.id,
+                    occurredAt: now,
+                    payload: {
+                      id: TurnItemId.make("retained-pending-background-tool"),
+                      threadId,
+                      runId: foreground.id,
+                      nodeId: null,
+                      providerThreadId: foreground.providerThreadId,
+                      providerTurnId: null,
+                      nativeItemRef: null,
+                      parentItemId: null,
+                      ordinal: 50,
+                      status: "running",
+                      title: "Retained background tool",
+                      startedAt: now,
+                      completedAt: null,
+                      updatedAt: now,
+                      type: "dynamic_tool",
+                      toolName: "retained_background_tool",
+                      input: { diagnostic: "disposable recovery fixture" },
+                    },
+                  },
+                ],
+              });
+            }
             yield* orchestrator.dispatch({
               type: "run.interrupt",
               commandId: CommandId.make("history-failure-stop"),
@@ -210,23 +251,88 @@ for (const recovery of ["missed native receipt", "portable resume fallback"] as 
             const [history] = yield* sql<{ turn_item_id: string; payload_json: string }>`
         SELECT turn_item_id, payload_json FROM orchestration_v2_projection_turn_items
         WHERE thread_id = ${threadId} AND run_id = ${foreground.id}
-          AND type = 'run_interrupt_result'`;
+          AND type = ${recoveryRead ? "dynamic_tool" : "run_interrupt_result"}`;
             assert.ok(history);
             // Fail the real typed history decoder without affecting current execution
             // metadata, and retain the original bytes for a controlled recovery.
-            yield* sql`UPDATE orchestration_v2_projection_turn_items SET payload_json = '{}'
+            if (!recoveryRead) {
+              yield* sql`UPDATE orchestration_v2_projection_turn_items SET payload_json = '{}'
         WHERE thread_id = ${threadId} AND turn_item_id = ${history.turn_item_id}`;
+            }
             yield* orchestrator.dispatch({
               type: "queue.resume",
               threadId,
               runId: queued.id,
               commandId: CommandId.make("history-failure-resume"),
             });
+            if (recoveryRead) {
+              yield* sql`UPDATE orchestration_v2_projection_turn_items SET payload_json = '{}'
+        WHERE thread_id = ${threadId} AND turn_item_id = ${history.turn_item_id}`;
+            }
             const [start] = yield* sql<{ effect_id: string }>`
         SELECT effect_id FROM orchestration_v2_effect_outbox
         WHERE thread_id = ${threadId} AND effect_type = 'provider-turn.start' AND status = 'pending'`;
             assert.ok(start);
+            let replacementAttemptId: typeof queued.activeAttemptId | undefined;
+            const replacementEffectId = "history-failure-current-owner-start";
             for (let attempt = 1; attempt <= 5; attempt += 1) {
+              if (attempt === 5 && recovery === "displaced recovery owner") {
+                const current = yield* orchestrator.getThreadRecords(threadId, [
+                  "runs",
+                  "attempts",
+                ]);
+                const currentRun = current.runs.find((run) => run.id === queued.id);
+                const oldAttempt = current.attempts.find(
+                  (entry) => entry.id === queued.activeAttemptId,
+                );
+                assert.ok(currentRun && oldAttempt);
+                replacementAttemptId = allocator.derive.runAttempt({
+                  runId: queued.id,
+                  attemptOrdinal: oldAttempt.attemptOrdinal + 1,
+                });
+                const now = yield* DateTime.now;
+                yield* eventSink.writeWithEffects({
+                  events: [
+                    {
+                      id: yield* allocator.allocate.event({ threadId }),
+                      type: "run-attempt.updated",
+                      threadId,
+                      runId: queued.id,
+                      occurredAt: now,
+                      payload: {
+                        ...oldAttempt,
+                        id: replacementAttemptId,
+                        attemptOrdinal: oldAttempt.attemptOrdinal + 1,
+                        reason: "retry",
+                        status: "pending",
+                        startedAt: null,
+                        completedAt: null,
+                      },
+                    },
+                    {
+                      id: yield* allocator.allocate.event({ threadId }),
+                      type: "run.updated",
+                      threadId,
+                      runId: queued.id,
+                      occurredAt: now,
+                      payload: { ...currentRun, activeAttemptId: replacementAttemptId },
+                    },
+                  ],
+                  effects: [
+                    {
+                      id: replacementEffectId,
+                      commandId: CommandId.make("history-failure-current-owner"),
+                      threadId,
+                      availableAt: DateTime.add(now, { hours: 1 }),
+                      request: {
+                        type: "provider-turn.start",
+                        runId: queued.id,
+                        expectedAttemptId: replacementAttemptId,
+                      },
+                    },
+                  ],
+                });
+              }
               // Make only the recorded retry deadline due. The real worker still owns
               // claiming, attempts, execution and settlement; no fixed sleep is proof.
               yield* sql`UPDATE orchestration_v2_effect_outbox SET available_at = created_at
@@ -252,6 +358,58 @@ for (const recovery of ["missed native receipt", "portable resume fallback"] as 
                 assert.isEmpty(current.providerTurns);
               }
               assert.equal(nativeOffers, 0);
+            }
+            if (replacementAttemptId !== undefined) {
+              const current = yield* orchestrator.getThreadRecords(
+                threadId,
+                ["runs", "attempts", "nodes", "messages", "providerTurns"],
+                { turnItemTypes: [] },
+              );
+              const currentRun = current.runs.find((run) => run.id === queued.id);
+              assert.equal(currentRun?.activeAttemptId, replacementAttemptId);
+              assert.equal(currentRun?.status, "starting");
+              assert.equal(
+                current.attempts.find((entry) => entry.id === replacementAttemptId)?.status,
+                "pending",
+              );
+              assert.equal(
+                current.attempts.find((entry) => entry.id === queued.activeAttemptId)?.status,
+                "pending",
+              );
+              assert.equal(
+                current.nodes.find((node) => node.id === queued.rootNodeId)?.status,
+                "pending",
+              );
+              assert.isEmpty(current.providerTurns);
+              const retained = current.messages.find((message) => message.id === queuedMessageId);
+              assert.equal(retained?.text, "Retained queued history payload");
+              assert.deepEqual(retained?.attachments, [attachment]);
+              assert.deepEqual(retained?.selectedScientSkillNames, ["retained-selection"]);
+              const pending = yield* outbox.get(replacementEffectId);
+              assert.ok(Option.isSome(pending));
+              assert.equal(pending.value.attemptCount, 0);
+              assert.equal(pending.value.status, "pending");
+              yield* sql`UPDATE orchestration_v2_projection_turn_items SET payload_json = ${history.payload_json}
+                WHERE thread_id = ${threadId} AND turn_item_id = ${history.turn_item_id}`;
+              yield* sql`UPDATE orchestration_v2_effect_outbox SET available_at = created_at WHERE effect_id = ${replacementEffectId}`;
+              yield* worker.drain(8);
+              assert.include(
+                yield* Deferred.await(nativeOffer).pipe(Effect.timeout("15 seconds")),
+                "Retained queued history payload",
+              );
+              assert.equal(nativeOffers, 1);
+              const started = yield* orchestrator.getThreadRecords(threadId, [
+                "runs",
+                "attempts",
+                "providerTurns",
+              ]);
+              assert.equal(
+                started.runs.find((run) => run.id === queued.id)?.activeAttemptId,
+                replacementAttemptId,
+              );
+              assert.equal(started.runs.find((run) => run.id === queued.id)?.status, "running");
+              yield* yield* Deferred.await(nativeFinish);
+              return;
             }
             const cursor = yield* orchestrator.getThreadEventSequence(threadId);
             const pull = yield* Stream.toPull(
@@ -292,6 +450,44 @@ for (const recovery of ["missed native receipt", "portable resume fallback"] as 
               "pending",
             );
             assert.isEmpty(held.value.providerTurns);
+            const failedItems = yield* orchestrator.getThreadRecords(threadId, ["turnItems"], {
+              turnItemRunIds: [queued.id],
+            });
+            assert.ok(
+              failedItems.turnItems.some(
+                (item) =>
+                  item.type === "error" &&
+                  item.nodeId === queued.rootNodeId &&
+                  item.title ===
+                    (recoveryRead
+                      ? "Provider recovery state could not be prepared"
+                      : "Provider history could not be prepared"),
+              ),
+            );
+            if (recoveryRead) {
+              const failedFacts = yield* eventSink.stream({ threadId }).pipe(
+                Stream.filter(
+                  ({ event }) =>
+                    event.runId === queued.id &&
+                    ((event.type === "run.updated" &&
+                      event.payload.status === "failed" &&
+                      event.payload.activeAttemptId === queued.activeAttemptId) ||
+                      (event.type === "run-attempt.updated" &&
+                        event.payload.status === "failed" &&
+                        event.payload.id === queued.activeAttemptId) ||
+                      (event.type === "node.updated" &&
+                        event.payload.status === "failed" &&
+                        event.payload.id === queued.rootNodeId)),
+                ),
+                Stream.take(3),
+                Stream.runCollect,
+                Effect.timeout("15 seconds"),
+              );
+              assert.sameMembers(
+                failedFacts.map(({ event }) => event.type),
+                ["run.updated", "run-attempt.updated", "node.updated"],
+              );
+            }
             if (recovery === "portable resume fallback") assert.isAbove(nativeResumeFailures, 0);
             const retained = held.value.messages.find((message) => message.id === queuedMessageId);
             assert.ok(retained);

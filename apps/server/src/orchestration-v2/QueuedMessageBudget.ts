@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import { ServerConfig } from "../config.ts";
+import { isAutomaticCompletionRun } from "./QueuedRunOrder.ts";
 import {
   parseThreadSegmentFromAttachmentId,
   resolveAttachmentPath,
@@ -26,10 +27,33 @@ const encodeMessage = Schema.encodeEffect(
 
 /** Called inside ThreadCommandExecutor, before accepting any admission or edit. */
 export const ensureQueuedMessageBudget = Effect.fn("ensureQueuedMessageBudget")(function* (input: {
-  readonly projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "messages">;
+  readonly projection: Pick<
+    OrchestrationV2ThreadProjection,
+    "thread" | "runs" | "messages" | "providerTurns"
+  >;
   readonly message: OrchestrationV2ConversationMessage;
 }) {
-  const pending = input.projection.runs.filter((run) => run.status === "queued");
+  // Promotion retains its queue slot until native delivery or retirement makes
+  // held restoration impossible, including the terminal reconciliation window.
+  const pending = input.projection.runs.filter((run) => {
+    if (run.status === "queued") return true;
+    if (
+      run.queuePosition == null ||
+      (run.status !== "starting" &&
+        run.status !== "running" &&
+        run.status !== "waiting" &&
+        run.status !== "failed") ||
+      isAutomaticCompletionRun(input.projection, run)
+    )
+      return false;
+    return !input.projection.providerTurns.some(
+      (turn) =>
+        turn.runAttemptId === run.activeAttemptId &&
+        turn.nodeId === run.rootNodeId &&
+        turn.providerThreadId === run.providerThreadId &&
+        (turn.acceptedAt !== undefined || turn.nativeAcceptance !== "pending"),
+    );
+  });
   const replacesExisting = pending.some((run) => run.userMessageId === input.message.id);
   if (pending.length + (replacesExisting ? 0 : 1) > SCIENT_THREAD_QUEUE_MAX_ITEMS_PER_THREAD)
     return yield* new QueuedMessageBudgetError({ message: "The queue already holds 20 messages." });

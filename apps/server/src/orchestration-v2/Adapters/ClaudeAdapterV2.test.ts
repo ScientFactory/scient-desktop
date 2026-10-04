@@ -2202,6 +2202,43 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
 
+  it.effect(
+    "retains uncertain admission when an offered native prompt fails before acknowledgment",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeWakeHarness;
+        yield* h.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: h.threadId,
+            providerThread: h.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("uncertain-native-offer"),
+            text: "Do not repeat an uncertain offer",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          h.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000799",
+            result: "",
+            subtype: "error_during_execution",
+            isError: true,
+            errors: ["Native response lost before acknowledgement"],
+            terminalReason: "api_error",
+          }),
+        );
+        assert.equal((yield* Queue.take(h.terminalReceipts)).status, "failed");
+        const turns = h.events
+          .filter((event) => event.type === "provider_turn.updated")
+          .map((event) => event.providerTurn);
+        assert.equal(turns[0]?.nativeAcceptance, "pending");
+        assert.equal(turns.at(-1)?.nativeAcceptance, "unknown");
+        assert.isTrue(turns.every((turn) => turn.acceptedAt === undefined));
+        assert.lengthOf(h.offeredMessages, 1);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
   it.effect.each([
     "foreign-session",
     "child-replay",

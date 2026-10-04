@@ -38,6 +38,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
@@ -123,6 +124,8 @@ export const ACP_PROTOCOL = "acp.ndjson-jsonrpc" as const;
  * the hydrated tool frame; two seconds split that tail into a second synthetic
  * wake. Longer floors (4–20s) only prolonged Working. No per-model carveouts.
  */
+const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
+
 const ACP_DEFERRED_FINALIZE_DEBOUNCE: Duration.Input = "3000 millis";
 
 export interface AcpAdapterV2RuntimeInput {
@@ -1194,6 +1197,8 @@ interface ActiveAcpTurn {
   finalizedStatus: "completed" | "interrupted" | "failed" | "cancelled" | null;
   /** session/prompt already returned; finalize deferred for background work. */
   promptSettled: boolean;
+  acceptedAt: DateTime.Utc | null;
+  promptOffered: boolean;
   promptSettledStatus: "completed" | "interrupted" | "failed" | "cancelled" | null;
   /**
    * Completed the moment `runtime.prompt` resolves on the wire, before the
@@ -6405,8 +6410,35 @@ export function makeAcpAdapterV2(
           },
           ordinal: context.input.providerTurnOrdinal,
           status,
+          nativeAcceptance:
+            context.acceptedAt !== null
+              ? "accepted"
+              : context.promptOffered
+                ? "unknown"
+                : "pending",
+          ...(context.acceptedAt === null ? {} : { acceptedAt: context.acceptedAt }),
           startedAt: context.startedAt,
           completedAt,
+        });
+
+        const markTurnAccepted = Effect.fnUntraced(function* (context: ActiveAcpTurn) {
+          if (
+            context.finalized ||
+            context.acceptedAt !== null ||
+            (yield* Ref.get(activeTurn)) !== context
+          )
+            return;
+          context.acceptedAt = yield* DateTime.now;
+          const turn = providerTurnPayload(context, "running", null);
+          yield* Ref.update(providerTurns, (current) =>
+            new Map(current).set(String(turn.id), turn),
+          );
+          yield* emitProviderEvent({
+            type: "provider_turn.updated",
+            driver,
+            threadId: context.input.threadId,
+            providerTurn: turn,
+          });
         });
 
         const terminalizeOpenRunOwnedItems = Effect.fnUntraced(function* (
@@ -6941,6 +6973,8 @@ export function makeAcpAdapterV2(
               promptSettled: false,
               promptSettledStatus: null,
               promptWireSettled,
+              acceptedAt: null,
+              promptOffered: false,
               backgroundFinalizeGeneration: 0,
             };
             const carryover = yield* Ref.getAndSet(carryoverSubagents, null);
@@ -7071,113 +7105,154 @@ export function makeAcpAdapterV2(
               return;
             }
             const promptGeneration = yield* Ref.get(runtimeCallbackGeneration);
-            yield* runtime.prompt({ prompt: promptParts!.prompt }).pipe(
-              Effect.tap(() =>
-                Ref.update(promptInstructionStates, (current) => {
-                  if (promptParts?.instructionState === undefined) return current;
-                  const updated = new Map(current);
-                  updated.set(requestedSessionId, promptParts.instructionState);
-                  return updated;
-                }),
-              ),
-              // Wire settlement precedes the completion callback's permit request so
-              // settled-soft classification can observe the native return even when
-              // the completion fiber has not yet set promptSettled under the permit.
-              Effect.tap(() =>
-                Deferred.succeed(context.promptWireSettled, undefined).pipe(Effect.asVoid),
-              ),
-              Effect.flatMap((result) =>
-                runRuntimeCallbackAtGeneration(
-                  promptGeneration,
-                  Effect.gen(function* () {
-                    if (context.finalized) return;
-                    const status =
-                      result.stopReason === "cancelled"
-                        ? context.interrupted
-                          ? "interrupted"
-                          : "cancelled"
-                        : "completed";
-                    if (status === "completed" && result.stopReason === "max_tokens") {
-                      const now = yield* DateTime.now;
-                      const nativeItemId = `${context.nativeThreadId}:${context.providerTurnId}:output-truncated`;
-                      yield* emitProviderEvent({
-                        type: "turn_item.updated",
-                        driver,
-                        turnItem: {
-                          id: idAllocator.derive.turnItemFromProviderItem({ driver, nativeItemId }),
-                          threadId: context.input.threadId,
-                          runId: context.input.runId,
-                          nodeId: context.input.rootNodeId,
-                          providerThreadId: context.input.providerThread.id,
-                          providerTurnId: context.providerTurnId,
-                          nativeItemRef: null,
-                          parentItemId: null,
-                          ordinal: yield* resolveItemOrdinal(context, nativeItemId),
-                          startedAt: now,
-                          updatedAt: now,
-                          completedAt: now,
-                          type: "notification",
-                          status: "completed",
-                          title: null,
-                          source: { kind: "output_truncated", stopReason: result.stopReason },
-                          outcome: "completed",
-                          summary: MODEL_TOKEN_LIMIT_MESSAGE,
-                        },
-                      });
-                    }
-                    // Grok monitors (and async subagents) keep working after the root
-                    // prompt RPC returns. Defer finalize so their later updates and
-                    // wake-turn traffic still project onto this run.
-                    if (
-                      flavor.deferFinalizeForBackgroundWork === true &&
-                      !context.interrupted &&
-                      hasDeferredBackgroundWork(context)
-                    ) {
-                      context.promptSettled = true;
-                      context.promptSettledStatus = status;
-                      // The agent finished this prompt's reply. Background work
-                      // holds the run open, not the text it already sent.
-                      yield* closeTextStreams(context);
-                      yield* (
-                        options.testHooks?.afterPromptSettledWithBackgroundWork?.() ?? Effect.void
+            yield* runtime
+              .prompt(
+                { prompt: promptParts!.prompt },
+                {
+                  onSend: runRuntimeCallbackAtGeneration(
+                    promptGeneration,
+                    Effect.gen(function* () {
+                      if (context.finalized || (yield* Ref.get(activeTurn)) !== context) return;
+                      context.promptOffered = true;
+                      const turn = providerTurnPayload(context, "running", null);
+                      yield* Ref.update(providerTurns, (current) =>
+                        new Map(current).set(String(turn.id), turn),
                       );
-                      return;
-                    }
-                    yield* finalizeTurn(context, status);
+                      yield* emitProviderEvent({
+                        type: "provider_turn.updated",
+                        driver,
+                        threadId: context.input.threadId,
+                        providerTurn: turn,
+                      });
+                    }),
+                  ),
+                },
+              )
+              .pipe(
+                // ACP resolves this operation from the native prompt response;
+                // transport dispatch/local running is deliberately insufficient.
+                Effect.tap(() =>
+                  runRuntimeCallbackAtGeneration(promptGeneration, markTurnAccepted(context)),
+                ),
+                Effect.tap(() =>
+                  Ref.update(promptInstructionStates, (current) => {
+                    if (promptParts?.instructionState === undefined) return current;
+                    const updated = new Map(current);
+                    updated.set(requestedSessionId, promptParts.instructionState);
+                    return updated;
                   }),
-                ).pipe(Effect.asVoid),
-              ),
-              // Prompt failure is not wire-settled: only a successful resolve marks
-              // the signal. catchCause must not complete promptWireSettled.
-              Effect.catchCause((cause) =>
-                runRuntimeCallbackAtGeneration(
-                  promptGeneration,
-                  Effect.gen(function* () {
-                    if (context.finalized) return;
-                    yield* finalizeTurn(
-                      context,
-                      context.interrupted ? "interrupted" : "failed",
-                      flavor.promptFailure?.(Cause.squash(cause)) ??
-                        makeProviderFailure({
-                          cause: Cause.squash(cause),
-                          class: "provider_error",
-                        }),
-                    ).pipe(
-                      Effect.andThen(
-                        Effect.logWarning("orchestration-v2.acp-prompt-failed", {
+                ),
+                // Wire settlement precedes the completion callback's permit request so
+                // settled-soft classification can observe the native return even when
+                // the completion fiber has not yet set promptSettled under the permit.
+                Effect.tap(() =>
+                  Deferred.succeed(context.promptWireSettled, undefined).pipe(Effect.asVoid),
+                ),
+                Effect.flatMap((result) =>
+                  runRuntimeCallbackAtGeneration(
+                    promptGeneration,
+                    Effect.gen(function* () {
+                      if (context.finalized) return;
+                      const status =
+                        result.stopReason === "cancelled"
+                          ? context.interrupted
+                            ? "interrupted"
+                            : "cancelled"
+                          : "completed";
+                      if (status === "completed" && result.stopReason === "max_tokens") {
+                        const now = yield* DateTime.now;
+                        const nativeItemId = `${context.nativeThreadId}:${context.providerTurnId}:output-truncated`;
+                        yield* emitProviderEvent({
+                          type: "turn_item.updated",
                           driver,
-                          providerSessionId: input.providerSessionId,
-                          providerThreadId: turnInput.providerThread.id,
-                          providerTurnId,
-                          cause,
-                        }),
-                      ),
-                    );
-                  }),
-                ).pipe(Effect.asVoid),
-              ),
-              Effect.forkIn(sessionScope),
-            );
+                          turnItem: {
+                            id: idAllocator.derive.turnItemFromProviderItem({
+                              driver,
+                              nativeItemId,
+                            }),
+                            threadId: context.input.threadId,
+                            runId: context.input.runId,
+                            nodeId: context.input.rootNodeId,
+                            providerThreadId: context.input.providerThread.id,
+                            providerTurnId: context.providerTurnId,
+                            nativeItemRef: null,
+                            parentItemId: null,
+                            ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+                            startedAt: now,
+                            updatedAt: now,
+                            completedAt: now,
+                            type: "notification",
+                            status: "completed",
+                            title: null,
+                            source: { kind: "output_truncated", stopReason: result.stopReason },
+                            outcome: "completed",
+                            summary: MODEL_TOKEN_LIMIT_MESSAGE,
+                          },
+                        });
+                      }
+                      // Grok monitors (and async subagents) keep working after the root
+                      // prompt RPC returns. Defer finalize so their later updates and
+                      // wake-turn traffic still project onto this run.
+                      if (
+                        flavor.deferFinalizeForBackgroundWork === true &&
+                        !context.interrupted &&
+                        hasDeferredBackgroundWork(context)
+                      ) {
+                        context.promptSettled = true;
+                        context.promptSettledStatus = status;
+                        // The agent finished this prompt's reply. Background work
+                        // holds the run open, not the text it already sent.
+                        yield* closeTextStreams(context);
+                        yield* (
+                          options.testHooks?.afterPromptSettledWithBackgroundWork?.() ?? Effect.void
+                        );
+                        return;
+                      }
+                      yield* finalizeTurn(context, status);
+                    }),
+                  ).pipe(Effect.asVoid),
+                ),
+                // Prompt failure is not wire-settled: only a successful resolve marks
+                // the signal. catchCause must not complete promptWireSettled.
+                Effect.catchCause((cause) =>
+                  runRuntimeCallbackAtGeneration(
+                    promptGeneration,
+                    Effect.gen(function* () {
+                      if (context.finalized) return;
+                      const promptError = Cause.squash(cause);
+                      if (
+                        context.acceptedAt === null &&
+                        isAcpRequestError(promptError) &&
+                        (promptError.code === -32600 ||
+                          promptError.code === -32601 ||
+                          promptError.code === -32602)
+                      ) {
+                        context.promptOffered = false;
+                      }
+                      yield* finalizeTurn(
+                        context,
+                        context.interrupted ? "interrupted" : "failed",
+                        flavor.promptFailure?.(promptError) ??
+                          makeProviderFailure({
+                            cause: promptError,
+                            class: "provider_error",
+                          }),
+                      ).pipe(
+                        Effect.andThen(
+                          Effect.logWarning("orchestration-v2.acp-prompt-failed", {
+                            driver,
+                            providerSessionId: input.providerSessionId,
+                            providerThreadId: turnInput.providerThread.id,
+                            providerTurnId,
+                            cause,
+                          }),
+                        ),
+                      );
+                    }),
+                  ).pipe(Effect.asVoid),
+                ),
+                Effect.forkIn(sessionScope),
+              );
           },
           (effect, turnInput) =>
             effect.pipe(

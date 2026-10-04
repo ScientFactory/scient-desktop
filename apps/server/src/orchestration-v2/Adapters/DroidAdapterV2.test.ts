@@ -78,6 +78,8 @@ const harness = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const crypto = yield* Crypto.Crypto;
   const config = yield* ServerConfig.ServerConfig;
+  if (scenario)
+    yield* fs.remove(NodePath.join(config.stateDir, "watchdog-signal"), { force: true });
   const requestsPath = NodePath.join(
     config.stateDir,
     `requests-${yield* crypto.randomUUIDv4}.jsonl`,
@@ -125,16 +127,19 @@ const harness = Effect.fnUntraced(function* (
   }
   const writeBlocked = yield* Deferred.make<void>();
   const releaseWrite = yield* Deferred.make<void>();
+  const nativeTerminated = yield* Deferred.make<void>();
   const rejectedAuthentication: string[] = [];
   const adapter = makeDroidAdapterV2({
     instanceId,
-    ...(scenario?.idleMillis === undefined ? {} : { turnIdleTimeoutMillis: scenario.idleMillis }),
     settings: yield* decodeDroidSettings({
       enabled: true,
       binaryPath: scripted?.binaryPath ?? binary,
     }),
     environment: {
       PATH: process.env.PATH,
+      ...(scenario?.idleMillis === undefined
+        ? {}
+        : { SCIENT_DROID_TURN_IDLE_TIMEOUT_MS: String(scenario.idleMillis) }),
       T3_ACP_DROID_AUTONOMY: "normal",
       T3_ACP_DROID_EMPTY_CONFIG_RESPONSE: "1",
       T3_ACP_DROID_ASYNC_CONFIG_REFRESH: "1",
@@ -149,6 +154,10 @@ const harness = Effect.fnUntraced(function* (
     makeRuntime: (input) =>
       makeDroidAcpRuntime({
         ...input,
+        onTermination: (error) =>
+          (input.onTermination?.(error) ?? Effect.void).pipe(
+            Effect.andThen(Deferred.succeed(nativeTerminated, undefined)),
+          ),
         ...(scenario?.blockPromptWrite
           ? {
               requestLogger: (event) =>
@@ -277,6 +286,30 @@ const harness = Effect.fnUntraced(function* (
       .map((line) => decodeRequest(line));
   return {
     adapter,
+    observed: recorded,
+    nativeTerminated: Deferred.await(nativeTerminated),
+    nativePid: fs
+      .readFileString(NodePath.join(config.stateDir, "droid-watchdog-pid"))
+      .pipe(Effect.map(Number)),
+    signalActivity: fs.writeFileString(NodePath.join(config.stateDir, "watchdog-signal"), "reset"),
+    nativeRequests: scripted?.readLog,
+    ready: Effect.gen(function* () {
+      while (true) {
+        const event = yield* Queue.take(queue);
+        if (event.type === "message.updated" && event.message.text.includes("watchdog-ready"))
+          return;
+        if (event.type === "turn.terminal") return yield* Effect.die("Turn ended before readiness");
+      }
+    }),
+    waitForMessage: (text: string) =>
+      Effect.gen(function* () {
+        while (true) {
+          const event = yield* Queue.take(queue);
+          if (event.type === "message.updated" && event.message.text.includes(text)) return;
+          if (event.type === "turn.terminal")
+            return yield* Effect.die("Turn ended before readiness");
+        }
+      }),
     rejectedAuthentication,
     arguments: () => NodeFS.readFileSync(argvLogPath, "utf8").trimEnd().split("\t"),
     send,
@@ -1386,4 +1419,182 @@ it.layer(testLayer)("Droid native inactivity supervision", (it) => {
       ),
     );
   }
+});
+
+// Real stdio, controlled host clock: native peer stays alive and deliberately
+// withholds its prompt response. These are supervision proofs, not live model runs.
+it.layer(testLayer)("DroidAdapterV2 idle supervision", (it) => {
+  const ready = `fs.writeFileSync("droid-watchdog-pid", String(process.pid)); update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "watchdog-ready" } });`;
+  for (const scenario of [
+    {
+      name: "silent prompt",
+      announce: "",
+      before: "570 seconds",
+      after: "1 minute",
+      failure: "(10m).",
+    },
+    {
+      name: "foreground native Task",
+      announce: `update({ sessionUpdate: "tool_call", toolCallId: "task-1", title: "Task", kind: "other", status: "pending", rawInput: { subagent_type: "explorer", description: "Audit", prompt: "Audit it", await: true } });`,
+      before: "11 minutes",
+      after: "50 minutes",
+      failure: "(60m) while executing 1 subagent task(s).",
+    },
+    {
+      name: "announced bounded TaskOutput",
+      announce: `update({ sessionUpdate: "tool_call", toolCallId: "wait-1", title: "TaskOutput", kind: "other", status: "pending", rawInput: { task_id: "earlier", block: true, timeout: 600000 } });`,
+      before: "630 seconds",
+      after: "1 minute",
+      failure: "(11m) while waiting for a sub-agent.",
+    },
+    {
+      name: "announced unbounded TaskOutput with a finite host cap",
+      announce: `update({ sessionUpdate: "tool_call", toolCallId: "wait-1", title: "TaskOutput", kind: "other", status: "pending", rawInput: { task_id: "earlier", block: true } });`,
+      before: "11 minutes",
+      after: "50 minutes",
+      failure: "(60m) while waiting for a sub-agent.",
+    },
+  ] as const) {
+    it.effect(`fails ${scenario.name} only after its supervised allowance`, () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness(false, false, false, undefined, {
+            body: `function onPrompt() { ${scenario.announce} ${ready} }`,
+          });
+          yield* h.send(1, "full-access");
+          yield* h.ready;
+          yield* TestClock.adjust(scenario.before);
+          assert.isFalse(h.observed.some((event) => event.type === "turn.terminal"));
+          yield* TestClock.adjust(scenario.after);
+          const terminal = yield* h.terminal;
+          assert.equal(terminal.status, "failed");
+          assert.include(
+            terminal.failure?.message ?? "",
+            `Droid turn exceeded the idle timeout ${scenario.failure}`,
+          );
+          assert.equal(h.observed.filter((event) => event.type === "turn.terminal").length, 1);
+          yield* h.nativeTerminated;
+          const pid = yield* h.nativePid;
+          assert.isTrue(Number.isInteger(pid) && pid > 0);
+          assert.throws(() => process.kill(pid, 0), /ESRCH/);
+        }),
+      ),
+    );
+  }
+  it.effect("pauses while a real user permission is pending, then gives a full idle window", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, {
+          body: `async function onPrompt() { ${ready}
+        await request("session/request_permission", {
+          toolCall: { toolCallId: "decision", title: "Write", kind: "edit", status: "pending", rawInput: { path: "file.txt" } },
+          options: [{ optionId: "yes", name: "Allow", kind: "allow_once" }, { optionId: "no", name: "Reject", kind: "reject_once" }],
+        });
+        ${ready}
+      }`,
+        });
+        yield* h.send(1, "approval-required");
+        const request = yield* h.approval;
+        yield* TestClock.adjust("61 minutes");
+        assert.isFalse(h.observed.some((event) => event.type === "turn.terminal"));
+        yield* h.runtime.respondToRuntimeRequest({ requestId: request.id, decision: "accept" });
+        // The permission waiter consumed the first readiness; await the native answer receipt.
+        yield* h.ready;
+        yield* TestClock.adjust("9 minutes");
+        assert.isFalse(h.observed.some((event) => event.type === "turn.terminal"));
+        yield* TestClock.adjust("2 minutes");
+        assert.equal((yield* h.terminal).status, "failed");
+      }),
+    ),
+  );
+  it.effect("resets the deadline on real native activity instead of total turn duration", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, {
+          body: `function onPrompt() { ${ready}
+        const watch = fs.watch(".", (_event, name) => {
+          if (name !== "watchdog-signal") return;
+          watch.close();
+          update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "activity-reset" } });
+        });
+      }`,
+        });
+        yield* h.send(1, "full-access");
+        yield* h.ready;
+        yield* TestClock.adjust("9 minutes");
+        yield* h.signalActivity;
+        yield* h.waitForMessage("activity-reset");
+        yield* TestClock.adjust("9 minutes");
+        assert.isFalse(h.observed.some((event) => event.type === "turn.terminal"));
+        yield* TestClock.adjust("2 minutes");
+        assert.equal((yield* h.terminal).status, "failed");
+      }),
+    ),
+  );
+  it.effect("pauses for native form elicitation until the user's answer", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, {
+          body: `async function onPrompt() { ${ready}
+        await request("elicitation/create", {
+          mode: "form", message: "Choose scope", requestedSchema: {
+            type: "object", properties: { scope: { type: "string", title: "Scope" } }, required: ["scope"],
+          },
+        });
+        ${ready}
+      }`,
+        });
+        yield* h.send(1, "full-access");
+        const question = yield* h.approval;
+        assert.equal(question.kind, "user_input");
+        yield* TestClock.adjust("61 minutes");
+        assert.isFalse(h.observed.some((event) => event.type === "turn.terminal"));
+        yield* h.runtime.respondToRuntimeRequest({
+          requestId: question.id,
+          decision: "accept",
+          answers: { scope: ["workspace"] },
+        });
+        yield* h.ready;
+        yield* TestClock.adjust("11 minutes");
+        assert.equal((yield* h.terminal).status, "failed");
+      }),
+    ),
+  );
+  it.effect("reopens the retired native runtime before a later turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, {
+          body: `function onPrompt(message) { ${ready} if (fs.existsSync("watchdog-signal")) reply(message, { stopReason: "end_turn" }); }`,
+        });
+        yield* h.send(1, "full-access");
+        yield* h.ready;
+        yield* TestClock.adjust("11 minutes");
+        assert.equal((yield* h.terminal).status, "failed");
+        yield* h.nativeTerminated;
+        yield* h.signalActivity;
+        yield* h.send(2, "full-access");
+        assert.equal((yield* h.terminal).status, "completed");
+      }),
+    ),
+  );
+  it.effect("retiring a completed prompt cannot time out the next native turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness(false, false, false, undefined, {
+          body: `function onPrompt(message) { ${ready} if (state.prompts === 1) reply(message, { stopReason: "end_turn" }); }`,
+        });
+        yield* h.send(1, "full-access");
+        assert.equal((yield* h.terminal).status, "completed");
+        yield* TestClock.adjust("9 minutes");
+        yield* h.send(2, "full-access");
+        yield* h.ready;
+        yield* TestClock.adjust("2 minutes");
+        assert.equal(h.observed.filter((event) => event.type === "turn.terminal").length, 1);
+        yield* TestClock.adjust("9 minutes");
+        const terminal = yield* h.terminal;
+        assert.equal(terminal.status, "failed");
+        assert.equal(terminal.runOrdinal, 2);
+      }),
+    ),
+  );
 });

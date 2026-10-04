@@ -2,7 +2,9 @@ import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { ProviderDriverKind, type DroidSettings } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import * as EffectAcpErrors from "effect-acp/errors";
 import {
@@ -15,6 +17,12 @@ import {
   type DroidAcpRuntime,
   type DroidAcpRuntimeFactory,
 } from "../../provider/acp/DroidAcpSupport.ts";
+import {
+  droidSubagentActivity,
+  makeDroidSubagentTracker,
+  observeDroidSubagentToolCall,
+} from "../../provider/droid/DroidSubagents.ts";
+import { makeDroidToolPresentation } from "./DroidToolPresentation.ts";
 import { acpPermissionDisposition } from "../../provider/acp/AcpClientPolicy.ts";
 import { isDroidAuthenticationRequiredError } from "../../provider/Layers/DroidProvider.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
@@ -26,8 +34,6 @@ import {
 } from "./AcpAdapterV2.ts";
 
 export interface DroidAdapterV2Options extends Omit<AcpAdapterV2Options, "flavor"> {
-  /** Injectable silence window; production also honors SCIENT_DROID_TURN_IDLE_TIMEOUT_MS. */
-  readonly turnIdleTimeoutMillis?: number;
   readonly settings: DroidSettings;
   readonly environment: NodeJS.ProcessEnv;
   readonly sensitiveEnvironmentValues: ReadonlyArray<string>;
@@ -35,18 +41,46 @@ export interface DroidAdapterV2Options extends Omit<AcpAdapterV2Options, "flavor
   readonly childProcessSpawner: Parameters<DroidAcpRuntimeFactory>[0]["childProcessSpawner"];
   readonly onAuthenticationRejected: (message: string) => Effect.Effect<void>;
 }
-import { makeDroidInactivity } from "./DroidInactivity.ts";
-import { makeDroidToolPresentation } from "./DroidToolPresentation.ts";
+const DEFAULT_IDLE_MILLIS = 600_000;
+const TASK_IDLE_MILLIS = 3_600_000;
+const ANNOUNCED_WAIT_MARGIN_MILLIS = 60_000;
 
+interface DroidPromptWatch {
+  readonly tasks: ReturnType<typeof makeDroidSubagentTracker>;
+  deadline: number;
+  decisions: number;
+}
+function idleCap(watch: DroidPromptWatch, idleMillis: number): number {
+  const activity = droidSubagentActivity(watch.tasks);
+  const cap =
+    activity.open > 0 || activity.announcedWaitMillis === "unbounded"
+      ? TASK_IDLE_MILLIS
+      : idleMillis;
+  return typeof activity.announcedWaitMillis === "number"
+    ? Math.max(cap, activity.announcedWaitMillis + ANNOUNCED_WAIT_MARGIN_MILLIS)
+    : cap;
+}
+function idleMessage(watch: DroidPromptWatch, idleMillis: number): string {
+  const millis = idleCap(watch, idleMillis);
+  const window =
+    millis % 60_000 === 0
+      ? `${millis / 60_000}m`
+      : millis % 1_000 === 0
+        ? `${millis / 1_000}s`
+        : `${millis}ms`;
+  const activity = droidSubagentActivity(watch.tasks);
+  const suffix =
+    activity.open > 0
+      ? ` while executing ${activity.open} subagent task(s)`
+      : activity.announcedWaitMillis !== undefined
+        ? " while waiting for a sub-agent"
+        : "";
+  return `Droid turn exceeded the idle timeout (${window})${suffix}.`;
+}
 const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
 const isAcpProcessExitedError = Schema.is(EffectAcpErrors.AcpProcessExitedError);
 
 export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
-  const configuredIdle = Number(
-    options.turnIdleTimeoutMillis ?? process.env.SCIENT_DROID_TURN_IDLE_TIMEOUT_MS,
-  );
-  const idleMillis =
-    Number.isFinite(configuredIdle) && configuredIdle > 0 ? configuredIdle : 600_000;
   const runtimes = new WeakMap<object, DroidAcpRuntime>();
   const redact = makeDroidCredentialRedactor({
     environment: options.environment,
@@ -120,131 +154,195 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
           ownDescendantProcessGroups: platform === "linux",
           processGroupPlatform: platform,
         });
-        let activity: Effect.Success<ReturnType<typeof makeDroidInactivity>> | undefined;
+        const configuredIdle = Number(options.environment.SCIENT_DROID_TURN_IDLE_TIMEOUT_MS);
+        const idleMillis =
+          Number.isFinite(configuredIdle) && configuredIdle > 0
+            ? configuredIdle
+            : DEFAULT_IDLE_MILLIS;
+        const tickMillis = Math.min(15_000, Math.max(25, Math.floor(idleMillis / 4)));
+        // The token belongs to this runtime's exact prompt, never a global session timer.
+        let currentWatch: DroidPromptWatch | undefined;
+        let nativeSessionId: string | undefined;
+        const activity = Effect.gen(function* () {
+          const watch = currentWatch;
+          if (watch === undefined) return;
+          const now = yield* Clock.currentTimeMillis;
+          if (currentWatch === watch) watch.deadline = now + idleCap(watch, idleMillis);
+        });
+        const duringDecision = <A, E, R>(
+          sessionId: string | undefined,
+          effect: Effect.Effect<A, E, R>,
+        ) =>
+          Effect.suspend(() => {
+            const watch =
+              sessionId !== undefined && sessionId === nativeSessionId ? currentWatch : undefined;
+            if (watch === undefined) return effect;
+            watch.decisions += 1;
+            return effect.pipe(
+              Effect.ensuring(
+                Effect.gen(function* () {
+                  watch.decisions -= 1;
+                  if (currentWatch === watch) yield* activity;
+                }),
+              ),
+            );
+          });
         const wrapped: DroidAcpRuntime = {
           ...runtime,
-          handleSessionUpdate: (handler) =>
-            runtime.handleSessionUpdate((notification) =>
-              (activity?.observe(notification) ?? Effect.void).pipe(
-                Effect.andThen(handler(notification)),
+          getEvents: () =>
+            runtime.getEvents().pipe(
+              Stream.tap((event) =>
+                Effect.gen(function* () {
+                  if (event._tag === "EventStreamBarrier" || event._tag === "ConnectionTerminated")
+                    return;
+                  const watch = currentWatch;
+                  if (watch === undefined) return;
+                  if (event._tag === "ToolCallUpdated")
+                    observeDroidSubagentToolCall(watch.tasks, event.toolCall, undefined);
+                  yield* activity;
+                }),
               ),
             ),
           handleRequestPermission: (handler) =>
-            runtime.handleRequestPermission(
-              (request, context) =>
-                activity?.waitingForUser(handler(request, context)) ?? handler(request, context),
+            runtime.handleRequestPermission((request, context) =>
+              duringDecision(
+                request.sessionId,
+                Effect.suspend(() => handler(request, context)),
+              ),
             ),
           handleElicitation: (handler) =>
-            runtime.handleElicitation(
-              (request, context) =>
-                activity?.waitingForUser(handler(request, context)) ?? handler(request, context),
+            runtime.handleElicitation((request, context) =>
+              duringDecision(
+                nativeSessionId,
+                Effect.suspend(() => handler(request, context)),
+              ),
             ),
           start: () =>
-            runtime
-              .start()
-              .pipe(
-                Effect.tapError((error) =>
-                  isDroidAuthenticationRequiredError(error)
-                    ? options.onAuthenticationRejected(
-                        "Droid reported that authentication is required",
-                      )
-                    : Effect.void,
-                ),
-              ),
-          prompt: (request, dispatch) =>
-            Effect.gen(function* () {
-              const supervision = yield* makeDroidInactivity(idleMillis);
-              activity = supervision;
-              let executingModel: string | undefined;
-              const result = yield* Effect.gen(function* () {
-                if (runtime.checkConfiguration) yield* runtime.checkConfiguration();
-                yield* validateDroidReasoningState(runtime);
-                const model = findSelectDroidConfigOption(yield* runtime.getConfigOptions, {
-                  category: "model",
-                  id: "model",
-                })?.currentValue;
-                executingModel = typeof model === "string" ? model : undefined;
-                if (
-                  typeof model === "string" &&
-                  runtime.getImageSupport?.(model) === false &&
-                  request.prompt.some((block) => block.type === "image")
-                )
-                  return yield* new EffectAcpErrors.AcpRequestError({
-                    code: -32602,
-                    errorMessage: "The selected Droid model does not support image prompts.",
-                  });
-                const result = yield* runtime.prompt(request, dispatch);
-                if (result.stopReason === "refusal")
-                  return yield* new EffectAcpErrors.AcpRequestError({
-                    code: -32603,
-                    errorMessage: "Droid ended the turn because its agent reported an error.",
-                  });
-                return result;
-              }).pipe(
-                Effect.raceFirst(supervision.awaitExpiry),
-                Effect.tapError((error) =>
-                  supervision.isExpiry(error)
-                    ? input.onTermination(error).pipe(
-                        Effect.andThen(
-                          runtime.terminateProcessGroup?.pipe(
-                            Effect.mapError(
-                              (cause) =>
-                                new EffectAcpErrors.AcpTransportError({
-                                  detail:
-                                    "Droid inactivity teardown could not contain its process.",
-                                  cause,
-                                }),
-                            ),
-                          ) ??
-                            new EffectAcpErrors.AcpTransportError({
-                              detail:
-                                "Droid inactivity teardown requires owned process-group containment.",
-                              cause: undefined,
-                            }),
-                        ),
-                      )
-                    : Effect.void,
-                ),
-                Effect.mapError((error) => {
-                  if (isAcpRequestError(error))
-                    return new EffectAcpErrors.AcpRequestError({
-                      ...error,
-                      errorMessage: redact(error.errorMessage),
-                      data: typeof error.data === "string" ? redact(error.data) : undefined,
-                      cause: undefined,
-                    });
-                  if (isAcpProcessExitedError(error))
-                    return new EffectAcpErrors.AcpProcessExitedError({
-                      ...error,
-                      ...(error.stderr === undefined ? {} : { stderr: redact(error.stderr) }),
-                      cause: undefined,
-                    });
-                  return error;
+            runtime.start().pipe(
+              Effect.tap((started) =>
+                Effect.sync(() => {
+                  nativeSessionId = started.sessionId;
                 }),
-                Effect.tapError((error) =>
-                  Effect.gen(function* () {
-                    const model = executingModel;
-                    const detail =
-                      isAcpRequestError(error) && typeof error.data === "string"
-                        ? error.data.trim()
-                        : error.message;
-                    if (
-                      typeof model === "string" &&
-                      model.trim() &&
-                      !model.startsWith("custom:") &&
-                      (/^401\b/.test(detail) || /\bauthentication required\b/i.test(detail))
+              ),
+              Effect.tapError((error) =>
+                isDroidAuthenticationRequiredError(error)
+                  ? options.onAuthenticationRejected(
+                      "Droid reported that authentication is required",
                     )
-                      yield* options.onAuthenticationRejected(redact(detail));
+                  : Effect.void,
+              ),
+            ),
+          prompt: (request, dispatch) => {
+            let executingModel: string | undefined;
+            return Effect.gen(function* () {
+              if (runtime.checkConfiguration) yield* runtime.checkConfiguration();
+              yield* validateDroidReasoningState(runtime);
+              const model = findSelectDroidConfigOption(yield* runtime.getConfigOptions, {
+                category: "model",
+                id: "model",
+              })?.currentValue;
+              executingModel = typeof model === "string" ? model : undefined;
+              if (
+                typeof model === "string" &&
+                runtime.getImageSupport?.(model) === false &&
+                request.prompt.some((block) => block.type === "image")
+              )
+                return yield* new EffectAcpErrors.AcpRequestError({
+                  code: -32602,
+                  errorMessage: "The selected Droid model does not support image prompts.",
+                });
+              const watch: DroidPromptWatch = {
+                tasks: makeDroidSubagentTracker(),
+                decisions: 0,
+                deadline: (yield* Clock.currentTimeMillis) + idleMillis,
+              };
+              currentWatch = watch;
+              const result = yield* Effect.gen(function* () {
+                const outcome = yield* Effect.raceFirst(
+                  runtime.prompt(request, dispatch).pipe(
+                    Effect.map((response) => ({
+                      _tag: "Completed" as const,
+                      response,
+                    })),
+                  ),
+                  Effect.gen(function* () {
+                    while (true) {
+                      yield* Effect.sleep(tickMillis);
+                      if (currentWatch !== watch) return yield* Effect.never;
+                      const now = yield* Clock.currentTimeMillis;
+                      if (watch.decisions > 0) {
+                        watch.deadline = now + idleCap(watch, idleMillis);
+                        continue;
+                      }
+                      if (now >= watch.deadline)
+                        return { _tag: "Idle" as const, message: idleMessage(watch, idleMillis) };
+                    }
                   }),
-                ),
+                );
+                if (outcome._tag === "Completed") return outcome.response;
+                // The race retires the exact prompt first. Flush cancellation, then
+                // terminate its owned native process group; sibling instances are untouched.
+                return yield* Effect.uninterruptible(
+                  Effect.gen(function* () {
+                    yield* runtime.cancelAndAwaitPrompt("2 seconds");
+                    if (runtime.terminateProcessGroup)
+                      yield* runtime.terminateProcessGroup.pipe(Effect.ignoreCause({ log: true }));
+                    return yield* new EffectAcpErrors.AcpRequestError({
+                      code: -32603,
+                      errorMessage: outcome.message,
+                    });
+                  }),
+                );
+              }).pipe(
                 Effect.ensuring(
                   Effect.sync(() => {
-                    if (activity === supervision) activity = undefined;
+                    if (currentWatch === watch) {
+                      currentWatch = undefined;
+                    }
                   }),
                 ),
               );
+              if (result.stopReason === "refusal")
+                return yield* new EffectAcpErrors.AcpRequestError({
+                  code: -32603,
+                  errorMessage: "Droid ended the turn because its agent reported an error.",
+                });
               return result;
-            }),
+            }).pipe(
+              Effect.mapError((error) => {
+                if (isAcpRequestError(error))
+                  return new EffectAcpErrors.AcpRequestError({
+                    ...error,
+                    errorMessage: redact(error.errorMessage),
+                    data: typeof error.data === "string" ? redact(error.data) : undefined,
+                    cause: undefined,
+                  });
+                if (isAcpProcessExitedError(error))
+                  return new EffectAcpErrors.AcpProcessExitedError({
+                    ...error,
+                    ...(error.stderr === undefined ? {} : { stderr: redact(error.stderr) }),
+                    cause: undefined,
+                  });
+                return error;
+              }),
+              Effect.tapError((error) =>
+                Effect.gen(function* () {
+                  const model = executingModel;
+                  const detail =
+                    isAcpRequestError(error) && typeof error.data === "string"
+                      ? error.data.trim()
+                      : error.message;
+                  if (
+                    typeof model === "string" &&
+                    model.trim() &&
+                    !model.startsWith("custom:") &&
+                    (/^401\b/.test(detail) || /\bauthentication required\b/i.test(detail))
+                  )
+                    yield* options.onAuthenticationRejected(redact(detail));
+                }),
+              ),
+            );
+          },
         };
         runtimes.set(wrapped, runtime);
         return wrapped;

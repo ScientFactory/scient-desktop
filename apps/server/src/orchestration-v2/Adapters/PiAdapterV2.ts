@@ -106,6 +106,8 @@ import {
 import { PI_FILE_CHANGE_TOOLS } from "./piT3McpExtensionSource.ts";
 
 export const PI_PROVIDER = ProviderDriverKind.make("pi");
+const isNativeStartReceiptError = Schema.is(ProviderAdapter.ProviderAdapterTurnStartError);
+
 const PI_DRIVER_KIND = PI_PROVIDER;
 const DEFAULT_PI_SETTINGS = Schema.decodeSync(PiSettings)({});
 
@@ -304,7 +306,7 @@ function compactionTitle(status: PiCompactionStatus): string {
 
 interface ActivePiTurn {
   readonly turnInput: ProviderAdapter.ProviderAdapterV2TurnInput;
-  readonly providerTurn: OrchestrationV2ProviderTurn;
+  providerTurn: OrchestrationV2ProviderTurn;
   readonly startedAt: DateTime.Utc;
   readonly itemOrdinals: Map<string, number>;
   nextItemOrdinal: number;
@@ -668,6 +670,21 @@ export function makePiAdapterV2(
        * update (0.84.2+). Emit it on the running turn only when the total
        * changes, so the meter moves live without a burst of no-op updates.
        */
+      const markTurnAccepted = Effect.fnUntraced(function* (turn: ActivePiTurn) {
+        if (threadState?.activeTurn !== turn || turn.providerTurn.acceptedAt !== undefined) return;
+        turn.providerTurn = {
+          ...turn.providerTurn,
+          nativeAcceptance: "accepted",
+          acceptedAt: yield* DateTime.now,
+        };
+        yield* emit({
+          type: "provider_turn.updated",
+          driver: PI_PROVIDER,
+          threadId: turn.turnInput.threadId,
+          providerTurn: turn.providerTurn,
+        });
+      });
+
       const reportLiveUsage = (turn: ActivePiTurn, usage: unknown) =>
         Effect.gen(function* () {
           const usedTokens = nonNegativeInteger(usage, "totalTokens");
@@ -1602,6 +1619,7 @@ export function makePiAdapterV2(
               yield* connection.terminate;
               return;
             }
+            yield* markTurnAccepted(turn);
             turn.sawAgentActivity = true;
             turn.settleProbeGeneration += 1;
             return;
@@ -1839,6 +1857,8 @@ export function makePiAdapterV2(
                 pendingCompact?.providerTurnId === turn?.providerTurn.id ? turn : null;
               if (compactTurn !== null) compactTurn.manualCompactInFlight = false;
               if (event["success"] === true) {
+                if (pendingCompact?.kind === "turn_start" && compactTurn !== null)
+                  yield* markTurnAccepted(compactTurn);
                 if (
                   pendingCompact?.kind === "turn_start" &&
                   compactTurn !== null &&
@@ -1859,6 +1879,11 @@ export function makePiAdapterV2(
                 return;
               }
               if (!compactTurn.sawCompaction) {
+                if (compactTurn.providerTurn.acceptedAt === undefined)
+                  compactTurn.providerTurn = {
+                    ...compactTurn.providerTurn,
+                    nativeAcceptance: "pending",
+                  };
                 compactTurn.failure = makeProviderFailure({
                   message: recordString(event, "error") ?? "Pi compact failed.",
                   class: "provider_error",
@@ -1875,6 +1900,8 @@ export function makePiAdapterV2(
             const responseTurn =
               pendingPrompt?.providerTurnId === turn?.providerTurn.id ? turn : null;
             if (event["success"] === true) {
+              if (pendingPrompt?.kind === "turn_start" && responseTurn !== null)
+                yield* markTurnAccepted(responseTurn);
               // Deferred success ack. Command-only prompts (pure extension
               // slash commands) never start an agent run and never emit
               // `agent_settled`, so probe for idleness. The probe result is
@@ -1907,6 +1934,11 @@ export function makePiAdapterV2(
                   ? turn
                   : null;
             if (failedTurn !== null) {
+              if (failedTurn.providerTurn.acceptedAt === undefined)
+                failedTurn.providerTurn = {
+                  ...failedTurn.providerTurn,
+                  nativeAcceptance: "pending",
+                };
               failedTurn.failure = makeProviderFailure({
                 message: recordString(event, "error") ?? "Pi rejected the prompt.",
                 class: "provider_error",
@@ -2409,6 +2441,7 @@ export function makePiAdapterV2(
               nativeTurnRef: providerRef(syntheticNativeTurnId, "weak"),
               ordinal: turnInput.providerTurnOrdinal,
               status: "running",
+              nativeAcceptance: "pending",
               startedAt,
               completedAt: null,
             };
@@ -2443,6 +2476,7 @@ export function makePiAdapterV2(
             // and answered instead of deadlocking the caller.
             yield* Effect.gen(function* () {
               state.activeTurn = activeTurn;
+              activeTurn.providerTurn = { ...activeTurn.providerTurn, nativeAcceptance: "unknown" };
               if (compactCommand !== null) {
                 yield* connection.send(compactRpcRecord(compactCommand));
                 pendingCompactResponses.push({
@@ -2464,7 +2498,7 @@ export function makePiAdapterV2(
                 type: "provider_turn.updated",
                 driver: PI_PROVIDER,
                 threadId: turnInput.threadId,
-                providerTurn,
+                providerTurn: activeTurn.providerTurn,
               });
               yield* updateProviderThread(state, {
                 status: "active",
@@ -2477,6 +2511,17 @@ export function makePiAdapterV2(
               }
             }).pipe(
               sessionEventPermit.withPermits(1),
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterTurnStartError({
+                    driver: PI_PROVIDER,
+                    threadId: turnInput.threadId,
+                    providerThreadId: turnInput.providerThread.id,
+                    runId: turnInput.runId,
+                    providerTurn: activeTurn.providerTurn,
+                    cause,
+                  }),
+              ),
               Effect.tapError(() =>
                 Effect.sync(() => {
                   if (state.activeTurn === activeTurn) state.activeTurn = null;
@@ -2488,15 +2533,16 @@ export function makePiAdapterV2(
             // Rejections therefore return later as id-less response records
             // handled by the event pump.
           }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProviderAdapter.ProviderAdapterTurnStartError({
-                  driver: PI_PROVIDER,
-                  threadId: turnInput.threadId,
-                  providerThreadId: turnInput.providerThread.id,
-                  runId: turnInput.runId,
-                  cause,
-                }),
+            Effect.mapError((cause) =>
+              isNativeStartReceiptError(cause)
+                ? cause
+                : new ProviderAdapter.ProviderAdapterTurnStartError({
+                    driver: PI_PROVIDER,
+                    threadId: turnInput.threadId,
+                    providerThreadId: turnInput.providerThread.id,
+                    runId: turnInput.runId,
+                    cause,
+                  }),
             ),
           ),
         steerTurn: (steerInput: ProviderAdapter.ProviderAdapterV2SteerInput) =>
