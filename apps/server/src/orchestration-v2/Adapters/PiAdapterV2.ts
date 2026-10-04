@@ -339,6 +339,7 @@ interface ActivePiTurn {
   lastLiveUsedTokens: number | null;
   /** Invalidates idle snapshots when new work starts after a settle probe. */
   settleProbeGeneration: number;
+  pendingSteerCount: number;
   /** An extension may start compaction immediately after Pi emits agent_settled. */
   settleWhenIdle: boolean;
   sawCompaction: boolean;
@@ -1494,7 +1495,21 @@ export function makePiAdapterV2(
         };
       });
 
-      const finalizeTurn = Effect.fnUntraced(function* (state: PiThreadState, readUsage = true) {
+      const settleResults = new WeakMap<
+        PiRpcRecord,
+        {
+          tokenUsage: OrchestrationV2ProviderTurn["tokenUsage"];
+          treeRefs: PiTurnTreeRefs | null;
+        }
+      >();
+      const finalizeTurn = Effect.fnUntraced(function* (
+        state: PiThreadState,
+        readUsage = true,
+        settled?: {
+          tokenUsage: OrchestrationV2ProviderTurn["tokenUsage"];
+          treeRefs: PiTurnTreeRefs | null;
+        },
+      ) {
         const turn = state.activeTurn;
         if (turn === null) return;
         state.activeTurn = null;
@@ -1520,10 +1535,17 @@ export function makePiAdapterV2(
         }
         yield* cancelPendingPrompts(completedAt);
         const treeRefs =
-          turn.stopTreeRefs !== undefined ? turn.stopTreeRefs : yield* captureTurnTreeRefs();
-        const tokenUsage = readUsage
-          ? yield* readTokenUsage(turn.latestCompactionAfterTokens, completedAt)
-          : undefined;
+          turn.stopTreeRefs !== undefined
+            ? turn.stopTreeRefs
+            : settled !== undefined
+              ? settled.treeRefs
+              : yield* captureTurnTreeRefs();
+        const tokenUsage =
+          settled !== undefined
+            ? settled.tokenUsage
+            : readUsage
+              ? yield* readTokenUsage(turn.latestCompactionAfterTokens, completedAt)
+              : undefined;
         const failure = turn.interrupted ? null : turn.failure;
         if (failure === null && !turn.interrupted && turn.outputTruncated) {
           yield* emit({
@@ -1634,17 +1656,36 @@ export function makePiAdapterV2(
       ) => {
         const providerTurnId = turn.providerTurn.id;
         const settleProbeGeneration = turn.settleProbeGeneration;
-        return request({ type: "get_state" }, 2_000).pipe(
+        return Effect.gen(function* () {
+          let data = yield* request({ type: "get_state" }, 2_000);
+          const event: PiRpcRecord = {
+            type: "t3.settle_probe",
+            providerTurnId,
+            settleAfterAgentActivity,
+            settleProbeGeneration,
+            attempt,
+            data,
+          };
+          if (
+            recordField(data, "isStreaming") !== true &&
+            recordField(data, "isCompacting") !== true &&
+            (recordNumber(data, "pendingMessageCount") ?? 0) === 0
+          ) {
+            // Do not hold the event permit during telemetry/tree reads. Native
+            // events and a steer can invalidate this snapshot while they wait.
+            const tokenUsage = yield* readTokenUsage(
+              turn.latestCompactionAfterTokens,
+              yield* DateTime.now,
+            );
+            const treeRefs = yield* captureTurnTreeRefs(2_000);
+            data = yield* request({ type: "get_state" }, 2_000);
+            event.data = data;
+            settleResults.set(event, { tokenUsage, treeRefs });
+          }
+          return event;
+        }).pipe(
           Effect.matchEffect({
-            onSuccess: (data) =>
-              Queue.offer(connection.events, {
-                type: "t3.settle_probe",
-                providerTurnId,
-                settleAfterAgentActivity,
-                settleProbeGeneration,
-                attempt,
-                data,
-              }),
+            onSuccess: (event) => Queue.offer(connection.events, event),
             // A failed probe still has to reach the pump. Dropping it would
             // leave a command-only turn active forever, because Pi never emits
             // agent events for one.
@@ -1675,6 +1716,7 @@ export function makePiAdapterV2(
               return;
             }
             yield* markTurnAccepted(turn);
+            turn.pendingSteerCount = 0;
             turn.sawAgentActivity = true;
             turn.contextRecoveryPending = false;
             turn.settleProbeGeneration += 1;
@@ -1980,6 +2022,10 @@ export function makePiAdapterV2(
             const pendingPrompt = command === "prompt" ? pendingPromptResponses.shift() : undefined;
             const responseTurn =
               pendingPrompt?.providerTurnId === turn?.providerTurn.id ? turn : null;
+            if (pendingPrompt?.kind === "steer" && responseTurn !== null) {
+              responseTurn.pendingSteerCount = Math.max(0, responseTurn.pendingSteerCount - 1);
+              if (responseTurn.settleWhenIdle) yield* scheduleSettleProbe(responseTurn, true);
+            }
             if (event["success"] === true) {
               if (pendingPrompt?.kind === "turn_start" && responseTurn !== null)
                 yield* markTurnAccepted(responseTurn);
@@ -2046,6 +2092,8 @@ export function makePiAdapterV2(
             const attempt = Math.max(1, Math.trunc(recordNumber(event, "attempt") ?? 1));
             if (
               turn === null ||
+              turn.providerTurn.acceptedAt === undefined ||
+              turn.pendingSteerCount > 0 ||
               turn.providerTurn.id !== event["providerTurnId"] ||
               turn.settleProbeGeneration !== event["settleProbeGeneration"] ||
               (!settleAfterAgentActivity && turn.sawAgentActivity) ||
@@ -2076,7 +2124,7 @@ export function makePiAdapterV2(
               (recordNumber(data, "pendingMessageCount") ?? 0) === 0
             ) {
               turn.settleWhenIdle = false;
-              if (state !== null) yield* finalizeTurn(state);
+              if (state !== null) yield* finalizeTurn(state, false, settleResults.get(event));
             }
             return;
           }
@@ -2559,6 +2607,7 @@ export function makePiAdapterV2(
               latestCompactionAfterTokens: null,
               lastLiveUsedTokens: null,
               settleProbeGeneration: 0,
+              pendingSteerCount: 0,
               settleWhenIdle: false,
               sawCompaction: false,
               manualCompactInFlight: compactCommand !== null,
@@ -2695,6 +2744,7 @@ export function makePiAdapterV2(
                   });
                 }
                 turn.settleProbeGeneration += 1;
+                turn.pendingSteerCount += 1;
               }),
             );
           }).pipe(

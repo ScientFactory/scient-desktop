@@ -98,6 +98,8 @@ interface FakePi {
   readonly queueState: (data: Record<string, unknown>) => void;
   /** Hold the next `get_state` response until the test resolves it. */
   readonly deferNextState: () => void;
+  readonly deferNextStats: () => void;
+  readonly resolveDeferredStats: () => Effect.Effect<void>;
   /** Resolve the held `get_state` request. */
   readonly resolveDeferredState: (data: unknown) => Effect.Effect<void>;
   /** Reject the next `get_state` request. */
@@ -156,6 +158,8 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
   const commandsQueue: Array<{ readonly success: boolean; readonly data?: unknown }> = [];
   const allRequests: Array<PiRpcRecord> = [];
   let deferState = false;
+  let deferStats = false;
+  let deferredStatsRequest: PiRpcRecord | undefined;
   let deferredStateRequest: PiRpcRecord | undefined;
   let failState = false;
   let vetoSwitch = false;
@@ -254,6 +258,11 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
           deferredStateRequest = record;
           continue;
         }
+        if (record["type"] === "get_session_stats" && deferStats) {
+          deferStats = false;
+          deferredStatsRequest = record;
+          continue;
+        }
         if (record["type"] === deferredLifecycle) {
           deferredLifecycle = undefined;
           continue;
@@ -307,6 +316,22 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     takeRequest,
     queueEntries: (data) => entriesQueue.push(data),
     queueMessages: (data) => messagesQueue.push(data),
+    deferNextStats: () => {
+      deferStats = true;
+    },
+    resolveDeferredStats: () =>
+      Effect.gen(function* () {
+        assert.isDefined(deferredStatsRequest);
+        const record = deferredStatsRequest!;
+        deferredStatsRequest = undefined;
+        yield* emit({
+          type: "response",
+          id: record.id,
+          command: "get_session_stats",
+          success: true,
+          data: {},
+        });
+      }),
     deferNextState: () => {
       deferState = true;
     },
@@ -2935,6 +2960,154 @@ describe("PiAdapterV2", () => {
       assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "interrupted");
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
+
+  it.effect("defers native preflight compaction settlement until initial acceptance", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent, observed } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "compaction_end" });
+      yield* fake.takeRequest("get_state");
+      yield* Effect.yieldNow;
+      assert.isFalse(observed.some((event) => event.type === "turn.terminal"));
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "agent_settled" });
+      const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
+      assert.equal(observed.filter((event) => event.type === "turn.terminal").length, 1);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  for (const scenario of [
+    "pending-acceptance",
+    "buffered-content",
+    "buffered-error",
+    "final-idle-error",
+    "stop",
+  ] as const) {
+    it.effect(`fences native settlement across a blocked usage request (${scenario})`, () =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent, observed } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        yield* startTurn(runtime, providerThread);
+        const receipt = yield* takeEvent((event) => event.type === "provider_turn.updated");
+        if (receipt.type !== "provider_turn.updated") return;
+        yield* fake.takeRequest("prompt");
+        yield* fake.emit({ type: "agent_start" });
+        fake.deferNextStats();
+        yield* fake.emit({ type: "agent_settled" });
+        yield* fake.takeRequest("get_session_stats");
+        if (scenario === "stop") {
+          const stopping = yield* runtime
+            .interruptTurn({ providerThread, providerTurnId: receipt.providerTurn.id })
+            .pipe(Effect.forkScoped);
+          yield* TestClock.adjust("3 seconds");
+          yield* fake.closeStdout;
+          yield* Fiber.join(stopping);
+        } else {
+          yield* runtime.steerTurn({
+            threadId: THREAD_ID,
+            providerThread,
+            providerTurnId: receipt.providerTurn.id,
+            runId: RunId.make("run:thread-pi-test:1"),
+            message: {
+              messageId: "steer-settle" as Parameters<
+                ProviderAdapterV2SessionRuntime["steerTurn"]
+              >[0]["message"]["messageId"],
+              text: "steer",
+              attachments: [],
+              createdBy: "user",
+              creationSource: "web",
+            },
+          });
+          yield* fake.takeRequest("prompt");
+          if (scenario !== "pending-acceptance" && scenario !== "final-idle-error") {
+            yield* fake.emit({ type: "agent_start" });
+            yield* fake.emit({
+              type: "message_end",
+              message: {
+                role: "assistant",
+                content: [{ type: "text", text: "  Fast steering response\n" }],
+                stopReason: scenario === "buffered-error" ? "error" : "stop",
+                errorMessage: "Synthetic steering failure",
+              },
+            });
+            yield* fake.emit({ type: "agent_settled" });
+          }
+        }
+        if (scenario === "final-idle-error") fake.deferNextState();
+        if (scenario !== "stop") yield* fake.resolveDeferredStats();
+        if (scenario === "final-idle-error") {
+          yield* fake.takeRequest("get_state");
+          yield* fake.emit({ type: "agent_start" });
+          yield* fake.emit({
+            type: "message_end",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "  Fast steering response\n" }],
+              stopReason: "error",
+              errorMessage: "Synthetic steering failure",
+            },
+          });
+          yield* fake.emit({ type: "agent_settled" });
+          yield* fake.resolveDeferredState(recordedIdleState(FAKE_SESSION_FILE));
+        }
+        if (scenario === "pending-acceptance") {
+          yield* fake.emit({
+            type: "extension_ui_request",
+            method: "notify",
+            message: "acceptance-fence",
+          });
+          yield* takeEvent(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "dynamic_tool" &&
+              event.turnItem.toolName === "notify",
+          );
+          assert.isFalse(observed.some((event) => event.type === "turn.terminal"));
+          yield* fake.emit({ type: "response", command: "prompt", success: true });
+          yield* fake.emit({ type: "response", command: "prompt", success: true });
+        }
+        // Stop changes the generation/intent while telemetry is blocked; its
+        // actual idle acknowledgement must settle the same owned turn.
+
+        const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+        assert.isTrue(
+          terminal.type === "turn.terminal" && terminal.providerTurnId === receipt.providerTurn.id,
+        );
+        if (terminal.type === "turn.terminal")
+          assert.equal(
+            terminal.status,
+            scenario === "stop"
+              ? "interrupted"
+              : scenario === "buffered-error" || scenario === "final-idle-error"
+                ? "failed"
+                : "completed",
+          );
+        if (scenario.startsWith("buffered") || scenario === "final-idle-error")
+          assert.isTrue(
+            observed.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "assistant_message" &&
+                event.turnItem.text === "  Fast steering response\n",
+            ),
+          );
+        assert.equal(observed.filter((event) => event.type === "turn.terminal").length, 1);
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+  }
 
   it.effect("keeps extension-started compaction and recovery in the settled turn", () =>
     Effect.gen(function* () {
