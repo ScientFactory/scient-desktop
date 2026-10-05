@@ -357,6 +357,8 @@ async function typePrompt(page: Page, text: string) {
   await editor.press("ControlOrMeta+A");
   await editor.press("Backspace");
   await editor.pressSequentially(text, { timeout: 15000 });
+  // Reload and Send exercise the draft the user actually authored.
+  await expect.poll(() => editor.innerText(), { timeout: 15000 }).toBe(text);
 }
 async function send(page: Page, text: string) {
   await typePrompt(page, text);

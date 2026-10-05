@@ -1,3 +1,9 @@
+import {
+  ExtractedDraftIntent,
+  normalizeExtractedDraftIntent,
+  transferredExtractedDraftIntent,
+} from "./scient/threadQueue/extractedDraftIntent";
+export { ExtractedDraftIntent } from "./scient/threadQueue/extractedDraftIntent";
 import { stripInlineContextReferences } from "./lib/composerContextReferences";
 import { elementContextToPreviewAnnotation } from "./lib/elementContext";
 import {
@@ -232,18 +238,6 @@ export const PersistedTerminalContextDraft = Schema.Struct({
   text: Schema.optionalKey(Schema.String),
 });
 type PersistedTerminalContextDraft = typeof PersistedTerminalContextDraft.Type;
-
-/** Browser-local semantic intent. Recovery journal copies may change their key;
- * the intent ID never changes. A malformed present marker must fail closed. */
-export const ExtractedDraftIntent = Schema.Union([
-  Schema.Struct({
-    intentId: Schema.String.check(Schema.isPattern(/^[a-f0-9-]{36}$/)),
-    journalKey: Schema.String.check(Schema.isMinLength(1)),
-  }),
-  Schema.Struct({ invalid: Schema.Literal(true) }),
-]);
-export type ExtractedDraftIntent = typeof ExtractedDraftIntent.Type;
-const isExtractedDraftIntent = Schema.is(ExtractedDraftIntent);
 
 const PersistedComposerThreadDraftState = Schema.Struct({
   extractedIntent: Schema.optionalKey(ExtractedDraftIntent),
@@ -1979,9 +1973,7 @@ function normalizePersistedDraftsByThreadId(
     const draftCandidate = draftValue as PersistedComposerThreadDraftState;
     const extractedIntent =
       "extractedIntent" in draftValue
-        ? isExtractedDraftIntent(draftCandidate.extractedIntent)
-          ? draftCandidate.extractedIntent
-          : { invalid: true as const }
+        ? normalizeExtractedDraftIntent(draftCandidate.extractedIntent)
         : undefined;
     const promptCandidate = typeof draftCandidate.prompt === "string" ? draftCandidate.prompt : "";
     const attachments = Array.isArray(draftCandidate.attachments)
@@ -4429,15 +4421,13 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 ...destination.previewAnnotations.map(previewAnnotationContextReference),
               ],
             );
-            if (
-              source.extractedIntent &&
-              destination.extractedIntent &&
-              JSON.stringify(source.extractedIntent) !== JSON.stringify(destination.extractedIntent)
-            )
-              throw new Error("Keep extracted intents in separate recoverable drafts.");
+            const transferredIntent = transferredExtractedDraftIntent(
+              source.extractedIntent,
+              destination.extractedIntent,
+            );
             const nextDestination: ComposerThreadDraftState = {
               ...destination,
-              ...(source.extractedIntent ? { extractedIntent: source.extractedIntent } : {}),
+              ...transferredIntent,
               prompt: movedPrompt,
               images: [...destination.images, ...movedImages],
               files: [...destination.files, ...movedFiles],
