@@ -9,7 +9,8 @@ import { sourcePlanFingerprint } from "../SourcePlan.ts";
 import { decodeRunRow } from "./projectionRowJson.ts";
 
 /** Track plans within one batch of events. Called after each event is positioned; returns
- * a plan-consumed event when the event is an accepted turn of a plan-started run. */
+ * the lookup for an accepted native turn, which yields a plan-consumed event when the turn
+ * belongs to a plan-started run; returns undefined, without any effect, for other events. */
 export const makeSourcePlanConsumer = (deps: {
   readonly sql: SqlClient.SqlClient;
   readonly projectionStore: ProjectionStore.ProjectionStoreV2Shape;
@@ -19,29 +20,31 @@ export const makeSourcePlanConsumer = (deps: {
     string,
     Extract<OrchestrationV2DomainEvent, { type: "plan.updated" }>["payload"]
   >();
-  return (event: OrchestrationV2DomainEvent) =>
-    Effect.gen(function* () {
-      if (event.type === "plan.updated") {
-        pendingPlans.set(`${event.threadId}\u0000${event.payload.id}`, event.payload);
-      }
-      if (event.type !== "provider-turn.updated") return undefined;
-      const turn = event.payload;
-      if (
-        turn.acceptedAt === undefined ||
-        turn.nativeAcceptance !== "accepted" ||
-        turn.runAttemptId === null ||
-        turn.nativeTurnRef === null ||
-        turn.startedAt === null ||
-        turn.status === "pending"
-      )
-        return undefined;
+  return (event: OrchestrationV2DomainEvent) => {
+    if (event.type === "plan.updated") {
+      pendingPlans.set(`${event.threadId}\u0000${event.payload.id}`, event.payload);
+    }
+    if (event.type !== "provider-turn.updated") return undefined;
+    const turn = event.payload;
+    if (
+      turn.acceptedAt === undefined ||
+      turn.nativeAcceptance !== "accepted" ||
+      turn.runAttemptId === null ||
+      turn.nativeTurnRef === null ||
+      turn.startedAt === null ||
+      turn.status === "pending"
+    )
+      return undefined;
+    const runAttemptId = turn.runAttemptId;
+    const nativeTurnRef = turn.nativeTurnRef;
+    return Effect.gen(function* () {
       // Read only canonical committed owners, within the enclosing append transaction.
       // A callback for a child, replaced attempt, or pooled sibling cannot consume a plan.
       const rows = yield* sql<{ readonly payload_json: string }>`
       SELECT r.payload_json
       FROM orchestration_v2_projection_runs r
       JOIN orchestration_v2_projection_run_attempts a
-        ON a.attempt_id = ${turn.runAttemptId}
+        ON a.attempt_id = ${runAttemptId}
        AND a.run_id = r.run_id AND a.thread_id = r.thread_id
       JOIN orchestration_v2_projection_nodes n
         ON n.node_id = ${turn.nodeId} AND n.thread_id = r.thread_id
@@ -58,7 +61,7 @@ export const makeSourcePlanConsumer = (deps: {
         AND p.last_run_ordinal = r.ordinal
         AND a.provider_thread_id = p.provider_thread_id
         AND a.provider_instance_id = p.provider_instance_id
-        AND p.driver = ${turn.nativeTurnRef.driver}
+        AND p.driver = ${nativeTurnRef.driver}
         AND (a.provider_turn_id IS NULL OR a.provider_turn_id = ${turn.id})
         AND json_extract(a.payload_json, '$.rootNodeId') = n.node_id
         AND n.kind = 'root_turn' AND n.parent_node_id IS NULL
@@ -72,7 +75,7 @@ export const makeSourcePlanConsumer = (deps: {
         (event.nodeId !== undefined && event.nodeId !== run.rootNodeId) ||
         (event.providerInstanceId !== undefined &&
           event.providerInstanceId !== run.providerInstanceId) ||
-        (event.driver !== undefined && event.driver !== turn.nativeTurnRef.driver)
+        (event.driver !== undefined && event.driver !== nativeTurnRef.driver)
       )
         return undefined;
       const ref = run.sourcePlanRef ?? run.legacyQueue?.sourceProposedPlan;
@@ -113,7 +116,7 @@ export const makeSourcePlanConsumer = (deps: {
           consumedBy: {
             threadId: event.threadId,
             runId: run.id,
-            runAttemptId: turn.runAttemptId,
+            runAttemptId,
             providerTurnId: turn.id,
           },
         },
@@ -121,4 +124,5 @@ export const makeSourcePlanConsumer = (deps: {
       pendingPlans.set(key, consumed.payload);
       return consumed;
     });
+  };
 };

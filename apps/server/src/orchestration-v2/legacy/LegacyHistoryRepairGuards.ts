@@ -202,7 +202,8 @@ const guardLegacyQuestionInsertions = Effect.fn("EventSink.guardLegacyQuestionIn
 );
 
 /** Run the requested repair guards in their required order: inserted answers,
- * then citation text, then history positions. */
+ * then citation text, then history positions. Returns undefined, without any effect,
+ * when the write requests none of them. */
 export const applyLegacyHistoryRepairGuards = (
   sql: SqlClient.SqlClient,
   options: {
@@ -212,16 +213,20 @@ export const applyLegacyHistoryRepairGuards = (
   },
   events: ReadonlyArray<OrchestrationV2DomainEvent>,
 ) =>
-  Effect.gen(function* () {
-    const insertionGuarded =
-      options.guardLegacyQuestionInsertions === true
-        ? yield* guardLegacyQuestionInsertions(sql, events)
-        : events;
-    const citationGuarded =
-      options.guardLegacyCitationRepairs === true
-        ? yield* guardLegacyCitationRepairs(sql, insertionGuarded)
-        : insertionGuarded;
-    return options.guardTurnItemPositionRepairs === true
-      ? yield* guardTurnItemPositionRepairs(sql, citationGuarded)
-      : citationGuarded;
-  });
+  options.guardLegacyQuestionInsertions !== true &&
+  options.guardLegacyCitationRepairs !== true &&
+  options.guardTurnItemPositionRepairs !== true
+    ? undefined
+    : Effect.gen(function* () {
+        const insertionGuarded =
+          options.guardLegacyQuestionInsertions === true
+            ? yield* guardLegacyQuestionInsertions(sql, events)
+            : events;
+        const citationGuarded =
+          options.guardLegacyCitationRepairs === true
+            ? yield* guardLegacyCitationRepairs(sql, insertionGuarded)
+            : insertionGuarded;
+        return options.guardTurnItemPositionRepairs === true
+          ? yield* guardTurnItemPositionRepairs(sql, citationGuarded)
+          : citationGuarded;
+      });

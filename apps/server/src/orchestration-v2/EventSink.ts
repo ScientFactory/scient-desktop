@@ -344,7 +344,8 @@ const baseLayer: Layer.Layer<
                 .pipe(Effect.map((payload) => ({ ...event, payload })))
             : Effect.succeed(event);
           normalized.push(positioned);
-          const consumed = yield* consumeSourcePlan(event);
+          const consumption = consumeSourcePlan(event);
+          const consumed = consumption === undefined ? undefined : yield* consumption;
           if (consumed !== undefined) normalized.push(consumed);
         }
         return normalized;
@@ -394,7 +395,8 @@ const baseLayer: Layer.Layer<
       const storedEvents = yield* sql.withTransaction(
         Effect.gen(function* () {
           // SCIENT-FORK:START — legacy V1 history repairs recheck ownership in this transaction.
-          const positionGuarded = yield* applyLegacyHistoryRepairGuards(sql, input, input.events);
+          const legacyRepairs = applyLegacyHistoryRepairGuards(sql, input, input.events);
+          const positionGuarded = legacyRepairs === undefined ? input.events : yield* legacyRepairs;
           // SCIENT-FORK:END
           const normalized = yield* normalizeEvents(
             input.guardPendingUserInputCancellations === true
