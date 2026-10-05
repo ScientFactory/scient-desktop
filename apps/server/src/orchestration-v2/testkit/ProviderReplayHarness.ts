@@ -525,6 +525,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     Layer.provide(
       Layer.mergeAll(
         contextHandoffServiceProvided,
+        serverConfigLayer,
         handoffSettingsLayer,
         databaseLayer,
         eventSinkProvided,
@@ -540,7 +541,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     ),
   );
   const providerTurnControlServiceProvided = ProviderTurnControlService.layer.pipe(
-    Layer.provide(Layer.merge(storesLayer, providerSessionManagerProvided)),
+    Layer.provide(Layer.mergeAll(storesLayer, providerSessionManagerProvided, serverConfigLayer)),
   );
   const runtimeRequestServiceProvided = RuntimeRequestService.layer.pipe(
     Layer.provide(Layer.merge(storesLayer, providerSessionManagerProvided)),

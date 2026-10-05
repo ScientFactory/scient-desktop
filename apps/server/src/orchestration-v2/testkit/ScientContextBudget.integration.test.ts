@@ -56,6 +56,7 @@ import { OrchestratorV2 } from "../Orchestrator.ts";
 import { ProjectStoreV2 } from "../ProjectStore.ts";
 import { makeLayer } from "../ProviderAdapterRegistry.ts";
 import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
+import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { EventStoreV2 } from "../EventStore.ts";
 import { EventSinkV2 } from "../EventSink.ts";
 import * as EffectWorker from "../EffectWorker.ts";
@@ -144,8 +145,32 @@ const cases: ReadonlyArray<{
   readonly refused?: boolean;
   readonly skills?: boolean;
   readonly retainedScope?: boolean;
+  readonly stopPreparation?: boolean;
+  readonly optionalCurrentMarker?: boolean;
   readonly optionalMarker?: boolean;
 }> = [
+  {
+    name: "optional-marker-straddles-current-input-cap",
+    size: "standard",
+    historyBytes: 100,
+    window: 1_000_000,
+    path: "fork",
+    included: true,
+    skills: true,
+    currentInput: "u".repeat(120_000),
+    optionalCurrentMarker: true,
+  },
+  {
+    name: "stop-during-shared-input-preparation",
+    size: "standard",
+    historyBytes: 100,
+    window: 1_000_000,
+    path: "fork",
+    included: true,
+    skills: true,
+    retainedScope: true,
+    stopPreparation: true,
+  },
   {
     name: "issued-scope-survives-rejected-merge-back",
     size: "standard",
@@ -181,7 +206,7 @@ const cases: ReadonlyArray<{
     skills: true,
     size: "standard",
     historyBytes: 150_000,
-    currentInput: "u".repeat(120_000),
+    currentInput: "u".repeat(119_000),
     window: 56_000,
     path: "fork",
     included: false,
@@ -423,7 +448,10 @@ for (const test of cases) {
                           yield* publish({
                             type: "text",
                             id: `${name}:answer:${offers.length}`,
-                            delta: "Controlled answer",
+                            delta:
+                              test.path === "ordinary-switch" && openInput.threadId === source
+                                ? historicalText
+                                : "Controlled answer",
                           });
                           yield* publish({
                             type: "text-completed",
@@ -525,13 +553,7 @@ for (const test of cases) {
                 creationSource: "web",
               });
             if (forkPath || switchPath) {
-              yield* establish(
-                source,
-                "source",
-                test.path === "ordinary-switch"
-                  ? historicalText
-                  : "Establish the native source boundary",
-              );
+              yield* establish(source, "source", "Establish the native source boundary");
               if (heldSource) {
                 yield* Deferred.await(sourceOffered).pipe(Effect.timeout("10 seconds"));
                 yield* waitFor(
@@ -579,7 +601,13 @@ for (const test of cases) {
                 commandId: CommandId.make(`${name}:send:${suffix}`),
                 messageId: MessageId.make(`${name}:message:${suffix}`),
                 text: currentInput,
-                ...(test.skills ? { selectedScientSkillNames: ["project-method"] } : {}),
+                ...(test.skills
+                  ? {
+                      selectedScientSkillNames: test.optionalCurrentMarker
+                        ? []
+                        : ["project-method"],
+                    }
+                  : {}),
                 attachments: [],
                 modelSelection: targetSelection,
                 dispatchMode:
@@ -849,6 +877,46 @@ for (const test of cases) {
                   !test.included,
                 );
               }
+              if (test.optionalCurrentMarker && skillRegistry) {
+                assert.ok(skillToken);
+                const issued = yield* skillRegistry.resolve(skillToken);
+                assert.ok(issued?.skillScope);
+                assert.equal(issued.skillScope.catalog?.status, "complete");
+                assert.equal(issued.skillScope.releases.size, 1);
+                assert.deepEqual(offeredScopes, [issued]);
+                assert.equal(publishedTo(target), 1);
+                assert.isTrue(offers[0]!.endsWith(currentInput));
+                assert.notInclude(offers[0]!, "Scient skill scope");
+                assert.isAbove(
+                  offers[0]!.length,
+                  120_000,
+                  "Inherited context has a separate allowance from the current-only cap",
+                );
+                const prepared = yield* prepareScientV2SkillScope({
+                  threadId: target,
+                  driver: ProviderDriverKind.make("codex"),
+                  mcpSessionInjection: true,
+                  projectRoot: cwd,
+                  text: currentInput,
+                  selectedScientSkillNames: [],
+                }).pipe(Effect.provide(skillPlannerLayer));
+                assert.isAbove(prepared.text.length, 120_000);
+                assert.equal(prepared.textWithoutCatalogMarker, currentInput);
+                const listed = yield* dispatchScientOperation(
+                  "skills.list",
+                  listScientSkillsForInvocation(),
+                ).pipe(
+                  Effect.provideService(AgentInvocationContext, scientInvocationForMcp(issued)),
+                );
+                assert.equal(listed.scope.status, "complete");
+                const loaded = yield* dispatchScientOperation(
+                  "skills.load",
+                  loadScientSkillForInvocation({ name: "project-method" }),
+                ).pipe(
+                  Effect.provideService(AgentInvocationContext, scientInvocationForMcp(issued)),
+                );
+                assert.include(loaded.instructions, "Preserve the evidence.");
+              }
               if (skillRegistry && (test.retainedScope || test.optionalMarker)) {
                 assert.ok(skillToken);
                 const issued = yield* skillRegistry.resolve(skillToken);
@@ -935,75 +1003,214 @@ for (const test of cases) {
                   const priorOffers = offers.length;
                   const priorOpenings = openings;
                   const priorPublications = publishedTo(target);
-                  modelWindow = 56_000;
-                  yield* orchestrator.dispatch({
-                    type: "message.dispatch",
-                    threadId: target,
-                    commandId: CommandId.make(`${name}:rejected`),
-                    messageId: MessageId.make(`${name}:rejected`),
-                    text: "u".repeat(120_000),
-                    selectedScientSkillNames: [],
-                    attachments: [],
-                    modelSelection: selection,
-                    dispatchMode: { type: "start_immediately" },
-                    createdBy: "user",
-                    creationSource: "web",
-                  });
-                  const refused = yield* waitFor(
-                    target,
-                    (projection) => projection.runs.at(-1)?.status === "failed",
-                  );
-                  assert.equal(offers.length, priorOffers);
-                  assert.equal(
-                    openings,
-                    priorOpenings,
-                    "The refusal must preserve the same native session",
-                  );
-                  assert.equal(publishedTo(target), priorPublications);
-                  const preserved = yield* skillRegistry.resolve(skillToken);
-                  assert.deepEqual(
-                    preserved,
-                    issued,
-                    "Rejected replacement cannot clear a previously usable issued grant",
-                  );
-                  assert.ok(preserved);
-                  const stillLoaded = yield* dispatchScientOperation(
-                    "skills.load",
-                    loadScientSkillForInvocation({ name: "project-method" }),
-                  ).pipe(
-                    Effect.provideService(
-                      AgentInvocationContext,
-                      scientInvocationForMcp(preserved),
-                    ),
-                  );
-                  assert.deepEqual(stillLoaded, loaded);
-                  const failure = refused.turnItems.find(
-                    (item) => item.type === "error" && item.runId === refused.runs.at(-1)?.id,
-                  );
-                  assert.ok(failure?.type === "error");
-                  assert.include(failure.failure.message, "Insufficient context allowance");
-                  assert.isTrue(
-                    refused.contextHandoffs.some(
-                      (candidate) =>
-                        candidate.strategy === "fork_delta_summary" &&
-                        candidate.history?.messages.some(
-                          (message) => message.text === "NEW_DELTA_FOR_MERGE_BACK",
+                  if (test.stopPreparation) {
+                    const projections = yield* ProjectionStoreV2;
+                    const prepareEntered = yield* Deferred.make<void>();
+                    const releasePreparation = yield* Deferred.make<void>();
+                    const originalHistory = projections.getTurnStartHistory;
+                    const historySpy = vi
+                      .spyOn(projections, "getTurnStartHistory")
+                      .mockImplementation((threadId) =>
+                        Effect.gen(function* () {
+                          const live = yield* projections.getRuntimeRecoveryProjection(threadId);
+                          if (threadId === target && live.runs.at(-1)?.status === "running") {
+                            yield* Deferred.succeed(prepareEntered, undefined);
+                            yield* Deferred.await(releasePreparation);
+                          }
+                          return yield* originalHistory(threadId);
+                        }),
+                      );
+                    yield* Effect.addFinalizer(() => Effect.sync(() => historySpy.mockRestore()));
+                    const binding = merged.providerThreads.find(
+                      (thread) => thread.id === merged.thread.activeProviderThreadId,
+                    );
+                    assert.ok(binding?.providerSessionId);
+                    const live = yield* (yield* ProviderSessionManagerV2).get(
+                      binding.providerSessionId,
+                    );
+                    assert.ok(Option.isSome(live));
+                    const previousTurn = merged.providerTurns.findLast(
+                      (turn) => turn.providerThreadId === binding.id,
+                    );
+                    assert.ok(previousTurn);
+                    const interrupted: Array<{
+                      turn: string;
+                      nativeThread: string | null | undefined;
+                      restart: boolean | undefined;
+                    }> = [];
+                    const originalInterrupt = live.value.interruptTurn;
+                    const interruptSpy = vi
+                      .spyOn(live.value, "interruptTurn")
+                      .mockImplementation((input) => {
+                        interrupted.push({
+                          turn: input.providerTurnId,
+                          nativeThread: input.providerThread.nativeThreadRef?.nativeId,
+                          restart: input.requestRuntimeRestart,
+                        });
+                        return originalInterrupt(input);
+                      });
+                    yield* Effect.addFinalizer(() => Effect.sync(() => interruptSpy.mockRestore()));
+                    yield* orchestrator.dispatch({
+                      type: "message.dispatch",
+                      threadId: target,
+                      commandId: CommandId.make(`${name}:stopped`),
+                      messageId: MessageId.make(`${name}:stopped`),
+                      text: "Continue with the captured request",
+                      selectedScientSkillNames: [],
+                      attachments: [],
+                      modelSelection: selection,
+                      dispatchMode: { type: "start_immediately" },
+                      createdBy: "user",
+                      creationSource: "web",
+                    });
+                    yield* Deferred.await(prepareEntered).pipe(Effect.timeout("10 seconds"));
+                    const parked = yield* orchestrator.getThreadProjection(target);
+                    const parkedRun = parked.runs.at(-1)!;
+                    assert.equal(parkedRun.status, "running");
+                    assert.isFalse(
+                      parked.providerTurns.some(
+                        (turn) => turn.runAttemptId === parkedRun.activeAttemptId,
+                      ),
+                    );
+                    assert.equal(offers.length, priorOffers);
+                    yield* orchestrator.dispatch({
+                      type: "run.interrupt",
+                      commandId: CommandId.make(`${name}:stop`),
+                      threadId: target,
+                      runId: parkedRun.id,
+                    });
+                    const requested = yield* orchestrator.getThreadProjection(target);
+                    assert.isTrue(
+                      requested.turnItems.some(
+                        (item) =>
+                          item.id ===
+                          allocator.derive.runSignalTurnItem({
+                            runId: parkedRun.id,
+                            signal: "interrupt-request",
+                          }),
+                      ),
+                    );
+                    yield* Deferred.succeed(releasePreparation, undefined);
+                    const stopped = yield* waitFor(
+                      target,
+                      (projection) =>
+                        projection.runs.find((run) => run.id === parkedRun.id)?.status ===
+                        "interrupted",
+                    ).pipe(
+                      Effect.onError(() =>
+                        orchestrator.getThreadProjection(target).pipe(
+                          Effect.flatMap((projection) =>
+                            Effect.logError("Actual Stop during preparation state", {
+                              run: projection.runs.find((run) => run.id === parkedRun.id),
+                              attempts: projection.attempts.filter(
+                                (attempt) => attempt.runId === parkedRun.id,
+                              ),
+                              nativeOffers: offers.length,
+                              priorOffers,
+                              interrupted,
+                              currentReceipt: projection.providerTurns.filter(
+                                (turn) => turn.runAttemptId === parkedRun.activeAttemptId,
+                              ),
+                              errors: projection.turnItems.filter(
+                                (item) => item.type === "error" && item.runId === parkedRun.id,
+                              ),
+                            }),
+                          ),
+                          Effect.ignore,
                         ),
-                    ),
-                  );
-                  assert.isFalse(
-                    refused.providerTurns.some(
-                      (turn) =>
-                        turn.runAttemptId === refused.runs.at(-1)?.activeAttemptId &&
-                        (turn.nativeAcceptance === "accepted" || turn.acceptedAt !== undefined),
-                    ),
-                  );
-                  assert.deepEqual(
-                    refused.messages.find(
-                      (message) => message.id === MessageId.make(`${name}:rejected`),
-                    )?.selectedScientSkillNames,
-                    [],
-                  );
+                      ),
+                    );
+                    assert.equal(offers.length, priorOffers);
+                    assert.equal(openings, priorOpenings);
+                    assert.equal(publishedTo(target), priorPublications);
+                    assert.deepEqual(yield* skillRegistry.resolve(skillToken), issued);
+                    assert.deepEqual(interrupted, [
+                      {
+                        turn: previousTurn.id,
+                        nativeThread: binding.nativeThreadRef?.nativeId,
+                        restart: true,
+                      },
+                    ]);
+                    assert.isFalse(
+                      stopped.providerTurns.some(
+                        (turn) => turn.runAttemptId === parkedRun.activeAttemptId,
+                      ),
+                    );
+                    assert.equal(
+                      stopped.runs.find((run) => run.id === merged.runs.at(-1)?.id)?.status,
+                      "completed",
+                    );
+                  } else {
+                    modelWindow = 56_000;
+                    yield* orchestrator.dispatch({
+                      type: "message.dispatch",
+                      threadId: target,
+                      commandId: CommandId.make(`${name}:rejected`),
+                      messageId: MessageId.make(`${name}:rejected`),
+                      text: "u".repeat(120_000),
+                      selectedScientSkillNames: [],
+                      attachments: [],
+                      modelSelection: selection,
+                      dispatchMode: { type: "start_immediately" },
+                      createdBy: "user",
+                      creationSource: "web",
+                    });
+                    const refused = yield* waitFor(
+                      target,
+                      (projection) => projection.runs.at(-1)?.status === "failed",
+                    );
+                    assert.equal(offers.length, priorOffers);
+                    assert.equal(
+                      openings,
+                      priorOpenings,
+                      "The refusal must preserve the same native session",
+                    );
+                    assert.equal(publishedTo(target), priorPublications);
+                    const preserved = yield* skillRegistry.resolve(skillToken);
+                    assert.deepEqual(
+                      preserved,
+                      issued,
+                      "Rejected replacement cannot clear a previously usable issued grant",
+                    );
+                    assert.ok(preserved);
+                    const stillLoaded = yield* dispatchScientOperation(
+                      "skills.load",
+                      loadScientSkillForInvocation({ name: "project-method" }),
+                    ).pipe(
+                      Effect.provideService(
+                        AgentInvocationContext,
+                        scientInvocationForMcp(preserved),
+                      ),
+                    );
+                    assert.deepEqual(stillLoaded, loaded);
+                    const failure = refused.turnItems.find(
+                      (item) => item.type === "error" && item.runId === refused.runs.at(-1)?.id,
+                    );
+                    assert.ok(failure?.type === "error");
+                    assert.include(failure.failure.message, "Insufficient context allowance");
+                    assert.isTrue(
+                      refused.contextHandoffs.some(
+                        (candidate) =>
+                          candidate.strategy === "fork_delta_summary" &&
+                          candidate.history?.messages.some(
+                            (message) => message.text === "NEW_DELTA_FOR_MERGE_BACK",
+                          ),
+                      ),
+                    );
+                    assert.isFalse(
+                      refused.providerTurns.some(
+                        (turn) =>
+                          turn.runAttemptId === refused.runs.at(-1)?.activeAttemptId &&
+                          (turn.nativeAcceptance === "accepted" || turn.acceptedAt !== undefined),
+                      ),
+                    );
+                    assert.deepEqual(
+                      refused.messages.find(
+                        (message) => message.id === MessageId.make(`${name}:rejected`),
+                      )?.selectedScientSkillNames,
+                      [],
+                    );
+                  }
                 }
               }
               if (test.path === "recovery") {

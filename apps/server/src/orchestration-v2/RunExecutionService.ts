@@ -1718,6 +1718,24 @@ export const layer: Layer.Layer<
                   error.providerTurn.providerThreadId === input.providerThread.id
                     ? error.providerTurn
                     : undefined;
+                // The wrapper may prepare context after the first pending-start
+                // fence. Stop in that interval still owns the declined native offer.
+                if (
+                  receipt === undefined &&
+                  input.shouldStartProviderTurn !== undefined &&
+                  !(yield* input.shouldStartProviderTurn()) &&
+                  (yield* cancelDeclinedStart)
+                ) {
+                  yield* Ref.set(rootTerminalSeen, true);
+                  yield* Ref.set(rootRunFinalized, true);
+                  if (
+                    (yield* Ref.get(cancelledStartOwner))?.retainedTurn === undefined ||
+                    (input.providerThread.pendingBackgroundTasks?.length ?? 0) === 0
+                  ) {
+                    yield* Fiber.interrupt(providerEventFiber);
+                  }
+                  return;
+                }
                 return yield* Effect.logError("orchestration V2 provider turn start failed", {
                   runId: input.run.id,
                   cause,

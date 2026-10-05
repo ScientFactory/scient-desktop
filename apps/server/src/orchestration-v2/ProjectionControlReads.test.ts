@@ -1,3 +1,5 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ServerConfig from "../config.ts";
 import { assert, it } from "@effect/vitest";
 import {
   EventId,
@@ -362,7 +364,14 @@ for (const storage of ["sqlite", "memory"] as const) {
       }).pipe(
         Effect.provide(
           Layer.merge(ProviderTurnControlService.layer, RuntimeRequestService.layer).pipe(
-            Layer.provide(sessions),
+            Layer.provide(
+              Layer.merge(
+                sessions,
+                ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
+                  Layer.provide(NodeServices.layer),
+                ),
+              ),
+            ),
           ),
         ),
       );
