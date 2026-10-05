@@ -33,6 +33,7 @@ import { AcpProviderCapabilitiesV2 } from "../../orchestration-v2/Adapters/AcpAd
 import {
   makeNativeSessionAdapterV2,
   NativeSessionOperationError,
+  type NativeSession,
 } from "../../orchestration-v2/Adapters/NativeSessionAdapterV2.ts";
 import * as Option from "effect/Option";
 import * as Clock from "effect/Clock";
@@ -160,6 +161,7 @@ const withImporter = <A, E, R>(
     readonly projectScope?: Scope.Scope;
     readonly runtimeOptions?: Parameters<typeof nativeImportRuntimeTestLayer>[1];
     readonly nativeIdFactory?: () => string;
+    readonly beforeOpen?: (threadId: ThreadId) => Effect.Effect<void>;
     readonly beforeFresh?: () => Effect.Effect<void, NativeSessionOperationError>;
     readonly beforeSend?: () => Effect.Effect<void, NativeSessionOperationError>;
     readonly onResume?: (nativeId: string) => Effect.Effect<void, NativeSessionOperationError>;
@@ -206,84 +208,93 @@ const withImporter = <A, E, R>(
         defaultCwd: cwd,
         continuations: { offer: () => Effect.die("Unexpected native continuation wake") },
         open: (input, publish) =>
-          Effect.sync(() => {
-            let nativeId = options.nativeIdFactory?.() ?? `import-peer:${input.providerSessionId}`;
-            return {
-              get nativeId() {
-                return nativeId;
-              },
-              nativeThreadKnown: true,
-              resume: (id) => options.onResume?.(id) ?? Effect.void,
-              ...(options.nativeIdFactory === undefined
-                ? {}
-                : {
-                    ensureFresh: () =>
-                      Effect.gen(function* () {
-                        yield* options.beforeFresh?.() ?? Effect.void;
-                        nativeId = options.nativeIdFactory!();
-                        yield* publish({ type: "native-thread", id: nativeId });
+          (options.beforeOpen?.(input.threadId) ?? Effect.void).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                let nativeId =
+                  options.nativeIdFactory?.() ?? `import-peer:${input.providerSessionId}`;
+                return {
+                  get nativeId() {
+                    return nativeId;
+                  },
+                  nativeThreadKnown: true,
+                  resume: (id) => options.onResume?.(id) ?? Effect.void,
+                  ...(options.nativeIdFactory === undefined
+                    ? {}
+                    : {
+                        ensureFresh: () =>
+                          Effect.gen(function* () {
+                            yield* options.beforeFresh?.() ?? Effect.void;
+                            nativeId = options.nativeIdFactory!();
+                            yield* publish({ type: "native-thread", id: nativeId });
+                          }),
                       }),
-                  }),
-              respond: () => Effect.die("Imported answers cannot be executable requests"),
-              interrupt: publish({ type: "terminal", status: "cancelled" }),
-              ...(options.onSteer === undefined
-                ? {}
-                : {
-                    steer: (
-                      input: import("../../orchestration-v2/ProviderAdapter.ts").ProviderAdapterV2SteerInput,
-                    ) => options.onSteer!(input.message.text),
-                  }),
-              send: (turn, nativeTurnId) =>
-                Effect.gen(function* () {
-                  prompts.push(turn.message.text);
-                  sends.push(turn);
-                  if (options.onSteer !== undefined)
-                    yield* publish({ type: "accepted", nativeTurnId });
-                  yield* options.beforeSend?.() ?? Effect.void;
-                  if (options.sourceTraces && turn.message.text === "Trace source") {
-                    yield* publish({
-                      type: "text",
-                      id: "source-thinking",
-                      delta: "Visible retained reasoning",
-                      reasoning: true,
-                    });
-                    yield* publish({ type: "text-completed", id: "source-thinking" });
-                    yield* publish({
-                      type: "tool",
-                      id: "source-tool",
-                      name: "read_file",
-                      input: { path: "data.csv" },
-                      output: "Superseded partial result",
-                      status: "running",
-                    });
-                    yield* publish({
-                      type: "tool",
-                      id: "source-tool",
-                      name: "read_file",
-                      input: { path: "data.csv" },
-                      output: `Retained native result ${"o".repeat(40_000)}`,
-                      status: "completed",
-                    });
-                    yield* publish({ type: "text", id: "source-answer", delta: "Source answer" });
-                    yield* publish({ type: "text-completed", id: "source-answer" });
-                  }
-                  if (
-                    turn.message.text.trimEnd().endsWith("Continue") ||
-                    turn.message.text.trimEnd().endsWith("Temporary follow-up")
-                  ) {
-                    yield* publish({
-                      type: "text",
-                      id: "continued-answer",
-                      delta: turn.message.text.trimEnd().endsWith("Continue")
-                        ? "Continued"
-                        : "Temporary answer",
-                    });
-                    yield* publish({ type: "text-completed", id: "continued-answer" });
-                  }
-                  yield* publish({ type: "terminal", status: "completed" });
-                }),
-            };
-          }),
+                  respond: () => Effect.die("Imported answers cannot be executable requests"),
+                  interrupt: publish({ type: "terminal", status: "cancelled" }),
+                  ...(options.onSteer === undefined
+                    ? {}
+                    : {
+                        steer: (
+                          input: import("../../orchestration-v2/ProviderAdapter.ts").ProviderAdapterV2SteerInput,
+                        ) => options.onSteer!(input.message.text),
+                      }),
+                  send: (turn, nativeTurnId) =>
+                    Effect.gen(function* () {
+                      prompts.push(turn.message.text);
+                      sends.push(turn);
+                      if (options.onSteer !== undefined)
+                        yield* publish({ type: "accepted", nativeTurnId });
+                      yield* options.beforeSend?.() ?? Effect.void;
+                      if (options.sourceTraces && turn.message.text === "Trace source") {
+                        yield* publish({
+                          type: "text",
+                          id: "source-thinking",
+                          delta: "Visible retained reasoning",
+                          reasoning: true,
+                        });
+                        yield* publish({ type: "text-completed", id: "source-thinking" });
+                        yield* publish({
+                          type: "tool",
+                          id: "source-tool",
+                          name: "read_file",
+                          input: { path: "data.csv" },
+                          output: "Superseded partial result",
+                          status: "running",
+                        });
+                        yield* publish({
+                          type: "tool",
+                          id: "source-tool",
+                          name: "read_file",
+                          input: { path: "data.csv" },
+                          output: `Retained native result ${"o".repeat(40_000)}`,
+                          status: "completed",
+                        });
+                        yield* publish({
+                          type: "text",
+                          id: "source-answer",
+                          delta: "Source answer",
+                        });
+                        yield* publish({ type: "text-completed", id: "source-answer" });
+                      }
+                      if (
+                        turn.message.text.trimEnd().endsWith("Continue") ||
+                        turn.message.text.trimEnd().endsWith("Temporary follow-up")
+                      ) {
+                        yield* publish({
+                          type: "text",
+                          id: "continued-answer",
+                          delta: turn.message.text.trimEnd().endsWith("Continue")
+                            ? "Continued"
+                            : "Temporary answer",
+                        });
+                        yield* publish({ type: "text-completed", id: "continued-answer" });
+                      }
+                      yield* publish({ type: "terminal", status: "completed" });
+                    }),
+                } satisfies NativeSession;
+              }),
+            ),
+          ),
       });
       return {
         ...adapter,
@@ -2614,6 +2625,7 @@ it.live(
             }>`SELECT max_tokens FROM scient_model_context_windows WHERE provider_instance_id = ${PROVIDER_ID}`;
             assert.isTrue(rows.some((row) => row.max_tokens === 20_000));
             return {
+              fixture: expanded,
               sourceId,
               answerId: source.messages.at(-1)!.id,
               messages: source.messages,
@@ -2623,6 +2635,9 @@ it.live(
           }),
           { runtimeOptions, projectScope, modelContextWindow: () => 20_000 },
         );
+        const opened = yield* Deferred.make<void>();
+        const releaseOpen = yield* Deferred.make<void>();
+        const lateTarget = ThreadId.make("capacity-reopen:late-preset");
         yield* withImporter(
           Effect.gen(function* () {
             const settings = yield* ServerSettingsService;
@@ -2655,6 +2670,31 @@ it.live(
             assert.isAbove(cached.omittedItemIds!.length, 0);
             assert.isBelow(cached.itemIds.length, original.items.length);
             assert.isAtMost(Math.abs(cached.itemIds.length - original.included), 1);
+            yield* settings.updateSettings({ scientFork: { contextHandoffSize: "compact" } });
+            const late = yield* deliver("late-preset", selected).pipe(Effect.forkScoped);
+            yield* Deferred.await(opened).pipe(Effect.timeout("10 seconds"));
+            const prepared = (yield* store.getThreadProjection(lateTarget)).contextHandoffs.at(-1)!;
+            assert.equal(prepared.budgetPolicy, "scient");
+            assert.deepEqual(prepared.history!.omittedItemIds, []);
+            assert.deepEqual(
+              prepared.history!.messages.map((message) => message.text),
+              original.items
+                .flatMap((item) => historicalMessage(item) ?? [])
+                .map((message) => message.text),
+            );
+            assert.isAbove(
+              prepared.history!.messages.reduce((bytes, message) => bytes + message.text.length, 0),
+              48_000,
+            );
+            assert.equal((yield* settings.getSettings).scientFork.contextHandoffSize, "compact");
+            yield* settings.updateSettings({ scientFork: { contextHandoffSize: "large" } });
+            yield* Deferred.succeed(releaseOpen, undefined);
+            const lateDelivery = yield* Fiber.join(late);
+            assert.isAbove(lateDelivery.omittedItemIds!.length, 0);
+            assert.isBelow(lateDelivery.itemIds.length, original.items.length);
+            assert.isAtMost(Math.abs(lateDelivery.itemIds.length - original.included), 1);
+            assert.isTrue((yield* ImportPeer).prompts.at(-1)!.endsWith("Continue"));
+            yield* settings.updateSettings({ scientFork: { contextHandoffSize: "maximum" } });
             const otherModel = yield* deliver("other-model", {
               ...selected,
               model: "unknown-other-model",
@@ -2680,7 +2720,73 @@ it.live(
             assert.deepEqual(source.messages, original.messages);
             assert.deepEqual(source.turnItems, original.items);
           }),
-          { runtimeOptions, modelContextWindow: () => undefined },
+          {
+            runtimeOptions,
+            modelContextWindow: () => undefined,
+            beforeOpen: (threadId) =>
+              threadId === lateTarget
+                ? Deferred.succeed(opened, undefined).pipe(
+                    Effect.andThen(Deferred.await(releaseOpen)),
+                  )
+                : Effect.void,
+          },
+        );
+        yield* Effect.gen(function* () {
+          const freshConfig = yield* ServerConfig;
+          assert.notEqual(freshConfig.stateDir, config.stateDir);
+          const freshDatabase = makeSqlitePersistenceLive(
+            NodePath.join(freshConfig.stateDir, "capacity.sqlite"),
+          ).pipe(Layer.provide(NodeServices.layer));
+          yield* withImporter(
+            Effect.gen(function* () {
+              const { lease } = yield* leaseFor(original.fixture);
+              const sourceId = (yield* importOnce(lease)).result.threadId;
+              const store = yield* ProjectionStoreV2;
+              const source = yield* store.getThreadProjection(sourceId);
+              yield* (yield* ServerSettingsService).updateSettings({
+                scientFork: { contextHandoffSize: "maximum" },
+              });
+              const target = ThreadId.make("capacity-other-profile:fork");
+              yield* (yield* ConversationForkService).dispatch({
+                type: "thread.fork",
+                commandId: CommandId.make(target),
+                originThreadId: sourceId,
+                newThreadId: target,
+                sourceAssistantMessageId: source.messages.at(-1)!.id,
+                workspaceMode: "local",
+              });
+              yield* continueImport(
+                target,
+                MessageId.make("capacity-other-profile:send"),
+                "Continue",
+                selected,
+              );
+              const delivery = (yield* store.getThreadProjection(target)).contextHandoffs.at(
+                -1,
+              )!.delivery!;
+              assert.equal(delivery.itemIds.length, source.turnItems.length);
+              assert.deepEqual(delivery.omittedItemIds, []);
+              const rows =
+                yield* (yield* SqlClient.SqlClient)`SELECT * FROM scient_model_context_windows`;
+              assert.deepEqual(rows, []);
+              const unchanged = yield* store.getThreadProjection(sourceId);
+              assert.deepEqual(unchanged.messages, source.messages);
+              assert.deepEqual(unchanged.turnItems, source.turnItems);
+            }),
+            {
+              modelContextWindow: () => undefined,
+              runtimeOptions: {
+                databaseLayer: freshDatabase,
+                serverConfigLayer: Layer.succeed(ServerConfig, freshConfig),
+              },
+            },
+          );
+        }).pipe(
+          Effect.provide(
+            ServerConfig.layerTest(process.cwd(), {
+              prefix: "native-capacity-other-profile-",
+            }).pipe(Layer.provideMerge(NodeServices.layer)),
+          ),
         );
       }).pipe(
         Effect.provide(

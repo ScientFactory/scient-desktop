@@ -1,44 +1,42 @@
-import { FORK_CONTEXT_HANDOFF_TOKEN_CAPS } from "@t3tools/contracts";
-import * as Config from "effect/Config";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Result from "effect/Result";
 import { ServerSettingsService } from "../serverSettings.ts";
-import { DEFAULT_HANDOFF_TOKEN_CAP, handoffTokenCapConfig } from "./ContextHandoffBudget.ts";
+import {
+  DEFAULT_HANDOFF_TOKEN_CAP,
+  handoffTokenCapConfig,
+  scientHandoffTokenCapOverride,
+} from "./ContextHandoffBudget.ts";
+import { handoffTokenCap } from "./scient-fork/context/handoffBudget.ts";
 
-/** Read the latest Scient preset for each handoff, including changes after runtime startup. */
+/** Explicit replay-fixture override; production chooses policy from canonical provenance. */
+export class ContextHandoffPolicyOverride extends Context.Reference<"byte" | undefined>(
+  "t3/orchestration-v2/ContextHandoffPolicyOverride",
+  { defaultValue: () => undefined },
+) {}
+
+export const genericContextHandoffPolicy = handoffTokenCapConfig.pipe(
+  Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
+  Effect.map((tokenCap) => ({ tokenCap, bytesPerToken: 1, byteCap: 64_000 })),
+);
+
+/** Capture required settings once; read the latest Scient preset at final delivery. */
 export const makeScientContextHandoffPolicy = Effect.fn("ScientContextHandoffPolicy.make")(
   function* () {
-    const settings = yield* Effect.serviceOption(ServerSettingsService);
+    const settings = yield* ServerSettingsService;
     return Effect.gen(function* () {
-      const snapshot = Option.isSome(settings)
-        ? yield* Effect.result(settings.value.getSettings)
-        : undefined;
-      if (snapshot === undefined || Result.isFailure(snapshot)) {
-        return {
-          tokenCap: yield* handoffTokenCapConfig.pipe(
-            Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
-          ),
-          bytesPerToken: 1,
-          byteCap: 64_000,
-        };
-      }
-      const override = yield* Config.option(Config.Int("T3CODE_CONTEXT_HANDOFF_TOKEN_CAP")).pipe(
+      const snapshot = yield* settings.getSettings;
+      const override = yield* scientHandoffTokenCapOverride.pipe(
         Effect.orElseSucceed(() => Option.none<number>()),
       );
       return {
-        tokenCap: Option.isSome(override)
-          ? Math.max(1_024, override.value)
-          : FORK_CONTEXT_HANDOFF_TOKEN_CAPS[snapshot.success.scientFork.contextHandoffSize],
+        tokenCap: handoffTokenCap(
+          snapshot.scientFork.contextHandoffSize,
+          Option.getOrUndefined(override),
+        ),
         bytesPerToken: 3,
         byteCap: Infinity,
       };
     });
   },
 );
-
-export const preparationHistoryBudget = (policy: {
-  readonly tokenCap: number | null;
-  readonly bytesPerToken: number;
-  readonly byteCap: number;
-}) => Math.min(policy.byteCap, (policy.tokenCap ?? Infinity) * policy.bytesPerToken);
