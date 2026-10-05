@@ -385,7 +385,6 @@ export default defineConfig({
         "apps/server/src/orchestration/Layers/ThreadDeletionReactor.test.ts": 2,
         "apps/server/src/orchestration/commandInvariants.test.ts": 5,
         "apps/server/src/orchestration/projector.test.ts": 20,
-        "apps/server/src/provider/Layers/CodexAdapter.test.ts": 1,
         "apps/server/src/provider/Layers/CursorProvider.test.ts": 1,
         "apps/server/src/provider/Layers/ProviderService.test.ts": 2,
       }).map(([file, maxOccurrences]) => {
