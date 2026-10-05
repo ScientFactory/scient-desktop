@@ -52,6 +52,10 @@ import { ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import { upsertProviderTurn } from "./ProjectionStore.ts";
 import { makeProviderFailure, makeProviderFailureTurnItem } from "./ProviderFailure.ts";
+import {
+  ThreadCommandExecutor,
+  layer as threadCommandExecutorLayer,
+} from "./ThreadCommandExecutor.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 
 export interface ProviderEventRoutingState {
@@ -676,6 +680,7 @@ export const layer: Layer.Layer<
     const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
+    const threadDispatch = yield* ThreadCommandExecutor;
 
     const writeFinalRunEvents = (input: {
       readonly run: OrchestrationV2Run;
@@ -963,13 +968,71 @@ export const layer: Layer.Layer<
               ),
             ),
           );
+          // SCIENT-FORK:START — serialize terminal commit with held registration, not with native callbacks.
+          // An interrupt receipt can commit even when this superseded root cannot finalize.
+          const supersededInterruptResultWritten = yield* Ref.make(false);
+          const writeOwnedFinalRunEvents = (final: Parameters<typeof writeFinalRunEvents>[0]) =>
+            Effect.gen(function* () {
+              if (
+                yield* (
+                  input.session.droidSteerTerminalHeld?.(input.attempt.id, final.terminal.status) ??
+                    Effect.succeed(false)
+                )
+              )
+                return false;
+              let committedSideEffect = false;
+              const write = writeFinalRunEvents({
+                ...final,
+                ...(final.hasUnpairedRunInterruptRequest === undefined
+                  ? {}
+                  : {
+                      hasUnpairedRunInterruptRequest: () =>
+                        Ref.get(supersededInterruptResultWritten).pipe(
+                          Effect.flatMap((written) =>
+                            written
+                              ? Effect.succeed(false)
+                              : final.hasUnpairedRunInterruptRequest!(),
+                          ),
+                        ),
+                    }),
+                refreshAfterTurn: Effect.sync(() => {
+                  committedSideEffect = true;
+                }),
+              }).pipe(
+                Effect.tap((committed) =>
+                  !committed && committedSideEffect
+                    ? Ref.set(supersededInterruptResultWritten, true)
+                    : Effect.void,
+                ),
+              );
+              const committed = yield* input.session.driver !== "droid"
+                ? write
+                : threadDispatch.withLock(
+                    input.run.threadId,
+                    Effect.gen(function* () {
+                      if (
+                        yield* (
+                          input.session.droidSteerTerminalHeld?.(input.attempt.id, "completed") ??
+                            Effect.succeed(false)
+                        )
+                      )
+                        return false;
+                      return yield* write;
+                    }),
+                  );
+              if (committedSideEffect) {
+                yield* final.refreshAfterTurn;
+              }
+              return committed;
+            });
+          // SCIENT-FORK:END
           const cancelledStartOwner = yield* Ref.make<EventSink.PendingStartOwner | undefined>(
             undefined,
           );
           const cancelDeclinedStart = Effect.gen(function* () {
             const stoppedThread = yield* input.cancelBeforeProviderTurn?.() ?? Effect.void;
             if (stoppedThread === undefined) return false;
-            const committed = yield* writeFinalRunEvents({
+            const committed = yield* writeOwnedFinalRunEvents({
               run: input.run,
               rootNode: input.rootNode,
               checkpointScope: input.checkpointScope,
@@ -1062,7 +1125,7 @@ export const layer: Layer.Layer<
                   runId: input.run.id,
                   cause,
                 });
-                yield* writeFinalRunEvents({
+                yield* writeOwnedFinalRunEvents({
                   run: input.run,
                   rootNode: input.rootNode,
                   checkpointScope: input.checkpointScope,
@@ -1162,9 +1225,17 @@ export const layer: Layer.Layer<
               if (yield* Ref.get(rootRunFinalized)) {
                 return;
               }
+              // SCIENT: held/pre-admission retains this owner until canonical consume/drop resolves.
+              if (
+                yield* (
+                  input.session.droidSteerTerminalHeld?.(input.attempt.id, terminal.status) ??
+                    Effect.succeed(false)
+                )
+              )
+                return;
               const providerThread = yield* Ref.get(latestProviderThread);
               const openSubagents = yield* Ref.get(openRunOwnedSubagents);
-              yield* writeFinalRunEvents({
+              const committed = yield* writeOwnedFinalRunEvents({
                 run: input.run,
                 rootNode: input.rootNode,
                 checkpointScope: input.checkpointScope,
@@ -1187,6 +1258,7 @@ export const layer: Layer.Layer<
                   (cause) => new RunExecutionIngestError({ runId: input.run.id, cause }),
                 ),
               );
+              if (!committed) return;
               if (isRunOwnedSubagentTerminalStatus(terminal.status)) {
                 yield* Ref.set(openRunOwnedSubagents, emptyOpenRunOwnedSubagentProjection());
               }
@@ -1327,6 +1399,14 @@ export const layer: Layer.Layer<
               return false;
             }
             const terminal = yield* Ref.get(terminalEvent);
+            if (
+              terminal !== null &&
+              (yield* (
+                input.session.droidSteerTerminalHeld?.(input.attempt.id, terminal.status) ??
+                  Effect.succeed(false)
+              ))
+            )
+              return false;
             // Non-completed terminals drop background tracking immediately.
             if (terminal !== null && terminal.status !== "completed") {
               return true;
@@ -1625,7 +1705,7 @@ export const layer: Layer.Layer<
                                     Effect.flatMap((openSubagents) =>
                                       Ref.get(committedRootProviderTurn).pipe(
                                         Effect.flatMap((receipt) =>
-                                          writeFinalRunEvents({
+                                          writeOwnedFinalRunEvents({
                                             run: input.run,
                                             rootNode: input.rootNode,
                                             checkpointScope: input.checkpointScope,
@@ -1795,7 +1875,7 @@ export const layer: Layer.Layer<
                       Effect.flatMap((latestItemOrdinal) =>
                         Ref.get(openRunOwnedSubagents).pipe(
                           Effect.flatMap((openSubagents) =>
-                            writeFinalRunEvents({
+                            writeOwnedFinalRunEvents({
                               run: input.run,
                               rootNode: input.rootNode,
                               checkpointScope: input.checkpointScope,
@@ -1846,7 +1926,7 @@ export const layer: Layer.Layer<
         }),
     } satisfies RunExecutionServiceV2Shape);
   }),
-);
+).pipe(Layer.provide(threadCommandExecutorLayer));
 
 function makeInterruptResultTurnItem(input: {
   readonly idAllocator: IdAllocator.IdAllocatorV2Shape;

@@ -430,6 +430,8 @@ export interface ProviderAdapterV2InterruptInput {
   readonly providerTurnId: ProviderTurnId;
   /** When true, the next `startTurn` may respawn the provider runtime (Grok Stop recovery). */
   readonly requestRuntimeRestart?: boolean;
+  /** SCIENT: private Droid admission token, consumed before interrupt mutates its native owner. */
+  readonly droidSteerLease?: string;
 }
 
 export interface ProviderAdapterV2RuntimeRequestResponseInput {
@@ -503,6 +505,28 @@ export interface ProviderAdapterV2InitiatedWorkIdentity {
 }
 
 export interface ProviderAdapterV2SessionRuntime {
+  // SCIENT-FORK:START — readiness is process-local; held intent remains canonical on the run.
+  readonly configureDroidSteerOwner?: (input: {
+    readonly attemptId: RunAttemptId;
+    readonly held: Effect.Effect<boolean>;
+    readonly drop: Effect.Effect<void>;
+  }) => Effect.Effect<void>;
+  readonly droidSteerTerminalHeld?: (
+    attemptId: RunAttemptId,
+    status: string,
+  ) => Effect.Effect<boolean>;
+  readonly reserveDroidSteer?: (input: {
+    readonly attemptId: RunAttemptId;
+    readonly providerTurnId: ProviderTurnId;
+    readonly revision: string;
+  }) => Effect.Effect<string | undefined>;
+  readonly validateDroidSteer?: (lease: string) => boolean;
+  readonly droidSteerConsumed?: (lease?: string) => boolean;
+  readonly invalidateDroidSteer?: () => void;
+  readonly consumeDroidSteer?: (
+    input: ProviderAdapterV2InterruptInput & { readonly droidSteerLease: string },
+  ) => Effect.Effect<boolean, ProviderAdapterV2Error>;
+  // SCIENT-FORK:END
   /** Called only under the Orchestrator thread lock, around final durable admission. */
   readonly withInitiatedWorkAdmission?: <A, E, R>(
     identity: ProviderAdapterV2InitiatedWorkIdentity,

@@ -27,6 +27,7 @@ import {
   OrchestrationV2Checkpoint,
   OrchestrationV2CheckpointScope,
   OrchestrationV2Command,
+  OrchestrationV2DroidHeldSteer,
   OrchestrationV2Notification,
   OrchestrationV2LimitRecoveryUpdate,
   OrchestrationV2DomainEvent,
@@ -1588,4 +1589,44 @@ describe("optional observed native root effort", () => {
       expect(() => decodeEffortTurnJson({ ...oldEffortTurn, observedEffort })).toThrow();
     });
   }
+});
+
+const decodeDroidHeldSteer = Schema.decodeUnknownSync(OrchestrationV2DroidHeldSteer);
+const droidHeldSteerJson = Schema.fromJsonString(OrchestrationV2DroidHeldSteer);
+const encodeDroidHeldSteerJson = Schema.encodeSync(droidHeldSteerJson);
+const decodeDroidHeldSteerJson = Schema.decodeSync(droidHeldSteerJson);
+
+describe("Droid held admission contract", () => {
+  it("round-trips captured intent without native readiness authority and keeps its command server-only", () => {
+    const held = decodeDroidHeldSteer({
+      revision: "revision",
+      messageId: "message",
+      sourceAttemptId: "attempt",
+      sourceRootNodeId: "root",
+      sourceProviderTurnId: "turn",
+      sourceProviderSessionId: "session",
+      modelSelection: { instanceId: "droid", model: "model", options: [] },
+      runtimePolicy: {
+        cwd: "/captured",
+        runtimeMode: "full-access",
+        interactionMode: "plan",
+        reasoningEffort: "high",
+      },
+      phase: "pre_admission",
+      admissionLease: "descriptive-lease",
+    });
+    const encoded = encodeDroidHeldSteerJson(held);
+    expect(decodeDroidHeldSteerJson(encoded)).toEqual(held);
+    expect(() =>
+      decodeOrchestrationV2Command({
+        type: "droid-steer.admission",
+        commandId: "claim",
+        threadId: "thread",
+        runId: "run",
+        revision: "revision",
+        operation: "complete",
+        lease: "descriptive-lease",
+      }),
+    ).toThrow();
+  });
 });

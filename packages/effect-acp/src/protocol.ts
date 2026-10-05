@@ -84,6 +84,8 @@ export interface AcpStdio extends Omit<Stdio.Stdio, "stdin"> {
 
 export interface AcpPatchedProtocolOptions {
   readonly stdio: AcpStdio;
+  /** SCIENT: fences an already-decoded array, including responses, before routing its first member. */
+  readonly onDecodedBatch?: (phase: "begin" | "end" | "failed") => Effect.Effect<void>;
   readonly terminationError?: Effect.Effect<AcpError.AcpError>;
   readonly serverRequestMethods: ReadonlySet<string>;
   readonly logIncoming?: boolean;
@@ -673,13 +675,6 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
               }),
           }),
         ),
-        Effect.tap((messages) =>
-          logProtocol({
-            direction: "incoming",
-            stage: "decoded",
-            payload: messages,
-          }),
-        ),
         Effect.tapErrorTag("AcpProtocolParseError", (error) =>
           logProtocol({
             direction: "incoming",
@@ -696,11 +691,23 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
             },
           }),
         ),
-        Effect.flatMap((messages) =>
-          Effect.forEach(messages, routeDecodedMessage, {
-            discard: true,
-          }),
-        ),
+        Effect.flatMap((messages) => {
+          const route = logProtocol({
+            direction: "incoming",
+            stage: "decoded",
+            payload: messages,
+          }).pipe(Effect.andThen(Effect.forEach(messages, routeDecodedMessage, { discard: true })));
+          if (options.onDecodedBatch === undefined) return route;
+          // SCIENT: the decoded logger may yield too; fence before it as well as before member one.
+          return Effect.uninterruptibleMask((restore) =>
+            restore(options.onDecodedBatch!("begin")).pipe(
+              Effect.andThen(restore(route)),
+              Effect.onExit((exit) =>
+                options.onDecodedBatch!(Exit.isSuccess(exit) ? "end" : "failed"),
+              ),
+            ),
+          );
+        }),
       ),
     ),
     Effect.matchEffect({
