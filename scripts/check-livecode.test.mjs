@@ -617,7 +617,7 @@ describe("production subject reachability", () => {
       ["apps/server/src/subject.test.ts", "import 'b';"],
     ];
     for (const [path, code] of files) a.write(path, code);
-    for (const [path, code] of [...files].reverse()) b.write(path, code);
+    for (const [path, code] of files.toReversed()) b.write(path, code);
     expect(JSON.stringify(a.inspect())).toBe(JSON.stringify(b.inspect()));
   });
 
