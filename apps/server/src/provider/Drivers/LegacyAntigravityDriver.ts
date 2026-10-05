@@ -42,6 +42,7 @@ import {
 } from "../Layers/LegacyAntigravityProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import { makeNativeSessionShutdown } from "../NativeSessionShutdown.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -187,17 +188,20 @@ export const LegacyAntigravityDriver = {
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
       });
-      const orchestrationAdapter = makeLegacyAntigravityAdapterV2({
-        instanceId,
-        settings: effectiveConfig,
-        environment: processEnv,
-        spawner,
-        fileSystem,
-        path,
-        serverConfig,
-        idAllocator: yield* IdAllocatorV2,
-        continuations: yield* ProviderContinuationRequests,
-      });
+      const nativeSessions = yield* makeNativeSessionShutdown(
+        makeLegacyAntigravityAdapterV2({
+          instanceId,
+          settings: effectiveConfig,
+          environment: processEnv,
+          spawner,
+          fileSystem,
+          path,
+          serverConfig,
+          idAllocator: yield* IdAllocatorV2,
+          continuations: yield* ProviderContinuationRequests,
+        }),
+      );
+      const orchestrationAdapter = nativeSessions.adapter;
       const textGeneration = yield* makeAntigravityTextGeneration(effectiveConfig, processEnv);
       const voiceTranscriptCorrection = yield* makeAntigravityVoiceTranscriptCorrection(
         effectiveConfig,
@@ -213,10 +217,7 @@ export const LegacyAntigravityDriver = {
         makeAntigravityLocalCredentialStore(processEnv, fileSystem, path, spawner, platform),
       ).pipe(
         Effect.map((actions) =>
-          withAntigravitySessionShutdown(
-            actions,
-            adapter.stopAll().pipe(Effect.andThen(orchestrationAdapter.stopAll())),
-          ),
+          withAntigravitySessionShutdown(actions, nativeSessions.closeSessions),
         ),
       );
       const checkProvider = Effect.all(
