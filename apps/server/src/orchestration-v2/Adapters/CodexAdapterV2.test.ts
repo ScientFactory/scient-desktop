@@ -1685,6 +1685,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     options: {
       readonly additionalSessions?: ReadonlyArray<CodexReplay.CodexAppServerReplayTranscript>;
       readonly resolveRuntime?: CodexAdapterV2.CodexAdapterV2Options["resolveRuntime"];
+      readonly replayDriver?: CodexReplay.CodexAppServerReplayDriver;
+      readonly onSessionClose?: () => Effect.Effect<void>;
     } = {},
   ) =>
     Effect.gen(function* () {
@@ -1698,7 +1700,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         open: (openInput) => {
           const sessionTranscript = transcripts[sessionOrdinal++];
           if (!sessionTranscript) return Effect.die("Unexpected native Codex session open");
-          return Layer.build(CodexReplay.layerReplay(sessionTranscript)).pipe(
+          const replayLayer = options.replayDriver
+            ? CodexReplay.layerReplayWithDriver(options.replayDriver)
+            : CodexReplay.layerReplay(sessionTranscript);
+          return Layer.build(replayLayer).pipe(
+            Effect.tap(() =>
+              options.onSessionClose ? Effect.addFinalizer(options.onSessionClose) : Effect.void,
+            ),
             Effect.mapError(
               (cause) =>
                 new ProviderAdapterOpenSessionError({
@@ -5356,6 +5364,289 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
+
+  for (const rejected of [false, true]) {
+    it.effect(
+      `preserves a newer unrelated root during a captured Stop ${rejected ? "rejection" : "success"}`,
+      () => {
+        let sessionCloses = 0;
+        return Effect.scoped(
+          Effect.gen(function* () {
+            const nativeThreadId = "captured-stop-native-thread";
+            const oldNativeTurnId = "native-1";
+            const newNativeTurnId = "native-2";
+            const prompt = "Start an independent root.";
+            const preamble = codexReplayPreamble({
+              nativeThreadId,
+              nativeTurnId: oldNativeTurnId,
+              prompt,
+            });
+            const startEntry = preamble.find(
+              (entry) => entry.type === "expect_outbound" && entry.label === "turn/start",
+            );
+            if (startEntry?.type !== "expect_outbound" || !Predicate.isObject(startEntry.frame)) {
+              return yield* Effect.die("Missing exact native turn/start replay expectation.");
+            }
+            const interruptRequested = yield* Deferred.make<void>();
+            const responseParked = yield* Deferred.make<void>();
+            const releaseResponse = yield* Deferred.make<void>();
+            yield* Effect.addFinalizer(() => Deferred.succeed(releaseResponse, undefined));
+            const transcript = makeCodexReplayTranscript({
+              scenario: `captured-stop-unrelated-root-${rejected ? "rejected" : "accepted"}`,
+              entries: [
+                ...preamble,
+                {
+                  type: "expect_outbound",
+                  label: "captured interrupt",
+                  frame: {
+                    id: 4,
+                    method: "turn/interrupt",
+                    params: { threadId: nativeThreadId, turnId: oldNativeTurnId },
+                  },
+                },
+                {
+                  type: "expect_outbound",
+                  label: "independent root start",
+                  frame: { ...startEntry.frame, id: 5 },
+                },
+                {
+                  type: "emit_inbound",
+                  label: "independent root accepted",
+                  frame: {
+                    id: 5,
+                    result: {
+                      turn: makeCodexReplayTurn({ id: newNativeTurnId, status: "inProgress" }),
+                    },
+                  },
+                },
+                {
+                  type: "emit_inbound",
+                  label: "independent root started",
+                  frame: {
+                    method: "turn/started",
+                    params: {
+                      threadId: nativeThreadId,
+                      turn: makeCodexReplayTurn({ id: newNativeTurnId, status: "inProgress" }),
+                    },
+                  },
+                },
+                {
+                  type: "emit_inbound",
+                  label: "held captured interrupt response",
+                  frame: rejected
+                    ? {
+                        id: 4,
+                        error: { code: -32_000, message: "captured native-1 interrupt rejected" },
+                      }
+                    : { id: 4, result: {} },
+                },
+                ...(!rejected
+                  ? [
+                      {
+                        type: "emit_inbound" as const,
+                        label: "old root completed",
+                        frame: {
+                          method: "turn/completed",
+                          params: {
+                            threadId: nativeThreadId,
+                            turn: makeCodexReplayTurn({
+                              id: oldNativeTurnId,
+                              status: "interrupted",
+                            }),
+                          },
+                        },
+                      },
+                    ]
+                  : []),
+                {
+                  type: "expect_outbound",
+                  label: "new root still steerable",
+                  frame: {
+                    id: 6,
+                    method: "turn/steer",
+                    params: {
+                      threadId: nativeThreadId,
+                      expectedTurnId: newNativeTurnId,
+                      input: [{ type: "text", text: "Continue the independent root." }],
+                    },
+                  },
+                },
+                {
+                  type: "emit_inbound",
+                  label: "new root steer acknowledged",
+                  frame: { id: 6, result: { turnId: newNativeTurnId } },
+                },
+                {
+                  type: "emit_inbound",
+                  label: "new root completed normally",
+                  frame: {
+                    method: "turn/completed",
+                    params: {
+                      threadId: nativeThreadId,
+                      turn: makeCodexReplayTurn({ id: newNativeTurnId, status: "completed" }),
+                    },
+                  },
+                },
+              ],
+            });
+            const driver = yield* CodexReplay.makeReplayDriver(transcript, {
+              beforeEmitInbound: (entry) =>
+                entry.label === "held captured interrupt response"
+                  ? Deferred.succeed(responseParked, undefined).pipe(
+                      Effect.andThen(Deferred.await(releaseResponse)),
+                    )
+                  : Effect.void,
+            });
+            const requests: Array<{ method: string; params: unknown }> = [];
+            const harness = yield* makeCodexReplayHarness(
+              transcript,
+              undefined,
+              (method, params) =>
+                Effect.sync(() => {
+                  requests.push({ method, params });
+                }).pipe(
+                  Effect.andThen(
+                    method === "turn/interrupt"
+                      ? Deferred.succeed(interruptRequested, undefined)
+                      : Effect.void,
+                  ),
+                  Effect.asVoid,
+                ),
+              undefined,
+              undefined,
+              undefined,
+              {
+                replayDriver: driver,
+                onSessionClose: () =>
+                  Effect.sync(() => {
+                    sessionCloses++;
+                  }),
+              },
+            );
+            const oldInput = makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("captured-stop-old-attempt"),
+              text: prompt,
+            });
+            const newInput = {
+              ...makeCodexTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: harness.providerThread,
+                now: yield* DateTime.now,
+                attemptId: RunAttemptId.make("captured-stop-independent-attempt"),
+                text: prompt,
+              }),
+              runOrdinal: 2,
+              providerTurnOrdinal: 2,
+            };
+            assert.notEqual(newInput.rootNodeId, oldInput.rootNodeId);
+            assert.notEqual(newInput.runId, oldInput.runId);
+            assert.isNull(newInput.appThread.lineage.parentThreadId);
+            yield* harness.runtime.startTurn(oldInput);
+            const providerTurns = () =>
+              harness.events.filter(
+                (
+                  event,
+                ): event is Extract<ProviderAdapterV2Event, { type: "provider_turn.updated" }> =>
+                  event.type === "provider_turn.updated",
+              );
+            yield* awaitUntil(
+              () =>
+                providerTurns().some(
+                  (event) => event.providerTurn.nativeTurnRef?.nativeId === oldNativeTurnId,
+                ),
+              "old native root receipt",
+            );
+            const oldTurn = providerTurns().find(
+              (event) => event.providerTurn.nativeTurnRef?.nativeId === oldNativeTurnId,
+            )!.providerTurn;
+            const stopInput = {
+              providerThread: harness.providerThread,
+              providerTurnId: oldTurn.id,
+            };
+            const stopFiber = yield* harness.runtime
+              .interruptTurn(stopInput)
+              .pipe(Effect.exit, Effect.forkScoped);
+            yield* Deferred.await(interruptRequested);
+            const startFiber = yield* harness.runtime.startTurn(newInput).pipe(Effect.forkScoped);
+            yield* Deferred.await(responseParked);
+            yield* awaitUntil(
+              () =>
+                providerTurns().some(
+                  (event) => event.providerTurn.nativeTurnRef?.nativeId === newNativeTurnId,
+                ),
+              "new unrelated native root receipt while old response is held",
+            );
+            const newTurn = providerTurns().find(
+              (event) => event.providerTurn.nativeTurnRef?.nativeId === newNativeTurnId,
+            )!.providerTurn;
+            assert.equal(newTurn.nodeId, newInput.rootNodeId);
+            assert.equal(newTurn.runAttemptId, newInput.attemptId);
+            assert.equal(newTurn.nativeAcceptance, "accepted");
+            assert.equal(newTurn.status, "running");
+            assert.equal(oldTurn.nodeId, oldInput.rootNodeId);
+            assert.equal(oldTurn.runAttemptId, oldInput.attemptId);
+            assert.equal(sessionCloses, 0);
+            assert.lengthOf(harness.terminalEvents(), 0);
+            assert.isUndefined(stopFiber.pollUnsafe());
+            yield* Deferred.succeed(releaseResponse, undefined);
+            yield* Fiber.join(startFiber);
+            const stopExit = yield* Fiber.join(stopFiber);
+            assert.equal(stopExit._tag, rejected ? "Failure" : "Success");
+            if (rejected)
+              assert.include(encodeUnknownJson(stopExit), "captured native-1 interrupt rejected");
+            yield* awaitUntil(() => harness.terminalEvents().length === 1, "old root settlement");
+            assert.equal(harness.terminalEvents()[0]?.providerTurnId, oldTurn.id);
+            assert.equal(harness.terminalEvents()[0]?.status, "interrupted");
+            assert.equal(
+              providerTurns()
+                .filter((event) => event.providerTurn.id === newTurn.id)
+                .at(-1)?.providerTurn.status,
+              "running",
+            );
+            const staleExit = yield* harness.runtime.interruptTurn(stopInput).pipe(Effect.exit);
+            assert.equal(staleExit._tag, "Failure");
+            assert.deepEqual(
+              requests.filter((request) => request.method === "turn/interrupt"),
+              [
+                {
+                  method: "turn/interrupt",
+                  params: { threadId: nativeThreadId, turnId: oldNativeTurnId },
+                },
+              ],
+            );
+            assert.equal(sessionCloses, 0);
+            yield* harness.runtime.steerTurn({
+              threadId: harness.threadId,
+              runId: newInput.runId,
+              providerThread: harness.providerThread,
+              providerTurnId: newTurn.id,
+              message: { ...newInput.message, text: "Continue the independent root." },
+            });
+            yield* awaitUntil(
+              () => harness.terminalEvents().length === 2,
+              "new root normal completion",
+            );
+            assert.equal(harness.terminalEvents()[1]?.providerTurnId, newTurn.id);
+            assert.equal(harness.terminalEvents()[1]?.status, "completed");
+            assert.equal(
+              providerTurns()
+                .filter((event) => event.providerTurn.id === newTurn.id)
+                .at(-1)?.providerTurn.status,
+              "completed",
+            );
+            assert.equal(sessionCloses, 0);
+            assert.deepEqual(yield* Ref.get(driver.state), {
+              cursor: transcript.entries.length,
+              failure: null,
+            });
+          }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+        ).pipe(Effect.tap(() => Effect.sync(() => assert.equal(sessionCloses, 1))));
+      },
+    );
+  }
 
   const INTERRUPT_SCENARIO = "codex-interrupt-mid-command";
   const INTERRUPT_NATIVE_THREAD = "native-codex-interrupt-thread";
