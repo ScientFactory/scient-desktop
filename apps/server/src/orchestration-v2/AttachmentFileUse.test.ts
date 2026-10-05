@@ -59,8 +59,9 @@ it.effect("pins claimed private bytes and pass-through reuse until receipt recon
       attachmentsDir: config.attachmentsDir,
       attachment,
     })!;
-    yield* fs.writeFileString(claimedPath, "modified");
+    yield* fs.writeFileString(claimedPath, "modified delivered bytes");
     expect(yield* fs.readFileString(pending.path)).toBe("evidence");
+    expect((yield* fs.stat(claimedPath)).type).toBe("File");
     const reused = yield* claimPendingAttachments({ threadId: "owner", attachments: [attachment] });
     yield* claimed.releasePins;
     expect(yield* attachmentHasReservations(attachment.id)).toBe(true);
@@ -131,4 +132,17 @@ it.effect(
         ),
       ).toBe("evidence");
     }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect("shares arbitration reservations for case aliases of a managed file ID", () =>
+  Effect.gen(function* () {
+    const { attachment } = yield* stored("alias-owner");
+    const pin = yield* reserveAttachment(
+      { ...attachment, id: ChatAttachmentId.make(attachment.id.toUpperCase()) },
+      { publication: true },
+    );
+    expect(yield* attachmentHasReservations(attachment.id)).toBe(true);
+    yield* pin.release;
+    expect(yield* attachmentHasReservations(attachment.id)).toBe(false);
+  }).pipe(Effect.provide(layer)),
 );

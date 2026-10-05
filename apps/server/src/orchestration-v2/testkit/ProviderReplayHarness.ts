@@ -28,6 +28,7 @@ import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import * as CheckpointCaptureService from "../CheckpointCaptureService.ts";
 import * as CheckpointService from "../CheckpointService.ts";
+import { layer as attachmentRollbackPruneLayer } from "../AttachmentRollbackPruneService.ts";
 import * as CheckpointRollbackService from "../CheckpointRollbackService.ts";
 import * as CommandPolicy from "../CommandPolicy.ts";
 import * as CommandReceiptStore from "../CommandReceiptStore.ts";
@@ -564,6 +565,16 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   const effectExecutorProvided = EffectWorker.executorLayer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        attachmentRollbackPruneLayer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              storesLayer,
+              threadCommandExecutorLayer,
+              providerSessionManagerProvided,
+              serverConfigLayer,
+            ),
+          ),
+        ),
         runFinalizationServiceProvided,
         checkpointRollbackServiceProvided,
         providerSessionManagerProvided,

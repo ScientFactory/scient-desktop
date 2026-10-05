@@ -1,3 +1,4 @@
+import { layer as attachmentRollbackPruneLayer } from "./AttachmentRollbackPruneService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
@@ -282,6 +283,15 @@ const conversationForkProvided = conversationForkServiceLayer.pipe(
 const effectExecutorProvided = effectExecutorLayer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      attachmentRollbackPruneLayer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            projectionStoreLayer,
+            threadCommandExecutorLayer,
+            providerSessionManagerProvided,
+          ),
+        ),
+      ),
       runFinalizationServiceProvided,
       checkpointRollbackServiceProvided,
       providerSessionManagerProvided,

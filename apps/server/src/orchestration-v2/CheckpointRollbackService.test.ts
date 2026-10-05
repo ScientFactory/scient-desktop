@@ -374,6 +374,20 @@ it.effect.each([
       status: "completed",
     })),
     nodes: [],
+    messages: [1, 2, 3].map((ordinal) => ({
+      threadId,
+      id: `message-${ordinal}`,
+      runId: `run-${ordinal}`,
+      attachments: [{ id: `local-image-${ordinal}` }],
+    })),
+    turnItems: [1, 2, 3].map((ordinal) => ({
+      threadId,
+      id: `question-${ordinal}`,
+      runId: `run-${ordinal}`,
+      type: "user_input_request",
+      status: "completed",
+      questionAnswer: { attachmentsByQuestionId: { q: [{ id: `local-question-${ordinal}` }] } },
+    })),
     attempts: [1, 2, 3].map((ordinal) => ({ id: `attempt-${ordinal}`, runId: `run-${ordinal}` })),
     checkpoints: [
       { id: checkpointId, scopeId, status: "ready", appRunOrdinal: targetOrdinal || null },
@@ -397,13 +411,32 @@ it.effect.each([
             }),
         }),
         Layer.mock(EventSink.EventSinkV2)({
-          write: ({ events }) =>
+          writeWithEffects: ({ events, effects }) =>
             Effect.sync(() => {
               assert.ok(
                 events.some(
                   (event) => event.type === "run.updated" && event.payload.status === "rolled_back",
                 ),
               );
+              assert.equal(effects.length, 1);
+              const cleanup = effects[0]!;
+              assert.equal(cleanup.request.type, "attachment.rollback-prune");
+              if (cleanup.request.type === "attachment.rollback-prune") {
+                const reverted = targetOrdinal === 0 ? [1, 2] : [2];
+                assert.deepEqual(
+                  cleanup.request.revertedRunIds.map(String),
+                  reverted.map((ordinal) => `run-${ordinal}`),
+                );
+                assert.deepEqual(
+                  [...cleanup.request.attachmentIds].sort(),
+                  reverted
+                    .flatMap((ordinal) => [`local-image-${ordinal}`, `local-question-${ordinal}`])
+                    .sort(),
+                );
+                assert.equal(cleanup.request.checkpointId, checkpointId);
+                assert.equal(cleanup.request.providerThreadId, providerThreadId);
+                assert.equal(cleanup.threadId, threadId);
+              }
               calls.push("projection");
               return [];
             }),

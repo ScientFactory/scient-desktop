@@ -17,6 +17,7 @@ import {
   orchestrationEffectQueueWait,
 } from "../observability/Metrics.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
+import { AttachmentRollbackPruneService } from "./AttachmentRollbackPruneService.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
@@ -99,6 +100,7 @@ export const executorLayer: Layer.Layer<
   Effect.gen(function* () {
     const runFinalization = yield* RunFinalizationService.RunFinalizationService;
     const resourceCleanup = yield* ResourceCleanupService.ResourceCleanupService;
+    const rollbackPrune = yield* AttachmentRollbackPruneService;
     const checkpointRollback = yield* CheckpointRollbackService.CheckpointRollbackServiceV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const providerTurnControl = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
@@ -419,6 +421,7 @@ export const executorLayer: Layer.Layer<
                 threadId: effect.threadId,
                 providerThreadId: effect.request.providerThreadId,
                 checkpointId: effect.request.checkpointId,
+                commandId: effect.commandId,
                 scopeId: effect.request.scopeId,
                 ...(effect.request.restoreFiles === undefined
                   ? {}
@@ -484,6 +487,17 @@ export const executorLayer: Layer.Layer<
               );
           case "terminal.cleanup":
             return resourceCleanup.cleanupTerminals(effect.threadId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
+          case "attachment.rollback-prune":
+            return rollbackPrune.execute(effect.threadId, effect.request).pipe(
               Effect.mapError(
                 (cause) =>
                   new OrchestrationEffectExecutionError({
@@ -760,7 +774,9 @@ export const layerWithOptions = (
             ? yield* outbox
                 .succeed({ effectId: effect.id, workerId })
                 .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
-            : effect.attemptCount >= maxAttempts && !awaitingNativeReceipt
+            : effect.attemptCount >= maxAttempts &&
+                !awaitingNativeReceipt &&
+                effect.request.type !== "attachment.rollback-prune"
               ? yield* outbox
                   .fail({ effectId: effect.id, workerId, error })
                   .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))

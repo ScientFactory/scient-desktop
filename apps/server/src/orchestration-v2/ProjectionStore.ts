@@ -307,6 +307,11 @@ export interface ProjectionTimelinePage {
 }
 
 export interface ProjectionStoreV2Shape {
+  readonly getRollbackAttachmentOwners: (input: {
+    readonly threadId: ThreadId;
+    readonly revertedRunIds: ReadonlyArray<RunId>;
+    readonly attachmentIds: ReadonlyArray<string>;
+  }) => Effect.Effect<ReadonlyArray<string>, ProjectionStoreV2Error>;
   readonly getThreadAttachmentIds: (
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<string>, ProjectionStoreV2Error>;
@@ -4346,6 +4351,38 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError(controlReadError(threadId)),
       );
 
+    const getRollbackAttachmentOwners: ProjectionStoreV2Shape["getRollbackAttachmentOwners"] = (
+      input,
+    ) =>
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const threadIds = new Set<ThreadId>([input.threadId]);
+            for (const id of input.attachmentIds) {
+              const rows = yield* sql<{ readonly thread_id: string }>`
+            SELECT thread_id FROM orchestration_v2_projection_messages WHERE instr(lower(payload_json), ${id.toLowerCase()}) > 0
+            UNION SELECT thread_id FROM orchestration_v2_projection_turn_items WHERE instr(lower(payload_json), ${id.toLowerCase()}) > 0
+            UNION SELECT thread_id FROM orchestration_v2_projection_threads WHERE instr(lower(payload_json), ${id.toLowerCase()}) > 0
+          `;
+              rows.forEach((row) => threadIds.add(ThreadId.make(row.thread_id)));
+            }
+            const owners = yield* Effect.forEach(threadIds, (threadId) =>
+              readCanonicalProjection(threadId, undefined, [
+                "runs",
+                "messages",
+                "turnItems",
+                "runtimeRequests",
+              ]),
+            );
+            return retainedRollbackAttachmentIds(input, owners);
+          }),
+        )
+        .pipe(
+          Effect.mapError(
+            (cause) => new ProjectionStoreReadError({ threadId: input.threadId, cause }),
+          ),
+        );
+
     const getThreadAttachmentIds: ProjectionStoreV2Shape["getThreadAttachmentIds"] = (threadId) =>
       sql<{ id: string }>`
       SELECT DISTINCT json_extract(attachment.value, '$.id') AS id
@@ -5388,9 +5425,82 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadSnapshotWindow,
       getTimelinePage,
       getThreadAttachmentIds,
+      getRollbackAttachmentOwners,
     } satisfies ProjectionStoreV2Shape;
   }),
 );
+
+const retainedRollbackAttachmentIds = (
+  input: {
+    readonly threadId: ThreadId;
+    readonly revertedRunIds: ReadonlyArray<RunId>;
+    readonly attachmentIds: ReadonlyArray<string>;
+  },
+  projections: ReadonlyArray<
+    Pick<
+      OrchestrationV2ThreadProjection,
+      "thread" | "runs" | "messages" | "turnItems" | "runtimeRequests"
+    >
+  >,
+) => {
+  const candidates = new Set(input.attachmentIds.map((id) => id.toLowerCase()));
+  const retained = new Set<string>();
+  const retain = (ids: ReadonlyArray<string>) =>
+    ids.forEach((id) => {
+      if (candidates.has(id.toLowerCase())) retained.add(id.toLowerCase());
+    });
+  for (const projection of projections) {
+    const recoverable = new Set(
+      projection.turnItems
+        .filter(
+          (item) =>
+            item.type === "user_message" &&
+            (item.inputIntent === "queued_turn" || item.inputIntent === "promoted_queued_to_steer"),
+        )
+        .map((item) => item.runId),
+    );
+    const releasable = (runId: RunId | null) =>
+      projection.thread.id === input.threadId &&
+      runId !== null &&
+      input.revertedRunIds.includes(runId) &&
+      !recoverable.has(runId) &&
+      projection.runs.some(
+        (run) =>
+          run.id === runId &&
+          run.status === "rolled_back" &&
+          run.legacyQueue === undefined &&
+          run.queueHeld !== true,
+      );
+    for (const message of projection.messages)
+      if (!releasable(message.runId))
+        retain(message.attachments.map((attachment) => attachment.id));
+    for (const item of projection.turnItems) {
+      if (
+        item.inheritedFrom === undefined &&
+        releasable(item.runId) &&
+        !(
+          item.type === "user_input_request" &&
+          projection.runtimeRequests.some(
+            (request) => request.id === item.requestId && request.status === "pending",
+          )
+        )
+      )
+        continue;
+      if (item.type === "user_message" || item.type === "assistant_message")
+        retain((item.attachments ?? []).map((attachment) => attachment.id));
+      if (item.type === "user_input_request" && item.questionAnswer !== undefined)
+        retain(
+          Object.values(item.questionAnswer.attachmentsByQuestionId)
+            .flat()
+            .map((attachment) => attachment.id),
+        );
+    }
+    const fork = projection.thread.conversationFork;
+    if (fork != null && fork.status !== "ready")
+      retain(fork.attachmentCopies.map((copy) => copy.source.id));
+  }
+  return input.attachmentIds.filter((id) => retained.has(id.toLowerCase()));
+};
 
 export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
   ProjectionStoreV2,
@@ -5637,6 +5747,12 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               (state.projections
                 .get(threadId)
                 ?.turnItems.reduce((max, item) => Math.max(max, item.ordinal), 0) ?? 0) + 1,
+          ),
+        ),
+      getRollbackAttachmentOwners: (input) =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) =>
+            retainedRollbackAttachmentIds(input, [...state.projections.values()]),
           ),
         ),
       getThreadAttachmentIds: (threadId) =>

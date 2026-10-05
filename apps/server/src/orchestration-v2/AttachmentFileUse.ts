@@ -27,7 +27,7 @@ const reservationDirectory = (stateDir: string, id: string) =>
   NodePath.join(
     stateDir,
     "attachment-file-use",
-    NodeCrypto.createHash("sha256").update(id).digest("hex"),
+    NodeCrypto.createHash("sha256").update(id.toLowerCase()).digest("hex"),
   );
 
 /**
@@ -60,7 +60,7 @@ export const reserveAttachment = Effect.fn("AttachmentFileUse.reserve")(function
           if (filename === null)
             return yield* new AttachmentFileUseError({ attachmentId: attachment.id });
           const info = yield* fs.stat(filename);
-          if (info.type !== "File" || info.size !== BigInt(attachment.sizeBytes))
+          if (info.type !== "File")
             return yield* new AttachmentFileUseError({ attachmentId: attachment.id });
         }
       }).pipe(
@@ -103,7 +103,7 @@ export const reserveUnreconciledPublication = (attachmentsDir: string, attachmen
       const directory = NodePath.join(
         NodePath.dirname(attachmentsDir),
         "attachment-file-use",
-        NodeCrypto.createHash("sha256").update(attachmentId).digest("hex"),
+        NodeCrypto.createHash("sha256").update(attachmentId.toLowerCase()).digest("hex"),
       );
       yield* arbitration
         .withPermit(
