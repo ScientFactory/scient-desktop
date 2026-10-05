@@ -26,6 +26,8 @@ export interface ProviderContinuationRequest {
    * deduplicates admission; startTurn adopts the buffer when its message has
    * notification.source.kind=provider_work, without writing a native prompt.
    * Stop invalidates dispatchIfCurrent and clears the buffer via clearIfCurrent.
+   * A busy predecessor defers admission without a command receipt. The worker
+   * retries this same generation through dispatchIfCurrent after a bounded delay.
    */
   readonly initiated?: {
     readonly providerInstanceId: ProviderInstanceId;

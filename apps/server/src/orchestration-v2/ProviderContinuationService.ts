@@ -136,7 +136,23 @@ export const workerLive = Layer.effectDiscard(
             ...request.initiated,
             detail: request.detail ?? "Provider started background work.",
           });
-          yield* request.dispatchIfCurrent(dispatch);
+          yield* request.dispatchIfCurrent(dispatch).pipe(
+            Effect.tap(() => clearRetryAttempt(identity)),
+            Effect.catchTag("OrchestratorProviderWorkDeferredError", () =>
+              Effect.gen(function* () {
+                const delay = yield* nextRetryDelay(identity);
+                // Keep the exact offer, buffer and command identity. Re-enter
+                // the producer's generation guard on every dispatch attempt.
+                yield* Effect.sleep(`${delay} millis`).pipe(
+                  Effect.andThen(requests.offer(request)),
+                  Effect.forkScoped,
+                );
+              }),
+            ),
+            Effect.catch((cause) =>
+              clearRetryAttempt(identity).pipe(Effect.andThen(Effect.fail(cause))),
+            ),
+          );
           return;
         }
         if (request.delegatedCompletion !== undefined) {

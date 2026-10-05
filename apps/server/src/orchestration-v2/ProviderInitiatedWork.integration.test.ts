@@ -17,11 +17,18 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import {
+  SqlitePersistenceMemory,
+  makeSqlitePersistenceLive,
+} from "../persistence/Layers/Sqlite.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as ProviderInstances from "../provider/Services/ProviderInstanceRegistry.ts";
 import { CheckpointStore } from "../checkpointing/CheckpointStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
@@ -31,7 +38,13 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import { OrchestratorV2, type OrchestratorV2Error } from "./Orchestrator.ts";
+import {
+  OrchestratorV2,
+  OrchestratorProviderWorkDeferredError,
+  type OrchestratorV2Error,
+} from "./Orchestrator.ts";
+import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
+import { checkpointRefForScopeOrdinal } from "./CheckpointService.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import {
@@ -66,6 +79,7 @@ const withInitiatedWork = <A, E, R>(
     workspaceB: string;
     relocateProject: (cwd: string) => Effect.Effect<void, ProjectStore.ProjectStoreV2Error>;
     emitWork: (workId: string, overrides?: WorkOverrides) => Effect.Effect<void>;
+    clearStoppedWork: (workId: string) => Effect.Effect<void>;
     takeOffer: Effect.Effect<Offer, Cause.TimeoutError>;
     prompts: ReadonlyArray<string>;
     adopted: ReadonlyArray<string>;
@@ -73,6 +87,8 @@ const withInitiatedWork = <A, E, R>(
     closes: () => number;
     loads: () => number;
     markNativeRunning: Effect.Effect<void>;
+    captureEntered: Effect.Effect<void>;
+    releaseCapture: Effect.Effect<void>;
     resolvePolicy: Effect.Effect<
       Option.Option<Pick<OrchestrationV2ProviderRuntimePolicy, "runtimeMode" | "interactionMode">>
     >;
@@ -80,7 +96,12 @@ const withInitiatedWork = <A, E, R>(
       predicate: (p: OrchestrationV2ThreadProjection) => boolean,
     ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error>;
   }) => Effect.Effect<A, E, R>,
-  options: { manualWorker?: boolean; restricted?: boolean; unknownNativeCwd?: boolean } = {},
+  options: {
+    manualWorker?: boolean;
+    restricted?: boolean;
+    unknownNativeCwd?: boolean;
+    holdCaptureOrdinal?: number;
+  } = {},
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -90,7 +111,19 @@ const withInitiatedWork = <A, E, R>(
       const workspaceB = yield* checkpointWorkspace("provider-initiated-other", {
         "native-answer.txt": "Initial B\n",
       });
-      const database = SqlitePersistenceMemory;
+      const fs = yield* FileSystem.FileSystem;
+      const captureEntered = yield* Deferred.make<void>();
+      const captureReleased = yield* Deferred.make<void>();
+      const profile = yield* Effect.acquireRelease(
+        fs.makeTempDirectory({ prefix: "initiated-gate" }),
+        (directory) => fs.remove(directory, { recursive: true }).pipe(Effect.orDie),
+      );
+      const database =
+        options.holdCaptureOrdinal === undefined
+          ? SqlitePersistenceMemory
+          : makeSqlitePersistenceLive(`${profile}/state.sqlite`).pipe(
+              Layer.provide(NodeServices.layer),
+            );
       const projectsLayer = ProjectStore.layer.pipe(Layer.provide(database));
       const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
         Layer.provide(
@@ -326,6 +359,35 @@ const withInitiatedWork = <A, E, R>(
           runContinuationWorker: true,
           configureMcp: true,
           runEffectWorker: !options.manualWorker,
+          ...(options.holdCaptureOrdinal === undefined
+            ? {}
+            : {
+                vcsProcessLayer: Layer.effect(
+                  VcsProcess.VcsProcess,
+                  Effect.gen(function* () {
+                    const real = yield* VcsProcess.VcsProcess;
+                    let held = false;
+                    return VcsProcess.VcsProcess.of({
+                      run: (input) =>
+                        Effect.gen(function* () {
+                          if (
+                            !held &&
+                            input.operation === VcsProcess.CHECKPOINT_CAPTURE_OPERATION &&
+                            input.args.includes("fetch") &&
+                            input.args.some((arg) =>
+                              arg.endsWith(`/ordinal/${options.holdCaptureOrdinal}`),
+                            )
+                          ) {
+                            held = true;
+                            yield* Deferred.succeed(captureEntered, undefined);
+                            yield* Deferred.await(captureReleased);
+                          }
+                          return yield* real.run(input);
+                        }),
+                    });
+                  }),
+                ).pipe(Layer.provide(VcsProcess.layer), Layer.provide(NodeServices.layer)),
+              }),
         },
       );
       return yield* Effect.gen(function* () {
@@ -420,12 +482,22 @@ const withInitiatedWork = <A, E, R>(
           workspaceB,
           relocateProject,
           emitWork: (id, override) => emitWork(id, override),
+          clearStoppedWork: (workId) =>
+            Effect.sync(() => {
+              buffered.delete(workId);
+              dropped++;
+            }),
           takeOffer: Queue.take(offers).pipe(Effect.timeout("10 seconds")),
           prompts,
           adopted,
           closes: () => closed,
           loads: () => loads,
           markNativeRunning: Effect.suspend(() => markNativeRunning),
+          captureEntered: Deferred.await(captureEntered).pipe(
+            Effect.timeout("10 seconds"),
+            Effect.orDie,
+          ),
+          releaseCapture: Deferred.succeed(captureReleased, undefined).pipe(Effect.asVoid),
           resolvePolicy: (yield* ProviderSessionManagerV2)
             .resolveMcpInvocationPolicy({
               threadId,
@@ -512,7 +584,7 @@ it.live.each([
   "stopped-generation",
   "archived",
   "busy",
-] as const)("rejects unsolicited work with no current native owner: %s", (scenario) =>
+] as const)("refuses premature unsolicited work without a current idle owner: %s", (scenario) =>
   withInitiatedWork(({ orchestrator, emitWork, takeOffer, dropped, adopted, prompts, waitFor }) =>
     Effect.gen(function* () {
       let active: Offer | undefined;
@@ -890,5 +962,207 @@ it.live.each(["fork", "merge_back"] as const)(
           assert.equal(loads(), initialLoads);
         }),
       { manualWorker: true },
+    ),
+);
+
+it.live.each(["complete", "stopped-generation", "foreign-owner", "replaced-owner"] as const)(
+  "reoffers one native generation only after its held real checkpoint: %s",
+  (scenario) =>
+    withInitiatedWork(
+      ({
+        orchestrator,
+        workspaceA,
+        emitWork,
+        clearStoppedWork,
+        takeOffer,
+        prompts,
+        adopted,
+        dropped,
+        waitFor,
+        captureEntered,
+        releaseCapture,
+      }) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const worker = yield* OrchestrationEffectWorkerV2;
+          const receipts = yield* CommandReceiptStoreV2;
+          const store = yield* CheckpointStore;
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("gate:predecessor"),
+            threadId,
+            messageId: MessageId.make("gate:predecessor"),
+            text: "Held predecessor",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          yield* worker.drain(12);
+          const predecessor = yield* takeOffer;
+          yield* fs.writeFileString(
+            `${workspaceA}/native-answer.txt`,
+            "Durable predecessor bytes\n",
+          );
+          yield* predecessor.finish;
+          const waiting = yield* waitFor(
+            (p) => p.runs.find((run) => run.id === predecessor.input.runId)?.status === "waiting",
+          );
+          assert.equal(
+            waiting.messages.find(
+              (message) => message.id === MessageId.make(`answer:${predecessor.input.runId}`),
+            )?.text,
+            "User answer",
+          );
+          const capture = yield* worker.drain(12).pipe(Effect.forkScoped);
+          yield* captureEntered;
+          const deferred = yield* Queue.unbounded<OrchestratorProviderWorkDeferredError>();
+          const observed = yield* Queue.unbounded<void>();
+          let current = true;
+          const guard: NonNullable<ProviderContinuationRequest["dispatchIfCurrent"]> = (dispatch) =>
+            Effect.suspend(() => {
+              if (!current) return Effect.succeedNone;
+              return dispatch.pipe(
+                Effect.tapError((cause) =>
+                  Schema.is(OrchestratorProviderWorkDeferredError)(cause)
+                    ? Queue.offer(deferred, cause).pipe(Effect.asVoid)
+                    : Effect.void,
+                ),
+                Effect.asSome,
+              );
+            }).pipe(Effect.ensuring(Queue.offer(observed, undefined)));
+          const workId = `held:${scenario}`;
+          yield* emitWork(workId, { dispatchIfCurrent: guard });
+          const refusal = yield* Queue.take(deferred).pipe(Effect.timeout("10 seconds"));
+          assert.equal(refusal.workId, workId);
+          assert.equal(refusal.threadId, threadId);
+          assert.isTrue(Option.isNone(yield* receipts.getByCommandId(refusal.commandId)));
+          const before = yield* orchestrator.getThreadProjection(threadId);
+          assert.lengthOf(before.runs, 2);
+          assert.lengthOf(
+            before.messages.filter(
+              (message) => message.notification?.source.kind === "provider_work",
+            ),
+            0,
+          );
+          assert.deepEqual(adopted, []);
+          assert.equal(dropped(), 0);
+          assert.deepEqual(prompts, ["First user message", "Held predecessor"]);
+          const root = before.nodes.find((node) => node.id === before.runs[1]!.rootNodeId)!;
+          const scope = before.checkpointScopes.find((row) => row.id === root.checkpointScopeId)!;
+          assert.isFalse(
+            yield* store.hasCheckpointRef({
+              cwd: scope.cwd,
+              checkpointRef: checkpointRefForScopeOrdinal({
+                scopeId: scope.id,
+                ordinalWithinScope: 2,
+              }),
+            }),
+          );
+
+          if (scenario === "stopped-generation") {
+            current = false; // The producer's Stop fence invalidates this buffered generation.
+            yield* clearStoppedWork(workId);
+            yield* orchestrator.dispatch({
+              type: "run.interrupt",
+              commandId: CommandId.make("gate:stop"),
+              threadId,
+              runId: predecessor.input.runId,
+            });
+          } else if (scenario === "foreign-owner") {
+            const sink = yield* EventSinkV2;
+            yield* sink.write({
+              events: [
+                {
+                  id: EventId.make("gate:foreign-owner"),
+                  type: "thread.metadata-updated",
+                  threadId,
+                  occurredAt: yield* DateTime.now,
+                  payload: {
+                    ...before.thread,
+                    activeProviderThreadId: ProviderThreadId.make("foreign:held-owner"),
+                    updatedAt: yield* DateTime.now,
+                  },
+                },
+              ],
+            });
+          } else if (scenario === "replaced-owner") {
+            yield* (yield* ProviderSessionManagerV2).closeInstance(instanceId);
+          }
+          yield* releaseCapture;
+          yield* Fiber.join(capture);
+          if (scenario === "complete") {
+            const ready = yield* waitFor(
+              (p) =>
+                p.runs.find((run) => run.id === predecessor.input.runId)?.status === "completed" &&
+                p.runs.length === 3,
+            );
+            const checkpoint = ready.checkpoints.find(
+              (row) => row.id === ready.runs[1]!.checkpointId,
+            )!;
+            assert.equal(checkpoint.status, "ready");
+            assert.isTrue(
+              yield* store.hasCheckpointRef({ cwd: scope.cwd, checkpointRef: checkpoint.ref }),
+            );
+            assert.equal(
+              ready.messages.find(
+                (message) => message.id === MessageId.make(`answer:${predecessor.input.runId}`),
+              )?.text,
+              "User answer",
+            );
+            const receipt = yield* receipts.getByCommandId(refusal.commandId);
+            assert.isTrue(Option.isSome(receipt));
+            if (Option.isSome(receipt)) assert.equal(receipt.value.status, "accepted");
+            yield* worker.drain(12);
+            const adoptedOffer = yield* takeOffer;
+            assert.equal(adoptedOffer.input.message.notification?.source.kind, "provider_work");
+            assert.deepEqual(adopted, [workId]);
+            assert.deepEqual(prompts, ["First user message", "Held predecessor"]);
+            yield* adoptedOffer.finish;
+            yield* waitFor((p) => p.runs[2]?.status === "waiting");
+            yield* worker.drain(12);
+            const completed = yield* waitFor((p) => p.runs[2]?.status === "completed");
+
+            while (Option.isSome(yield* Queue.poll(observed))) {
+              /* consume earlier attempt receipts */
+            }
+            yield* emitWork(workId, { dispatchIfCurrent: guard });
+            yield* Queue.take(observed).pipe(Effect.timeout("10 seconds"));
+            const replayed = yield* orchestrator.getThreadProjection(threadId);
+            assert.lengthOf(replayed.runs, 3);
+            assert.deepEqual(replayed, completed);
+            assert.deepEqual(adopted, [workId]);
+            assert.isTrue(
+              Option.isNone(
+                yield* receipts.getByCommandId(
+                  CommandId.make(`${refusal.commandId}:different-generation`),
+                ),
+              ),
+            );
+          } else {
+            if (scenario !== "stopped-generation") yield* waitFor(() => dropped() === 1);
+            else {
+              while (Option.isSome(yield* Queue.poll(observed))) {
+                /* consume the first deferred attempt */
+              }
+              yield* Queue.take(observed).pipe(Effect.timeout("10 seconds"));
+              assert.isTrue(Option.isNone(yield* receipts.getByCommandId(refusal.commandId)));
+              assert.equal(dropped(), 1);
+            }
+            const after = yield* orchestrator.getThreadProjection(threadId);
+            assert.lengthOf(after.runs, 2);
+            assert.deepEqual(adopted, []);
+            assert.deepEqual(prompts, ["First user message", "Held predecessor"]);
+            if (scenario !== "stopped-generation") {
+              const receipt = yield* receipts.getByCommandId(refusal.commandId);
+              assert.isTrue(Option.isSome(receipt));
+              if (Option.isSome(receipt)) assert.equal(receipt.value.status, "rejected");
+              yield* emitWork(workId, { dispatchIfCurrent: guard });
+              yield* waitFor(() => dropped() === 2);
+              assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
+            }
+          }
+        }),
+      { manualWorker: true, holdCaptureOrdinal: 2 },
     ),
 );
