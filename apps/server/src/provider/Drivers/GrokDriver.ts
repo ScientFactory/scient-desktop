@@ -31,6 +31,7 @@ import {
   type GrokAdapterV2DriverEnv,
 } from "../../orchestration-v2/Adapters/GrokAdapterV2.ts";
 import { ProviderDriverError } from "../Errors.ts";
+import { makeNativeSessionShutdown } from "../NativeSessionShutdown.ts";
 import {
   buildInitialGrokProviderSnapshot,
   checkGrokProviderStatus,
@@ -198,28 +199,31 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         instanceId,
       });
       // SCIENT-FORK:END
-      const orchestrationAdapter = yield* GrokAdapterV2Driver.create({
-        instanceId,
-        displayName,
-        accentColor,
-        environment,
-        enabled,
-        config: effectiveConfig,
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderDriverError({
-              driver: DRIVER_KIND,
-              instanceId,
-              detail: "Failed to build Grok orchestration adapter.",
-              cause,
-            }),
+      const nativeSessions = yield* makeNativeSessionShutdown(
+        yield* GrokAdapterV2Driver.create({
+          instanceId,
+          displayName,
+          accentColor,
+          environment,
+          enabled,
+          config: effectiveConfig,
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderDriverError({
+                driver: DRIVER_KIND,
+                instanceId,
+                detail: "Failed to build Grok orchestration adapter.",
+                cause,
+              }),
+          ),
         ),
       );
+      const orchestrationAdapter = nativeSessions.adapter;
       const textGeneration = yield* makeGrokTextGeneration(effectiveConfig, processEnv);
       const connectionActions = withGrokSessionShutdown(
         yield* makeGrokConnectionActions(effectiveConfig, processEnv, spawner),
-        adapter.stopAll(),
+        nativeSessions.closeSessions,
       );
 
       const checkProvider = checkGrokProviderStatus(effectiveConfig, processEnv, cwd).pipe(
