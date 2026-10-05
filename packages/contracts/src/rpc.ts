@@ -233,17 +233,6 @@ import {
   RelayClientStatusSchema,
 } from "./relayClient.ts";
 import {
-  ProviderConnectionCancelInput,
-  ProviderConnectionDisconnectInput,
-  ProviderConnectionError,
-  ProviderConnectionStartInput,
-  ProviderConnectionSubmitAuthorizationCodeInput,
-  ProviderRuntimeCancelInput,
-  ProviderRuntimePlan,
-  ProviderRuntimePlanInput,
-  ProviderRuntimeStartInput,
-} from "./providerLifecycle.ts";
-import {
   VoiceTranscriptCorrectionError,
   VoiceTranscriptCorrectionRequest,
   VoiceTranscriptCorrectionResult,
@@ -423,6 +412,18 @@ import {
   WsProviderSkillsSetEnabledRpc,
 } from "./scient/skillRpcs.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient provider connection and runtime RPCs.
+import {
+  SCIENT_PROVIDER_CONNECTION_WS_METHODS,
+  WsServerStartProviderConnectionRpc,
+  WsServerCancelProviderConnectionRpc,
+  WsServerSubmitProviderAuthorizationCodeRpc,
+  WsServerDisconnectProviderRpc,
+  WsServerPlanProviderRuntimeRpc,
+  WsServerStartProviderRuntimeRpc,
+  WsServerCancelProviderRuntimeRpc,
+} from "./scient/providerConnectionRpcs.ts";
+// SCIENT-FORK:END
 
 export const WS_METHODS = {
   // Project registry methods
@@ -540,13 +541,9 @@ export const WS_METHODS = {
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
   serverRefreshProviders: "server.refreshProviders",
-  serverStartProviderConnection: "server.startProviderConnection",
-  serverCancelProviderConnection: "server.cancelProviderConnection",
-  serverSubmitProviderAuthorizationCode: "server.submitProviderAuthorizationCode",
-  serverDisconnectProvider: "server.disconnectProvider",
-  serverPlanProviderRuntime: "server.planProviderRuntime",
-  serverStartProviderRuntime: "server.startProviderRuntime",
-  serverCancelProviderRuntime: "server.cancelProviderRuntime",
+  // SCIENT-FORK:START — Scient provider connection and runtime methods.
+  ...SCIENT_PROVIDER_CONNECTION_WS_METHODS,
+  // SCIENT-FORK:END
   serverUpdateProvider: "server.updateProvider",
   serverUpdateServer: "server.updateServer",
   serverUpdateServerWithProgress: "server.updateServerWithProgress",
@@ -709,51 +706,6 @@ const WsServerUpdateProviderRpc = Rpc.make(WS_METHODS.serverUpdateProvider, {
   payload: ServerProviderUpdateInput,
   success: ServerProviderUpdatedPayload,
   error: Schema.Union([ServerProviderUpdateError, EnvironmentAuthorizationError]),
-});
-
-const WsServerStartProviderConnectionRpc = Rpc.make(WS_METHODS.serverStartProviderConnection, {
-  payload: ProviderConnectionStartInput,
-  success: ServerProviderUpdatedPayload,
-  error: Schema.Union([ProviderConnectionError, EnvironmentAuthorizationError]),
-});
-
-const WsServerCancelProviderConnectionRpc = Rpc.make(WS_METHODS.serverCancelProviderConnection, {
-  payload: ProviderConnectionCancelInput,
-  success: ServerProviderUpdatedPayload,
-  error: Schema.Union([ProviderConnectionError, EnvironmentAuthorizationError]),
-});
-
-const WsServerSubmitProviderAuthorizationCodeRpc = Rpc.make(
-  WS_METHODS.serverSubmitProviderAuthorizationCode,
-  {
-    payload: ProviderConnectionSubmitAuthorizationCodeInput,
-    success: ServerProviderUpdatedPayload,
-    error: Schema.Union([ProviderConnectionError, EnvironmentAuthorizationError]),
-  },
-);
-
-const WsServerDisconnectProviderRpc = Rpc.make(WS_METHODS.serverDisconnectProvider, {
-  payload: ProviderConnectionDisconnectInput,
-  success: ServerProviderUpdatedPayload,
-  error: Schema.Union([ProviderConnectionError, EnvironmentAuthorizationError]),
-});
-
-const WsServerPlanProviderRuntimeRpc = Rpc.make(WS_METHODS.serverPlanProviderRuntime, {
-  payload: ProviderRuntimePlanInput,
-  success: ProviderRuntimePlan,
-  error: Schema.Union([ProviderConnectionError, EnvironmentAuthorizationError]),
-});
-
-const WsServerStartProviderRuntimeRpc = Rpc.make(WS_METHODS.serverStartProviderRuntime, {
-  payload: ProviderRuntimeStartInput,
-  success: ServerProviderUpdatedPayload,
-  error: Schema.Union([ProviderConnectionError, EnvironmentAuthorizationError]),
-});
-
-const WsServerCancelProviderRuntimeRpc = Rpc.make(WS_METHODS.serverCancelProviderRuntime, {
-  payload: ProviderRuntimeCancelInput,
-  success: ServerProviderUpdatedPayload,
-  error: Schema.Union([ProviderConnectionError, EnvironmentAuthorizationError]),
 });
 
 const ProviderSetupRpcError = Schema.Union([ProviderSetupError, EnvironmentAuthorizationError]);
