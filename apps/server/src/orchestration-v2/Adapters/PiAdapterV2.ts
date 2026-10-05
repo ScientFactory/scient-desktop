@@ -28,6 +28,7 @@ import * as NodePath from "@effect/platform-node/NodePath";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import {
   getModelSelectionStringOptionValue,
+  modelSelectionsEqual,
   MODEL_TOKEN_LIMIT_MESSAGE,
 } from "@t3tools/shared/model";
 import {
@@ -73,6 +74,7 @@ import {
 } from "../../provider/pi/PiSessionFile.ts";
 import { randomUuidV4 } from "../RandomUuid.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
 import * as ServerConfig from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
@@ -253,6 +255,13 @@ export interface PiAdapterV2Options {
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly serverConfig: ServerConfig.ServerConfig["Service"];
   readonly makeConnection?: typeof makePiRpcConnection;
+  readonly continuationRequests?:
+    | {
+        readonly offer: (
+          request: ProviderContinuationRequests.ProviderContinuationRequest,
+        ) => Effect.Effect<void>;
+      }
+    | undefined;
 }
 
 /** Concatenate the `text` fields of a Pi content-block array. */
@@ -393,6 +402,14 @@ function piApprovalRequestKind(title: string): "command" | "file-change" {
     : "command";
 }
 
+interface BufferedPiWork {
+  readonly workId: string;
+  readonly providerThread: OrchestrationV2ProviderThread;
+  readonly modelSelection: ModelSelection;
+  readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+  readonly records: PiRpcRecord[];
+}
+
 interface PiThreadState {
   providerThread: OrchestrationV2ProviderThread;
   activeTurn: ActivePiTurn | null;
@@ -427,6 +444,7 @@ export function makePiAdapterV2(
         return yield* protocolError("Pi does not support automatic runtime mode.");
       const scope = yield* Effect.scope;
       const cwd = input.runtimePolicy.cwd ?? options.serverConfig.cwd;
+      const nativePath = options.path ?? (yield* Path.Path.pipe(Effect.provide(NodePath.layer)));
       const mcpSession =
         input.configureMcp === false
           ? undefined
@@ -579,10 +597,35 @@ export function makePiAdapterV2(
       // not mistaken for an unexpected transport failure.
       let stopRequested = false;
       let forcedSessionFailure: string | null = null;
-      // Pi extensions can trigger an agent turn after the owning T3 turn has
-      // settled. Until orchestration has a first-class provider-initiated run,
-      // stop that runtime before it can execute tools without a timeline owner.
       let unsolicitedActivityDetected = false;
+      let bufferedWork: BufferedPiWork | null = null;
+      let nativeSelection: ModelSelection | null = null;
+      let workOrdinal = 0;
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          stopRequested = true;
+          bufferedWork = null;
+        }),
+      );
+      const capturedRuntimePolicy = { ...input.runtimePolicy, cwd };
+      const captureNativeSelection = (data: unknown) => {
+        const model = recordField(data, "model");
+        const provider = recordString(model, "provider");
+        const id = recordString(model, "id");
+        const thinkingLevel = recordString(data, "thinkingLevel");
+        const slug =
+          provider === undefined || id === undefined ? undefined : encodePiModelSlug(provider, id);
+        nativeSelection =
+          slug === undefined
+            ? null
+            : {
+                instanceId: options.instanceId,
+                model: slug,
+                ...(thinkingLevel === undefined
+                  ? {}
+                  : { options: [{ id: "thinkingLevel", value: thinkingLevel }] }),
+              };
+      };
       let appliedModel: string | null = null;
       let appliedThinking: string | null = null;
       /** Last thread title synced into pi's session name (`/resume` listing). */
@@ -1833,12 +1876,118 @@ export function makePiAdapterV2(
         );
       };
 
+      const disposeBufferedWork = (work: BufferedPiWork) =>
+        sessionEventPermit.withPermits(1)(
+          Effect.gen(function* () {
+            if (bufferedWork !== work) return;
+            bufferedWork = null;
+            stopRequested = true;
+            yield* connection.terminate;
+          }),
+        );
+      const offerBufferedWork = Effect.fnUntraced(function* (work: BufferedPiWork) {
+        const bus = options.continuationRequests;
+        if (bus === undefined) return;
+        const isCurrent = () => bufferedWork === work && !stopRequested;
+        const request: ProviderContinuationRequests.ProviderInitiatedWorkRequest = {
+          threadId: boundThreadId,
+          providerThreadId: work.providerThread.id,
+          driver: PI_PROVIDER,
+          detail: "Pi extension started native work",
+          initiated: {
+            providerInstanceId: options.instanceId,
+            providerSessionId: input.providerSessionId,
+            workId: work.workId,
+            modelSelection: work.modelSelection,
+            runtimePolicy: work.runtimePolicy,
+          },
+          dispatchIfCurrent: (dispatch) =>
+            Effect.suspend(() => {
+              if (!isCurrent()) return Effect.succeedNone;
+              return dispatch.pipe(
+                Effect.map(Option.some),
+                Effect.catch((error) => {
+                  // A predecessor's checkpoint can still be settling. Re-offer
+                  // the same generation; Stop/scope loss invalidate this token.
+                  if (
+                    isCurrent() &&
+                    recordString(error, "cause") ===
+                      "Provider-initiated work no longer owns an idle native thread."
+                  ) {
+                    return Effect.sleep("100 millis").pipe(
+                      Effect.andThen(
+                        Effect.suspend(() => (isCurrent() ? bus.offer(request) : Effect.void)),
+                      ),
+                      Effect.forkIn(scope),
+                      Effect.as(Option.none()),
+                    );
+                  }
+                  return Effect.fail(error);
+                }),
+              );
+            }),
+          clearIfCurrent: () => disposeBufferedWork(work),
+        };
+        yield* bus.offer(request);
+      });
+
+      const refuseUnownedWork = Effect.fnUntraced(function* (detail: string) {
+        stopRequested = true;
+        forcedSessionFailure = detail;
+        yield* updateProviderSession("error", detail);
+        yield* connection.terminate;
+      });
+
       const handleSessionEvent = Effect.fnUntraced(function* (event: PiRpcRecord) {
         const state = threadState;
         const turn = state?.activeTurn ?? null;
+        if (turn === null && bufferedWork !== null) {
+          // Correlated responses are transport-owned, and old deferred acks
+          // or idle probes must not become a new generation's acceptance.
+          if (event["type"] !== "response" && event["type"] !== "t3.settle_probe")
+            bufferedWork.records.push(event);
+          return;
+        }
         switch (event["type"]) {
           case "agent_start": {
             if (turn === null) {
+              if (options.continuationRequests !== undefined && state !== null) {
+                const data = yield* request({ type: "get_state" }).pipe(
+                  Effect.orElseSucceed(() => undefined),
+                );
+                if (data === undefined) {
+                  yield* refuseUnownedWork("Pi native work state could not be captured.");
+                  return;
+                }
+                yield* assertSessionIdentity(data);
+                captureNativeSelection(data);
+                contextWindow = rememberModelContextWindow(recordField(data, "model"));
+                if (!nativePath.isAbsolute(cwd) || nativeSelection === null) {
+                  yield* refuseUnownedWork(
+                    "Pi native work requires an absolute captured cwd and a known native model.",
+                  );
+                  return;
+                }
+              }
+              if (
+                state !== null &&
+                nativeSelection !== null &&
+                options.continuationRequests !== undefined &&
+                nativePath.isAbsolute(cwd)
+              ) {
+                const work: BufferedPiWork = {
+                  workId: `${input.providerSessionId}:native-generation:${++workOrdinal}`,
+                  providerThread: state.providerThread,
+                  modelSelection: nativeSelection,
+                  runtimePolicy: capturedRuntimePolicy,
+                  records: [event],
+                };
+                bufferedWork = work;
+                sessionEntity = { ...sessionEntity, model: nativeSelection.model };
+                yield* updateProviderSession("running", null);
+                yield* offerBufferedWork(work).pipe(Effect.forkIn(scope));
+                return;
+              }
               unsolicitedActivityDetected = true;
               yield* updateProviderSession("error", PI_UNSOLICITED_ACTIVITY_ERROR);
               yield* connection.terminate;
@@ -2394,6 +2543,7 @@ export function makePiAdapterV2(
           }
         }
         const stateData = launchAlreadyBound ? launchState : yield* request({ type: "get_state" });
+        captureNativeSelection(stateData);
         if (!modelsDiscovered) {
           const modelsData = yield* request({ type: "get_available_models" }).pipe(
             Effect.orElseSucceed(() => undefined),
@@ -2557,6 +2707,7 @@ export function makePiAdapterV2(
           },
         ).pipe(Effect.mapError((cause) => protocolError(cause.detail, cause)));
         contextWindow = rememberModelContextWindow(confirmed.state.model);
+        captureNativeSelection(confirmed.state);
         appliedModel = inherit ? null : modelSelection.model;
         appliedThinking =
           inherit && thinking === undefined ? null : (confirmed.confirmedThinkingLevel ?? null);
@@ -2625,6 +2776,9 @@ export function makePiAdapterV2(
           return sessionEntity;
         },
         events: Stream.fromQueue(events),
+        hasPendingBackgroundWork: Effect.sync(() => bufferedWork !== null),
+        hasPendingBackgroundWorkForThread: (thread) =>
+          Effect.sync(() => bufferedWork?.providerThread.id === thread.id),
         getModelContextWindow: (selection) => {
           if (selection.instanceId !== options.instanceId) return undefined;
           const slug =
@@ -2701,14 +2855,36 @@ export function makePiAdapterV2(
               turnInput.providerThread.driver !== PI_PROVIDER
             )
               return yield* protocolError("Pi turn belongs to another runtime owner");
+            const source = turnInput.message.notification?.source;
+            const adoptedWork = source?.kind === "provider_work" ? bufferedWork : null;
+            if (
+              source?.kind === "provider_work" &&
+              (adoptedWork === null ||
+                adoptedWork.workId !== source.workId ||
+                source.providerSessionId !== input.providerSessionId ||
+                source.providerThreadId !== state.providerThread.id ||
+                !modelSelectionsEqual(adoptedWork.modelSelection, source.modelSelection) ||
+                !Schema.toEquivalence(ProviderAdapter.ProviderAdapterV2RuntimePolicy)(
+                  adoptedWork.runtimePolicy,
+                  source.runtimePolicy,
+                ) ||
+                !modelSelectionsEqual(adoptedWork.modelSelection, turnInput.modelSelection) ||
+                !Schema.toEquivalence(ProviderAdapter.ProviderAdapterV2RuntimePolicy)(
+                  adoptedWork.runtimePolicy,
+                  turnInput.runtimePolicy,
+                ))
+            )
+              return yield* protocolError("Pi native generation no longer owns this captured run");
+            if (adoptedWork === null && bufferedWork !== null)
+              return yield* protocolError("Pi native work is waiting for its own run");
             // The orchestrator adopts a fork under its already-allocated row.
             // Future session updates must retain that authoritative identity.
             state.providerThread = turnInput.providerThread;
-            yield* applySelection(turnInput.modelSelection);
+            if (adoptedWork === null) yield* applySelection(turnInput.modelSelection);
             // Mirror the thread title into pi's session name so the session
             // stays identifiable in pi's own /resume listing. Best-effort:
             // naming must never block a turn.
-            if (turnInput.appThread.title !== appliedSessionName) {
+            if (adoptedWork === null && turnInput.appThread.title !== appliedSessionName) {
               yield* request({
                 type: "set_session_name",
                 name: turnInput.appThread.title,
@@ -2730,7 +2906,7 @@ export function makePiAdapterV2(
             if (compactCommand !== null && turnInput.message.attachments.length > 0)
               return yield* protocolError("Pi native commands do not support attachments.");
             const payload =
-              compactCommand === null
+              adoptedWork === null && compactCommand === null
                 ? yield* resolvePromptPayload(turnInput.message.text, turnInput.message.attachments)
                 : null;
             const startedAt = yield* DateTime.now;
@@ -2784,9 +2960,26 @@ export function makePiAdapterV2(
             // project trust, login, and session-switch dialogs can be shown
             // and answered instead of deadlocking the caller.
             yield* Effect.gen(function* () {
+              if (
+                turnInput.shouldStartProviderTurn !== undefined &&
+                !(yield* turnInput.shouldStartProviderTurn())
+              ) {
+                if (adoptedWork !== null) {
+                  bufferedWork = null;
+                  stopRequested = true;
+                  yield* connection.terminate;
+                }
+                return yield* Effect.interrupt;
+              }
+              if (adoptedWork !== null && bufferedWork !== adoptedWork)
+                return yield* protocolError("Pi native generation was disposed before adoption");
+              if (adoptedWork === null && bufferedWork !== null)
+                return yield* protocolError(
+                  "Pi native work started while a prompt was being prepared",
+                );
               state.activeTurn = activeTurn;
               activeTurn.providerTurn = { ...activeTurn.providerTurn, nativeAcceptance: "unknown" };
-              if (compactCommand !== null) {
+              if (adoptedWork === null && compactCommand !== null) {
                 yield* connection.send(compactRpcRecord(compactCommand));
                 pendingCompactResponses.push({
                   providerTurnId: providerTurn.id,
@@ -2818,6 +3011,10 @@ export function makePiAdapterV2(
               if (outOfTurnExtensionErrors.length > 0) {
                 yield* Queue.offer(connection.events, { type: "t3.flush_extension_errors" });
               }
+              if (adoptedWork !== null) {
+                bufferedWork = null;
+                for (const record of adoptedWork.records) yield* handleSessionEvent(record);
+              }
             }).pipe(
               sessionEventPermit.withPermits(1),
               Effect.mapError(
@@ -2835,6 +3032,7 @@ export function makePiAdapterV2(
                 Effect.gen(function* () {
                   if (state.activeTurn === activeTurn) state.activeTurn = null;
                   stopRequested = true;
+                  bufferedWork = null;
                   forcedSessionFailure = "Pi prompt delivery could not be confirmed.";
                   yield* updateProviderSession(
                     "error",
@@ -3429,6 +3627,14 @@ function piUiResponse(
 
 // ── driver ────────────────────────────────────────────────────
 
+/** Enable native work only when the host supplied its live continuation queue. */
+export const piContinuationRequestsIfProvided = Effect.gen(function* () {
+  const context = yield* Effect.context<never>();
+  if (!context.mapUnsafe.has(ProviderContinuationRequests.ProviderContinuationRequests.key))
+    return undefined;
+  return yield* ProviderContinuationRequests.ProviderContinuationRequests;
+});
+
 export type PiAdapterV2DriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
@@ -3456,6 +3662,7 @@ export const PiAdapterV2Driver: ProviderAdapterDriver<PiSettings, PiAdapterV2Dri
         path: yield* Path.Path,
         idAllocator,
         serverConfig,
+        continuationRequests: yield* piContinuationRequestsIfProvided,
       });
     },
     (effect, input) =>

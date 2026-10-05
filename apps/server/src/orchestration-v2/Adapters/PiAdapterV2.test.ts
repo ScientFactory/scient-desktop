@@ -28,6 +28,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -36,6 +37,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
+import { ProviderContinuationRequests } from "../ProviderContinuationRequests.ts";
 import * as ServerConfig from "../../config.ts";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
@@ -45,9 +47,15 @@ import {
   ProviderAdapterTurnStartError,
   type ProviderAdapterV2Event,
   type ProviderAdapterV2SessionRuntime,
+  type ProviderAdapterV2TurnInput,
 } from "../ProviderAdapter.ts";
 import { handoffBudget } from "../ContextHandoffBudget.ts";
-import { makePiAdapterV2, PI_PROVIDER } from "./PiAdapterV2.ts";
+import {
+  makePiAdapterV2,
+  PI_PROVIDER,
+  type PiAdapterV2Options,
+  piContinuationRequestsIfProvided,
+} from "./PiAdapterV2.ts";
 import { makePiRpcConnection, parsePiModelSlug, PiRpcError, type PiRpcRecord } from "./PiRpc.ts";
 import { piContextErrorMessage } from "../../provider/pi/PiContextError.ts";
 import { encodePiModelSlug } from "../../provider/pi/PiModel.ts";
@@ -403,6 +411,7 @@ const makeAdapter = Effect.fnUntraced(function* (
   launchArgs = "",
   forkFake?: FakePi,
   makeConnection?: typeof makePiRpcConnection,
+  continuationRequests?: PiAdapterV2Options["continuationRequests"],
 ) {
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const serverConfig = yield* ServerConfig.ServerConfig;
@@ -410,6 +419,7 @@ const makeAdapter = Effect.fnUntraced(function* (
   return makePiAdapterV2({
     instanceId: PI_INSTANCE_ID,
     ...(makeConnection === undefined ? {} : { makeConnection }),
+    ...(continuationRequests === undefined ? {} : { continuationRequests }),
     settings: { enabled: true, binaryPath: "pi", launchArgs, customModels: [] },
     environment: {},
     spawner:
@@ -434,13 +444,15 @@ const openRuntime = Effect.fnUntraced(function* (
   providerSessionId = SESSION_ID,
   forkFake?: FakePi,
   makeConnection?: typeof makePiRpcConnection,
+  continuationRequests?: PiAdapterV2Options["continuationRequests"],
+  policy = runtimePolicy,
 ) {
-  const adapter = yield* makeAdapter(fake, "", forkFake, makeConnection);
+  const adapter = yield* makeAdapter(fake, "", forkFake, makeConnection, continuationRequests);
   const runtime = yield* adapter.openSession({
     threadId,
     providerSessionId,
     modelSelection: modelSelection(model),
-    runtimePolicy,
+    runtimePolicy: policy,
   });
   const emitted = yield* Queue.unbounded<ProviderAdapterV2Event>();
   const observed: ProviderAdapterV2Event[] = [];
@@ -496,6 +508,7 @@ const startTurn = Effect.fnUntraced(function* (
   selection?: ModelSelection,
   runOrdinal = 1,
   threadId = THREAD_ID,
+  overrides: Partial<ProviderAdapterV2TurnInput> = {},
 ) {
   const appThread = yield* makeAppThread(model, threadId);
   const runId = RunId.make(`run:${threadId}:${runOrdinal}`);
@@ -517,6 +530,7 @@ const startTurn = Effect.fnUntraced(function* (
     },
     modelSelection: selection ?? modelSelection(model),
     runtimePolicy,
+    ...overrides,
   });
 });
 
@@ -4124,3 +4138,287 @@ describe("PiRpc early process exit", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
+
+describe("Pi captured work admission fences", () => {
+  it.effect("checks exact Stop after selection and before native prompt wire", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, observed } = yield* openRuntime(fake);
+      const thread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      let checks = 0;
+      const cancelled = yield* startTurn(
+        runtime,
+        thread,
+        "default",
+        [],
+        "Cancelled before wire",
+        undefined,
+        1,
+        THREAD_ID,
+        {
+          shouldStartProviderTurn: () =>
+            Effect.sync(() => {
+              checks++;
+              return false;
+            }),
+        },
+      ).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(cancelled));
+      if (Exit.isFailure(cancelled)) assert.isTrue(Cause.hasInterruptsOnly(cancelled.cause));
+      assert.equal(checks, 1);
+      assert.lengthOf(
+        fake.allRequests().filter((r) => r.type === "prompt"),
+        0,
+      );
+      assert.lengthOf(
+        observed.filter((e) => e.type === "provider_turn.updated" || e.type === "turn.terminal"),
+        0,
+      );
+      yield* startTurn(runtime, thread, "default", [], "Next owned turn", undefined, 2);
+      yield* fake.takeRequest("prompt");
+      assert.lengthOf(
+        fake.allRequests().filter((r) => r.type === "prompt"),
+        1,
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  for (const stopped of [false, true]) {
+    it.effect(`adopts only the exact captured native generation and fences Stop (${stopped})`, () =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const offered =
+          yield* Queue.unbounded<
+            import("../ProviderContinuationRequests.ts").ProviderContinuationRequest
+          >();
+        const { runtime, observed, takeEvent } = yield* openRuntime(
+          fake,
+          "default",
+          THREAD_ID,
+          SESSION_ID,
+          undefined,
+          undefined,
+          { offer: (r) => Queue.offer(offered, r).pipe(Effect.asVoid) },
+        );
+        const thread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        fake.queueState({ model: { provider: "fixture", id: "synthetic" } });
+        yield* fake.emit({ type: "agent_start" });
+        const packet = yield* Queue.take(offered);
+        const captured = packet.initiated!;
+        assert.equal(runtime.providerSession.model, captured.modelSelection.model);
+        assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+        const notification = {
+          source: {
+            kind: "provider_work" as const,
+            workId: captured.workId,
+            providerSessionId: captured.providerSessionId,
+            providerThreadId: packet.providerThreadId,
+            modelSelection: captured.modelSelection,
+            runtimePolicy: captured.runtimePolicy,
+          },
+          outcome: "updated" as const,
+          summary: "Pi native work",
+        };
+        const overrides = {
+          modelSelection: captured.modelSelection,
+          runtimePolicy: captured.runtimePolicy,
+          message: {
+            messageId: MessageId.make("native-generation"),
+            text: "Adopt existing native work",
+            attachments: [],
+            createdBy: "agent" as const,
+            creationSource: "provider" as const,
+            notification,
+          },
+        };
+        const mismatch = yield* startTurn(
+          runtime,
+          thread,
+          "default",
+          [],
+          "",
+          undefined,
+          1,
+          THREAD_ID,
+          { ...overrides, runtimePolicy: { ...captured.runtimePolicy, cwd: "/another-workspace" } },
+        ).pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(mismatch));
+        assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+        const adopted = yield* startTurn(
+          runtime,
+          thread,
+          "default",
+          [],
+          "",
+          undefined,
+          1,
+          THREAD_ID,
+          { ...overrides, shouldStartProviderTurn: () => Effect.succeed(!stopped) },
+        ).pipe(Effect.exit);
+        assert.equal(Exit.isFailure(adopted), stopped);
+        assert.lengthOf(
+          fake.allRequests().filter((r) => r.type === "prompt"),
+          0,
+        );
+        assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+        if (stopped) {
+          assert.lengthOf(
+            observed.filter(
+              (e) => e.type === "provider_turn.updated" || e.type === "turn.terminal",
+            ),
+            0,
+          );
+          assert.isTrue(Option.isNone(yield* packet.dispatchIfCurrent!(Effect.succeed("stale"))));
+        } else {
+          const receipt = yield* takeEvent(
+            (e) =>
+              e.type === "provider_turn.updated" && e.providerTurn.nativeAcceptance === "accepted",
+          );
+          assert.equal(receipt.type, "provider_turn.updated");
+          yield* fake.emit({ type: "agent_settled" });
+          const terminal = yield* takeEvent((e) => e.type === "turn.terminal");
+          assert.equal(
+            terminal.type === "turn.terminal" ? terminal.status : undefined,
+            "completed",
+          );
+          assert.lengthOf(
+            observed.filter((e) => e.type === "turn.terminal"),
+            1,
+          );
+        }
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+  }
+});
+
+it.effect("refuses an ordinary prompt when native work races its correlated preparation", () =>
+  Effect.gen(function* () {
+    const fake = yield* makeFakePi;
+    const entered = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const offered =
+      yield* Queue.unbounded<
+        import("../ProviderContinuationRequests.ts").ProviderContinuationRequest
+      >();
+    let selectionStarted = false;
+    let held = false;
+    const { runtime } = yield* openRuntime(
+      fake,
+      "default",
+      THREAD_ID,
+      SESSION_ID,
+      undefined,
+      (input) =>
+        makePiRpcConnection(input).pipe(
+          Effect.map((connection) => ({
+            ...connection,
+            request: (record, timeout) =>
+              connection.request(record, timeout).pipe(
+                Effect.tap(() => {
+                  if (record.type === "set_model") selectionStarted = true;
+                  if (record.type !== "get_state" || !selectionStarted || held) return Effect.void;
+                  held = true;
+                  return Deferred.succeed(entered, undefined).pipe(
+                    Effect.andThen(Deferred.await(release)),
+                  );
+                }),
+              ),
+          })),
+        ),
+      { offer: (packet) => Queue.offer(offered, packet).pipe(Effect.asVoid) },
+    );
+    const thread = yield* runtime.ensureThread({
+      threadId: THREAD_ID,
+      modelSelection: modelSelection("default"),
+      runtimePolicy,
+    });
+    const preparing = yield* startTurn(runtime, thread, "fixture/synthetic").pipe(
+      Effect.exit,
+      Effect.forkScoped,
+    );
+    yield* Deferred.await(entered);
+    yield* fake.emit({ type: "agent_start" });
+    const packet = yield* Queue.take(offered);
+    assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+    yield* Deferred.succeed(release, undefined);
+    assert.isTrue(Exit.isFailure(yield* Fiber.join(preparing)));
+    assert.lengthOf(
+      fake.allRequests().filter((r) => r.type === "prompt"),
+      0,
+    );
+    assert.isTrue(Option.isNone(yield* packet.dispatchIfCurrent!(Effect.succeed("stale"))));
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);
+
+for (const failure of ["unknown-model", "state-query", "relative-cwd"] as const) {
+  it.effect(`refuses and releases unowned native work when capture fails (${failure})`, () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      let offers = 0;
+      const { runtime, observed, takeEvent } = yield* openRuntime(
+        fake,
+        "default",
+        THREAD_ID,
+        SESSION_ID,
+        undefined,
+        undefined,
+        {
+          offer: () =>
+            Effect.sync(() => {
+              offers++;
+            }),
+        },
+        failure === "relative-cwd" ? { ...runtimePolicy, cwd: "relative" } : runtimePolicy,
+      );
+      yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      if (failure === "state-query") fake.failNextState();
+      if (failure === "relative-cwd")
+        fake.queueState({ model: { provider: "fixture", id: "synthetic" } });
+      yield* fake.emit({ type: "agent_start" });
+      const refusal = yield* takeEvent(
+        (e) => e.type === "provider_session.updated" && e.providerSession.status === "error",
+      );
+      assert.include(
+        refusal.type === "provider_session.updated" ? refusal.providerSession.lastError : "",
+        failure === "state-query"
+          ? "could not be captured"
+          : failure === "relative-cwd"
+            ? "absolute captured cwd"
+            : "known native model",
+      );
+      assert.equal(offers, 0);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      assert.lengthOf(
+        observed.filter((e) => e.type === "provider_turn.updated" || e.type === "turn.terminal"),
+        0,
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+}
+
+it.effect(
+  "requires an explicitly provided continuation queue instead of the dropping reference default",
+  () =>
+    Effect.gen(function* () {
+      assert.isUndefined(yield* piContinuationRequestsIfProvided);
+      const bus = { offer: () => Effect.void, take: Effect.never };
+      assert.strictEqual(
+        yield* piContinuationRequestsIfProvided.pipe(
+          Effect.provideService(ProviderContinuationRequests, bus),
+        ),
+        bus,
+      );
+    }).pipe(Effect.provide(testLayer)),
+);

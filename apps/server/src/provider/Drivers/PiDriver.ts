@@ -28,6 +28,7 @@ import { makePiTextGeneration } from "../../textGeneration/PiTextGeneration.ts";
 import * as Crypto from "effect/Crypto";
 import {
   makePiAdapterV2,
+  piContinuationRequestsIfProvided,
   type PiAdapterV2DriverEnv,
 } from "../../orchestration-v2/Adapters/PiAdapterV2.ts";
 import { ProviderDriverError } from "../Errors.ts";
@@ -191,6 +192,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
         idAllocator: yield* IdAllocator.IdAllocatorV2,
         serverConfig,
         makeConnection,
+        continuationRequests: yield* piContinuationRequestsIfProvided,
       });
       // SCIENT-FORK:START — retained library adapter for compatibility callers.
       // Production orchestration executes through `orchestrationAdapter`.

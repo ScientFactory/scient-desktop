@@ -38,10 +38,10 @@ export const layer = Layer.mergeAll(
   ),
 );
 
-export const fixture = Effect.fnUntraced(function* (suffix: string) {
+export const fixture = Effect.fnUntraced(function* (suffix: string, workspace?: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-pi-real-v2-" });
+  const root = workspace ?? (yield* fs.makeTempDirectoryScoped({ prefix: "scient-pi-real-v2-" }));
   const profile = path.join(root, "profile");
   yield* fs.makeDirectory(profile);
   const instanceId = ProviderInstanceId.make(`pi-real-${suffix}`);
@@ -131,7 +131,13 @@ export const fixture = Effect.fnUntraced(function* (suffix: string) {
     });
   });
 
-  const models = (baseUrl: string, reasoning = false, contextWindow = 32000, maxTokens = 1024) =>
+  const models = (
+    baseUrl: string,
+    reasoning = false,
+    contextWindow = 32000,
+    maxTokens = 1024,
+    ids: ReadonlyArray<string> = ["synthetic"],
+  ) =>
     fs.writeFileString(
       path.join(profile, "models.json"),
       json({
@@ -140,17 +146,15 @@ export const fixture = Effect.fnUntraced(function* (suffix: string) {
             baseUrl,
             api: "openai-completions",
             apiKey: "synthetic-not-a-secret",
-            models: [
-              {
-                id: "synthetic",
-                name: "Synthetic test model",
-                reasoning,
-                input: ["text"],
-                contextWindow,
-                maxTokens,
-                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-              },
-            ],
+            models: ids.map((id) => ({
+              id,
+              name: "Synthetic test model",
+              reasoning,
+              input: ["text"],
+              contextWindow,
+              maxTokens,
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            })),
           },
         },
       }),
