@@ -50,6 +50,15 @@ const decodeRequest = Schema.decodeSync(
     }),
   ),
 );
+const decodeMcpServers = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.Struct({
+      type: Schema.optional(Schema.Literal("stdio")),
+      name: Schema.String,
+      env: Schema.Array(Schema.Struct({ name: Schema.String, value: Schema.String })),
+    }),
+  ),
+);
 const layer = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
@@ -323,6 +332,22 @@ it.layer(layer, { excludeTestServices: true })("native Grok model selection", (i
             assert.equal((rules ?? "").includes("scient_skill_load"), granted);
             assert.notInclude(rules ?? "", "preview_status");
             assert.notInclude(rules ?? "", "device_list");
+            const launches = h.requests().filter((request) => request.method === "session/new");
+            assert.lengthOf(launches, 1);
+            const servers = yield* decodeMcpServers(launches[0]?.params?.mcpServers);
+            if (granted) {
+              assert.lengthOf(servers, 1);
+              assert.equal(servers[0]?.name, "scient");
+              // Grok generation 1 uses ACP's untagged stdio representation.
+              assert.isUndefined(servers[0]?.type);
+              assert.deepEqual(servers[0]?.env, [
+                { name: "ELECTRON_RUN_AS_NODE", value: "1" },
+                { name: "T3_ACP_MCP_ENDPOINT", value: "http://127.0.0.1:43123/mcp" },
+                { name: "T3_ACP_MCP_AUTHORIZATION", value: "Bearer synthetic-grok-awareness" },
+              ]);
+            } else {
+              assert.deepEqual(servers, []);
+            }
             assert.lengthOf(
               h.requests().filter((request) => request.method === "session/prompt"),
               1,

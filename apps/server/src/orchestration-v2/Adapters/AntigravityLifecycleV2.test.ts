@@ -55,6 +55,7 @@ const decodeMcpServers = Schema.decodeUnknownEffect(
   Schema.Array(
     Schema.Struct({
       type: Schema.Literal("stdio"),
+      name: Schema.String,
       args: Schema.Array(Schema.String),
       env: Schema.Array(Schema.Struct({ name: Schema.String, value: Schema.String })),
     }),
@@ -160,6 +161,7 @@ const assertDead = (pids: ReadonlyArray<{ readonly pid: number }>) =>
 const harness = Effect.fnUntraced(function* (options?: {
   readonly blockPromptWrite?: boolean;
   readonly backgroundPeer?: boolean;
+  readonly configureMcp?: boolean;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -270,6 +272,7 @@ await import(${encodeString(mockAgentPath)});`,
       providerSessionId: ProviderSessionId.make("antigravity-native-session"),
       modelSelection,
       runtimePolicy: policy,
+      ...(options?.configureMcp === undefined ? {} : { configureMcp: options.configureMcp }),
       ...(initialNativeThreadId === undefined ? {} : { initialNativeThreadId }),
     });
   const send = Effect.fnUntraced(function* (
@@ -351,7 +354,7 @@ await import(${encodeString(mockAgentPath)});`,
 
 it.layer(layer, { excludeTestServices: true })("Antigravity native lifecycle", (it) => {
   it.effect(
-    "runs native auth, resume, scoped MCP, model confirmation, commands and streaming",
+    "runs native auth, resume, scoped Scient MCP, model confirmation, commands and streaming",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -436,16 +439,19 @@ it.layer(layer, { excludeTestServices: true })("Antigravity native lifecycle", (
           ] as const) {
             const matched = requests.filter((request) => request.method === method);
             assert.lengthOf(matched, 1);
-            // The peer advertises no HTTP MCP transport; the native stdio
-            // bridge carries the same scoped endpoint and fresh authorization.
             const servers = yield* decodeMcpServers(matched[0]?.params?.mcpServers);
             assert.lengthOf(servers, 1);
-            assert.equal(servers[0]?.args.at(-1), "acp-mcp-bridge");
-            assert.deepEqual(servers[0]?.env, [
-              { name: "ELECTRON_RUN_AS_NODE", value: "1" },
-              { name: "T3_ACP_MCP_ENDPOINT", value: mcp.endpoint },
-              { name: "T3_ACP_MCP_AUTHORIZATION", value: authorization },
-            ]);
+            const server = servers[0];
+            assert.equal(server?.name, "scient");
+            assert.equal(server?.type, "stdio");
+            if (server?.type === "stdio") {
+              assert.equal(server.args.at(-1), "acp-mcp-bridge");
+              assert.deepEqual(server.env, [
+                { name: "ELECTRON_RUN_AS_NODE", value: "1" },
+                { name: "T3_ACP_MCP_ENDPOINT", value: mcp.endpoint },
+                { name: "T3_ACP_MCP_AUTHORIZATION", value: authorization },
+              ]);
+            }
           }
           const configuration = requests
             .filter((request) => request.method === "session/set_config_option")
@@ -464,6 +470,57 @@ it.layer(layer, { excludeTestServices: true })("Antigravity native lifecycle", (
           );
         }),
       ),
+  );
+  it.effect("keeps explicitly disabled scoped MCP absent on native start and resume", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness({ configureMcp: false });
+        yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            McpProviderSession.setMcpProviderSession({
+              environmentId: EnvironmentId.make("antigravity-disabled-mcp"),
+              threadId: h.threadId,
+              providerSessionId: "antigravity-disabled-mcp-session",
+              providerInstanceId: h.instanceId,
+              endpoint: "http://127.0.0.1:12345/mcp",
+              authorizationHeader: "Bearer synthetic-disabled-session",
+              capabilities: new Set<never>(),
+            }),
+          ),
+          () => Effect.sync(() => McpProviderSession.clearMcpProviderSession(h.threadId)),
+        );
+        const firstScope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(firstScope, Exit.void));
+        const first = yield* h.open().pipe(Scope.provide(firstScope));
+        const original = yield* first.ensureThread({
+          threadId: h.threadId,
+          modelSelection: h.modelSelection,
+          runtimePolicy: h.policy,
+        });
+        yield* Scope.close(firstScope, Exit.void);
+        const resumed = yield* h.open(original.nativeThreadRef?.nativeId ?? undefined);
+        const restored = yield* resumed.resumeThread({
+          providerThread: original,
+          threadId: h.threadId,
+          modelSelection: h.modelSelection,
+          runtimePolicy: h.policy,
+        });
+        assert.equal(restored.nativeThreadRef?.nativeId, original.nativeThreadRef?.nativeId);
+        const launches = h
+          .readLog()
+          .filter(
+            (request) => request.method === "session/new" || request.method === "session/resume",
+          );
+        assert.deepEqual(
+          launches.map((request) => request.method),
+          ["session/new", "session/resume"],
+        );
+        assert.deepEqual(
+          launches.map((request) => request.params?.mcpServers),
+          [[], []],
+        );
+      }),
+    ),
   );
   it.effect(
     "keeps unrequested MCP absent while restoring the exact native model and mode on resume",
