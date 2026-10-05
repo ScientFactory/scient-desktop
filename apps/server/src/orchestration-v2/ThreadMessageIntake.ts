@@ -114,6 +114,10 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
     // Claims accumulate across questions, so all of preparation shares one
     // rollback boundary: any failure before dispatch removes every new copy.
     const claimedPaths: string[] = [];
+    const pinReleases: Array<Effect.Effect<void>> = [];
+    const releasePins = Effect.suspend(() =>
+      Effect.forEach(pinReleases, (release) => release, { discard: true }),
+    );
     const prepared = yield* Effect.gen(function* () {
       const attachmentsByQuestionId: import("@t3tools/contracts").UserInputAttachments = {};
       for (const [questionId, attachments] of Object.entries(incomingByQuestionId)) {
@@ -122,6 +126,7 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
           attachments,
         });
         claimedPaths.push(...claimed.claimedPaths);
+        pinReleases.push(claimed.releasePins);
         Object.defineProperty(attachmentsByQuestionId, questionId, {
           value: claimed.attachments,
           enumerable: true,
@@ -137,7 +142,11 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
         ),
       );
       return { answers, attachmentsByQuestionId };
-    }).pipe(Effect.onError(() => AttachmentClaims.releaseClaimedAttachments(claimedPaths)));
+    }).pipe(
+      Effect.onError(() =>
+        AttachmentClaims.releaseClaimedAttachments(claimedPaths).pipe(Effect.andThen(releasePins)),
+      ),
+    );
     return yield* threads
       .dispatch({
         ...command,
@@ -167,12 +176,14 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
                     ? []
                     : Object.values(item.questionAnswer.attachmentsByQuestionId).flat(),
                 ),
-              )
+              ).pipe(Effect.andThen(releasePins))
             : Effect.void;
         }),
         Effect.tapError((error) =>
           dispatchWasNotAccepted(error)
-            ? AttachmentClaims.releaseClaimedAttachments(claimedPaths)
+            ? AttachmentClaims.releaseClaimedAttachments(claimedPaths).pipe(
+                Effect.andThen(releasePins),
+              )
             : Effect.void,
         ),
       );
@@ -207,11 +218,19 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
           result.storedEvents.flatMap(({ event }) =>
             event.type === "message.updated" ? event.payload.attachments : [],
           ),
+        ).pipe(
+          Effect.andThen(
+            result.storedEvents.some(({ event }) => event.type === "message.updated")
+              ? claimed.releasePins
+              : Effect.void,
+          ),
         ),
       ),
       Effect.tapError((error) =>
         dispatchWasNotAccepted(error)
-          ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths)
+          ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths).pipe(
+              Effect.andThen(claimed.releasePins),
+            )
           : Effect.void,
       ),
     );
@@ -223,10 +242,16 @@ export const sendToThread = Effect.fn("ThreadMessageIntake.sendToThread")(functi
   const threads = yield* ThreadManagement.ThreadManagementService;
   const claimed = yield* AttachmentClaims.claimPendingAttachments(input);
   return yield* threads.sendToThread({ ...input, attachments: claimed.attachments }).pipe(
-    Effect.tap((result) => releaseUnusedClaims(claimed.claimedPaths, result.message.attachments)),
+    Effect.tap((result) =>
+      releaseUnusedClaims(claimed.claimedPaths, result.message.attachments).pipe(
+        Effect.andThen(claimed.releasePins),
+      ),
+    ),
     Effect.tapError((error) =>
       dispatchWasNotAccepted(error)
-        ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths)
+        ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths).pipe(
+            Effect.andThen(claimed.releasePins),
+          )
         : Effect.void,
     ),
   );
@@ -252,7 +277,7 @@ export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(functi
     ),
   );
   yield* AttachmentClaims.validateAttachmentLimits(input.initialMessage?.attachments ?? []);
-  if (!input.initialMessage?.attachments.some(AttachmentClaims.attachmentIsPendingUpload)) {
+  if (!input.initialMessage?.attachments.length) {
     return yield* launches.launch(input);
   }
   if (input.threadId === undefined) {
@@ -286,7 +311,7 @@ export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(functi
         releaseUnusedClaims(
           claimed.claimedPaths,
           result.projection.messages.flatMap((message) => message.attachments),
-        ),
+        ).pipe(Effect.andThen(claimed.releasePins)),
       ),
       Effect.tapError((error) => {
         // Project/receipt reads precede message dispatch. The create-thread error
@@ -301,7 +326,9 @@ export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(functi
               error.cause._tag !== "OrchestratorProjectionError") &&
             dispatchWasNotAccepted(error.cause));
         return notAccepted
-          ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths)
+          ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths).pipe(
+              Effect.andThen(claimed.releasePins),
+            )
           : Effect.void;
       }),
     );

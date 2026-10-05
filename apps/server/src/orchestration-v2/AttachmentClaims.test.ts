@@ -129,6 +129,11 @@ describe("AttachmentClaims", () => {
         mimeType: "image/png",
         sizeBytes: 4,
       };
+      const config = yield* ServerConfig.ServerConfig;
+      NodeFS.writeFileSync(
+        NodePath.join(config.attachmentsDir, `${stored.id}.png`),
+        new Uint8Array([1, 2, 3, 4]),
+      );
       const claimed = yield* claimPendingAttachments({
         threadId: "thread-claims-2",
         attachments: [stored],

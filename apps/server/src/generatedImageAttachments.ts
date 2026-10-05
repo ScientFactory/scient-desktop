@@ -1,3 +1,4 @@
+import { reserveUnreconciledPublication } from "./orchestration-v2/AttachmentFileUse.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -255,6 +256,7 @@ export async function materializeGeneratedImageAttachment(input: {
   readonly attachmentsDir: string;
   readonly allowDurableFallbackWhenSourceUnavailable?: boolean;
 }): Promise<ChatImageAttachment> {
+  await reserveUnreconciledPublication(input.attachmentsDir, generatedImageAttachmentId(input));
   const durable = await recoverDurable(input);
   const [sourceResult, roots] = await Promise.all([
     NodeFSP.realpath(input.sourcePath).then(

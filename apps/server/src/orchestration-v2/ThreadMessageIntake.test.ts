@@ -27,6 +27,7 @@ import {
 } from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { dispatchCommand } from "./ThreadMessageIntake.ts";
+import { attachmentHasReservations } from "./AttachmentFileUse.ts";
 
 const intakeTestLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-question-intake-",
@@ -325,6 +326,7 @@ it.effect("retains claimed copies when dispatch failure may have been accepted",
       entry.startsWith("thread-ambiguous-"),
     );
     expect(threadFiles).toHaveLength(1);
+    expect(yield* attachmentHasReservations(threadFiles[0]!.slice(0, -4))).toBe(true);
     expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);
   }).pipe(Effect.provide(intakeTestLayer)),
 );
@@ -617,6 +619,11 @@ it.effect("retains claimed copies referenced by a fresh recorded answer", () =>
         entry.startsWith("thread-fresh-answer-"),
       ),
     ).toHaveLength(2);
+    for (const name of NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
+      entry.startsWith("thread-fresh-answer-"),
+    )) {
+      expect(yield* attachmentHasReservations(name.slice(0, -4))).toBe(false);
+    }
   }).pipe(Effect.provide(intakeTestLayer)),
 );
 
