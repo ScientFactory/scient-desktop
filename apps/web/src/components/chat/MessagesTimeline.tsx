@@ -1,4 +1,3 @@
-import { AgentSpawnMemberRow } from "~/scient/presentation/AgentSpawnMemberRow";
 import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-presentation";
 import { useBoundedAnswerFollow } from "./useBoundedAnswerFollow";
 import { countUnreadBelow, unreadMessagesForThread } from "./unreadTimelineMessages";
@@ -59,7 +58,6 @@ import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/s
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import {
   emptyAgentPanelModel,
-  isActiveSubagentStatus,
   type AgentPanelModel,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
@@ -287,7 +285,10 @@ import { TimelineSystemDivider } from "./TimelineSystemDivider";
 import { ScientChatImageGallery } from "~/scient/images/ScientChatImageGallery";
 // Website tool icons never fetch a web favicon.
 import { remoteImageAddress } from "~/scient/presentation/remoteImageAddress";
-import { agentSpawnRowLabel, deriveAgentSpawnSummary } from "./agentSpawnSummary";
+import {
+  renderSubagentRosterGroup,
+  subagentGroupRoster,
+} from "~/scient/presentation/AgentSpawnRow";
 // SCIENT-FORK:END
 import { SkillChipIcon, SkillInlineText } from "./SkillInlineText";
 import * as DateTime from "effect/DateTime";
@@ -3568,43 +3569,22 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
     else ctx.workGroupViewState.expandedEntries.delete(groupId);
     setExpanded(open);
   };
-  const workflow = ctx.agentPanelModel.workflows.find((group) =>
-    members.some((item) => item.subagentId === group.workflow.id),
-  );
-  const nativeMemberIds: ReadonlyArray<string> = members.map((item) => item.subagentId);
-  const hasRoster =
-    workflow !== undefined ||
-    ctx.agentPanelModel.directAgents.some((agent) => nativeMemberIds.includes(agent.id));
-  if (hasRoster) {
-    return (
-      <WorkLogBlock continues={row.continuesWorkLog}>
-        <AgentSpawnRow
-          entryId={row.id}
-          spawn={{
-            workflowId: workflow?.workflow.id ?? null,
-            agentTaskIds: nativeMemberIds,
-          }}
-          onToggleEntry={(wasExpanded) => ctx.onToggleWorkEntry(row.id, wasExpanded)}
-        />
-        {members.flatMap((member) => {
-          const childThreadId = member.childThreadId;
-          return childThreadId === null
-            ? []
-            : [
-                <button
-                  key={member.id}
-                  type="button"
-                  aria-label="Open child thread"
-                  onClick={() => ctx.onOpenThread(childThreadId)}
-                  className="ms-7 mt-1 self-start text-xs text-muted-foreground hover:text-foreground"
-                >
-                  Open {member.title ?? "subagent"} thread ›
-                </button>,
-              ];
-        })}
-      </WorkLogBlock>
-    );
+  // SCIENT-FORK:START — a group the agent panel knows renders as one spawn row.
+  const roster = subagentGroupRoster(ctx.agentPanelModel, members);
+  if (roster) {
+    return renderSubagentRosterGroup({
+      rowId: row.id,
+      continuesWorkLog: row.continuesWorkLog,
+      members,
+      roster,
+      context: ctx,
+      LiveActivityRow,
+      WorkingTimer,
+      failedToolIconClassName,
+      toolCallExpandedBodyClassName,
+    });
   }
+  // SCIENT-FORK:END
   return (
     <WorkLogBlock continues={row.continuesWorkLog}>
       <Collapsible open={expanded} onOpenChange={toggleExpanded} data-subagent-group>
@@ -5515,106 +5495,6 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
 }
 
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
-
-/** One tool row per batch, with member results available on expansion. */
-const AgentSpawnRow = memo(function AgentSpawnRow(props: {
-  entryId: string;
-  /** One workflow run, or a batch of direct spawns when workflowId is null. */
-  spawn: {
-    /** Workflow coordinator taskId, or null for a direct-spawn batch. */
-    workflowId: string | null;
-    agentTaskIds: ReadonlyArray<string>;
-  };
-  active?: boolean | undefined;
-  onToggleEntry?: ((collapsed: boolean) => void) | undefined;
-}) {
-  const { entryId, spawn } = props;
-  const { agentPanelModel, expandedSpawnEntryIds, onToggleSpawnRow, onOpenAgents } =
-    use(TimelineRowCtx);
-  const expanded = expandedSpawnEntryIds.has(entryId);
-
-  const memberIds = new Set(spawn.agentTaskIds);
-  const workflowGroup = spawn.workflowId
-    ? agentPanelModel.workflows.find((group) => group.workflow.id === spawn.workflowId)
-    : undefined;
-  const agents = workflowGroup
-    ? [...workflowGroup.phases.flatMap((phase) => phase.members), ...workflowGroup.unphasedMembers]
-    : agentPanelModel.directAgents.filter((agent) => memberIds.has(agent.id));
-  const agentCount = Math.max(
-    agents.length,
-    Math.max(memberIds.size - (spawn.workflowId ? 1 : 0), 0),
-  );
-  const summary = deriveAgentSpawnSummary({
-    agents,
-    agentCount,
-    coordinatorStatus: workflowGroup?.workflow.status,
-  });
-  const { live } = summary;
-  const failed = summary.tone === "failed";
-  const workflowName =
-    workflowGroup?.workflow.workflowName ?? workflowGroup?.workflow.title ?? null;
-  const label = agentSpawnRowLabel(summary, workflowName);
-  // The longest-running agent still at work: a quiet row keeps counting.
-  const workingSince = agents
-    .filter((agent) => isActiveSubagentStatus(agent.status) && agent.startedAt !== null)
-    .map((agent) => agent.startedAt!)
-    .toSorted()[0];
-  const toggleExpanded = () => {
-    props.onToggleEntry?.(expanded);
-    onToggleSpawnRow(entryId, !expanded);
-  };
-
-  return (
-    <div className="flex flex-col">
-      <button
-        type="button"
-        aria-expanded={expanded}
-        onClick={toggleExpanded}
-        className="flex cursor-pointer select-none rounded-md text-left transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-      >
-        <LiveActivityRow
-          label={
-            live && workingSince ? (
-              <span className="flex min-w-0">
-                <span className="min-w-0 truncate">{label}</span>
-                <span className="shrink-0 whitespace-pre tabular-nums">
-                  {" · "}
-                  <WorkingTimer createdAt={workingSince} />
-                </span>
-              </span>
-            ) : (
-              label
-            )
-          }
-          iconName="bot"
-          active={live && props.active !== false}
-          failed={failed}
-        />
-      </button>
-      {expanded ? (
-        <div className="ms-7 mt-0.5 flex flex-col">
-          {agents.map((agent) => (
-            <AgentSpawnMemberRow
-              key={agent.id}
-              agent={agent}
-              onToggleEntry={props.onToggleEntry}
-              WorkingTimer={WorkingTimer}
-              failedToolIconClassName={failedToolIconClassName}
-              toolCallExpandedBodyClassName={toolCallExpandedBodyClassName}
-            />
-          ))}
-          <button
-            type="button"
-            onClick={onOpenAgents}
-            className="mt-1 self-start rounded-sm px-1 text-xs text-muted-foreground hover:text-foreground"
-          >
-            Open Agents panel ›
-          </button>
-        </div>
-      ) : null}
-    </div>
-  );
-});
 
 function remarkThoughtPreview(fallback: string) {
   return (tree: Root) => {
