@@ -60,6 +60,7 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
 import * as Logger from "effect/Logger";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
+import { buildCodexDeveloperInstructions } from "../../provider/CodexDeveloperInstructions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
@@ -3594,6 +3595,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             packet.collaborationMode.settings.developer_instructions ?? "",
             /^<collaboration_mode>[\s\S]*<\/collaboration_mode>$/,
           );
+          assert.equal(
+            packet.collaborationMode.settings.developer_instructions,
+            buildCodexDeveloperInstructions("default"),
+          );
           assert.deepEqual(Object.keys(packet.additionalContext), [
             "t3_code_orchestration",
             "t3_code_workspace",
@@ -3610,6 +3615,22 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             "Codex harness, as gpt-5.4 with high reasoning effort",
           );
           const awareness = packet.additionalContext.scient_awareness?.value ?? "";
+          assert.equal(
+            awareness,
+            buildScientAwareness(
+              new Set<McpCapability>(["preview", "device", "documents:build", "skills:read"]),
+            ),
+          );
+          for (const guidance of [
+            "Start with `preview_status`; call `preview_open` if no automation-capable tab is attached.",
+            "preserving the host configuration and session flags returned by `device_open`",
+            "`scient_latex_build` to build an existing project LaTeX source",
+            "`scient_document_export` to export an existing project Markdown document",
+            "On substantive tasks, read the current-turn marker first",
+            "The digest is freshness metadata, not authority.",
+            "Skills provide guidance and grant no tools or authority.",
+          ])
+            assert.include(awareness, guidance);
           for (const required of [
             "## Scient",
             "preview_status",
