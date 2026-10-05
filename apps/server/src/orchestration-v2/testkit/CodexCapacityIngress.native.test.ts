@@ -63,11 +63,13 @@ const decodeFrame = Schema.decodeSync(
 );
 const decodeTurnInput = Schema.decodeUnknownEffect(
   Schema.Struct({
+    threadId: Schema.String,
     input: Schema.Array(
       Schema.Struct({ type: Schema.String, text: Schema.optional(Schema.String) }),
     ),
   }),
 );
+const decodeResumeInput = Schema.decodeUnknownEffect(Schema.Struct({ threadId: Schema.String }));
 const turn = (id: string, status: "inProgress" | "completed") => ({
   id,
   items: [],
@@ -119,6 +121,9 @@ const waitFor = Effect.fnUntraced(function* (
   return Option.getOrThrow(found);
 });
 
+let nextNativeThreadId = 0;
+let nextNativeTurnId = 0;
+
 /** Only external JSONL is controlled: decoding, native adapter, manager and worker are production. */
 const makePeer = (autoComplete: boolean) =>
   Effect.sync(() => {
@@ -153,19 +158,25 @@ const makePeer = (autoComplete: boolean) =>
           const queue = yield* Queue.unbounded<Uint8Array>();
           const started = yield* Deferred.make<void>();
           const closed = yield* Deferred.make<void>();
-          const nativeId = `capacity-native:${input.providerSessionId}`;
-          const turnId = `capacity-turn:${input.providerSessionId}`;
+          let nativeId = "";
+          let turnId = "";
           const emit = (frame: unknown) =>
             Queue.offer(queue, new TextEncoder().encode(`${encodeJson(frame)}\n`));
-          const complete = emit({
-            method: "turn/completed",
-            params: { threadId: nativeId, turn: turn(turnId, "completed") },
-          });
+          const complete = Effect.suspend(() =>
+            emit({
+              method: "turn/completed",
+              params: { threadId: nativeId, turn: turn(turnId, "completed") },
+            }),
+          );
           const peer = {
             started,
             closed,
-            nativeId,
-            turnId,
+            get nativeId() {
+              return nativeId;
+            },
+            get turnId() {
+              return turnId;
+            },
             appThreadId: input.threadId,
             emit,
             complete,
@@ -223,6 +234,7 @@ const makePeer = (autoComplete: boolean) =>
                     };
                     break;
                   case "thread/start":
+                    nativeId = `capacity-native:${++nextNativeThreadId}`;
                     result = {
                       thread: nativeThread(nativeId, input.runtimePolicy.cwd ?? "/synthetic"),
                       model: "gpt-5.4",
@@ -237,6 +249,10 @@ const makePeer = (autoComplete: boolean) =>
                     };
                     break;
                   case "thread/resume":
+                    nativeId = yield* decodeResumeInput(frame.params).pipe(
+                      Effect.map((params) => params.threadId),
+                      Effect.orDie,
+                    );
                     result = {
                       thread: nativeThread(nativeId, input.runtimePolicy.cwd ?? "/synthetic"),
                       model: "gpt-5.4",
@@ -248,6 +264,8 @@ const makePeer = (autoComplete: boolean) =>
                     break;
                   case "turn/start": {
                     const params = yield* decodeTurnInput(frame.params).pipe(Effect.orDie);
+                    assert.equal(params.threadId, nativeId);
+                    turnId = `capacity-turn:${++nextNativeTurnId}`;
                     peer.offered.push(
                       params.input
                         .flatMap((item) => (item.text === undefined ? [] : [item.text]))
@@ -976,6 +994,43 @@ it.live(
                   e.event.payload.tokenUsage?.maxTokens === 77_777,
               ),
             );
+            const owners = [
+              { ...held, maxTokens: 22_000 },
+              { ...failed, maxTokens: null },
+              { ...replaced, maxTokens: null },
+            ];
+            assert.equal(new Set(owners.map((owner) => owner.peer.nativeId)).size, 3);
+            assert.equal(new Set(owners.map((owner) => owner.peer.turnId)).size, 3);
+            assert.equal(
+              new Set(owners.map((owner) => owner.projection.providerTurns[0]!.id)).size,
+              3,
+            );
+            for (const owner of owners) {
+              const expected = owner.projection.providerTurns[0]!;
+              const projection = yield* orchestrator.getThreadProjection(owner.id);
+              assert.equal(projection.providerTurns.length, 1);
+              assert.equal(projection.providerTurns[0]!.id, expected.id);
+              assert.equal(projection.providerTurns[0]!.nativeTurnRef?.nativeId, owner.peer.turnId);
+              assert.equal(
+                projection.providerTurns[0]!.tokenUsage?.maxTokens ?? null,
+                owner.maxTokens,
+              );
+              assert.deepEqual(
+                yield* sql`SELECT provider_turn_id, thread_id, provider_thread_id, node_id, run_attempt_id,
+                  json_extract(payload_json, '$.tokenUsage.maxTokens') AS max_tokens
+                  FROM orchestration_v2_projection_provider_turns WHERE provider_turn_id = ${expected.id}`,
+                [
+                  {
+                    provider_turn_id: expected.id,
+                    thread_id: owner.id,
+                    provider_thread_id: expected.providerThreadId,
+                    node_id: expected.nodeId,
+                    run_attempt_id: expected.runAttemptId,
+                    max_tokens: owner.maxTokens,
+                  },
+                ],
+              );
+            }
           }),
           false,
           5,
