@@ -703,6 +703,95 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
       assert.deepEqual(yield* store.getTurnStartHistory(threadId, [RunId.make("run:other")]), []);
     }),
   );
+  it.effect(
+    "retains immutable observed effort with usage-present updates only for the same owner",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* ProjectionStore.ProjectionStoreV2;
+        const threadId = yield* addRolledBackRecoveryCandidate("observed-effort");
+        const now = yield* DateTime.now;
+        const turn = {
+          id: ProviderTurnId.make("observed-effort-turn"),
+          providerThreadId: ProviderThreadId.make("observed-effort-provider-thread"),
+          nodeId: NodeId.make("observed-effort-root"),
+          runAttemptId: RunAttemptId.make("observed-effort-attempt"),
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: "running" as const,
+          startedAt: now,
+          completedAt: null,
+        };
+        const usage = { usedTokens: 5, updatedAt: "2026-10-05T00:00:00.000Z" };
+        const write = (
+          suffix: string,
+          payload: import("@t3tools/contracts").OrchestrationV2ProviderTurn,
+        ) =>
+          store.apply({
+            id: EventId.make(`observed-effort-${suffix}`),
+            type: "provider-turn.updated",
+            threadId,
+            driver,
+            nodeId: payload.nodeId,
+            occurredAt: now,
+            payload,
+          });
+        yield* write("initial", { ...turn, observedEffort: "off" });
+        yield* write("terminal", {
+          ...turn,
+          status: "completed",
+          completedAt: now,
+          tokenUsage: usage,
+        });
+        assert.equal(
+          (yield* store.getThreadProjection(threadId)).providerTurns[0]?.observedEffort,
+          "off",
+        );
+        yield* write("stale-known", { ...turn, observedEffort: "high", tokenUsage: usage });
+        const retained = (yield* store.getThreadProjection(threadId)).providerTurns[0]!;
+        assert.equal(retained.observedEffort, "off");
+        assert.equal(
+          ProjectionStore.upsertProviderTurn([retained], { ...turn, tokenUsage: usage })[0]
+            ?.observedEffort,
+          "off",
+        );
+        assert.equal(
+          ProjectionStore.upsertProviderTurn([retained], {
+            ...turn,
+            observedEffort: "high",
+            tokenUsage: usage,
+          })[0]?.observedEffort,
+          "off",
+        );
+        assert.deepEqual(retained.tokenUsage, usage);
+        for (const displaced of [
+          { ...turn, nodeId: NodeId.make("foreign-root") },
+          { ...turn, runAttemptId: RunAttemptId.make("foreign-attempt") },
+          { ...turn, providerThreadId: ProviderThreadId.make("foreign-thread") },
+        ]) {
+          assert.notProperty(
+            ProjectionStore.upsertProviderTurn([retained], displaced)[0],
+            "observedEffort",
+          );
+        }
+        assert.notProperty(
+          ProjectionStore.upsertProviderTurn([retained], {
+            ...turn,
+            id: ProviderTurnId.make("another-turn"),
+          })[1],
+          "observedEffort",
+        );
+        yield* write("foreign-owner", {
+          ...turn,
+          runAttemptId: RunAttemptId.make("foreign-attempt"),
+          tokenUsage: usage,
+        });
+        assert.notProperty(
+          (yield* store.getThreadProjection(threadId)).providerTurns[0],
+          "observedEffort",
+        );
+      }),
+  );
+
   it.effect("preserves stored provider usage when a terminal update omits it", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;

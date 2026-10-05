@@ -287,6 +287,14 @@ function providerRef(
 const decodeSelectionModel = Schema.decodeUnknownEffect(PiRpcModel);
 const decodeSelectionState = Schema.decodeUnknownEffect(PiRpcState);
 const decodeSelectionThinkingLevels = Schema.decodeUnknownEffect(PiRpcThinkingLevels);
+function observedNativeEffort(state: PiRpcState): PiThinkingLevel | undefined {
+  const metadata = state.model?.reasoningMetadata;
+  const known =
+    state.model !== undefined &&
+    (metadata === undefined ||
+      (metadata.status === "known" && metadata.supported === true && metadata.levels.length > 0));
+  return known ? state.thinkingLevel : undefined;
+}
 
 // ── per-session state ─────────────────────────────────────────
 
@@ -2684,8 +2692,19 @@ export function makePiAdapterV2(
         const inherit = modelSelection.model === PI_INHERIT_MODEL_SLUG;
         let selected = inherit ? baselineModel : parsePiModelSlug(modelSelection.model);
         // An untouched native default remains native authority; no model/effort writes.
-        if (inherit && appliedModel === null && appliedThinking === null && thinking === undefined)
-          return;
+        if (
+          inherit &&
+          appliedModel === null &&
+          appliedThinking === null &&
+          thinking === undefined
+        ) {
+          const response = yield* request({ type: "get_state" }, 2_000).pipe(Effect.option);
+          if (Option.isNone(response)) return undefined;
+          // Validate ownership before optional metadata parsing can discard malformed state.
+          yield* assertSessionIdentity(response.value);
+          const observed = yield* decodeSelectionState(response.value).pipe(Effect.option);
+          return Option.isSome(observed) ? observedNativeEffort(observed.value) : undefined;
+        }
         if (inherit && selected === null && thinking !== undefined) {
           const state = yield* selectionClient
             .getState()
@@ -2712,6 +2731,7 @@ export function makePiAdapterV2(
             messageCount: 1,
           },
         ).pipe(Effect.mapError((cause) => protocolError(cause.detail, cause)));
+        yield* assertSessionIdentity(confirmed.state);
         contextWindow = rememberModelContextWindow(confirmed.state.model);
         captureNativeSelection(confirmed.state);
         appliedModel = inherit ? null : modelSelection.model;
@@ -2724,6 +2744,7 @@ export function makePiAdapterV2(
           driver: PI_PROVIDER,
           providerSession: sessionEntity,
         });
+        return confirmed.confirmedThinkingLevel;
       });
 
       const resolvePromptPayload = Effect.fnUntraced(function* (
@@ -2906,7 +2927,17 @@ export function makePiAdapterV2(
             // The orchestrator adopts a fork under its already-allocated row.
             // Future session updates must retain that authoritative identity.
             state.providerThread = turnInput.providerThread;
-            if (adoptedWork === null) yield* applySelection(turnInput.modelSelection);
+            // Adopted work began before this call; later state cannot describe its generation.
+            const observedEffort =
+              adoptedWork === null ? yield* applySelection(turnInput.modelSelection) : undefined;
+            if (
+              threadState !== state ||
+              generationAdmissionClosed ||
+              stopRequested ||
+              state.providerThread.id !== turnInput.providerThread.id ||
+              state.activeTurn !== null
+            )
+              return yield* protocolError("Pi root owner changed while observing native state");
             // Mirror the thread title into pi's session name so the session
             // stays identifiable in pi's own /resume listing. Best-effort:
             // naming must never block a turn.
@@ -2949,6 +2980,7 @@ export function makePiAdapterV2(
               ordinal: turnInput.providerTurnOrdinal,
               status: "running",
               nativeAcceptance: "pending",
+              ...(observedEffort === undefined ? {} : { observedEffort }),
               startedAt,
               completedAt: null,
             };

@@ -30,6 +30,8 @@ import {
   OrchestrationV2LimitRecoveryUpdate,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderCapabilities,
+  OrchestrationV2ProviderTurn,
+  OrchestrationV2ProviderTurnJson,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
   OrchestrationV2RpcSchemas,
@@ -1516,4 +1518,51 @@ describe("inert fork initialization handoff provenance", () => {
       }),
     ).toThrow();
   });
+});
+
+const providerTurnCodec = Schema.toCodecJson(OrchestrationV2ProviderTurn);
+const decodeEffortTurn = Schema.decodeUnknownSync(providerTurnCodec);
+const encodeEffortTurn = Schema.encodeSync(providerTurnCodec);
+const decodeEffortTurnJson = Schema.decodeUnknownSync(OrchestrationV2ProviderTurnJson);
+const oldEffortTurn = {
+  id: "observed-effort-turn",
+  providerThreadId: "observed-effort-thread",
+  nodeId: "observed-effort-root",
+  runAttemptId: null,
+  nativeTurnRef: null,
+  ordinal: 1,
+  status: "completed",
+  startedAt: null,
+  completedAt: null,
+};
+describe("optional observed native root effort", () => {
+  it("keeps transport undefined distinct from a typed JSON clear", () => {
+    expect(
+      decodeEffortTurn({ ...oldEffortTurn, observedEffort: null }).observedEffort,
+    ).toBeUndefined();
+    expect(() => decodeEffortTurnJson({ ...oldEffortTurn, observedEffort: null })).toThrow();
+  });
+  it("retains old absent Type/JSON records without inventing an effort or acceptance", () => {
+    const decoded = decodeEffortTurn(oldEffortTurn);
+    expect(decoded).not.toHaveProperty("observedEffort");
+    expect(decoded).not.toHaveProperty("nativeAcceptance");
+    expect(decodeEffortTurnJson(encodeEffortTurn(decoded))).toEqual(oldEffortTurn);
+  });
+  for (const observedEffort of ["off", "high"]) {
+    it(`round-trips explicit ${observedEffort} without changing execution ownership`, () => {
+      const decoded = decodeEffortTurn({ ...oldEffortTurn, observedEffort });
+      expect(decodeEffortTurnJson(encodeEffortTurn(decoded))).toEqual({
+        ...oldEffortTurn,
+        observedEffort,
+      });
+      expect(decoded.nodeId).toBe(oldEffortTurn.nodeId);
+      expect(decoded.runAttemptId).toBeNull();
+    });
+  }
+  for (const observedEffort of ["", " ", "x".repeat(65)]) {
+    it(`rejects invalid observed display metadata ${String(observedEffort).slice(0, 12)}`, () => {
+      expect(() => decodeEffortTurn({ ...oldEffortTurn, observedEffort })).toThrow();
+      expect(() => decodeEffortTurnJson({ ...oldEffortTurn, observedEffort })).toThrow();
+    });
+  }
 });
