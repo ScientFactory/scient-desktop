@@ -465,14 +465,12 @@ export function makePiAdapterV2(
       });
       // Pi lazily creates its default session file. An owned empty file lets
       // Pi write the native header before an empty thread is published.
+      // Startup cleanup stays ordered even when the caller closes its parent
+      // scope finalizers in parallel. The file is released after the process.
+      const connectionScope = yield* Scope.fork(scope, "sequential");
       let freshSession: { readonly sessionFile: string } | undefined;
       let freshSessionPublished = false;
       let initialBindingComplete = false;
-      const cleanupUnpublishedSession = Effect.suspend(() =>
-        freshSession === undefined || freshSessionPublished
-          ? Effect.void
-          : provideCacheFs(cleanupFreshPiSessionFile(freshSession)).pipe(Effect.orDie),
-      );
       const initialSessionFile =
         input.initialNativeThreadId ??
         (yield* Effect.acquireRelease(
@@ -503,18 +501,16 @@ export function makePiAdapterV2(
               ? Effect.void
               : provideCacheFs(cleanupFreshPiSessionFile(fresh)).pipe(Effect.orDie),
         ).pipe(
+          Scope.provide(connectionScope),
           Effect.map((fresh) => {
             freshSession = fresh;
             return fresh.sessionFile;
           }),
         ));
-      // The file finalizer is registered first so the connection and its child
-      // process are fully closed before an unpublished allocation is removed.
-      const connectionScope = yield* Scope.fork(scope, "sequential");
       const rollbackStartup = (exit: Exit.Exit<unknown, unknown>) =>
         freshSession === undefined || initialBindingComplete || Exit.isSuccess(exit)
           ? Effect.void
-          : Scope.close(connectionScope, exit).pipe(Effect.andThen(cleanupUnpublishedSession));
+          : Scope.close(connectionScope, exit);
       const connection: PiRpcConnection = yield* (options.makeConnection ?? makePiRpcConnection)({
         command: options.settings.binaryPath || "pi",
         args: [...launch.args, "--session", initialSessionFile],

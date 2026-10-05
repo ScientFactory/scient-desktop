@@ -13,7 +13,13 @@ import { makePiRpcConnection, PiRpcError } from "./PiRpc.ts";
 import { binary, ensure, fixture, json, layer } from "./PiNativeTestHarness.ts";
 
 it.layer(layer, { excludeTestServices: true })("native Pi unpublished startup ownership", (it) => {
-  for (const leg of ["spawn", "startup", "binding-failure", "binding-cancellation"] as const) {
+  for (const leg of [
+    "spawn",
+    "startup",
+    "binding-failure",
+    "binding-cancellation",
+    "parallel-close",
+  ] as const) {
     it.effect.skipIf(!binary)(
       `rolls back only its fresh file after native ${leg}`,
       () =>
@@ -31,6 +37,9 @@ it.layer(layer, { excludeTestServices: true })("native Pi unpublished startup ow
             yield* h.fs.writeFileString(otherOwner, "Other owner's exact bytes\n");
             const entered = yield* Deferred.make<string>();
             const releaseBinding = yield* Deferred.make<void>();
+            const cleanupEntered = yield* Deferred.make<void>();
+            const releaseCleanup = yield* Deferred.make<void>();
+            let nativePid: number | undefined;
             const pidFile = `${h.root}/native-pid`;
             yield* h.fs.makeDirectory(`${h.profile}/extensions`);
             yield* h.fs.writeFileString(
@@ -44,7 +53,7 @@ it.layer(layer, { excludeTestServices: true })("native Pi unpublished startup ow
                 Effect.gen(function* () {
                   if (String(target).startsWith(`${root}/`) && String(target) !== otherOwner) {
                     if (yield* h.fs.exists(pidFile)) {
-                      const pid = Number(yield* h.fs.readFileString(pidFile));
+                      const pid = nativePid ?? Number(yield* h.fs.readFileString(pidFile));
                       assert.throws(() => NodeProcess.kill(pid, 0), /ESRCH/);
                     }
                     removedOwnedFile = true;
@@ -62,13 +71,27 @@ it.layer(layer, { excludeTestServices: true })("native Pi unpublished startup ow
               makeConnection: (input) =>
                 makePiRpcConnection(input).pipe(
                   Effect.flatMap((connection) =>
-                    leg === "startup"
+                    leg === "startup" || leg === "parallel-close"
                       ? connection.request({ type: "get_state" }).pipe(
                           Effect.mapError(
                             (cause) => new PiRpcError({ operation: "get_state", cause }),
                           ),
                           Effect.andThen(Deferred.succeed(entered, String(input.args.at(-1)))),
-                          Effect.andThen(Effect.never),
+                          Effect.andThen(
+                            leg === "startup"
+                              ? Effect.never
+                              : Effect.gen(function* () {
+                                  nativePid = Number(
+                                    yield* h.fs.readFileString(pidFile).pipe(Effect.orDie),
+                                  );
+                                  yield* Effect.addFinalizer(() =>
+                                    Deferred.succeed(cleanupEntered, undefined).pipe(
+                                      Effect.andThen(Deferred.await(releaseCleanup)),
+                                    ),
+                                  );
+                                  return connection;
+                                }),
+                          ),
                         )
                       : Effect.succeed({
                           ...connection,
@@ -110,7 +133,20 @@ it.layer(layer, { excludeTestServices: true })("native Pi unpublished startup ow
               modelSelection: h.modelSelection,
               runtimePolicy: h.policy,
             });
-            if (leg === "spawn") {
+            if (leg === "parallel-close") {
+              const parent = yield* Scope.make("parallel");
+              yield* Effect.addFinalizer(() => Scope.close(parent, Exit.void));
+              yield* open.pipe(Scope.provide(parent));
+              const ownedFile = yield* Deferred.await(entered);
+              const closing = yield* Scope.close(parent, Exit.void).pipe(Effect.forkScoped);
+              yield* Effect.gen(function* () {
+                yield* Deferred.await(cleanupEntered).pipe(Effect.timeout("10 seconds"));
+                assert.isTrue(yield* h.fs.exists(ownedFile));
+                assert.doesNotThrow(() => NodeProcess.kill(nativePid!, 0));
+              }).pipe(Effect.ensuring(Deferred.succeed(releaseCleanup, undefined)));
+              yield* Fiber.join(closing);
+              assert.isFalse(yield* h.fs.exists(ownedFile));
+            } else if (leg === "spawn") {
               assert.isTrue(Exit.isFailure(yield* Effect.exit(open)));
             } else if (leg === "startup") {
               const opening = yield* open.pipe(Effect.scoped, Effect.forkScoped);
