@@ -1,10 +1,16 @@
 /** Destination capacity, scoped to the selected provider instance and model. */
 import {
   ModelSelection,
+  OrchestrationV2RunJson,
   ServerSettings,
+  type OrchestrationV2DomainEvent,
   type ProviderSessionId,
   type ProviderThreadId,
+  type RunAttemptId,
+  type RunId,
+  type ThreadId,
 } from "@t3tools/contracts";
+import { modelSelectionsEqual } from "@t3tools/shared/model";
 import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -110,3 +116,85 @@ export const resolveNativeModelContextWindow = Effect.fn("resolveNativeModelCont
     return windows.length === 0 ? undefined : Math.min(...windows);
   },
 );
+
+const decodeCapacityRun = Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2RunJson));
+
+/** The context window an accepted Codex turn reports, read inside the write transaction.
+ * Undefined unless the captured launch owner still owns the run; the write must then not commit. */
+export const readOwnedNativeModelCapacity = (
+  sql: SqlClient.SqlClient,
+  input: {
+    readonly threadId: ThreadId;
+    readonly runId: RunId;
+    readonly activeAttemptId: RunAttemptId;
+    readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+  },
+  capacityOwner: NativeModelCapacityOwner,
+) =>
+  Effect.gen(function* () {
+    const usage = input.events.find((event) => event.type === "provider-turn.updated");
+    const turn = usage?.type === "provider-turn.updated" ? usage.payload : undefined;
+    if (
+      turn?.nativeTurnRef?.driver !== "codex" ||
+      turn.nativeTurnRef.nativeId === null ||
+      turn.nativeAcceptance !== "accepted" ||
+      turn.status !== "running" ||
+      turn.tokenUsage?.maxTokens == null ||
+      !Number.isFinite(turn.tokenUsage.maxTokens) ||
+      turn.tokenUsage.maxTokens <= 0 ||
+      turn.runAttemptId !== input.activeAttemptId ||
+      turn.providerThreadId !== capacityOwner.providerThreadId ||
+      usage?.threadId !== input.threadId ||
+      usage.runId !== input.runId ||
+      usage.nodeId !== turn.nodeId ||
+      usage.providerInstanceId !== capacityOwner.modelSelection.instanceId ||
+      usage.driver !== "codex" ||
+      !/^codex-launch:v1:[a-f0-9]{64}$/.test(capacityOwner.launchFingerprint)
+    )
+      return undefined;
+    const owners = yield* sql<{ readonly payload_json: string }>`
+      SELECT r.payload_json FROM orchestration_v2_projection_runs r
+      JOIN orchestration_v2_projection_run_attempts a ON a.attempt_id = ${input.activeAttemptId}
+        AND a.run_id = r.run_id AND a.thread_id = r.thread_id
+      JOIN orchestration_v2_projection_nodes n ON n.node_id = ${turn.nodeId}
+        AND n.run_id = r.run_id AND n.thread_id = r.thread_id
+      JOIN orchestration_v2_projection_provider_threads p ON p.provider_thread_id = ${capacityOwner.providerThreadId}
+        AND p.thread_id = r.thread_id
+      JOIN orchestration_v2_projection_provider_sessions s ON s.provider_session_id = ${capacityOwner.providerSessionId}
+        AND s.provider_instance_id = r.provider_instance_id AND s.driver = 'codex'
+      JOIN orchestration_v2_projection_provider_session_bindings b ON b.provider_session_id = s.provider_session_id
+        AND b.thread_id = r.thread_id
+      JOIN orchestration_v2_projection_threads t ON t.thread_id = r.thread_id
+      LEFT JOIN orchestration_v2_projection_provider_turns v ON v.provider_turn_id = ${turn.id}
+      WHERE r.run_id = ${input.runId} AND r.thread_id = ${input.threadId}
+        AND json_extract(r.payload_json, '$.rootNodeId') = n.node_id
+        AND r.provider_thread_id = p.provider_thread_id AND r.provider_instance_id = p.provider_instance_id
+        AND r.provider_instance_id = ${capacityOwner.modelSelection.instanceId}
+        AND p.provider_session_id = s.provider_session_id AND p.driver = 'codex'
+        AND p.last_run_ordinal = r.ordinal
+        AND json_extract(p.payload_json, '$.nativeThreadRef.nativeId') = ${capacityOwner.nativeThreadId}
+        AND json_extract(p.payload_json, '$.nativeThreadRef.driver') = 'codex'
+        AND a.status = 'running'
+        AND a.provider_thread_id = p.provider_thread_id AND a.provider_instance_id = p.provider_instance_id
+        AND json_extract(a.payload_json, '$.rootNodeId') = n.node_id
+        AND (a.provider_turn_id IS NULL OR a.provider_turn_id = ${turn.id})
+        AND (json_extract(a.payload_json, '$.nativeThreadId') IS NULL OR json_extract(a.payload_json, '$.nativeThreadId') = ${capacityOwner.nativeThreadId})
+        AND n.kind = 'root_turn' AND n.parent_node_id IS NULL AND n.provider_thread_id = p.provider_thread_id
+        AND (n.provider_turn_id IS NULL OR n.provider_turn_id = ${turn.id})
+        AND t.deleted_at IS NULL AND t.archived_at IS NULL
+        AND json_extract(t.payload_json, '$.activeProviderThreadId') = p.provider_thread_id
+        AND (v.provider_turn_id IS NULL OR (v.thread_id = r.thread_id AND v.provider_thread_id = p.provider_thread_id
+          AND v.node_id = n.node_id AND v.run_attempt_id = a.attempt_id AND v.status = 'running'
+          AND json_extract(v.payload_json, '$.nativeTurnRef.driver') = 'codex'
+          AND json_extract(v.payload_json, '$.nativeTurnRef.nativeId') = ${turn.nativeTurnRef.nativeId}))
+      LIMIT 1`;
+    if (
+      owners[0] === undefined ||
+      !modelSelectionsEqual(
+        (yield* decodeCapacityRun(owners[0].payload_json)).modelSelection,
+        capacityOwner.modelSelection,
+      )
+    )
+      return undefined;
+    return turn.tokenUsage.maxTokens;
+  });
