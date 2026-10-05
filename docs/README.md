@@ -132,6 +132,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [T3 foundation refresh (2026-08-07)](./internals/t3-foundation-refresh-20260807.md)
 - [Upstream maintenance and dated integration-record collection](../UPSTREAM.md)
 - [T3 upstream alignment protocol](./internals/upstream-alignment-protocol.md)
+- [Scient divergence inventory](./internals/scient-divergence-inventory.md)
 - [CI gates](./internals/ci.md)
 - [Engineering work artifacts](./internals/work-artifacts.md)
 
