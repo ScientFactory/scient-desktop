@@ -2849,6 +2849,49 @@ it.live(
             const nativeTurn = active.providerTurns.find(
               (turn) => turn.runAttemptId === foreground.input.attemptId,
             )!;
+            const historicalAt = yield* DateTime.now;
+            const historicalStopId = (yield* IdAllocatorV2).derive.runSignalTurnItem({
+              runId: foreground.input.runId,
+              signal: "interrupt-request",
+            });
+            // Historical controls must not fence the current root or native turn.
+            yield* (yield* EventSinkV2).write({
+              events: [
+                {
+                  id: historicalStopId,
+                  nodeId: NodeId.make(`${threadId}:historical-root`),
+                  providerTurnId: null,
+                },
+                {
+                  id: TurnItemId.make(`${threadId}:historical-native-Stop`),
+                  nodeId: foreground.input.rootNodeId,
+                  providerTurnId: ProviderTurnId.make(`${threadId}:historical-native-turn`),
+                },
+              ].map((owner, index) => ({
+                id: EventId.make(`${threadId}:historical-Stop:${index}`),
+                type: "turn-item.updated" as const,
+                threadId,
+                runId: foreground.input.runId,
+                providerInstanceId: active.runs[0]!.providerInstanceId,
+                occurredAt: historicalAt,
+                payload: {
+                  ...owner,
+                  threadId,
+                  runId: foreground.input.runId,
+                  providerThreadId: nativeTurn.providerThreadId,
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal: Math.max(...active.turnItems.map((item) => item.ordinal)) + index + 1,
+                  status: "completed" as const,
+                  title: "Interrupt requested",
+                  startedAt: historicalAt,
+                  completedAt: historicalAt,
+                  updatedAt: historicalAt,
+                  type: "run_interrupt_request" as const,
+                  message: "Historical owner Stop",
+                },
+              })),
+            });
             const messageId = MessageId.make(`${threadId}:original-queued-message`);
             const attachment = {
               type: "file" as const,
@@ -3019,6 +3062,19 @@ it.live(
             assert.lengthOf(steers, 1);
             assert.lengthOf(offers, 1);
             const after = yield* orchestrator.getThreadProjection(threadId);
+            const historical = after.turnItems.filter(
+              (item) => item.type === "run_interrupt_request",
+            );
+            assert.lengthOf(historical, 2);
+            assert.equal(
+              historical.find((item) => item.id === historicalStopId)?.nodeId,
+              NodeId.make(`${threadId}:historical-root`),
+            );
+            assert.equal(
+              historical.find((item) => item.nodeId === foreground.input.rootNodeId)
+                ?.providerTurnId,
+              ProviderTurnId.make(`${threadId}:historical-native-turn`),
+            );
             assert.lengthOf(after.providerTurns, 1);
             assert.lengthOf(
               after.attempts.filter((attempt) => attempt.runId === foreground.input.runId),
