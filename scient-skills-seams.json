@@ -253,8 +253,8 @@
     },
     {
       "path": "apps/server/src/orchestration-v2/ProviderTurnControlService.ts",
-      "anchor": "prepareScientV2SkillTurn",
-      "purpose": "Prepare persisted selections before native steer delivery (SelectedScientSkillNames.test.ts)."
+      "anchor": "prepareScientV2SkillScope",
+      "purpose": "Prepare persisted skill selections without publishing authority, then validate current input and fence the owner before publication and native Steer (SelectedScientSkillNames.test.ts)."
     },
     {
       "path": "apps/server/src/orchestration-v2/ProviderSessionManager.ts",
