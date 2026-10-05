@@ -28,6 +28,7 @@ import { createAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts
 import * as DateTime from "effect/DateTime";
 import * as Clock from "effect/Clock";
 import { EventSinkV2 } from "./EventSink.ts";
+import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { EffectOutboxV2 } from "./EffectOutbox.ts";
 import { OrchestrationEffectWorkerV2, runDaemonWithOptions } from "./EffectWorker.ts";
 import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
@@ -1585,9 +1586,89 @@ for (const release of ["whole", "head", "newer-failure", "new-admission"] as con
               released.runs.find((run) => run.id === second.id)?.queueHeld,
               release === "head",
             );
+            let settledUnderParentLock = false;
+            if (release === "newer-failure") {
+              settledUnderParentLock = true;
+              // Commit the newer real failure while the older terminal reactor
+              // is still fenced by the parent lock. Failed runs do not capture.
+              yield* resumed.settle("failed");
+              stage = "newer failure committed under parent lock";
+              const failed = yield* waitForThread(
+                childThreadId,
+                (projection) =>
+                  projection.runs.some((run) => run.id === first.id && run.status === "failed") &&
+                  projection.attempts.some(
+                    (attempt) =>
+                      attempt.id === resumed.input.attemptId && attempt.status === "failed",
+                  ) &&
+                  projection.nodes.some(
+                    (node) => node.id === resumed.input.rootNodeId && node.status === "failed",
+                  ),
+              );
+              assert.equal(failed.runs.find((run) => run.id === second.id)?.status, "queued");
+              assert.equal(failed.runs.find((run) => run.id === second.id)?.queueHeld, false);
+              const eventStore = yield* EventStore.EventStoreV2;
+              const throughSequence = yield* eventStore.latestSequence({ threadId: childThreadId });
+              const history = yield* eventStore
+                .read({ threadId: childThreadId, eventType: "run.updated", throughSequence })
+                .pipe(Stream.runCollect);
+              const terminals = history
+                .flatMap((entry) =>
+                  entry.event.type === "run.updated"
+                    ? [
+                        {
+                          sequence: entry.sequence,
+                          commandId: entry.commandId,
+                          runId: entry.event.payload.id,
+                          attemptId: entry.event.payload.activeAttemptId,
+                          rootNodeId: entry.event.payload.rootNodeId,
+                          providerThreadId: entry.event.payload.providerThreadId,
+                          status: entry.event.payload.status,
+                        },
+                      ]
+                    : [],
+                )
+                .toSorted((left, right) => left.sequence - right.sequence);
+              const interrupted = terminals.find(
+                (entry) =>
+                  entry.runId === child.input.runId &&
+                  entry.attemptId === child.input.attemptId &&
+                  entry.status === "interrupted",
+              );
+              const newer = terminals.find(
+                (entry) =>
+                  entry.runId === first.id &&
+                  entry.attemptId === resumed.input.attemptId &&
+                  entry.status === "failed",
+              );
+              assert.ok(interrupted);
+              assert.ok(newer);
+              const receipt = yield* (yield* CommandReceiptStoreV2).getByCommandId(
+                resume.commandId,
+              );
+              assert.isTrue(Option.isSome(receipt));
+              if (Option.isNone(receipt))
+                return yield* Effect.die("Missing accepted Resume receipt");
+              assert.equal(receipt.value.status, "accepted");
+              assert.equal(receipt.value.threadId, childThreadId);
+              assert.equal(receipt.value.commandType, "queue.resume");
+              assert.isBelow(interrupted.sequence, receipt.value.resultSequence);
+              assert.isBelow(receipt.value.resultSequence, newer.sequence);
+              assert.deepEqual(offers, ["parent", "child-foreground", "first"]);
+              yield* Effect.logInfo("Queue promotion deciding terminal boundaries", {
+                interrupted,
+                resume: {
+                  commandId: resume.commandId,
+                  resultSequence: receipt.value.resultSequence,
+                },
+                newer,
+                tail: { runId: second.id, status: "queued", held: false },
+              });
+            }
             yield* Deferred.succeed(unlock, undefined);
             yield* Fiber.join(parentLock);
-            yield* resumed.settle(release === "newer-failure" ? "failed" : "completed");
+            if (!settledUnderParentLock)
+              yield* resumed.settle(release === "newer-failure" ? "failed" : "completed");
             stage = "resumed head terminal";
             const completed = yield* waitForThread(childThreadId, (projection) =>
               projection.runs.some(
@@ -1639,6 +1720,38 @@ for (const release of ["whole", "head", "newer-failure", "new-admission"] as con
               ...(release === "new-admission" ? ["third"] : []),
             ]);
           }).pipe(
+            Effect.tapError(() =>
+              release === "newer-failure"
+                ? Effect.gen(function* () {
+                    const eventStore = yield* EventStore.EventStoreV2;
+                    const throughSequence = yield* eventStore.latestSequence({
+                      threadId: childThreadId,
+                    });
+                    const history = yield* eventStore
+                      .read({ threadId: childThreadId, eventType: "run.updated", throughSequence })
+                      .pipe(Stream.runCollect);
+                    yield* Effect.logError(
+                      "Queue promotion failed deciding stored timeline",
+                      history.flatMap((entry) =>
+                        entry.event.type === "run.updated"
+                          ? [
+                              {
+                                sequence: entry.sequence,
+                                commandId: entry.commandId,
+                                runId: entry.event.payload.id,
+                                attemptId: entry.event.payload.activeAttemptId,
+                                rootNodeId: entry.event.payload.rootNodeId,
+                                providerThreadId: entry.event.payload.providerThreadId,
+                                status: entry.event.payload.status,
+                                held: entry.event.payload.queueHeld,
+                              },
+                            ]
+                          : [],
+                      ),
+                    );
+                  })
+                : Effect.void,
+            ),
             Effect.tapError(() =>
               orchestrator.getThreadProjection(childThreadId).pipe(
                 Effect.flatMap((projection) =>

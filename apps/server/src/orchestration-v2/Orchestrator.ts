@@ -124,6 +124,7 @@ import {
   ThreadForkServiceV2,
 } from "./ThreadForkService.ts";
 import { planThreadDeletion } from "./ThreadDeletion.ts";
+import { makeScientTerminalQueueHold } from "../scient/orchestration/TerminalQueueHold.ts";
 
 export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
   "OrchestratorDispatchError",
@@ -1196,6 +1197,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // Every terminal run checks the queue. Only a deliverable queued run
       // needs the transcript for provider handoff and legacy import context.
       if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
+      // SCIENT-FORK:START terminal-queue-promotion-fence
+      yield* holdLatestTerminalBeforePromotion(threadId);
+      if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
+      // SCIENT-FORK:END terminal-queue-promotion-fence
       let projection = yield* readCommandProjection(threadId);
       if (
         projection.thread.archivedAt !== null ||
@@ -10512,196 +10517,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
   };
 
-  const holdQueueAfterTerminal = Effect.fn("orchestrationV2.holdQueueAfterTerminal")(function* (
-    stored: OrchestrationV2StoredEvent,
-  ) {
-    if (
-      stored.event.type !== "run.updated" ||
-      (stored.event.payload.status !== "failed" && stored.event.payload.status !== "interrupted")
-    )
-      return;
-    const terminal = stored.event.payload;
-    const threadId = stored.event.threadId;
-    const projection = yield* projectionStore.getThreadRecords(
-      threadId,
-      ["runs", "messages", "nodes", "attempts", "providerTurns", "turnItems"],
-      { messageRoles: ["user", "system"], turnItemRunIds: [terminal.id] },
-    );
-    const run = projection.runs.find((candidate) => candidate.id === terminal.id);
-    if (
-      run === undefined ||
-      run.status !== terminal.status ||
-      run.activeAttemptId !== terminal.activeAttemptId
-    )
-      return;
-    const queued = projection.runs.filter(
-      (candidate) =>
-        candidate.status === "queued" &&
-        candidate.queueHeld !== true &&
-        !isAutomaticCompletionRun(projection, candidate),
-    );
-    const queueBoundaries = new Map<RunId, number>();
-    let terminalSequence = stored.sequence;
-    if (queued.length > 0) {
-      // Only this rare terminal reaction reads historical run facts. Resume,
-      // admission, and the original exact-attempt terminal transition remain
-      // durable across restart; checkpoint/cleanup echoes confer no new hold.
-      const throughSequence = yield* eventStore.latestSequence({ threadId });
-      const queuedIds = new Set(queued.map((candidate) => candidate.id));
-      const admissionSequences = new Map<RunId, number>();
-      const releaseReceipts = new Map<CommandId, number>();
-      yield* Stream.concat(
-        eventStore.read({ threadId, eventType: "run.created", throughSequence }),
-        eventStore.read({ threadId, eventType: "run.updated", throughSequence }),
-      ).pipe(
-        Stream.runForEach((entry) =>
-          Effect.gen(function* () {
-            const event = entry.event;
-            if (event.type !== "run.created" && event.type !== "run.updated") return;
-            const payload = event.payload;
-            if (
-              event.type === "run.updated" &&
-              payload.id === terminal.id &&
-              payload.activeAttemptId === terminal.activeAttemptId &&
-              payload.rootNodeId === terminal.rootNodeId &&
-              payload.providerThreadId === terminal.providerThreadId &&
-              (payload.status === "failed" || payload.status === "interrupted")
-            )
-              terminalSequence = Math.min(terminalSequence, entry.sequence);
-            if (!queuedIds.has(payload.id) || payload.status !== "queued") return;
-            if (event.type === "run.created") {
-              admissionSequences.set(
-                payload.id,
-                Math.min(admissionSequences.get(payload.id) ?? entry.sequence, entry.sequence),
-              );
-              return;
-            }
-            if (payload.queueHeld !== false || entry.commandId == null) return;
-            let released = releaseReceipts.get(entry.commandId);
-            if (released === undefined) {
-              const receipt = yield* commandReceipts.getByCommandId(entry.commandId);
-              released =
-                Option.isSome(receipt) &&
-                receipt.value.status === "accepted" &&
-                receipt.value.threadId === threadId &&
-                receipt.value.commandType === "queue.resume"
-                  ? receipt.value.resultSequence
-                  : 0;
-              releaseReceipts.set(entry.commandId, released);
-            }
-            if (released >= entry.sequence)
-              queueBoundaries.set(
-                payload.id,
-                Math.max(queueBoundaries.get(payload.id) ?? 0, entry.sequence),
-              );
-          }),
-        ),
-      );
-      for (const [runId, sequence] of admissionSequences) {
-        queueBoundaries.set(runId, Math.max(queueBoundaries.get(runId) ?? 0, sequence));
-      }
-    }
-    const now = yield* DateTime.now;
-    const rootNode = projection.nodes.find((node) => node.id === run.rootNodeId);
-    const attempt = projection.attempts.find((entry) => entry.id === run.activeAttemptId);
-    const nativeReceipt = projection.providerTurns.some(
-      (turn) =>
-        turn.runAttemptId === run.activeAttemptId &&
-        turn.nodeId === run.rootNodeId &&
-        turn.providerThreadId === run.providerThreadId &&
-        (turn.acceptedAt !== undefined || turn.nativeAcceptance !== "pending"),
-    );
-    const retryable =
-      run.status === "failed" &&
-      run.queuePosition != null &&
-      !isAutomaticCompletionRun(projection, run) &&
-      attempt?.status === "failed" &&
-      rootNode !== undefined &&
-      !nativeReceipt;
-    const events: Array<Omit<OrchestrationV2DomainEvent, "id">> = queued
-      .filter((candidate) => (queueBoundaries.get(candidate.id) ?? 0) <= terminalSequence)
-      .map((candidate) => ({
-        type: "run.updated",
-        threadId,
-        runId: candidate.id,
-        providerInstanceId: candidate.providerInstanceId,
-        occurredAt: now,
-        payload: { ...candidate, queueHeld: true },
-      }));
-    if (retryable) {
-      const failure =
-        latestRootProviderFailure(run, projection.turnItems) ??
-        makeProviderFailure({
-          class: "unknown",
-          message: "The queued provider could not start.",
-        });
-      events.push({
-        type: "turn-item.updated",
-        threadId,
-        runId: run.id,
-        nodeId: rootNode.id,
-        providerInstanceId: run.providerInstanceId,
-        occurredAt: now,
-        payload: {
-          id: idAllocator.derive.runSignalTurnItem({
-            runId: run.id,
-            signal: `queued-start-failure:${run.activeAttemptId}`,
-          }),
-          threadId,
-          runId: run.id,
-          nodeId: rootNode.id,
-          providerThreadId: attempt.providerThreadId,
-          providerTurnId: null,
-          nativeItemRef: null,
-          parentItemId: null,
-          ordinal: yield* nextTurnItemOrdinal(projection),
-          status: "failed",
-          title: "Queued provider could not start",
-          startedAt: now,
-          completedAt: now,
-          updatedAt: now,
-          type: "error",
-          failure: { ...failure, code: "queued_start_failed" },
-        },
-      });
-      events.push(
-        {
-          type: "run.updated",
-          threadId,
-          runId: run.id,
-          nodeId: rootNode.id,
-          providerInstanceId: run.providerInstanceId,
-          occurredAt: now,
-          payload: {
-            ...run,
-            status: "queued",
-            queueHeld: true,
-            startedAt: null,
-            completedAt: null,
-          },
-        },
-        {
-          type: "node.updated",
-          threadId,
-          runId: run.id,
-          nodeId: rootNode.id,
-          providerInstanceId: run.providerInstanceId,
-          occurredAt: now,
-          payload: { ...rootNode, status: "pending", startedAt: null, completedAt: null },
-        },
-      );
-    } else if (run.queuePosition != null) {
-      events.push({
-        type: "run.updated",
-        threadId,
-        runId: run.id,
-        providerInstanceId: run.providerInstanceId,
-        occurredAt: now,
-        payload: { ...run, queuePosition: null },
-      });
-    }
-    if (events.length > 0) yield* writeSystemEvents(events);
-  });
+  // SCIENT-FORK:START terminal-queue-hold
+  const { holdQueueAfterTerminal, holdLatestTerminalBeforePromotion } = makeScientTerminalQueueHold(
+    {
+      projectionStore,
+      eventStore,
+      commandReceipts,
+      idAllocator,
+      nextTurnItemOrdinal,
+      writeSystemEvents,
+    },
+  );
+  // SCIENT-FORK:END terminal-queue-hold
 
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {
