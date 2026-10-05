@@ -25,7 +25,8 @@
     "packages/contracts/src/scientSkillSelection.ts",
     "packages/contracts/src/scientSkills.ts",
     "packages/contracts/src/scientThreadQueue.ts",
-    "packages/scient-operations/src/operation.ts"
+    "packages/scient-operations/src/operation.ts",
+    "packages/contracts/src/scient/skillRpcs.ts"
   ],
   "skillDiffSignals": [
     "@scientfactory/scient-skills",
@@ -223,7 +224,7 @@
     },
     {
       "path": "packages/contracts/src/rpc.ts",
-      "anchor": "providerSkillsSetEnabled",
+      "anchor": "...SCIENT_SKILL_WS_METHODS",
       "purpose": "Register Scient inventory, personal activation, and capability-gated provider-native mutation contracts."
     },
     {
