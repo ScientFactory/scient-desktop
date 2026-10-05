@@ -18,7 +18,6 @@
     "apps/server/src/scient/operations/AgentInvocationContext.ts",
     "apps/server/src/scient/operations/AgentOperationDispatcher.ts",
     "apps/server/src/scient/threadQueue/Ledger.ts",
-    "apps/server/src/scient/threadQueue/Worker.ts",
     "apps/server/src/scient/threadQueue/operations.ts",
     "apps/web/src/routes/settings.skills_.external.tsx",
     "apps/web/src/routes/settings.skills.tsx",
