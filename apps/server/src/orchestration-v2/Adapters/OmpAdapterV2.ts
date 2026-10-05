@@ -1,3 +1,5 @@
+// SCIENT-FORK: confirmed process ownership and lock release.
+import { makeOmpProcessOwnership } from "../scient-provider/OmpProcessOwnership.ts";
 import {
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
@@ -13,7 +15,6 @@ import * as Exit from "effect/Exit";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Scope from "effect/Scope";
-import * as Semaphore from "effect/Semaphore";
 import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -41,11 +42,7 @@ import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { ompCommandDecision } from "../../provider/omp/OmpCommandPolicy.ts";
 import { writeOmpExtensionFiles } from "../../provider/omp/OmpExtensionBootstrap.ts";
 import { ompScientExtensionSource } from "../../provider/omp/OmpScientExtension.ts";
-import {
-  makeOmpRedaction,
-  type OmpRpcProcess,
-  type OmpProcessExit,
-} from "../../provider/omp/OmpRpcProcess.ts";
+import { makeOmpRedaction, type OmpRpcProcess } from "../../provider/omp/OmpRpcProcess.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import {
   decodeOmpModelSlug,
@@ -348,31 +345,21 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
               Effect.provideService(Path.Path, path),
             );
           redaction = client.redaction;
-          let confirmedExit: OmpProcessExit | undefined;
-          const shutdownPermit = yield* Semaphore.make(1);
-          const shutdownObserved = shutdownPermit.withPermit(
-            Effect.suspend(() =>
-              confirmedExit !== undefined
-                ? Effect.succeed(confirmedExit)
-                : client.shutdown.pipe(
-                    Effect.tap((exit) =>
-                      Effect.sync(() => {
-                        if (exit.code !== null || exit.exited === true) confirmedExit = exit;
-                      }),
-                    ),
-                  ),
-            ).pipe(Effect.uninterruptible),
-          );
+          // SCIENT-FORK: retained shutdown confirmation owns the lock lifetime.
+          const processOwnership = yield* makeOmpProcessOwnership({
+            shutdown: () => client.shutdown,
+            releaseLock: () => releaseOmpSessionLock(sessionLock, locks),
+            unconfirmed: () =>
+              Effect.fail(
+                new NativeSessionOperationError({
+                  detail: `${target.name} shutdown could not confirm process exit; its conversation remains locked.`,
+                }),
+              ),
+          });
+          const shutdownObserved = processOwnership.shutdown;
           ownedShutdown = shutdownObserved;
           yield* Effect.addFinalizer(() => shutdownObserved.pipe(Effect.ignore));
-          const stopOwnedProcess = Effect.gen(function* () {
-            const exit = yield* shutdownObserved;
-            if (exit.code === null && exit.exited !== true)
-              return yield* new NativeSessionOperationError({
-                detail: `${target.name} shutdown could not confirm process exit; its conversation remains locked.`,
-              });
-            yield* releaseOmpSessionLock(sessionLock, locks);
-          });
+          const stopOwnedProcess = processOwnership.stop;
           let catalog: Effect.Success<ReturnType<typeof client.getModels>>["models"] = [];
           let catalogCurrent = false;
           let closed = false;
@@ -1210,6 +1197,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
             steer: (steerInput, validateOwner) =>
               Effect.gen(function* () {
                 const prompt = yield* payload(steerInput.message);
+                // SCIENT-FORK: recheck the captured owner after payload preparation.
                 yield* validateOwner?.() ?? Effect.void;
                 const result = yield* client.steer(prompt.message, prompt.images);
                 yield* runtime.accepted(

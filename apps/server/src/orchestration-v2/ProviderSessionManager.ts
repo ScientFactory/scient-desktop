@@ -1,3 +1,10 @@
+// SCIENT-FORK: exact native consumer and known-unusable owner retirement.
+import {
+  disposeRetiredEventConsumer,
+  interruptAndJoinRetirement,
+  retireUnusableOwner,
+  makeSessionRetirement,
+} from "./scient-provider/SessionRetirement.ts";
 import { expandComposerCitationsForProvider } from "@t3tools/shared/composerCitations";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -42,7 +49,6 @@ import { makeKeyedSerialExecutor } from "./KeyedSerialExecutor.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import {
   ProviderAdapterEventStreamError,
-  ProviderAdapterInterruptError,
   ProviderAdapterProtocolError,
   ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2Error,
@@ -896,86 +902,28 @@ export const layerWithOptions = (
           }
         });
 
-      const releaseEventConsumer = (entry: LiveSessionEntry) =>
-        Effect.gen(function* () {
-          if (!entry.eventConsumer) return;
-          // Removal abandons this exact pump, including a blocked or never-started
-          // one. Producer sealing alone does not own it.
-          if (entry.eventPump.fiber && !entry.eventPump.ended)
-            entry.eventPump.fiber.interruptUnsafe();
-          yield* entry.eventConsumer.dispose;
-        });
+      // SCIENT-FORK: abandonment belongs to the exact canonical consumer.
+      const releaseEventConsumer = disposeRetiredEventConsumer;
 
-      const closeRetiringEntry = Effect.fnUntraced(function* (
-        entry: LiveSessionEntry,
-        input: ReleaseEntryInput,
-      ) {
-        const retireCredentials = Effect.forEach(
-          entry.mcpCredentialIdByThread,
-          ([threadId, credentialId]) => reclaimUnusedMcpCredential(threadId, credentialId, true),
-          { discard: true },
-        );
-        // Start physical cleanup before any idle/subscriber join can park it.
-        // The manager owns both fibers, independent of a public waiter's scope.
-        const physicalClose = yield* closeOwnedScope(entry.scope).pipe(
-          Effect.exit,
-          Effect.forkDetach({ startImmediately: true }),
-        );
-        yield* Effect.acquireUseRelease(
-          Effect.void,
-          () =>
-            Effect.gen(function* () {
-              if (input.cancelIdleFiber !== false) yield* cancelIdleFiber(entry.idleFiber);
-              if (input.gracefulSubscribers === true) yield* endSubscribers(entry);
-              else if (input.reason === "server_shutdown") yield* closeSubscribers(entry);
-              else
-                yield* failSubscribers(
-                  entry,
-                  input.detail ?? `Provider session released: ${input.reason}.`,
-                );
-              const observed = yield* Fiber.join(physicalClose).pipe(
-                Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
-              );
-              if (Option.isNone(observed))
-                yield* Effect.logWarning("orchestration-v2.provider-session-scope-close-timeout", {
-                  providerSessionId: input.providerSessionId,
-                  reason: input.reason,
-                  timeoutMs: RELEASE_SCOPE_CLOSE_TIMEOUT_MS,
-                });
-              yield* releaseEventConsumer(entry);
-              yield* retireCredentials;
-              yield* writeReleasedSessionEvents({
-                entry,
-                reason: input.reason,
-                ...(input.detail === undefined ? {} : { detail: input.detail }),
-              });
-              yield* writeReleasedRuntimeRequestEvents({ entry, reason: input.reason }).pipe(
-                entry.requestEventPermit.withPermits(1),
-              );
-              // Timeout retires logical/UI authority, not physical ownership. Keep
-              // observing this same attempt; Scope.close cannot retry finalizers.
-              const result = Option.isSome(observed)
-                ? observed.value
-                : yield* Fiber.join(physicalClose);
-              if (Option.isNone(observed))
-                yield* Effect.logInfo(
-                  "orchestration-v2.provider-session-scope-close-finished-late",
-                  {
-                    providerSessionId: input.providerSessionId,
-                    reason: input.reason,
-                    outcome: result._tag,
-                  },
-                );
-              if (Exit.isFailure(result)) return yield* Effect.failCause(result.cause);
-            }),
-          () =>
-            Effect.gen(function* () {
-              yield* releaseEventConsumer(entry);
-              // Logical retirement revokes only this owner's unused credentials.
-              // It is not a claim that its native process physically exited.
-              yield* retireCredentials;
-            }),
-        );
+      // SCIENT-FORK: captured data callbacks retain the existing physical/logical close order.
+      const closeRetiringEntry = makeSessionRetirement({
+        closeTimeoutMs: RELEASE_SCOPE_CLOSE_TIMEOUT_MS,
+        reclaimCredential: (threadId, credentialId) =>
+          reclaimUnusedMcpCredential(threadId, credentialId, true),
+        closeScope: closeOwnedScope,
+        cancelIdle: cancelIdleFiber,
+        endSubscribers,
+        closeSubscribers,
+        failSubscribers,
+        releaseConsumer: releaseEventConsumer,
+        writeSession: (entry: LiveSessionEntry, input: ReleaseEntryInput) =>
+          writeReleasedSessionEvents({
+            entry,
+            reason: input.reason,
+            ...(input.detail === undefined ? {} : { detail: input.detail }),
+          }),
+        writeRequests: (entry: LiveSessionEntry, input: ReleaseEntryInput) =>
+          writeReleasedRuntimeRequestEvents({ entry, reason: input.reason }),
       });
 
       const awaitClosingEntry = Effect.fnUntraced(function* (owner: ClosingSessionEntry) {
@@ -1701,29 +1649,21 @@ export const layerWithOptions = (
           interruptTurn: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
               Effect.andThen(
-                Effect.gen(function* () {
-                  const entry = (yield* Ref.get(sessions)).get(sessionKey(providerSessionId));
-                  yield* runtime.interruptTurn(input);
-                  if (runtime.providerSession.status !== "stopped") return;
-                  // SCIENT-FORK: join this owner's sealed-prefix retirement after native permits release.
-                  yield* Effect.gen(function* () {
-                    if (entry?.runtime === runtime && entry.eventPump.fiber)
-                      yield* Fiber.join(entry.eventPump.fiber).pipe(
-                        Effect.timeout(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
-                      );
-                    const closing = closingSessions.get(sessionKey(providerSessionId));
-                    if (closing?.entry.runtime === runtime) yield* awaitClosingEntry(closing);
-                  }).pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new ProviderAdapterInterruptError({
-                          driver: runtime.driver,
-                          providerThreadId: input.providerThread.id,
-                          providerTurnId: input.providerTurnId,
-                          cause,
-                        }),
-                    ),
-                  );
+                // SCIENT-FORK: preserve the pump/physical-close join outside native permits.
+                interruptAndJoinRetirement({
+                  runtime,
+                  request: input,
+                  readEntry: Ref.get(sessions).pipe(
+                    Effect.map((entries) => entries.get(sessionKey(providerSessionId))),
+                  ),
+                  closeTimeoutMs: RELEASE_SCOPE_CLOSE_TIMEOUT_MS,
+                  joinRetainedClose: () =>
+                    Effect.suspend(() => {
+                      const closing = closingSessions.get(sessionKey(providerSessionId));
+                      return closing?.entry.runtime === runtime
+                        ? awaitClosingEntry(closing)
+                        : Effect.void;
+                    }),
                 }),
               ),
             ),
@@ -2123,26 +2063,26 @@ export const layerWithOptions = (
                         cause: `Provider ${existing.runtime.driver} does not support attaching multiple app threads to one session.`,
                       });
                     }
-                    // The decorated handle captures opening state; eligibility belongs
-                    // to the exact internal owner's live status before reuse.
-                    const status = existing.runtime.providerSession.status;
-                    if (status === "error" || status === "stopped") {
-                      yield* releaseEntry({
-                        providerSessionId: input.providerSessionId,
-                        expectedRuntime: existing.runtime,
-                        reason: status === "error" ? "runtime_error" : "manual_shutdown",
-                        detail: "The existing native owner is no longer reusable.",
-                      }).pipe(
-                        Effect.mapError(
-                          (cause) =>
-                            new ProviderSessionOpenError({
-                              instanceId: input.modelSelection.instanceId,
-                              providerSessionId: input.providerSessionId,
-                              cause,
-                            }),
+                    // SCIENT-FORK: close exact known-unusable live owners before replacement.
+                    if (
+                      !(yield* retireUnusableOwner(existing.runtime, (reason) =>
+                        releaseEntry({
+                          providerSessionId: input.providerSessionId,
+                          expectedRuntime: existing.runtime,
+                          reason,
+                          detail: "The existing native owner is no longer reusable.",
+                        }).pipe(
+                          Effect.mapError(
+                            (cause) =>
+                              new ProviderSessionOpenError({
+                                instanceId: input.modelSelection.instanceId,
+                                providerSessionId: input.providerSessionId,
+                                cause,
+                              }),
+                          ),
                         ),
-                      );
-                    } else {
+                      ))
+                    ) {
                       yield* ensureThreadAttached({
                         providerSessionId: input.providerSessionId,
                         threadId: input.threadId,

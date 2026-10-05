@@ -1,3 +1,8 @@
+// SCIENT-FORK: native producer sealing and captured-owner validation.
+import {
+  makeStoppedNativeProducer,
+  capturedNativeOwnerValidator,
+} from "../scient-provider/NativeProducerLifecycle.ts";
 import {
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
@@ -220,7 +225,6 @@ export function makeNativeSessionAdapterV2(
             }
           | undefined;
         let backgroundPending = false;
-        let producerSealed = false;
         let wakeOffered = false;
         const wake: {
           readonly update: NativeSessionUpdate;
@@ -522,15 +526,16 @@ export function makeNativeSessionAdapterV2(
                 false,
               );
           });
-        // SCIENT-FORK: confirmed breaking interrupts retain their complete receipts through EOF.
-        const sealStoppedProducer = Effect.gen(function* () {
-          if (producerSealed) return;
-          for (const pending of requests.values())
-            yield* settleRequest(pending, "cancelled", yield* DateTime.now);
-          yield* updateSession("stopped");
-          budget.seal();
-          producerSealed = true;
-          yield* events.end;
+        // SCIENT-FORK: retain confirmed stopped receipts through consumer EOF.
+        const stoppedProducer = makeStoppedNativeProducer({
+          cancelRequests: () =>
+            Effect.gen(function* () {
+              for (const pending of requests.values())
+                yield* settleRequest(pending, "cancelled", yield* DateTime.now);
+            }),
+          publishStopped: () => updateSession("stopped"),
+          sealBudget: () => budget.seal(),
+          end: () => events.end,
         });
         const onUpdate = (update: NativeSessionUpdate): Effect.Effect<void> =>
           eventPermit.withPermit(
@@ -1063,7 +1068,7 @@ export function makeNativeSessionAdapterV2(
             Effect.andThen(
               eventPermit.withPermit(
                 Effect.gen(function* () {
-                  if (producerSealed) return;
+                  if (stoppedProducer.sealed) return;
                   yield* stopBackgroundTasks("cancelled", yield* DateTime.now);
                   yield* finish({ type: "terminal", status: "cancelled" });
                   for (const pending of requests.values())
@@ -1342,23 +1347,24 @@ export function makeNativeSessionAdapterV2(
                     return yield* protocolError(
                       "The native session does not own this active turn.",
                     );
-                  const validateOwner = () =>
-                    Effect.suspend(() =>
-                      active === owner &&
-                      owner !== undefined &&
+                  // SCIENT-FORK: the closure checks the exact current run/thread/turn after preparation.
+                  const validateOwner = capturedNativeOwnerValidator({
+                    owner,
+                    current: () => active,
+                    matches: (owner) =>
                       owner.turn.id === request.providerTurnId &&
                       owner.turn.providerThreadId === request.providerThread.id &&
                       owner.input.runId === request.runId &&
                       thread?.id === request.providerThread.id &&
-                      validateThreadOwner(request.threadId, request.providerThread)
-                        ? Effect.void
-                        : Effect.fail(
-                            new NativeSessionOperationError({
-                              detail: "The native session no longer owns this active turn.",
-                              breaksSession: false,
-                            }),
-                          ),
-                    );
+                      validateThreadOwner(request.threadId, request.providerThread),
+                    refuse: () =>
+                      Effect.fail(
+                        new NativeSessionOperationError({
+                          detail: "The native session no longer owns this active turn.",
+                          breaksSession: false,
+                        }),
+                      ),
+                  });
                   yield* steer(request, validateOwner);
                 }).pipe(
                   Effect.mapError(
@@ -1402,7 +1408,7 @@ export function makeNativeSessionAdapterV2(
                         driver,
                         providerThread: thread,
                       });
-                      yield* sealStoppedProducer;
+                      yield* stoppedProducer.seal;
                     }
                   }),
                 );
@@ -1422,7 +1428,7 @@ export function makeNativeSessionAdapterV2(
                     status: "cancelled",
                     broken: native.interruptBreaksSession === true,
                   });
-                  if (native.interruptBreaksSession === true) yield* sealStoppedProducer;
+                  if (native.interruptBreaksSession === true) yield* stoppedProducer.seal;
                 }),
               );
             }).pipe(
