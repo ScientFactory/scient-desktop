@@ -1,13 +1,17 @@
-import { AgentSpawnMemberRow } from "~/scient/presentation/AgentSpawnMemberRow";
-import { TurnPlanTimelineRow } from "~/scient/presentation/TurnPlanTimelineRow";
 import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-presentation";
 import { useBoundedAnswerFollow } from "./useBoundedAnswerFollow";
+import {
+  timelineRowsKey,
+  type RestingAtReadingEnd,
+  useReaderScrollInput,
+  useReadingBookkeepingFrame,
+  useSaveReadingPosition,
+} from "./readerScrolling";
 import { countUnreadBelow, unreadMessagesForThread } from "./unreadTimelineMessages";
 import {
   readerAtReadingEnd,
   readingEndAllowance,
   readingEndGapOnScreen,
-  readingIdentity,
   resolveReadingRow,
 } from "./readerScrollPolicy";
 
@@ -60,10 +64,7 @@ import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/s
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import {
   emptyAgentPanelModel,
-  isActiveSubagentStatus,
-  isTerminalSubagentStatus,
   type AgentPanelModel,
-  type RuntimeSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   subagentGroupSummary,
@@ -180,7 +181,6 @@ import { useFileContextMenuHandler } from "../../fileContextMenu";
 import { useProject, useThreadShell } from "../../state/entities";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
-  flushTimelinePositions,
   readTimelinePosition,
   rememberTimelinePosition,
   timelineContentOverflowsViewport,
@@ -290,7 +290,10 @@ import { TimelineSystemDivider } from "./TimelineSystemDivider";
 import { ScientChatImageGallery } from "~/scient/images/ScientChatImageGallery";
 // Website tool icons never fetch a web favicon.
 import { remoteImageAddress } from "~/scient/presentation/remoteImageAddress";
-import { agentSpawnRowLabel, deriveAgentSpawnSummary } from "./agentSpawnSummary";
+import {
+  renderSubagentRosterGroup,
+  subagentGroupRoster,
+} from "~/scient/presentation/AgentSpawnRow";
 // SCIENT-FORK:END
 import { SkillChipIcon, SkillInlineText } from "./SkillInlineText";
 import * as DateTime from "effect/DateTime";
@@ -403,11 +406,6 @@ function TimelineListFooter({ composerInset }: { readonly composerInset: number 
   );
 }
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
-/** Which rows are listed: a new or removed row changes it, a row changing size does not. */
-function timelineRowsKey(data: readonly unknown[]) {
-  const last = data.at(-1) as { id?: string } | undefined;
-  return `${data.length}:${last?.id ?? ""}`;
-}
 /** Older-history pages a missing saved message may load before falling back. */
 const MAX_READING_HISTORY_PAGES = 2;
 
@@ -692,10 +690,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   // Expanding or collapsing a block at the end must not pin the end: the
   // toggled row keeps its place instead (maintainVisibleContentPosition).
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
-  // Any click or key in the timeline can expand or collapse content (a long
-  // message, a plan, tool output). Idle end pinning pauses briefly after one,
-  // so the toggled content keeps its place instead of being pinned to its end.
-  const [interactionSettling, setInteractionSettling] = useState(false);
   // The reader's own scrolling input, held until their movement has stopped:
   // a drag, an animated wheel notch or key scroll moves for several frames.
   const readerInputRef = useRef(false);
@@ -853,27 +847,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       ),
     [agentPanelModel],
   );
-  const liveAgentTaskKey = useMemo(() => {
-    if (agentPanelModel === undefined) return undefined;
-    const ids: string[] = [];
-    const consider = (agent: { id: string; status: RuntimeSubagent["status"] }) => {
-      if (isActiveSubagentStatus(agent.status)) ids.push(agent.id);
-    };
-    agentPanelModel.directAgents.forEach(consider);
-    for (const group of agentPanelModel.workflows) {
-      if (!isTerminalSubagentStatus(group.workflow.status)) ids.push(group.workflow.id);
-      group.unphasedMembers.forEach(consider);
-      group.phases.forEach((phase) => phase.members.forEach(consider));
-    }
-    return ids.sort().join("\n");
-  }, [agentPanelModel]);
-  const liveAgentTaskIds = useMemo(
-    () =>
-      liveAgentTaskKey === undefined
-        ? undefined
-        : new Set(liveAgentTaskKey.length > 0 ? liveAgentTaskKey.split("\n") : []),
-    [liveAgentTaskKey],
-  );
   // SCIENT-FORK:END
   const rawRows = useMemo(() => {
     const previous = rowsProjectionRef.current;
@@ -893,7 +866,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         supportsConversationRollback,
         hasForkBaseline,
         forkBaselineAssistantMessageId,
-        liveAgentTaskIds,
         subagentWorkflowIds,
 
         worktreeSetup,
@@ -922,7 +894,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     activeTurnStartedAt,
     turnDiffSummaries,
     supportsConversationRollback,
-    liveAgentTaskIds,
     subagentWorkflowIds,
     worktreeSetup,
   ]);
@@ -1150,65 +1121,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
-  useEffect(() => {
-    if (!timelineViewportElement) return;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const settle = () => {
-      setInteractionSettling(true);
-      if (timer !== null) clearTimeout(timer);
-      timer = setTimeout(() => {
-        timer = null;
-        setInteractionSettling(false);
-      }, 400);
-    };
-    // The reader's own scrolling input; idle end keeping never acts on it.
-    const input = () => {
-      readerInputRef.current = true;
-      stillFramesRef.current = 0;
-      scheduleBookkeepingRef.current();
-    };
-    // A scrollbar drag moves the view on every frame until release.
-    const pressed = (event: PointerEvent) => {
-      if (event.target !== listRef.current?.getScrollableNode()) return;
-      scrollbarHeldRef.current = true;
-      input();
-    };
-    const released = () => {
-      scrollbarHeldRef.current = false;
-    };
-    const keyed = (event: globalThis.KeyboardEvent) => {
-      // Keys typed into the composer or another field don't scroll the timeline.
-      if (
-        event.target instanceof Element &&
-        event.target.closest("input, textarea, [contenteditable=true], [contenteditable='']")
-      )
-        return;
-      if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key))
-        input();
-    };
-    const ownerDocument = timelineViewportElement.ownerDocument;
-    timelineViewportElement.addEventListener("click", settle, { capture: true });
-    timelineViewportElement.addEventListener("keydown", settle, { capture: true });
-    timelineViewportElement.addEventListener("wheel", input, { capture: true, passive: true });
-    timelineViewportElement.addEventListener("touchmove", input, { capture: true, passive: true });
-    timelineViewportElement.addEventListener("pointerdown", pressed, { capture: true });
-    ownerDocument.addEventListener("keydown", keyed, { capture: true });
-    ownerDocument.addEventListener("pointerup", released);
-    ownerDocument.addEventListener("pointercancel", released);
-    ownerDocument.addEventListener("mouseup", released);
-    return () => {
-      if (timer !== null) clearTimeout(timer);
-      timelineViewportElement.removeEventListener("click", settle, { capture: true });
-      timelineViewportElement.removeEventListener("keydown", settle, { capture: true });
-      timelineViewportElement.removeEventListener("wheel", input, { capture: true });
-      timelineViewportElement.removeEventListener("touchmove", input, { capture: true });
-      timelineViewportElement.removeEventListener("pointerdown", pressed, { capture: true });
-      ownerDocument.removeEventListener("keydown", keyed, { capture: true });
-      ownerDocument.removeEventListener("pointerup", released);
-      ownerDocument.removeEventListener("pointercancel", released);
-      ownerDocument.removeEventListener("mouseup", released);
-    };
-  }, [listRef, timelineViewportElement]);
+  // SCIENT-FORK:START — the reader's own clicks, keys and scrolling input.
+  const interactionSettling = useReaderScrollInput({
+    listRef,
+    viewport: timelineViewportElement,
+    readerInputRef,
+    scrollbarHeldRef,
+    stillFramesRef,
+    scheduleBookkeepingRef,
+  });
+  // SCIENT-FORK:END
   // Re-measure the minimap gutter when the chat column changes width without a viewport resize.
   const chatWidth = useClientSettings((settings) => settings.chatWidth);
   const {
@@ -1314,43 +1236,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     onContentOverflowChange?.(measureContentOverflow());
   }, [cancelContentOverflowFrame, measureContentOverflow, onContentOverflowChange, rows.length]);
 
-  const saveReadingPosition = useCallback(() => {
-    const state = listRef.current?.getState?.();
-    if (
-      restoringThreadPosition ||
-      !readingListLoaded ||
-      positionHistoryLoading ||
-      citationPositioning ||
-      timelinePositioningPending ||
-      state?.data !== rows
-    )
-      return;
-    const element = listRef.current?.getScrollableNode();
-    const position =
-      state?.data?.length && element
-        ? resolveWorkGroupScrollAnchor({ ...state, scroll: element.scrollTop })
-        : undefined;
-    if (!position || !state) return;
-    const index = rows.findIndex((row) => row.id === position.rowId);
-    const identity = readingIdentity(rows, index, runningRunId);
-    const row = state.elementAtIndex(index);
-    if (!identity || !row || !element) return;
-    rememberTimelinePosition(listIdentityKey, {
-      ...position,
-      ...identity,
-      offsetWithinRow: identity.rowId
-        ? element.getBoundingClientRect().top - row.getBoundingClientRect().top
-        : 0,
-      atEnd: readerAtReadingEnd(state, contentInsetEndAdjustment, turnUnfinished) ?? false,
-      ...(anchorMessageId ? { anchorMessageId } : {}),
-      disclosures: {
-        runs: paintedExpandedRunIds,
-        workGroups: paintedExpandedWorkGroupIds,
-        attempts: paintedExpandedAttemptIds,
-        workGroupState: workGroupViewState,
-      },
-    });
-  }, [
+  // SCIENT-FORK:START — remember the reading position by row identity.
+  const saveReadingPosition = useSaveReadingPosition({
     listRef,
     restoringThreadPosition,
     readingListLoaded,
@@ -1367,22 +1254,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     paintedExpandedWorkGroupIds,
     paintedExpandedAttemptIds,
     workGroupViewState,
-  ]);
-  const saveReadingPositionRef = useRef(saveReadingPosition);
-  useLayoutEffect(() => {
-    saveReadingPositionRef.current = saveReadingPosition;
   });
-  useLayoutEffect(() => {
-    const save = () => {
-      saveReadingPositionRef.current();
-      flushTimelinePositions();
-    };
-    window.addEventListener("pagehide", save);
-    return () => {
-      save();
-      window.removeEventListener("pagehide", save);
-    };
-  }, [listIdentityKey]);
+  // SCIENT-FORK:END
   // Each response's latest message: the unit the unread badge counts.
   const responseEndMessageIds = useMemo(
     () => deriveTerminalAssistantMessageIds(timelineEntries),
@@ -1391,12 +1264,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   // Where the reader last rested at the reading end: the on-screen distance
   // to the end of the last message's text, and where that end sat in the
   // content. Null when not at the end.
-  const restingAtReadingEndRef = useRef<{
-    gap: number;
-    contentEnd: number;
-    /** The rows at rest (count and last row): only their size changes are kept in view. */
-    rowsKey: string;
-  } | null>(null);
+  const restingAtReadingEndRef = useRef<RestingAtReadingEnd | null>(null);
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
     if (restoringThreadPosition || positionHistoryLoading || state?.data !== rows) return;
@@ -1557,73 +1425,24 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     reportContentOverflow,
   ]);
 
-  // Row size changes arrive many times per frame while an answer streams, and
-  // new rows or state arrive on top of them. The position, unread and end
-  // bookkeeping runs at most once per frame, with the latest state.
-  const handleScrollRef = useRef(handleScroll);
-  useLayoutEffect(() => {
-    handleScrollRef.current = handleScroll;
+  // SCIENT-FORK:START — per-frame position, unread and end bookkeeping.
+  const handleScrollOnNextFrame = useReadingBookkeepingFrame({
+    handleScroll,
+    listRef,
+    contentInsetEndAdjustment,
+    restingAtReadingEndRef,
+    readerInputRef,
+    scheduleBookkeepingRef,
+    isWorking,
+    revealActive,
+    interactionSettling,
+    timelinePositioningPending,
+    citationPositioning,
+    restoringThreadPosition,
+    anchoredEndSpace,
+    disclosureToggleSettling,
   });
-  // While the reader rests at the end of an idle thread, late layout (a
-  // resized window, a diagram or image finishing its render) keeps the end of
-  // the last message's text where it was. New rows, streaming, reveals, and
-  // content the reader just toggled never move the reader.
-  const idleEndKeeping =
-    !isWorking &&
-    !revealActive &&
-    !interactionSettling &&
-    !timelinePositioningPending &&
-    !citationPositioning &&
-    !restoringThreadPosition &&
-    !anchoredEndSpace &&
-    !disclosureToggleSettling;
-  const idleEndKeepingRef = useRef(idleEndKeeping);
-  useLayoutEffect(() => {
-    idleEndKeepingRef.current = idleEndKeeping;
-  });
-  const keepReadingEndInView = useCallback(() => {
-    const resting = restingAtReadingEndRef.current;
-    const list = listRef.current;
-    const viewport = list?.getScrollableNode();
-    if (!idleEndKeepingRef.current || !resting || !list || !viewport) return;
-    const state = list.getState();
-    // New rows grow below the reader and never move them; a frame with the
-    // reader's own scrolling input is theirs, whatever else changed in it.
-    if (readerInputRef.current || timelineRowsKey(state.data) !== resting.rowsKey) return;
-    // Measured on screen: the list's own positions can trail the rendered rows.
-    const gap = readingEndGapOnScreen(state, viewport, contentInsetEndAdjustment);
-    if (gap === null) return;
-    // Only content moving the text end counts. A scroll alone (the reader, a
-    // minimap or citation jump, find in page) leaves the text end where it is
-    // in the content, and is the reader's new position; content above that
-    // the list already compensated for leaves the on-screen gap unchanged.
-    const contentEnd = gap + viewport.scrollTop;
-    if (Math.abs(contentEnd - resting.contentEnd) <= 1) return;
-    const grown = gap - resting.gap;
-    if (grown > 1) viewport.scrollTop += grown;
-  }, [contentInsetEndAdjustment, listRef]);
-  const keepReadingEndInViewRef = useRef(keepReadingEndInView);
-  useLayoutEffect(() => {
-    keepReadingEndInViewRef.current = keepReadingEndInView;
-  });
-  const bookkeepingFrameRef = useRef<number | null>(null);
-  const handleScrollOnNextFrame: () => void = useCallback(() => {
-    if (bookkeepingFrameRef.current !== null) return;
-    bookkeepingFrameRef.current = requestAnimationFrame(() => {
-      bookkeepingFrameRef.current = null;
-      keepReadingEndInViewRef.current();
-      handleScrollRef.current();
-    });
-  }, []);
-  useLayoutEffect(() => {
-    scheduleBookkeepingRef.current = handleScrollOnNextFrame;
-  }, [handleScrollOnNextFrame]);
-  useEffect(
-    () => () => {
-      if (bookkeepingFrameRef.current !== null) cancelAnimationFrame(bookkeepingFrameRef.current);
-    },
-    [],
-  );
+  // SCIENT-FORK:END
   useEffect(() => {
     handleScrollOnNextFrame();
   }, [handleScroll, handleScrollOnNextFrame, rows.length]);
@@ -2326,7 +2145,6 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
                 : (row.kind === "message" &&
                       row.message.role === "assistant" &&
                       !row.showAssistantMeta) ||
-                    row.kind === "turn-plan" ||
                     row.kind === "worktree-setup" ||
                     row.kind === "event" ||
                     row.kind === "attempt-fold"
@@ -2378,7 +2196,6 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       ) : null}
       {row.kind === "assistant-meta" ? <AssistantMetaTimelineRow row={row} /> : null}
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
-      {row.kind === "turn-plan" ? <TurnPlanTimelineRow row={row} /> : null}
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
       {row.kind === "worktree-setup" ? <WorktreeSetupTimelineRow row={row} /> : null}
       {row.kind === "event" ? <V2EventTimelineRow row={row} /> : null}
@@ -3596,49 +3413,22 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
     else ctx.workGroupViewState.expandedEntries.delete(groupId);
     setExpanded(open);
   };
-  const workflow = ctx.agentPanelModel.workflows.find((group) =>
-    members.some((item) => item.subagentId === group.workflow.id),
-  );
-  const nativeMemberIds: ReadonlyArray<string> = members.map((item) => item.subagentId);
-  const hasRoster =
-    workflow !== undefined ||
-    ctx.agentPanelModel.directAgents.some((agent) => nativeMemberIds.includes(agent.id));
-  if (hasRoster) {
-    return (
-      <WorkLogBlock continues={row.continuesWorkLog}>
-        <AgentSpawnRow
-          workEntry={{
-            id: row.id,
-            createdAt: row.createdAt,
-            runId: row.projectedItem.item.runId,
-            label,
-            tone: "tool",
-            agentSpawn: {
-              workflowId: workflow?.workflow.id ?? null,
-              agentTaskIds: nativeMemberIds,
-            },
-          }}
-          onToggleEntry={(wasExpanded) => ctx.onToggleWorkEntry(row.id, wasExpanded)}
-        />
-        {members.flatMap((member) => {
-          const childThreadId = member.childThreadId;
-          return childThreadId === null
-            ? []
-            : [
-                <button
-                  key={member.id}
-                  type="button"
-                  aria-label="Open child thread"
-                  onClick={() => ctx.onOpenThread(childThreadId)}
-                  className="ms-7 mt-1 self-start text-xs text-muted-foreground hover:text-foreground"
-                >
-                  Open {member.title ?? "subagent"} thread ›
-                </button>,
-              ];
-        })}
-      </WorkLogBlock>
-    );
+  // SCIENT-FORK:START — a group the agent panel knows renders as one spawn row.
+  const roster = subagentGroupRoster(ctx.agentPanelModel, members);
+  if (roster) {
+    return renderSubagentRosterGroup({
+      rowId: row.id,
+      continuesWorkLog: row.continuesWorkLog,
+      members,
+      roster,
+      context: ctx,
+      LiveActivityRow,
+      WorkingTimer,
+      failedToolIconClassName,
+      toolCallExpandedBodyClassName,
+    });
   }
+  // SCIENT-FORK:END
   return (
     <WorkLogBlock continues={row.continuesWorkLog}>
       <Collapsible open={expanded} onOpenChange={toggleExpanded} data-subagent-group>
@@ -4247,17 +4037,6 @@ function LiveActivityContent({
 
 function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "work-live" }> }) {
   const ctx = use(TimelineRowCtx);
-  // SCIENT-FORK:START — spawn rows render their own component.
-  if (row.entry.agentSpawn) {
-    return (
-      <AgentSpawnRow
-        workEntry={row.entry}
-        active={row.active}
-        onToggleEntry={(collapsed) => ctx.onToggleWorkEntry(row.id, collapsed)}
-      />
-    );
-  }
-  // SCIENT-FORK:END
   const questionHeading = row.entry.questionAnswer
     ? getQuestionTextPreview(row.entry.questionAnswer)
     : "";
@@ -4293,7 +4072,7 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
           ) : row.active && row.entry.toolLifecycleStatus === "inProgress" ? (
             <span className="flex min-w-0">
               <span className="min-w-0 truncate">{label}</span>
-              <LiveStepElapsed startedAt={row.entry.startedAt ?? row.entry.createdAt} />
+              <LiveStepElapsed startedAt={row.entry.createdAt} />
             </span>
           ) : (
             label
@@ -5561,104 +5340,6 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
 
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
-/** One tool row per batch, with member results available on expansion. */
-const AgentSpawnRow = memo(function AgentSpawnRow(props: {
-  workEntry: TimelineWorkEntry;
-  active?: boolean | undefined;
-  onToggleEntry?: ((collapsed: boolean) => void) | undefined;
-}) {
-  const { workEntry } = props;
-  const { agentPanelModel, expandedSpawnEntryIds, onToggleSpawnRow, onOpenAgents } =
-    use(TimelineRowCtx);
-  const spawn = workEntry.agentSpawn;
-  if (!spawn) {
-    return null;
-  }
-  const expanded = expandedSpawnEntryIds.has(workEntry.id);
-
-  const memberIds = new Set(spawn.agentTaskIds);
-  const workflowGroup = spawn.workflowId
-    ? agentPanelModel.workflows.find((group) => group.workflow.id === spawn.workflowId)
-    : undefined;
-  const agents = workflowGroup
-    ? [...workflowGroup.phases.flatMap((phase) => phase.members), ...workflowGroup.unphasedMembers]
-    : agentPanelModel.directAgents.filter((agent) => memberIds.has(agent.id));
-  const agentCount = Math.max(
-    agents.length,
-    Math.max(memberIds.size - (spawn.workflowId ? 1 : 0), 0),
-  );
-  const summary = deriveAgentSpawnSummary({
-    agents,
-    agentCount,
-    coordinatorStatus: workflowGroup?.workflow.status,
-  });
-  const { live } = summary;
-  const failed = summary.tone === "failed";
-  const workflowName =
-    workflowGroup?.workflow.workflowName ?? workflowGroup?.workflow.title ?? null;
-  const label = agentSpawnRowLabel(summary, workflowName);
-  // The longest-running agent still at work: a quiet row keeps counting.
-  const workingSince = agents
-    .filter((agent) => isActiveSubagentStatus(agent.status) && agent.startedAt !== null)
-    .map((agent) => agent.startedAt!)
-    .toSorted()[0];
-  const toggleExpanded = () => {
-    props.onToggleEntry?.(expanded);
-    onToggleSpawnRow(workEntry.id, !expanded);
-  };
-
-  return (
-    <div className="flex flex-col">
-      <button
-        type="button"
-        aria-expanded={expanded}
-        onClick={toggleExpanded}
-        className="flex cursor-pointer select-none rounded-md text-left transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-      >
-        <LiveActivityRow
-          label={
-            live && workingSince ? (
-              <span className="flex min-w-0">
-                <span className="min-w-0 truncate">{label}</span>
-                <span className="shrink-0 whitespace-pre tabular-nums">
-                  {" · "}
-                  <WorkingTimer createdAt={workingSince} />
-                </span>
-              </span>
-            ) : (
-              label
-            )
-          }
-          iconName="bot"
-          active={live && props.active !== false}
-          failed={failed}
-        />
-      </button>
-      {expanded ? (
-        <div className="ms-7 mt-0.5 flex flex-col">
-          {agents.map((agent) => (
-            <AgentSpawnMemberRow
-              key={agent.id}
-              agent={agent}
-              onToggleEntry={props.onToggleEntry}
-              WorkingTimer={WorkingTimer}
-              failedToolIconClassName={failedToolIconClassName}
-              toolCallExpandedBodyClassName={toolCallExpandedBodyClassName}
-            />
-          ))}
-          <button
-            type="button"
-            onClick={onOpenAgents}
-            className="mt-1 self-start rounded-sm px-1 text-xs text-muted-foreground hover:text-foreground"
-          >
-            Open Agents panel ›
-          </button>
-        </div>
-      ) : null}
-    </div>
-  );
-});
-
 function remarkThoughtPreview(fallback: string) {
   return (tree: Root) => {
     const plainText = (node: Root | RootContent): string => {
@@ -5714,11 +5395,6 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   onToggleEntry?: ((collapsed: boolean) => void) | undefined;
 }) {
   const { workEntry, workspaceRoot, displayLabel } = props;
-  // SCIENT-FORK:START — before any hooks, spawn rows render their own component.
-  if (workEntry.agentSpawn) {
-    return <AgentSpawnRow workEntry={workEntry} active onToggleEntry={props.onToggleEntry} />;
-  }
-  // SCIENT-FORK:END
   const ctx = use(TimelineRowCtx);
   const { threadRef, onImageExpand, timestampFormat } = ctx;
   const createdThread =

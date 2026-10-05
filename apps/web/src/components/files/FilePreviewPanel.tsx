@@ -5,6 +5,15 @@ import {
   StaticTextFileSurface,
   type FilePostRender,
 } from "~/scient/fileSurfaces/StaticTextFileSurface";
+import {
+  ScientMathSourceToolbar,
+  useScientFileEditorBindings,
+} from "~/scient/fileSurfaces/scientFileEditorBindings";
+import {
+  applyScientMarkdownRename,
+  ScientDocumentSessionAdmissionFailure,
+  scientDocumentSessionFile,
+} from "~/scient/fileSurfaces/scientDocumentSession";
 // SCIENT-FORK:END
 import { useAtomValue } from "@effect/atom-react";
 import { Spinner } from "~/components/ui/spinner";
@@ -28,8 +37,6 @@ import {
   isWorkspaceVideoPreviewPath,
 } from "@t3tools/shared/filePreview";
 import { Editor } from "@pierre/diffs/editor";
-import { sourceMathController, sourceMathOwnsEvent } from "~/scient/math/input/sourceAdapter";
-import { MathInputTools } from "~/scient/math/input/MathInputTools";
 import { EditProvider, File, Virtualizer } from "@pierre/diffs/react";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 import {
@@ -53,7 +60,6 @@ import {
   Suspense,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -84,7 +90,6 @@ import type {
 import { isAbsolutePath } from "~/terminal-links";
 import { workspaceFileHostPath } from "./filePath";
 import { ScrollArea } from "~/components/ui/scroll-area";
-import { Button } from "~/components/ui/button";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { buildFileReviewComment } from "~/reviewCommentContext";
@@ -112,10 +117,7 @@ import { useMarkdownPersistenceLease } from "~/scient/markdownEditor/persistence
 import { useMarkdownPersistenceGuards } from "~/scient/markdownEditor/persistence/useMarkdownPersistenceGuards";
 import { useMarkdownSourcePersistence } from "~/scient/markdownEditor/persistence/useMarkdownSourcePersistence";
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
-import {
-  documentSessionIsCurrent,
-  markdownPersistenceRegistry,
-} from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
+import { documentSessionIsCurrent } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { workspacePdfSourceForPreview } from "~/scient/pdf/pdfSource";
 import {
   ScientFileFreshnessNotices,
@@ -132,7 +134,6 @@ import {
   MEDIA_FAILURE_COPY,
   readFailureBlocksPreview,
   readOnlyNotice,
-  refreshFailureNoticeCopy,
 } from "~/scient/fileSurfaces/fileFailureCopy";
 import { FileReadFailure } from "~/scient/fileSurfaces/FileReadFailure";
 import {
@@ -180,10 +181,7 @@ import {
 } from "./filePreviewMode";
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
 import {
-  clearProjectFileQueryData,
   getOptimisticProjectFileQueryData,
-  projectReadFailure,
-  refreshProjectEntriesQuery,
   setProjectFileQueryData,
 } from "./projectFilesQueryState";
 
@@ -907,75 +905,21 @@ function EditableFileEditor({
     [addReviewComment, composerDraftTarget, onContentsChange, relativePath],
   );
 
-  useLayoutEffect(
-    () =>
-      externalPersistence?.registerExternalProjection((update) => {
-        if (!editor.getFile() || editor.isComposing) return "defer";
-        const prepared = editor.prepareExternalEdits(
-          update.previousSource,
-          update.patches.map((patch) => ({
-            start: patch.start,
-            end: patch.end,
-            text: patch.replacement,
-          })),
-        );
-        if (!prepared) return null;
-        return () => {
-          applyingExternal.current = true;
-          try {
-            prepared();
-            externalBindings.current.onExternalVersionApplied?.(update.editVersion);
-          } finally {
-            applyingExternal.current = false;
-          }
-        };
-      }),
-    [editor, externalPersistence],
-  );
-
-  const reportEditorSelection = useCallback(() => {
-    if (onEditorSelectionChange === undefined) return;
-    if (editorSelectionFrameRef.current !== null) {
-      cancelAnimationFrame(editorSelectionFrameRef.current);
-    }
-    editorSelectionFrameRef.current = requestAnimationFrame(() => {
-      editorSelectionFrameRef.current = null;
-      onEditorSelectionChange(editor.getState().selections?.at(-1) ?? null);
-    });
-  }, [editor, onEditorSelectionChange]);
-  const mathEditable = useRef(!editingBlocked);
-  mathEditable.current = !editingBlocked;
-  const mathInput = useMemo(() => {
-    const format = /\.tex$/iu.test(relativePath)
-      ? "latex"
-      : /\.(?:md|markdown)$/iu.test(relativePath)
-        ? "markdown"
-        : null;
-    return format ? sourceMathController(editor, format, () => mathEditable.current) : null;
-  }, [editor, relativePath]);
-  useEffect(() => {
-    const host = surfaceRef.current;
-    if (!host || !mathInput) return;
-    return mathInput.attach(host, sourceMathOwnsEvent);
-  }, [mathInput]);
-  reportEditorSelectionRef.current = reportEditorSelection;
-
-  useEffect(() => {
-    if (onEditorSelectionChange === undefined) return;
-    const handleSelectionChange = () => {
-      const surface = surfaceRef.current;
-      if (surface === null || !surface.contains(document.activeElement)) return;
-      reportEditorSelection();
-    };
-    document.addEventListener("selectionchange", handleSelectionChange);
-    return () => {
-      document.removeEventListener("selectionchange", handleSelectionChange);
-      if (editorSelectionFrameRef.current !== null) {
-        cancelAnimationFrame(editorSelectionFrameRef.current);
-        editorSelectionFrameRef.current = null;
-      }
-    };
-  }, [onEditorSelectionChange, reportEditorSelection]);
+  // SCIENT-FORK:START — session edit projection, selection reporting, math input
+  const { mathInput, onCompositionEnd, onKeyDownCapture } = useScientFileEditorBindings({
+    editor,
+    relativePath,
+    editingBlocked,
+    surfaceRef,
+    externalPersistence,
+    externalBindings,
+    applyingExternal,
+    editorSelectionFrameRef,
+    reportEditorSelectionRef,
+    onEditorSelectionChange,
+    onRunShortcut,
+  });
+  // SCIENT-FORK:END
 
   const removeAnnotationEntry = useCallback(
     (entryId: string) => {
@@ -1139,30 +1083,12 @@ function EditableFileEditor({
         <div
           ref={surfaceRef}
           className="relative flex min-h-0 flex-1"
-          onCompositionEnd={() =>
-            queueMicrotask(() =>
-              externalBindings.current.externalPersistence?.resumeExternalUpdates(),
-            )
-          }
-          onKeyDownCapture={(event) => {
-            if (
-              onRunShortcut === undefined ||
-              event.key !== "Enter" ||
-              (!event.metaKey && !event.ctrlKey) ||
-              event.altKey ||
-              event.shiftKey
-            ) {
-              return;
-            }
-            event.preventDefault();
-            onRunShortcut(editor.getState().selections?.at(-1) ?? null);
-          }}
+          onCompositionEnd={onCompositionEnd}
+          onKeyDownCapture={onKeyDownCapture}
         >
-          {mathInput && !editingBlocked ? (
-            <div className="scient-math-source-toolbar">
-              <MathInputTools controller={mathInput} />
-            </div>
-          ) : null}
+          {/* SCIENT-FORK:START — source math input */}
+          <ScientMathSourceToolbar mathInput={mathInput} editingBlocked={editingBlocked} />
+          {/* SCIENT-FORK:END */}
           <Virtualizer
             className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
             config={{
@@ -1549,34 +1475,14 @@ export default function FilePreviewPanel({
     authoritativeSnapshot: queriedFile.authoritativeData,
     workspaceMutationId,
   });
-  // The editor keeps showing its last confirmed version when a refresh read
-  // fails; this is why it failed, so the notice can say the file moved.
-  const markdownRefreshFailure =
-    markdownSnapshot && !markdownSnapshot.pending
-      ? projectReadFailure(markdownSnapshot.error)
-      : null;
-  const markdownRefreshCopy = refreshFailureNoticeCopy(markdownRefreshFailure, hostOs);
-  // Once admitted, the retained draft is the editor's display truth even when
-  // an unrelated cached query fails or temporarily returns an older snapshot.
-  const file =
-    markdownSnapshot && relativePath !== null
-      ? {
-          ...queriedFile,
-          error: null,
-          failure: null,
-          failureReason: null,
-          failureOsErrorCode: null,
-          isPending: false,
-          data: {
-            relativePath,
-            contents: markdownSnapshot.draftSource,
-            revision: markdownSnapshot.baselineRevision,
-            byteLength: queriedFile.data?.byteLength ?? 0,
-            truncated: false,
-            readOnly: false,
-          },
-        }
-      : queriedFile;
+  // SCIENT-FORK:START — a document session's draft is the displayed file
+  const { markdownRefreshFailure, markdownRefreshCopy, file } = scientDocumentSessionFile(
+    queriedFile,
+    markdownSnapshot,
+    relativePath,
+    hostOs,
+  );
+  // SCIENT-FORK:END
   // Rendered documents and media own their layout. Word wrap only applies to
   // the raw text surfaces that feed the Pierre file renderer/editor.
   const showsRawText =
@@ -1862,25 +1768,17 @@ export default function FilePreviewPanel({
                         (file.data?.truncated ?? false)
                       }
                       label={relativePath.slice(relativePath.lastIndexOf("/") + 1)}
-                      onRenamed={(destinationRelativePath, revision) => {
-                        markdownPersistenceRegistry.forgetClean({
+                      onRenamed={(destinationRelativePath, revision) =>
+                        applyScientMarkdownRename({
                           environmentId,
                           cwd,
                           relativePath,
-                        });
-                        if (file.data) {
-                          setProjectFileQueryData(
-                            environmentId,
-                            cwd,
-                            destinationRelativePath,
-                            file.data.contents,
-                            revision,
-                          );
-                        }
-                        clearProjectFileQueryData(environmentId, cwd, relativePath);
-                        refreshProjectEntriesQuery(environmentId, cwd);
-                        onOpenFile(destinationRelativePath);
-                      }}
+                          fileData: file.data,
+                          destinationRelativePath,
+                          revision,
+                          onOpenFile,
+                        })
+                      }
                     />
                   ) : undefined
                 }
@@ -2091,38 +1989,19 @@ export default function FilePreviewPanel({
               refreshKey={viewerRefreshKey}
             />
           ) : awaitingMarkdownLease && admissionError ? (
-            <>
-              <div
-                role="alert"
-                className="shrink-0 border-b border-warning/24 bg-warning-surface px-3 py-2 scient-reading-ui text-xs text-warning-foreground"
-              >
-                <p>
-                  This file could not be opened safely for editing. The last available preview is
-                  read-only.
-                </p>
-                <p>
-                  {admissionError instanceof Error
-                    ? admissionError.message
-                    : "The current disk version could not be verified."}
-                </p>
-                <Button size="xs" variant="outline" onClick={retryAdmission}>
-                  Try again
-                </Button>
-              </div>
-              {relativePath && file.data ? (
-                // SCIENT-FORK:START
-                <StaticTextFileSurface
-                  cwd={cwd}
-                  relativePath={relativePath}
-                  contents={file.data.contents}
-                  resolvedTheme={resolvedTheme}
-                  wordWrap={wordWrap}
-                  onPostRender={onFilePostRender}
-                />
-              ) : // SCIENT-FORK:END
-              null}
-            </>
-          ) : awaitingMarkdownLease ? (
+            // SCIENT-FORK:START — document session could not be admitted
+            <ScientDocumentSessionAdmissionFailure
+              admissionError={admissionError}
+              onRetry={retryAdmission}
+              cwd={cwd}
+              relativePath={relativePath}
+              contents={file.data?.contents}
+              resolvedTheme={resolvedTheme}
+              wordWrap={wordWrap}
+              onPostRender={onFilePostRender}
+            />
+          ) : // SCIENT-FORK:END
+          awaitingMarkdownLease ? (
             <div
               className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground"
               aria-label="Opening editor"

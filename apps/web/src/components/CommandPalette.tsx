@@ -4,7 +4,13 @@ import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-r
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { useScientAnalyticsView } from "~/scient/analytics/client";
+// SCIENT-FORK:START
+import {
+  useScientCommandPaletteProjectInitialization,
+  useScientCommandPaletteView,
+  useScientNewThreadAddProjectItem,
+} from "~/scient/commandPalette/scientCommandPalette";
+// SCIENT-FORK:END
 import {
   canCreateProjectInEnvironment,
   getCloneDestinationBrowsePath,
@@ -85,7 +91,6 @@ import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useProjectFolderDrop } from "../hooks/useProjectFolderDrop";
-import { useScientProjectInitialization } from "../hooks/useScientProjectInitialization";
 import { useProjectOpening } from "../hooks/useProjectOpening";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
@@ -124,9 +129,6 @@ import {
   waitForProject,
 } from "../state/entities";
 import { useThreadSearch } from "../state/queries";
-// SCIENT-FORK:START
-import { allEnvironmentProjectSnapshotsReadyAtom } from "../state/shell";
-// SCIENT-FORK:END
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import { getAvailableNewFolderName, getAvailableNewProjectPath } from "../lib/projectEntry";
 import {
@@ -135,7 +137,6 @@ import {
 } from "../lib/newThreadNavigationIntent";
 import { waitForProjectProjection } from "../lib/projectProjection";
 import { preloadProjectChat } from "../lib/preloadProjectChat";
-import { type ScientProjectInitializationDecision } from "../lib/scientProjectInitialization";
 import {
   appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
@@ -253,38 +254,6 @@ interface AddProjectBrowseScopeState {
   readonly baseDirectoryPath: string;
   readonly initialPath: string;
   readonly resolvedInitialPath: string | null;
-}
-
-function ProjectSearchDescription(props: {
-  readonly environmentLabels: ReadonlyArray<string>;
-  readonly grouped: boolean;
-  readonly location: {
-    readonly kind: "local" | "remote";
-    readonly label: string;
-    readonly machine: EnvironmentMachineKind;
-  };
-  readonly workspaceRoot: string;
-}) {
-  if (!props.grouped) {
-    return (
-      <span className="flex min-w-0 items-center gap-1">
-        <span className="inline-flex min-w-0 items-center gap-1">
-          {props.location.kind === "remote" ? (
-            <EnvironmentMachineIcon
-              aria-hidden
-              kind={props.location.machine}
-              className={COMMAND_PALETTE_META_ICON_CLASS}
-            />
-          ) : null}
-          <span className="truncate">{props.location.label}</span>
-        </span>
-        <CommandPaletteMetaDot />
-        <span className="truncate">{props.workspaceRoot}</span>
-      </span>
-    );
-  }
-
-  return <span className="truncate">{props.environmentLabels.join(" · ")}</span>;
 }
 
 function getEnvironmentBrowsePlatform(os: string | null | undefined): string {
@@ -561,21 +530,9 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     openIntent: null,
   });
   const setOpen = useCallback((open: boolean) => dispatch({ _tag: "SetOpen", open }), []);
-  useScientAnalyticsView(
-    state.open
-      ? {
-          name: "feature.viewed",
-          properties: {
-            feature:
-              state.openIntent?.kind === "add-project"
-                ? "project-picker"
-                : state.openIntent?.kind === "new-thread-in"
-                  ? "new-thread"
-                  : "search",
-          },
-        }
-      : null,
-  );
+  // SCIENT-FORK:START — feature-view analytics
+  useScientCommandPaletteView(state.open, state.openIntent);
+  // SCIENT-FORK:END
   const toggleMode = useCallback(
     (mode: SearchOverlayMode) => dispatch({ _tag: "ToggleMode", mode }),
     [],
@@ -1000,23 +957,15 @@ function OpenCommandPaletteDialog(props: {
   const cloneLookupGeneration = useRef(0);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
+  // SCIENT-FORK:START — Scient project initialization on opening
   const {
-    initializeWithFeedback: initializeProjectWithFeedback,
-    inspection: projectInitializationInspection,
-    prepareForOpening: prepareScientProjectForOpening,
-    resolveDecision: resolveProjectInitializationDecision,
-  } = useScientProjectInitialization();
-  useLayoutEffect(() => {
-    if (!props.open) resolveProjectInitializationDecision("cancel");
-  }, [props.open, resolveProjectInitializationDecision]);
-  const handleProjectInitializationDecision = useCallback(
-    (decision: ScientProjectInitializationDecision) => {
-      // The opening attempt closes the picker at handoff, after registration
-      // and draft preparation. A setup choice alone isn't a navigation handoff.
-      resolveProjectInitializationDecision(decision);
-    },
-    [resolveProjectInitializationDecision],
-  );
+    initializeProjectWithFeedback,
+    projectInitializationInspection,
+    prepareScientProjectForOpening,
+    resolveProjectInitializationDecision,
+    handleProjectInitializationDecision,
+  } = useScientCommandPaletteProjectInitialization(props.open);
+  // SCIENT-FORK:END
   const projectPathInputRef = useRef<HTMLInputElement>(null);
   const projectGroupingSettings = useMemo(
     () => selectProjectGroupingSettings(clientSettings),
@@ -2032,24 +1981,9 @@ function OpenCommandPaletteDialog(props: {
     startAddProjectSourceSelection,
   ]);
 
-  // SCIENT-FORK:START — "New thread in…" also offers Add project. Adding one
-  // ends in a new thread in it, as opening a project does, so with no projects
-  // the picker is how New thread gets started.
-  const projectSnapshotsReady = useAtomValue(allEnvironmentProjectSnapshotsReadyAtom);
-  const newThreadAddProjectItem = useMemo(
-    (): CommandPaletteActionItem => ({
-      kind: "action",
-      value: "action:new-thread-in:add-project",
-      searchTerms: ["add project", "new project", "folder", "clone", "repository"],
-      title: "Add project",
-      icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
-      keepOpen: true,
-      run: async () => {
-        openAddProjectFlow();
-      },
-    }),
-    [openAddProjectFlow],
-  );
+  // SCIENT-FORK:START — "New thread in…" also offers Add project
+  const { projectSnapshotsReady, newThreadAddProjectItem } =
+    useScientNewThreadAddProjectItem(openAddProjectFlow);
   // SCIENT-FORK:END
 
   // New project starts on this device (options list it first); the name step
@@ -3742,9 +3676,9 @@ function OpenCommandPaletteDialog(props: {
         <TooltipTrigger
           render={
             <Button
+              variant="outline"
               size="xs"
               tabIndex={-1}
-              variant="outline"
               className="absolute inset-e-2.5 top-1/2 -translate-y-1/2"
               aria-label={`${remoteProjectButtonLabel ?? "Continue"} (Enter)`}
               disabled={!canSubmitRemoteProjectFlow}
@@ -3996,4 +3930,36 @@ function OpenCommandPaletteDialog(props: {
       />
     </CommandPaletteContent>
   );
+}
+
+function ProjectSearchDescription(props: {
+  readonly environmentLabels: ReadonlyArray<string>;
+  readonly grouped: boolean;
+  readonly location: {
+    readonly kind: "local" | "remote";
+    readonly label: string;
+    readonly machine: EnvironmentMachineKind;
+  };
+  readonly workspaceRoot: string;
+}) {
+  if (!props.grouped) {
+    return (
+      <span className="flex min-w-0 items-center gap-1">
+        <span className="inline-flex min-w-0 items-center gap-1">
+          {props.location.kind === "remote" ? (
+            <EnvironmentMachineIcon
+              aria-hidden
+              kind={props.location.machine}
+              className={COMMAND_PALETTE_META_ICON_CLASS}
+            />
+          ) : null}
+          <span className="truncate">{props.location.label}</span>
+        </span>
+        <CommandPaletteMetaDot />
+        <span className="truncate">{props.workspaceRoot}</span>
+      </span>
+    );
+  }
+
+  return <span className="truncate">{props.environmentLabels.join(" · ")}</span>;
 }

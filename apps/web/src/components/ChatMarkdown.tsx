@@ -197,13 +197,12 @@ import {
   BrowserSettingsReadError,
 } from "../browser/openFileInPreview";
 import {
-  resolveStreamingMarkdownDirection,
   resolvePlainTextBoxDirection,
   resolveFenceDirection,
   type ContentDirection,
   type FixedContentDirection,
 } from "../scient/bidi/contentDirection";
-import { useContentDirection } from "../scient/bidi/ContentDirectionScope";
+import { useChatContentDirection } from "../scient/bidi/useChatContentDirection";
 import { rehypeScientBidi } from "../scient/bidi/rehypeScientBidi";
 import "../scient/bidi/scient-bidi.css";
 import {
@@ -2189,40 +2188,15 @@ function useChatMarkdownState({
     [extraRemarkPlugins, incrementalParsing, lineBreaks],
   );
   const remarkPlugins = useScientMathRemarkPlugins(baseRemarkPlugins, textProp);
-  const scopedContentDirection = useContentDirection();
-  const effectiveContentDirection = contentDirection ?? scopedContentDirection;
-  const streamingDirectionRef = useRef<{
-    messageId: MessageId | null;
-    direction: FixedContentDirection;
-  } | null>(null);
-  if (
-    isStreaming &&
-    effectiveContentDirection === "auto" &&
-    streamingDirectionRef.current?.messageId !== (messageId ?? null)
-  ) {
-    streamingDirectionRef.current = {
-      messageId: messageId ?? null,
-      direction: resolveStreamingMarkdownDirection({
-        markdown: text,
-        requestedDirection: effectiveContentDirection,
-        messageDirectionHint: directionHint,
-        isStreaming: true,
-      }),
-    };
-  }
-  const frozenDirection =
-    effectiveContentDirection === "auto" &&
-    streamingDirectionRef.current?.messageId === (messageId ?? null)
-      ? streamingDirectionRef.current.direction
-      : null;
-  const resolvedContentDirection = resolveStreamingMarkdownDirection({
-    markdown: text,
-    requestedDirection: effectiveContentDirection,
-    messageDirectionHint: directionHint,
-    frozenDirection,
+  // SCIENT-FORK:START — message direction, held while an auto message streams
+  const { effectiveContentDirection, resolvedContentDirection } = useChatContentDirection({
+    text,
+    contentDirection,
+    messageId,
+    directionHint,
     isStreaming,
   });
-  if (!isStreaming) streamingDirectionRef.current = null;
+  // SCIENT-FORK:END
   const { resolvedTheme } = useTheme();
   const [localMediaPreview, setLocalMediaPreview] = useState<ExpandedImagePreview | null>(null);
   const markdownRef = useRef<HTMLDivElement>(null);

@@ -33,7 +33,6 @@ import {
   workEntryIndicatesToolNeutralStatus,
   workLogEntryIsToolLike,
   type TimelineEntry,
-  type TurnPlanEntry,
   type WorkLogEntry,
 } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
@@ -638,12 +637,6 @@ type MessagesTimelineRowContent =
       id: string;
       createdAt: string;
       proposedPlan: ProposedPlan;
-    }
-  | {
-      kind: "turn-plan";
-      id: string;
-      createdAt: string;
-      turnPlan: TurnPlanEntry;
     }
   | {
       kind: "working";
@@ -1427,22 +1420,12 @@ export function deriveMessagesTimelineRows(input: {
   );
   const activeWorkAnchor = activeToolEntries[0];
   const latestVisibleToolEntry = visibleActiveToolEntries.at(-1);
-  const latestRunningToolEntry = visibleActiveToolEntries.findLast((entry) => {
-    // SCIENT-FORK:START — a spawn row is live while any of its sub-agents work.
-    const spawn = entry.entry.agentSpawn;
-    return spawn
-      ? entry === latestVisibleToolEntry &&
-          ((spawn.workflowId !== null && input.liveAgentTaskIds?.has(spawn.workflowId)) === true ||
-            spawn.agentTaskIds.some((taskId) => input.liveAgentTaskIds?.has(taskId) === true))
-      : workEntryIsActiveTurnActivity(entry.entry);
-    // SCIENT-FORK:END
-  });
+  const latestRunningToolEntry = visibleActiveToolEntries.findLast((entry) =>
+    workEntryIsActiveTurnActivity(entry.entry),
+  );
   const latestToolKeepsActivityLive =
     latestRunningToolEntry !== undefined ||
     (latestVisibleToolEntry !== undefined &&
-      // SCIENT-FORK:START — a settled spawn row never reads as finished work.
-      latestVisibleToolEntry.entry.agentSpawn === undefined &&
-      // SCIENT-FORK:END
       workEntryIndicatesToolSuccess(latestVisibleToolEntry.entry));
   const latestToolFailed =
     latestRunningToolEntry === undefined &&
@@ -1492,9 +1475,7 @@ export function deriveMessagesTimelineRows(input: {
     if (activeWorkRow === null) return;
     nextRows.push(activeWorkRow);
     hasActivityRow ||= activeWorkRow.active;
-    // SCIENT-FORK:START — a spawn row expands in place; never as a tool group.
-    if (!activeWorkRow.expanded || activeWorkRow.entry.agentSpawn !== undefined) return;
-    // SCIENT-FORK:END
+    if (!activeWorkRow.expanded) return;
     nextRows.push(
       expandedWorkGroupRow(
         activeWorkRow.groupId,
@@ -1593,18 +1574,9 @@ export function deriveMessagesTimelineRows(input: {
     }
 
     if (timelineEntry.kind === "work") {
-      // SCIENT-FORK:START — a spawn row and a question/answer row each stand
-      // alone: they render their own component instead of joining a tool group.
-      if (
-        timelineEntry.entry.agentSpawn !== undefined ||
-        timelineEntry.entry.questionAnswer !== undefined
-      ) {
-        const spawn = timelineEntry.entry.agentSpawn;
-        if (spawn && workEntryIsInActiveRun(timelineEntry.entry)) {
-          hasActivityRow ||=
-            (spawn.workflowId !== null && input.liveAgentTaskIds?.has(spawn.workflowId) === true) ||
-            spawn.agentTaskIds.some((taskId) => input.liveAgentTaskIds?.has(taskId) === true);
-        }
+      // SCIENT-FORK:START — a question/answer row stands alone: it renders its
+      // own component instead of joining a tool group.
+      if (timelineEntry.entry.questionAnswer !== undefined) {
         nextRows.push({
           kind: "work",
           id: timelineEntry.id,
@@ -1767,16 +1739,6 @@ export function deriveMessagesTimelineRows(input: {
         id: timelineEntry.id,
         createdAt: timelineEntry.createdAt,
         proposedPlan: timelineEntry.proposedPlan,
-      });
-      continue;
-    }
-
-    if (timelineEntry.kind === "turn-plan") {
-      nextRows.push({
-        kind: "turn-plan",
-        id: timelineEntry.id,
-        createdAt: timelineEntry.createdAt,
-        turnPlan: timelineEntry.turnPlan,
       });
       continue;
     }
@@ -2231,8 +2193,6 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
     case "proposed-plan":
       return a.proposedPlan === (b as typeof a).proposedPlan;
 
-    case "turn-plan":
-      return a.turnPlan === (b as typeof a).turnPlan;
     case "event":
       return (
         a.projectedItem === (b as typeof a).projectedItem &&
