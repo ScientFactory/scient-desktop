@@ -26,6 +26,7 @@ import {
   type RunId,
   type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
+import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import * as DateTime from "effect/DateTime";
@@ -547,10 +548,7 @@ export function resolveThreadMetadataUpdateForNextTurn(input: {
   const nextModelSelection = input.nextModelSelection;
   const modelSelectionChanged =
     nextModelSelection !== undefined &&
-    (nextModelSelection.model !== input.currentModelSelection.model ||
-      nextModelSelection.instanceId !== input.currentModelSelection.instanceId ||
-      JSON.stringify(nextModelSelection.options ?? null) !==
-        JSON.stringify(input.currentModelSelection.options ?? null));
+    !modelSelectionsEqual(nextModelSelection, input.currentModelSelection);
   const branchChanged = input.nextBranch !== undefined && input.nextBranch !== input.currentBranch;
   if (!modelSelectionChanged && !branchChanged) {
     return null;

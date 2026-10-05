@@ -7,6 +7,7 @@ import {
   ANTIGRAVITY_DEFAULT_MODEL,
   ProviderDriverKind,
   type ServerProvider,
+  type ModelSelection,
 } from "@t3tools/contracts";
 import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -275,6 +276,92 @@ describe("resolveThreadMetadataUpdateForNextTurn", () => {
         nextBranch: "feature/current",
       }),
     ).toBeNull();
+  });
+
+  const options: ModelSelection["options"] = [
+    { id: "reasoningEffort", value: "high" },
+    { id: "fastMode", value: true },
+  ];
+
+  it.each([
+    {
+      label: "permuted options",
+      current: { ...modelSelection, options },
+      next: { ...modelSelection, options: options.toReversed() },
+    },
+    {
+      label: "omitted to empty options",
+      current: modelSelection,
+      next: { ...modelSelection, options: [] },
+    },
+    {
+      label: "empty to omitted options",
+      current: { ...modelSelection, options: [] },
+      next: modelSelection,
+    },
+  ])("does not write metadata for $label", ({ current, next }) => {
+    expect(
+      resolveThreadMetadataUpdateForNextTurn({
+        currentModelSelection: current,
+        nextModelSelection: next,
+        currentBranch: "feature/current",
+      }),
+    ).toBeNull();
+  });
+
+  it.each([
+    {
+      label: "provider instance",
+      next: { ...modelSelection, instanceId: ProviderInstanceId.make("codex-other"), options },
+    },
+    { label: "model", next: { ...modelSelection, model: "gpt-5.4-mini", options } },
+    {
+      label: "string option value",
+      next: { ...modelSelection, options: [{ id: "reasoningEffort", value: "low" }, options[1]!] },
+    },
+    {
+      label: "boolean option value",
+      next: { ...modelSelection, options: [options[0]!, { id: "fastMode", value: false }] },
+    },
+    {
+      label: "option identity",
+      next: { ...modelSelection, options: [options[0]!, { id: "otherMode", value: true }] },
+    },
+  ])("writes the exact selection when the $label changes", ({ next }) => {
+    expect(
+      resolveThreadMetadataUpdateForNextTurn({
+        currentModelSelection: { ...modelSelection, options },
+        nextModelSelection: next,
+        currentBranch: "feature/current",
+      }),
+    ).toEqual({ modelSelection: next });
+  });
+
+  it("preserves checkout updates and worktree reset with equivalent model options", () => {
+    expect(
+      resolveThreadMetadataUpdateForNextTurn({
+        currentModelSelection: { ...modelSelection, options },
+        nextModelSelection: { ...modelSelection, options: options.toReversed() },
+        currentBranch: "feature/thread",
+        nextBranch: "feature/checkout",
+      }),
+    ).toEqual({ branch: "feature/checkout", worktreePath: null });
+  });
+
+  it("preserves simultaneous model and checkout updates", () => {
+    const nextModelSelection = { ...modelSelection, model: "gpt-5.4-mini", options };
+    expect(
+      resolveThreadMetadataUpdateForNextTurn({
+        currentModelSelection: { ...modelSelection, options },
+        nextModelSelection,
+        currentBranch: "feature/thread",
+        nextBranch: "feature/checkout",
+      }),
+    ).toEqual({
+      modelSelection: nextModelSelection,
+      branch: "feature/checkout",
+      worktreePath: null,
+    });
   });
 });
 
