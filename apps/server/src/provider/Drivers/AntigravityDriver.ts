@@ -7,6 +7,7 @@ import {
   nodeRuntimeUnavailableMessage,
 } from "@t3tools/shared/nodeRuntime";
 import * as Crypto from "effect/Crypto";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -579,15 +580,18 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         instanceId,
         authMethod: auth.authMethod,
         controller: authFlow.controller,
-        stopSessions: adapter.stopAll().pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderSetupError({
-                instanceId,
-                operation: "stopSessions",
-                detail: "Scient could not stop active Antigravity sessions.",
-                cause,
-              }),
+        stopSessions: authFlow.stopProcesses.pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.failCause(cause)
+              : Effect.fail(
+                  new ProviderSetupError({
+                    instanceId,
+                    operation: "stopSessions",
+                    detail: "Scient could not stop active Antigravity sessions.",
+                    cause,
+                  }),
+                ),
           ),
         ),
         randomOwnerId: crypto.randomUUIDv4.pipe(

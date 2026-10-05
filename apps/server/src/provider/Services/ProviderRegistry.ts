@@ -25,7 +25,6 @@ import type {
   ProviderSkillActions,
   ProviderVoiceTranscriptCorrection,
 } from "../ProviderDriver.ts";
-import type { ProviderAdapterError } from "../Errors.ts";
 
 export type ProviderMaintenanceActionKind = "update";
 
@@ -143,11 +142,6 @@ export interface ProviderRegistryShape {
   readonly getVoiceTranscriptCorrectionForInstance: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ProviderVoiceTranscriptCorrection | undefined>;
-
-  /** Stop every live session using one shared provider runtime before mutating it. */
-  readonly stopProviderSessions: (
-    provider: ProviderDriverKind,
-  ) => Effect.Effect<void, ProviderAdapterError>;
 
   /**
    * Apply volatile maintenance-action state to one configured instance.

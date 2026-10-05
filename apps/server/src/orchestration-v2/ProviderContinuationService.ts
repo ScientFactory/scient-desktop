@@ -13,6 +13,20 @@ const encodeWorkIdentity = Schema.encodeSync(Schema.fromJsonString(Schema.Array(
 
 const CONTINUATION_MESSAGE_TEXT = "Background task completed.";
 
+function initiatedWorkRetryIdentity(
+  request: ProviderContinuationRequests.ProviderContinuationRequest,
+) {
+  const initiated = request.initiated;
+  return initiated === undefined
+    ? undefined
+    : encodeWorkIdentity([
+        initiated.providerInstanceId,
+        initiated.providerSessionId,
+        request.providerThreadId,
+        initiated.workId,
+      ]);
+}
+
 function delegatedCompletionText(taskIds: ReadonlyArray<string>): string {
   const taskList = taskIds.join(", ");
   return taskIds.length === 1
@@ -84,7 +98,10 @@ export const workerLive = Layer.effectDiscard(
       });
 
     const dispatchContinuation = Effect.fn("ProviderContinuationService.dispatchContinuation")(
-      function* (request: ProviderContinuationRequests.ProviderContinuationRequest) {
+      function* (
+        request: ProviderContinuationRequests.ProviderContinuationRequest,
+        initiatedIdentity: string | undefined,
+      ) {
         const projection = yield* threads.getThreadRecords(
           request.threadId,
           ["messages", "runs", "providerTurns"],
@@ -105,6 +122,7 @@ export const workerLive = Layer.effectDiscard(
               delegatedCompletionRetryKey(request, request.delegatedCompletion),
             );
           }
+          if (initiatedIdentity !== undefined) yield* clearRetryAttempt(initiatedIdentity);
           // No continuation turn will start to clear the adapter's sticky offer.
           if (request.clearIfCurrent !== undefined) {
             yield* request.clearIfCurrent();
@@ -116,16 +134,16 @@ export const workerLive = Layer.effectDiscard(
           return;
         }
         if (request.initiated !== undefined) {
-          if (request.dispatchIfCurrent === undefined || request.clearIfCurrent === undefined) {
+          if (
+            initiatedIdentity === undefined ||
+            request.dispatchIfCurrent === undefined ||
+            request.clearIfCurrent === undefined
+          ) {
+            if (initiatedIdentity !== undefined) yield* clearRetryAttempt(initiatedIdentity);
             if (request.clearIfCurrent !== undefined) yield* request.clearIfCurrent();
             return;
           }
-          const identity = encodeWorkIdentity([
-            request.initiated.providerInstanceId,
-            request.initiated.providerSessionId,
-            request.providerThreadId,
-            request.initiated.workId,
-          ]);
+          const identity = initiatedIdentity;
           const dispatch = threads.dispatch({
             type: "provider-work.admit",
             commandId: CommandId.make(`provider-work:${identity}`),
@@ -148,9 +166,6 @@ export const workerLive = Layer.effectDiscard(
                   Effect.forkScoped,
                 );
               }),
-            ),
-            Effect.catch((cause) =>
-              clearRetryAttempt(identity).pipe(Effect.andThen(Effect.fail(cause))),
             ),
           );
           return;
@@ -224,8 +239,9 @@ export const workerLive = Layer.effectDiscard(
     );
 
     yield* requests.take.pipe(
-      Effect.flatMap((request) =>
-        dispatchContinuation(request).pipe(
+      Effect.flatMap((request) => {
+        const initiatedIdentity = initiatedWorkRetryIdentity(request);
+        return dispatchContinuation(request, initiatedIdentity).pipe(
           Effect.catchCause((cause) =>
             Effect.gen(function* () {
               yield* Effect.logWarning("orchestration-v2.provider-continuation.dispatch-failed", {
@@ -234,6 +250,7 @@ export const workerLive = Layer.effectDiscard(
                 cause,
               });
               if (request.initiated !== undefined) {
+                if (initiatedIdentity !== undefined) yield* clearRetryAttempt(initiatedIdentity);
                 if (request.clearIfCurrent !== undefined) yield* request.clearIfCurrent();
               }
               if (request.delegatedCompletion !== undefined) {
@@ -270,8 +287,8 @@ export const workerLive = Layer.effectDiscard(
               }
             }),
           ),
-        ),
-      ),
+        );
+      }),
       Effect.forever,
       Effect.forkScoped,
     );

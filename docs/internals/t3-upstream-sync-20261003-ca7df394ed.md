@@ -726,3 +726,186 @@ the final hash repair and merge; it does not certify this combined candidate.
 Independent source and evidence review:
 `full-seam-batch-independent-integration-review-7ef738.md`. Other cleanup lanes,
 full runtime/build/archive checks and manual acceptance remain open.
+
+The composed provenance gate rejects both new owned merges because their second
+parents are newer than the frozen owned-main base. Exact reviewed owned merge
+receipts now record the ordered parents of `7ef738fb31` and `7a4fedcbbe`, with this
+committed maintainer record. The checker validates full IDs, unique receipts,
+actual ordered two-parent identity, inspected-history ancestry and a regular
+committed review record. It exempts only those exact edges; nested unapproved
+donor merges remain rejected. Official target, integration cursor, original base,
+historical donor exceptions and workflow admission modes remain unchanged.
+The complete eighteen-case provenance suite passes, including actual temporary
+Git histories proving reviewed-edge acceptance, exact-parent displacement, nested
+foreign rejection and untracked/symlink report refusal. Scripts compilation,
+scoped formatting/lint/diff and the actual provenance gate against original
+owned main and exact official target pass (`owned-merge-provenance-*-round1.txt`).
+The earlier static-round10 failure is retained as causal evidence. Final composed
+gates remain required after later integrations.
+
+The original D3 requirement now has actual WebSocket endpoint proof rather than
+only a URL predicate test. Absent, older, newer and malformed query protocols
+receive the exact HTTP 426 upgrade response before the live authentication service
+or V2 intake runs; a current HTTP header does not substitute for the required
+query. The positive control reaches actual authentication and an authenticated
+`server.getConfig` WebSocket RPC. The unchanged production admission gate already
+enforced this order. The complete server route file passes 242 cases, with scoped
+formatting/lint and whitespace checks clean. Round1 compilation passed before
+the final same-typed future-version test row; final combined compilation remains
+required. Independent review matches the exact final test and production blobs
+(`d3-ws-protocol-qualified-handoff-round2.md`,
+`d3-ws-protocol-independent-review-round2.md`). Installed-client upgrade and
+remote/mobile acceptance remain separate from this controlled endpoint proof.
+
+### Reviewed architecture and boundary composition
+
+The coordinator composition retains 37 independently reviewed maintainer Markdown
+paths, the owned OpenCode acknowledgement fix and canonical loaded-answer attention
+across server/web/mobile. The architecture documentation explicitly distinguishes
+live V2 execution from old-data readers; inherited test origin is determined from
+Scient-added assertions and fixture/parameter conditions, not title or filename.
+The branch keeps every upstream and owned parent. The skills-release mount repair
+classifies the actual Scient catalog and inherited workspace-manifest fixture,
+without weakening any seam checker or changing runtime behavior.
+
+The composed boundary qualification passes 463 focused cases across server, shared,
+web and mobile, all 32 compiler tasks and scoped formatting/lint. The separate OC2
+owned acknowledgement group passes 100 cases plus its compiler/style checks. Web
+logs retain existing React warnings. The current full seam suite passes after the
+previous two unclassified skills-release references were classified. The final
+provenance/WebSocket composition passes 18 provenance and 242 actual server-route
+cases, scripts/server compilers, scoped formatting/lint and whitespace. Independent
+frozen source reviews accept both incoming patches and the exact resolved tree
+`c6e81605ca603ac82e03099d142cd98c15583b5c`. These are bounded local evidence, not
+whole-candidate, vendor/platform or manual acceptance.
+
+Exact reviewed owned merge edges are recorded below and in upstream-state.json.
+Only their complete ordered vectors are admitted; nested ancestry remains audited.
+The original owned base, official target, integration cursor, historical exceptions
+and trusted workflow flags are unchanged. No runtime qualification is inferred
+from a provenance receipt.
+
+| Merge                                      | First parent                               | Second parent                              |
+| ------------------------------------------ | ------------------------------------------ | ------------------------------------------ |
+| `6dc7de1d74a288c404b9481874c6a77b1986e580` | `7ef738fb31cf7595142254dc8fe6dfd47523aa35` | `b180c89867f74fa67ef4cd008fd913c2292cb5e5` |
+| `649a9caa1e0a7eba51942bf84e475c3d9931a71e` | `6dc7de1d74a288c404b9481874c6a77b1986e580` | `2a672bd865b89e20768476643925b3e85fc2d90f` |
+| `7992b26bef3b9636e2a547c28d1393c8bc4749ac` | `649a9caa1e0a7eba51942bf84e475c3d9931a71e` | `238eb3d822faefa29aef40b1ef70193111b00f16` |
+| `a61371f826c605c8202267cee8a15cc3c7ecce83` | `3911b36ee87de0c827465a1886e0685aad495a74` | `d3bc827adf4fb19ca916355e9f07c6fab86dfac7` |
+
+V1 removal and remaining provider/context/queue preservation fixes still require
+reviewed composition. Final complete checks/build/smoke/package, independent full
+review, current documentation refresh and actual app/manual acceptance remain open.
+
+The broader maintainer review also confirms two stale explanations already in
+this candidate. Accepted fork navigation uses dialog-subtree removal followed
+by a layout commit, preserving source-leaving and retry guards even if an
+animation callback never arrives. Current V2 conversation export is supported;
+offline recovery of the untouched original V1 database is a separate procedure.
+The two paragraphs now match those boundaries. Independent source review:
+`docs-boundaries-independent-integration-review-3911b36.md`. The reviewed architecture-documentation batch is composed here; remaining
+migration guidance still needs a final refresh after core ports and deletion.
+These paragraph corrections do not qualify the whole guide or runtime acceptance.
+
+The desktop smoke gate previously reported success after its launched process
+exited early with code7 and no fatal text. The actual CLI reproduces that false
+pass. The repaired gate requires survival until requested shutdown, accepts only
+the intended graceful exit, rejects forced termination, and evaluates output
+after stream closure. Incomplete inherited pipes cause a bounded failure. The
+original eight-second survival and two-second grace limits are unchanged.
+Eleven real controlled subprocess cases pass, including early exits, launch
+failure, late fatal output and exact descendant cleanup; scoped lint and
+formatting pass without warnings. Independent review matches both integrated
+blobs (`desktop-smoke-gate-qualified-handoff.md`,
+`desktop-smoke-gate-independent-frozen-review.md`). Desktop compilation passes
+but excludes these standalone JavaScript files; actual execution and lint
+qualify them. This proves gate honesty on macOS controlled children, not
+Electron/backend/renderer readiness or Windows execution. Fresh built-app and
+packaged smoke remain required.
+
+The actual original-base provenance gate exposed one additional owned docs-lane
+synchronization edge already in the reviewed architecture ancestry. Record only
+`df7866c8d98f1d9bee15b17f033fa8ed1406d848`, ordered parents
+`fde2233486a4f03ad5577e89a858bcb38cbf88fd` and
+`c4aad71535abbd98c38659711b2cc47b1ab2fe5d`. Its non-documentation blobs
+match that retained alignment parent; nested history remains audited. The failed
+actual gate is retained as evidence, and must pass again on the final composition.
+
+The reviewed smoke/documentation composition retains both parents at
+`c1d9a5ea1d498403b5dc257286bf24f85c838353`, ordered
+`fbbfdd58c28fbc6988aee22d842452c94026d2fe` and
+`736d7c02183a978102b5a0bd2af92537be2b9ff8`. Exact resolved tree
+`8c6831d6cabbeed1ac36a70ce2fd6170f9c6ed28` passes eleven real controlled
+smoke-gate cases, scoped formatting/lint/whitespace and the complete seam path
+classification against frozen upstream `ca7df394ed8151fa77f856beefa90bc60a785d60`.
+The first seam invocation used the old stored cursor and refused V2 mount
+classification; the corrected explicit target/index check passes without changing
+any manifest or checker. Independent frozen composition review preserves all
+rich V2 migration/fork rules and matches both smoke script blobs. Actual final
+ancestry qualification, built-app/packaged smoke and manual acceptance are
+separate gates; none is inferred from this merge receipt.
+
+The independently reviewed divergence inventory is integrated at `687b37199c8f322dfe6d155c7fe0f8ed25c0b42f`, with ordered parents `19efc756b53128a4b94dea5d011746b3ddc26d13` and `66f598c48ee968e27b1a53ed1316a3d98549fdcc`. Its three new script/test/guide blobs match the reviewed donor; the maintainer index adds one guide link. Exact composed qualification passes 29 Node regressions, scripts typecheck, scoped formatting/lint and whitespace checks. Executable-alias invocation and required source-blob validation retain their fail-closed regression coverage. The inventory remains advisory: unresolved scope and historical debt stay visible, and no reviewed-debt baseline or CI activation is introduced. This metadata-only delivery preserves the existing development-signing repair and changes no runtime behavior or upstream cursor. Final composed qualification and application acceptance remain separate.
+
+### Whole-alignment client quality and controlled app acceptance
+
+The reviewed client composition reaches `c988124a4d7862dc343bd0da196c428bbeabe66d`
+(tree `a717c541ef5640ad3ef4fcce6c141412a0e130b7`), retaining the preceding
+`f026c5b906df4b45c5a2bb2e7566e73de3db3271` unused V1 registry removal. All
+fourteen integrated client blobs equal their independently reviewed donors;
+unrelated compiler configuration is preserved. This work extends the original
+alignment quality scope beyond the defect handoff.
+
+- Compute and slow-request receipts honor the saved clock preference, retain
+  local date/year where required, and omit malformed times. Donor
+  `6e2f7ff8e02b8faa29823290ff20cfd4ceabbf9c` has 73 passing cases across three
+  complete files, a passing web compiler and formatting checks. Executed baseline
+  comparison confirms the same 17 existing lint warnings, with none added.
+- Mobile shows an unsupported requested access mode without inventing a selected
+  effective mode or changing server permission policy. Outbox and option-memory
+  consumers use canonical model-selection equality: equivalent option ordering
+  or omitted/empty options cause no redundant metadata update; real changes still
+  synchronize before delivery. Donor
+  `c75fbdd2c16d7f5248d58b99cc57f5a95ad2ce9e` has 100 passing cases across eight
+  complete files, passing mobile/shared compilers and formatting, and no new lint
+  warnings. Actual mounted settings and outbox delivery paths are covered;
+  native mobile interaction remains separate.
+
+The separate synthetic app stays frozen at
+`19efc756b53128a4b94dea5d011746b3ddc26d13`. Actual browser actions through
+production V2 persistence and controlled ACP stdio establish the following bounded
+conditions; they do not qualify the newer composition or live vendor accounts:
+
+- An ordinary-answer fork shows one Scient boundary and no redundant initial
+  generic handoff. A later explicit provider-instance change shows its handoff.
+  Backend context delivery remains intact.
+- Actual SCIC upload/preview/import, application export and reimport retain inert
+  historical approval/tool/plan/reasoning/system history. New current-owner live
+  approval requests survive reload and settle once through Approve/Decline;
+  changing future permissions is exercised independently of historical authority.
+- Successful unheld work drains automatically in FIFO order. Stop retains a hold
+  across reload and later foreground completion; idle keyboard reorder, held-head
+  Send and explicit whole-queue Resume are exercised. Text-only queued-edit
+  extraction, Stop/reload recovery and ordinary-draft stash restoration pass.
+- A real controlled-peer transport closure fails the running turn while holding
+  its queued successor across reload. One explicit Resume receipt releases it;
+  bounded SQL through sequence787 and one native completion prove delivery with
+  captured Supervised permissions unchanged. The earlier custom error-marker
+  simulation remains unqualified as failure evidence.
+
+External evidence and independent audits are in
+`reviews/orchestration-v2-alignment-20261003/`: `interim-browser-acceptance-19ef.md`,
+`queue-real-transport-failure-19ef.md`,
+`queue-transport-failure-edit-stop-independent-evidence-audit-19ef.md`,
+`receipt-clock-qualified-handoff.md`, and
+`mobile-policy-equality-local-commit-handoff.md`. These task records are in the
+umbrella workspace, not product runtime inputs.
+
+The startup wrapper timed out awaiting owned log markers; separate process,
+endpoint and browser observations establish the live app, not a passing startup
+marker gate. Current native window/PDF Save, screenshots, pointer drag, multiwindow
+edit ownership, final-source scientific surfaces and full app acceptance remain
+unqualified. The earlier successful native PDF proof belongs to its older exact
+candidate. Aggregate attachment preflight, remaining core/provider composition,
+dependency-ordered cleanup, final documentation/catalog refresh, complete local
+gates/build/artifact checks and independent final review remain active. No whole
+alignment or manual-review readiness is inferred from these scoped results.

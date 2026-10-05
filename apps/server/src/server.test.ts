@@ -1001,7 +1001,6 @@ const buildAppUnderTest = (options?: {
               getVoiceTranscriptCorrectionForInstance: () =>
                 // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
                 Effect.succeed<ProviderVoiceTranscriptCorrection | undefined>(undefined),
-              stopProviderSessions: () => Effect.void,
               setProviderManagedRuntimeSummary: () => Effect.succeed([]),
               setProviderMaintenanceActionState: () => Effect.succeed([]),
               setProviderConnectionOperation: () => Effect.succeed([]),
@@ -1433,6 +1432,7 @@ const buildAppUnderTest = (options?: {
     const services = yield* Layer.build(appLayer);
     return {
       ...config,
+      auth: Context.get(services, EnvironmentAuth.EnvironmentAuth),
       v2: {
         threads: Context.get(services, ThreadManagementV2.ThreadManagementService),
         orchestrator: Context.get(services, OrchestratorV2.OrchestratorV2),
@@ -4573,6 +4573,81 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
 
       assert.equal(response.status, 401);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  for (const [label, protocol] of [
+    ["absent", null],
+    ["old", String(ORCHESTRATION_PROTOCOL_VERSION - 1)],
+    ["newer", String(ORCHESTRATION_PROTOCOL_VERSION + 1)],
+    ["invalid", "not-a-protocol"],
+  ] as const) {
+    it.effect(`rejects ${label} WebSocket protocol before authentication or RPC`, () =>
+      Effect.gen(function* () {
+        const app = yield* buildAppUnderTest();
+        // Observe the exact memoized live auth service; the spy delegates rather
+        // than replacing the production authentication decision.
+        const authenticate = vi.spyOn(app.auth, "authenticateWebSocketUpgrade");
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            authenticate.mockRestore();
+          }),
+        );
+        const url = new URL(yield* getHttpServerUrl("/ws"));
+        if (protocol !== null) url.searchParams.set(ORCHESTRATION_PROTOCOL_QUERY_PARAM, protocol);
+        const response = yield* fetchEffect(url.toString(), {
+          headers: {
+            authorization: "Bearer synthetic-invalid-protocol-credential",
+            [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
+          },
+        });
+        const body = yield* response.json;
+        assert.equal(response.status, 426);
+        assert.deepEqual(body, {
+          code: "orchestration_protocol_incompatible",
+          message: `Update this client to one that supports orchestration protocol ${ORCHESTRATION_PROTOCOL_VERSION}.`,
+          orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+        });
+        assert.equal(authenticate.mock.calls.length, 0);
+        assert.equal(yield* app.v2.eventSink.latestSequence(), 0);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    );
+  }
+
+  it.effect("preserves authentication and real RPC for the current WebSocket protocol", () =>
+    Effect.gen(function* () {
+      const app = yield* buildAppUnderTest();
+      const authenticate = vi.spyOn(app.auth, "authenticateWebSocketUpgrade");
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          authenticate.mockRestore();
+        }),
+      );
+      const url = new URL(yield* getHttpServerUrl("/ws"));
+      url.searchParams.set(ORCHESTRATION_PROTOCOL_QUERY_PARAM, ORCHESTRATION_PROTOCOL_VERSION_TEXT);
+      const response = yield* fetchEffect(url.toString());
+      const body = yield* responseJsonEffect<{
+        readonly _tag: string;
+        readonly code: string;
+        readonly reason: string;
+        readonly traceId: string;
+      }>(response);
+      assert.equal(response.status, 401);
+      assert.equal(body._tag, "EnvironmentAuthInvalidError");
+      assert.equal(body.code, "auth_invalid");
+      assert.equal(body.reason, "missing_credential");
+      assert.isString(body.traceId);
+      assert.equal(authenticate.mock.calls.length, 1);
+
+      const config = yield* Effect.scoped(
+        withWsRpcClient(yield* getWsServerUrl("/ws"), (client) =>
+          client[WS_METHODS.serverGetConfig]({}),
+        ),
+      );
+      assert.equal(config.environment.environmentId, testEnvironmentDescriptor.environmentId);
+      assert.equal(config.auth.policy, "desktop-managed-local");
+      assert.equal(authenticate.mock.calls.length, 2);
+      assert.equal(yield* app.v2.eventSink.latestSequence(), 0);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

@@ -137,7 +137,21 @@ export function makeAntigravityAcpAdapterFlavor(
       const scope = yield* Effect.scope;
       const platform = yield* HostProcessPlatform;
       const runtime = yield* options.withProcess(
-        Scope.close(scope, Exit.void),
+        Scope.close(scope, Exit.void).pipe(
+          // Closing the reader's scope can interrupt its EOF notification.
+          // Retire this runtime generation explicitly so the next turn respawns.
+          Effect.ensuring(
+            Effect.suspend(
+              () =>
+                input.onTermination?.(
+                  new EffectAcpErrors.AcpTransportError({
+                    detail: "The Antigravity process stopped for account setup.",
+                    cause: "Antigravity auth owner closed the process scope",
+                  }),
+                ) ?? Effect.void,
+            ),
+          ),
+        ),
         options.makeRuntime({
           ...input,
           clientFileSystem: true,

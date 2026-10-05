@@ -172,31 +172,29 @@ export const make = Effect.gen(function* () {
       );
       let fromCheckpointRef;
       if (input.fromTurnCount === 0) {
-        // A new workspace can first enter at a nonzero thread ordinal. Use its
-        // earliest recorded ready boundary, including historical roots at that cwd.
-        fromCheckpointRef = baselines.toSorted(
+        // Historical roots can predate baseline metadata. Their implicit zero
+        // still precedes a newer ready boundary in the same workspace.
+        const implicitLegacyBaselines = workspaceRoots.flatMap((scope) =>
+          isWorkspaceBoundRootScopeId(scope.id) ||
+          projection.checkpoints.some(
+            (checkpoint) =>
+              checkpoint.scopeId === scope.id &&
+              checkpoint.runId === null &&
+              checkpoint.appRunOrdinal === null,
+          )
+            ? []
+            : [
+                {
+                  scopeId: scope.id,
+                  ordinalWithinScope: 0,
+                  ref: checkpointRefForScopeOrdinal({ scopeId: scope.id, ordinalWithinScope: 0 }),
+                },
+              ],
+        );
+        fromCheckpointRef = [...baselines, ...implicitLegacyBaselines].toSorted(
           (a, b) =>
             a.ordinalWithinScope - b.ordinalWithinScope || a.scopeId.localeCompare(b.scopeId),
         )[0]?.ref;
-        if (fromCheckpointRef === undefined) {
-          const legacyRoot = workspaceRoots
-            .toSorted((a, b) => a.id.localeCompare(b.id))
-            .find(
-              (scope) =>
-                !isWorkspaceBoundRootScopeId(scope.id) &&
-                !projection.checkpoints.some(
-                  (checkpoint) =>
-                    checkpoint.scopeId === scope.id &&
-                    checkpoint.runId === null &&
-                    checkpoint.appRunOrdinal === null,
-                ),
-            );
-          if (legacyRoot !== undefined)
-            fromCheckpointRef = checkpointRefForScopeOrdinal({
-              scopeId: legacyRoot.id,
-              ordinalWithinScope: 0,
-            });
-        }
       } else {
         const fromCheckpoint = readyCheckpoints.find(
           (checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount,

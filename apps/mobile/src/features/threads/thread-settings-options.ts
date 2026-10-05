@@ -44,15 +44,6 @@ export function runtimeModeChoicesForSupportedModes(
     : RUNTIME_MODE_CHOICES;
 }
 
-export function compatibleRuntimeModeForChoices(
-  runtimeMode: RuntimeMode,
-  choices: ReadonlyArray<{ readonly mode: RuntimeMode }>,
-): RuntimeMode {
-  return choices.some((choice) => choice.mode === runtimeMode)
-    ? runtimeMode
-    : (choices[0]?.mode ?? runtimeMode);
-}
-
 export function selectableChoices(
   descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
 ) {

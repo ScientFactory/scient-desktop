@@ -6,18 +6,21 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { ProviderInstanceId, ThreadId, type ProviderRuntimeEvent } from "@t3tools/contracts";
+import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
 import type { ResolvedModelConnection } from "../../customModels.ts";
-import { makeOmpAdapter } from "../Layers/OmpAdapter.ts";
+import { nativeOmpSession, watchNativeOmpTextTurn } from "../testUtils/nativeOmpSession.ts";
 import { makeOmpCustomModelsClientFactory } from "./OmpCustomModels.ts";
 import * as OmpExecutableGate from "./OmpExecutableGate.ts";
 import { ompLiveInstance, ompQualifyBinary, ompQualifyTarget } from "./OmpLive.testFixtures.ts";
+
+class NativeForkFixtureError extends Error {
+  readonly _tag = "NativeForkFixtureError";
+}
 
 /** Real RPC and native tools; only the model is a loopback stub. */
 describe.runIf(ompQualifyBinary)("real Oh My Pi fork history", () => {
@@ -78,16 +81,16 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi fork history", () => {
                     message.content.some((part) => part.type === "image_url"),
                 );
                 if (contextPath === undefined) {
-                  const line = texts
-                    .flatMap((text) => text.split("\n"))
-                    .find(
-                      (line) =>
-                        line.startsWith('"') &&
-                        line.includes("scient-context-") &&
-                        line.endsWith('.txt"'),
-                    );
-                  if (!line) throw new Error("Missing context file in native model input");
-                  contextPath = JSON.parse(line) as string;
+                  const encodedPath = texts
+                    .flatMap((text) =>
+                      [
+                        ...text.matchAll(/"(?:[^"\\]|\\.)*scient-prompt-(?:[^"\\]|\\.)*\.txt"/gu),
+                      ].map((match) => match[0]),
+                    )
+                    .find((path) => path.length > 0);
+                  if (!encodedPath)
+                    throw new NativeForkFixtureError("Missing context file in native model input");
+                  contextPath = JSON.parse(encodedPath) as string;
                 } else {
                   const last = body.messages.filter((message) => message.role === "tool").at(-1);
                   const output =
@@ -99,7 +102,7 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi fork history", () => {
                     .filter((line) => /^[A-Za-z0-9+/=]+$/u.test(line))
                     .join("");
                   if (Buffer.from(encoded, "base64").toString("utf8") !== chunks[delivered])
-                    throw new Error(
+                    throw new NativeForkFixtureError(
                       `Native tool did not deliver complete chunk ${delivered}: ${output.length} bytes: ${output.slice(0, 400)} ... ${output.slice(-200)}`,
                     );
                   delivered += 1;
@@ -156,7 +159,8 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi fork history", () => {
             () => new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve)),
           );
           const address = server.address();
-          if (!address || typeof address === "string") throw new Error("Stub did not listen");
+          if (!address || typeof address === "string")
+            throw new NativeForkFixtureError("Stub did not listen");
           const instanceId = ProviderInstanceId.make("omp-fork-live");
           const connection: ResolvedModelConnection = {
             id: "stub",
@@ -197,37 +201,28 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi fork history", () => {
             "base64",
           );
           NodeFS.writeFileSync(NodePath.join(attachmentsDir, "fork-image.png"), image);
-          const adapter = yield* makeOmpAdapter({
+          const threadId = ThreadId.make("omp-fork-live-thread");
+          const modelSelection = createModelSelection(instanceId, "scient_stub/context");
+          const options = {
+            root,
             target: ompQualifyTarget,
             binaryPath: ompQualifyBinary!,
-            providerInstanceId: instanceId,
+            instanceId,
+            threadId,
+            modelSelection,
             stateDir,
             attachmentsDir,
             environment,
             homePath,
             makeProcess: factory,
-          });
-          const terminals = yield* Queue.unbounded<ProviderRuntimeEvent>();
-          yield* adapter.streamEvents.pipe(
-            Stream.runForEach((event) =>
-              event.type === "turn.completed" || event.type === "turn.aborted"
-                ? Queue.offer(terminals, event)
-                : Effect.void,
-            ),
-            Effect.forkScoped,
-          );
-          const threadId = ThreadId.make("omp-fork-live-thread");
-          yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
-          const modelSelection = createModelSelection(instanceId, "scient_stub/context");
-          expect(yield* adapter.getModelContextWindow({ threadId, modelSelection })).toBe(
-            1_000_000,
-          );
-          yield* adapter.sendTurn({
-            threadId,
-            input: prompt,
-            originalInput: "Continue using the complete history and attached image.",
-            hasContextPreamble: true,
-            modelSelection,
+          };
+          const session = yield* nativeOmpSession(options);
+          const capacity = session.runtime.getModelContextWindow;
+          if (!capacity) return yield* Effect.die("Missing native model capacity getter");
+          expect(capacity(modelSelection)).toBe(1_000_000);
+          const completed = yield* watchNativeOmpTextTurn(session.events);
+          yield* session.start({
+            text: prompt,
             attachments: [
               {
                 type: "image",
@@ -238,26 +233,22 @@ describe.runIf(ompQualifyBinary)("real Oh My Pi fork history", () => {
               },
             ],
           });
-          const terminal = yield* Queue.take(terminals).pipe(Effect.timeout("120 seconds"));
+          const answer = yield* completed.pipe(Effect.timeout("120 seconds"));
           expect(failure).toBeUndefined();
-          expect(terminal.type).toBe("turn.completed");
+          expect(answer).toBe("All retained history and the image were received.");
           expect(delivered).toBe(chunks.length);
           expect(sawImage).toBe(true);
-          const resumeCursor = (yield* adapter.listSessions()).find(
-            (session) => session.threadId === threadId,
-          )?.resumeCursor;
-          expect(resumeCursor).toBeDefined();
-          yield* adapter.stopAll();
+          const prior = session.latestProviderThread();
+          expect(prior.nativeMetadata?.resumeCursor).toBeDefined();
+          yield* session.close;
           expect(contextPath).toBeDefined();
           expect(NodeFS.existsSync(contextPath!)).toBe(false);
-          const resumed = yield* adapter.startSession({
-            threadId,
-            cwd: root,
-            runtimeMode: "full-access",
-            resumeCursor,
-          });
-          expect(resumed.status).toBe("ready");
-          yield* adapter.stopAll();
+          const resumed = yield* nativeOmpSession({ ...options, resumeProviderThread: prior });
+          expect(resumed.runtime.providerSession.status).toBe("ready");
+          expect(resumed.providerThread.nativeThreadRef?.nativeId).toBe(
+            prior.nativeThreadRef?.nativeId,
+          );
+          yield* resumed.close;
         }),
       ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer))),
     180_000,

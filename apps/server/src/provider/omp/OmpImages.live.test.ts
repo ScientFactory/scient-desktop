@@ -8,7 +8,7 @@ import * as NodeZlib from "node:zlib";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { ProviderInstanceId, ThreadId, type ProviderRuntimeEvent } from "@t3tools/contracts";
+import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -16,7 +16,8 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
 import type { ResolvedModelConnection } from "../../customModels.ts";
-import { makeOmpAdapter } from "../Layers/OmpAdapter.ts";
+import { nativeOmpSession } from "../testUtils/nativeOmpSession.ts";
+import type { ProviderAdapterV2Event } from "../../orchestration-v2/ProviderAdapter.ts";
 import * as OmpExecutableGate from "./OmpExecutableGate.ts";
 import { makeOmpCustomModelsClientFactory } from "./OmpCustomModels.ts";
 import { ompLiveInstance, ompQualifyBinary, ompQualifyTarget } from "./OmpLive.testFixtures.ts";
@@ -218,34 +219,33 @@ describe.runIf(binary)("real Oh My Pi image attachments", () => {
             instanceId,
             NodePath.join(root, "state"),
           );
-          const adapter = yield* makeOmpAdapter({
+          const threadId = ThreadId.make("omp-images-live-thread");
+          const session = yield* nativeOmpSession({
+            root,
+            threadId,
+            modelSelection: createModelSelection(instanceId, "scient_stub/vision"),
             target: ompQualifyTarget,
             binaryPath: binary!,
-            providerInstanceId: instanceId,
+            instanceId,
             stateDir: NodePath.join(root, "state"),
             attachmentsDir: attachments,
             environment,
             homePath,
             makeProcess: factory,
           });
-          const terminals = yield* Queue.unbounded<ProviderRuntimeEvent>();
-          yield* adapter.streamEvents.pipe(
+          const terminals = yield* Queue.unbounded<ProviderAdapterV2Event>();
+          yield* session.events.pipe(
             Stream.runForEach((event) =>
-              event.type === "turn.completed" || event.type === "turn.aborted"
-                ? Queue.offer(terminals, event)
-                : Effect.void,
+              event.type === "turn.terminal" ? Queue.offer(terminals, event) : Effect.void,
             ),
             Effect.forkScoped,
           );
-          const threadId = ThreadId.make("omp-images-live-thread");
-          yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
           const send = (id: string, side: number) =>
             Effect.gen(function* () {
               const image = noisePng(side);
               NodeFS.writeFileSync(NodePath.join(attachments, `${id}.png`), image);
-              yield* adapter.sendTurn({
-                threadId,
-                input: "Describe the attached image.",
+              yield* session.start({
+                text: "Describe the attached image.",
                 attachments: [
                   {
                     type: "image",
@@ -255,10 +255,11 @@ describe.runIf(binary)("real Oh My Pi image attachments", () => {
                     sizeBytes: image.length,
                   },
                 ],
-                modelSelection: createModelSelection(instanceId, "scient_stub/vision"),
               });
               const terminal = yield* Queue.take(terminals).pipe(Effect.timeout("60 seconds"));
-              expect(terminal.type).toBe("turn.completed");
+              expect(terminal.type).toBe("turn.terminal");
+              if (terminal.type !== "turn.terminal") throw new Error("Missing native terminal");
+              expect(terminal.status).toBe("completed");
               return image.length;
             });
 
@@ -277,7 +278,7 @@ describe.runIf(binary)("real Oh My Pi image attachments", () => {
           // tool's result adds the large one to the second.
           expect(large[0]).toEqual({ imageParts: 1, toolResult: false });
           expect(large[1]).toEqual({ imageParts: 2, toolResult: true });
-          yield* adapter.stopAll();
+          yield* session.close;
         }),
       ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer))),
     180_000,

@@ -185,6 +185,22 @@ current owned main. In the receipt, retain the original owned base and upstream 
 record the owned-main commit and catch-up merge ID. The catch-up does not advance `integrationBase`
 or replace `lastRefreshMerge` with an owned-main merge.
 
+### Compose reviewed owned implementation branches
+
+Preserve authored Scient branch history when integrating an independently reviewed
+implementation batch. Record each introduced owned merge in
+`upstream-state.json`'s `ownedIntegrationMerges`: a unique ID, full merge commit,
+its two full ordered parent commits, and a committed maintainer review record
+under `docs/`. The provenance checker requires the exact actual parent vector,
+the merge in the inspected candidate's history, and a regular nonempty review
+record committed in that candidate. A local or symlinked report is insufficient.
+
+This records only the exact reviewed merge edges. Every nested merge introduced
+by the implementation branch is still checked; an owned branch must not carry
+an unreviewed upstream PR parent. Keep the original owned base, official target,
+historical donor exceptions and trusted queue/push modes unchanged. An owned
+composition does not advance `integrationBase` or qualify runtime behavior.
+
 ## 4. Audit protected seams
 
 Every alignment explicitly reviews:
@@ -211,10 +227,12 @@ entire staged diff for conflict markers, duplicated branches, stale product copy
 changes, and silently reintroduced upstream authority. Regenerate generated artifacts and lockfiles
 from the composed sources; do not hand-edit generated conflict blocks.
 
-Before deleting superseded code, list Scient behaviors proved only by its tests. Drop rows from
-upstream's own tests: upstream already chose which to delete or retain. Group the remaining rows
-by feature; mark a behavior **covered** when a live replacement test already asserts it, and port
-only real gaps. Test counts or matching filenames do not establish equivalent behavior.
+Before deleting superseded code, inventory Scient-added assertions and fixture or parameter
+conditions, including those inside inherited upstream tests. Exclude only untouched upstream-only
+conditions. Group the remaining promises by feature; mark a behavior **covered** only when a live
+replacement test asserts its deciding conditions, and port real gaps. Test titles, file origin,
+import reachability and test counts do not establish origin or equivalent behavior. Unresolved
+Scient conditions block deletion of their only proving path.
 
 ### 5.1 Read an error count only when the syntax gate is open
 

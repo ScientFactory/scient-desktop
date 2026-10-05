@@ -341,6 +341,8 @@ export interface AcpAdapterV2Flavor {
   readonly approvalOptions?: (
     request: EffectAcpSchema.RequestPermissionRequest,
   ) => ReadonlyArray<ProviderApprovalOption>;
+  /** Scient remembers the session grant when this agent only accepts allow-once on the wire. */
+  readonly allowOnceForSessionApproval?: boolean;
   /**
    * Activate saved sessions with `session/resume` before `session/load` when
    * the agent supports both. Antigravity's load replays history slowly.
@@ -5730,7 +5732,7 @@ export function makeAcpAdapterV2(
                 }
                 const optionId =
                   selectPermissionOptionId(params, decision) ??
-                  (decision === "acceptForSession"
+                  (decision === "acceptForSession" && flavor.allowOnceForSessionApproval === true
                     ? selectPermissionOptionId(params, "accept")
                     : undefined);
                 return optionId === undefined
@@ -5844,9 +5846,9 @@ export function makeAcpAdapterV2(
                   const enumValues = Array.isArray(record?.enum)
                     ? record.enum.filter((value): value is string => typeof value === "string")
                     : [];
-                  const titledOptions = Array.isArray(record?.oneOf)
-                    ? record.oneOf.flatMap((entry) => {
-                        const option = unknownRecord(entry);
+                  const namedOptions = Array.isArray(record?.oneOf)
+                    ? record.oneOf.flatMap((choice) => {
+                        const option = unknownRecord(choice);
                         return typeof option?.const === "string"
                           ? [
                               {
@@ -5858,8 +5860,8 @@ export function makeAcpAdapterV2(
                       })
                     : [];
                   const options =
-                    titledOptions.length > 0
-                      ? titledOptions
+                    namedOptions.length > 0
+                      ? namedOptions
                       : enumValues.length > 0
                         ? enumValues.map((value) => ({ label: value, description: value }))
                         : record?.type === "boolean"

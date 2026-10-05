@@ -46,7 +46,6 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
-  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
@@ -179,13 +178,15 @@ import {
   type ComposerBannerStackContent,
   type ComposerBannerStackItem,
 } from "./ComposerBannerStack";
-import { compressImageForStash, prepareImageForAttachment } from "../../lib/imageCompression";
+import { compressImageForStash } from "../../lib/imageCompression";
+import { stageComposerAttachmentBatch } from "./composerAttachmentStaging";
 import {
   fileAttachmentTooLargeMessage,
   formatAttachmentSize,
 } from "@t3tools/client-runtime/state/attachments";
 import {
   attachmentsToReleaseOnUploadCapabilityLoss,
+  composerDraftAttachmentFacts,
   composerOtherFilesForPresentation,
   classifyComposerAttachmentFile,
   fileAttachmentCapabilityBlockReason,
@@ -5958,26 +5959,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Callbacks: attachments
   // ------------------------------------------------------------------
-  const countReservedAttachments = () => {
+  const otherQuestionAttachmentKeys = () => {
     const questionRequest = pendingUserInputs[0];
-    const otherQuestionKeys =
-      questionAttachmentTarget && questionRequest && activeThreadId
-        ? questionRequest.questions
-            .map((question) =>
-              questionAttachmentDraftId(
-                environmentId,
-                activeThreadId,
-                questionRequest.requestId,
-                question.id,
-              ),
-            )
-            .filter((key) => key !== questionAttachmentTarget)
-        : [];
+    return questionAttachmentTarget && questionRequest && activeThreadId
+      ? questionRequest.questions
+          .map((question) =>
+            questionAttachmentDraftId(
+              environmentId,
+              activeThreadId,
+              questionRequest.requestId,
+              question.id,
+            ),
+          )
+          .filter((key) => key !== questionAttachmentTarget)
+      : [];
+  };
+  const countReservedAttachments = () => {
     return (
       composerImagesRef.current.length +
       composerFilesRef.current.length +
       (pendingImageCompressionsRef.current.get(attachmentTargetKey) ?? 0) +
-      countQuestionAttachments(otherQuestionKeys)
+      countQuestionAttachments(otherQuestionAttachmentKeys())
     );
   };
   /** Resolves true when at least one chip was inserted for the accepted attachments. */
@@ -6096,32 +6098,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
     }
     setThreadError(threadId, error);
-    let insertedAny = false;
-    if (acceptedFiles.length > 0) {
-      // Only files the draft actually took get a chip; a duplicate is deduped by the store
-      // and a chip for it would point at nothing.
-      const storedIds = new Set(addComposerFilesToDraft(acceptedFiles));
-      const storedFiles = acceptedFiles.filter((file) => storedIds.has(file.id));
-      if (storedFiles.length > 0) {
-        insertedAny = insertAttachmentReferences(
-          storedFiles.map(fileContextReference),
-          options?.selection,
-        );
-      }
-      if (options?.source?._tag === "pasted-text" && storedFiles.length > 0) {
-        const attached = storedFiles[0]!;
-        toastManager.add({
-          type: "info",
-          title: `Large paste attached as ${attached.name}`,
-          description: `${formatAttachmentSize(attached.sizeBytes)} · Use ${
-            isMacPlatform(navigator.platform) ? "⌘⇧V" : "Ctrl+Shift+V"
-          } to keep a large paste inline.`,
-          data: { hideCopyButton: true },
-        });
-      }
-    }
-    if (acceptedImages.length === 0) return insertedAny;
-
+    // Reserve all async image slots before conversion. Files are staged only
+    // with the admitted batch, so a byte-limit rejection leaves the draft intact.
     pendingImageCompressionsRef.current.set(
       attachmentTargetKey,
       pendingCount + acceptedImages.length,
@@ -6129,60 +6107,83 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (questionAttachmentTarget)
       changeQuestionAttachmentPreparation(questionAttachmentTarget, acceptedImages.length);
     try {
-      const nextImages: ComposerImageAttachment[] = [];
-      let compressionError: string | null = null;
-      for (const file of acceptedImages) {
-        // Images over the wire cap are downscaled to fit rather than
-        // refused; files already within it pass through byte-for-byte.
-        const compressed = await prepareImageForAttachment(
-          file,
-          PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
-        );
-        if (!compressed.ok) {
-          compressionError =
-            compressed.reason === "unreadable"
-              ? `'${file.name}' could not be read as an image.`
-              : `'${file.name}' is too large to attach, even after compression.`;
-          continue;
-        }
-        const attachmentFile = compressed.file;
-        const previewUrl = URL.createObjectURL(attachmentFile);
-        nextImages.push({
-          type: "image",
-          id: randomUUID(),
-          name: attachmentFile.name || "image",
-          mimeType: attachmentFile.type,
-          sizeBytes: attachmentFile.size,
-          previewUrl,
-          file: attachmentFile,
-        });
-      }
-      if (
-        questionAttachmentTarget &&
-        !useQuestionAttachmentPreparation.getState().counts[questionAttachmentTarget]
-      ) {
-        for (const image of nextImages) URL.revokeObjectURL(image.previewUrl);
-        return false;
-      }
-      const storedImageIds = new Set(
-        nextImages.length === 1 && nextImages[0]
-          ? addComposerImage(nextImages[0])
-          : nextImages.length > 1
-            ? addComposerImagesToDraft(nextImages)
-            : [],
-      );
-      const storedImages = nextImages.filter((image) => storedImageIds.has(image.id));
-      if (storedImages.length > 0 && imageAttachmentsGetChips) {
-        insertedAny =
-          insertAttachmentReferences(storedImages.map(imageContextReference)) || insertedAny;
-      }
-      // Only failures are reported here. Success must not pass `null`: by
-      // now other work (a failed send, an overlapping paste) may have set a
-      // thread error this call knows nothing about, and clearing it would
-      // swallow that message.
-      if (compressionError !== null) {
-        setThreadError(threadId, compressionError);
-      }
+      const staged = await stageComposerAttachmentBatch({
+        images: acceptedImages,
+        files: acceptedFiles,
+        readExisting: () => {
+          const targetDraft = getComposerDraft(attachmentDraftTarget) ?? {
+            images: [],
+            files: [],
+            persistedAttachments: [],
+          };
+          return [
+            ...composerDraftAttachmentFacts(targetDraft),
+            ...otherQuestionAttachmentKeys().flatMap((key) => {
+              const draft = getComposerDraft(key);
+              return draft
+                ? composerDraftAttachmentFacts(draft).map((attachment) => ({
+                    id: attachment.id,
+                    type: attachment.type,
+                    mimeType: attachment.mimeType,
+                    sizeBytes: attachment.sizeBytes,
+                  }))
+                : [];
+            }),
+          ].filter((attachment) => !replacedReattachMarkerIds.has(attachment.id));
+        },
+        stillWanted: () =>
+          acceptedImages.length === 0 ||
+          !questionAttachmentTarget ||
+          Boolean(useQuestionAttachmentPreparation.getState().counts[questionAttachmentTarget]),
+        commit: ({ images, files }) => {
+          let insertedAny = false;
+          if (files.length > 0) {
+            const storedIds = new Set(addComposerFilesToDraft([...files]));
+            const storedFiles = files.filter((file) => storedIds.has(file.id));
+            if (storedFiles.length > 0) {
+              insertedAny = insertAttachmentReferences(
+                storedFiles.map(fileContextReference),
+                options?.selection,
+              );
+            }
+            if (options?.source?._tag === "pasted-text" && storedFiles.length > 0) {
+              const attached = storedFiles[0]!;
+              toastManager.add({
+                type: "info",
+                title: `Large paste attached as ${attached.name}`,
+                description: `${formatAttachmentSize(attached.sizeBytes)} · Use ${
+                  isMacPlatform(navigator.platform) ? "⌘⇧V" : "Ctrl+Shift+V"
+                } to keep a large paste inline.`,
+                data: { hideCopyButton: true },
+              });
+            }
+          }
+          const nextImages: ComposerImageAttachment[] = images.map((file) => ({
+            type: "image",
+            id: randomUUID(),
+            name: file.name || "image",
+            mimeType: file.type,
+            sizeBytes: file.size,
+            previewUrl: URL.createObjectURL(file),
+            file,
+          }));
+          const storedImageIds = new Set(
+            nextImages.length === 1 && nextImages[0]
+              ? addComposerImage(nextImages[0])
+              : nextImages.length > 1
+                ? addComposerImagesToDraft(nextImages)
+                : [],
+          );
+          const storedImages = nextImages.filter((image) => storedImageIds.has(image.id));
+          if (storedImages.length > 0 && imageAttachmentsGetChips) {
+            insertedAny =
+              insertAttachmentReferences(storedImages.map(imageContextReference)) || insertedAny;
+          }
+          return insertedAny;
+        },
+      });
+      if (staged.error !== null) setThreadError(threadId, staged.error);
+      return staged.inserted;
     } finally {
       if (questionAttachmentTarget)
         changeQuestionAttachmentPreparation(questionAttachmentTarget, -acceptedImages.length);
@@ -6194,7 +6195,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         pendingImageCompressionsRef.current.delete(attachmentTargetKey);
       }
     }
-    return insertedAny;
   };
 
   /**

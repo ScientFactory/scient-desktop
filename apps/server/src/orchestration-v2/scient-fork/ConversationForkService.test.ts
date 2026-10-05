@@ -324,6 +324,19 @@ it.effect(
         limit: 100,
       });
       assert.deepEqual(page.items, target.visibleTurnItems);
+      const oldActivity = target.turnItems.find((item) => item.type === "command_execution");
+      assert.ok(oldActivity);
+      const anchored = yield* store.getTimelinePage(command.newThreadId, {
+        itemId: oldActivity.id,
+        view: "activity",
+        limit: 1,
+      });
+      assert.deepEqual(
+        anchored.items.map((row) => row.item),
+        [oldActivity],
+      );
+      assert.equal(anchored.items[0]?.visibility, "inherited");
+
       assert.equal((yield* forks.dispatch(command)).sequence, receipt.sequence);
 
       // Native rollback hides only fork-local runs. The inherited prefix is

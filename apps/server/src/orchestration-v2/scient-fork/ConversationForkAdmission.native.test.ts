@@ -244,7 +244,21 @@ it.live(
         yield* forks.dispatch(emptyCommand);
         const empty = yield* store.getThreadProjection(emptyCommand.newThreadId);
         assert.deepEqual(empty.messages, []);
-        assert.deepEqual(empty.turnItems, []);
+        assert.deepEqual(
+          empty.turnItems.map((item) => item.type),
+          ["fork"],
+        );
+        const emptyBoundary = empty.turnItems[0];
+        assert.ok(emptyBoundary?.type === "fork");
+        assert.isUndefined(emptyBoundary.inheritedFrom);
+        assert.deepEqual(emptyBoundary.source, {
+          type: "message",
+          threadId: source.thread.id,
+          messageId: emptyCommand.sourceUserMessageId,
+          position: "before",
+        });
+        assert.isNull(emptyBoundary.runId);
+        assert.isNull(emptyBoundary.nodeId);
         assert.isNull(empty.thread.forkLineage?.baselineAssistantMessageId);
         assert.isFalse(
           empty.contextTransfers.some((transfer) => transfer.frozenSource !== undefined),
