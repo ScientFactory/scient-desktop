@@ -15,6 +15,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -177,7 +178,15 @@ export interface ProviderSessionManagerV2Shape {
   readonly close: (
     providerSessionId: ProviderSessionId,
   ) => Effect.Effect<void, ProviderSessionManagerV2Error>;
-  /** Closes every live runtime owned by one provider instance. */
+  /** Internal teardown truth only; never an execution or native-reader release capability. */
+  readonly getCloseState?: (providerSessionId: ProviderSessionId) => Effect.Effect<
+    Option.Option<{
+      readonly providerSessionId: ProviderSessionId;
+      readonly instanceId: ProviderInstanceId;
+      readonly state: "pending" | "failed";
+    }>
+  >;
+  /** Closes live and retained retiring runtimes owned by one exact provider instance. */
   readonly closeInstance: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<void, ProviderSessionManagerV2Error>;
@@ -234,6 +243,23 @@ interface LiveSessionEntry {
   readonly idleFiber: Fiber.Fiber<void, never> | null;
   /** Set when idle release is deferred for pending background work; bounds total deferral. */
   readonly pinnedSinceMs: number | null;
+}
+
+interface ClosingSessionEntry {
+  entry: LiveSessionEntry;
+  readonly reason: ProviderSessionReleaseReason;
+  readonly operation: Fiber.Fiber<Exit.Exit<void, unknown>, never>;
+  state: "pending" | "failed";
+}
+
+interface ReleaseEntryInput {
+  readonly providerSessionId: ProviderSessionId;
+  readonly reason: ProviderSessionReleaseReason;
+  readonly detail?: string;
+  readonly cancelIdleFiber?: boolean;
+  readonly onlyIfIdleGeneration?: number;
+  readonly gracefulSubscribers?: boolean;
+  readonly expectedRuntime?: ProviderAdapterV2SessionRuntime;
 }
 
 type ProviderSessionEventSignal =
@@ -392,6 +418,9 @@ export const layerWithOptions = (
       const layerScope = yield* Effect.scope;
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
       const releasingRuntimes = new WeakSet<ProviderAdapterV2SessionRuntime>();
+      // The same exact owner survives logical removal, timeout and failed scope
+      // close. It has no execution rights; retries join its original operation.
+      const closingSessions = new Map<string, ClosingSessionEntry>();
       // Pi session files admit only one native writer, including during startup.
       // The process scope releases its leases after native teardown completes.
       const piFileLeases = new Map<string, Scope.Closeable>();
@@ -874,26 +903,141 @@ export const layerWithOptions = (
           yield* entry.eventConsumer.dispose;
         });
 
-      const releaseEntry = (input: {
-        readonly providerSessionId: ProviderSessionId;
-        readonly reason: ProviderSessionReleaseReason;
-        readonly detail?: string;
-        readonly cancelIdleFiber?: boolean;
-        readonly onlyIfIdleGeneration?: number;
-        readonly gracefulSubscribers?: boolean;
-        readonly expectedRuntime?: ProviderAdapterV2SessionRuntime;
-      }) =>
-        Effect.acquireUseRelease(
+      const closeRetiringEntry = Effect.fnUntraced(function* (
+        entry: LiveSessionEntry,
+        input: ReleaseEntryInput,
+      ) {
+        const retireCredentials = Effect.forEach(
+          entry.mcpCredentialIdByThread,
+          ([threadId, credentialId]) => reclaimUnusedMcpCredential(threadId, credentialId, true),
+          { discard: true },
+        );
+        // Start physical cleanup before any idle/subscriber join can park it.
+        // The manager owns both fibers, independent of a public waiter's scope.
+        const physicalClose = yield* closeOwnedScope(entry.scope).pipe(
+          Effect.exit,
+          Effect.forkDetach({ startImmediately: true }),
+        );
+        yield* Effect.acquireUseRelease(
+          Effect.void,
+          () =>
+            Effect.gen(function* () {
+              if (input.cancelIdleFiber !== false) yield* cancelIdleFiber(entry.idleFiber);
+              if (input.gracefulSubscribers === true) yield* endSubscribers(entry);
+              else if (input.reason === "server_shutdown") yield* closeSubscribers(entry);
+              else
+                yield* failSubscribers(
+                  entry,
+                  input.detail ?? `Provider session released: ${input.reason}.`,
+                );
+              const observed = yield* Fiber.join(physicalClose).pipe(
+                Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
+              );
+              if (Option.isNone(observed))
+                yield* Effect.logWarning("orchestration-v2.provider-session-scope-close-timeout", {
+                  providerSessionId: input.providerSessionId,
+                  reason: input.reason,
+                  timeoutMs: RELEASE_SCOPE_CLOSE_TIMEOUT_MS,
+                });
+              yield* releaseEventConsumer(entry);
+              yield* retireCredentials;
+              yield* writeReleasedSessionEvents({
+                entry,
+                reason: input.reason,
+                ...(input.detail === undefined ? {} : { detail: input.detail }),
+              });
+              yield* writeReleasedRuntimeRequestEvents({ entry, reason: input.reason }).pipe(
+                entry.requestEventPermit.withPermits(1),
+              );
+              // Timeout retires logical/UI authority, not physical ownership. Keep
+              // observing this same attempt; Scope.close cannot retry finalizers.
+              const result = Option.isSome(observed)
+                ? observed.value
+                : yield* Fiber.join(physicalClose);
+              if (Option.isNone(observed))
+                yield* Effect.logInfo(
+                  "orchestration-v2.provider-session-scope-close-finished-late",
+                  {
+                    providerSessionId: input.providerSessionId,
+                    reason: input.reason,
+                    outcome: result._tag,
+                  },
+                );
+              if (Exit.isFailure(result)) return yield* Effect.failCause(result.cause);
+            }),
+          () =>
+            Effect.gen(function* () {
+              yield* releaseEventConsumer(entry);
+              // Logical retirement revokes only this owner's unused credentials.
+              // It is not a claim that its native process physically exited.
+              yield* retireCredentials;
+            }),
+        );
+      });
+
+      const awaitClosingEntry = Effect.fnUntraced(function* (owner: ClosingSessionEntry) {
+        const result = yield* Fiber.join(owner.operation).pipe(
+          Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
+        );
+        if (Option.isNone(result))
+          return yield* new ProviderSessionReleaseError({
+            providerSessionId: owner.entry.runtime.providerSessionId,
+            reason: owner.reason,
+            cause:
+              "The exact native close is still pending; replacement or credential changes require its completion.",
+          });
+        if (Exit.isFailure(result.value))
+          return yield* new ProviderSessionReleaseError({
+            providerSessionId: owner.entry.runtime.providerSessionId,
+            reason: owner.reason,
+            cause: result.value.cause,
+          });
+      });
+
+      const releaseEntry = (input: ReleaseEntryInput) =>
+        Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
             const key = sessionKey(input.providerSessionId);
+            const prior = closingSessions.get(key);
+            if (prior !== undefined) {
+              if (
+                input.expectedRuntime !== undefined &&
+                prior.entry.runtime !== input.expectedRuntime
+              )
+                return;
+              return yield* restore(awaitClosingEntry(prior));
+            }
             const candidate = (yield* Ref.get(sessions)).get(key);
             if (
               candidate === undefined ||
               (input.expectedRuntime !== undefined && candidate.runtime !== input.expectedRuntime)
             )
-              return Option.none<LiveSessionEntry>();
-            // Reserve inside the native fence so an idle decision cannot invalidate
-            // an owner that became busy while that fence was waiting for SQL.
+              return;
+            const begin = yield* Deferred.make<void>();
+            let captured = candidate;
+            const operation = yield* Deferred.await(begin).pipe(
+              Effect.andThen(Effect.suspend(() => closeRetiringEntry(captured, input))),
+              Effect.exit,
+              Effect.tap((result) =>
+                Effect.sync(() => {
+                  const current = closingSessions.get(key);
+                  if (
+                    current?.entry.runtime !== captured.runtime ||
+                    current.entry.scope !== captured.scope
+                  )
+                    return;
+                  if (Exit.isFailure(result)) current.state = "failed";
+                  else closingSessions.delete(key);
+                }),
+              ),
+              Effect.forkDetach({ startImmediately: true }),
+            );
+            const owner: ClosingSessionEntry = {
+              entry: candidate,
+              reason: input.reason,
+              state: "pending",
+              operation,
+            };
             const reserve = Ref.modify(sessions, (current) => {
               const existing = current.get(key);
               if (
@@ -907,128 +1051,55 @@ export const layerWithOptions = (
                 (existing.busyCount > 0 || existing.idleGeneration !== input.onlyIfIdleGeneration)
               )
                 return [false, current] as const;
+              captured = existing;
+              owner.entry = existing;
+              // Queryable ownership is installed in the short generation handoff,
+              // before logical removal and before restoring waiter interruption.
+              closingSessions.set(key, owner);
               releasingRuntimes.add(existing.runtime);
               return [true, current] as const;
             });
-            const reserved = yield* candidate.runtime.invalidateInitiatedWork === undefined
-              ? reserve
-              : candidate.runtime.invalidateInitiatedWork(reserve);
-            if (!reserved) return Option.none<LiveSessionEntry>();
-            return yield* Ref.modify(sessions, (current) => {
-              const key = sessionKey(input.providerSessionId);
+            const invalidation = yield* (
+              candidate.runtime.invalidateInitiatedWork === undefined
+                ? reserve
+                : candidate.runtime.invalidateInitiatedWork(reserve)
+            ).pipe(Effect.exit);
+            if (closingSessions.get(key) !== owner) {
+              operation.interruptUnsafe();
+              const concurrent = closingSessions.get(key);
+              if (
+                concurrent?.entry.runtime === candidate.runtime &&
+                concurrent.entry.scope === candidate.scope
+              )
+                return yield* restore(awaitClosingEntry(concurrent));
+              if (Exit.isFailure(invalidation))
+                return yield* new ProviderSessionReleaseError({
+                  providerSessionId: input.providerSessionId,
+                  reason: input.reason,
+                  cause: invalidation.cause,
+                });
+              return;
+            }
+            yield* Ref.update(sessions, (current) => {
               const existing = current.get(key);
-              if (existing?.runtime !== candidate.runtime || existing.scope !== candidate.scope)
-                return [Option.none<LiveSessionEntry>(), current] as const;
+              if (existing?.runtime !== captured.runtime || existing.scope !== captured.scope)
+                return current;
+              captured = existing;
+              owner.entry = existing;
               const updated = new Map(current);
               updated.delete(key);
-              return [Option.some(existing), updated] as const;
+              return updated;
             });
-          }),
-          (entry) =>
-            Option.match(entry, {
-              onNone: () => Effect.void,
-              onSome: (entry) =>
-                Effect.gen(function* () {
-                  if (input.cancelIdleFiber !== false) {
-                    yield* cancelIdleFiber(entry.idleFiber);
-                  }
-                  if (input.gracefulSubscribers === true) {
-                    yield* endSubscribers(entry);
-                  } else if (input.reason === "server_shutdown") {
-                    yield* closeSubscribers(entry);
-                  } else {
-                    yield* failSubscribers(
-                      entry,
-                      input.detail ?? `Provider session released: ${input.reason}.`,
-                    );
-                  }
-                  // Scope close can wedge on a misbehaving adapter finalizer
-                  // (e.g. a provider process that never yields its message
-                  // stream). Time-box it so release still persists released
-                  // events and leaves a diagnosable trail instead of silently
-                  // parking the session as "ready" forever.
-                  const closeFiber = yield* closeOwnedScope(entry.scope).pipe(
-                    Effect.exit,
-                    Effect.forkDetach({ startImmediately: true }),
-                  );
-                  const closeExit = yield* Fiber.join(closeFiber).pipe(
-                    Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
-                  );
-                  if (Option.isNone(closeExit)) {
-                    yield* Effect.logWarning(
-                      "orchestration-v2.provider-session-scope-close-timeout",
-                      {
-                        providerSessionId: input.providerSessionId,
-                        reason: input.reason,
-                        timeoutMs: RELEASE_SCOPE_CLOSE_TIMEOUT_MS,
-                      },
-                    );
-                    yield* Fiber.join(closeFiber).pipe(
-                      Effect.flatMap((exit) =>
-                        Exit.isFailure(exit)
-                          ? Effect.logWarning(
-                              "orchestration-v2.provider-session-scope-close-failed",
-                              {
-                                providerSessionId: input.providerSessionId,
-                                reason: input.reason,
-                                cause: exit.cause,
-                              },
-                            )
-                          : Effect.logInfo(
-                              "orchestration-v2.provider-session-scope-close-completed-late",
-                              {
-                                providerSessionId: input.providerSessionId,
-                                reason: input.reason,
-                              },
-                            ),
-                      ),
-                      Effect.forkDetach,
-                    );
-                  }
-                  yield* releaseEventConsumer(entry);
-                  yield* writeReleasedSessionEvents({
-                    entry,
-                    reason: input.reason,
-                    ...(input.detail === undefined ? {} : { detail: input.detail }),
-                  });
-                  yield* writeReleasedRuntimeRequestEvents({
-                    entry,
-                    reason: input.reason,
-                  }).pipe(entry.requestEventPermit.withPermits(1));
-                  if (Option.isSome(closeExit) && Exit.isFailure(closeExit.value)) {
-                    return yield* Effect.failCause(closeExit.value.cause);
-                  }
-                }),
-            }),
-          (entry) =>
-            Option.match(entry, {
-              onNone: () => Effect.void,
-              onSome: (entry) =>
-                // Revoke every credential this session recorded, including for
-                // threads that detached without re-attaching: the provider
-                // process is gone, so nothing holds them anymore. Skip threads
-                // a live replacement session took over, since credential reuse
-                // means the replacement may hold this very credential.
-                Effect.gen(function* () {
-                  yield* releaseEventConsumer(entry);
-                  yield* Effect.forEach(
-                    entry.mcpCredentialIdByThread,
-                    ([threadId, mcpCredentialId]) =>
-                      reclaimUnusedMcpCredential(threadId, mcpCredentialId, true),
-                    { discard: true },
-                  );
-                }),
-            }),
-        ).pipe(
-          Effect.catchCause((cause) =>
-            Effect.fail(
-              new ProviderSessionReleaseError({
+            // Physical cleanup starts only after the generation permit is released.
+            yield* Deferred.succeed(begin, undefined);
+            if (Exit.isFailure(invalidation))
+              return yield* new ProviderSessionReleaseError({
                 providerSessionId: input.providerSessionId,
                 reason: input.reason,
-                cause,
-              }),
-            ),
-          ),
+                cause: invalidation.cause,
+              });
+            return yield* restore(awaitClosingEntry(owner));
+          }),
         );
 
       // Annotated to break the releaseIfStillIdle <-> scheduleIdleReleaseInternal
@@ -1787,7 +1858,16 @@ export const layerWithOptions = (
       };
 
       const shutdown = Effect.gen(function* () {
-        const activeSessions = [...(yield* Ref.get(sessions)).values()];
+        const activeSessions = [
+          ...new Map([
+            ...[...(yield* Ref.get(sessions)).values()].map(
+              (entry) => [entry.runtime, entry] as const,
+            ),
+            ...[...closingSessions.values()].map(
+              (owner) => [owner.entry.runtime, owner.entry] as const,
+            ),
+          ]).values(),
+        ];
         yield* Effect.forEach(
           activeSessions,
           (entry) =>
@@ -1852,6 +1932,7 @@ export const layerWithOptions = (
         ) {
           const entries = [...(yield* Ref.get(sessions)).values()].filter(
             (entry) =>
+              !releasingRuntimes.has(entry.runtime) &&
               entry.runtime.instanceId === invocation.providerInstanceId &&
               entry.attachedThreadIds.has(invocation.threadId) &&
               entry.mcpCredentialIdByThread.get(invocation.threadId) ===
@@ -1903,6 +1984,7 @@ export const layerWithOptions = (
           const current = yield* Ref.get(sessions);
           const owner = entries.find(
             (entry) =>
+              !releasingRuntimes.has(entry.runtime) &&
               entry.runtime.providerSessionId === nativeThread.providerSessionId &&
               current.get(sessionKey(entry.runtime.providerSessionId))?.runtime === entry.runtime &&
               current
@@ -1938,6 +2020,21 @@ export const layerWithOptions = (
                     }
                   }
                   const key = sessionKey(input.providerSessionId);
+                  const retiring = [...closingSessions.values()].find(
+                    (owner) =>
+                      sessionKey(owner.entry.runtime.providerSessionId) === key ||
+                      (owner.entry.runtime.instanceId === input.modelSelection.instanceId &&
+                        owner.entry.attachedThreadIds.has(input.threadId)),
+                  );
+                  if (retiring)
+                    return yield* new ProviderSessionOpenError({
+                      instanceId: input.modelSelection.instanceId,
+                      providerSessionId: input.providerSessionId,
+                      cause:
+                        retiring.state === "failed"
+                          ? "The prior native close failed; exact-owner recovery is required."
+                          : "The prior native close is still pending.",
+                    });
                   const existing = (yield* Ref.get(sessions)).get(key);
                   if (existing !== undefined) {
                     if (releasingRuntimes.has(existing.runtime))
@@ -2235,7 +2332,7 @@ export const layerWithOptions = (
         get: (providerSessionId) =>
           Effect.gen(function* () {
             const entry = (yield* Ref.get(sessions)).get(sessionKey(providerSessionId));
-            if (entry === undefined) {
+            if (entry === undefined || releasingRuntimes.has(entry.runtime)) {
               return Option.none<ProviderAdapterV2SessionRuntime>();
             }
             yield* touchActivity(providerSessionId);
@@ -2249,6 +2346,17 @@ export const layerWithOptions = (
                 }),
             ),
           ),
+        getCloseState: (providerSessionId) =>
+          Effect.sync(() => {
+            const owner = closingSessions.get(sessionKey(providerSessionId));
+            return owner === undefined
+              ? Option.none()
+              : Option.some({
+                  providerSessionId: owner.entry.runtime.providerSessionId,
+                  instanceId: owner.entry.runtime.instanceId,
+                  state: owner.state,
+                });
+          }),
         close: (providerSessionId) =>
           releaseEntry({ providerSessionId, reason: "manual_shutdown" }).pipe(
             Effect.mapError(
@@ -2261,9 +2369,16 @@ export const layerWithOptions = (
           ),
         closeInstance: (instanceId) =>
           Effect.gen(function* () {
-            const active = [...(yield* Ref.get(sessions)).values()].filter(
-              (entry) => entry.runtime.instanceId === instanceId,
-            );
+            const active = [
+              ...new Map([
+                ...[...(yield* Ref.get(sessions)).values()].map(
+                  (entry) => [entry.runtime, entry] as const,
+                ),
+                ...[...closingSessions.values()].map(
+                  (owner) => [owner.entry.runtime, owner.entry] as const,
+                ),
+              ]).values(),
+            ].filter((entry) => entry.runtime.instanceId === instanceId);
             const outcomes = yield* Effect.forEach(
               active,
               (entry) =>
