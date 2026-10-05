@@ -559,3 +559,435 @@ NodeTest.test("changed Git links remain metadata debt without fetching external 
   NodeAssert.equal(all(reviewed.inspect())[0].kind, "non-regular-content");
   NodeAssert.equal(reviewed.inspect().status, "advisory");
 });
+
+function formatExceptionsFor(f, candidate, path, format) {
+  const initial = f.inspect(candidate);
+  const finding = initial.files
+    .find((file) => file.path === path)
+    .findings.find((item) => item.kind === "unsupported-language");
+  const before = f.git("ls-tree", f.upstream, "--", path).split(/\s+/);
+  const after = f.git("ls-tree", candidate, "--", path).split(/\s+/);
+  return {
+    schemaVersion: 1,
+    kind: "reviewed-format-exceptions",
+    upstream: f.upstream,
+    entries: [
+      {
+        path,
+        format,
+        upstreamBlob: before[2],
+        candidateBlob: after[2],
+        upstreamMode: before[0],
+        candidateMode: after[0],
+        findingFingerprint: finding.fingerprint,
+        owner: "Format maintainer",
+        reason: "Reviewed the exact Markdown content; no marker parser is available",
+        reviewRecord: "docs/review.md",
+        reviewBlob: f.git("rev-parse", `${candidate}:docs/review.md`).trim(),
+        expiresAt: "2026-12-01",
+      },
+    ],
+  };
+}
+
+NodeTest.test(
+  "opt-in reviewed format exception credits exact text without hiding parser limits",
+  (t) => {
+    const f = fixture(t, { "guide.md": "Original\n", "docs/review.md": "Exact content review\n" });
+    f.write("guide.md", "Scient addition\n");
+    const candidate = f.commit(),
+      initial = f.inspect(candidate);
+    const formatExceptions = formatExceptionsFor(f, candidate, "guide.md", "markdown");
+    const accepted = f.inspect(candidate, { formatExceptions, asOf: "2026-10-05" });
+    NodeAssert.equal(initial.counts.unresolved, 1);
+    NodeAssert.equal(accepted.status, "advisory");
+    NodeAssert.equal(accepted.ratchet, "no-new-debt-within-declared-scope");
+    const finding = all(accepted)[0];
+    NodeAssert.equal(finding.kind, "unsupported-language");
+    NodeAssert.equal(finding.disposition, "reviewed-format-exception");
+    NodeAssert.equal(finding.fingerprint, all(initial)[0].fingerprint);
+    NodeAssert.equal(finding.formatException.format, "markdown");
+    NodeAssert.match(finding.formatException.parserLimit, /no .*parser/i);
+    NodeAssert.equal(accepted.counts["reviewed-format-exception"], 1);
+    NodeAssert.deepEqual(accepted.unmatchedFormatExceptions, []);
+    NodeAssert.deepEqual(f.inspect(candidate), initial);
+  },
+);
+
+NodeTest.test(
+  "format review rejects stale content, modes, fingerprint and changed review record",
+  (t) => {
+    const f = fixture(t, { "guide.md": "Original\n", "docs/review.md": "Exact review\n" });
+    f.write("guide.md", "Reviewed addition\n");
+    const candidate = f.commit(),
+      formatExceptions = formatExceptionsFor(f, candidate, "guide.md", "markdown");
+    for (const mutate of [
+      (input) => {
+        input.entries[0].findingFingerprint = "0".repeat(64);
+      },
+      (input) => {
+        input.entries[0].upstreamBlob = "0".repeat(40);
+      },
+      (input) => {
+        input.entries[0].candidateBlob = "0".repeat(40);
+      },
+      (input) => {
+        input.entries[0].candidateMode = "100755";
+      },
+      (input) => {
+        input.entries[0].reviewBlob = "0".repeat(40);
+      },
+    ]) {
+      const input = structuredClone(formatExceptions);
+      mutate(input);
+      NodeAssert.equal(
+        f.inspect(candidate, { formatExceptions: input, asOf: "2026-10-05" }).status,
+        "unavailable",
+      );
+    }
+    f.write("guide.md", "A new, unreviewed condition\n");
+    NodeAssert.equal(
+      f.inspect(f.commit(), { formatExceptions, asOf: "2026-10-05" }).status,
+      "unavailable",
+    );
+    f.write("guide.md", "Reviewed addition\n");
+    f.write("docs/review.md", "Different review\n");
+    NodeAssert.equal(
+      f.inspect(f.commit(), { formatExceptions, asOf: "2026-10-05" }).status,
+      "unavailable",
+    );
+  },
+);
+
+NodeTest.test(
+  "format review requires exact named schema, date, owner, reason and committed UTF-8 review",
+  (t) => {
+    const f = fixture(t, {
+      "guide.md": "Original\n",
+      "docs/review.md": "Review\n",
+      "outside.md": "Outside\n",
+    });
+    f.write("guide.md", "Reviewed\n");
+    const candidate = f.commit(),
+      formatExceptions = formatExceptionsFor(f, candidate, "guide.md", "markdown");
+    const edits = [
+      (input) => {
+        input.kind = "baseline";
+      },
+      (input) => {
+        input.upstream = "0".repeat(40);
+      },
+      (input) => {
+        input.entries.push(input.entries[0]);
+      },
+      (input) => {
+        input.entries[0].format = "arbitrary";
+      },
+      (input) => {
+        input.entries[0].owner = " ";
+      },
+      (input) => {
+        input.entries[0].reason = " ";
+      },
+      (input) => {
+        input.entries[0].expiresAt = "2026-10-04";
+      },
+      (input) => {
+        input.entries[0].expiresAt = "2026-02-30";
+      },
+      (input) => {
+        input.entries[0].reviewRecord = "docs/missing.md";
+      },
+      (input) => {
+        input.entries[0].reviewRecord = "outside.md";
+      },
+      (input) => {
+        input.entries[0].reviewRecord = "docs/../outside.md";
+      },
+    ];
+    for (const edit of edits) {
+      const input = structuredClone(formatExceptions);
+      edit(input);
+      NodeAssert.equal(
+        f.inspect(candidate, { formatExceptions: input, asOf: "2026-10-05" }).status,
+        "unavailable",
+      );
+    }
+    for (const input of [null, false, [], { ...formatExceptions, entries: null }])
+      NodeAssert.equal(
+        f.inspect(candidate, { formatExceptions: input, asOf: "2026-10-05" }).status,
+        "unavailable",
+      );
+    for (const asOf of [undefined, "now", "2026-02-30", "2026-12-02"])
+      NodeAssert.equal(f.inspect(candidate, { formatExceptions, asOf }).status, "unavailable");
+    // Expiry is inclusive and deterministic; never use the machine clock.
+    NodeAssert.equal(
+      f.inspect(candidate, { formatExceptions, asOf: "2026-12-01" }).counts[
+        "reviewed-format-exception"
+      ],
+      1,
+    );
+    for (const content of ["", " \n", Buffer.from([0xff]), Buffer.from([0, 65])]) {
+      f.write("docs/review.md", content);
+      const changed = f.commit();
+      const input = structuredClone(formatExceptions);
+      input.entries[0].reviewBlob = f.git("rev-parse", `${changed}:docs/review.md`).trim();
+      NodeAssert.equal(
+        f.inspect(changed, { formatExceptions: input, asOf: "2026-10-05" }).status,
+        "unavailable",
+      );
+    }
+  },
+);
+
+for (const side of ["upstream", "candidate", "review"])
+  NodeTest.test(`format review fails closed with missing ${side} blob`, (t) => {
+    const f = fixture(t, {
+      "guide.md": "Original missing-blob witness\n",
+      "docs/review.md": "Exact review object\n",
+    });
+    f.write("guide.md", "Reviewed missing-blob witness\n");
+    const candidate = f.commit(),
+      formatExceptions = formatExceptionsFor(f, candidate, "guide.md", "markdown");
+    const entry = formatExceptions.entries[0];
+    const oid =
+      side === "review"
+        ? entry.reviewBlob
+        : side === "upstream"
+          ? entry.upstreamBlob
+          : entry.candidateBlob;
+    removeFixtureBlob(f, oid);
+    const result = f.inspect(candidate, { formatExceptions, asOf: "2026-10-05" });
+    NodeAssert.equal(result.status, "unavailable");
+    NodeAssert.equal(result.ratchet, "unavailable");
+  });
+
+NodeTest.test(
+  "format exception cannot waive binary, encoding, nonregular, deletion or unresolved diff",
+  (t) => {
+    for (const kind of ["binary", "encoding", "symlink", "deletion", "diff"]) {
+      const f = fixture(t, {
+        "guide.md": "Original\n",
+        "docs/review.md": "Review\n",
+        ".gitattributes": kind === "diff" ? "guide.md -diff\n" : "",
+      });
+      f.write("guide.md", "Reviewed\n");
+      const reviewed = f.commit();
+      const formatExceptions = formatExceptionsFor(f, reviewed, "guide.md", "markdown");
+      if (kind === "binary") f.write("guide.md", Buffer.from([0, 65]));
+      if (kind === "encoding") f.write("guide.md", Buffer.from([0xff, 65]));
+      if (kind === "symlink") {
+        NodeFS.unlinkSync(NodePath.join(f.cwd, "guide.md"));
+        NodeFS.symlinkSync("docs/review.md", NodePath.join(f.cwd, "guide.md"));
+      }
+      if (kind === "deletion") NodeFS.unlinkSync(NodePath.join(f.cwd, "guide.md"));
+      const candidate = kind === "diff" ? reviewed : f.commit(),
+        input = structuredClone(formatExceptions);
+      if (kind !== "deletion") {
+        input.entries[0].candidateBlob = f.git("rev-parse", `${candidate}:guide.md`).trim();
+        input.entries[0].candidateMode = kind === "symlink" ? "120000" : "100644";
+        input.entries[0].findingFingerprint = all(f.inspect(candidate)).find(
+          (item) => item.candidateBlob,
+        )?.fingerprint;
+      }
+      const result = f.inspect(candidate, { formatExceptions: input, asOf: "2026-10-05" });
+      NodeAssert.equal(result.status, "unavailable", kind);
+      NodeAssert.equal(result.ratchet, "unavailable", kind);
+    }
+  },
+);
+
+NodeTest.test(
+  "format exceptions do not cover unknown extensions or supported-parser failures",
+  (t) => {
+    for (const [path, content] of [
+      ["a.unknown", "changed\n"],
+      ["a.ts", "const = ;"],
+      ["a.ts", "// SCIENT-FORK:START\nconst a = 2;\n"],
+    ]) {
+      const f = fixture(t, {
+        [path]: "const a = 1;\n",
+        "guide.md": "Original\n",
+        "docs/review.md": "Review\n",
+      });
+      f.write("guide.md", "Reviewed\n");
+      f.write(path, content);
+      const candidate = f.commit(),
+        input = formatExceptionsFor(f, candidate, "guide.md", "markdown");
+      const result = f.inspect(candidate, { formatExceptions: input, asOf: "2026-10-05" });
+      NodeAssert.equal(result.counts["reviewed-format-exception"], 1);
+      NodeAssert.equal(result.counts.unresolved, 1);
+      NodeAssert.equal(result.ratchet, "needs-review");
+      const attempted = structuredClone(input),
+        bad = attempted.entries[0];
+      bad.path = path;
+      bad.upstreamBlob = f.git("rev-parse", `${f.upstream}:${path}`).trim();
+      bad.candidateBlob = f.git("rev-parse", `${candidate}:${path}`).trim();
+      bad.findingFingerprint = all(f.inspect(candidate)).find(
+        (item) => item.candidateBlob === bad.candidateBlob,
+      ).fingerprint;
+      NodeAssert.equal(
+        f.inspect(candidate, { formatExceptions: attempted, asOf: "2026-10-05" }).status,
+        "unavailable",
+      );
+    }
+  },
+);
+
+NodeTest.test("format CLI keeps exemption visible and rejects stale or unnamed input", (t) => {
+  const f = fixture(t, { "guide.md": "Original\n", "docs/review.md": "Review\n" });
+  f.write("guide.md", "Reviewed\n");
+  const candidate = f.commit(),
+    input = formatExceptionsFor(f, candidate, "guide.md", "markdown");
+  const exceptionPath = NodePath.join(f.cwd, "reviewed-formats.json");
+  const script = NodeURL.fileURLToPath(
+    new URL("./scient-divergence-inventory.mjs", import.meta.url),
+  );
+  const run = (...extra) =>
+    NodeChildProcess.spawnSync(
+      process.execPath,
+      [script, "--upstream", f.upstream, "--candidate", candidate, "--ratchet", ...extra],
+      { cwd: f.cwd, encoding: "utf8" },
+    );
+  NodeAssert.equal(run().status, 1);
+  NodeFS.writeFileSync(exceptionPath, JSON.stringify(input));
+  const valid = run("--format-exceptions", exceptionPath, "--as-of", "2026-10-05");
+  NodeAssert.equal(valid.status, 0);
+  NodeAssert.equal(JSON.parse(valid.stdout).counts["reviewed-format-exception"], 1);
+  input.entries[0].findingFingerprint = "0".repeat(64);
+  NodeFS.writeFileSync(exceptionPath, JSON.stringify(input));
+  NodeAssert.equal(run("--format-exceptions", exceptionPath, "--as-of", "2026-10-05").status, 2);
+  NodeFS.writeFileSync(exceptionPath, JSON.stringify(baselineFor(f.inspect(candidate))));
+  NodeAssert.equal(run("--format-exceptions", exceptionPath, "--as-of", "2026-10-05").status, 2);
+  NodeAssert.equal(run("--format-exceptions").status, 2);
+});
+
+NodeTest.test("known-format opt-in remains content-pinned for every declared extension", (t) => {
+  for (const [extension, format] of [
+    ["md", "markdown"],
+    ["yaml", "yaml"],
+    ["yml", "yaml"],
+    ["sh", "shell"],
+    ["bash", "shell"],
+    ["css", "css"],
+    ["rs", "rust"],
+    ["xml", "xml"],
+  ]) {
+    const path = `owned.${extension}`,
+      f = fixture(t, { [path]: "Original\n", "docs/review.md": "Review\n" });
+    f.write(path, "Reviewed content\n");
+    const candidate = f.commit();
+    const input = formatExceptionsFor(f, candidate, path, format);
+    const result = f.inspect(candidate, { formatExceptions: input, asOf: "2026-10-05" });
+    NodeAssert.equal(result.counts["reviewed-format-exception"], 1, extension);
+    NodeAssert.equal(all(result)[0].kind, "unsupported-language");
+    NodeAssert.equal(all(result)[0].formatException.format, format);
+    NodeAssert.equal(result.ratchet, "no-new-debt-within-declared-scope");
+  }
+});
+
+NodeTest.test("format exception keeps regular executable mode debt separate", (t) => {
+  const f = fixture(t, { "owned.sh": "original\n", "docs/review.md": "Review\n" });
+  f.write("owned.sh", "reviewed\n");
+  f.git("add", "owned.sh");
+  f.git("update-index", "--chmod=+x", "owned.sh");
+  f.git("-c", "core.hooksPath=/dev/null", "commit", "-qm", "changed regular mode");
+  const candidate = f.git("rev-parse", "HEAD").trim(),
+    input = formatExceptionsFor(f, candidate, "owned.sh", "shell");
+  const result = f.inspect(candidate, { formatExceptions: input, asOf: "2026-10-05" });
+  NodeAssert.equal(result.counts["reviewed-format-exception"], 1);
+  NodeAssert.equal(result.counts["new-debt"], 1);
+  NodeAssert.equal(all(result).find((item) => item.kind === "mode-change").disposition, "new-debt");
+  NodeAssert.equal(result.ratchet, "needs-review");
+  const baseline = baselineFor(
+    result,
+    all(result).filter((item) => item.kind === "mode-change"),
+  );
+  NodeAssert.equal(
+    f.inspect(candidate, { formatExceptions: input, baseline, asOf: "2026-10-05" }).ratchet,
+    "no-new-debt-within-declared-scope",
+  );
+});
+
+NodeTest.test(
+  "format review cannot credit an original symlink or a nonregular review record",
+  (t) => {
+    const originalLink = fixture(
+      t,
+      { "docs/review.md": "Review\n" },
+      { "guide.md": "original-link" },
+    );
+    NodeFS.unlinkSync(NodePath.join(originalLink.cwd, "guide.md"));
+    originalLink.write("guide.md", "Regular replacement\n");
+    const candidate = originalLink.commit(),
+      first = originalLink.inspect(candidate);
+    const before = originalLink
+      .git("ls-tree", originalLink.upstream, "--", "guide.md")
+      .split(/\s+/);
+    const after = originalLink.git("ls-tree", candidate, "--", "guide.md").split(/\s+/);
+    NodeAssert.ok(all(first).some((item) => item.kind === "non-regular-content"));
+    const input = {
+      schemaVersion: 1,
+      kind: "reviewed-format-exceptions",
+      upstream: originalLink.upstream,
+      entries: [
+        {
+          path: "guide.md",
+          format: "markdown",
+          upstreamBlob: before[2],
+          candidateBlob: after[2],
+          upstreamMode: before[0],
+          candidateMode: after[0],
+          findingFingerprint: all(first).find((item) => item.kind === "non-regular-content")
+            .fingerprint,
+          owner: "Maintainer",
+          reason: "Attempted wrong-kind review",
+          reviewRecord: "docs/review.md",
+          reviewBlob: originalLink.git("rev-parse", `${candidate}:docs/review.md`).trim(),
+          expiresAt: "2026-12-01",
+        },
+      ],
+    };
+    NodeAssert.equal(
+      originalLink.inspect(candidate, { formatExceptions: input, asOf: "2026-10-05" }).status,
+      "unavailable",
+    );
+    const f = fixture(t, { "guide.md": "Original\n", "docs/review.md": "Review\n" });
+    f.write("guide.md", "Reviewed\n");
+    const regular = f.commit(),
+      formats = formatExceptionsFor(f, regular, "guide.md", "markdown");
+    NodeFS.unlinkSync(NodePath.join(f.cwd, "docs/review.md"));
+    NodeFS.symlinkSync("../guide.md", NodePath.join(f.cwd, "docs/review.md"));
+    const linked = f.commit();
+    formats.entries[0].reviewBlob = f.git("rev-parse", `${linked}:docs/review.md`).trim();
+    NodeAssert.equal(
+      f.inspect(linked, { formatExceptions: formats, asOf: "2026-10-05" }).status,
+      "unavailable",
+    );
+  },
+);
+
+NodeTest.test(
+  "unchanged or mode-only format entries cannot become dormant path exemptions",
+  (t) => {
+    const f = fixture(t, { "guide.md": "Original\n", "docs/review.md": "Review\n" });
+    f.write("guide.md", "Reviewed\n");
+    const changed = f.commit(),
+      formats = formatExceptionsFor(f, changed, "guide.md", "markdown");
+    f.write("guide.md", "Original\n");
+    const unchanged = f.commit();
+    formats.entries[0].candidateBlob = formats.entries[0].upstreamBlob;
+    NodeAssert.equal(
+      f.inspect(unchanged, { formatExceptions: formats, asOf: "2026-10-05" }).status,
+      "unavailable",
+    );
+    f.git("update-index", "--chmod=+x", "guide.md");
+    f.git("-c", "core.hooksPath=/dev/null", "commit", "-qm", "mode only");
+    const modeOnly = f.git("rev-parse", "HEAD").trim();
+    formats.entries[0].candidateMode = "100755";
+    NodeAssert.equal(
+      f.inspect(modeOnly, { formatExceptions: formats, asOf: "2026-10-05" }).status,
+      "unavailable",
+    );
+  },
+);
