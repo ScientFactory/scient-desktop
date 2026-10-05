@@ -22,7 +22,6 @@ export interface GroupingWork {
   readonly turnId?: TurnId | null | undefined;
   readonly tone: string;
   readonly sourceActivityKind?: string | undefined;
-  readonly agentSpawn?: unknown;
   readonly questionAnswer?: unknown;
 }
 
@@ -54,20 +53,6 @@ export interface TurnFold {
   readonly createdAt: string;
   readonly hiddenEntryIds: ReadonlySet<string>;
   readonly label: string;
-}
-
-/**
- * Work that never joins a group of neighbouring work entries: subagent
- * batches, answered questions, context compactions, and errors each stand on
- * their own row.
- */
-export function workEntryStandsAlone(entry: GroupingWork): boolean {
-  return (
-    entry.agentSpawn !== undefined ||
-    entry.questionAnswer !== undefined ||
-    entry.sourceActivityKind === "context-compaction" ||
-    entry.tone === "error"
-  );
 }
 
 /**
@@ -278,11 +263,8 @@ export function deriveTurnFolds<W extends GroupingWork>(input: {
       ) {
         continue;
       }
-      // User input and subagent batches stay visible after their turn settles.
-      if (
-        entry.kind === "work" &&
-        (entry.entry.questionAnswer !== undefined || entry.entry.agentSpawn !== undefined)
-      ) {
+      // User input stays visible after its turn settles.
+      if (entry.kind === "work" && entry.entry.questionAnswer !== undefined) {
         continue;
       }
       hiddenEntryIds.add(entry.id);

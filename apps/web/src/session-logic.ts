@@ -44,9 +44,8 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Equal from "effect/Equal";
 import { shallow } from "zustand/vanilla/shallow";
-// SCIENT-FORK:START — Scient work-log rows, plan rows and skill labels.
+// SCIENT-FORK:START — Scient work-log severity and skill labels.
 import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-presentation";
-import { type TurnId } from "@t3tools/contracts";
 import { scientSkillUsageLabel } from "./scient/skills/scientSkillUsageLabel";
 // SCIENT-FORK:END
 
@@ -73,12 +72,6 @@ export interface WorkLogEntry {
   readonly questionAnswer?: import("@t3tools/contracts").UserInputAttachmentAnswerPayload;
   readonly id: string;
   readonly createdAt: string;
-  /**
-   * When a row merged from several lifecycle updates first appeared;
-   * `createdAt` follows the latest update. Absent on a row with one update.
-   */
-  readonly startedAt?: string;
-  readonly turnId?: TurnId | null;
   readonly externalUrl?: { readonly href: string };
   readonly runId?: RunId | null;
   readonly label: string;
@@ -96,16 +89,6 @@ export interface WorkLogEntry {
   readonly sourceActivityKind?: string;
   readonly taskId?: string;
   readonly agentRole?: string;
-  /**
-   * Present on agent-spawn rows: one per workflow run or per-turn batch of
-   * direct spawns. The row ("Kicked off N subagents") derives its live
-   * status and member list from the agent panel model at render time.
-   */
-  readonly agentSpawn?: {
-    /** Workflow coordinator taskId, or null for a direct-spawn batch. */
-    workflowId: string | null;
-    agentTaskIds: ReadonlyArray<string>;
-  };
   readonly toolData?: unknown;
   readonly requestKind?: string;
   readonly itemType?: OrchestrationV2TurnItem["type"];

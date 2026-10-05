@@ -60,9 +60,7 @@ import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments"
 import {
   emptyAgentPanelModel,
   isActiveSubagentStatus,
-  isTerminalSubagentStatus,
   type AgentPanelModel,
-  type RuntimeSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   subagentGroupSummary,
@@ -852,27 +850,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       ),
     [agentPanelModel],
   );
-  const liveAgentTaskKey = useMemo(() => {
-    if (agentPanelModel === undefined) return undefined;
-    const ids: string[] = [];
-    const consider = (agent: { id: string; status: RuntimeSubagent["status"] }) => {
-      if (isActiveSubagentStatus(agent.status)) ids.push(agent.id);
-    };
-    agentPanelModel.directAgents.forEach(consider);
-    for (const group of agentPanelModel.workflows) {
-      if (!isTerminalSubagentStatus(group.workflow.status)) ids.push(group.workflow.id);
-      group.unphasedMembers.forEach(consider);
-      group.phases.forEach((phase) => phase.members.forEach(consider));
-    }
-    return ids.sort().join("\n");
-  }, [agentPanelModel]);
-  const liveAgentTaskIds = useMemo(
-    () =>
-      liveAgentTaskKey === undefined
-        ? undefined
-        : new Set(liveAgentTaskKey.length > 0 ? liveAgentTaskKey.split("\n") : []),
-    [liveAgentTaskKey],
-  );
   // SCIENT-FORK:END
   const rawRows = useMemo(() => {
     const previous = rowsProjectionRef.current;
@@ -892,7 +869,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         supportsConversationRollback,
         hasForkBaseline,
         forkBaselineAssistantMessageId,
-        liveAgentTaskIds,
         subagentWorkflowIds,
 
         worktreeSetup,
@@ -921,7 +897,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     activeTurnStartedAt,
     turnDiffSummaries,
     supportsConversationRollback,
-    liveAgentTaskIds,
     subagentWorkflowIds,
     worktreeSetup,
   ]);
@@ -3604,16 +3579,10 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
     return (
       <WorkLogBlock continues={row.continuesWorkLog}>
         <AgentSpawnRow
-          workEntry={{
-            id: row.id,
-            createdAt: row.createdAt,
-            runId: row.projectedItem.item.runId,
-            label,
-            tone: "tool",
-            agentSpawn: {
-              workflowId: workflow?.workflow.id ?? null,
-              agentTaskIds: nativeMemberIds,
-            },
+          entryId={row.id}
+          spawn={{
+            workflowId: workflow?.workflow.id ?? null,
+            agentTaskIds: nativeMemberIds,
           }}
           onToggleEntry={(wasExpanded) => ctx.onToggleWorkEntry(row.id, wasExpanded)}
         />
@@ -4244,17 +4213,6 @@ function LiveActivityContent({
 
 function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "work-live" }> }) {
   const ctx = use(TimelineRowCtx);
-  // SCIENT-FORK:START — spawn rows render their own component.
-  if (row.entry.agentSpawn) {
-    return (
-      <AgentSpawnRow
-        workEntry={row.entry}
-        active={row.active}
-        onToggleEntry={(collapsed) => ctx.onToggleWorkEntry(row.id, collapsed)}
-      />
-    );
-  }
-  // SCIENT-FORK:END
   const questionHeading = row.entry.questionAnswer
     ? getQuestionTextPreview(row.entry.questionAnswer)
     : "";
@@ -4290,7 +4248,7 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
           ) : row.active && row.entry.toolLifecycleStatus === "inProgress" ? (
             <span className="flex min-w-0">
               <span className="min-w-0 truncate">{label}</span>
-              <LiveStepElapsed startedAt={row.entry.startedAt ?? row.entry.createdAt} />
+              <LiveStepElapsed startedAt={row.entry.createdAt} />
             </span>
           ) : (
             label
@@ -5560,18 +5518,20 @@ const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation(
 
 /** One tool row per batch, with member results available on expansion. */
 const AgentSpawnRow = memo(function AgentSpawnRow(props: {
-  workEntry: TimelineWorkEntry;
+  entryId: string;
+  /** One workflow run, or a batch of direct spawns when workflowId is null. */
+  spawn: {
+    /** Workflow coordinator taskId, or null for a direct-spawn batch. */
+    workflowId: string | null;
+    agentTaskIds: ReadonlyArray<string>;
+  };
   active?: boolean | undefined;
   onToggleEntry?: ((collapsed: boolean) => void) | undefined;
 }) {
-  const { workEntry } = props;
+  const { entryId, spawn } = props;
   const { agentPanelModel, expandedSpawnEntryIds, onToggleSpawnRow, onOpenAgents } =
     use(TimelineRowCtx);
-  const spawn = workEntry.agentSpawn;
-  if (!spawn) {
-    return null;
-  }
-  const expanded = expandedSpawnEntryIds.has(workEntry.id);
+  const expanded = expandedSpawnEntryIds.has(entryId);
 
   const memberIds = new Set(spawn.agentTaskIds);
   const workflowGroup = spawn.workflowId
@@ -5601,7 +5561,7 @@ const AgentSpawnRow = memo(function AgentSpawnRow(props: {
     .toSorted()[0];
   const toggleExpanded = () => {
     props.onToggleEntry?.(expanded);
-    onToggleSpawnRow(workEntry.id, !expanded);
+    onToggleSpawnRow(entryId, !expanded);
   };
 
   return (
@@ -5711,11 +5671,6 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   onToggleEntry?: ((collapsed: boolean) => void) | undefined;
 }) {
   const { workEntry, workspaceRoot, displayLabel } = props;
-  // SCIENT-FORK:START — before any hooks, spawn rows render their own component.
-  if (workEntry.agentSpawn) {
-    return <AgentSpawnRow workEntry={workEntry} active onToggleEntry={props.onToggleEntry} />;
-  }
-  // SCIENT-FORK:END
   const ctx = use(TimelineRowCtx);
   const { threadRef, onImageExpand, timestampFormat } = ctx;
   const createdThread =
