@@ -47,6 +47,9 @@ import { makeLayer } from "../ProviderAdapterRegistry.ts";
 import { nativeModelWindowKey } from "../scient-fork/NativeModelContextWindow.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
+// SCIENT-FORK:START — failure-only evidence before the synthetic server unwinds.
+import { ScientCapacityFailureObservation } from "./ScientCapacityFailureObservation.test-support.ts";
+// SCIENT-FORK:END
 
 const instanceId = ProviderInstanceId.make("codex");
 const selection = { instanceId, model: "gpt-5.4" };
@@ -325,6 +328,7 @@ it.live(
         const fs = yield* FileSystem.FileSystem;
         const cwd = yield* checkpointWorkspace("first-codex-capacity");
         const databaseFile = NodePath.join(config.stateDir, "capacity.sqlite");
+        const observation = new ScientCapacityFailureObservation(databaseFile);
         const configLayer = Layer.succeed(ServerConfig, config);
         const projectId = ProjectId.make("capacity-project");
         let profile = "A";
@@ -403,14 +407,29 @@ it.live(
                   : { providerSessionIdleTimeoutMs: idleTimeoutMs }),
                 decorateEventSink: (sink) => ({
                   ...sink,
+                  writeWithEffects: (input) =>
+                    observation.forward(
+                      "writeWithEffects",
+                      input.events,
+                      sink.writeWithEffects(input),
+                    ),
                   writeIfRunCurrent: (input) => {
                     const gate =
                       input.nativeModelCapacityOwner === undefined ? undefined : pendingGate;
-                    if (gate === undefined) return sink.writeIfRunCurrent(input);
+                    if (gate === undefined)
+                      return observation.forward(
+                        "writeIfRunCurrent",
+                        input.events,
+                        sink.writeIfRunCurrent(input),
+                      );
                     pendingGate = undefined;
-                    return sink.writeIfRunCurrent(input).pipe(
-                      Effect.provideService(CapacityGate, gate),
-                      Effect.tap((result) => Deferred.succeed(gate.finished, result.committed)),
+                    return observation.forward(
+                      "writeIfRunCurrent.gated",
+                      input.events,
+                      sink.writeIfRunCurrent(input).pipe(
+                        Effect.provideService(CapacityGate, gate),
+                        Effect.tap((result) => Deferred.succeed(gate.finished, result.committed)),
+                      ),
                     );
                   },
                 }),
@@ -420,10 +439,14 @@ it.live(
                 }).pipe(Layer.orDie),
               },
             );
-            return yield* effect.pipe(
-              Effect.provideService(Peer, peer),
-              Effect.provide(layer.pipe(Layer.provideMerge(database))),
-            );
+            // SCIENT-FORK:START — catch the original body Exit while server resources still exist.
+            return yield* observation
+              .beforeCleanup(effect, observation.liveOwners(peer.opened))
+              .pipe(
+                // SCIENT-FORK:END
+                Effect.provideService(Peer, peer),
+                Effect.provide(layer.pipe(Layer.provideMerge(database))),
+              );
           }).pipe(Effect.scoped);
         const yieldPath = yield* Path.Path;
         const original = yield* serve(
@@ -822,7 +845,9 @@ it.live(
                 createdBy: "user",
                 creationSource: "web",
               });
+              observation.at("race.dispatch", id);
               yield* dispatch(id, modelSelection);
+              observation.at("race.accepted", id);
               const projection = yield* waitFor(id, (p) =>
                 p.providerTurns.some((t) => t.nativeAcceptance === "accepted"),
               );
@@ -846,8 +871,10 @@ it.live(
             const gate = yield* makeCapacityGate("inside");
             pendingGate = gate;
             yield* held.peer.usage(22_000);
+            observation.at("idle.capacity.entered", held.id);
             yield* Deferred.await(gate.entered).pipe(Effect.timeout("10 seconds"));
             yield* held.peer.complete;
+            observation.at("idle.peer.closed", held.id);
             yield* Deferred.await(held.peer.closed).pipe(Effect.timeout("10 seconds"));
             const reader = yield* Effect.acquireRelease(
               Effect.sync(() => new NodeSqlite.DatabaseSync(databaseFile, { readOnly: true })),
@@ -867,7 +894,9 @@ it.live(
                 .get(orderingKey),
             );
             yield* Deferred.succeed(gate.release, undefined);
+            observation.at("idle.capacity.finished", held.id);
             assert.isTrue(yield* Deferred.await(gate.finished));
+            observation.at("idle.run.completed", held.id);
             const completed = yield* waitFor(held.id, (p) => p.runs.at(-1)?.status === "completed");
             assert.equal(completed.runs.length, 1);
             assert.equal(
@@ -910,6 +939,7 @@ it.live(
             );
             yield* sql`CREATE TRIGGER capacity_write_failure BEFORE INSERT ON scient_model_context_windows WHEN NEW.max_tokens = 42_000 BEGIN SELECT RAISE(ABORT, 'synthetic capacity write failure'); END`;
             yield* failed.peer.usage(42_000);
+            observation.at("sql.run.failed", failed.id);
             const failureProjection = yield* waitFor(
               failed.id,
               (p) => p.runs.at(-1)?.status === "failed",
@@ -932,6 +962,7 @@ it.live(
             );
             yield* sql`DROP TRIGGER capacity_write_failure`;
             yield* failed.peer.complete;
+            observation.at("sql.peer.closed", failed.id);
             yield* Deferred.await(failed.peer.closed).pipe(Effect.timeout("10 seconds"));
 
             // Replacing the durable attempt before the owner transaction rejects a queued old frame.
@@ -942,6 +973,7 @@ it.live(
             const replacementGate = yield* makeCapacityGate("before");
             pendingGate = replacementGate;
             yield* replaced.peer.usage(77_777);
+            observation.at("replacement.capacity.entered", replaced.id);
             yield* Deferred.await(replacementGate.entered).pipe(Effect.timeout("10 seconds"));
             const oldRun = replaced.projection.runs[0]!;
             const oldAttempt = replaced.projection.attempts[0]!;
@@ -970,6 +1002,7 @@ it.live(
               ],
             });
             yield* Deferred.succeed(replacementGate.release, undefined);
+            observation.at("replacement.capacity.finished", replaced.id);
             assert.isFalse(yield* Deferred.await(replacementGate.finished));
             const replacementKey = yield* nativeModelWindowKey(
               oldRun.modelSelection,
