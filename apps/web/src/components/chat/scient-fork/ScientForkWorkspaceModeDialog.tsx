@@ -1,6 +1,7 @@
 import type {
   EnvironmentId,
   OrchestrationForkLineage,
+  OrchestrationV2ThreadShell,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -17,6 +18,7 @@ import {
 } from "react";
 
 import { useEnvironmentThreadShells } from "../../../state/entities";
+import { useArchivedThreadSnapshots } from "../../../lib/archivedThreadsState";
 import { Button } from "../../ui/button";
 import {
   Dialog,
@@ -113,6 +115,7 @@ interface ScientForkTitleOrigin {
   readonly projectId: ProjectId | null;
   readonly title: string;
   readonly forkLineage?: OrchestrationForkLineage | null | undefined;
+  readonly source?: Pick<OrchestrationV2ThreadShell, "forkLineage">;
 }
 
 /**
@@ -153,17 +156,28 @@ export function ScientForkDialog({
 }: ScientForkDialogProps & {
   readonly origin: ScientForkTitleOrigin | null;
 }) {
-  const environmentThreads = useEnvironmentThreadShells(
-    props.open ? (origin?.environmentId ?? null) : null,
+  const originEnvironmentId = props.open ? (origin?.environmentId ?? null) : null;
+  const environmentThreads = useEnvironmentThreadShells(originEnvironmentId);
+  const archiveEnvironmentIds = useMemo(
+    () => (originEnvironmentId === null ? [] : [originEnvironmentId]),
+    [originEnvironmentId],
   );
+  const { snapshots: archivedSnapshots } = useArchivedThreadSnapshots(archiveEnvironmentIds);
   const proposedTitle = useMemo(() => {
     if (!props.open || origin === null) return "";
+    const forkLineage =
+      origin.source === undefined ? origin.forkLineage : origin.source.forkLineage;
+    const archivedThreads = archivedSnapshots
+      .filter((entry) => entry.environmentId === origin.environmentId)
+      .flatMap((entry) => entry.snapshot.threads);
     return deriveForkTitle({
       origin,
-      originHasForkLineage: origin.forkLineage != null,
-      projectThreads: environmentThreads.filter((thread) => thread.projectId === origin.projectId),
+      originHasForkLineage: forkLineage != null,
+      projectThreads: [...environmentThreads, ...archivedThreads].filter(
+        (thread) => thread.projectId === origin.projectId,
+      ),
     });
-  }, [environmentThreads, origin, props.open]);
+  }, [archivedSnapshots, environmentThreads, origin, props.open]);
 
   return <ScientForkWorkspaceModeDialog {...props} proposedTitle={proposedTitle} />;
 }

@@ -588,78 +588,137 @@ describe("MessagesTimeline", () => {
     },
   );
 
-  it.each(["fork", "provider_handoff", "merge_back", "missing", "later-run", "inherited"] as const)(
-    "renders one fork boundary while preserving %s handoff semantics",
-    (kind) => {
-      const item = decodeNativeWorkflowItem({
-        id: "fork-init-context-row",
-        threadId: "thread-1",
-        runId: "fork-first-run",
-        nodeId: "first-root",
-        providerThreadId: "provider-1",
-        providerTurnId: null,
-        nativeItemRef: null,
-        parentItemId: null,
-        ordinal: 2,
-        status: "completed",
-        title: "Fork context",
-        startedAt: MESSAGE_CREATED_AT,
-        completedAt: MESSAGE_CREATED_AT,
-        updatedAt: MESSAGE_CREATED_AT,
-        type: "handoff",
-        contextHandoffId: "context-1",
-        fromProviderThreadIds: [],
-        toProviderThreadId: "provider-1",
-        fromProviderInstanceIds: [],
-        toProviderInstanceId: "codex",
-        strategy: "full_thread_summary",
-      });
-      const now = DateTime.makeUnsafe(MESSAGE_CREATED_AT);
-      const transfer = decodeTimelineTransfer({
-        id: "transfer-1",
-        type: kind === "provider_handoff" || kind === "merge_back" ? kind : "fork",
-        sourceThreadId: "source",
-        targetThreadId: "thread-1",
-        sourcePoint: { threadId: "source" },
-        basePoint: null,
-        sourceProviderInstanceId: "codex",
-        targetProviderInstanceId: "codex",
-        targetRunId: kind === "later-run" ? "later-run" : "fork-first-run",
-        status: "consumed",
-        resolution: { strategy: "portable_context", contextHandoffId: "context-1" },
-        createdBy: "user",
-        error: null,
-        createdAt: now,
-        updatedAt: now,
-        consumedAt: now,
-      });
-      const markup = renderToStaticMarkup(
-        <MessagesTimeline
-          {...buildProps()}
-          hasForkBaseline
-          forkBaselineAssistantMessageId={null}
-          contextTransfers={kind === "missing" ? undefined : [transfer]}
-          timelineEntries={[
-            {
-              kind: "event",
-              id: item.id,
-              createdAt: MESSAGE_CREATED_AT,
-              projectedItem: {
-                item,
-                position: 2,
-                visibility: kind === "inherited" ? "inherited" : "local",
-                sourceThreadId: ThreadId.make("thread-1"),
-                sourceItemId: item.id,
-              },
+  it.each([
+    "fork",
+    "provider_handoff",
+    "merge_back",
+    "missing",
+    "later-run",
+    "inherited",
+    "proven-inherited",
+  ] as const)("renders one fork boundary while preserving %s handoff semantics", (kind) => {
+    const item = decodeNativeWorkflowItem({
+      id: "fork-init-context-row",
+      threadId: "thread-1",
+      runId: "fork-first-run",
+      nodeId: "first-root",
+      providerThreadId: "provider-1",
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 2,
+      status: "completed",
+      title: "Fork context",
+      startedAt: MESSAGE_CREATED_AT,
+      completedAt: MESSAGE_CREATED_AT,
+      updatedAt: MESSAGE_CREATED_AT,
+      type: "handoff",
+      contextHandoffId: "context-1",
+      ...(kind === "proven-inherited"
+        ? {
+            runId: null,
+            nodeId: null,
+            providerThreadId: null,
+            inheritedFrom: {
+              threadId: "child",
+              itemId: "original-handoff",
+              runId: "child-first-run",
+              status: "completed",
             },
-          ]}
-        />,
-      );
-      expect(markup.match(/Conversation forked here/g)).toHaveLength(1);
-      if (kind === "fork") expect(markup).not.toContain("Context handoff");
-      else expect(markup).toContain("Context handoff");
-    },
-  );
+            forkInitialization: {
+              transferId: "old-fork-transfer",
+              contextHandoffId: "context-1",
+              threadId: "child",
+              runId: "child-first-run",
+            },
+          }
+        : {}),
+      fromProviderThreadIds: [],
+      toProviderThreadId: "provider-1",
+      fromProviderInstanceIds: [],
+      toProviderInstanceId: "codex",
+      strategy: "full_thread_summary",
+    });
+    const now = DateTime.makeUnsafe(MESSAGE_CREATED_AT);
+    const transfer = decodeTimelineTransfer({
+      id: "transfer-1",
+      type: kind === "provider_handoff" || kind === "merge_back" ? kind : "fork",
+      sourceThreadId: "source",
+      targetThreadId: "thread-1",
+      sourcePoint: { threadId: "source" },
+      basePoint: null,
+      sourceProviderInstanceId: "codex",
+      targetProviderInstanceId: "codex",
+      targetRunId: kind === "later-run" ? "later-run" : "fork-first-run",
+      status: "consumed",
+      resolution: { strategy: "portable_context", contextHandoffId: "context-1" },
+      createdBy: "user",
+      error: null,
+      createdAt: now,
+      updatedAt: now,
+      consumedAt: now,
+    });
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        hasForkBaseline
+        forkBaselineAssistantMessageId={null}
+        contextTransfers={kind === "missing" ? undefined : [transfer]}
+        timelineEntries={[
+          {
+            kind: "event",
+            id: item.id,
+            createdAt: MESSAGE_CREATED_AT,
+            projectedItem: {
+              item,
+              position: 2,
+              visibility:
+                kind === "inherited" || kind === "proven-inherited" ? "inherited" : "local",
+              sourceThreadId: ThreadId.make("thread-1"),
+              sourceItemId: item.id,
+            },
+          },
+          ...(kind === "proven-inherited"
+            ? [
+                {
+                  kind: "event" as const,
+                  id: "later-real-switch",
+                  createdAt: MESSAGE_CREATED_AT,
+                  projectedItem: {
+                    item: decodeNativeWorkflowItem({
+                      ...item,
+                      id: "later-real-switch",
+                      ordinal: 3,
+                      startedAt: MESSAGE_CREATED_AT,
+                      completedAt: MESSAGE_CREATED_AT,
+                      updatedAt: MESSAGE_CREATED_AT,
+                      contextHandoffId: "later-provider-context",
+                      forkInitialization: undefined,
+                      title: "Provider handoff",
+                      toProviderInstanceId: "claudeAgent",
+                      inheritedFrom: {
+                        threadId: "child",
+                        itemId: "later-real-switch",
+                        runId: "child-second-run",
+                        status: "completed",
+                      },
+                    }),
+                    position: 3,
+                    visibility: "inherited" as const,
+                    sourceThreadId: ThreadId.make("child"),
+                    sourceItemId: TurnItemId.make("later-real-switch"),
+                  },
+                },
+              ]
+            : []),
+        ]}
+      />,
+    );
+    expect(markup.match(/Conversation forked here/g)).toHaveLength(1);
+    if (kind === "proven-inherited") expect(markup.match(/Context handoff/g)).toHaveLength(1);
+    else if (kind === "fork") expect(markup).not.toContain("Context handoff");
+    else expect(markup).toContain("Context handoff");
+  });
 
   it("renders elapsed time for a completed turn", () => {
     const runId = RunId.make("turn-with-fold");

@@ -20,6 +20,8 @@ import {
   useProject,
   useThreadRefs,
   useThreadShell,
+  useThreadStatus,
+  resolveThreadDetailRef,
 } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { environmentShell } from "../state/shell";
@@ -89,6 +91,12 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
   const draftThread = useComposerDraftStore((store) =>
     serverThreadRef ? store.getDraftThreadByRef(serverThreadRef) : null,
   );
+  const serverThreadStatus = useThreadStatus(
+    resolveThreadDetailRef(serverThreadRef, {
+      shellExists: serverThreadShell !== null,
+      waitForShell: draftThread !== null,
+    }),
+  );
   const promotedDraftId = useComposerDraftStore((store) =>
     target.kind === "server" ? store.getDraftIdByRef(target.threadRef) : null,
   );
@@ -114,7 +122,7 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
   const renderState = resolveThreadRouteRenderState({
     bootstrapComplete,
     serverThreadExists: serverThreadShell !== null,
-    serverThreadDeleted: serverThreadShell?.deletedAt != null,
+    serverThreadDeleted: serverThreadShell?.deletedAt != null || serverThreadStatus === "deleted",
     draftThreadExists: draftThread !== null,
   });
   const serverThreadStarted = threadHasStarted(serverThreadShell);
@@ -203,10 +211,10 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
         />
       );
     }
-  } else if (renderState === "ready" || (renderState === "loading" && serverThreadShell !== null)) {
+  } else if (renderState === "ready" || renderState === "loading") {
     view = (
       <ChatView
-        {...(nextChatViewKey ? { key: nextChatViewKey.key } : {})}
+        key={nextChatViewKey?.key}
         environmentId={target.threadRef.environmentId}
         threadId={target.threadRef.threadId}
         routeKind="server"
