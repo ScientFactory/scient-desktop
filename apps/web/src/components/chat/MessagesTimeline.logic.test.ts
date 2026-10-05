@@ -7,6 +7,7 @@ import {
   RuntimeRequestId,
   type OrchestrationV2ProjectedTurnItem,
   OrchestrationV2TurnItem,
+  OrchestrationV2TurnItemJson,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
@@ -43,6 +44,8 @@ import {
 import type { WorkLogEntry } from "../../session-logic";
 
 const decodeBoundaryItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem);
+const decodeJsonBoundaryItem = Schema.decodeUnknownSync(OrchestrationV2TurnItemJson);
+const encodeJsonBoundaryItem = Schema.encodeSync(OrchestrationV2TurnItemJson);
 
 describe("findLatestCompletedAssistantMessageId", () => {
   it("selects the latest settled terminal response while a newer turn is active", () => {
@@ -4052,6 +4055,145 @@ describe("resolveTimelineToolPresentation", () => {
 });
 
 describe("v2 run and attempt history", () => {
+  it.each([
+    { resource: "incoming-fork", trailingWork: false, nativeRun: false, duration: "21s" },
+    { resource: "outgoing-fork", trailingWork: false, nativeRun: false, duration: "21s" },
+    // Thread creation projects actual work; keep its timing contribution.
+    { resource: "thread-created", trailingWork: false, nativeRun: false, duration: "28m 47s" },
+    { resource: "incoming-fork", trailingWork: true, nativeRun: false, duration: "25s" },
+    { resource: "outgoing-fork", trailingWork: true, nativeRun: true, duration: "21s" },
+  ] as const)(
+    "separates $resource cards from work timing (trailing=$trailingWork, native=$nativeRun)",
+    ({ resource, trailingWork, nativeRun, duration }) => {
+      const threadId = ThreadId.make("fork-destination");
+      const sourceThreadId = ThreadId.make("fork-source");
+      const runId = nativeRun ? RunId.make("native-run") : null;
+      const base = {
+        threadId,
+        runId,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        status: "completed",
+        title: null,
+      };
+      const at = (seconds: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, seconds)).toISOString();
+      const record = (id: string, seconds: number, fields: Record<string, unknown>) =>
+        decodeJsonBoundaryItem({
+          ...base,
+          id,
+          ordinal: seconds,
+          startedAt: at(seconds),
+          completedAt: at(seconds),
+          updatedAt: at(seconds),
+          ...fields,
+        });
+      const items: OrchestrationV2ProjectedTurnItem[] = [
+        record("prompt", 0, {
+          type: "user_message",
+          messageId: "prompt-message",
+          createdBy: "user",
+          creationSource: "web",
+          inputIntent: "turn_start",
+          text: "Check the workspace",
+          attachments: [],
+        }),
+        record("command", 5, {
+          type: "command_execution",
+          input: "pwd",
+          output: "/workspace",
+          exitCode: 0,
+        }),
+        record("answer", 21, {
+          type: "assistant_message",
+          messageId: "answer-message",
+          text: "Checked",
+          streaming: false,
+        }),
+        ...(trailingWork
+          ? [
+              record("trailing-command", 25, {
+                type: "command_execution",
+                input: "pwd",
+                output: "/workspace",
+                exitCode: 0,
+              }),
+            ]
+          : []),
+      ].map((item, position) => ({
+        position,
+        visibility: nativeRun ? "local" : "inherited",
+        sourceThreadId,
+        sourceItemId: item.id,
+        item,
+      }));
+      const resourceItem = record("later-resource", 1727, {
+        ...(resource === "thread-created"
+          ? {
+              type: "thread_created",
+              targetRunId: null,
+              targetProviderInstanceId: "controlled",
+              targetModel: "controlled-model",
+            }
+          : {
+              type: "fork",
+              source: { type: "run", threadId: sourceThreadId, runId: "source-run" },
+              providerThreadId: undefined,
+            }),
+        targetThreadId: resource === "incoming-fork" ? threadId : "another-destination",
+        runId: nativeRun ? runId : null,
+        startedAt: null,
+      });
+      items.push({
+        position: items.length,
+        visibility: "local",
+        sourceThreadId: threadId,
+        sourceItemId: resourceItem.id,
+        item: resourceItem,
+      });
+
+      // Reload through the wire codec and ChatView's projection/folding path.
+      // Inherited history has no executable run; the native case retains one.
+      for (const projectedItems of [
+        items,
+        items.map((row) => ({
+          ...row,
+          item: decodeJsonBoundaryItem(
+            JSON.parse(JSON.stringify(encodeJsonBoundaryItem(row.item))),
+          ),
+        })),
+      ]) {
+        const rows = deriveMessagesTimelineRows({
+          timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+            visibleTurnItems: projectedItems,
+            optimisticMessages: [],
+          }),
+          latestRun: runId
+            ? { runId, status: "completed", startedAt: at(0), completedAt: at(21) }
+            : null,
+          isWorking: false,
+          turnDiffSummaries: [],
+          supportsConversationRollback: false,
+          hasForkBaseline: !nativeRun,
+          forkBaselineAssistantMessageId: MessageId.make("answer-message"),
+        });
+        expect(rows.filter((row) => row.kind === "turn-fold")).toMatchObject([
+          { label: `Worked for ${duration}`, createdAt: at(0), expanded: false },
+        ]);
+        expect(rows.filter((row) => row.kind === "fork-marker")).toHaveLength(nativeRun ? 0 : 1);
+        const visibleResources = rows.filter((row) => row.kind === "event");
+        expect(visibleResources.map((row) => row.id)).toEqual(
+          resource === "outgoing-fork" ? ["later-resource"] : [],
+        );
+        expect(
+          rows.find((row) => row.kind === "message" && row.message.role === "assistant"),
+        ).toMatchObject({ message: { id: "answer-message", text: "Checked" } });
+      }
+    },
+  );
+
   it("folds settled-turn commentary and work behind a Worked-for row", () => {
     const timelineEntries = [
       {

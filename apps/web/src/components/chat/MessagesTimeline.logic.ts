@@ -1086,8 +1086,11 @@ function deriveTurnFolds(input: {
       continue;
     }
 
-    const firstEntry = group.entries[0];
-    const lastEntry = group.entries.at(-1);
+    // Linked resources stay visible but their lifetime is not response work.
+    const firstEntry = group.entries.find((entry) => !timelineEntryIsPersistentResourceCard(entry));
+    const lastEntry = group.entries.findLast(
+      (entry) => !timelineEntryIsPersistentResourceCard(entry),
+    );
     if (!firstEntry || !lastEntry) {
       continue;
     }
