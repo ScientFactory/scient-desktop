@@ -249,7 +249,7 @@
     },
     {
       "path": "apps/server/src/orchestration-v2/ProviderTurnStartService.ts",
-      "anchor": "prepareScientV2SkillTurn",
+      "anchor": "prepareScientV2SkillScope",
       "purpose": "Prepare exact native-turn skill authority from the persisted V2 message (SelectedScientSkillNames.test.ts)."
     },
     {

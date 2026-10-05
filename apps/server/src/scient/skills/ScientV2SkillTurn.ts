@@ -17,7 +17,7 @@ import * as ScientSkillSession from "./ScientSkillSession.ts";
  * Everything below is the shared `prepareScientSkillTurn` contract: explicit
  * names are the only selection authority, and serialized provider text is not.
  */
-export const prepareScientV2SkillTurn = Effect.fnUntraced(function* (input: {
+export const prepareScientV2SkillScope = Effect.fnUntraced(function* (input: {
   readonly threadId: ThreadId;
   readonly driver: ProviderDriverKind;
   readonly mcpSessionInjection?: boolean;
@@ -53,24 +53,40 @@ export const prepareScientV2SkillTurn = Effect.fnUntraced(function* (input: {
     plan.delivery !== "unsupported" &&
     input.mcpSessionInjection === true &&
     mcpSession?.capabilities.has("skills:read") === true;
-  const skillTurn = prepareScientSkillTurn(
-    input.text,
-    deliverable ? plan.skills : [],
-    deliverable ? plan.releases : new Map(),
-    {
-      skillListToolName: tools.name("scient_skills_list"),
-      skillLoadToolName: tools.name("scient_skill_load"),
-      includeCatalogMarker: deliverable && mcpSession?.capabilities.has("skills:read") === true,
-      providerNativeSkillTool: tools.providerNativeSkillTool,
-      deferred: tools.deferred,
-    },
-    input.selectedScientSkillNames,
-    plan.catalogStatus,
-  );
-  if (deliverable) {
-    // The bearer token stays stable for the provider process, but its exact
-    // skill authority is replaced immediately before this turn.
-    yield* McpSessionRegistry.replaceActiveMcpSkillScope(input.threadId, skillTurn.skillScope);
-  }
-  return skillTurn.input ?? input.text;
+  const projection = {
+    skillListToolName: tools.name("scient_skills_list"),
+    skillLoadToolName: tools.name("scient_skill_load"),
+    providerNativeSkillTool: tools.providerNativeSkillTool,
+    deferred: tools.deferred,
+  };
+  const prepare = (includeCatalogMarker: boolean) =>
+    prepareScientSkillTurn(
+      input.text,
+      deliverable ? plan.skills : [],
+      deliverable ? plan.releases : new Map(),
+      { ...projection, includeCatalogMarker },
+      input.selectedScientSkillNames,
+      plan.catalogStatus,
+    );
+  const skillTurn = prepare(deliverable);
+  const text = skillTurn.input ?? input.text;
+  const withoutCatalogMarker = prepare(false).input ?? input.text;
+  return {
+    text,
+    textWithoutCatalogMarker: text === withoutCatalogMarker ? undefined : withoutCatalogMarker,
+    // Preparation is inert: shared context validation owns when this scope
+    // becomes visible to the provider's already-issued bearer credential.
+    publish: deliverable
+      ? McpSessionRegistry.replaceActiveMcpSkillScope(input.threadId, skillTurn.skillScope)
+      : Effect.void,
+  };
+});
+
+/** Direct controls retain their existing immediate preparation/publication boundary. */
+export const prepareScientV2SkillTurn = Effect.fnUntraced(function* (
+  input: Parameters<typeof prepareScientV2SkillScope>[0],
+) {
+  const prepared = yield* prepareScientV2SkillScope(input);
+  yield* prepared.publish;
+  return prepared.text;
 });

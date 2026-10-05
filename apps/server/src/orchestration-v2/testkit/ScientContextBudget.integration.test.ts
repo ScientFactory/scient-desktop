@@ -1,6 +1,9 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { initializeScientProject } from "@scientfactory/project-init";
 import {
   CommandId,
+  EnvironmentId,
   EventId,
   MessageId,
   ProjectId,
@@ -12,6 +15,24 @@ import {
   type ModelSelection,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Context from "effect/Context";
+import * as FileSystem from "effect/FileSystem";
+import { HttpServer } from "effect/unstable/http";
+import * as NetAddress from "effect/unstable/net/NetAddress";
+import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
+import type { McpInvocationScope } from "../../mcp/McpInvocationContext.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
+import { scientInvocationForMcp } from "../../mcp/ScientMcpInvocation.ts";
+import {
+  listScientSkillsForInvocation,
+  loadScientSkillForInvocation,
+} from "../../mcp/toolkits/skills/handlers.ts";
+import { AgentInvocationContext } from "../../scient/operations/AgentInvocationContext.ts";
+import { dispatchScientOperation } from "../../scient/operations/AgentOperationDispatcher.ts";
+import * as ScientSkillSession from "../../scient/skills/ScientSkillSession.ts";
+import * as ScientSkillPolicy from "../../scient/skills/ScientSkillPolicy.ts";
+import * as ScientSkillRegistry from "../../scient/skills/ScientSkillRegistry.ts";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Fiber from "effect/Fiber";
@@ -40,6 +61,40 @@ import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import { LegacyV1ThreadImporter } from "../legacy/LegacyV1ThreadImporter.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
+
+const skillRegistryLayer = McpSessionRegistry.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(
+        HttpServer.HttpServer,
+        HttpServer.HttpServer.of({
+          address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 43123),
+          serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
+        }),
+      ),
+      Layer.succeed(
+        ServerEnvironment.ServerEnvironment,
+        ServerEnvironment.ServerEnvironment.of({
+          getEnvironmentId: Effect.succeed(EnvironmentId.make("skill-budget-fixture")),
+          getDescriptor: Effect.die("No environment descriptor needed"),
+        }),
+      ),
+    ),
+  ),
+);
+const skillPlannerLayer = ScientSkillSession.layer.pipe(
+  Layer.provide(
+    Layer.merge(
+      ScientSkillRegistry.layerFromCatalog({ releases: [], diagnostics: [] }),
+      ScientSkillPolicy.layerFromSnapshot({
+        userSkills: [],
+        projectSkills: [],
+        trustedProjects: [],
+      }),
+    ),
+  ),
+);
 
 const instanceId = ProviderInstanceId.make("acp");
 const selection = { instanceId, model: "controlled-budget-model" };
@@ -83,6 +138,7 @@ const cases: ReadonlyArray<{
   readonly olderAbsentPolicy?: boolean;
   readonly included: boolean;
   readonly refused?: boolean;
+  readonly skills?: boolean;
 }> = [
   { name: "standard", size: "standard", historyBytes: 150_000, window: 1_000_000, included: true },
   {
@@ -96,6 +152,7 @@ const cases: ReadonlyArray<{
   },
   {
     name: "mandatory-current-input-exhausts-handoff-window",
+    skills: true,
     size: "standard",
     historyBytes: 150_000,
     currentInput: "u".repeat(120_000),
@@ -220,6 +277,24 @@ for (const test of cases) {
           const name = `scient-budget-${test.name}`;
           const currentInput = test.currentInput ?? defaultCurrentInput;
           const cwd = yield* checkpointWorkspace(name);
+          const skillRegistry = test.skills
+            ? Context.get(
+                yield* Layer.build(skillRegistryLayer),
+                McpSessionRegistry.McpSessionRegistry,
+              )
+            : undefined;
+          if (test.skills) {
+            yield* Effect.promise(() => initializeScientProject({ root: cwd }));
+            const fs = yield* FileSystem.FileSystem;
+            const skillPath = `${cwd}/.scient/skills/project-method`;
+            yield* fs.makeDirectory(skillPath, { recursive: true });
+            yield* fs.writeFileString(
+              `${skillPath}/SKILL.md`,
+              "---\nname: project-method\ndescription: Bounded fixture evidence.\n---\n\n# Method\n\nPreserve the evidence.\n",
+            );
+          }
+          let beforeSkillScope: McpInvocationScope | undefined;
+          let skillToken: string | undefined;
           const source = ThreadId.make(`${name}:source`);
           const forkPath = test.path === "fork" || test.path === "fork-switch";
           const switchPath =
@@ -247,17 +322,29 @@ for (const test of cases) {
             .map((ownedInstance) => {
               const nativeAdapter = makeNativeSessionAdapterV2({
                 instanceId: ownedInstance,
-                driver: ProviderDriverKind.make("acp"),
+                driver: ProviderDriverKind.make(test.skills ? "codex" : "acp"),
                 defaultCwd: cwd,
                 capabilities: AcpProviderCapabilitiesV2,
                 idAllocator: allocator,
-                mcpSessionInjection: false,
+                mcpSessionInjection: test.skills === true,
                 continuations: { offer: () => Effect.die("No continuation in budget proof") },
                 open: (openInput, publish) =>
                   Effect.gen(function* () {
                     if (test.preparedSize !== undefined && openInput.threadId === target) {
                       yield* Deferred.succeed(opened, undefined);
                       yield* Deferred.await(releaseOpen);
+                    }
+                    if (skillRegistry && openInput.threadId === target) {
+                      const config = McpProviderSession.readMcpProviderSession(target);
+                      assert.ok(config);
+                      skillToken = config.authorizationHeader.replace(/^Bearer\s+/, "");
+                      beforeSkillScope = yield* skillRegistry.resolve(skillToken);
+                      assert.ok(beforeSkillScope);
+                      assert.deepEqual(beforeSkillScope.skillScope, {
+                        catalog: { status: "pending" },
+                        releases: new Map(),
+                        skills: [],
+                      });
                     }
                     const nativeId = `${name}:native:${++openings}`;
                     const native: NativeSession = {
@@ -437,6 +524,7 @@ for (const test of cases) {
                 commandId: CommandId.make(`${name}:send:${suffix}`),
                 messageId: MessageId.make(`${name}:message:${suffix}`),
                 text: currentInput,
+                ...(test.skills ? { selectedScientSkillNames: ["project-method"] } : {}),
                 attachments: [],
                 modelSelection: targetSelection,
                 dispatchMode:
@@ -583,6 +671,38 @@ for (const test of cases) {
             );
             if (test.refused) {
               assert.equal(offers.length, 0);
+              if (skillRegistry) {
+                assert.ok(skillToken);
+                assert.ok(beforeSkillScope);
+                const after = yield* skillRegistry.resolve(skillToken);
+                assert.ok(after, "Refusal must not need credential rotation to preserve authority");
+                assert.deepEqual(
+                  after,
+                  beforeSkillScope,
+                  "A rejected shared-context turn must never publish its new skill scope",
+                );
+                const listed = yield* dispatchScientOperation(
+                  "skills.list",
+                  listScientSkillsForInvocation(),
+                ).pipe(
+                  Effect.provideService(AgentInvocationContext, scientInvocationForMcp(after)),
+                );
+                assert.equal(listed.scope.status, "pending");
+                const denied = yield* dispatchScientOperation(
+                  "skills.load",
+                  loadScientSkillForInvocation({ name: "project-method" }),
+                ).pipe(
+                  Effect.provideService(AgentInvocationContext, scientInvocationForMcp(after)),
+                  Effect.flip,
+                );
+                assert.equal(denied._tag, "ScientSkillToolError");
+                assert.propertyVal(denied, "code", "not-found");
+                assert.deepEqual(
+                  settled.messages.find((message) => message.id === current.messageId)
+                    ?.selectedScientSkillNames,
+                  ["project-method"],
+                );
+              }
               const failure = settled.turnItems.find(
                 (item) => item.type === "error" && item.runId === settled.runs.at(-1)?.id,
               );
@@ -649,6 +769,15 @@ for (const test of cases) {
                     makeLayer(adapters),
                     {
                       runEffectWorker: !test.olderAbsentPolicy,
+                      ...(skillRegistry === undefined
+                        ? {}
+                        : {
+                            configureMcp: true,
+                            mcpSessionRegistryLayer: Layer.succeed(
+                              McpSessionRegistry.McpSessionRegistry,
+                              skillRegistry,
+                            ),
+                          }),
                       serverSettingsLayer: ServerSettings.layerTest({
                         scientFork: { contextHandoffSize: test.preparedSize ?? test.size },
                       }).pipe(Layer.orDie),
@@ -664,10 +793,11 @@ for (const test of cases) {
                     ),
                   ),
                 ),
+                Layer.provide(test.skills ? skillPlannerLayer : Layer.empty),
               ),
             ),
           );
-        }).pipe(Effect.provide(idAllocatorLayer)),
+        }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, idAllocatorLayer))),
       ),
   );
 }
