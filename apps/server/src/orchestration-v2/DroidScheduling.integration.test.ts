@@ -12,11 +12,14 @@ import {
   ProviderInstanceId,
   ThreadId,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2StoredEvent,
 } from "@t3tools/contracts";
 import type { ProviderAdapterV2Event } from "./ProviderAdapter.ts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as Exit from "effect/Exit";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -26,6 +29,9 @@ import * as Stream from "effect/Stream";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import type { AcpProtocolLogEvent } from "effect-acp/protocol";
+import type { AcpSessionRequestLogEvent } from "../provider/acp/AcpSessionRuntime.ts";
 import * as Config from "../config.ts";
 import { makeDroidAcpRuntime } from "../provider/acp/DroidAcpSupport.ts";
 import { scriptedDroid } from "../provider/testUtils/scriptedDroid.ts";
@@ -39,6 +45,8 @@ import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderRep
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
 
 import { EventSinkV2 } from "./EventSink.ts";
+import { EventStoreV2 } from "./EventStore.ts";
+import { EffectOutboxV2 } from "./EffectOutbox.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { layer as threadCommandExecutorLayer } from "./ThreadCommandExecutor.ts";
 import { ProjectCloneTracker } from "../project/ProjectCloneTracker.ts";
@@ -58,6 +66,7 @@ import {
 const importedQuestion = "Which city did we pick for the workshop?";
 const importedAnswer = "We picked Poseidonis for the workshop.";
 const decodeDroidSettings = Schema.decodeEffect(DroidSettings);
+const encodeUnknownJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const instanceId = ProviderInstanceId.make("droid-native-scheduling");
 const threadId = ThreadId.make("thread:droid-native-scheduling");
 const selection = { instanceId, model: "droid-native" };
@@ -88,12 +97,35 @@ const withDroid = <A, E, R>(
     releasePreparation: Effect.Effect<boolean>;
     log: Effect.Effect<ReadonlyArray<{ method?: string; params?: Record<string, unknown> }>>;
     injectEvent: (event: ProviderAdapterV2Event) => Effect.Effect<void>;
+    teardownEntered: Effect.Effect<void>;
+    releaseTeardown: Effect.Effect<boolean>;
+    pids: ReadonlyArray<number>;
+    nativeEvents: ReadonlyArray<ProviderAdapterV2Event>;
+    requests: ReadonlyArray<AcpSessionRequestLogEvent>;
+    protocol: ReadonlyArray<AcpProtocolLogEvent>;
+    observe: (
+      phase: string,
+      commandResult?: unknown,
+    ) => Effect.Effect<{
+      projection: OrchestrationV2ThreadProjection;
+      ownership: ReadonlyArray<ReadonlyArray<{ payload_json: string }>>;
+      events: ReadonlyArray<OrchestrationV2StoredEvent>;
+      effects: ReadonlyArray<{
+        effect_id: string;
+        command_id: string;
+        effect_type: string;
+        payload_json: string;
+        status: string;
+      }>;
+    }>;
   }) => Effect.Effect<A, E, R>,
   options: {
     manualWorker?: boolean;
     holdModel?: boolean;
     injectEvents?: boolean;
     importHistory?: boolean;
+    holdTeardown?: boolean;
+    receiptName?: string;
   } = {},
 ) =>
   Effect.scoped(
@@ -106,10 +138,59 @@ const withDroid = <A, E, R>(
       const crypto = yield* Crypto.Crypto;
       const allocator = yield* IdAllocatorV2;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const receiptDirectory = process.env.DROID_SCHED_RECEIPTS;
+      const record = (phase: string, value: unknown) =>
+        receiptDirectory === undefined || options.receiptName === undefined
+          ? Effect.void
+          : fs
+              .makeDirectory(receiptDirectory, { recursive: true })
+              .pipe(
+                Effect.andThen(
+                  fs.writeFileString(
+                    `${receiptDirectory}/${options.receiptName}-${phase}.json`,
+                    JSON.stringify(value, null, 2) + "\n",
+                  ),
+                ),
+                Effect.orDie,
+              );
+      const pids: number[] = [];
+      const exits: Array<Fiber.Fiber<unknown>> = [];
+      const nativeEvents: ProviderAdapterV2Event[] = [];
+      const requests: AcpSessionRequestLogEvent[] = [];
+      const protocol: AcpProtocolLogEvent[] = [];
+      const trackedSpawner = ChildProcessSpawner.make((command) =>
+        spawner.spawn(command).pipe(
+          Effect.tap((handle) =>
+            Effect.gen(function* () {
+              pids.push(Number(handle.pid));
+              exits.push(yield* handle.exitCode.pipe(Effect.exit, Effect.forkDetach));
+            }),
+          ),
+        ),
+      );
+      yield* Effect.addFinalizer(() =>
+        Effect.gen(function* () {
+          const exitResults = yield* Effect.forEach(exits, (exit) =>
+            Fiber.join(exit).pipe(Effect.timeout("5 seconds"), Effect.orDie),
+          );
+          for (const pid of pids) assert.throws(() => process.kill(pid, 0), /ESRCH/u);
+          yield* record("cleanup", { pids, exitResults, gone: true });
+        }),
+      );
       const entered = yield* Deferred.make<void>(),
         released = yield* Deferred.make<void>();
+      const teardownEntered = yield* Deferred.make<void>(),
+        teardownReleased = yield* Deferred.make<void>();
       let admissionGuard = () => Effect.succeed(false);
       const nativeAdapter = makeDroidAdapterV2({
+        testHooks: {
+          afterHardTeardownTransportDrained: () =>
+            options.holdTeardown
+              ? Deferred.succeed(teardownEntered, undefined).pipe(
+                  Effect.andThen(Deferred.await(teardownReleased)),
+                )
+              : Effect.void,
+        },
         instanceId,
         settings: yield* decodeDroidSettings({
           enabled: true,
@@ -118,7 +199,21 @@ const withDroid = <A, E, R>(
         environment: { PATH: process.env.PATH },
         sensitiveEnvironmentValues: [],
         makeRuntime: (input) =>
-          makeDroidAcpRuntime(input).pipe(
+          makeDroidAcpRuntime({
+            ...input,
+            requestLogger: (event) =>
+              Effect.sync(() => {
+                requests.push(event);
+              }),
+            protocolLogging: {
+              logIncoming: true,
+              logOutgoing: true,
+              logger: (event) =>
+                Effect.sync(() => {
+                  protocol.push(event);
+                }),
+            },
+          }).pipe(
             Effect.map((runtime) => ({
               ...runtime,
               setModel: (model) =>
@@ -130,7 +225,7 @@ const withDroid = <A, E, R>(
                   : runtime.setModel(model),
             })),
           ),
-        childProcessSpawner: spawner,
+        childProcessSpawner: trackedSpawner,
         fileSystem: fs,
         crypto,
         serverConfig: config,
@@ -144,13 +239,18 @@ const withDroid = <A, E, R>(
           nativeAdapter.openSession(input).pipe(
             Effect.map((runtime) => ({
               ...runtime,
-              ...(options.injectEvents
-                ? {
-                    events: runtime.events.pipe(
-                      Stream.merge(Stream.fromQueue(injected), { haltStrategy: "left" }),
-                    ),
-                  }
-                : {}),
+              events: (options.injectEvents
+                ? runtime.events.pipe(
+                    Stream.merge(Stream.fromQueue(injected), { haltStrategy: "left" }),
+                  )
+                : runtime.events
+              ).pipe(
+                Stream.tap((event) =>
+                  Effect.sync(() => {
+                    nativeEvents.push(event);
+                  }),
+                ),
+              ),
               startTurn: (turn: Parameters<typeof runtime.startTurn>[0]) => {
                 admissionGuard = turn.shouldStartProviderTurn ?? (() => Effect.succeed(false));
                 return runtime.startTurn(turn);
@@ -193,6 +293,8 @@ const withDroid = <A, E, R>(
       return yield* Effect.gen(function* () {
         const orchestrator = yield* OrchestratorV2,
           worker = yield* OrchestrationEffectWorkerV2;
+        const sql = yield* SqlClient.SqlClient;
+        const eventStore = yield* EventStoreV2;
         let currentThreadId = threadId;
         if (options.importHistory) {
           const now = DateTime.formatIso(yield* DateTime.now);
@@ -351,6 +453,69 @@ const withDroid = <A, E, R>(
           releasePreparation: Deferred.succeed(released, undefined),
           log: peer.readLog(),
           injectEvent: (event) => Queue.offer(injected, event).pipe(Effect.asVoid),
+          teardownEntered: Deferred.await(teardownEntered),
+          releaseTeardown: Deferred.succeed(teardownReleased, undefined),
+          pids,
+          nativeEvents,
+          requests,
+          protocol,
+          observe: (phase, commandResult) =>
+            Effect.gen(function* () {
+              const projection = yield* orchestrator.getThreadProjection(currentThreadId);
+              const ownership = yield* Effect.all([
+                sql<{
+                  payload_json: string;
+                }>`SELECT payload_json FROM orchestration_v2_projection_runs WHERE thread_id = ${currentThreadId} ORDER BY ordinal`,
+                sql<{
+                  payload_json: string;
+                }>`SELECT payload_json FROM orchestration_v2_projection_run_attempts WHERE thread_id = ${currentThreadId} ORDER BY run_id, attempt_ordinal`,
+                sql<{
+                  payload_json: string;
+                }>`SELECT payload_json FROM orchestration_v2_projection_nodes WHERE thread_id = ${currentThreadId} ORDER BY node_id`,
+                sql<{
+                  payload_json: string;
+                }>`SELECT payload_json FROM orchestration_v2_projection_messages WHERE thread_id = ${currentThreadId} ORDER BY message_id`,
+                sql<{
+                  payload_json: string;
+                }>`SELECT payload_json FROM orchestration_v2_projection_checkpoint_scopes WHERE thread_id = ${currentThreadId} ORDER BY scope_id`,
+                sql<{
+                  payload_json: string;
+                }>`SELECT payload_json FROM orchestration_v2_projection_checkpoints WHERE thread_id = ${currentThreadId} ORDER BY checkpoint_id`,
+              ]);
+              const events = yield* eventStore
+                .read({ threadId: currentThreadId })
+                .pipe(Stream.runCollect);
+              const effects = yield* sql<{
+                effect_id: string;
+                command_id: string;
+                effect_type: string;
+                payload_json: string;
+                status: string;
+              }>`SELECT effect_id, command_id, effect_type, payload_json, status FROM orchestration_v2_effect_outbox WHERE thread_id = ${currentThreadId} ORDER BY effect_id`;
+              yield* record(phase, {
+                phase,
+                commandResult,
+                projection,
+                ownershipTables: [
+                  "runs",
+                  "attempts",
+                  "nodes",
+                  "messages",
+                  "checkpointScopes",
+                  "checkpoints",
+                ],
+                ownership,
+                events,
+                effects,
+                nativeEvents,
+                requests,
+                protocol,
+                log: yield* peer.readLog(),
+                pids,
+                cwd,
+              });
+              return { projection, ownership, events, effects };
+            }).pipe(Effect.orDie),
         });
       }).pipe(Effect.provide(layer));
     }),
@@ -552,6 +717,175 @@ it.live("supplies native Droid preparation with an authoritative guard invalidat
       }),
     { holdModel: true },
   ),
+);
+
+it.live(
+  "a follow-up targeting the original Droid run after Stop entered native teardown stays undelivered",
+  () =>
+    withDroid(
+      waiting,
+      (h) =>
+        Effect.gen(function* () {
+          const outbox = yield* EffectOutboxV2;
+          yield* h.send("first");
+          const original = yield* h.waitFor((p) =>
+            p.providerTurns.some((turn) => turn.status === "running"),
+          );
+          const originalRun = original.runs[0]!;
+          const originalTurn = original.providerTurns.find(
+            (turn) => turn.runAttemptId === originalRun.activeAttemptId,
+          )!;
+          yield* h.send("held-one", "queue_after_active");
+          yield* h.stop();
+          yield* h.teardownEntered.pipe(Effect.timeout("10 seconds"));
+          const stopping = yield* h.observe("stop-teardown-entered-before-followup");
+          assert.isFalse(yield* h.admissionGuard());
+          assert.doesNotThrow(() => process.kill(h.pids[0]!, 0));
+          assert.deepEqual(promptTexts(yield* h.log), ["first"]);
+          assert.isTrue(
+            stopping.projection.turnItems.some(
+              (item) =>
+                item.type === "run_interrupt_request" &&
+                item.runId === originalRun.id &&
+                item.nodeId === originalRun.rootNodeId &&
+                item.providerThreadId === originalTurn.providerThreadId &&
+                item.providerTurnId === originalTurn.id,
+            ),
+          );
+          for (const mode of ["steer_active", "restart_active"] as const) {
+            const commandId = CommandId.make(`stop-first:${mode}`);
+            const refused = yield* h.orchestrator
+              .dispatch({
+                type: "message.dispatch",
+                commandId,
+                threadId: h.threadId,
+                messageId: MessageId.make(`stop-first:${mode}`),
+                text: "follow-up",
+                attachments: [],
+                dispatchMode: { type: mode, targetRunId: originalRun.id },
+                modelSelection: selection,
+                createdBy: "user",
+                creationSource: "web",
+              })
+              .pipe(Effect.exit);
+            const raced = yield* h.observe(`refused-${mode}-before-cleanup`, refused);
+            assert.isTrue(Exit.isFailure(refused));
+            if (Exit.isFailure(refused))
+              assert.include(encodeUnknownJson(refused.cause), "is stopping and cannot be steered");
+            assert.deepEqual(raced.projection, stopping.projection);
+            assert.deepEqual(raced.ownership, stopping.ownership);
+            assert.deepEqual(raced.events, stopping.events);
+            assert.deepEqual(raced.effects, stopping.effects);
+            assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
+            assert.lengthOf(
+              raced.projection.attempts.filter((attempt) => attempt.runId === originalRun.id),
+              1,
+              "Stop-first must not create a replacement execution owner",
+            );
+            assert.deepEqual(promptTexts(yield* h.log), ["first"]);
+            assert.isFalse(
+              h.requests.some(
+                (request) =>
+                  request.method === "session/prompt" &&
+                  JSON.stringify(request.payload).includes("follow-up"),
+              ),
+            );
+          }
+          const held = stopping.projection.runs.find((run) => run.status === "queued")!;
+          const promotionId = CommandId.make("stop-first:queued-promotion");
+          const promoted = yield* h.orchestrator
+            .dispatch({
+              type: "queued-message.promote-to-steer",
+              commandId: promotionId,
+              threadId: h.threadId,
+              queuedRunId: held.id,
+              targetRunId: originalRun.id,
+            })
+            .pipe(Effect.exit);
+          const afterPromotion = yield* h.observe(
+            "refused-queued-promotion-before-cleanup",
+            promoted,
+          );
+          assert.isTrue(Exit.isFailure(promoted));
+          assert.deepEqual(afterPromotion.projection, stopping.projection);
+          assert.deepEqual(afterPromotion.ownership, stopping.ownership);
+          assert.deepEqual(afterPromotion.events, stopping.events);
+          assert.deepEqual(afterPromotion.effects, stopping.effects);
+          assert.deepEqual(yield* outbox.listByCommandId(promotionId), []);
+          yield* h.releaseTeardown;
+          yield* h.worker.drain(12);
+          yield* h.waitFor(
+            (p) => p.runs.find((run) => run.id === originalRun.id)?.status === "interrupted",
+          );
+          yield* h.worker.drain(12);
+          const final = yield* h.observe("stop-first-converges-once-without-followup-owner");
+          assert.equal(
+            final.projection.runs.find((run) => run.id === originalRun.id)!.activeAttemptId,
+            originalRun.activeAttemptId,
+          );
+          assert.equal(
+            final.projection.runs.find((run) => run.id === originalRun.id)!.rootNodeId,
+            originalRun.rootNodeId,
+          );
+          assert.equal(
+            final.projection.runs.find((run) => run.id === originalRun.id)!.userMessageId,
+            originalRun.userMessageId,
+          );
+          assert.lengthOf(
+            final.projection.attempts.filter((attempt) => attempt.runId === originalRun.id),
+            1,
+          );
+          assert.equal(
+            final.projection.attempts.find((attempt) => attempt.id === originalRun.activeAttemptId)!
+              .status,
+            "interrupted",
+          );
+          assert.lengthOf(
+            final.events.filter(
+              (stored) =>
+                stored.event.type === "run.updated" &&
+                stored.event.payload.id === originalRun.id &&
+                stored.event.payload.status === "interrupted",
+            ),
+            1,
+          );
+          assert.lengthOf(
+            h.nativeEvents.filter(
+              (event) =>
+                event.type === "turn.terminal" &&
+                event.providerTurnId === originalTurn.id &&
+                event.status === "interrupted",
+            ),
+            1,
+          );
+          assert.isFalse(final.projection.turnItems.some((item) => item.type === "error"));
+          assert.deepEqual(promptTexts(yield* h.log), ["first"]);
+          assert.equal(final.projection.runs.find((run) => run.id === held.id)!.status, "queued");
+          assert.isTrue(final.projection.runs.find((run) => run.id === held.id)!.queueHeld);
+          assert.equal(
+            final.projection.messages.find((message) => message.id === held.userMessageId)!.text,
+            "held-one",
+          );
+          assert.lengthOf(h.pids, 1);
+          yield* h.send("recovery");
+          const recovered = yield* h.waitFor(
+            (p) =>
+              p.runs.find((run) => run.userMessageId === MessageId.make("message:recovery"))
+                ?.status === "completed",
+          );
+          assert.equal(
+            recovered.runs.find((run) => run.id === originalRun.id)!.status,
+            "interrupted",
+          );
+          assert.equal(recovered.runs.find((run) => run.id === held.id)!.status, "queued");
+          assert.deepEqual(promptTexts(yield* h.log), ["first", "recovery"]);
+          assert.lengthOf(h.pids, 2);
+          assert.notEqual(h.pids[0], h.pids[1]);
+          assert.throws(() => process.kill(h.pids[0]!, 0), /ESRCH/u);
+          yield* h.observe("ordinary-post-Stop-continuation-with-held-tail");
+        }).pipe(Effect.ensuring(h.releaseTeardown)),
+      { holdTeardown: true, receiptName: "C074" },
+    ),
 );
 
 for (const terminal of ["completed", "interrupted"] as const) {

@@ -6,7 +6,6 @@
   "src/git/GitManager.test.ts": 18.7,
   "src/orchestration/Layers/OrchestrationEngine.test.ts": 1.4,
   "src/orchestration/Layers/ProjectionPipeline.test.ts": 0.5,
-  "src/orchestration/Layers/ProviderCommandReactor.test.ts": 3.8,
   "src/orchestration/Layers/ProviderRuntimeIngestion.test.ts": 2.4,
   "src/persistence/Layers/OrchestrationEventStore.test.ts": 2.2,
   "src/process/externalLauncher.test.ts": 2.2,

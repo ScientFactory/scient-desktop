@@ -299,11 +299,6 @@
       "purpose": "Build mobile outbox commands with captured skill selections, dispatch and first-message title (thread-outbox-start-turn.test.ts)."
     },
     {
-      "path": "apps/server/src/orchestration/Layers/ProviderCommandReactor.ts",
-      "anchor": "selectedScientSkillNames",
-      "purpose": "Retain legacy persisted skill-selection forwarding for compatibility; native execution is mounted separately."
-    },
-    {
       "path": "apps/server/src/orchestration/decider.ts",
       "anchor": "selectedScientSkillNames",
       "purpose": "Retain legacy turn-event skill selection for compatibility and migration."

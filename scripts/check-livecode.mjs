@@ -69,11 +69,6 @@ export const REVIEWED_TEST_SUPPORT = {
       "packages/contracts/src/index.ts",
     ],
   },
-  "apps/server/src/orchestration/projector.test.ts": {
-    reason:
-      "Branded identifiers and event constructors build projector inputs; assertions exercise the projector's state transitions.",
-    modules: ["packages/contracts/src/index.ts"],
-  },
 };
 
 // Published packages' runtime exports are added from package.json below. At the

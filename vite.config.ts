@@ -378,11 +378,9 @@ export default defineConfig({
       // Lower a ceiling when you migrate a file, and delete its entry at zero.
       ...Object.entries({
         "apps/server/src/orchestration/Layers/OrchestrationEngine.test.ts": 5,
-        "apps/server/src/orchestration/Layers/ProviderCommandReactor.test.ts": 66,
         "apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.test.ts": 29,
         "apps/server/src/orchestration/Layers/ThreadDeletionReactor.test.ts": 2,
         "apps/server/src/orchestration/commandInvariants.test.ts": 5,
-        "apps/server/src/orchestration/projector.test.ts": 20,
         "apps/server/src/provider/Layers/CursorProvider.test.ts": 1,
         "apps/server/src/provider/Layers/ProviderService.test.ts": 2,
       }).map(([file, maxOccurrences]) => {

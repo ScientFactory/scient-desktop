@@ -842,7 +842,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           "checkpointScopes",
           "contextTransfers",
         ],
-        { turnItemTypes: ["user_message", "error"], messageRoles: ["user", "system"] },
+        {
+          turnItemTypes: ["user_message", "error", "run_interrupt_request"],
+          messageRoles: ["user", "system"],
+        },
       )
       .pipe(
         Effect.map((records): OrchestrationV2ThreadProjection => ({
@@ -3883,6 +3886,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `No running provider turn found for active run ${targetRun.id}.`,
         });
       }
+      // SCIENT-FORK:START — pending Stop owns this root before native teardown settles.
+      const activeAttempt = input.projection.attempts.find(
+        (candidate) =>
+          candidate.id === targetRun.activeAttemptId &&
+          candidate.runId === targetRun.id &&
+          candidate.rootNodeId === rootNodeId,
+      );
+      if (
+        activeAttempt !== undefined &&
+        input.projection.turnItems.some(
+          (item) =>
+            item.type === "run_interrupt_request" &&
+            item.runId === targetRun.id &&
+            item.nodeId === activeAttempt.rootNodeId &&
+            (item.providerThreadId === null || item.providerThreadId === providerThread.id) &&
+            (item.providerTurnId === null || item.providerTurnId === providerTurn.id),
+        )
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: input.command.commandId,
+          commandType: input.command.type,
+          cause: `Target run ${targetRun.id} is stopping and cannot be steered.`,
+        });
+      }
+      // SCIENT-FORK:END
       const sessionOption = yield* providerSessions.get(providerSessionId).pipe(
         Effect.mapError(
           (cause) =>
@@ -7547,7 +7575,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             "runtimeRequests",
             "subagents",
           ],
-          { turnItemTypes: [], messageRoles: ["user", "system"] },
+          { turnItemTypes: ["run_interrupt_request"], messageRoles: ["user", "system"] },
         )
         .pipe(
           Effect.mapError(() => new OrchestratorProjectionError({ threadId: command.threadId })),
