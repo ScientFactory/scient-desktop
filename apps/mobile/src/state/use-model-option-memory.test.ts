@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
+import { ProviderInstanceId } from "@t3tools/contracts";
 
 import { appAtomRegistry } from "./atom-registry";
 import { modelOptionMemoryAtom } from "./use-composer-drafts";
@@ -42,7 +43,7 @@ describe("withRememberedModelOptions", () => {
     rememberModelOptions("codex", "gpt-5.3-codex", [...XHIGH]);
     expect(
       withRememberedModelOptions({
-        instanceId: "codex",
+        instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5.3-codex",
         options: [{ id: "reasoningEffort", value: "low" }],
       }),
@@ -51,12 +52,36 @@ describe("withRememberedModelOptions", () => {
 
   it("keeps incoming selections that already match memory", () => {
     rememberModelOptions("pi", "xai/grok-4.6", [...XHIGH]);
-    const selection = { instanceId: "pi", model: "xai/grok-4.6", options: [...XHIGH] };
+    const selection = {
+      instanceId: ProviderInstanceId.make("pi"),
+      model: "xai/grok-4.6",
+      options: [...XHIGH],
+    };
     expect(withRememberedModelOptions(selection)).toBe(selection);
   });
 
+  it("preserves the incoming selection and option order when memory is semantically equal", () => {
+    rememberModelOptions("pi", "xai/grok-4.6", [
+      { id: "thinking", value: "high" },
+      { id: "search", value: true },
+    ]);
+    const selection = {
+      instanceId: ProviderInstanceId.make("pi"),
+      model: "xai/grok-4.6",
+      options: [
+        { id: "search", value: true },
+        { id: "thinking", value: "high" },
+      ],
+    };
+    expect(withRememberedModelOptions(selection)).toBe(selection);
+    expect(selection.options.map((option) => option.id)).toEqual(["search", "thinking"]);
+  });
+
   it("keeps incoming selections when nothing is remembered", () => {
-    const selection = { instanceId: "pi", model: "openai-codex/gpt-5.6-sol" };
+    const selection = {
+      instanceId: ProviderInstanceId.make("pi"),
+      model: "openai-codex/gpt-5.6-sol",
+    };
     expect(withRememberedModelOptions(selection)).toBe(selection);
   });
 });
