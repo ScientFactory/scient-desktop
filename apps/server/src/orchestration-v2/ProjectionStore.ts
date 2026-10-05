@@ -76,6 +76,7 @@ import {
   isThreadHistoryTurnStart,
   THREAD_HISTORY_MAX_RAW_TURNS,
 } from "./threadHistoryPaging.ts";
+import { isWorkspaceBoundRootScopeId, rootScopeWorkspaceMatches } from "./CheckpointService.ts";
 
 export class ProjectionStoreApplyEventError extends Schema.TaggedError<ProjectionStoreApplyEventError>()(
   "ProjectionStoreApplyEventError",
@@ -547,6 +548,21 @@ function upsertById<T extends { readonly id: string }>(items: ReadonlyArray<T>, 
   const updated = [...items];
   updated[index] = next;
   return updated;
+}
+
+function checkpointScopeBindingError(
+  scope: OrchestrationV2CheckpointScope,
+  existing: OrchestrationV2CheckpointScope | undefined,
+): ProjectionStoreApplyEventError | undefined {
+  if (
+    isWorkspaceBoundRootScopeId(scope.id) &&
+    (!rootScopeWorkspaceMatches(scope) || (existing !== undefined && existing.cwd !== scope.cwd))
+  ) {
+    return new ProjectionStoreApplyEventError({
+      eventType: "checkpoint-scope.created",
+      cause: "A workspace-bound checkpoint root cannot change its captured workspace.",
+    });
+  }
 }
 
 export function upsertProviderTurn(
@@ -2167,6 +2183,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             break;
           }
           case "checkpoint-scope.created": {
+            if (isWorkspaceBoundRootScopeId(event.payload.id)) {
+              const rows = yield* sql<PayloadRow>`
+                SELECT payload_json FROM orchestration_v2_projection_checkpoint_scopes
+                WHERE scope_id = ${event.payload.id}
+              `;
+              const existing =
+                rows[0] === undefined
+                  ? undefined
+                  : yield* decodeCheckpointScopePayload(rows[0].payload_json);
+              const error = checkpointScopeBindingError(event.payload, existing);
+              if (error !== undefined) return yield* error;
+            }
             const payloadJson = yield* encodeCheckpointScopePayload(event.payload);
             const payload = parseEncodedPayload(payloadJson);
             yield* sql`
@@ -5372,19 +5400,36 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
     const service: ProjectionStoreV2Shape = {
       apply: (event) =>
         Effect.gen(function* () {
-          const result = yield* Ref.modify(replayState, (existing) => {
-            const next: ProjectionReplayState = {
-              projections: new Map(existing.projections),
-              providerSessionThreadIds: new Map(existing.providerSessionThreadIds),
-            };
-            if (!applyToProjectionReplayState(next, event)) {
-              return [
-                new ProjectionStoreThreadNotFoundError({ threadId: event.threadId }),
-                existing,
-              ] as const;
-            }
-            return [undefined, next] as const;
-          });
+          const result = yield* Ref.modify(
+            replayState,
+            (
+              existing,
+            ): readonly [
+              ProjectionStoreApplyEventError | ProjectionStoreThreadNotFoundError | undefined,
+              ProjectionReplayState,
+            ] => {
+              if (event.type === "checkpoint-scope.created") {
+                const error = checkpointScopeBindingError(
+                  event.payload,
+                  existing.projections
+                    .get(event.threadId)
+                    ?.checkpointScopes.find((scope) => scope.id === event.payload.id),
+                );
+                if (error !== undefined) return [error, existing] as const;
+              }
+              const next: ProjectionReplayState = {
+                projections: new Map(existing.projections),
+                providerSessionThreadIds: new Map(existing.providerSessionThreadIds),
+              };
+              if (!applyToProjectionReplayState(next, event)) {
+                return [
+                  new ProjectionStoreThreadNotFoundError({ threadId: event.threadId }),
+                  existing,
+                ] as const;
+              }
+              return [undefined, next] as const;
+            },
+          );
 
           if (result) {
             return yield* result;
