@@ -59,11 +59,12 @@ import {
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import type { ProviderSnapshotSource } from "../builtInProviderCatalog.ts";
-// SCIENT-FORK:START — model merge policy and transient provider state.
+// SCIENT-FORK:START — model merge, transient state and reload.
 import {
   mergeScientProviderModel,
   scientRetainMissingProviderModels,
 } from "./ScientProviderModelMerge.ts";
+import { makeScientProviderReload } from "./ScientProviderReload.ts";
 import {
   makeScientProviderTransientState,
   overlayScientProviderTransientState,
@@ -954,15 +955,24 @@ export const ProviderRegistryLive = Layer.effect(
       () => syncLiveSourcesAndContinue,
     ).pipe(Effect.forkScoped);
 
-    const reloadInstance = Effect.fn("ProviderRegistry.reloadInstance")(function* (
-      instanceId: ProviderInstanceId,
-    ) {
-      yield* instanceRegistry.rebuildInstance(instanceId);
-      // Do not race the registry-change subscriber: attach the replacement
-      // source synchronously before asking it to probe the newly active path.
-      yield* syncLiveSources.pipe(Effect.provideService(Scope.Scope, layerScope));
-      return yield* refreshInstance(instanceId);
+    // SCIENT-FORK:START — reload and strict refreshes.
+    const {
+      reloadInstance,
+      refreshInstanceStrict,
+      refreshInstanceAfterAccountChange,
+      reloadInstanceStrict,
+    } = makeScientProviderReload({
+      instanceRegistry,
+      layerScope,
+      syncLiveSources,
+      getLiveSources,
+      refreshInstance,
+      refreshOneSource,
+      readRefreshedSource,
+      syncProvider,
+      authenticationFailuresRef,
     });
+    // SCIENT-FORK:END
 
     const recoverRefreshFailure = Effect.fn("recoverRefreshFailure")(function* (
       cause: Cause.Cause<unknown>,
@@ -974,90 +984,6 @@ export const ProviderRegistryLive = Layer.effect(
         cause: Cause.pretty(cause),
       });
       return yield* Ref.get(providersRef);
-    });
-
-    const failStrictRefresh = (
-      operation: ProviderRegistry.ProviderRegistryRefreshError["operation"],
-      instanceId: ProviderInstanceId,
-    ) =>
-      Effect.catchCause((cause: Cause.Cause<unknown>) =>
-        Cause.hasInterruptsOnly(cause)
-          ? Effect.interrupt
-          : Effect.fail(
-              new ProviderRegistry.ProviderRegistryRefreshError({
-                operation,
-                instanceId,
-                message: `Provider ${operation} failed for ${instanceId}.`,
-                cause,
-              }),
-            ),
-      );
-
-    const refreshInstanceStrict = Effect.fn("ProviderRegistry.refreshInstanceStrict")(function* (
-      instanceId: ProviderInstanceId,
-    ) {
-      const sources = yield* getLiveSources;
-      const providerSource = sources.find((candidate) => candidate.instanceId === instanceId);
-      if (!providerSource) {
-        return yield* new ProviderRegistry.ProviderRegistryRefreshError({
-          operation: "refresh",
-          instanceId,
-          message: `Provider refresh failed for ${instanceId}: no live source is available.`,
-        });
-      }
-      return yield* refreshOneSource(providerSource).pipe(failStrictRefresh("refresh", instanceId));
-    });
-
-    const refreshInstanceAfterAccountChange = Effect.fn(
-      "ProviderRegistry.refreshInstanceAfterAccountChange",
-    )(function* (instanceId: ProviderInstanceId) {
-      const previousFailure = (yield* Ref.get(authenticationFailuresRef)).get(instanceId);
-      const sources = yield* getLiveSources;
-      const providerSource = sources.find((candidate) => candidate.instanceId === instanceId);
-      if (!providerSource) {
-        return yield* new ProviderRegistry.ProviderRegistryRefreshError({
-          operation: "refresh",
-          instanceId,
-          message: `Provider refresh failed for ${instanceId}: no live source is available.`,
-        });
-      }
-
-      // Keep the proven failure visible while the provider performs fresh
-      // account verification. Clearing it first creates a false-ready window
-      // and requires incomplete rollback on failure or interruption.
-      const canonicalProvider = yield* readRefreshedSource(providerSource).pipe(
-        failStrictRefresh("refresh", instanceId),
-      );
-      if (previousFailure) {
-        yield* Ref.update(authenticationFailuresRef, (previous) => {
-          if (previous.get(instanceId) !== previousFailure) {
-            return previous;
-          }
-          const next = new Map(previous);
-          next.delete(instanceId);
-          return next;
-        });
-      }
-      return yield* syncProvider(canonicalProvider);
-    });
-
-    const reloadInstanceStrict = Effect.fn("ProviderRegistry.reloadInstanceStrict")(function* (
-      instanceId: ProviderInstanceId,
-    ) {
-      return yield* Effect.gen(function* () {
-        yield* instanceRegistry.rebuildInstance(instanceId);
-        yield* syncLiveSources.pipe(Effect.provideService(Scope.Scope, layerScope));
-        const sources = yield* getLiveSources;
-        const providerSource = sources.find((candidate) => candidate.instanceId === instanceId);
-        if (!providerSource) {
-          return yield* new ProviderRegistry.ProviderRegistryRefreshError({
-            operation: "reload",
-            instanceId,
-            message: `Provider reload failed for ${instanceId}: no live source is available.`,
-          });
-        }
-        return yield* refreshOneSource(providerSource);
-      }).pipe(failStrictRefresh("reload", instanceId));
     });
 
     const updateProviders = (
