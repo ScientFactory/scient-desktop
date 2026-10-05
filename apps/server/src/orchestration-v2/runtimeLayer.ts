@@ -1,4 +1,6 @@
 import { layer as attachmentRollbackPruneLayer } from "./AttachmentRollbackPruneService.ts";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { ServerSettingsService } from "../serverSettings.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
@@ -109,8 +111,9 @@ const providerEventIngestorProvided = providerEventIngestorLayer.pipe(
 );
 
 const checkpointServiceProvided = checkpointServiceLayer.pipe(Layer.provide(idAllocatorLayer));
+const contextHandoffSettings = Layer.effect(ServerSettingsService, ServerSettingsService);
 const contextHandoffServiceProvided = contextHandoffServiceLayer.pipe(
-  Layer.provide(idAllocatorLayer),
+  Layer.provide(Layer.merge(idAllocatorLayer, contextHandoffSettings)),
 );
 
 const providerAdapterRegistryProvided = providerAdapterRegistryLayerFromProviderInstances;
@@ -149,6 +152,8 @@ const providerTurnStartServiceProvided = providerTurnStartServiceLayer.pipe(
   Layer.provide(
     Layer.mergeAll(
       contextHandoffServiceProvided,
+      contextHandoffSettings,
+      Layer.effect(SqlClient.SqlClient, SqlClient.SqlClient),
       eventSinkProvided,
       idAllocatorLayer,
       projectionStoreLayer,

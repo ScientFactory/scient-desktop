@@ -40,6 +40,7 @@ import {
   RuntimeRequestId,
   type ThreadId,
   TurnId,
+  RuntimeTaskId,
   type TurnCompletedPayload,
 } from "@t3tools/contracts";
 
@@ -806,7 +807,7 @@ export function makeDroidAdapter(droidSettings: DroidSettings, options?: DroidAd
               ...(yield* makeEventStamp()),
               provider: PROVIDER,
               threadId: ctx.threadId,
-              turnId: event.turnId,
+              turnId: event.turnId === undefined ? undefined : TurnId.make(event.turnId),
             };
             // One branch per event type keeps each payload with its own type.
             switch (event.type) {
@@ -814,25 +815,25 @@ export function makeDroidAdapter(droidSettings: DroidSettings, options?: DroidAd
                 return yield* offerRuntimeEvent({
                   ...base,
                   type: event.type,
-                  payload: event.payload,
+                  payload: { ...event.payload, taskId: RuntimeTaskId.make(event.payload.taskId) },
                 });
               case "task.progress":
                 return yield* offerRuntimeEvent({
                   ...base,
                   type: event.type,
-                  payload: event.payload,
+                  payload: { ...event.payload, taskId: RuntimeTaskId.make(event.payload.taskId) },
                 });
               case "task.updated":
                 return yield* offerRuntimeEvent({
                   ...base,
                   type: event.type,
-                  payload: event.payload,
+                  payload: { ...event.payload, taskId: RuntimeTaskId.make(event.payload.taskId) },
                 });
               case "task.completed":
                 return yield* offerRuntimeEvent({
                   ...base,
                   type: event.type,
-                  payload: event.payload,
+                  payload: { ...event.payload, taskId: RuntimeTaskId.make(event.payload.taskId) },
                 });
             }
           }),

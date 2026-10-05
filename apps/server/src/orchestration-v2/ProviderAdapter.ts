@@ -502,6 +502,16 @@ export interface ProviderAdapterV2SessionRuntime {
    */
   readonly subscribeEvents?: Effect.Effect<ProviderAdapterV2EventSubscription>;
   /**
+   * Native single-consumer spool lease. Retain before publishing the pump;
+   * producer close only seals writes. EOF/cancel releases it automatically.
+   * The publisher must dispose a never-started or explicitly abandoned pump;
+   * disposal retires undelivered receipts and does not acknowledge delivery.
+   */
+  readonly eventConsumer?: {
+    readonly retain: Effect.Effect<void>;
+    readonly dispose: Effect.Effect<void>;
+  };
+  /**
    * Adapters whose native runtime can hold pending work outside an active
    * turn (for example Claude background tasks and their wake turns) report it
    * here so the session manager defers idle release while it is pending.
@@ -516,6 +526,8 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly hasPendingBackgroundWorkForThread?: (
     providerThread: OrchestrationV2ProviderThread,
   ) => Effect.Effect<boolean>;
+  /** Trusted adapter-owned immutable hash of the actual native launch; never protocol metadata. */
+  readonly modelContextWindowLaunchFingerprint?: string;
   /**
    * Capacity for the requested model/options, independent of native thread usage.
    * `cwd` is the thread's working directory, for providers whose project config

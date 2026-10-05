@@ -213,6 +213,17 @@ export interface AcpAdapterV2ExtensionContext {
   readonly lastProposedPlanMarkdown: Effect.Effect<string | undefined>;
 }
 
+export interface AcpAdapterV2ToolPresentation {
+  readonly observe: (toolCall: AcpToolCallState) => {
+    readonly subagents: ReadonlyArray<AcpAdapterV2SubagentUpdate>;
+    /** Undefined suppresses the ordinary tool row. */
+    readonly tool: AcpToolCallState | undefined;
+  };
+  readonly finish: (
+    status: "completed" | "interrupted" | "failed" | "cancelled",
+  ) => ReadonlyArray<AcpAdapterV2SubagentUpdate>;
+}
+
 export interface AcpAdapterV2Flavor {
   /** Interprets provider-specific prompt errors before they cross into orchestration. */
   readonly promptFailure?: (cause: unknown) => OrchestrationV2ProviderFailure;
@@ -310,6 +321,8 @@ export interface AcpAdapterV2Flavor {
   readonly approvalOptions?: (
     request: EffectAcpSchema.RequestPermissionRequest,
   ) => ReadonlyArray<ProviderApprovalOption>;
+  /** Scient remembers the session grant when this agent only accepts allow-once on the wire. */
+  readonly allowOnceForSessionApproval?: boolean;
   /**
    * Activate saved sessions with `session/resume` before `session/load` when
    * the agent supports both. Antigravity's load replays history slowly.
@@ -320,11 +333,17 @@ export interface AcpAdapterV2Flavor {
   ) => Effect.Effect<void>;
   /** Batch launches without child completion signals become idle when the root turn ends. */
   readonly subagentsIdleOnTurnCompletion?: boolean;
+  /** A failed native prompt ended this runtime's work; close its remaining visible items. */
+  readonly terminalizeRunOwnedItemsOnFailure?: boolean;
   readonly supportsCompaction?: boolean;
   readonly runtimeHarness?: string;
   readonly registerExtensions?: (
     context: AcpAdapterV2ExtensionContext,
   ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+  /** Stateful protocol presentation belongs to one native turn. */
+  readonly createToolPresentation?: (
+    input: ProviderAdapter.ProviderAdapterV2TurnInput,
+  ) => AcpAdapterV2ToolPresentation;
   readonly extractSubagentUpdate?: (
     toolCall: AcpToolCallState,
   ) => AcpAdapterV2SubagentUpdate | undefined;
@@ -1113,6 +1132,7 @@ interface AcpNativeBuildConfiguration {
 }
 
 interface ActiveAcpTurn {
+  readonly toolPresentation: AcpAdapterV2ToolPresentation | undefined;
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly nativeThreadId: string;
@@ -3041,8 +3061,17 @@ export function makeAcpAdapterV2(
           yield* closeTextStream(context, "user");
           const previous = context.tools.get(incoming.toolCallId);
           const merged = mergeToolCallState(previous, incoming);
-          const toolCall = flavor.normalizeToolCall?.(merged) ?? merged;
+          const presentation = context.toolPresentation?.observe(merged);
+          const presentedTool = presentation?.tool ?? merged;
+          const toolCall = flavor.normalizeToolCall?.(presentedTool) ?? presentedTool;
           context.tools.set(toolCall.toolCallId, toolCall);
+          if (presentation !== undefined) {
+            for (const subagent of presentation.subagents) yield* emitSubagent(context, subagent);
+            if (presentation.tool === undefined) {
+              yield* rearmDeferredFinalize(context);
+              return;
+            }
+          }
           const backgroundTaskId = flavor.extractBackgroundTaskId?.(toolCall);
           if (backgroundTaskId !== undefined) {
             context.toolCallIdsByBackgroundTaskId.set(backgroundTaskId, toolCall.toolCallId);
@@ -5645,7 +5674,11 @@ export function makeAcpAdapterV2(
                 if (decision === "cancel") {
                   return { outcome: { outcome: "cancelled" } } as const;
                 }
-                const optionId = selectPermissionOptionId(params, decision);
+                const optionId =
+                  selectPermissionOptionId(params, decision) ??
+                  (decision === "acceptForSession" && flavor.allowOnceForSessionApproval === true
+                    ? selectPermissionOptionId(params, "accept")
+                    : undefined);
                 return optionId === undefined
                   ? ({ outcome: { outcome: "cancelled" } } as const)
                   : ({ outcome: { outcome: "selected", optionId } } as const);
@@ -5757,15 +5790,30 @@ export function makeAcpAdapterV2(
                   const enumValues = Array.isArray(record?.enum)
                     ? record.enum.filter((value): value is string => typeof value === "string")
                     : [];
+                  const namedOptions = Array.isArray(record?.oneOf)
+                    ? record.oneOf.flatMap((choice) => {
+                        const option = unknownRecord(choice);
+                        return typeof option?.const === "string"
+                          ? [
+                              {
+                                label: option.const,
+                                description: nonEmptyText(option.title, option.const),
+                              },
+                            ]
+                          : [];
+                      })
+                    : [];
                   const options =
-                    enumValues.length > 0
-                      ? enumValues.map((value) => ({ label: value, description: value }))
-                      : record?.type === "boolean"
-                        ? [
-                            { label: "true", description: "Yes" },
-                            { label: "false", description: "No" },
-                          ]
-                        : [];
+                    namedOptions.length > 0
+                      ? namedOptions
+                      : enumValues.length > 0
+                        ? enumValues.map((value) => ({ label: value, description: value }))
+                        : record?.type === "boolean"
+                          ? [
+                              { label: "true", description: "Yes" },
+                              { label: "false", description: "No" },
+                            ]
+                          : [];
                   return {
                     id,
                     header: nonEmptyText(record?.title, `Question ${index + 1}`),
@@ -6136,6 +6184,7 @@ export function makeAcpAdapterV2(
           return activated;
         });
 
+        let appliedSessionModel = input.modelSelection.model;
         const configureSession = Effect.fnUntraced(function* (
           startResult: AcpSessionRuntime.AcpSessionRuntimeStartResult,
           modelSelection: ModelSelection,
@@ -6247,6 +6296,7 @@ export function makeAcpAdapterV2(
               }),
             );
           }
+          appliedSessionModel = appliedModel ?? modelSelection.model;
           if (flavor.applyRuntimePolicy !== undefined) {
             yield* flavor.applyRuntimePolicy(runtime, runtimePolicy);
             yield* (
@@ -6358,7 +6408,7 @@ export function makeAcpAdapterV2(
           providerInstanceId: options.instanceId,
           status: "ready",
           cwd: input.runtimePolicy.cwd ?? process.cwd(),
-          model: input.modelSelection.model,
+          model: appliedSessionModel,
           capabilities,
           createdAt,
           updatedAt: createdAt,
@@ -6414,12 +6464,15 @@ export function makeAcpAdapterV2(
 
         const terminalizeOpenRunOwnedItems = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
-          options: { readonly terminalizeSubagents: boolean },
+          options: {
+            readonly terminalizeSubagents: boolean;
+            readonly status?: "failed" | "interrupted";
+          },
         ) {
           for (const tool of context.tools.values()) {
             const status = toolStatus(tool.status);
             if (status === "pending" || status === "running" || status === "waiting") {
-              yield* emitTool(context, tool, "interrupted");
+              yield* emitTool(context, tool, options.status ?? "interrupted");
             }
           }
           if (!options.terminalizeSubagents) return;
@@ -6432,7 +6485,7 @@ export function makeAcpAdapterV2(
               prompt: subagent.task.prompt,
               title: subagent.task.title,
               model: subagent.task.model,
-              status: "interrupted",
+              status: options.status ?? "interrupted",
               childSessionId: subagent.childSessionId,
               result: subagent.task.result,
               suppressNormalTool: true,
@@ -6474,6 +6527,8 @@ export function makeAcpAdapterV2(
           const settledStatus = context.interrupted ? "interrupted" : status;
           context.finalizedStatus = settledStatus;
           context.finalized = true;
+          for (const subagent of context.toolPresentation?.finish(settledStatus) ?? [])
+            yield* emitSubagent(context, subagent);
           const directStopQuarantine = yield* Ref.get(stoppedRunQuarantine);
           if (flavor.subagentsIdleOnTurnCompletion === true) {
             for (const subagent of context.subagents.values()) {
@@ -6496,6 +6551,14 @@ export function makeAcpAdapterV2(
             // keeps live subagent lineages for in-process replacement carryover.
             yield* terminalizeOpenRunOwnedItems(context, {
               terminalizeSubagents: directStopQuarantine,
+            });
+          } else if (
+            settledStatus === "failed" &&
+            flavor.terminalizeRunOwnedItemsOnFailure === true
+          ) {
+            yield* terminalizeOpenRunOwnedItems(context, {
+              terminalizeSubagents: true,
+              status: "failed",
             });
           }
           yield* closeTextStreams(context);
@@ -6901,6 +6964,7 @@ export function makeAcpAdapterV2(
               );
             }
             const context: ActiveAcpTurn = {
+              toolPresentation: flavor.createToolPresentation?.(turnInput),
               input: turnInput,
               providerTurnId,
               nativeThreadId: requestedSessionId,
@@ -7290,7 +7354,9 @@ export function makeAcpAdapterV2(
           instanceId: options.instanceId,
           driver,
           providerSessionId: input.providerSessionId,
-          providerSession,
+          get providerSession() {
+            return { ...providerSession, model: appliedSessionModel };
+          },
           events: Stream.fromEffectRepeat(Queue.take(events)),
           ...(postSettleContinuationEnabled
             ? {

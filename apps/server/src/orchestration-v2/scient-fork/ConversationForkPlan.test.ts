@@ -25,6 +25,7 @@ import {
 } from "../legacy/HistoricalSystemMessage.ts";
 import { emptyProjection } from "../ProjectionStore.ts";
 import { planConversationFork } from "./ConversationForkPlan.ts";
+import { historicalMessage } from "../ContextHandoffBudget.ts";
 
 const now = DateTime.makeUnsafe("2026-10-03T00:00:00.000Z");
 const decodeHistoricalSystemMessage = Schema.decodeUnknownEffect(HistoricalSystemMessage);
@@ -675,4 +676,215 @@ it.effect("a cancelled run with no rendered facts keeps only the earlier frozen 
         .map(({ item }) => item.id),
     );
   }),
+);
+
+it.effect("a completed-looking response in an active native run is not a settled boundary", () =>
+  Effect.gen(function* () {
+    for (const status of ["queued", "preparing", "starting", "running"] as const) {
+      const projection = makeProjection();
+      projection.runs[0] = { ...projection.runs[0]!, status, completedAt: null };
+      assert.equal(
+        (yield* Effect.result(
+          planConversationFork({
+            projection,
+            targetThreadId,
+            source: { kind: "assistant-response", messageId: MessageId.make("answer-one") },
+          }),
+        ))._tag,
+        "Failure",
+        status,
+      );
+    }
+    const accepted = yield* planConversationFork({
+      projection: makeProjection(),
+      targetThreadId,
+      source: { kind: "assistant-response", messageId: MessageId.make("answer-one") },
+    });
+    assert.equal(accepted.boundaryRunId, completed);
+  }),
+);
+
+it.effect(
+  "a running native fork retains interrupted and unanswered requests once under their own run ownership",
+  () =>
+    Effect.gen(function* () {
+      const projection = makeProjection();
+      const unanswered = RunId.make("interrupted-unanswered");
+      projection.runs.splice(1, 0, {
+        ...projection.runs[0]!,
+        id: unanswered,
+        ordinal: 2,
+        userMessageId: MessageId.make("interrupted-question"),
+        rootNodeId: null,
+        status: "interrupted",
+      });
+      projection.runs[2] = { ...projection.runs[2]!, ordinal: 3 };
+      const request = {
+        ...projection.turnItems[0]!,
+        id: TurnItemId.make("interrupted-question"),
+        runId: unanswered,
+        ordinal: 3,
+        messageId: MessageId.make("interrupted-question"),
+        text: "Interrupted question",
+        attachments: [],
+      };
+      const work = {
+        ...projection.turnItems[1]!,
+        id: TurnItemId.make("interrupted-work"),
+        runId: unanswered,
+        ordinal: 4,
+        status: "interrupted" as const,
+      };
+      projection.turnItems.splice(3, 0, request, work);
+      projection.visibleTurnItems = projection.turnItems.map((item, position) => ({
+        item,
+        position,
+        sourceThreadId: threadId,
+        sourceItemId: item.id,
+        visibility: "local" as const,
+      }));
+      const plan = yield* planConversationFork({
+        projection,
+        targetThreadId,
+        source: { kind: "running-turn", runId: running },
+      });
+      const copied = plan.items.filter((item) => item.inheritedFrom?.runId === unanswered);
+      assert.lengthOf(copied, 2);
+      assert.isTrue(copied.every((item) => item.runId === null));
+      assert.equal(
+        copied.filter(
+          (item) => item.type === "user_message" && item.text === "Interrupted question",
+        ).length,
+        1,
+      );
+      assert.equal(
+        plan.items.filter(
+          (item) =>
+            item.inheritedFrom?.runId === running &&
+            item.type === "user_message" &&
+            item.inputIntent === "turn_start",
+        ).length,
+        1,
+      );
+      assert.ok(plan.messages.some((message) => message.text === "First answer"));
+      assert.isFalse(
+        plan.items.some(
+          (item) =>
+            item.inheritedFrom?.runId === running && item.inheritedFrom?.itemId === request.id,
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "a later unanswered native run requested before an earlier answer finishes stays outside that answer's fork",
+  () =>
+    Effect.gen(function* () {
+      const projection = makeProjection();
+      const question = projection.turnItems[3]!;
+      projection.visibleTurnItems = [
+        projection.turnItems[0]!,
+        question,
+        projection.turnItems[1]!,
+        projection.turnItems[2]!,
+        ...projection.turnItems.slice(4),
+      ].map((item, position) => ({
+        item,
+        position,
+        sourceThreadId: threadId,
+        sourceItemId: item.id,
+        visibility: "local" as const,
+      }));
+      const plan = yield* planConversationFork({
+        projection,
+        targetThreadId,
+        source: { kind: "assistant-response", messageId: MessageId.make("answer-one") },
+      });
+      assert.deepEqual(
+        plan.messages.map((message) => message.text),
+        ["First question", "First answer"],
+      );
+      assert.isFalse(plan.items.some((item) => item.inheritedFrom?.runId === running));
+    }),
+);
+
+it.effect(
+  "native question history follows retained run ownership and excludes pending and message-mode replay",
+  () =>
+    Effect.gen(function* () {
+      const projection = makeProjection();
+      const question = (
+        id: string,
+        runId: RunId,
+      ): Extract<OrchestrationV2TurnItem, { type: "user_input_request" }> => ({
+        id: TurnItemId.make(id),
+        threadId,
+        runId,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 0,
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "user_input_request",
+        requestId: RuntimeRequestId.make(id),
+        questions: [{ id: "dataset", header: "Data", question: "Which dataset?", options: [] }],
+        questionAnswer: { requestId: id, answers: { dataset: id }, attachmentsByQuestionId: {} },
+      });
+      const chosen = question("retained-answer", completed);
+      const pending = {
+        ...question("pending-answer", completed),
+        status: "running" as const,
+        questionAnswer: undefined,
+      };
+      const messageMode = {
+        ...question("message-mode-answer", completed),
+        responseMode: "message" as const,
+      };
+      const later = question("later-answer", running);
+      const items = [
+        projection.turnItems[0]!,
+        chosen,
+        pending,
+        messageMode,
+        later,
+        ...projection.turnItems.slice(1),
+      ];
+      const plan = yield* planConversationFork({
+        projection: {
+          ...projection,
+          turnItems: items,
+          visibleTurnItems: items.map((item, position) => ({
+            item,
+            position,
+            sourceThreadId: threadId,
+            sourceItemId: item.id,
+            visibility: "local" as const,
+          })),
+        },
+        targetThreadId,
+        source: { kind: "assistant-response", messageId: MessageId.make("answer-one") },
+      });
+      const answers = plan.items.filter((item) => item.type === "user_input_request");
+      assert.lengthOf(answers, 3);
+      assert.isFalse(answers.some((item) => item.inheritedFrom?.itemId === later.id));
+      const replayed = answers.flatMap((item) => {
+        const message = historicalMessage(item);
+        return message ? [message.text] : [];
+      });
+      assert.lengthOf(replayed, 1);
+      assert.include(replayed[0]!, "Which dataset?");
+      assert.include(replayed[0]!, "retained-answer");
+      assert.notInclude(replayed[0]!, "later-answer");
+      assert.isTrue(
+        answers.every(
+          (item) => item.runId === null && item.nodeId === null && item.nativeItemRef === null,
+        ),
+      );
+    }),
 );

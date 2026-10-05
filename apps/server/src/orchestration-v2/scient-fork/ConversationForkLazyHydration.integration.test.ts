@@ -20,7 +20,10 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "../Adapters/CodexAdapterV2.ts";
-import { LegacyV1ThreadImporter } from "../legacy/LegacyV1ThreadImporter.ts";
+import {
+  LegacyV1ThreadImporter,
+  layer as legacyImporterLayer,
+} from "../legacy/LegacyV1ThreadImporter.ts";
 import { HistoricalSystemMessage } from "../legacy/HistoricalSystemMessage.ts";
 import * as ProjectStore from "../ProjectStore.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
@@ -83,6 +86,8 @@ const seedUnopenedHistory = Effect.fn("LazyHydration.seedUnopenedHistory")(funct
   });
   yield* sql`INSERT INTO projection_threads (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode, created_at, updated_at)
     VALUES (${source}, ${projectId}, 'Unopened history', '{"instanceId":"codex","model":"fixture"}', 'full-access', 'default', ${now}, ${now})`;
+  if (suffix === "archived")
+    yield* sql`UPDATE projection_threads SET archived_at = '2026-01-02T00:00:00.000Z' WHERE thread_id = ${source}`;
   yield* sql`INSERT INTO projection_thread_messages (message_id, thread_id, role, text, turn_id, is_streaming, created_at, updated_at)
     VALUES ('lazy-question', ${source}, 'user', 'Original question', 'same-turn', 0, '2026-01-01T00:00:01.000Z', '2026-01-01T00:00:01.000Z'),
       ('lazy-answer', ${source}, 'assistant', 'Clicked answer', 'same-turn', 0, '2026-01-01T00:00:02.000Z', '2026-01-01T00:00:02.000Z'),
@@ -178,7 +183,7 @@ function assertFrozenHistory(child: OrchestrationV2ThreadProjection) {
   assert.deepEqual(child.providerSessions, []);
 }
 
-it.live.each(["options-first", "dispatch-only"] as const)(
+it.live.each(["options-first", "dispatch-only", "archived"] as const)(
   "hydrates an unopened migrated source through %s before freezing exact history",
   (entry) =>
     Effect.scoped(
@@ -186,6 +191,10 @@ it.live.each(["options-first", "dispatch-only"] as const)(
         const { source, target, command } = yield* seedUnopenedHistory(entry);
         const forks = yield* ConversationForkService;
         const store = yield* ProjectionStore.ProjectionStoreV2;
+        if (entry === "archived") {
+          assert.isNotNull((yield* store.getThreadProjection(source)).thread.archivedAt);
+        }
+
         if (entry === "options-first") {
           const options = yield* forks.getOptions(command);
           assert.equal(options.available, true);
@@ -199,6 +208,9 @@ it.live.each(["options-first", "dispatch-only"] as const)(
         const receipt = yield* forks.dispatch(command);
         const child = yield* store.getThreadProjection(target);
         assertFrozenHistory(child);
+        assert.isNull(child.thread.archivedAt);
+        if (entry === "archived")
+          assert.isNotNull((yield* store.getThreadProjection(source)).thread.archivedAt);
         const sql = yield* SqlClient.SqlClient;
         const [marker] = yield* sql<{ transcript_imported_at: string | null }>`
           SELECT transcript_imported_at FROM orchestration_v2_legacy_imports WHERE thread_id = ${source}`;
@@ -248,6 +260,52 @@ it.live(
         const store = yield* ProjectionStore.ProjectionStoreV2;
         assertFrozenHistory(yield* store.getThreadProjection(target));
         assert.equal((yield* forks.dispatch(command)).sequence, receipt.sequence);
+      }).pipe(Effect.provide(testLayer), Effect.timeout("15 seconds")),
+    ),
+);
+
+it.live.each(["undecodable", "unbound"] as const)(
+  "native fork admission refuses %s submitted legacy question records and permits corrected retry",
+  (kind) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { source, target, command } = yield* seedUnopenedHistory(`question-${kind}`);
+        const sql = yield* SqlClient.SqlClient;
+        const valid =
+          '{"requestId":"historical-question","answers":{"dataset":"Measured"},"questionTextById":{"dataset":"Which dataset?"},"attachmentsByQuestionId":{}}';
+        yield* sql`INSERT INTO projection_thread_activities (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at)
+      VALUES ('lazy-submitted-answer', ${source}, ${kind === "unbound" ? null : "same-turn"}, 'info', 'user-input.answer-submitted', 'Submitted answer', ${kind === "undecodable" ? "{" : valid}, '2026-01-01T00:00:01.500Z')`;
+        const forks = yield* ConversationForkService;
+        const options = yield* Effect.result(forks.getOptions(command));
+        if (options._tag === "Success") assert.isFalse(options.success.available);
+        assert.equal((yield* Effect.result(forks.dispatch(command)))._tag, "Failure");
+        assert.deepEqual(
+          yield* sql`SELECT thread_id FROM orchestration_v2_projection_threads WHERE thread_id = ${target}`,
+          [],
+        );
+        assert.deepEqual(
+          yield* sql`SELECT command_id FROM orchestration_command_receipts WHERE command_id = ${command.commandId}`,
+          [],
+        );
+        yield* sql`UPDATE projection_thread_activities SET turn_id = 'same-turn', payload_json = ${valid} WHERE thread_id = ${source} AND activity_id = 'lazy-submitted-answer'`;
+        // Remove only the unbound fact so the missing-only reader can hydrate its repaired association.
+        if (kind === "unbound") {
+          yield* sql`DELETE FROM orchestration_v2_projection_turn_items WHERE thread_id = ${source} AND turn_item_id IN ('migration:v1:history:answer:lazy-submitted-answer', 'migration:v1:history:activity:lazy-submitted-answer')`;
+          yield* sql`DELETE FROM orchestration_events WHERE application_event_version = 2 AND stream_id = ${source} AND event_id IN ('migration:v1:history:answer:lazy-submitted-answer', 'migration:v1:history:activity:lazy-submitted-answer')`;
+          yield* sql`UPDATE orchestration_v2_legacy_imports SET history_repair_version = 1 WHERE thread_id = ${source}`;
+          // A successfully hydrated V1 snapshot is immutable within one reader's lifetime.
+          yield* Effect.gen(function* () {
+            yield* (yield* LegacyV1ThreadImporter).ensureTranscript(source);
+          }).pipe(Effect.provide(Layer.fresh(legacyImporterLayer)));
+        }
+        yield* forks.dispatch(command);
+        const child = yield* (yield* ProjectionStore.ProjectionStoreV2).getThreadProjection(target);
+        const typed = child.turnItems.find((item) => item.type === "user_input_request");
+        assert.ok(typed?.type === "user_input_request");
+        assert.deepEqual(typed.questionAnswer?.answers, { dataset: "Measured" });
+        assert.equal(typed.historyTurnId, "same-turn");
+        assert.deepEqual(child.runtimeRequests, []);
+        assert.deepEqual(child.runs, []);
       }).pipe(Effect.provide(testLayer), Effect.timeout("15 seconds")),
     ),
 );

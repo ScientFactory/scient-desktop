@@ -2,6 +2,8 @@ import type { ProviderAdapterV2HistoricalContext } from "./ProviderAdapter.ts";
 import { assert, describe, it } from "@effect/vitest";
 import {
   ContextHandoffId,
+  MessageId,
+  NodeId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -22,6 +24,7 @@ import * as Schema from "effect/Schema";
 import {
   contextUsageForHandoff,
   handoffBudget,
+  scientHandoffByteBudget,
   historyCost,
   historyResponseItems,
   selectHistory,
@@ -205,6 +208,31 @@ describe("handoff budget", () => {
     assert.isNull(historicalMessage({ ...activity, runId: RunId.make("live-run") }));
     assert.isNull(historicalMessage({ ...activity, historyTurnId: undefined }));
     assert.isNull(historicalMessage({ ...activity, input: { command: "foreign tool call" } }));
+    const turnless = {
+      ...activity,
+      historyTurnId: undefined,
+      id: TurnItemId.make("server:conversation-import:owned:item:work-log"),
+    };
+    assert.include(historicalMessage(turnless)!.text, "retained output");
+    assert.isNull(historicalMessage({ ...turnless, nodeId: NodeId.make("live-node") }));
+    assert.isNull(
+      historicalMessage({
+        ...turnless,
+        nativeItemRef: {
+          driver: ProviderDriverKind.make("codex"),
+          nativeId: "live-tool",
+          strength: "strong",
+        },
+      }),
+    );
+    assert.equal(
+      historicalMessage({
+        ...reasoning,
+        historyTurnId: undefined,
+        id: TurnItemId.make("migration:v1:history:reasoning:owned"),
+      })?.text,
+      "Selected portable reasoning",
+    );
   });
 
   it("retains short conversations verbatim in role and order", () => {
@@ -779,6 +807,227 @@ describe("handoff delivery", () => {
       assert.equal(calls, 0);
     }),
   );
+});
+
+describe("Scient native handoff token policy", () => {
+  const input = {
+    tokenCap: null,
+    bytesPerToken: 3,
+    byteCap: Infinity,
+    userText: "",
+    attachments: [],
+    providerThread,
+    nativeContextEstimate: 0,
+  };
+  it("uses the unknown 128k window and charges token reserves before selecting bytes", () => {
+    assert.equal(handoffBudget(input), 287_997);
+    assert.equal(handoffBudget({ ...input, tokenCap: 64_000 }), 192_000);
+    assert.equal(handoffBudget({ ...input, nativeContextEstimate: 100_000 }), 0);
+  });
+  it("bounds the preset by compaction, native occupancy and full current attachment allowances", () => {
+    const usage = { usedTokens: 140_000, maxTokens: 1_000_000, autoCompactThreshold: 200_000 };
+    const nearFull = { ...input, providerThread: { ...providerThread, contextUsage: usage } };
+    assert.equal(handoffBudget(nearFull), 29_997);
+    const image = {
+      type: "image" as const,
+      id: "image",
+      name: "figure.png",
+      mimeType: "image/png",
+      sizeBytes: 1,
+    };
+    assert.equal(
+      handoffBudget(nearFull) - handoffBudget({ ...nearFull, attachments: [image] }),
+      24_576,
+    );
+    assert.equal(handoffBudget({ ...nearFull, attachments: [image, image] }), 0);
+    assert.equal(
+      handoffBudget({
+        ...input,
+        tokenCap: 64_000,
+        providerThread: {
+          ...providerThread,
+          contextUsage: { usedTokens: 0, maxTokens: 1_000_000 },
+        },
+      }),
+      192_000,
+    );
+  });
+});
+
+const inertForkItem = {
+  id: TurnItemId.make("frozen-item"),
+  threadId,
+  runId: null,
+  nodeId: null,
+  providerThreadId: null,
+  providerTurnId: null,
+  nativeItemRef: null,
+  parentItemId: null,
+  ordinal: 1,
+  status: "interrupted" as const,
+  title: null,
+  startedAt: now,
+  completedAt: now,
+  updatedAt: now,
+  inheritedFrom: {
+    threadId: ThreadId.make("running-source"),
+    itemId: TurnItemId.make("source-partial"),
+    runId: RunId.make("source-run"),
+    status: "running" as const,
+  },
+};
+it("native history names captured-window images as references without replaying image bytes", () => {
+  const history = historicalMessage({
+    ...inertForkItem,
+    type: "user_message",
+    messageId: MessageId.make("frozen-user"),
+    createdBy: "user",
+    creationSource: "web",
+    inputIntent: "turn_start",
+    status: "completed",
+    text: "Look at this",
+    attachments: [
+      {
+        type: "image",
+        id: "snapshot-owned",
+        name: "window.png",
+        mimeType: "image/png",
+        sizeBytes: 10,
+        source: {
+          kind: "snap-shot",
+          capturedAt: "2026-09-26T10:00:00.000Z",
+          appName: "Synthetic capture",
+          windowTitle: "Test window",
+        },
+      },
+      { type: "image", id: "plain-owned", name: "plot.png", mimeType: "image/png", sizeBytes: 10 },
+    ],
+  });
+  assert.ok(history);
+  assert.include(history.text, "window.png");
+  assert.include(history.text, '"capturedWindow":true');
+  assert.include(history.text, '"contentReattached":false');
+  const wire = historyResponseItems([history], "History");
+  assert.isFalse(JSON.stringify(wire).includes('"type":"input_image"'));
+  assert.include(wire[1]!.content[0]!.text, "plot.png");
+});
+it("native selection keeps original constraints and latest thinking before oversized older work", () => {
+  const candidates = [
+    message("constraints", "user", "Keep source fidelity"),
+    message("old-work", "assistant", "old work".repeat(5000)),
+    message("latest-request", "user", "Fit the model"),
+    { ...message("latest-thinking", "assistant", "Trying a quadratic"), kind: "reasoning" },
+    message("latest-answer", "assistant", "Partial fit"),
+  ];
+  const selected = selectHistory({ messages: candidates, coverage: "History", budget: 1800 });
+  assert.deepEqual(
+    selected.messages.map((item) => item.itemId),
+    ["constraints", "latest-request", "latest-thinking", "latest-answer"],
+  );
+  assert.deepEqual(selected.omittedItemIds, ["old-work"]);
+  assert.isAtMost(historyCost(selected.messages, selected.context), 1800);
+});
+it.effect(
+  "native delivery labels a running fork's unfinished material and warns about its shared folder",
+  () =>
+    Effect.gen(function* () {
+      const thought = historicalMessage({
+        ...inertForkItem,
+        type: "reasoning",
+        text: "Trying a quadratic",
+        streaming: false,
+      });
+      const tool = historicalMessage({
+        ...inertForkItem,
+        id: TurnItemId.make("frozen-tool"),
+        type: "dynamic_tool",
+        toolName: "fit_model",
+        input: { file: "src/fit.py" },
+        output: "Still fitting",
+      });
+      const file = historicalMessage({
+        ...inertForkItem,
+        id: TurnItemId.make("frozen-file"),
+        type: "file_change",
+        fileName: "src/fit.py",
+      });
+      assert.ok(thought && tool && file);
+      const result = yield* deliverContextHandoffs({
+        handoffs: [
+          {
+            ...handoff,
+            history: {
+              messages: [thought, tool, file],
+              coverage: "Frozen native fork",
+              omittedItems: 0,
+            },
+          },
+        ],
+        providerThread,
+        budget: 10000,
+        alreadyDeliveredItemIds: new Set(),
+        sharedForkWorkspace: true,
+        persist: () => Effect.void,
+      });
+      assert.include(result.context, "partial");
+      assert.include(result.context, "unfinished");
+      assert.include(result.context, "still be running in this same folder");
+      assert.include(result.context, "src/fit.py");
+      assert.include(result.context, "status=interrupted");
+      assert.notInclude(result.context, '"type":"tool_call"');
+    }),
+);
+
+describe("Scient serialized handoff allowance", () => {
+  it("preserves presets and unclamped override without changing generic switches", () => {
+    const input = {
+      environmentOverride: undefined,
+      userText: 'Continue "exactly" 🧪',
+      attachments: [],
+      providerThread,
+      nativeContextEstimate: 0,
+      modelContextWindow: 1_000_000,
+    };
+    assert.equal(scientHandoffByteBudget({ ...input, size: "compact" }), 48_000);
+    assert.equal(scientHandoffByteBudget({ ...input, size: "standard" }), 192_000);
+    assert.equal(scientHandoffByteBudget({ ...input, size: "large" }), 384_000);
+    assert.isAbove(scientHandoffByteBudget({ ...input, size: "maximum" }), 2_000_000);
+    assert.equal(
+      scientHandoffByteBudget({ ...input, size: "compact", environmentOverride: 200_000 }),
+      600_000,
+    );
+    assert.equal(handoffBudget({ ...input, tokenCap: 200_000 }), 64_000);
+  });
+
+  it("charges receiving occupancy, escaped input, attachments and selected capacity", () => {
+    const input = {
+      size: "maximum" as const,
+      environmentOverride: undefined,
+      userText: "Continue",
+      attachments: [],
+      providerThread: {
+        ...providerThread,
+        contextUsage: { usedTokens: 7_000, maxTokens: 1_000_000 },
+      },
+      nativeContextEstimate: 0,
+      modelContextWindow: 32_000,
+    };
+    const available = scientHandoffByteBudget(input);
+    assert.equal(available, (32_000 - 7_000 - 4 - 16_000) * 3);
+    assert.equal(scientHandoffByteBudget({ ...input, userText: "界".repeat(10_000) }), 0);
+    const image = {
+      type: "image" as const,
+      id: "image",
+      name: "image.png",
+      mimeType: "image/png",
+      sizeBytes: 10_000_000,
+    };
+    assert.equal(
+      scientHandoffByteBudget({ ...input, attachments: [image] }),
+      Math.max(0, available - 8_192 * 3),
+    );
+    assert.equal(scientHandoffByteBudget({ ...input, modelContextWindow: 16_000 }), 0);
+  });
 });
 
 it.effect.each(["after-record", "before-agent"] as const)(

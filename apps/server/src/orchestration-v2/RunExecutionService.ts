@@ -1,3 +1,4 @@
+import type { NativeModelCapacityOwner } from "./scient-fork/NativeModelContextWindow.ts";
 import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -608,6 +609,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly appThread: OrchestrationV2AppThread;
   readonly providerSessionId: ProviderSessionId;
   readonly session: ProviderAdapterV2SessionRuntime;
+  readonly nativeModelCapacityOwner?: NativeModelCapacityOwner;
   readonly run: OrchestrationV2Run;
   readonly rootNode: OrchestrationV2ExecutionNode;
   readonly checkpointScope: OrchestrationV2CheckpointScope;
@@ -1420,6 +1422,24 @@ export const layer: Layer.Layer<
                     runId: input.run.id,
                     nodeId: input.rootNode.id,
                     event: deliveredEvent,
+                    ...(input.nativeModelCapacityOwner === undefined ||
+                    rootTerminalAlreadySeen ||
+                    deliveredEvent.type !== "provider_turn.updated" ||
+                    deliveredEvent.driver !== "codex" ||
+                    deliveredEvent.providerTurn.nodeId !== input.rootNode.id ||
+                    deliveredEvent.providerTurn.runAttemptId !== input.attempt.id ||
+                    deliveredEvent.providerTurn.tokenUsage?.maxTokens == null ||
+                    !Number.isFinite(deliveredEvent.providerTurn.tokenUsage.maxTokens) ||
+                    deliveredEvent.providerTurn.tokenUsage.maxTokens <= 0
+                      ? {}
+                      : {
+                          nativeModelCapacityOwner: input.nativeModelCapacityOwner,
+                          writeIfRunCurrent: {
+                            runId: input.run.id,
+                            activeAttemptId: input.attempt.id,
+                            expectedStatus: "running" as const,
+                          },
+                        }),
                     ...(isRootProviderThreadUpdate
                       ? rootTerminalAlreadySeen
                         ? {

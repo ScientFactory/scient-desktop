@@ -1,5 +1,6 @@
 import type {
   ChatAttachment,
+  ForkContextHandoffSize,
   ModelSelection,
   OrchestrationV2ThreadProjection,
   ThreadTokenUsageSnapshot,
@@ -11,6 +12,7 @@ import type {
 
 import * as Config from "effect/Config";
 import * as Schema from "effect/Schema";
+import { estimateTokens, handoffTokenCap } from "./scient-fork/context/handoffBudget.ts";
 
 const isImportedActivity = Schema.is(
   Schema.Struct({
@@ -27,6 +29,52 @@ export const handoffTokenCapConfig = Config.Int("T3CODE_CONTEXT_HANDOFF_TOKEN_CA
   Config.withDefault(DEFAULT_HANDOFF_TOKEN_CAP),
   Config.map((value) => Math.max(1_024, Math.min(HANDOFF_BYTE_CAP, value))),
 );
+
+// Scient presets are estimated tokens; generic provider switches retain their
+// byte allowance above. Resolve the final serialized allowance only after the
+// receiving model and native occupancy are known.
+export const scientHandoffTokenCapOverride = Config.Int("T3CODE_CONTEXT_HANDOFF_TOKEN_CAP").pipe(
+  Config.option,
+);
+
+export function scientHandoffByteBudget(input: {
+  readonly size: ForkContextHandoffSize;
+  readonly environmentOverride: number | undefined;
+  readonly userText: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+  readonly providerThread: OrchestrationV2ProviderThread;
+  readonly nativeContextEstimate: number;
+  readonly modelContextWindow?: number | undefined;
+}): number {
+  return handoffBudget({
+    ...input,
+    tokenCap: handoffTokenCap(input.size, input.environmentOverride),
+    bytesPerToken: 3,
+    byteCap: Infinity,
+  });
+}
+
+export { estimateTokens as estimateScientHandoffTokens };
+
+/** Only canonical imported/forked history inherits Scient's retained-context policy. */
+export function hasScientContextHistory(
+  projection: Pick<OrchestrationV2ThreadProjection, "thread" | "contextTransfers">,
+): boolean {
+  const { thread } = projection;
+  return (
+    thread.historyOrigin === "v1_import" ||
+    thread.historyOrigin === "conversation_import" ||
+    thread.historyOrigin === "scient_fork" ||
+    thread.conversationImport != null ||
+    thread.forkLineage != null ||
+    thread.conversationFork != null ||
+    projection.contextTransfers.some(
+      (transfer) =>
+        transfer.targetThreadId === thread.id &&
+        (transfer.type === "fork" || transfer.type === "merge_back"),
+    )
+  );
+}
 
 // Live reports belong to provider turns. Use only accepted root attempts whose
 // durable native identity matches this thread; row reuse must not revive old usage.
@@ -119,7 +167,9 @@ export function attachmentTokenAllowance(attachments: ReadonlyArray<ChatAttachme
 // custom models. Unknown windows use a 128k allowance, reserving a quarter for
 // tools, instructions and subsequent work. Current input is never truncated.
 export function handoffBudget(input: {
-  readonly tokenCap: number;
+  readonly tokenCap: number | null;
+  readonly bytesPerToken?: number;
+  readonly byteCap?: number;
   readonly userText: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly providerThread: OrchestrationV2ProviderThread;
@@ -133,17 +183,38 @@ export function handoffBudget(input: {
     usage?.autoCompactThreshold ?? Infinity,
   );
   const native = usage?.usedTokens ?? input.nativeContextEstimate;
+  const bytesPerToken = input.bytesPerToken ?? 1;
   const current =
-    Buffer.byteLength(JSON.stringify(input.userText)) + attachmentTokenAllowance(input.attachments);
+    Math.ceil(Buffer.byteLength(JSON.stringify(input.userText)) / bytesPerToken) +
+    attachmentTokenAllowance(input.attachments);
   return Math.max(
     0,
     Math.min(
-      input.tokenCap,
-      // Cap only imported history. Attachment transport limits belong to adapters;
-      // they may send binary/base64 data separately from the history request.
-      HANDOFF_BYTE_CAP,
-      window - native - current - Math.max(16_000, Math.ceil(window / 4)),
+      input.byteCap ?? HANDOFF_BYTE_CAP,
+      // The selector consumes bytes; provider capacity and preset caps consume tokens.
+      (input.tokenCap ?? Infinity) * bytesPerToken,
+      (window - native - current - Math.max(16_000, Math.ceil(window / 4))) * bytesPerToken,
     ),
+  );
+}
+
+/** Grouping is optional; importer identities and exact frozen copies own inert text. */
+function hasPortableArtifactOwner(item: OrchestrationV2TurnItem): boolean {
+  return (
+    item.historyTurnId !== undefined ||
+    item.inheritedFrom !== undefined ||
+    item.id.startsWith("migration:v1:history:") ||
+    (item.id.startsWith("server:conversation-import:") && item.id.includes(":item:"))
+  );
+}
+
+function hasArtifactExecutionAuthority(item: OrchestrationV2TurnItem): boolean {
+  return (
+    item.runId !== null ||
+    item.nodeId !== null ||
+    item.providerThreadId !== null ||
+    item.providerTurnId !== null ||
+    item.nativeItemRef !== null
   );
 }
 
@@ -155,23 +226,37 @@ export function historicalMessage(
     case "user_message":
     case "assistant_message":
       text = item.text;
+      if ((item.attachments?.length ?? 0) > 0) {
+        const references = item.attachments!.map((attachment) => ({
+          id: attachment.id,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          contentReattached: false,
+          ...(attachment.type === "image" &&
+          "source" in attachment &&
+          attachment.source?.kind === "snap-shot"
+            ? { capturedWindow: true }
+            : {}),
+        }));
+        text += `\nAttachment references (bytes not replayed): ${JSON.stringify(references)}`;
+      }
       break;
     case "reasoning":
-      // Portable files explicitly selected this text; native reasoning stays excluded.
-      if (item.runId !== null || item.historyTurnId === undefined || item.nativeItemRef !== null)
-        return null;
+      // Imports and exact forks freeze visible text without retaining execution authority.
+      if (hasArtifactExecutionAuthority(item) || !hasPortableArtifactOwner(item)) return null;
       text = item.text;
       break;
     case "dynamic_tool":
-      // Import stores validated work-log records as inert historical activities.
-      if (
-        item.runId !== null ||
-        item.historyTurnId === undefined ||
-        item.nativeItemRef !== null ||
-        !isImportedActivity(item.input)
-      )
-        return null;
-      text = `${item.input.summary}\n${JSON.stringify(item.input.payload)}`;
+      if (hasArtifactExecutionAuthority(item)) return null;
+      if (hasPortableArtifactOwner(item) && isImportedActivity(item.input)) {
+        text = `${item.input.summary}\n${JSON.stringify(item.input.payload)}`;
+      } else if (item.inheritedFrom?.runId != null) {
+        text = [
+          `Tool: ${item.toolName}`,
+          `Input: ${JSON.stringify(item.input)}`,
+          `Output: ${typeof item.output === "string" ? item.output : JSON.stringify(item.output)}`,
+        ].join("\n");
+      } else return null;
       break;
     case "command_execution":
       text = [
@@ -225,6 +310,12 @@ export function historicalMessage(
     default:
       return null;
   }
+  if (
+    item.runId === null &&
+    item.inheritedFrom?.status === "running" &&
+    item.type !== "user_message"
+  )
+    text = `Partial snapshot of unfinished activity at the fork boundary; this is not a completed result.\n${text}`;
   return {
     role: item.type === "user_message" || item.type === "user_input_request" ? "user" : "assistant",
     text,

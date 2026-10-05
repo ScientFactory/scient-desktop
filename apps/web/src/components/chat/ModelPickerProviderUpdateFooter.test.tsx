@@ -2,7 +2,7 @@ import { ProviderDriverKind } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ModelPickerProviderUpdateFooter } from "./ModelPickerContent";
+import { ModelPickerProviderUpdateFooter } from "~/scient/providerConnection/ModelPickerProviderUpdateFooter";
 
 describe("ModelPickerProviderUpdateFooter", () => {
   it("offers one quiet, accessible update action", () => {

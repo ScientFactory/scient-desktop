@@ -2,6 +2,7 @@ import {
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderCapabilities,
+  type OrchestrationV2ProviderFailureClass,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
@@ -14,7 +15,6 @@ import {
 import { mergeSubagentPresentation } from "./SubagentPresentation.ts";
 import { MODEL_TOKEN_LIMIT_MESSAGE } from "@t3tools/shared/model";
 import * as Schema from "effect/Schema";
-import * as Cause from "effect/Cause";
 import * as Semaphore from "effect/Semaphore";
 import {
   makeSubagentChildThread,
@@ -22,14 +22,22 @@ import {
 } from "../SubagentProjection.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import {
+  makeNativeEventQueueBudget,
+  type NativeEventQueueLimits,
+  type NativeEventQueueCharge,
+} from "./NativeEventQueueBudget.ts";
 import * as Exit from "effect/Exit";
-import * as Queue from "effect/Queue";
+import { makeNativeEventQueue, type NativeEventQueueStorage } from "./NativeEventQueue.ts";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ProviderAdapter from "../ProviderAdapter.ts";
 import type { IdAllocatorV2 } from "../IdAllocator.ts";
 import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
+
+const encodeNativeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 /** Native process events, before either orchestration version's presentation mapping. */
 export type NativeSessionUpdate =
@@ -42,7 +50,11 @@ export type NativeSessionUpdate =
       readonly delta: string;
       readonly reasoning?: boolean;
     }
-  | { readonly type: "text-completed"; readonly id: string }
+  | {
+      readonly type: "text-completed";
+      readonly id: string;
+      readonly status?: "completed" | "failed";
+    }
   | {
       readonly type: "tool";
       readonly id: string;
@@ -74,17 +86,23 @@ export type NativeSessionUpdate =
   | { readonly type: "native-thread"; readonly id: string; readonly resumeCursor?: unknown }
   | { readonly type: "model"; readonly model: string }
   | { readonly type: "background"; readonly pending: boolean }
+  | { readonly type: "continuation-started" }
   | {
       readonly type: "terminal";
       readonly status: "completed" | "failed" | "cancelled";
       readonly detail?: string;
       readonly broken?: boolean;
       readonly stopReason?: string;
+      readonly failureClass?: OrchestrationV2ProviderFailureClass;
     };
 
 export class NativeSessionOperationError extends Schema.TaggedError<NativeSessionOperationError>()(
   "NativeSessionOperationError",
-  { detail: Schema.String, cause: Schema.optional(Schema.Defect()) },
+  {
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+    breaksSession: Schema.optional(Schema.Boolean),
+  },
 ) {
   override get message(): string {
     return this.detail;
@@ -103,6 +121,9 @@ export const nativeSessionFailure = (cause: unknown): NativeSessionOperationErro
       });
 
 export interface NativeSession {
+  /** Join an observed process-loss receipt before owner release can cancel the active turn. */
+  readonly beforeOwnerClose?: Effect.Effect<void>;
+  readonly getModelContextWindow?: ProviderAdapter.ProviderAdapterV2SessionRuntime["getModelContextWindow"];
   readonly nativeId: string;
   /** A local session identity is not authority to resume a provider conversation. */
   readonly nativeThreadKnown?: boolean;
@@ -138,6 +159,9 @@ export interface NativeSessionAdapterV2Options {
   readonly continuations: {
     readonly offer: (request: ProviderContinuationRequest) => Effect.Effect<void>;
   };
+  readonly settleIdleSubagents?: boolean;
+  readonly eventQueueLimits?: NativeEventQueueLimits;
+  readonly eventQueueStorage?: NativeEventQueueStorage;
   readonly open: (
     input: ProviderAdapter.ProviderAdapterV2OpenSessionInput,
     onUpdate: (update: NativeSessionUpdate) => Effect.Effect<void>,
@@ -149,6 +173,7 @@ export function makeNativeSessionAdapterV2(
   options: NativeSessionAdapterV2Options,
 ): ProviderAdapter.ProviderAdapterV2Shape {
   const { driver, idAllocator } = options;
+  const queueBudget = makeNativeEventQueueBudget(options.eventQueueLimits);
   const ref = (nativeId: string) => ({ driver, nativeId, strength: "strong" as const });
   const protocolError = (detail: string) =>
     new ProviderAdapter.ProviderAdapterProtocolError({ driver, detail });
@@ -167,7 +192,9 @@ export function makeNativeSessionAdapterV2(
       Effect.gen(function* () {
         if (input.modelSelection.instanceId !== options.instanceId)
           return yield* protocolError("The model selection belongs to another provider instance.");
-        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>();
+        const ownerScope = yield* Effect.scope;
+        const nativeReady = yield* Deferred.make<NativeSession>();
+        const events = yield* makeNativeEventQueue(options.eventQueueStorage);
         const eventPermit = yield* Semaphore.make(1);
         const createdAt = yield* DateTime.now;
         let providerSession: OrchestrationV2ProviderSession = {
@@ -193,7 +220,10 @@ export function makeNativeSessionAdapterV2(
           | undefined;
         let backgroundPending = false;
         let wakeOffered = false;
-        const wake: NativeSessionUpdate[] = [];
+        const wake: {
+          readonly update: NativeSessionUpdate;
+          readonly charge: NativeEventQueueCharge;
+        }[] = [];
         const items = new Map<string, OrchestrationV2TurnItem>();
         const subagentOwners = new Map<string, ProviderAdapter.ProviderAdapterV2TurnInput>();
         const subagents = new Map<string, OrchestrationV2Subagent>();
@@ -208,12 +238,55 @@ export function makeNativeSessionAdapterV2(
             readonly nativeId: string;
           }
         >();
-        const emit = (event: ProviderAdapter.ProviderAdapterV2Event) =>
-          Queue.offer(events, event).pipe(Effect.asVoid);
-        const updateSession = (status: typeof providerSession.status) =>
+        const budget = queueBudget.open(
+          Effect.gen(function* () {
+            const native = yield* Deferred.await(nativeReady);
+            yield* eventPermit.withPermit(
+              Effect.gen(function* () {
+                const detail =
+                  "The native provider produced events faster than Scient could deliver them, so the session was closed.";
+                // The roster clear can release background ingestion; publish the
+                // unusable owner status in that same first containment receipt.
+                if (thread) thread = { ...thread, status: "error", updatedAt: yield* DateTime.now };
+                yield* stopBackgroundTasks("failed", yield* DateTime.now);
+                if (active)
+                  yield* finish({ type: "terminal", status: "failed", detail, broken: true });
+                else {
+                  providerSession = { ...providerSession, lastError: detail };
+                  yield* updateSession("error");
+                }
+              }),
+            );
+            // Closing a producer must not await the stalled event reader or hold its mapper permit.
+            yield* native.interrupt.pipe(Effect.ignore);
+            // The owner retains its terminal receipts until release; peer exit
+            // is not an unexpected end of the adapter's event stream.
+          }).pipe(Effect.forkIn(ownerScope), Effect.asVoid),
+          Effect.sync(() => {
+            for (const buffered of wake) buffered.charge.release();
+            wake.length = 0;
+            wakeOffered = false;
+          }).pipe(Effect.andThen(events.spill)),
+        );
+        if (options.eventQueueStorage) yield* events.onDispose(Effect.sync(() => budget.release()));
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => (options.eventQueueStorage ? budget.seal() : budget.release())),
+        );
+        const emitBatch = (
+          frames: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
+          control: boolean,
+        ) =>
+          Effect.gen(function* () {
+            if (frames.length === 0) return;
+            yield* budget.admit(frames, control, frames.length, (charge) =>
+              events.offer(frames, charge),
+            );
+          });
+        const emit = (event: ProviderAdapter.ProviderAdapterV2Event) => emitBatch([event], true);
+        const updateSession = (status: typeof providerSession.status, publish = emit) =>
           Effect.gen(function* () {
             providerSession = { ...providerSession, status, updatedAt: yield* DateTime.now };
-            yield* emit({ type: "provider_session.updated", driver, providerSession });
+            yield* publish({ type: "provider_session.updated", driver, providerSession });
           });
         const settleRequest = (
           pending: {
@@ -259,31 +332,45 @@ export function makeNativeSessionAdapterV2(
               yield* emit({ type: "node.updated", driver, node: settled });
             }
           });
-        const publishBackgroundRoster = (now: DateTime.Utc) =>
+        const publishBackgroundRoster = (now: DateTime.Utc, publish = emit) =>
           Effect.gen(function* () {
             if (!thread) return;
+            const children = [...subagents.values()].filter((task) => task.status === "running");
             thread = {
               ...thread,
-              pendingBackgroundTasks: [...subagents.values()]
-                .filter((task) => task.status === "running")
-                .map((task) => ({
+              pendingBackgroundTasks: [
+                ...children.map((task) => ({
                   kind: "subagent" as const,
                   taskId: task.id,
                   ...(task.title ? { description: task.title } : {}),
                   ...(task.childThreadId ? { childThreadId: task.childThreadId } : {}),
                 })),
+                ...(backgroundPending && children.length === 0
+                  ? [
+                      {
+                        kind: "monitor" as const,
+                        taskId: `${thread.id}:native-monitor`,
+                        description: "Monitoring provider background work",
+                      },
+                    ]
+                  : []),
+              ],
               updatedAt: now,
             };
-            yield* emit({ type: "provider_thread.updated", driver, providerThread: thread });
+            yield* publish({ type: "provider_thread.updated", driver, providerThread: thread });
           });
         const stopBackgroundTasks = (
           status: "failed" | "cancelled" | "interrupted",
           now: DateTime.Utc,
+          clearWake = true,
         ) =>
           Effect.gen(function* () {
             backgroundPending = false;
-            wake.length = 0;
-            wakeOffered = false;
+            if (clearWake) {
+              for (const buffered of wake) buffered.charge.release();
+              wake.length = 0;
+              wakeOffered = false;
+            }
             for (const [key, task] of subagents) {
               if (task.status !== "running") continue;
               const settled = { ...task, status, completedAt: now, updatedAt: now };
@@ -422,96 +509,122 @@ export function makeNativeSessionAdapterV2(
                     failureItemOrdinal: running.nextOrdinal++,
                     failure: makeProviderFailure({
                       message: update.detail ?? "The native provider turn failed.",
-                      class: "provider_error",
+                      class: update.failureClass ?? "provider_error",
                     }),
                   }
                 : { ...terminal, type: "turn.terminal", status, failure: null },
             );
+            if (options.eventQueueLimits && !update.broken && backgroundPending)
+              yield* emitBatch(
+                [{ type: "provider_thread.updated", driver, providerThread: thread }],
+                false,
+              );
           });
         const onUpdate = (update: NativeSessionUpdate): Effect.Effect<void> =>
           eventPermit.withPermit(
             Effect.gen(function* () {
+              if (budget.closed) return;
+              if (update.type === "native-thread" && !thread) return;
               if (
+                options.eventQueueLimits &&
+                update.type === "native-thread" &&
+                thread?.nativeThreadRef?.driver === driver &&
+                thread.nativeThreadRef.strength === "strong" &&
+                thread.nativeThreadRef.nativeId === update.id &&
+                (!("resumeCursor" in update) ||
+                  encodeNativeJson({ cursor: thread.nativeMetadata?.resumeCursor }) ===
+                    encodeNativeJson({ cursor: update.resumeCursor }))
+              )
+                return;
+              if (
+                options.eventQueueLimits &&
+                update.type === "model" &&
+                update.model === providerSession.model
+              )
+                return;
+              if (update.type === "terminal" && !active && !update.broken && wake.length === 0)
+                return;
+              if (
+                options.eventQueueLimits &&
+                update.type === "background" &&
+                !update.pending &&
+                !backgroundPending &&
+                !thread?.pendingBackgroundTasks?.length &&
+                ![...subagents.values()].some((task) => task.status === "running")
+              )
+                return;
+              const control =
                 update.type === "accepted" ||
                 update.type === "offered" ||
-                update.type === "rejected"
-              ) {
-                const running = active;
-                if (
-                  running === undefined ||
-                  running.turn.nativeTurnRef?.nativeId !== update.nativeTurnId ||
-                  running.turn.acceptedAt !== undefined
-                )
-                  return;
-                running.turn =
-                  update.type === "accepted"
-                    ? {
-                        ...running.turn,
-                        nativeAcceptance: "accepted",
-                        acceptedAt: yield* DateTime.now,
-                      }
-                    : {
-                        ...running.turn,
-                        nativeAcceptance: update.type === "rejected" ? "pending" : "unknown",
-                      };
-                turns.set(running.turn.id, running.turn);
-                yield* emit({
-                  type: "provider_turn.updated",
-                  driver,
-                  threadId: running.input.threadId,
-                  providerTurn: running.turn,
+                update.type === "rejected" ||
+                update.type === "question-resolved" ||
+                update.type === "native-thread" ||
+                (update.type === "model" &&
+                  active !== undefined &&
+                  active.turn.acceptedAt === undefined) ||
+                (update.type === "continuation-started" && active !== undefined) ||
+                (update.type === "background" && (!update.pending || active !== undefined)) ||
+                (update.type === "terminal" && (active !== undefined || update.broken === true));
+              const inspected = control ? { admitted: true } : yield* budget.inspect(update);
+              if (!inspected.admitted) return;
+              const frames: ProviderAdapter.ProviderAdapterV2Event[] = [];
+              const emit = (event: ProviderAdapter.ProviderAdapterV2Event) =>
+                Effect.sync(() => {
+                  frames.push(event);
                 });
-                return;
-              }
-              if (update.type === "model") {
-                providerSession = { ...providerSession, model: update.model };
-                yield* updateSession(providerSession.status);
-                return;
-              }
-              if (update.type === "native-thread") {
-                if (thread) {
-                  thread = {
-                    ...thread,
-                    nativeThreadRef: ref(update.id),
-                    ...(!("resumeCursor" in update)
-                      ? {}
+              yield* Effect.gen(function* () {
+                if (
+                  update.type === "accepted" ||
+                  update.type === "offered" ||
+                  update.type === "rejected"
+                ) {
+                  const running = active;
+                  if (
+                    running === undefined ||
+                    running.turn.nativeTurnRef?.nativeId !== update.nativeTurnId ||
+                    running.turn.acceptedAt !== undefined
+                  )
+                    return;
+                  running.turn =
+                    update.type === "accepted"
+                      ? {
+                          ...running.turn,
+                          nativeAcceptance: "accepted",
+                          acceptedAt: yield* DateTime.now,
+                        }
                       : {
-                          nativeMetadata: {
-                            ...thread.nativeMetadata,
-                            resumeCursor: update.resumeCursor,
-                          },
-                        }),
-                    updatedAt: yield* DateTime.now,
-                  };
-                  yield* emit({ type: "provider_thread.updated", driver, providerThread: thread });
+                          ...running.turn,
+                          nativeAcceptance: update.type === "rejected" ? "pending" : "unknown",
+                        };
+                  turns.set(running.turn.id, running.turn);
+                  yield* emit({
+                    type: "provider_turn.updated",
+                    driver,
+                    threadId: running.input.threadId,
+                    providerTurn: running.turn,
+                  });
+                  return;
                 }
-                return;
-              }
-              if (update.type === "background") {
-                backgroundPending = update.pending;
-                return;
-              }
-              if (update.type === "question-resolved") {
-                for (const pending of requests.values()) {
-                  if (pending.nativeId !== update.id || pending.request.status !== "pending")
-                    continue;
-                  yield* settleRequest(pending, "resolved", yield* DateTime.now);
+                if (update.type === "model") {
+                  providerSession = { ...providerSession, model: update.model };
+                  yield* updateSession(providerSession.status, emit);
+                  return;
                 }
-                return;
-              }
-              const running = active;
-              if (!running) {
-                if (update.type === "terminal" && update.broken) {
-                  yield* stopBackgroundTasks("failed", yield* DateTime.now);
-                  for (const pending of requests.values())
-                    yield* settleRequest(pending, "cancelled", yield* DateTime.now);
-                  providerSession = {
-                    ...providerSession,
-                    lastError: update.detail ?? "The native provider process stopped.",
-                  };
-                  yield* updateSession("error");
+                if (update.type === "native-thread") {
                   if (thread) {
-                    thread = { ...thread, status: "error", updatedAt: yield* DateTime.now };
+                    thread = {
+                      ...thread,
+                      nativeThreadRef: ref(update.id),
+                      ...(!("resumeCursor" in update)
+                        ? {}
+                        : {
+                            nativeMetadata: {
+                              ...thread.nativeMetadata,
+                              resumeCursor: update.resumeCursor,
+                            },
+                          }),
+                      updatedAt: yield* DateTime.now,
+                    };
                     yield* emit({
                       type: "provider_thread.updated",
                       driver,
@@ -520,323 +633,411 @@ export function makeNativeSessionAdapterV2(
                   }
                   return;
                 }
-                if (!thread) return;
-                if (update.type === "terminal" && wake.length === 0) return;
-                wake.push(update);
-                if (!wakeOffered && update.type !== "terminal") {
-                  wakeOffered = true;
-                  yield* options.continuations.offer({
-                    threadId: input.threadId,
-                    providerThreadId: thread.id,
+                if (update.type === "background") {
+                  if (update.pending) {
+                    backgroundPending = true;
+                    // Capture pending ownership before the native terminal. Budget the
+                    // idle monitor after that outcome, so overflow cannot rewrite it.
+                    yield* publishBackgroundRoster(
+                      yield* DateTime.now,
+                      options.eventQueueLimits && active ? () => Effect.void : emit,
+                    );
+                  } else yield* stopBackgroundTasks("cancelled", yield* DateTime.now, false);
+                  return;
+                }
+                if (update.type === "question-resolved") {
+                  for (const pending of requests.values()) {
+                    if (pending.nativeId !== update.id || pending.request.status !== "pending")
+                      continue;
+                    yield* settleRequest(pending, "resolved", yield* DateTime.now);
+                  }
+                  return;
+                }
+                let running = active;
+                if (
+                  options.settleIdleSubagents &&
+                  !running &&
+                  update.type === "subagent" &&
+                  thread
+                ) {
+                  const key = `${thread.id}:subagent:${update.id}`;
+                  const owner = subagentOwners.get(key);
+                  const item = items.get(key);
+                  const turn = item?.providerTurnId ? turns.get(item.providerTurnId) : undefined;
+                  if (owner && item && turn)
+                    running = {
+                      input: owner,
+                      turn,
+                      interrupted: false,
+                      nextOrdinal: item.ordinal + 1,
+                    };
+                }
+                if (!running) {
+                  if (update.type === "terminal" && update.broken) {
+                    yield* stopBackgroundTasks("failed", yield* DateTime.now);
+                    for (const pending of requests.values())
+                      yield* settleRequest(pending, "cancelled", yield* DateTime.now);
+                    providerSession = {
+                      ...providerSession,
+                      lastError: update.detail ?? "The native provider process stopped.",
+                    };
+                    yield* updateSession("error");
+                    if (thread) {
+                      thread = { ...thread, status: "error", updatedAt: yield* DateTime.now };
+                      yield* emit({
+                        type: "provider_thread.updated",
+                        driver,
+                        providerThread: thread,
+                      });
+                    }
+                    return;
+                  }
+                  if (!thread) return;
+                  if (update.type === "terminal" && wake.length === 0) return;
+                  const admission = yield* budget.admit(update, false, 1, (charge) =>
+                    Effect.sync(() => {
+                      wake.push({ update, charge });
+                    }),
+                  );
+                  if (!admission.admitted || budget.closed) return;
+                  if (!wakeOffered && update.type !== "terminal") {
+                    wakeOffered = true;
+                    yield* options.continuations.offer({
+                      threadId: input.threadId,
+                      providerThreadId: thread.id,
+                      driver,
+                      detail: null,
+                      delivery: "adapter_buffered",
+                    });
+                  }
+                  return;
+                }
+                if (update.type === "continuation-started") return;
+                if (
+                  running.turn.nativeAcceptance === "pending" &&
+                  (update.type === "text" ||
+                    update.type === "tool" ||
+                    update.type === "subagent" ||
+                    update.type === "question")
+                ) {
+                  running.turn = { ...running.turn, nativeAcceptance: "unknown" };
+                  turns.set(running.turn.id, running.turn);
+                  yield* emit({
+                    type: "provider_turn.updated",
                     driver,
-                    detail: null,
-                    delivery: "adapter_buffered",
+                    threadId: running.input.threadId,
+                    providerTurn: running.turn,
                   });
                 }
-                return;
-              }
-              if (
-                running.turn.nativeAcceptance === "pending" &&
-                (update.type === "text" ||
-                  update.type === "tool" ||
-                  update.type === "subagent" ||
-                  update.type === "question")
-              ) {
-                running.turn = { ...running.turn, nativeAcceptance: "unknown" };
-                turns.set(running.turn.id, running.turn);
-                yield* emit({
-                  type: "provider_turn.updated",
-                  driver,
-                  threadId: running.input.threadId,
-                  providerTurn: running.turn,
-                });
-              }
-              if (update.type === "terminal") {
-                yield* finish(update);
-                return;
-              }
-              const now = yield* DateTime.now;
-              // Native tasks can finish in a later wake turn. Their identity and
-              // ownership remain those of the turn that spawned them.
-              const nativeId =
-                update.type === "subagent"
-                  ? `${running.input.providerThread.id}:subagent:${update.id}`
-                  : `${running.turn.id}:${update.id}`;
-              const previous = items.get(nativeId);
-              const owner = subagentOwners.get(nativeId) ?? running.input;
-              if (update.type === "subagent" && !previous) subagentOwners.set(nativeId, owner);
-              const base = {
-                id: idAllocator.derive.turnItemFromProviderItem({ driver, nativeItemId: nativeId }),
-                threadId: owner.threadId,
-                runId: owner.runId,
-                nodeId: idAllocator.derive.nodeFromProviderItem({ driver, nativeItemId: nativeId }),
-                providerThreadId: running.input.providerThread.id,
-                providerTurnId: previous?.providerTurnId ?? running.turn.id,
-                nativeItemRef: ref(nativeId),
-                parentItemId: null,
-                ordinal: previous?.ordinal ?? running.nextOrdinal++,
-                startedAt: previous?.startedAt ?? now,
-                updatedAt: now,
-                completedAt: null,
-              };
-              let item: OrchestrationV2TurnItem;
-              if (update.type === "text" || update.type === "text-completed") {
-                const reasoning =
-                  update.type === "text"
-                    ? update.reasoning === true
-                    : previous?.type === "reasoning";
-                const text =
-                  (previous?.type === "assistant_message" || previous?.type === "reasoning"
-                    ? previous.text
-                    : "") + (update.type === "text" ? update.delta : "");
-                const streaming = update.type === "text";
-                const common = {
-                  ...base,
-                  title: null,
-                  status: streaming ? ("running" as const) : ("completed" as const),
-                  completedAt: streaming ? null : now,
-                  text,
-                  streaming,
-                };
-                if (reasoning) item = { ...common, type: "reasoning" };
-                else {
-                  const messageId = idAllocator.derive.messageFromProviderItem({
+                if (update.type === "terminal") {
+                  yield* finish(update);
+                  return;
+                }
+                const now = yield* DateTime.now;
+                // Native tasks can finish in a later wake turn. Their identity and
+                // ownership remain those of the turn that spawned them.
+                const nativeId =
+                  update.type === "subagent"
+                    ? `${running.input.providerThread.id}:subagent:${update.id}`
+                    : `${running.turn.id}:${update.id}`;
+                const previous = items.get(nativeId);
+                const owner = subagentOwners.get(nativeId) ?? running.input;
+                if (update.type === "subagent" && !previous) subagentOwners.set(nativeId, owner);
+                const base = {
+                  id: idAllocator.derive.turnItemFromProviderItem({
                     driver,
                     nativeItemId: nativeId,
-                  });
-                  item = { ...common, type: "assistant_message", messageId };
-                  const message: OrchestrationV2ConversationMessage = {
-                    id: messageId,
-                    threadId: running.input.threadId,
-                    runId: running.input.runId,
-                    nodeId: base.nodeId,
-                    role: "assistant",
-                    text,
-                    attachments: [],
-                    streaming,
-                    createdBy: "agent",
-                    creationSource: "provider",
-                    createdAt: base.startedAt,
-                    updatedAt: now,
-                  };
-                  messages.set(messageId, message);
-                  yield* emit({ type: "message.updated", driver, message });
-                }
-              } else if (update.type === "tool") {
-                item = {
-                  ...base,
-                  type: "dynamic_tool",
-                  title: update.name,
-                  toolName: update.name,
-                  status: update.status,
-                  input: update.input ?? (previous?.type === "dynamic_tool" ? previous.input : {}),
-                  ...(update.output === undefined ? {} : { output: update.output }),
-                  completedAt: update.status === "running" ? null : now,
-                };
-              } else if (update.type === "subagent") {
-                const previousSubagent = subagents.get(nativeId);
-                const reopened =
-                  previousSubagent !== undefined &&
-                  previousSubagent.status !== "running" &&
-                  update.status === "running" &&
-                  update.reopen === true;
-                if (
-                  previousSubagent !== undefined &&
-                  previousSubagent.status !== "running" &&
-                  update.status === "running" &&
-                  !reopened
-                )
-                  return;
-                const subagentId = base.nodeId;
-                const childThreadId = idAllocator.derive.threadFromProviderThread({
-                  driver,
-                  providerInstanceId: options.instanceId,
-                  nativeThreadId: nativeId,
-                });
-                if (!previous) {
-                  yield* emit({
-                    type: "app_thread.created",
-                    driver,
-                    appThread: makeSubagentChildThread({
-                      parentThread: owner.appThread,
-                      childThreadId,
-                      parentNodeId: subagentId,
-                      activeProviderThreadId: null,
-                      providerInstanceId: options.instanceId,
-                      modelSelection: owner.modelSelection,
-                      title: update.title,
-                      now,
-                      createdBy: "agent",
-                      creationSource: "provider",
-                    }),
-                  });
-                }
-                if (update.detail && update.status !== "running") {
-                  const artifacts = makeSubagentConversationArtifacts({
-                    messageId: idAllocator.derive.messageFromProviderItem({
-                      driver,
-                      nativeItemId: `${nativeId}:result`,
-                    }),
-                    turnItemId: idAllocator.derive.turnItemFromProviderItem({
-                      driver,
-                      nativeItemId: `${nativeId}:result`,
-                    }),
-                    threadId: childThreadId,
-                    rootNodeId: subagentId,
-                    providerThreadId: null,
-                    providerTurnId: null,
-                    nativeItemRef: ref(update.id),
-                    role: "assistant",
-                    text: update.detail,
-                    ordinal: 1,
-                    now,
-                  });
-                  yield* emit({ type: "message.updated", driver, message: artifacts.message });
-                  yield* emit({ type: "turn_item.updated", driver, turnItem: artifacts.turnItem });
-                }
-                const completedAt =
-                  update.status === "running" ? null : (previousSubagent?.completedAt ?? now);
-                const subagent: OrchestrationV2Subagent = {
-                  id: subagentId,
+                  }),
                   threadId: owner.threadId,
                   runId: owner.runId,
-                  parentNodeId: owner.rootNodeId,
-                  origin: "provider_native",
-                  createdBy: "agent",
-                  driver,
-                  providerInstanceId: options.instanceId,
-                  providerThreadId: base.providerThreadId,
-                  childThreadId,
-                  nativeTaskRef: ref(update.id),
-                  prompt: update.title,
-                  title: update.title,
-                  model: update.model ?? previousSubagent?.model ?? null,
-                  presentation: mergeSubagentPresentation(
-                    previousSubagent?.presentation,
-                    update.presentation,
-                    DateTime.formatIso(now),
-                    reopened,
-                  ),
-                  status: update.status,
-                  ...(update.status === "running" && update.detail !== undefined
-                    ? { progress: update.detail }
-                    : reopened
-                      ? {}
-                      : previousSubagent?.progress === undefined
-                        ? {}
-                        : { progress: previousSubagent.progress }),
-                  result:
-                    update.status === "running"
-                      ? null
-                      : (update.detail ?? previousSubagent?.result ?? null),
-                  startedAt: reopened ? now : (previousSubagent?.startedAt ?? base.startedAt),
-                  completedAt,
+                  nodeId: idAllocator.derive.nodeFromProviderItem({
+                    driver,
+                    nativeItemId: nativeId,
+                  }),
+                  providerThreadId: running.input.providerThread.id,
+                  providerTurnId: previous?.providerTurnId ?? running.turn.id,
+                  nativeItemRef: ref(nativeId),
+                  parentItemId: null,
+                  ordinal: previous?.ordinal ?? running.nextOrdinal++,
+                  startedAt: previous?.startedAt ?? now,
                   updatedAt: now,
+                  completedAt: null,
                 };
-                subagents.set(nativeId, subagent);
-                yield* emit({ type: "subagent.updated", driver, subagent });
-                yield* publishBackgroundRoster(now);
-                item = {
-                  ...base,
-                  type: "subagent",
-                  subagentId,
-                  title: update.title,
-                  status: update.status,
-                  origin: "provider_native",
-                  driver,
-                  providerInstanceId: options.instanceId,
-                  childThreadId,
-                  prompt: update.title,
-                  result: update.detail ?? null,
-                  completedAt,
-                };
-              } else {
-                const requestId = yield* idAllocator.allocate.runtimeRequest({
-                  driver,
-                  providerTurnId: running.turn.id,
-                  nativeRequestId: nativeId,
-                });
-                const request: OrchestrationV2RuntimeRequest = {
-                  id: requestId,
-                  nodeId: base.nodeId,
-                  providerTurnId: running.turn.id,
-                  nativeRequestRef: ref(update.id),
-                  kind: update.method === "confirm" ? "command" : "user_input",
-                  status: "pending",
-                  responseCapability: { type: "live", providerSessionId: input.providerSessionId },
-                  createdAt: now,
-                  resolvedAt: null,
-                };
-                item =
-                  update.method === "confirm"
-                    ? {
-                        ...base,
-                        type: "approval_request",
+                let item: OrchestrationV2TurnItem;
+                if (update.type === "text" || update.type === "text-completed") {
+                  const reasoning =
+                    update.type === "text"
+                      ? update.reasoning === true
+                      : previous?.type === "reasoning";
+                  const text =
+                    (previous?.type === "assistant_message" || previous?.type === "reasoning"
+                      ? previous.text
+                      : "") + (update.type === "text" ? update.delta : "");
+                  const streaming = update.type === "text";
+                  const common = {
+                    ...base,
+                    title: null,
+                    status: streaming
+                      ? ("running" as const)
+                      : update.type === "text-completed"
+                        ? (update.status ?? "completed")
+                        : ("completed" as const),
+                    completedAt: streaming ? null : now,
+                    text,
+                    streaming,
+                  };
+                  if (reasoning) item = { ...common, type: "reasoning" };
+                  else {
+                    const messageId = idAllocator.derive.messageFromProviderItem({
+                      driver,
+                      nativeItemId: nativeId,
+                    });
+                    item = { ...common, type: "assistant_message", messageId };
+                    const message: OrchestrationV2ConversationMessage = {
+                      id: messageId,
+                      threadId: running.input.threadId,
+                      runId: running.input.runId,
+                      nodeId: base.nodeId,
+                      role: "assistant",
+                      text,
+                      attachments: [],
+                      streaming,
+                      createdBy: "agent",
+                      creationSource: "provider",
+                      createdAt: base.startedAt,
+                      updatedAt: now,
+                    };
+                    messages.set(messageId, message);
+                    yield* emit({ type: "message.updated", driver, message });
+                  }
+                } else if (update.type === "tool") {
+                  item = {
+                    ...base,
+                    type: "dynamic_tool",
+                    title: update.name,
+                    toolName: update.name,
+                    status:
+                      running.interrupted && update.status === "failed"
+                        ? "interrupted"
+                        : update.status,
+                    input:
+                      update.input ?? (previous?.type === "dynamic_tool" ? previous.input : {}),
+                    ...(update.output === undefined ? {} : { output: update.output }),
+                    completedAt: update.status === "running" ? null : now,
+                  };
+                } else if (update.type === "subagent") {
+                  const previousSubagent = subagents.get(nativeId);
+                  const reopened =
+                    previousSubagent !== undefined &&
+                    previousSubagent.status !== "running" &&
+                    update.status === "running" &&
+                    update.reopen === true;
+                  if (
+                    previousSubagent !== undefined &&
+                    previousSubagent.status !== "running" &&
+                    update.status === "running" &&
+                    !reopened
+                  )
+                    return;
+                  const subagentId = base.nodeId;
+                  const childThreadId = idAllocator.derive.threadFromProviderThread({
+                    driver,
+                    providerInstanceId: options.instanceId,
+                    nativeThreadId: nativeId,
+                  });
+                  if (!previous) {
+                    yield* emit({
+                      type: "app_thread.created",
+                      driver,
+                      appThread: makeSubagentChildThread({
+                        parentThread: owner.appThread,
+                        childThreadId,
+                        parentNodeId: subagentId,
+                        activeProviderThreadId: null,
+                        providerInstanceId: options.instanceId,
+                        modelSelection: owner.modelSelection,
                         title: update.title,
-                        status: "waiting",
-                        requestId,
-                        requestKind: "command",
-                        prompt: update.message,
-                      }
-                    : {
-                        ...base,
-                        type: "user_input_request",
-                        title: update.title,
-                        status: "waiting",
-                        requestId,
-                        questions: [
-                          {
-                            id: update.id,
-                            header: update.title,
-                            question: update.message,
-                            options: update.options,
-                          },
-                        ],
-                      };
-                requests.set(requestId, { request, item, nativeId: update.id });
-                yield* emit({
-                  type: "runtime_request.updated",
-                  driver,
-                  threadId: running.input.threadId,
-                  runtimeRequest: request,
-                });
-                yield* updateSession("waiting");
-              }
-              items.set(nativeId, item);
-              yield* emit({ type: "turn_item.updated", driver, turnItem: item });
-              const node: OrchestrationV2ExecutionNode = {
-                id: base.nodeId,
-                threadId: base.threadId,
-                runId: base.runId,
-                parentNodeId: owner.rootNodeId,
-                rootNodeId: owner.rootNodeId,
-                kind:
-                  item.type === "approval_request"
-                    ? "approval_request"
-                    : item.type === "user_input_request"
-                      ? "user_input_request"
-                      : item.type === "dynamic_tool"
-                        ? "tool_call"
-                        : item.type === "subagent"
-                          ? "subagent"
-                          : item.type === "reasoning"
-                            ? "reasoning"
-                            : "assistant_message",
-                status: item.status,
-                countsForRun: false,
-                providerThreadId: base.providerThreadId,
-                providerTurnId: base.providerTurnId,
-                nativeItemRef: base.nativeItemRef,
-                runtimeRequestId:
-                  item.type === "approval_request" || item.type === "user_input_request"
-                    ? item.requestId
-                    : null,
-                checkpointScopeId: null,
-                startedAt: base.startedAt,
-                completedAt: item.completedAt,
-              };
-              nodes.set(node.id, node);
-              yield* emit({ type: "node.updated", driver, node });
+                        now,
+                        createdBy: "agent",
+                        creationSource: "provider",
+                      }),
+                    });
+                  }
+                  if (update.detail && update.status !== "running") {
+                    const artifacts = makeSubagentConversationArtifacts({
+                      messageId: idAllocator.derive.messageFromProviderItem({
+                        driver,
+                        nativeItemId: `${nativeId}:result`,
+                      }),
+                      turnItemId: idAllocator.derive.turnItemFromProviderItem({
+                        driver,
+                        nativeItemId: `${nativeId}:result`,
+                      }),
+                      threadId: childThreadId,
+                      rootNodeId: subagentId,
+                      providerThreadId: null,
+                      providerTurnId: null,
+                      nativeItemRef: ref(update.id),
+                      role: "assistant",
+                      text: update.detail,
+                      ordinal: 1,
+                      now,
+                    });
+                    yield* emit({ type: "message.updated", driver, message: artifacts.message });
+                    yield* emit({
+                      type: "turn_item.updated",
+                      driver,
+                      turnItem: artifacts.turnItem,
+                    });
+                  }
+                  const completedAt =
+                    update.status === "running" ? null : (previousSubagent?.completedAt ?? now);
+                  const subagent: OrchestrationV2Subagent = {
+                    id: subagentId,
+                    threadId: owner.threadId,
+                    runId: owner.runId,
+                    parentNodeId: owner.rootNodeId,
+                    origin: "provider_native",
+                    createdBy: "agent",
+                    driver,
+                    providerInstanceId: options.instanceId,
+                    providerThreadId: base.providerThreadId,
+                    childThreadId,
+                    nativeTaskRef: ref(update.id),
+                    prompt: update.title,
+                    title: update.title,
+                    model: update.model ?? previousSubagent?.model ?? null,
+                    presentation: mergeSubagentPresentation(
+                      previousSubagent?.presentation,
+                      update.presentation,
+                      DateTime.formatIso(now),
+                      reopened,
+                    ),
+                    status: update.status,
+                    ...(update.status === "running" && update.detail !== undefined
+                      ? { progress: update.detail }
+                      : reopened
+                        ? {}
+                        : previousSubagent?.progress === undefined
+                          ? {}
+                          : { progress: previousSubagent.progress }),
+                    result:
+                      update.status === "running"
+                        ? null
+                        : (update.detail ?? previousSubagent?.result ?? null),
+                    startedAt: reopened ? now : (previousSubagent?.startedAt ?? base.startedAt),
+                    completedAt,
+                    updatedAt: now,
+                  };
+                  subagents.set(nativeId, subagent);
+                  yield* emit({ type: "subagent.updated", driver, subagent });
+                  yield* publishBackgroundRoster(now, emit);
+                  item = {
+                    ...base,
+                    type: "subagent",
+                    subagentId,
+                    title: update.title,
+                    status: update.status,
+                    origin: "provider_native",
+                    driver,
+                    providerInstanceId: options.instanceId,
+                    childThreadId,
+                    prompt: update.title,
+                    result: update.detail ?? null,
+                    completedAt,
+                  };
+                } else {
+                  const requestId = yield* idAllocator.allocate.runtimeRequest({
+                    driver,
+                    providerTurnId: running.turn.id,
+                    nativeRequestId: nativeId,
+                  });
+                  const request: OrchestrationV2RuntimeRequest = {
+                    id: requestId,
+                    nodeId: base.nodeId,
+                    providerTurnId: running.turn.id,
+                    nativeRequestRef: ref(update.id),
+                    kind: update.method === "confirm" ? "command" : "user_input",
+                    status: "pending",
+                    responseCapability: {
+                      type: "live",
+                      providerSessionId: input.providerSessionId,
+                    },
+                    createdAt: now,
+                    resolvedAt: null,
+                  };
+                  item =
+                    update.method === "confirm"
+                      ? {
+                          ...base,
+                          type: "approval_request",
+                          title: update.title,
+                          status: "waiting",
+                          requestId,
+                          requestKind: "command",
+                          prompt: update.message,
+                        }
+                      : {
+                          ...base,
+                          type: "user_input_request",
+                          title: update.title,
+                          status: "waiting",
+                          requestId,
+                          questions: [
+                            {
+                              id: update.id,
+                              header: update.title,
+                              question: update.message,
+                              options: update.options,
+                            },
+                          ],
+                        };
+                  requests.set(requestId, { request, item, nativeId: update.id });
+                  yield* emit({
+                    type: "runtime_request.updated",
+                    driver,
+                    threadId: running.input.threadId,
+                    runtimeRequest: request,
+                  });
+                  yield* updateSession("waiting", emit);
+                }
+                items.set(nativeId, item);
+                yield* emit({ type: "turn_item.updated", driver, turnItem: item });
+                const node: OrchestrationV2ExecutionNode = {
+                  id: base.nodeId,
+                  threadId: base.threadId,
+                  runId: base.runId,
+                  parentNodeId: owner.rootNodeId,
+                  rootNodeId: owner.rootNodeId,
+                  kind:
+                    item.type === "approval_request"
+                      ? "approval_request"
+                      : item.type === "user_input_request"
+                        ? "user_input_request"
+                        : item.type === "dynamic_tool"
+                          ? "tool_call"
+                          : item.type === "subagent"
+                            ? "subagent"
+                            : item.type === "reasoning"
+                              ? "reasoning"
+                              : "assistant_message",
+                  status: item.status,
+                  countsForRun: false,
+                  providerThreadId: base.providerThreadId,
+                  providerTurnId: base.providerTurnId,
+                  nativeItemRef: base.nativeItemRef,
+                  runtimeRequestId:
+                    item.type === "approval_request" || item.type === "user_input_request"
+                      ? item.requestId
+                      : null,
+                  checkpointScopeId: null,
+                  startedAt: base.startedAt,
+                  completedAt: item.completedAt,
+                };
+                nodes.set(node.id, node);
+                yield* emit({ type: "node.updated", driver, node });
+              });
+              yield* emitBatch(frames, control);
             }).pipe(
               Effect.catch((cause) =>
                 finish({ type: "terminal", status: "failed", detail: cause.message, broken: true }),
@@ -844,16 +1045,21 @@ export function makeNativeSessionAdapterV2(
             ),
           );
         const native = yield* options.open(input, onUpdate);
+        yield* Deferred.succeed(nativeReady, native);
         yield* Effect.addFinalizer(() =>
-          eventPermit.withPermit(
-            Effect.gen(function* () {
-              yield* finish({ type: "terminal", status: "cancelled" });
-              yield* stopBackgroundTasks("cancelled", yield* DateTime.now);
-              for (const pending of requests.values())
-                yield* settleRequest(pending, "cancelled", yield* DateTime.now);
-              yield* updateSession("stopped");
-              yield* Queue.end(events);
-            }),
+          (native.beforeOwnerClose ?? Effect.void).pipe(
+            Effect.andThen(
+              eventPermit.withPermit(
+                Effect.gen(function* () {
+                  yield* stopBackgroundTasks("cancelled", yield* DateTime.now);
+                  yield* finish({ type: "terminal", status: "cancelled" });
+                  for (const pending of requests.values())
+                    yield* settleRequest(pending, "cancelled", yield* DateTime.now);
+                  yield* updateSession("stopped");
+                  yield* events.end;
+                }),
+              ),
+            ),
           ),
         );
         const validateThreadOwner = (
@@ -919,7 +1125,20 @@ export function makeNativeSessionAdapterV2(
           get providerSession() {
             return providerSession;
           },
-          events: Stream.fromQueue(events),
+          ...(native.getModelContextWindow === undefined
+            ? {}
+            : { getModelContextWindow: native.getModelContextWindow }),
+          ...(options.eventQueueStorage ? { eventConsumer: events.consumer } : {}),
+          events: events.events.pipe(
+            Stream.mapError(
+              (cause) =>
+                new ProviderAdapter.ProviderAdapterEventStreamError({
+                  driver,
+                  providerSessionId: input.providerSessionId,
+                  cause,
+                }),
+            ),
+          ),
           hasPendingBackgroundWork: Effect.sync(
             () =>
               backgroundPending ||
@@ -928,6 +1147,12 @@ export function makeNativeSessionAdapterV2(
                 (item) => item.type === "subagent" && item.status === "running",
               ),
           ),
+          hasPendingBackgroundWorkForThread: (providerThread) =>
+            Effect.sync(
+              () =>
+                providerThread.id === thread?.id &&
+                (providerThread.pendingBackgroundTasks?.length ?? 0) > 0,
+            ),
           ensureThread: (request) =>
             Effect.gen(function* () {
               if (!validateThreadOwner(request.threadId, request.existingProviderThread))
@@ -979,7 +1204,11 @@ export function makeNativeSessionAdapterV2(
             ),
           startTurn: (request) =>
             Effect.gen(function* () {
-              if (providerSession.status === "error" || providerSession.status === "stopped")
+              if (
+                budget.closed ||
+                providerSession.status === "error" ||
+                providerSession.status === "stopped"
+              )
                 return yield* protocolError("The native session is no longer usable.");
               if (active)
                 return yield* protocolError("The native session already has an active turn.");
@@ -993,6 +1222,14 @@ export function makeNativeSessionAdapterV2(
                   "The native session does not own this provider thread.",
                 );
               const startedAt = yield* DateTime.now;
+              thread = {
+                ...thread,
+                status: "active",
+                firstRunOrdinal: thread.firstRunOrdinal ?? request.runOrdinal,
+                lastRunOrdinal: request.runOrdinal,
+                updatedAt: startedAt,
+              };
+              yield* emit({ type: "provider_thread.updated", driver, providerThread: thread });
               const nativeTurnId = `${thread.id}:${request.attemptId}`;
               const turn: OrchestrationV2ProviderTurn = {
                 id: idAllocator.derive.providerTurn({ driver, nativeTurnId }),
@@ -1002,7 +1239,11 @@ export function makeNativeSessionAdapterV2(
                 nativeTurnRef: { ...ref(nativeTurnId), strength: "weak" },
                 ordinal: request.providerTurnOrdinal,
                 status: "running",
-                nativeAcceptance: "pending",
+                nativeAcceptance:
+                  request.message.createdBy === "agent" &&
+                  request.message.creationSource === "provider"
+                    ? "unknown"
+                    : "pending",
                 startedAt,
                 completedAt: null,
               };
@@ -1026,7 +1267,10 @@ export function makeNativeSessionAdapterV2(
               ) {
                 wakeOffered = false;
                 const buffered = wake.splice(0);
-                for (const event of buffered) yield* onUpdate(event);
+                for (const event of buffered) {
+                  event.charge.release();
+                  yield* onUpdate(event.update);
+                }
                 if (active && !backgroundPending)
                   yield* finish({ type: "terminal", status: "completed" });
               } else {
@@ -1039,7 +1283,7 @@ export function makeNativeSessionAdapterV2(
                           type: "terminal",
                           status: "failed",
                           detail: cause.message,
-                          broken: true,
+                          broken: cause.breaksSession !== false,
                         }),
                       )
                       .pipe(
@@ -1104,8 +1348,36 @@ export function makeNativeSessionAdapterV2(
                 ),
           interruptTurn: (request) =>
             Effect.gen(function* () {
+              if (!active) {
+                const ownedTurn = turns.get(request.providerTurnId);
+                if (
+                  !thread ||
+                  thread.id !== request.providerThread.id ||
+                  !validateThreadOwner(input.threadId, request.providerThread) ||
+                  ownedTurn?.providerThreadId !== thread.id ||
+                  (!backgroundPending &&
+                    wake.length === 0 &&
+                    ![...subagents.values()].some((task) => task.status === "running"))
+                )
+                  return;
+                yield* native.interrupt;
+                yield* eventPermit.withPermit(
+                  Effect.gen(function* () {
+                    yield* stopBackgroundTasks("interrupted", yield* DateTime.now);
+                    if (native.interruptBreaksSession === true) {
+                      thread = { ...thread!, status: "closed", updatedAt: yield* DateTime.now };
+                      yield* emit({
+                        type: "provider_thread.updated",
+                        driver,
+                        providerThread: thread,
+                      });
+                      yield* updateSession("stopped");
+                    }
+                  }),
+                );
+                return;
+              }
               if (
-                !active ||
                 active.turn.id !== request.providerTurnId ||
                 active.turn.providerThreadId !== request.providerThread.id
               )

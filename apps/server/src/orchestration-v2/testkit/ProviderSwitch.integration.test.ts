@@ -914,6 +914,8 @@ describe("orchestration v2 provider switching", () => {
                   },
                 },
                 registry,
+                // These fixtures exercise the conservative one-byte-per-token policy.
+                { contextHandoffPolicy: "byte" },
               ),
             ),
           );
@@ -1078,6 +1080,7 @@ describe("orchestration v2 provider switching", () => {
                     },
                   },
                   registry,
+                  { contextHandoffPolicy: "byte" },
                 ),
               ),
             );

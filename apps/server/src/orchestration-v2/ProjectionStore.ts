@@ -61,6 +61,7 @@ import {
   isOrchestrationV2SupersededInterrupt,
   isOrchestrationV2TurnItemVisible,
 } from "@t3tools/shared/orchestrationV2Timeline";
+import { historicalMessage } from "./ContextHandoffBudget.ts";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -3636,16 +3637,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const getTurnStartHistory: ProjectionStoreV2Shape["getTurnStartHistory"] = (threadId, runIds) =>
       Effect.gen(function* () {
         const rows = yield* sql<PayloadRow>`
-          SELECT payload_json FROM orchestration_v2_projection_turn_items
-          WHERE thread_id = ${threadId}
-            AND (type IN ('user_message','assistant_message','command_execution','error',
+          SELECT item.payload_json FROM orchestration_v2_projection_turn_items AS item
+          WHERE item.thread_id = ${threadId}
+            AND (item.type IN ('user_message','assistant_message','command_execution','error',
               'run_interrupt_result','file_change','proposed_plan')
-              OR (type = 'user_input_request' AND status = 'completed'
-                AND json_type(payload_json, '$.questionAnswer') = 'object'))
-            AND ${runIds === undefined ? sql`1` : sql`run_id IN ${sql.in(runIds)}`}
-          ORDER BY ordinal ASC, turn_item_id ASC
+              OR (item.type IN ('reasoning','dynamic_tool') AND item.run_id IS NULL)
+              OR (item.type = 'user_input_request' AND item.status = 'completed'
+                AND json_type(item.payload_json, '$.questionAnswer') = 'object'))
+            AND ${runIds === undefined ? sql`1` : sql`item.run_id IN ${sql.in(runIds)}`}
+          ORDER BY item.ordinal ASC, item.turn_item_id ASC
         `;
-        return yield* decodeRows(decodeTurnItemPayload, threadId)(rows);
+        return (yield* decodeRows(decodeTurnItemPayload, threadId)(rows)).filter(
+          (item) =>
+            (item.type !== "reasoning" && item.type !== "dynamic_tool") ||
+            historicalMessage(item) !== null,
+        );
       }).pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })));
 
     const getThreadProjection: ProjectionStoreV2Shape["getThreadProjection"] = (threadId) =>
@@ -6039,10 +6045,14 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                     "run_interrupt_result",
                     "file_change",
                     "proposed_plan",
+                    "reasoning",
+                    "dynamic_tool",
                   ].includes(item.type) ||
                     (item.type === "user_input_request" &&
                       item.status === "completed" &&
                       item.questionAnswer !== undefined)) &&
+                  ((item.type !== "reasoning" && item.type !== "dynamic_tool") ||
+                    (item.runId === null && historicalMessage(item) !== null)) &&
                   (runIds === undefined || (item.runId !== null && runIds.includes(item.runId))),
               ),
             ),

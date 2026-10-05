@@ -913,17 +913,6 @@ export const ProviderRegistryLive = Layer.effect(
       return instance?.voiceTranscriptCorrection;
     });
 
-    const stopProviderSessions = Effect.fn("stopProviderSessions")(function* (
-      provider: ProviderDriverKind,
-    ) {
-      const instances = yield* instanceRegistry.listInstances;
-      yield* Effect.forEach(
-        instances.filter((instance) => instance.driverKind === provider),
-        (instance) => instance.adapter.stopAll(),
-        { concurrency: "unbounded", discard: true },
-      );
-    });
-
     /**
      * Diff the aggregator's live-source set against the current
      * `ProviderInstanceRegistry` and:
@@ -1368,7 +1357,6 @@ export const ProviderRegistryLive = Layer.effect(
       getProviderManagedRuntimeActionsForInstance,
       getProviderSkillActionsForInstance,
       getVoiceTranscriptCorrectionForInstance,
-      stopProviderSessions,
       setProviderMaintenanceActionState,
       setProviderConnectionOperation,
       setProviderAuthenticationFailure,

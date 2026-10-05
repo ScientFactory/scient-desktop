@@ -361,7 +361,7 @@ it.live(
                 (yield* sql<{ history_repair_version: number }>`SELECT history_repair_version
                 FROM orchestration_v2_legacy_imports WHERE thread_id = ${threadId}`)[0]
                   ?.history_repair_version,
-                2,
+                3,
               );
               const first = held.messages.find(
                 (message) => message.text === "Recovered first work",

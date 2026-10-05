@@ -164,7 +164,18 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
       end = lastInBoundary < 0 ? clicked : lastInBoundary;
     }
   }
-  const retained = rows.slice(0, end + 1);
+  const selectedRun = projection.runs.find((run) => run.id === boundaryRunId);
+  const runOrdinals = new Map(projection.runs.map((run) => [run.id, run.ordinal]));
+  // A later request can be recorded before the selected answer finishes.
+  // Durable run ownership prevents that overlap from extending this prefix.
+  const retained = rows
+    .slice(0, end + 1)
+    .filter(
+      ({ item }) =>
+        selectedRun === undefined ||
+        item.runId === null ||
+        (runOrdinals.get(item.runId) ?? Infinity) <= selectedRun.ordinal,
+    );
   const messageIds = new Map<MessageId, MessageId>();
   const itemIds = new Map<TurnItemId, TurnItemId>();
   const attachmentMap = new Map<string, ChatAttachment>();
@@ -194,6 +205,17 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
     return true;
   };
   for (const [index, { item }] of retained.entries()) {
+    if (
+      item.type === "user_input_request" &&
+      item.questionAnswer !== undefined &&
+      item.status === "completed" &&
+      item.runId === null &&
+      item.historyTurnId === undefined &&
+      item.inheritedFrom?.runId == null
+    )
+      return yield* reject(
+        "A retained submitted question answer has no authoritative turn boundary.",
+      );
     itemIds.set(item.id, TurnItemId.make(`scient-fork:${targetThreadId}:item:${index}`));
     if (item.type === "user_message" || item.type === "assistant_message") {
       if (!messageIds.has(item.messageId))

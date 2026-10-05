@@ -23,6 +23,8 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+export { modelSelectionsEqual } from "@t3tools/shared/model";
+
 import { DraftComposerAttachmentSchema } from "../lib/composer-image-schema";
 import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { DraftComposerAttachment } from "../lib/composerImages";
@@ -122,14 +124,6 @@ export function resolveQueuedThreadSettings(
       message.interactionMode ?? thread.interactionMode,
     ),
   };
-}
-
-export function modelSelectionsEqual(left: ModelSelectionType, right: ModelSelectionType): boolean {
-  return (
-    left.instanceId === right.instanceId &&
-    left.model === right.model &&
-    JSON.stringify(left.options ?? null) === JSON.stringify(right.options ?? null)
-  );
 }
 
 export function encodeQueuedThreadMessage(message: QueuedThreadMessage): unknown {

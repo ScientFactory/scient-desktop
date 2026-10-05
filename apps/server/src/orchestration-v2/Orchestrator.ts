@@ -50,6 +50,7 @@ import {
   derivePendingBackgroundWork,
   pendingBackgroundTurnItems,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { historicalMessage } from "./ContextHandoffBudget.ts";
 import * as Context from "effect/Context";
 import { OrchestrationThreadSettleBlockedError } from "./Errors.ts";
 import * as DateTime from "effect/DateTime";
@@ -74,6 +75,7 @@ import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import { CommandPolicyV2, resolveMessageDispatchIntent } from "./CommandPolicy.ts";
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { ContextHandoffServiceV2 } from "./ContextHandoffService.ts";
+import { hasScientContextHistory } from "./ContextHandoffBudget.ts";
 import { notificationTurnItem } from "./Notification.ts";
 import { isRestartNoteSource } from "./RestartBackgroundNote.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
@@ -1481,7 +1483,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.thread.historyOrigin === "v1_import" ||
         projection.thread.historyOrigin === "scient_fork" ||
         projection.thread.historyOrigin === "conversation_import"
-          ? yield* readHandoffItems(threadId, [null])
+          ? yield* readHandoffItems(threadId, [null]).pipe(
+              Effect.map((items) =>
+                items.some((item) => historicalMessage(item) !== null) ? items : [],
+              ),
+            )
           : [];
       const handoffStrategy = needsFullContext
         ? ("full_thread_summary" as const)
@@ -1522,6 +1528,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 threadId,
                 targetRunId: queuedRun.id,
                 transferId,
+                ...(hasScientContextHistory(projection)
+                  ? { purpose: "scient_history" as const }
+                  : {}),
                 fromProviderThreadIds: Array.from(
                   new Set(
                     coveredRuns.flatMap((run) =>
@@ -4244,11 +4253,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             type: "provider_handoff",
           }),
         );
+        const restartHistoryContext = yield* projectionStore
+          .getThreadRecords(input.command.threadId, ["contextTransfers"])
+          .pipe(mapDispatchError(input.command));
         restartHandoff = yield* contextHandoffService
           .prepareProviderHandoff({
             threadId: input.command.threadId,
             targetRunId: targetRun.id,
             transferId,
+            ...(hasScientContextHistory(restartHistoryContext)
+              ? { purpose: "scient_history" as const }
+              : {}),
             fromProviderThreadIds: [providerThread.id],
             toProviderThreadId: targetProviderThreadBase.id,
             fromProviderInstanceId: targetRun.providerInstanceId,
@@ -5310,7 +5325,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.thread.historyOrigin === "v1_import" ||
         projection.thread.historyOrigin === "scient_fork" ||
         projection.thread.historyOrigin === "conversation_import"
-          ? yield* readHandoffItems(command.threadId, [null])
+          ? yield* readHandoffItems(command.threadId, [null]).pipe(
+              Effect.map((items) =>
+                items.some((item) => historicalMessage(item) !== null) ? items : [],
+              ),
+            )
           : [];
       const isProviderSwitch =
         activeProviderThread !== undefined &&
@@ -5963,6 +5982,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 threadId: command.threadId,
                 targetRunId: runId,
                 transferId: pendingForkTransfer.id,
+                purpose: "scient_fork",
                 fromProviderThreadIds:
                   sourceProviderThread === undefined ? [] : [sourceProviderThread.id],
                 toProviderThreadId: ensuredProviderThread.id,
@@ -6053,6 +6073,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 threadId: command.threadId,
                 targetRunId: runId,
                 transferId: providerSwitchTransferId,
+                ...(hasScientContextHistory(projection)
+                  ? { purpose: "scient_history" as const }
+                  : {}),
                 fromProviderThreadIds: Array.from(
                   new Set(
                     providerSwitchCoveredRuns.flatMap((run) =>

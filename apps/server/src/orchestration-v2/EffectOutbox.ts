@@ -308,7 +308,9 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         Array.from({ length: Math.min(64, Math.max(0, Math.floor(count))) }, () => undefined),
       ).pipe(Effect.asVoid);
     // Title generation is correlated metadata work, so it has its own
-    // per-thread lane and cannot delay provider lifecycle effects.
+    // per-thread lane and cannot delay provider lifecycle effects. A steer can
+    // reach a running turn while its start effect holds a long native send.
+    // Other lifecycle effects and concurrent steers retain thread ordering.
     const claimableCandidatePredicate = (availableBefore?: string) =>
       sql`
         ${
@@ -331,6 +333,10 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               (
                 candidate.effect_type != 'thread-title.generate'
                 AND active.effect_type != 'thread-title.generate'
+                AND NOT (
+                  candidate.effect_type = 'provider-turn.steer'
+                  AND active.effect_type = 'provider-turn.start'
+                )
               )
             )
         )
