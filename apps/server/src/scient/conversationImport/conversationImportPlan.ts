@@ -21,6 +21,7 @@
  * keeps it, as it keeps a fork's inherited turns.
  */
 import {
+  ProviderCitationPresentation,
   ApprovalRequestId,
   CONVERSATION_IMPORT_MAX_NOTICES,
   CommandId,
@@ -83,6 +84,7 @@ export const PortableConversationImportPlan = Schema.Struct({
     Schema.Struct({
       messageId: MessageId,
       role: OrchestrationMessageRole,
+      citationPresentation: Schema.optional(ProviderCitationPresentation),
       text: Schema.String,
       attachments: Schema.optional(Schema.Array(ChatAttachment)),
       turnId: Schema.NullOr(TurnId),
@@ -893,6 +895,9 @@ export function buildConversationImportCommand(input: {
         messageId: ids.messages[message.id]!,
         role: message.role,
         text: importedMessageMarkdown(message),
+        ...(message.role === "assistant" && message.citationPresentation !== undefined
+          ? { citationPresentation: message.citationPresentation }
+          : {}),
         ...(attachments.length > 0 ? { attachments } : {}),
         turnId: localTurn(assignment.byMessageId.get(message.id)),
         createdAt: message.createdAt,

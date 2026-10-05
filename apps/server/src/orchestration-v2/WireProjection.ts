@@ -1,5 +1,7 @@
+import { presentProviderCitationText } from "./providerCitationMarkdown.ts";
 import type {
   OrchestrationV2DomainEvent,
+  OrchestrationV2ConversationMessage,
   OrchestrationV2ContextHandoff,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
@@ -157,6 +159,12 @@ function summarizeDynamicValue(value: unknown): unknown {
 
 export function projectTurnItemForWire(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
   switch (item.type) {
+    // SCIENT-FORK:START — citation fallback is presentation, never a stored-text repair.
+    case "assistant_message": {
+      const text = presentProviderCitationText(item);
+      return text === item.text ? item : { ...item, text };
+    }
+    // SCIENT-FORK:END
     case "handoff": {
       const { summary: _summary, ...projected } = item;
       return projected;
@@ -199,6 +207,17 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
   }
 }
 
+// SCIENT-FORK:START — message and item clients share one raw-to-display citation projection.
+export function projectMessageForWire(
+  message: OrchestrationV2ConversationMessage,
+): OrchestrationV2ConversationMessage {
+  if (message.role !== "assistant") return message;
+  const text = presentProviderCitationText(message);
+  return text === message.text ? message : { ...message, text };
+}
+
+// SCIENT-FORK:END
+
 export function projectContextHandoffForWire(
   handoff: OrchestrationV2ContextHandoff,
 ): OrchestrationV2ContextHandoff {
@@ -220,6 +239,8 @@ export function projectThreadProjectionForWire(
   };
   return {
     ...projection,
+    // SCIENT-FORK: use the same presentation for snapshot messages and visible items.
+    messages: projection.messages.map(projectMessageForWire),
     contextHandoffs: projection.contextHandoffs.map(projectContextHandoffForWire),
     turnItems: projection.turnItems.map(project),
     visibleTurnItems: projection.visibleTurnItems.map((row) => ({
@@ -232,9 +253,12 @@ export function projectThreadProjectionForWire(
 export function projectDomainEventForWire(
   event: OrchestrationV2DomainEvent,
 ): OrchestrationV2DomainEvent {
+  // SCIENT-FORK: event delivery uses the same citation presentation as snapshot delivery.
   return event.type === "turn-item.updated"
     ? { ...event, payload: projectTurnItemForWire(event.payload) }
-    : event.type === "context-handoff.updated"
-      ? { ...event, payload: projectContextHandoffForWire(event.payload) }
-      : event;
+    : event.type === "message.updated"
+      ? { ...event, payload: projectMessageForWire(event.payload) }
+      : event.type === "context-handoff.updated"
+        ? { ...event, payload: projectContextHandoffForWire(event.payload) }
+        : event;
 }

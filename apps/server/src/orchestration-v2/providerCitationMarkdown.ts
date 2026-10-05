@@ -1,4 +1,11 @@
-import type { RuntimeCitationSource, RuntimeTextCitation } from "@t3tools/contracts";
+import { markdownProseTextSpans } from "@scientfactory/scient-markdown";
+import { extractCodexTextCitations } from "../provider/codexCitations.ts";
+import type {
+  ProviderCitationPresentation,
+  OrchestrationV2ProviderRef,
+  RuntimeCitationSource,
+  RuntimeTextCitation,
+} from "@t3tools/contracts";
 
 function safeWebUrl(value: string): string | null {
   if (!URL.canParse(value)) return null;
@@ -77,4 +84,38 @@ export function renderProviderCitationMarkdown(input: {
   }
 
   return `${output}${input.text.slice(cursor)}`;
+}
+
+/** Provider markers are interpreted only in prose, never authored code or destinations. */
+export function extractCodexProseCitations(text: string): ReadonlyArray<RuntimeTextCitation> {
+  const citations = extractCodexTextCitations(text);
+  if (citations.length === 0) return citations;
+  const spans = markdownProseTextSpans(text);
+  // Regex matches and parser text ranges are ordered, so each prose span is visited once.
+  let spanIndex = 0;
+  return citations.filter((citation) => {
+    while (spanIndex < spans.length && spans[spanIndex]!.end <= citation.start) spanIndex += 1;
+    const span = spans[spanIndex];
+    return span !== undefined && citation.start >= span.start && citation.end <= span.end;
+  });
+}
+
+/** Derive wire-only presentation from canonical raw text and inert syntax provenance. */
+export function presentProviderCitationText(input: {
+  readonly text: string;
+  readonly citationPresentation?: ProviderCitationPresentation | undefined;
+  readonly nativeItemRef?: OrchestrationV2ProviderRef | null | undefined;
+  readonly streaming: boolean;
+}): string {
+  if (
+    input.streaming ||
+    (input.citationPresentation?.format !== "codex-private-v1" &&
+      input.nativeItemRef?.driver !== "codex")
+  )
+    return input.text;
+  return renderProviderCitationMarkdown({
+    text: input.text,
+    citations: extractCodexProseCitations(input.text),
+    sources: input.citationPresentation?.sources ?? [],
+  });
 }

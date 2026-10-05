@@ -1,11 +1,10 @@
+import { ProviderCitationPresentationSource } from "@t3tools/contracts";
 import * as NodeCrypto from "node:crypto";
 import type { RuntimeCitationSource } from "@t3tools/contracts";
-import {
-  extractCodexCitationSources,
-  extractCodexTextCitations,
-} from "../../provider/codexCitations.ts";
+import { extractCodexCitationSources } from "../../provider/codexCitations.ts";
 import {
   canRenderProviderCitationMarkdown,
+  extractCodexProseCitations,
   renderProviderCitationMarkdown,
 } from "../providerCitationMarkdown.ts";
 import { materializeGeneratedImageAttachment } from "../../generatedImageAttachments.ts";
@@ -245,6 +244,9 @@ const decodeCodexBackgroundTerminalTerminateResponse = Schema.decodeUnknownEffec
 );
 const decodeCodexBackgroundTerminalsListResponse = Schema.decodeUnknownEffect(
   CodexBackgroundTerminalsListResponse,
+);
+const decodeCitationPresentationSource = Schema.decodeUnknownOption(
+  ProviderCitationPresentationSource,
 );
 const CODEX_CLIENT_CAPABILITIES = {
   experimentalApi: true,
@@ -2919,12 +2921,26 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           completed: boolean,
         ) =>
           Effect.gen(function* () {
-            const citations = completed ? extractCodexTextCitations(item.text) : [];
+            // SCIENT-FORK:START — preserve unresolved provider syntax with inert provenance for portable presentation.
+            const citations = completed ? extractCodexProseCitations(item.text) : [];
             const sources = Array.from(context.citationSources.values());
             const text =
               citations.length > 0 && canRenderProviderCitationMarkdown({ citations, sources })
                 ? renderProviderCitationMarkdown({ text: item.text, citations, sources })
                 : item.text;
+            const sourceIds = new Set(citations.flatMap((citation) => citation.sourceIds));
+            const boundedSources = sources
+              .filter((source) => sourceIds.has(source.id))
+              .flatMap((source) => {
+                const decoded = decodeCitationPresentationSource(source);
+                return Option.isSome(decoded) ? [decoded.value] : [];
+              })
+              .slice(0, 128);
+            const citationPresentation =
+              citations.length > 0 && text === item.text
+                ? { format: "codex-private-v1" as const, sources: boundedSources }
+                : undefined;
+            // SCIENT-FORK:END
             const updatedAt = yield* DateTime.now;
             const completedAt = completed ? updatedAt : null;
             const nodeId = idAllocator.derive.nodeFromProviderItem({
@@ -2965,6 +2981,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               runId: context.projectionRunId,
               nodeId,
               role: "assistant",
+              ...(citationPresentation === undefined ? {} : { citationPresentation }),
               text,
               attachments: [],
               streaming: !completed,
@@ -2988,6 +3005,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               updatedAt,
               type: "assistant_message",
               messageId,
+              ...(citationPresentation === undefined ? {} : { citationPresentation }),
               text,
               streaming: !completed,
             };

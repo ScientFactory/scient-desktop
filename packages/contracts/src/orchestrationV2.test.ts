@@ -1,3 +1,4 @@
+import { ProviderCitationPresentation } from "./providerCitationPresentation.ts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
@@ -43,6 +44,8 @@ import {
   OrchestrationV2TurnItemJson,
 } from "./orchestrationV2.ts";
 
+const isCitationPresentation = Schema.is(ProviderCitationPresentation);
+const decodeCitationPresentation = Schema.decodeUnknownOption(ProviderCitationPresentation);
 const now = DateTime.makeUnsafe("2026-04-20T00:00:00.000Z");
 
 const oldNotice = Schema.Struct({
@@ -1515,5 +1518,25 @@ describe("inert fork initialization handoff provenance", () => {
         forkInitialization: { ...proof, runId: null },
       }),
     ).toThrow();
+  });
+});
+
+describe("inert citation presentation bounds", () => {
+  const valid = {
+    format: "codex-private-v1",
+    sources: [{ id: "s", url: "https://example.test", title: "Study" }],
+  };
+  it("accepts an empty recognized scope and rejects oversized or untrusted fields", () => {
+    expect(isCitationPresentation(valid)).toBe(true);
+    expect(isCitationPresentation({ format: "codex-private-v1", sources: [] })).toBe(true);
+    for (const value of [
+      { ...valid, sources: Array.from({ length: 129 }, () => valid.sources[0]) },
+      { ...valid, sources: [{ ...valid.sources[0], id: "x".repeat(257) }] },
+      { ...valid, sources: [{ ...valid.sources[0], url: "x".repeat(32769) }] },
+      { ...valid, sources: [{ ...valid.sources[0], title: "x".repeat(1025) }] },
+      { ...valid, format: "arbitrary-provider" },
+      { ...valid, sources: [{ id: "s", url: { toString: () => "https://example.test" } }] },
+    ])
+      expect(decodeCitationPresentation(value)._tag).toBe("None");
   });
 });

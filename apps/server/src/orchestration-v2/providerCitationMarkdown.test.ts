@@ -2,6 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   canRenderProviderCitationMarkdown,
+  extractCodexProseCitations,
+  presentProviderCitationText,
   renderProviderCitationMarkdown,
 } from "./providerCitationMarkdown.ts";
 
@@ -74,5 +76,76 @@ describe("provider citation Markdown", () => {
         sources: [{ id: "unsafe", url: "file:///etc/passwd" }],
       }),
     ).toBe(false);
+  });
+});
+
+describe("raw citation presentation", () => {
+  const marker = "\uE200cite\uE202known\uE201";
+  const missing = "\uE200cite\uE202absent\uE201";
+  const provenance = {
+    format: "codex-private-v1" as const,
+    sources: [
+      { id: "known", url: "https://example.test/evidence", title: "Evidence" },
+      { id: "unsafe", url: "javascript:alert(1)" },
+    ],
+  };
+  const present = (text: string) =>
+    presentProviderCitationText({ text, citationPresentation: provenance, streaming: false });
+  it("derives mixed safe links and unavailable fallback from current UTF-16 text", () => {
+    const text = `שלום 😀 ${marker} ${missing} \uE200cite\uE202unsafe\uE201`;
+    expect(present(text)).toBe(
+      'שלום 😀 [1](<https://example.test/evidence> "Evidence") [citation unavailable] [citation unavailable]',
+    );
+    expect(present(`New ${missing}`)).toBe("New [citation unavailable]");
+    expect(present(present(text))).toBe(present(text));
+  });
+  it("keeps code, HTML, math, metadata and destinations literal alongside prose", () => {
+    const literal = [
+      `---\nsource: ${marker}\n---`,
+      "```md\n" + marker + "\n```",
+      "``" + marker + " with ` embedded``",
+      `<span>${marker}</span>`,
+      `$${marker}$`,
+      `[label](<https://example.test/${marker}>)`,
+      `[ref]: <https://example.test/${marker}>`,
+    ].join("\n\n");
+    const text = `${literal}\n\nProse ${marker}`;
+    expect(extractCodexProseCitations(text)).toHaveLength(1);
+    expect(present(text)).toBe(
+      `${literal}\n\nProse [1](<https://example.test/evidence> "Evidence")`,
+    );
+  });
+  it("keeps exact ordered ranges across long formatted prose and excluded literal spans", () => {
+    let text = "😀 **unrelated** _prose_ ".repeat(1_500);
+    let expectedDisplay = text;
+    const ranges: Array<{ start: number; end: number; sourceIds: string[] }> = [];
+    const link = '[1](<https://example.test/evidence> "Evidence")';
+    for (let section = 0; section < 24; section += 1) {
+      const chunk = `**${marker}** \`${marker}\` [label](<https://example.test/${marker}>) _${marker}_ \uE200cite\uE202kn**own\uE201**\n\n`;
+      const firstStart = text.length + 2;
+      const secondStart = text.length + chunk.indexOf(`_${marker}_`) + 1;
+      ranges.push(
+        { start: firstStart, end: firstStart + marker.length, sourceIds: ["known"] },
+        { start: secondStart, end: secondStart + marker.length, sourceIds: ["known"] },
+      );
+      text += chunk;
+      expectedDisplay += `**${link}** \`${marker}\` [label](<https://example.test/${marker}>) _${link}_ \uE200cite\uE202kn**own\uE201**\n\n`;
+    }
+    expect(extractCodexProseCitations(text)).toEqual(ranges);
+    expect(present(text)).toBe(expectedDisplay);
+  });
+  it("leaves absent provenance, streaming and malformed marker text unchanged", () => {
+    for (const text of [
+      marker,
+      "\uE200cite\uE202\uE201",
+      "\uE200cite\uE202incomplete",
+      "ordinary Markdown [one](https://example.test)",
+    ]) {
+      expect(presentProviderCitationText({ text, streaming: false })).toBe(text);
+      expect(
+        presentProviderCitationText({ text, citationPresentation: provenance, streaming: true }),
+      ).toBe(text);
+    }
+    expect(present("\uE200cite\uE202\uE201")).toBe("\uE200cite\uE202\uE201");
   });
 });

@@ -61,7 +61,7 @@ export const SCIC_MEDIA_TYPE = "application/vnd.scient.conversation+zip";
 export const SCIC_FORMAT = "scient.conversation-file";
 /** A newer minor version is read with a warning; any other major version is rejected. */
 export const SCIC_FORMAT_MAJOR_VERSION = 1;
-export const SCIC_FORMAT_MINOR_VERSION = 0;
+export const SCIC_FORMAT_MINOR_VERSION = 1;
 
 /**
  * Largest `.scic` one import may upload: the export's attachment ceiling plus

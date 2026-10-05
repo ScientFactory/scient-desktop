@@ -3,7 +3,6 @@ import {
   MessageId,
   OrchestrationThreadActivity,
   TurnId,
-  type OrchestrationMessage,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
@@ -26,7 +25,7 @@ export function conversationSnapshotProjection(
   projection: OrchestrationV2ThreadProjection,
   workspaceRoot: string | null,
 ): ConversationSnapshotThread {
-  const messages: OrchestrationMessage[] = [];
+  const messages: ConversationSnapshotThread["messages"][number][] = [];
   const activities: OrchestrationThreadActivity[] = [];
   const proposedPlans: ConversationSnapshotThread["proposedPlans"][number][] = [];
   const messageById = new Map(projection.messages.map((message) => [message.id, message]));
@@ -64,6 +63,9 @@ export function conversationSnapshotProjection(
           role: item.type === "user_message" ? "user" : "assistant",
           turnId,
           text: item.text,
+          ...(item.type === "assistant_message" && item.citationPresentation !== undefined
+            ? { citationPresentation: item.citationPresentation }
+            : {}),
           streaming: item.type === "assistant_message" && item.streaming,
           attachments: item.attachments ?? message?.attachments ?? [],
           ...(item.type === "user_message" && item.context !== undefined

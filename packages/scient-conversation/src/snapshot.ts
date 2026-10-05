@@ -6,6 +6,7 @@
 import {
   CONVERSATION_SNAPSHOT_FORMAT,
   ChatAttachment,
+  type ProviderCitationPresentation,
   type ConversationAttachment,
   type ConversationMessage,
   type ConversationSnapshotSelection,
@@ -37,12 +38,14 @@ export type ConversationSnapshotThread = Pick<
   | "workspaceRoot"
   | "worktreePath"
   | "modelSelection"
-  | "messages"
   | "activities"
   | "proposedPlans"
   | "forkLineage"
   | "conversationImport"
 > & {
+  readonly messages: ReadonlyArray<
+    OrchestrationMessage & { readonly citationPresentation?: ProviderCitationPresentation }
+  >;
   readonly latestTurn?: OrchestrationThread["latestTurn"];
   readonly session?: OrchestrationThread["session"];
   readonly activeTurn?: { readonly turnId: TurnId; readonly requestedAt: string } | null;
@@ -102,7 +105,7 @@ export function runningTurnId(thread: ConversationSnapshotThread): TurnId | null
  */
 export interface SelectedConversationContent {
   readonly runningTurnId: TurnId | null;
-  readonly messages: ReadonlyArray<OrchestrationMessage>;
+  readonly messages: ConversationSnapshotThread["messages"];
   readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
   readonly proposedPlans: OrchestrationThread["proposedPlans"];
 }
@@ -293,6 +296,9 @@ export function buildConversationSnapshot(input: {
       createdAt: message.createdAt,
       updatedAt: message.updatedAt,
       text: projected.text,
+      ...(message.role === "assistant" && message.citationPresentation !== undefined
+        ? { citationPresentation: message.citationPresentation }
+        : {}),
       attachments,
       references: projected.references,
     });

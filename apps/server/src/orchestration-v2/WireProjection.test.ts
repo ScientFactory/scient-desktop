@@ -46,6 +46,23 @@ const base = {
 };
 
 describe("orchestration V2 wire projection", () => {
+  it("presents an unresolved completed native Codex citation without changing its raw item", () => {
+    const raw = "Evidence 😀 \uE200cite\uE202missing\uE201.";
+    const item = decodeTurnItem({
+      ...base,
+      type: "assistant_message",
+      messageId: MessageId.make("unresolved-citation"),
+      nativeItemRef: { driver: "codex", nativeId: "unresolved", strength: "strong" },
+      text: raw,
+      streaming: false,
+    });
+    const presented = projectTurnItemForWire(item);
+    expect(presented.type).toBe("assistant_message");
+    if (presented.type !== "assistant_message") throw new Error("Missing assistant item");
+    expect(presented.text).toBe("Evidence 😀 [citation unavailable].");
+    expect(item.type === "assistant_message" && item.text).toBe(raw);
+  });
+
   it("preserves oversized inert task completion identity, usage and bounded display through JSON", () => {
     const detail = "Evidence checked. " + "😀".repeat(20_000);
     const item = {
