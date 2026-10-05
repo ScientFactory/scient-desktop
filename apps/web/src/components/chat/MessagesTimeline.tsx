@@ -1,11 +1,11 @@
 import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-presentation";
 import { useBoundedAnswerFollow } from "./useBoundedAnswerFollow";
+import { useReaderScrollInput, useSaveReadingPosition } from "./readerScrolling";
 import { countUnreadBelow, unreadMessagesForThread } from "./unreadTimelineMessages";
 import {
   readerAtReadingEnd,
   readingEndAllowance,
   readingEndGapOnScreen,
-  readingIdentity,
   resolveReadingRow,
 } from "./readerScrollPolicy";
 
@@ -175,7 +175,6 @@ import { useFileContextMenuHandler } from "../../fileContextMenu";
 import { useProject, useThreadShell } from "../../state/entities";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
-  flushTimelinePositions,
   readTimelinePosition,
   rememberTimelinePosition,
   timelineContentOverflowsViewport,
@@ -690,10 +689,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   // Expanding or collapsing a block at the end must not pin the end: the
   // toggled row keeps its place instead (maintainVisibleContentPosition).
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
-  // Any click or key in the timeline can expand or collapse content (a long
-  // message, a plan, tool output). Idle end pinning pauses briefly after one,
-  // so the toggled content keeps its place instead of being pinned to its end.
-  const [interactionSettling, setInteractionSettling] = useState(false);
   // The reader's own scrolling input, held until their movement has stopped:
   // a drag, an animated wheel notch or key scroll moves for several frames.
   const readerInputRef = useRef(false);
@@ -1125,65 +1120,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
-  useEffect(() => {
-    if (!timelineViewportElement) return;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const settle = () => {
-      setInteractionSettling(true);
-      if (timer !== null) clearTimeout(timer);
-      timer = setTimeout(() => {
-        timer = null;
-        setInteractionSettling(false);
-      }, 400);
-    };
-    // The reader's own scrolling input; idle end keeping never acts on it.
-    const input = () => {
-      readerInputRef.current = true;
-      stillFramesRef.current = 0;
-      scheduleBookkeepingRef.current();
-    };
-    // A scrollbar drag moves the view on every frame until release.
-    const pressed = (event: PointerEvent) => {
-      if (event.target !== listRef.current?.getScrollableNode()) return;
-      scrollbarHeldRef.current = true;
-      input();
-    };
-    const released = () => {
-      scrollbarHeldRef.current = false;
-    };
-    const keyed = (event: globalThis.KeyboardEvent) => {
-      // Keys typed into the composer or another field don't scroll the timeline.
-      if (
-        event.target instanceof Element &&
-        event.target.closest("input, textarea, [contenteditable=true], [contenteditable='']")
-      )
-        return;
-      if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key))
-        input();
-    };
-    const ownerDocument = timelineViewportElement.ownerDocument;
-    timelineViewportElement.addEventListener("click", settle, { capture: true });
-    timelineViewportElement.addEventListener("keydown", settle, { capture: true });
-    timelineViewportElement.addEventListener("wheel", input, { capture: true, passive: true });
-    timelineViewportElement.addEventListener("touchmove", input, { capture: true, passive: true });
-    timelineViewportElement.addEventListener("pointerdown", pressed, { capture: true });
-    ownerDocument.addEventListener("keydown", keyed, { capture: true });
-    ownerDocument.addEventListener("pointerup", released);
-    ownerDocument.addEventListener("pointercancel", released);
-    ownerDocument.addEventListener("mouseup", released);
-    return () => {
-      if (timer !== null) clearTimeout(timer);
-      timelineViewportElement.removeEventListener("click", settle, { capture: true });
-      timelineViewportElement.removeEventListener("keydown", settle, { capture: true });
-      timelineViewportElement.removeEventListener("wheel", input, { capture: true });
-      timelineViewportElement.removeEventListener("touchmove", input, { capture: true });
-      timelineViewportElement.removeEventListener("pointerdown", pressed, { capture: true });
-      ownerDocument.removeEventListener("keydown", keyed, { capture: true });
-      ownerDocument.removeEventListener("pointerup", released);
-      ownerDocument.removeEventListener("pointercancel", released);
-      ownerDocument.removeEventListener("mouseup", released);
-    };
-  }, [listRef, timelineViewportElement]);
+  // SCIENT-FORK:START — the reader's own clicks, keys and scrolling input.
+  const interactionSettling = useReaderScrollInput({
+    listRef,
+    viewport: timelineViewportElement,
+    readerInputRef,
+    scrollbarHeldRef,
+    stillFramesRef,
+    scheduleBookkeepingRef,
+  });
+  // SCIENT-FORK:END
   // Re-measure the minimap gutter when the chat column changes width without a viewport resize.
   const chatWidth = useClientSettings((settings) => settings.chatWidth);
   const {
@@ -1289,43 +1235,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     onContentOverflowChange?.(measureContentOverflow());
   }, [cancelContentOverflowFrame, measureContentOverflow, onContentOverflowChange, rows.length]);
 
-  const saveReadingPosition = useCallback(() => {
-    const state = listRef.current?.getState?.();
-    if (
-      restoringThreadPosition ||
-      !readingListLoaded ||
-      positionHistoryLoading ||
-      citationPositioning ||
-      timelinePositioningPending ||
-      state?.data !== rows
-    )
-      return;
-    const element = listRef.current?.getScrollableNode();
-    const position =
-      state?.data?.length && element
-        ? resolveWorkGroupScrollAnchor({ ...state, scroll: element.scrollTop })
-        : undefined;
-    if (!position || !state) return;
-    const index = rows.findIndex((row) => row.id === position.rowId);
-    const identity = readingIdentity(rows, index, runningRunId);
-    const row = state.elementAtIndex(index);
-    if (!identity || !row || !element) return;
-    rememberTimelinePosition(listIdentityKey, {
-      ...position,
-      ...identity,
-      offsetWithinRow: identity.rowId
-        ? element.getBoundingClientRect().top - row.getBoundingClientRect().top
-        : 0,
-      atEnd: readerAtReadingEnd(state, contentInsetEndAdjustment, turnUnfinished) ?? false,
-      ...(anchorMessageId ? { anchorMessageId } : {}),
-      disclosures: {
-        runs: paintedExpandedRunIds,
-        workGroups: paintedExpandedWorkGroupIds,
-        attempts: paintedExpandedAttemptIds,
-        workGroupState: workGroupViewState,
-      },
-    });
-  }, [
+  // SCIENT-FORK:START — remember the reading position by row identity.
+  const saveReadingPosition = useSaveReadingPosition({
     listRef,
     restoringThreadPosition,
     readingListLoaded,
@@ -1342,22 +1253,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     paintedExpandedWorkGroupIds,
     paintedExpandedAttemptIds,
     workGroupViewState,
-  ]);
-  const saveReadingPositionRef = useRef(saveReadingPosition);
-  useLayoutEffect(() => {
-    saveReadingPositionRef.current = saveReadingPosition;
   });
-  useLayoutEffect(() => {
-    const save = () => {
-      saveReadingPositionRef.current();
-      flushTimelinePositions();
-    };
-    window.addEventListener("pagehide", save);
-    return () => {
-      save();
-      window.removeEventListener("pagehide", save);
-    };
-  }, [listIdentityKey]);
+  // SCIENT-FORK:END
   // Each response's latest message: the unit the unread badge counts.
   const responseEndMessageIds = useMemo(
     () => deriveTerminalAssistantMessageIds(timelineEntries),
