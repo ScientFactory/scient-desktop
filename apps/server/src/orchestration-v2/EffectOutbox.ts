@@ -107,6 +107,13 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     type: Schema.Literal("terminal.cleanup"),
   }),
   Schema.Struct({
+    type: Schema.Literal("attachment.rollback-prune"),
+    attachmentIds: Schema.Array(Schema.String),
+    revertedRunIds: Schema.Array(RunId),
+    checkpointId: CheckpointId,
+    providerThreadId: ProviderThreadId,
+  }),
+  Schema.Struct({
     type: Schema.Literal("attachment.cleanup"),
     attachmentIds: Schema.Array(Schema.String),
   }),
@@ -128,6 +135,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "checkpoint.capture",
   "terminal.cleanup",
   "attachment.cleanup",
+  "attachment.rollback-prune",
   "thread-title.generate",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 

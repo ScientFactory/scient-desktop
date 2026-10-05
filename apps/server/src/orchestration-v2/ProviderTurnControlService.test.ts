@@ -231,6 +231,7 @@ it.effect(
           getRuntimeRecoveryProjection: () => Effect.die("unused getRuntimeRecoveryProjection"),
           getPlan: () => Effect.die("unused"),
           hasUnpairedRunInterruptRequest: () => Effect.die("unused interrupt read"),
+          getRollbackAttachmentOwners: () => Effect.die("unused prune query"),
           getThreadAttachmentIds: () => Effect.die("Unused attachment lookup"),
           getTimelinePage: () => Effect.die("Unused timeline read"),
           getMessageCount: () => Effect.die("unused message count"),

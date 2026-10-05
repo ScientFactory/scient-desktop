@@ -1,3 +1,4 @@
+import { layer as attachmentRollbackPruneLayer } from "./AttachmentRollbackPruneService.ts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
@@ -287,6 +288,15 @@ const conversationForkProvided = conversationForkServiceLayer.pipe(
 const effectExecutorProvided = effectExecutorLayer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      attachmentRollbackPruneLayer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            projectionStoreLayer,
+            threadCommandExecutorLayer,
+            providerSessionManagerProvided,
+          ),
+        ),
+      ),
       runFinalizationServiceProvided,
       checkpointRollbackServiceProvided,
       providerSessionManagerProvided,
