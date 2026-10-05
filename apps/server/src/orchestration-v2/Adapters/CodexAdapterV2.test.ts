@@ -36,6 +36,7 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexReplay from "effect-codex-app-server/replay";
+import * as CodexSchema from "effect-codex-app-server/schema";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -50,6 +51,8 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { HttpServer } from "effect/unstable/http";
+import * as NetAddress from "effect/unstable/net/NetAddress";
 
 import packageJson from "../../../package.json" with { type: "json" };
 import * as ServerConfig from "../../config.ts";
@@ -58,6 +61,8 @@ import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts"
 import * as Logger from "effect/Logger";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
+import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
 import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/T3OrchestrationInstructions.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
@@ -3443,6 +3448,187 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
     );
   }
+
+  it.effect(
+    "preserves Auto review and full granted guidance below every entry limit in one native start packet",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeThreadId = "auto-full-guidance-thread";
+          const nativeTurnId = "auto-full-guidance-turn";
+          const prompt = "Review this change automatically.";
+          const capabilities = new Set<McpCapability>([
+            "preview",
+            "device",
+            "documents:build",
+            "skills:read",
+          ]);
+          const runtimePolicy = {
+            ...CODEX_TEST_RUNTIME_POLICY,
+            runtimeMode: "auto" as const,
+          };
+          const modelSelection: ModelSelection = {
+            ...CODEX_TEST_MODEL_SELECTION,
+            options: [{ id: "reasoningEffort", value: "high" }],
+          };
+          const expected = yield* CodexAdapterV2.buildCodexTurnStartParams({
+            nativeThreadId,
+            codexInput: [{ type: "text", text: prompt }],
+            runtimePolicy,
+            modelSelection,
+            hasT3Mcp: true,
+            mcpCapabilities: capabilities,
+          });
+          const decodePacket = Schema.decodeUnknownEffect(
+            CodexSchema.V2TurnStartParams.pipe(
+              Schema.fieldsAssign({
+                collaborationMode: CodexSchema.ClientRequest__CollaborationMode,
+                additionalContext: Schema.Record(
+                  Schema.String,
+                  CodexSchema.V2TurnStartParams__AdditionalContextEntry,
+                ),
+              }),
+            ),
+          );
+          const packets = yield* Ref.make<
+            ReadonlyArray<Effect.Success<ReturnType<typeof decodePacket>>>
+          >([]);
+          const preamble = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt });
+          const transcript = makeCodexReplayTranscript({
+            scenario: "auto-full-guidance-packet",
+            entries: [
+              ...preamble.slice(0, 5),
+              {
+                type: "expect_outbound",
+                label: "Auto review with full granted context",
+                frame: { id: 3, method: "turn/start", params: expected },
+              },
+              ...preamble.slice(6),
+              {
+                type: "emit_inbound",
+                label: "done",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                  },
+                },
+              },
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript, undefined, (method, params) =>
+            method === "turn/start"
+              ? decodePacket(params).pipe(
+                  Effect.orDie,
+                  Effect.flatMap((packet) =>
+                    Ref.update(packets, (current) => [...current, packet]),
+                  ),
+                )
+              : Effect.void,
+          );
+          const registry = yield* McpSessionRegistry.__testing.make().pipe(
+            Effect.provideService(
+              HttpServer.HttpServer,
+              HttpServer.HttpServer.of({
+                address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 43123),
+                serve: () => Effect.void,
+              }),
+            ),
+            Effect.provideService(
+              ServerEnvironment.ServerEnvironment,
+              ServerEnvironment.ServerEnvironment.of({
+                getEnvironmentId: Effect.succeed(EnvironmentId.make("auto-full-guidance")),
+                getDescriptor: Effect.die("This packet fixture does not discover environments."),
+              }),
+            ),
+          );
+          const issued = yield* registry.issue({
+            threadId: harness.threadId,
+            providerInstanceId: modelSelection.instanceId,
+            capabilities,
+          });
+          const scope = yield* registry.resolve(
+            issued.config.authorizationHeader.replace(/^Bearer\s+/, ""),
+          );
+          assert.equal(scope?.threadId, harness.threadId);
+          assert.equal(scope?.providerInstanceId, modelSelection.instanceId);
+          assert.deepEqual(scope?.capabilities, capabilities);
+          McpProviderSession.setMcpProviderSession(issued.config);
+          yield* Effect.addFinalizer(() =>
+            registry
+              .revokeThread(harness.threadId)
+              .pipe(
+                Effect.andThen(
+                  Effect.sync(() => McpProviderSession.clearMcpProviderSession(harness.threadId)),
+                ),
+              ),
+          );
+          yield* harness.runtime.startTurn({
+            ...makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("auto-full-guidance-attempt"),
+              text: prompt,
+            }),
+            runtimePolicy,
+            modelSelection,
+          });
+          yield* harness.firstTerminal;
+          const delivered = yield* Ref.get(packets);
+          assert.equal(delivered.length, 1);
+          const packet = delivered[0]!;
+          assert.equal(packet.threadId, nativeThreadId);
+          assert.deepEqual(packet.input, [{ type: "text", text: prompt }]);
+          assert.equal(packet.cwd, "/workspace");
+          assert.equal(packet.model, "gpt-5.4");
+          assert.equal(packet.effort, "high");
+          assert.equal(packet.approvalPolicy, "on-request");
+          assert.equal(packet.approvalsReviewer, "auto_review");
+          assert.deepEqual(packet.sandboxPolicy, { type: "workspaceWrite" });
+          assert.equal(packet.collaborationMode.mode, "default");
+          assert.equal(packet.collaborationMode.settings.model, "gpt-5.4");
+          assert.equal(packet.collaborationMode.settings.reasoning_effort, "high");
+          assert.match(
+            packet.collaborationMode.settings.developer_instructions ?? "",
+            /^<collaboration_mode>[\s\S]*<\/collaboration_mode>$/,
+          );
+          assert.deepEqual(Object.keys(packet.additionalContext), [
+            "t3_code_orchestration",
+            "t3_code_workspace",
+            "t3_code_runtime",
+            "scient_awareness",
+          ]);
+          assert.equal(
+            (packet.additionalContext.t3_code_orchestration?.value ?? "") +
+              (packet.additionalContext.t3_code_workspace?.value ?? ""),
+            T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+          );
+          assert.include(
+            packet.additionalContext.t3_code_runtime?.value ?? "",
+            "Codex harness, as gpt-5.4 with high reasoning effort",
+          );
+          const awareness = packet.additionalContext.scient_awareness?.value ?? "";
+          for (const required of [
+            "## Scient",
+            "preview_status",
+            "preview_open",
+            "device_list",
+            "device_open",
+            "scient_pdf_build",
+            "scient_skill_load",
+          ])
+            assert.include(awareness, required);
+          for (const [key, entry] of Object.entries(packet.additionalContext)) {
+            assert.equal(entry.kind, "application");
+            assert.isBelow(Buffer.byteLength(entry.value), 4_000, key);
+          }
+          assert.equal(harness.terminalEvents().length, 1);
+          assert.equal(harness.terminalEvents()[0]?.status, "completed");
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      ),
+  );
 
   it.effect.each([
     { compact: false, completed: false },
