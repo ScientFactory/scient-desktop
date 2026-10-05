@@ -233,7 +233,20 @@ export const PersistedTerminalContextDraft = Schema.Struct({
 });
 type PersistedTerminalContextDraft = typeof PersistedTerminalContextDraft.Type;
 
+/** Browser-local semantic intent. Recovery journal copies may change their key;
+ * the intent ID never changes. A malformed present marker must fail closed. */
+export const ExtractedDraftIntent = Schema.Union([
+  Schema.Struct({
+    intentId: Schema.String.check(Schema.isPattern(/^[a-f0-9-]{36}$/)),
+    journalKey: Schema.String.check(Schema.isMinLength(1)),
+  }),
+  Schema.Struct({ invalid: Schema.Literal(true) }),
+]);
+export type ExtractedDraftIntent = typeof ExtractedDraftIntent.Type;
+const isExtractedDraftIntent = Schema.is(ExtractedDraftIntent);
+
 const PersistedComposerThreadDraftState = Schema.Struct({
+  extractedIntent: Schema.optionalKey(ExtractedDraftIntent),
   prompt: Schema.String,
   attachments: Schema.Array(PersistedComposerImageAttachment),
   files: Schema.optionalKey(Schema.Array(PersistedComposerDraftFileAttachment)),
@@ -387,6 +400,7 @@ export type ComposerContextInsertionHandler = (
 const contextInsertionHandlers = new Map<string, ComposerContextInsertionHandler>();
 
 export interface ComposerThreadDraftState {
+  extractedIntent?: ExtractedDraftIntent;
   /** Context editing for a queue-owned hidden draft; not project/server authority.
    * Its queue journal owns persistence, not the new-project draft registry. */
   contextThreadId?: ThreadId;
@@ -988,6 +1002,7 @@ function normalizeTerminalContextsForThread(
 
 function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
   return (
+    draft.extractedIntent === undefined &&
     draft.prompt.length === 0 &&
     draft.images.length === 0 &&
     draft.files.length === 0 &&
@@ -1962,6 +1977,12 @@ function normalizePersistedDraftsByThreadId(
       continue;
     }
     const draftCandidate = draftValue as PersistedComposerThreadDraftState;
+    const extractedIntent =
+      "extractedIntent" in draftValue
+        ? isExtractedDraftIntent(draftCandidate.extractedIntent)
+          ? draftCandidate.extractedIntent
+          : { invalid: true as const }
+        : undefined;
     const promptCandidate = typeof draftCandidate.prompt === "string" ? draftCandidate.prompt : "";
     const attachments = Array.isArray(draftCandidate.attachments)
       ? draftCandidate.attachments.flatMap((entry) => {
@@ -2099,6 +2120,7 @@ function normalizePersistedDraftsByThreadId(
     const hasModelData =
       Object.keys(modelSelectionByProvider).length > 0 || activeProvider !== null;
     if (
+      extractedIntent === undefined &&
       promptCandidate.length === 0 &&
       attachments.length === 0 &&
       files.length === 0 &&
@@ -2125,6 +2147,7 @@ function normalizePersistedDraftsByThreadId(
                 : threadKeyOrId;
             })();
     nextDraftsByThreadKey[normalizedThreadKey] = {
+      ...(extractedIntent ? { extractedIntent } : {}),
       prompt,
       attachments,
       ...(files.length > 0 ? { files } : {}),
@@ -2167,6 +2190,7 @@ function stripLegacyModelSeedsFromEmptyDraftSessions(
     Object.entries(draftsByThreadKey).flatMap(([threadKey, draft]) => {
       if (
         draftThreadsByThreadKey[threadKey] === undefined ||
+        draft.extractedIntent !== undefined ||
         draft.modelSelectionExplicit === true ||
         persistedComposerDraftHasUserContent(draft)
       ) {
@@ -2215,6 +2239,7 @@ export function partializeComposerDraftStoreState(
         ([threadKey, draftThread]) =>
           mappedDraftKeys.has(threadKey) ||
           isDraftThreadPromoting(draftThread) ||
+          state.draftsByThreadKey[threadKey]?.extractedIntent !== undefined ||
           composerDraftHasUserContent(state.draftsByThreadKey[threadKey]),
       )
       .map(([threadKey]) => threadKey),
@@ -2234,6 +2259,7 @@ export function partializeComposerDraftStoreState(
     const hasModelData =
       Object.keys(draft.modelSelectionByProvider).length > 0 || draft.activeProvider !== null;
     if (
+      draft.extractedIntent === undefined &&
       draft.prompt.length === 0 &&
       draft.persistedAttachments.length === 0 &&
       draft.files.length === 0 &&
@@ -2248,6 +2274,7 @@ export function partializeComposerDraftStoreState(
       continue;
     }
     const persistedDraft: DeepMutable<PersistedComposerThreadDraftState> = {
+      ...(draft.extractedIntent ? { extractedIntent: draft.extractedIntent } : {}),
       prompt: draft.prompt,
       attachments: draft.persistedAttachments,
       ...(draft.files.length > 0
@@ -2560,6 +2587,7 @@ function toHydratedThreadDraft(
     })) ?? [];
 
   return {
+    ...(persistedDraft.extractedIntent ? { extractedIntent: persistedDraft.extractedIntent } : {}),
     // Files predating inline references get a chip appended; images stay shelf-only.
     prompt: ensureInlineContextReferences(persistedDraft.prompt, [
       ...(persistedDraft.reviewComments ?? []).map(reviewCommentContextReference),
@@ -4249,8 +4277,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             if (!current) {
               return state;
             }
+            const { extractedIntent: _extractedIntent, ...ordinary } = current;
             const nextDraft: ComposerThreadDraftState = {
-              ...current,
+              ...ordinary,
               prompt: "",
               images: [],
               files: [],
@@ -4400,8 +4429,15 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 ...destination.previewAnnotations.map(previewAnnotationContextReference),
               ],
             );
+            if (
+              source.extractedIntent &&
+              destination.extractedIntent &&
+              JSON.stringify(source.extractedIntent) !== JSON.stringify(destination.extractedIntent)
+            )
+              throw new Error("Keep extracted intents in separate recoverable drafts.");
             const nextDestination: ComposerThreadDraftState = {
               ...destination,
+              ...(source.extractedIntent ? { extractedIntent: source.extractedIntent } : {}),
               prompt: movedPrompt,
               images: [...destination.images, ...movedImages],
               files: [...destination.files, ...movedFiles],

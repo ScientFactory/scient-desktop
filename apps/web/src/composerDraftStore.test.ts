@@ -3573,3 +3573,58 @@ describe("composerDraftStore attachment references", () => {
     );
   });
 });
+
+describe("extracted draft intent persistence", () => {
+  const threadId = ThreadId.make("extracted-intent-thread");
+  it("keeps the stable marker through persistence/hydration and ordinary authoring clears it explicitly", () => {
+    const key = threadKeyFor(threadId, TEST_ENVIRONMENT_ID);
+    useComposerDraftStore
+      .getState()
+      .setPrompt(scopeThreadRef(TEST_ENVIRONMENT_ID, threadId), "captured");
+    const marker = {
+      intentId: "11111111-1111-4111-8111-111111111111",
+      journalKey: "copied-journal",
+    };
+    useComposerDraftStore.setState((state) => ({
+      draftsByThreadKey: {
+        ...state.draftsByThreadKey,
+        [key]: { ...state.draftsByThreadKey[key]!, extractedIntent: marker },
+      },
+    }));
+    const persisted = partializeComposerDraftStoreState(useComposerDraftStore.getState());
+    const hydrated = useComposerDraftStore.persist.getOptions().merge!(
+      persisted,
+      useComposerDraftStore.getInitialState(),
+    );
+    expect(hydrated.draftsByThreadKey[key]?.extractedIntent).toEqual(marker);
+    useComposerDraftStore.setState(hydrated);
+    useComposerDraftStore
+      .getState()
+      .setPrompt(scopeThreadRef(TEST_ENVIRONMENT_ID, threadId), "late typed");
+    expect(useComposerDraftStore.getState().draftsByThreadKey[key]?.extractedIntent).toEqual(
+      marker,
+    );
+    useComposerDraftStore
+      .getState()
+      .clearComposerContent(scopeThreadRef(TEST_ENVIRONMENT_ID, threadId));
+    useComposerDraftStore
+      .getState()
+      .setPrompt(scopeThreadRef(TEST_ENVIRONMENT_ID, threadId), "captured");
+    expect(
+      useComposerDraftStore.getState().draftsByThreadKey[key]?.extractedIntent,
+    ).toBeUndefined();
+  });
+  it("does not turn a malformed present marker into an unmarked ordinary draft", () => {
+    const key = threadKeyFor(threadId, TEST_ENVIRONMENT_ID);
+    const hydrated = useComposerDraftStore.persist.getOptions().merge!(
+      {
+        draftsByThreadKey: {
+          [key]: { prompt: "keep", attachments: [], extractedIntent: { intentId: "bad" } },
+        },
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+    expect(hydrated.draftsByThreadKey[key]?.prompt).toBe("keep");
+    expect(hydrated.draftsByThreadKey[key]?.extractedIntent).toEqual({ invalid: true });
+  });
+});

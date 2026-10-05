@@ -11,7 +11,13 @@ import {
   queueSubmissionId,
   acknowledgeQueueSubmission,
   composerSubmissionMatchesDraft,
+  bindExtractedSubmission,
+  consumeExtractedSubmission,
+  extractedDraftFingerprint,
+  type ExtractedSubmissionPacket,
 } from "../scient/threadQueue/submission";
+// SCIENT-FORK: extracted-intent retry and recovery stay in their owned module.
+import { retryExtractedSubmission } from "../scient/threadQueue/extractedIntentSend";
 import {
   beginQueueEdit,
   stashRecoveredDraft,
@@ -19,6 +25,10 @@ import {
   flushQueueEdit,
   loadQueueEdits,
   useQueueEditSessions,
+  resolveExtractedDraftIntent,
+  prepareExtractedDraftIntent,
+  retireConsumedDraftIntent,
+  stashProvenanceDraft,
 } from "../scient/threadQueue/editSession";
 import { nativeQueueEditItem } from "../scient/threadQueue/nativeQueueEditItem";
 import { composerTargetKey } from "../composerDraftStore";
@@ -1883,6 +1893,9 @@ function ChatViewContent(props: ChatViewProps) {
   }, [citationLocation.href, citationLocation.key, environmentId, threadId]);
   const { resolvedTheme } = useTheme();
   // Granular store selectors — avoid subscribing to prompt changes.
+  const composerExtractedIntent = useComposerDraftStore(
+    (store) => store.getComposerDraft(composerDraftTarget)?.extractedIntent,
+  );
   const composerRuntimeMode = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.runtimeMode ?? null,
   );
@@ -8878,6 +8891,7 @@ function ChatViewContent(props: ChatViewProps) {
     // Typed out in full rather than picked from the menu. Attachments or contexts
     // mean the user is sending a prompt, so those go through as usual.
     if (
+      !useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.extractedIntent &&
       usageLimitsOffered &&
       usageLimitsKey !== null &&
       !directAnnotation &&
@@ -8916,6 +8930,41 @@ function ChatViewContent(props: ChatViewProps) {
     ) {
       notifyDirectAnnotationAttached();
       return;
+    }
+    let extractedIntent: Awaited<ReturnType<typeof resolveExtractedDraftIntent>>;
+    sendInFlightRef.current = true;
+    try {
+      extractedIntent = await resolveExtractedDraftIntent(
+        useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+      );
+      if (extractedIntent && (options?.steer || directAnnotation || directPrompt))
+        throw new Error(
+          "Send this extracted intent as its own message before starting another action.",
+        );
+      // SCIENT-FORK: exact retry intake; the owned helper reconciles recovery.
+      const retryResult = await retryExtractedSubmission({
+        intent: extractedIntent,
+        target: composerDraftTarget,
+        queueEdit,
+        dispatch: startThreadTurn,
+        onDraftCleared: () => {
+          promptRef.current = "";
+          composerRef.current?.resetCursorState();
+        },
+      });
+      if (retryResult) {
+        const result = retryResult;
+        if (result._tag === "Failure") {
+          setThreadError(activeThread.id, chatActionErrorMessage(squashAtomCommandFailure(result)));
+          return;
+        }
+        return;
+      }
+    } catch (cause) {
+      setThreadError(activeThread.id, chatActionErrorMessage(cause));
+      return;
+    } finally {
+      sendInFlightRef.current = false;
     }
     if (queueEdit && !queueEdit.transferred) {
       sendInFlightRef.current = true;
@@ -8971,6 +9020,13 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
     const multipleModelSelections = directPrompt === null ? sendCtx.multipleModelSelections : null;
+    if (extractedIntent && multipleModelSelections !== null) {
+      setThreadError(
+        activeThread.id,
+        "Send this extracted intent to one model before starting multiple models.",
+      );
+      return;
+    }
     if (
       multipleModelSelections !== null &&
       serverConfig?.environment.capabilities.requiredWorktreeBootstrap !== true
@@ -9080,6 +9136,13 @@ function ChatViewContent(props: ChatViewProps) {
       composerPreviewAnnotations.length === 0 &&
       effectiveReviewComments.length === 0 &&
       isStandaloneForkSlashCommand(trimmed);
+    if (standaloneForkCommand && extractedIntent) {
+      setThreadError(
+        activeThread.id,
+        "Keep this extracted intent in its recovery draft before opening a fork.",
+      );
+      return;
+    }
     if (standaloneForkCommand) {
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
@@ -9097,6 +9160,13 @@ function ChatViewContent(props: ChatViewProps) {
       effectiveReviewComments.length === 0
         ? parseCodexFeedbackCommand(trimmed)
         : null;
+    if (feedbackCommand && extractedIntent) {
+      setThreadError(
+        activeThread.id,
+        "Keep this extracted intent before submitting separate feedback.",
+      );
+      return;
+    }
     if (feedbackCommand && multipleModelSelections === null) {
       if (!isServerThread || activeThread.activeProviderThreadId === null) {
         toastManager.add(
@@ -9150,6 +9220,7 @@ function ChatViewContent(props: ChatViewProps) {
     if (
       !directAnnotation &&
       directPrompt === null &&
+      !extractedIntent &&
       sendInteractionModeEnabled &&
       showPlanFollowUpPrompt &&
       activeProposedPlan &&
@@ -9226,7 +9297,7 @@ function ChatViewContent(props: ChatViewProps) {
       effectiveReviewComments.length === 0
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
-    if (standaloneSlashCommand && multipleModelSelections === null) {
+    if (standaloneSlashCommand && !extractedIntent && multipleModelSelections === null) {
       handleInteractionModeChange(standaloneSlashCommand);
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
@@ -9397,6 +9468,8 @@ function ChatViewContent(props: ChatViewProps) {
     let submittedMessageId: MessageId | null = null;
     let requestAccepted = false;
     try {
+      if (extractedIntent)
+        extractedIntent = await prepareExtractedDraftIntent(extractedIntent.intentId);
       if (queueEdit) await flushQueueEdit(queueEdit);
       const attachmentCapabilitiesBeforeUpload = readLiveAttachmentCapabilities();
       if (attachmentCapabilitiesBeforeUpload.fileBlockReason !== null) {
@@ -9495,7 +9568,8 @@ function ChatViewContent(props: ChatViewProps) {
         if (options?.steer || directAnnotation) return undefined;
         return queueSubmissionId(submissionTargetKey, {
           threadId: threadIdForSend,
-          sourceProposedPlan: queueEdit?.extractedItem?.sourceProposedPlan,
+          sourceProposedPlan:
+            extractedIntent?.sourceProposedPlan ?? queueEdit?.extractedItem?.sourceProposedPlan,
           text: outgoingMessageText,
           context: outgoingMessageContext,
           modelSelection: ctxSelectedModelSelection,
@@ -10003,15 +10077,20 @@ function ChatViewContent(props: ChatViewProps) {
         if (backgroundThreadRef) {
           beginBackgroundDraftSubmissionByRef(backgroundThreadRef);
         }
-        const startPromise = startThreadTurn({
+        const extractedSourcePlan =
+          extractedIntent?.sourceProposedPlan ?? queueEdit?.extractedItem?.sourceProposedPlan;
+        const preparedPacket: ExtractedSubmissionPacket = {
           environmentId,
           input: {
+            commandId: CommandId.make(
+              extractedIntent ? `extracted-intent:${extractedIntent.intentId}` : randomUUID(),
+            ),
             threadId: threadIdForSend,
-            ...(queueEdit?.extractedItem?.sourceProposedPlan
+            ...(extractedSourcePlan
               ? {
                   sourceProposedPlan: {
-                    ...queueEdit.extractedItem.sourceProposedPlan,
-                    planId: PlanId.make(queueEdit.extractedItem.sourceProposedPlan.planId),
+                    ...extractedSourcePlan,
+                    planId: PlanId.make(extractedSourcePlan.planId),
                   },
                 }
               : {}),
@@ -10041,7 +10120,22 @@ function ChatViewContent(props: ChatViewProps) {
             ...(bootstrap ? { bootstrap } : {}),
             createdAt: messageCreatedAt,
           },
-        });
+        };
+        if (extractedIntent) {
+          await prepareExtractedDraftIntent(extractedIntent.intentId);
+          if (!draftSnapshotForSend)
+            throw new Error("The extracted draft snapshot is unavailable.");
+          const marker = draftSnapshotForSend.extractedIntent;
+          if (!marker || !("intentId" in marker) || marker.intentId !== extractedIntent.intentId)
+            throw new Error("The extracted draft changed ownership before preparation completed.");
+          extractedIntent = await bindExtractedSubmission(
+            extractedIntent,
+            preparedPacket,
+            await extractedDraftFingerprint(draftSnapshotForSend),
+            marker.journalKey,
+          );
+        }
+        const startPromise = startThreadTurn(preparedPacket);
         if (backgroundThreadRef) {
           markPromotedDraftThreadByRef(backgroundThreadRef);
           try {
@@ -10074,6 +10168,7 @@ function ChatViewContent(props: ChatViewProps) {
         } else {
           turnStartSucceeded = true;
           requestAccepted = true;
+          if (extractedIntent) await consumeExtractedSubmission(extractedIntent);
           const queued = "queued" in startResult.value && startResult.value.queued === true;
           let canAcknowledge = true;
           try {
@@ -10096,6 +10191,18 @@ function ChatViewContent(props: ChatViewProps) {
               promptRef.current = "";
               composerRef.current?.resetCursorState();
             }
+          }
+          if (extractedIntent) {
+            const afterAck = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+            const mayDetachLaterDraft = !composerSubmissionMatchesDraft(
+              draftSnapshotForSend,
+              afterAck,
+            );
+            await retireConsumedDraftIntent(
+              composerDraftTarget,
+              extractedIntent.intentId,
+              mayDetachLaterDraft ? extractedIntent.boundJournalKey : undefined,
+            );
           }
           if (submissionId && canAcknowledge) {
             try {
@@ -12054,8 +12161,13 @@ function ChatViewContent(props: ChatViewProps) {
                           {!composerMounted ? null : (
                             <ChatComposer
                               key={composerTargetKey(composerDraftTarget)}
-                              {...(queueEdit?.transferred
-                                ? { onStashRecoveredDraft: () => stashRecoveredDraft(queueEdit) }
+                              {...(queueEdit?.transferred || composerExtractedIntent
+                                ? {
+                                    onStashRecoveredDraft: () =>
+                                      queueEdit?.transferred
+                                        ? stashRecoveredDraft(queueEdit)
+                                        : stashProvenanceDraft(composerDraftTarget),
+                                  }
                                 : {})}
                               multipleModelSelections={multipleModelSelections}
                               supportsMultipleModels={
