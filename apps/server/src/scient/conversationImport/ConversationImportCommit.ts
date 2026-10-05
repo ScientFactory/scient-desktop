@@ -69,7 +69,7 @@ export function conversationImportEvents(command: PortableConversationImportPlan
     type: "thread.created",
     payload: thread,
   });
-  const records = [
+  const unordered = [
     ...command.messages.map((message) => ({
       type: "message" as const,
       message,
@@ -88,7 +88,29 @@ export function conversationImportEvents(command: PortableConversationImportPlan
       createdAt: plan.createdAt,
       id: plan.id,
     })),
-  ].toSorted((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  ];
+  const records =
+    command.historyOrder === undefined
+      ? unordered.toSorted(
+          (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+        )
+      : (() => {
+          const byKey = new Map(unordered.map((record) => [`${record.type}:${record.id}`, record]));
+          if (command.historyOrder.length !== unordered.length)
+            throw new ConversationImportCommitError({
+              message: "The import history order is incomplete.",
+            });
+          return command.historyOrder.map((ref) => {
+            const key = `${ref.type}:${ref.id}`;
+            const record = byKey.get(key);
+            if (record === undefined)
+              throw new ConversationImportCommitError({
+                message: "The import history order is invalid.",
+              });
+            byKey.delete(key);
+            return record;
+          });
+        })();
   for (const [ordinal, record] of records.entries()) {
     const itemId = TurnItemId.make(`${command.commandId}:item:${record.id}`);
     const time = DateTime.makeUnsafe(record.createdAt);
@@ -350,12 +372,22 @@ export const layer = Layer.effect(
           });
           return yield* new ConversationImportCommitError({ message });
         }
+        const events = yield* Effect.try({
+          try: () => conversationImportEvents(command),
+          catch: (cause) =>
+            isCommitError(cause)
+              ? cause
+              : new ConversationImportCommitError({
+                  message: "The import history could not be prepared.",
+                  cause,
+                }),
+        });
         yield* sink.commitCommand({
           commandId: command.commandId,
           threadId: command.threadId,
           commandType: command.type,
           acceptedAt: yield* DateTime.now,
-          events: conversationImportEvents(command),
+          events,
           effects: [],
         });
       },
