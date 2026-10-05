@@ -14,6 +14,7 @@ import * as Layer from "effect/Layer";
 
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as IdAllocator from "./IdAllocator.ts";
+import { ContextHandoffPolicyOverride } from "./ScientContextHandoffPolicy.ts";
 
 const TestLayer = ContextHandoffService.layer.pipe(Layer.provide(IdAllocator.layer));
 
@@ -151,14 +152,95 @@ it.layer(TestLayer)("ContextHandoffService legacy import", (it) => {
         createdAt: DateTime.makeUnsafe("2026-01-02T00:00:00.000Z"),
       });
 
-      assert.include(
-        handoff.history?.omittedItemIds ?? [],
-        TurnItemId.make("turn-item:long-single-token"),
+      assert.deepEqual(handoff.history?.omittedItemIds, []);
+      assert.equal(handoff.budgetPolicy, "scient");
+      assert.equal(
+        handoff.history?.messages.at(-1)?.text,
+        `${"🧪".repeat(20_000)}LATEST_SINGLE_TOKEN`,
       );
       assert.isAtMost(handoff.summaryText.length, 32_000);
       assert.include(handoff.summaryText, "User:\n... ");
       assert.include(handoff.summaryText, "LATEST_SINGLE_TOKEN");
       assert.notInclude(handoff.summaryText, "\ufffd");
     }),
+  );
+});
+
+it.layer(TestLayer)("ContextHandoffService preparation policy", (it) => {
+  it.effect("keeps generic switch preparation capped while Scient retains intact candidates", () =>
+    Effect.gen(function* () {
+      const service = yield* ContextHandoffService.ContextHandoffServiceV2;
+      const text = `whole:${"x".repeat(300_000)}:end`;
+      const input = {
+        threadId: ThreadId.make("thread:legacy-context"),
+        targetRunId: RunId.make("run:first-v2"),
+        transferId: null,
+        fromProviderThreadIds: [],
+        toProviderThreadId: ProviderThreadId.make("provider-thread:first-v2"),
+        fromProviderInstanceId: ProviderInstanceId.make("codex"),
+        toProviderInstanceId: ProviderInstanceId.make("acp"),
+        coveredRunOrdinals: { from: 1, to: 1 },
+        strategy: "full_thread_summary" as const,
+        items: [importedItem({ role: "assistant", id: "large", text, ordinal: 1 })],
+        createdAt: DateTime.makeUnsafe("2026-01-02T00:00:00.000Z"),
+      };
+      const generic = yield* service.prepareProviderHandoff(input);
+      assert.isUndefined(generic.budgetPolicy);
+      assert.deepEqual(generic.history?.messages, []);
+      assert.deepEqual(generic.history?.omittedItemIds, [TurnItemId.make("turn-item:large")]);
+      for (const purpose of ["scient_fork", "scient_history", "session_recovery"] as const) {
+        const retained = yield* service.prepareProviderHandoff({ ...input, purpose });
+        assert.equal(retained.budgetPolicy, "scient");
+        assert.equal(retained.history?.messages[0]?.text, text);
+        assert.deepEqual(retained.history?.omittedItemIds, []);
+      }
+    }),
+  );
+});
+
+// Preserve the pre-composition bounded replay assertion under its explicit fixture policy.
+it.layer(
+  ContextHandoffService.layer.pipe(
+    Layer.provide(
+      Layer.merge(IdAllocator.layer, Layer.succeed(ContextHandoffPolicyOverride, "byte")),
+    ),
+  ),
+)("ContextHandoffService explicit byte fixture", (it) => {
+  it.effect(
+    "preserves conservative byte-fixture omission and bounded summary for oversized imports",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* ContextHandoffService.ContextHandoffServiceV2;
+        const handoff = yield* service.prepareLegacyImport({
+          threadId: ThreadId.make("thread:legacy-context"),
+          targetRunId: RunId.make("run:first-v2"),
+          toProviderThreadId: ProviderThreadId.make("provider-thread:first-v2"),
+          toProviderInstanceId: ProviderInstanceId.make("codex"),
+          items: [
+            importedItem({
+              role: "assistant",
+              id: "older",
+              text: "older message",
+              ordinal: 1,
+            }),
+            importedItem({
+              role: "user",
+              id: "long-single-token",
+              text: `${"🧪".repeat(20_000)}LATEST_SINGLE_TOKEN`,
+              ordinal: 2,
+            }),
+          ],
+          createdAt: DateTime.makeUnsafe("2026-01-02T00:00:00.000Z"),
+        });
+
+        assert.include(
+          handoff.history?.omittedItemIds ?? [],
+          TurnItemId.make("turn-item:long-single-token"),
+        );
+        assert.isAtMost(handoff.summaryText.length, 32_000);
+        assert.include(handoff.summaryText, "User:\n... ");
+        assert.include(handoff.summaryText, "LATEST_SINGLE_TOKEN");
+        assert.notInclude(handoff.summaryText, "\ufffd");
+      }),
   );
 });

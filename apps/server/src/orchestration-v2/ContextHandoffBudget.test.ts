@@ -22,6 +22,7 @@ import * as Schema from "effect/Schema";
 import {
   contextUsageForHandoff,
   handoffBudget,
+  scientHandoffByteBudget,
   historyCost,
   historyResponseItems,
   selectHistory,
@@ -974,3 +975,55 @@ it.effect(
       assert.notInclude(result.context, '"type":"tool_call"');
     }),
 );
+
+describe("Scient serialized handoff allowance", () => {
+  it("preserves presets and unclamped override without changing generic switches", () => {
+    const input = {
+      environmentOverride: undefined,
+      userText: 'Continue "exactly" 🧪',
+      attachments: [],
+      providerThread,
+      nativeContextEstimate: 0,
+      modelContextWindow: 1_000_000,
+    };
+    assert.equal(scientHandoffByteBudget({ ...input, size: "compact" }), 48_000);
+    assert.equal(scientHandoffByteBudget({ ...input, size: "standard" }), 192_000);
+    assert.equal(scientHandoffByteBudget({ ...input, size: "large" }), 384_000);
+    assert.isAbove(scientHandoffByteBudget({ ...input, size: "maximum" }), 2_000_000);
+    assert.equal(
+      scientHandoffByteBudget({ ...input, size: "compact", environmentOverride: 200_000 }),
+      600_000,
+    );
+    assert.equal(handoffBudget({ ...input, tokenCap: 200_000 }), 64_000);
+  });
+
+  it("charges receiving occupancy, escaped input, attachments and selected capacity", () => {
+    const input = {
+      size: "maximum" as const,
+      environmentOverride: undefined,
+      userText: "Continue",
+      attachments: [],
+      providerThread: {
+        ...providerThread,
+        contextUsage: { usedTokens: 7_000, maxTokens: 1_000_000 },
+      },
+      nativeContextEstimate: 0,
+      modelContextWindow: 32_000,
+    };
+    const available = scientHandoffByteBudget(input);
+    assert.equal(available, (32_000 - 7_000 - 4 - 16_000) * 3);
+    assert.equal(scientHandoffByteBudget({ ...input, userText: "界".repeat(10_000) }), 0);
+    const image = {
+      type: "image" as const,
+      id: "image",
+      name: "image.png",
+      mimeType: "image/png",
+      sizeBytes: 10_000_000,
+    };
+    assert.equal(
+      scientHandoffByteBudget({ ...input, attachments: [image] }),
+      Math.max(0, available - 8_192 * 3),
+    );
+    assert.equal(scientHandoffByteBudget({ ...input, modelContextWindow: 16_000 }), 0);
+  });
+});

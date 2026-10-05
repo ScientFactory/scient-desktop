@@ -1,3 +1,4 @@
+import { ContextHandoffPolicyOverride } from "../ScientContextHandoffPolicy.ts";
 import type { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
@@ -310,6 +311,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   options: {
     /** Preserve one disposable profile across file-backed restart and recovery tests. */
     readonly serverConfigLayer?: Layer.Layer<ServerConfig.ServerConfig>;
+    readonly serverSettingsLayer?: Layer.Layer<ServerSettings.ServerSettingsService>;
     readonly databaseLayer?: Layer.Layer<
       SqlClient.SqlClient,
       | MigrationError
@@ -392,14 +394,20 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   const continuationRequestsLayer =
     options.runContinuationWorker === true ? ProviderContinuationRequests.layer : Layer.empty;
   const providedRegistryLayer = registryLayer.pipe(Layer.provide(continuationRequestsLayer));
-  const serverSettingsLayer = ServerSettings.layerTest({
-    responseStreamingMode: "turn",
-    ...(options.continueThreadsAfterServerUpdate === undefined
-      ? {}
-      : { continueThreadsAfterServerUpdate: options.continueThreadsAfterServerUpdate }),
-  }).pipe(Layer.orDie);
-  const handoffSettingsLayer =
-    options.contextHandoffPolicy === "byte" ? Layer.empty : serverSettingsLayer;
+  const serverSettingsLayer =
+    options.serverSettingsLayer ??
+    ServerSettings.layerTest({
+      responseStreamingMode: "turn",
+      ...(options.continueThreadsAfterServerUpdate === undefined
+        ? {}
+        : { continueThreadsAfterServerUpdate: options.continueThreadsAfterServerUpdate }),
+    }).pipe(Layer.orDie);
+  const handoffSettingsLayer = Layer.merge(
+    serverSettingsLayer,
+    options.contextHandoffPolicy === "byte"
+      ? Layer.succeed(ContextHandoffPolicyOverride, "byte")
+      : Layer.empty,
+  );
   const storesLayer = Layer.mergeAll(
     EventStore.layer,
     ProjectionStore.layer,

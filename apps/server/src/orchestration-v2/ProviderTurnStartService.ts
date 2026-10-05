@@ -1,7 +1,11 @@
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { resolveNativeModelContextWindow } from "./scient-fork/NativeModelContextWindow.ts";
-import { makeScientContextHandoffPolicy } from "./ScientContextHandoffPolicy.ts";
+import {
+  ContextHandoffPolicyOverride,
+  genericContextHandoffPolicy,
+  makeScientContextHandoffPolicy,
+} from "./ScientContextHandoffPolicy.ts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
@@ -37,6 +41,7 @@ import * as EventSink from "./EventSink.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import {
   handoffBudget,
+  hasScientContextHistory,
   attachmentTokenAllowance,
   contextUsageForHandoff,
   historicalMessage,
@@ -93,6 +98,7 @@ export class ProviderTurnStartServiceV2 extends Context.Service<
 export const layer: Layer.Layer<
   ProviderTurnStartServiceV2,
   never,
+  | ServerSettingsService
   | EventSink.EventSinkV2
   | ContextHandoffService.ContextHandoffServiceV2
   | IdAllocator.IdAllocatorV2
@@ -109,7 +115,7 @@ export const layer: Layer.Layer<
   Effect.gen(function* () {
     const handoffPolicy = yield* makeScientContextHandoffPolicy();
     const modelWindowSql = yield* Effect.serviceOption(SqlClient.SqlClient);
-    const modelWindowSettings = yield* Effect.serviceOption(ServerSettingsService);
+    const forceBytePolicy = (yield* ContextHandoffPolicyOverride) === "byte";
     const eventSink = yield* EventSink.EventSinkV2;
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -122,6 +128,7 @@ export const layer: Layer.Layer<
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
+    const serverSettings = yield* ServerSettingsService;
 
     // These callbacks outlive startup while a run drains background work. Build
     // them outside start's scope so they cannot retain its full thread history.
@@ -728,6 +735,7 @@ export const layer: Layer.Layer<
               threadId: projection.thread.id,
               targetRunId: run.id,
               transferId: nativeForkTransfer.id,
+              purpose: "scient_fork",
               fromProviderThreadIds: [],
               toProviderThreadId: providerThread.id,
               fromProviderInstanceId:
@@ -901,6 +909,7 @@ export const layer: Layer.Layer<
           threadId: projection.thread.id,
           targetRunId: run.id,
           transferId,
+          ...(hasScientContextHistory(projection) ? { purpose: "session_recovery" as const } : {}),
           fromProviderThreadIds: [providerThread.id],
           toProviderThreadId: providerThread.id,
           fromProviderInstanceId: providerThread.providerInstanceId,
@@ -993,15 +1002,14 @@ export const layer: Layer.Layer<
         run.modelSelection,
         resolvedRuntimePolicy.cwd,
       );
-      const knownModelWindow =
-        Option.isSome(modelWindowSql) && Option.isSome(modelWindowSettings)
-          ? yield* resolveNativeModelContextWindow({
-              sql: modelWindowSql.value,
-              settings: yield* modelWindowSettings.value.getSettings,
-              modelSelection: run.modelSelection,
-              reported: reportedModelWindow,
-            })
-          : reportedModelWindow;
+      const knownModelWindow = Option.isSome(modelWindowSql)
+        ? yield* resolveNativeModelContextWindow({
+            sql: modelWindowSql.value,
+            settings: yield* serverSettings.getSettings,
+            modelSelection: run.modelSelection,
+            reported: reportedModelWindow,
+          })
+        : reportedModelWindow;
       // Persist before delivery. Keep this native transcript's measured
       // occupancy. A different model drops compaction telemetry and uses the
       // new window when that window is known.
@@ -1218,6 +1226,20 @@ export const layer: Layer.Layer<
         restartCancelledWork.length === 0
           ? ""
           : restartCancelledBackgroundWorkNote(restartCancelledWork);
+      const usesScientBudget =
+        !forceBytePolicy &&
+        (hasScientContextHistory(projection) ||
+          effectiveHandoffs.some(
+            (handoff) =>
+              handoff.budgetPolicy === "scient" ||
+              projection.contextTransfers.some(
+                (transfer) =>
+                  transfer.id === handoff.transferId &&
+                  (transfer.type === "fork" || transfer.type === "merge_back") &&
+                  transfer.targetThreadId === projection.thread.id &&
+                  transfer.targetProviderInstanceId === run.providerInstanceId,
+              ),
+          ));
       const settledHandoffs = projection.contextHandoffs.filter(
         (handoff) =>
           handoff.toProviderThreadId === providerThread.id &&
@@ -1330,6 +1352,7 @@ export const layer: Layer.Layer<
                     threadId: projection.thread.id,
                     targetRunId: run.id,
                     transferId: null,
+                    ...(usesScientBudget ? { purpose: "session_recovery" as const } : {}),
                     fromProviderThreadIds: [providerThread.id],
                     toProviderThreadId: providerThread.id,
                     fromProviderInstanceId: run.providerInstanceId,
@@ -1349,11 +1372,11 @@ export const layer: Layer.Layer<
             deferInline: compact,
             providerThread: runningProviderThread,
             budget: Effect.gen(function* () {
-              const policy = yield* handoffPolicy;
+              const policy = yield* usesScientBudget ? handoffPolicy : genericContextHandoffPolicy;
               return handoffBudget({
                 ...policy,
                 modelContextWindow,
-                // The note is sent with the user text, so it spends the same allowance.
+                // The restart note and user text spend the same serialized allowance.
                 userText: restartNote === "" ? userText : `${restartNote}\n\n${userText}`,
                 attachments: message.attachments,
                 providerThread: budgetProviderThread,
