@@ -1008,6 +1008,11 @@ export const layer: Layer.Layer<
             settings: yield* serverSettings.getSettings,
             modelSelection: run.modelSelection,
             reported: reportedModelWindow,
+            ...(session.modelContextWindowLaunchFingerprint === undefined
+              ? {}
+              : {
+                  launchFingerprint: session.modelContextWindowLaunchFingerprint,
+                }),
           })
         : reportedModelWindow;
       // Persist before delivery. Keep this native transcript's measured
@@ -1479,6 +1484,20 @@ export const layer: Layer.Layer<
       yield* runExecution.startRootRun({
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
         appThread: projection.thread,
+        ...(session.driver !== "codex" ||
+        session.modelContextWindowLaunchFingerprint === undefined ||
+        runningProviderThread.nativeThreadRef?.driver !== "codex" ||
+        runningProviderThread.nativeThreadRef.nativeId === null
+          ? {}
+          : {
+              nativeModelCapacityOwner: {
+                modelSelection: run.modelSelection,
+                launchFingerprint: session.modelContextWindowLaunchFingerprint,
+                providerSessionId,
+                providerThreadId: runningProviderThread.id,
+                nativeThreadId: runningProviderThread.nativeThreadRef.nativeId,
+              },
+            }),
         providerSessionId,
         session: deliverySession,
         run: runningRun,

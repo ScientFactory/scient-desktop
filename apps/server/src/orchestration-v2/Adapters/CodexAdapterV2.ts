@@ -1,3 +1,4 @@
+import * as NodeCrypto from "node:crypto";
 import type { RuntimeCitationSource } from "@t3tools/contracts";
 import {
   extractCodexCitationSources,
@@ -1233,6 +1234,12 @@ export interface CodexAppServerClientFactoryShape {
     readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
     readonly settings: CodexSettings;
     readonly environment: NodeJS.ProcessEnv;
+    /** Resolved once by the adapter and used verbatim by the production spawner. */
+    readonly launch?: {
+      readonly command: string;
+      readonly args: ReadonlyArray<string>;
+      readonly shell: boolean;
+    };
   }) => Effect.Effect<
     CodexClient.CodexAppServerClient["Service"],
     ProviderAdapterOpenSessionError,
@@ -1411,13 +1418,20 @@ export const codexAppServerClientFactoryFromSettingsLayer: Layer.Layer<
             ...input.environment,
             ...(input.settings.homePath ? { CODEX_HOME: input.settings.homePath } : {}),
           };
-          const command = yield* makeCodexAppServerSpawnCommand({
-            command: input.settings.binaryPath || "codex",
-            args: codexAppServerArgs(
-              resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
-            ),
-            env: environment,
-          });
+          const command =
+            input.launch === undefined
+              ? yield* makeCodexAppServerSpawnCommand({
+                  command: input.settings.binaryPath || "codex",
+                  args: codexAppServerArgs(
+                    resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
+                  ),
+                  env: environment,
+                })
+              : ChildProcess.make(input.launch.command, input.launch.args, {
+                  env: environment,
+                  extendEnv: false,
+                  shell: input.launch.shell,
+                });
           const handle = yield* spawner.spawn(command).pipe(
             Effect.provideService(Scope.Scope, scope),
             Effect.mapError(
@@ -1544,7 +1558,11 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
   const encodeRuntime = Schema.encodeUnknownSync(
     Schema.fromJsonString(
       Schema.Struct({
+        version: Schema.Literal(1),
         settings: CodexSettings,
+        command: Schema.String,
+        args: Schema.Array(Schema.String),
+        shell: Schema.Boolean,
         environment: Schema.Record(Schema.String, Schema.UndefinedOr(Schema.String)),
       }),
     ),
@@ -1577,16 +1595,35 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                     }),
                 ),
               );
-        const settings = resolvedRuntime?.config ?? adapterOptions.settings;
-        const environment = resolvedRuntime?.environment ?? adapterOptions.environment;
-        // Reports can serve sibling native sessions only under this exact runtime.
-        // This key is private memory; the engine owns durable settings/cache identity.
-        const configuration = encodeRuntime({
-          settings,
-          environment: Object.fromEntries(
-            Object.entries(environment).sort(([a], [b]) => a.localeCompare(b)),
-          ),
+        const settings = Object.freeze({ ...(resolvedRuntime?.config ?? adapterOptions.settings) });
+        const hostEnvironment = yield* HostProcessEnvironment;
+        const environment = Object.freeze({
+          ...hostEnvironment,
+          ...(resolvedRuntime?.environment ?? adapterOptions.environment),
+          ...(settings.homePath ? { CODEX_HOME: settings.homePath } : {}),
         });
+        const resolvedLaunch = yield* resolveSpawnCommand(
+          settings.binaryPath || "codex",
+          codexAppServerArgs(resolveCodexLaunchArgs(settings.launchArgs, environment)),
+          { env: environment, extendEnv: false },
+        );
+        const launch = Object.freeze({
+          ...resolvedLaunch,
+          args: Object.freeze([...resolvedLaunch.args]),
+        });
+        // Hash exactly the immutable inputs handed to open; never persist credentials.
+        const configuration = `codex-launch:v1:${NodeCrypto.createHash("sha256")
+          .update(
+            encodeRuntime({
+              version: 1,
+              settings,
+              ...launch,
+              environment: Object.fromEntries(
+                Object.entries(environment).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+              ),
+            }),
+          )
+          .digest("hex")}`;
         const client = yield* clientFactory.open({
           instanceId: adapterOptions.instanceId,
           threadId: input.threadId,
@@ -1594,6 +1631,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           runtimePolicy: input.runtimePolicy,
           settings,
           environment,
+          launch,
         });
         const additionalContextByThread = yield* Ref.make(
           new Map<
@@ -5555,6 +5593,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           providerSessionId: input.providerSessionId,
           providerSession: session,
           events: Stream.fromEffectRepeat(Queue.take(events)),
+          modelContextWindowLaunchFingerprint: configuration,
           getModelContextWindow: (selection) =>
             selection.instanceId === adapterOptions.instanceId
               ? modelWindows.find(

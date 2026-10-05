@@ -312,6 +312,9 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     /** Preserve one disposable profile across file-backed restart and recovery tests. */
     readonly serverConfigLayer?: Layer.Layer<ServerConfig.ServerConfig>;
     readonly serverSettingsLayer?: Layer.Layer<ServerSettings.ServerSettingsService>;
+    readonly providerSessionIdleTimeoutMs?: number;
+    /** Observe or gate the real canonical writer without replacing its SQL transaction. */
+    readonly decorateEventSink?: (sink: EventSink.EventSinkV2Shape) => EventSink.EventSinkV2Shape;
     readonly databaseLayer?: Layer.Layer<
       SqlClient.SqlClient,
       | MigrationError
@@ -416,9 +419,16 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     EffectOutbox.layer,
     TurnItemPositionStore.layer,
   ).pipe(Layer.provide(databaseLayer));
-  const eventSinkProvided = EventSink.layerFromStores.pipe(
+  const actualEventSink = EventSink.layerFromStores.pipe(
     Layer.provide(Layer.mergeAll(storesLayer, databaseLayer)),
   );
+  const eventSinkProvided =
+    options.decorateEventSink === undefined
+      ? actualEventSink
+      : Layer.effect(
+          EventSink.EventSinkV2,
+          Effect.map(EventSink.EventSinkV2, options.decorateEventSink),
+        ).pipe(Layer.provide(actualEventSink));
   const commandReceiptStoreProvided = CommandReceiptStore.layer.pipe(Layer.provide(databaseLayer));
   const legacyImporterProvided = LegacyV1ThreadImporter.layer.pipe(
     Layer.provide(Layer.mergeAll(eventSinkProvided, databaseLayer)),
@@ -459,6 +469,9 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     });
   const providerSessionManagerProvided = ProviderSessionManager.layerWithOptions({
     configureMcp: options.configureMcp ?? false,
+    ...(options.providerSessionIdleTimeoutMs === undefined
+      ? {}
+      : { idleTimeoutMs: options.providerSessionIdleTimeoutMs }),
   }).pipe(
     Layer.provide(
       Layer.mergeAll(
