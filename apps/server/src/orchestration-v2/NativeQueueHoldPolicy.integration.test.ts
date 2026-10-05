@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
+  CheckpointRef,
   ComposerContextId,
   EnvironmentId,
   RunId,
@@ -37,7 +38,14 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Logger from "effect/Logger";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-import { CheckpointStore } from "../checkpointing/CheckpointStore.ts";
+import {
+  CheckpointStore,
+  layer as checkpointStoreLayer,
+} from "../checkpointing/CheckpointStore.ts";
+import * as CheckpointDiffQuery from "../checkpointing/CheckpointDiffQuery.ts";
+import { CheckpointRefUnavailableError } from "../checkpointing/Errors.ts";
+import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import { RunFinalizationObserver } from "./RunFinalizationService.ts";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -49,7 +57,11 @@ import {
   type NativeSessionUpdate,
 } from "./Adapters/NativeSessionAdapterV2.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
-import { OrchestratorV2, type OrchestratorV2Error } from "./Orchestrator.ts";
+import {
+  OrchestratorV2,
+  OrchestratorProjectionError,
+  type OrchestratorV2Error,
+} from "./Orchestrator.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import {
   ProviderAdapterOpenSessionError,
@@ -3494,6 +3506,389 @@ it.live(
                   Layer.mergeAll(ProjectionStore.layer, EventStore.layer).pipe(
                     Layer.provideMerge(databaseLayer),
                   ),
+                ),
+              ),
+            ),
+          ),
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+);
+
+it.live(
+  "reads actual ready workspace baselines and adjacent A-B-A ranges after reopen and rebuild",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const name = "workspace-query-A-B-A";
+        const workspaceA = yield* checkpointWorkspace(`${name}-A`, {
+          "evidence.txt": "Initial A\n",
+        });
+        const workspaceB = yield* checkpointWorkspace(`${name}-B`, {
+          "evidence.txt": "Initial B\n",
+        });
+        const fs = yield* FileSystem.FileSystem;
+        const profile = yield* Effect.acquireRelease(
+          fs.makeTempDirectory({ prefix: name }),
+          (path) => fs.remove(path, { recursive: true }).pipe(Effect.orDie),
+        );
+        const databaseLayer = makeSqlitePersistenceLive(`${profile}/state.sqlite`).pipe(
+          Layer.provide(NodeServices.layer),
+        );
+        const serverConfigLayer = Layer.succeed(ServerConfig, yield* makeReplayServerConfig(name));
+        const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              ProjectStore.layer.pipe(Layer.provide(databaseLayer)),
+              Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
+                getInstance: () => Effect.succeed(undefined),
+              }),
+            ),
+          ),
+          Layer.orDie,
+        );
+        const threadId = ThreadId.make(`thread:${name}`);
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const git = (cwd: string, args: ReadonlyArray<string>) =>
+          spawner.string(ChildProcess.make("git", args, { cwd }));
+        const snapshotB = Effect.gen(function* () {
+          return {
+            refs: yield* git(workspaceB, ["for-each-ref"]),
+            objects: yield* git(workspaceB, ["count-objects", "-v"]),
+            index: Array.from(yield* fs.readFile(`${workspaceB}/.git/index`)),
+            text: yield* fs.readFileString(`${workspaceB}/evidence.txt`),
+          };
+        });
+        const verifyQueries = (
+          ranges: ReadonlyArray<{
+            from: number;
+            to: number;
+            cwd: string;
+            fromRef: CheckpointRef;
+            toRef: CheckpointRef;
+            added: string;
+            removed: string;
+          }>,
+        ) =>
+          Effect.gen(function* () {
+            const projections = yield* ProjectionStore.ProjectionStoreV2;
+            const realStore = yield* CheckpointStore;
+            const refsA = yield* git(workspaceA, ["for-each-ref"]);
+            const beforeB = yield* snapshotB;
+            const beforeA = yield* fs.readFileString(`${workspaceA}/evidence.txt`);
+            for (const reversed of [false, true]) {
+              const calls: Array<Parameters<typeof realStore.diffCheckpoints>[0]> = [];
+              const query = yield* CheckpointDiffQuery.make.pipe(
+                Effect.provide(
+                  Layer.mergeAll(
+                    Layer.mock(ThreadManagement.ThreadManagementService)({
+                      getCheckpointContext: () =>
+                        projections.getCheckpointContext(threadId).pipe(
+                          Effect.map((context) => ({
+                            ...context,
+                            checkpointScopes: reversed
+                              ? context.checkpointScopes.toReversed()
+                              : context.checkpointScopes,
+                          })),
+                          Effect.mapError(
+                            (cause) => new OrchestratorProjectionError({ threadId, cause }),
+                          ),
+                        ),
+                    }),
+                    Layer.succeed(CheckpointStore, {
+                      ...realStore,
+                      diffCheckpoints: (input) => {
+                        calls.push(input);
+                        const range = ranges[calls.length - 1]!;
+                        assert.equal(input.cwd, range.cwd);
+                        assert.equal(input.fromCheckpointRef, range.fromRef);
+                        assert.equal(input.toCheckpointRef, range.toRef);
+                        assert.isFalse(input.fallbackFromToHead);
+                        return realStore.diffCheckpoints(input);
+                      },
+                    }),
+                  ),
+                ),
+              );
+              for (const range of ranges) {
+                const result =
+                  range.from === 0
+                    ? yield* query.getFullThreadDiff({
+                        threadId,
+                        toTurnCount: range.to,
+                        ignoreWhitespace: false,
+                      })
+                    : yield* query.getTurnDiff({
+                        threadId,
+                        fromTurnCount: range.from,
+                        toTurnCount: range.to,
+                        ignoreWhitespace: false,
+                      });
+                assert.include(result.diff, `+${range.added}`);
+                assert.include(result.diff, `-${range.removed}`);
+                assert.notInclude(result.diff, "Uncaptured query distraction");
+              }
+              assert.lengthOf(calls, ranges.length);
+            }
+            assert.equal(yield* git(workspaceA, ["for-each-ref"]), refsA);
+            assert.equal(yield* fs.readFileString(`${workspaceA}/evidence.txt`), beforeA);
+            assert.deepEqual(yield* snapshotB, beforeB);
+          });
+        const finished = yield* withNativeQueue(
+          name,
+          ({ orchestrator, takeOffer, waitFor, offers }) =>
+            Effect.gen(function* () {
+              const sink = yield* EventSinkV2;
+              const worker = yield* OrchestrationEffectWorkerV2;
+              const now = yield* DateTime.now;
+              const projectId = ProjectId.make(`project:${name}`);
+              yield* sink.commitProjectCommand({
+                commandId: CommandId.make(`${name}:project`),
+                projectId,
+                commandType: "project.created",
+                acceptedAt: now,
+                event: {
+                  eventId: EventId.make(`${name}:project`),
+                  aggregateKind: "project",
+                  aggregateId: projectId,
+                  occurredAt: DateTime.formatIso(now),
+                  commandId: null,
+                  causationEventId: null,
+                  correlationId: null,
+                  metadata: {},
+                  type: "project.created",
+                  payload: {
+                    projectId,
+                    title: name,
+                    workspaceRoot: workspaceA,
+                    defaultModelSelection: modelSelection,
+                    scripts: [],
+                    createdAt: DateTime.formatIso(now),
+                    updatedAt: DateTime.formatIso(now),
+                  },
+                },
+              });
+              const relocate = (cwd: string, suffix: string) =>
+                sink.commitProjectCommand({
+                  commandId: CommandId.make(`${name}:${suffix}`),
+                  projectId,
+                  commandType: "project.meta-updated",
+                  acceptedAt: now,
+                  event: {
+                    eventId: EventId.make(`${name}:${suffix}`),
+                    aggregateKind: "project",
+                    aggregateId: projectId,
+                    occurredAt: DateTime.formatIso(now),
+                    commandId: null,
+                    causationEventId: null,
+                    correlationId: null,
+                    metadata: {},
+                    type: "project.meta-updated",
+                    payload: { projectId, workspaceRoot: cwd, updatedAt: DateTime.formatIso(now) },
+                  },
+                });
+              const complete = Effect.fnUntraced(function* (
+                text: string,
+                cwd: string,
+                output: string,
+              ) {
+                yield* send(orchestrator, threadId, text);
+                yield* worker.drain(12);
+                const offer = yield* takeOffer;
+                assert.equal(offer.input.runtimePolicy.cwd, cwd);
+                yield* fs.writeFileString(`${cwd}/evidence.txt`, `${output}\n`);
+                yield* offer.answer(`${output} answer`);
+                yield* offer.settle("completed");
+                yield* waitFor(
+                  (p) => p.runs.find((run) => run.id === offer.input.runId)?.status === "waiting",
+                );
+                yield* worker.drain(12);
+                const projection = yield* waitFor(
+                  (p) => p.runs.find((run) => run.id === offer.input.runId)?.status === "completed",
+                );
+                const checkpoint = projection.checkpoints.find(
+                  (row) =>
+                    row.id ===
+                    projection.runs.find((run) => run.id === offer.input.runId)!.checkpointId,
+                )!;
+                assert.equal(checkpoint.status, "ready");
+                return checkpoint;
+              });
+              const checkpointA = yield* complete("first A", workspaceA, "Native A output");
+              const untouchedB = yield* snapshotB;
+              yield* relocate(workspaceB, "B");
+              assert.deepEqual(yield* snapshotB, untouchedB);
+              const checkpointB = yield* complete("first B", workspaceB, "Native B output");
+              yield* relocate(workspaceA, "return-A");
+              const checkpointReturnA = yield* complete(
+                "return A",
+                workspaceA,
+                "Returned native A output",
+              );
+              const projection = yield* orchestrator.getThreadProjection(threadId);
+              const baselineA = projection.checkpoints.find(
+                (row) => row.scopeId === checkpointA.scopeId && row.ordinalWithinScope === 0,
+              )!;
+              const baselineB = projection.checkpoints.find(
+                (row) => row.scopeId === checkpointB.scopeId && row.ordinalWithinScope === 1,
+              )!;
+              const returnBaselineA = projection.checkpoints.find(
+                (row) => row.id === checkpointReturnA.parentCheckpointId,
+              )!;
+              assert.equal(baselineA.status, "ready");
+              assert.equal(baselineB.status, "ready");
+              assert.equal(returnBaselineA.scopeId, checkpointA.scopeId);
+              assert.equal(returnBaselineA.status, "ready");
+              assert.equal(
+                projection.checkpoints.find(
+                  (row) => row.scopeId === checkpointB.scopeId && row.ordinalWithinScope === 0,
+                )?.status,
+                "missing",
+              );
+              assert.notEqual(checkpointA.scopeId, checkpointB.scopeId);
+              assert.equal(checkpointReturnA.scopeId, checkpointA.scopeId);
+              const ranges = [
+                {
+                  from: 0,
+                  to: 1,
+                  cwd: workspaceA,
+                  fromRef: baselineA.ref,
+                  toRef: checkpointA.ref,
+                  added: "Native A output",
+                  removed: "Initial A",
+                },
+                {
+                  from: 0,
+                  to: 2,
+                  cwd: workspaceB,
+                  fromRef: baselineB.ref,
+                  toRef: checkpointB.ref,
+                  added: "Native B output",
+                  removed: "Initial B",
+                },
+                {
+                  from: 0,
+                  to: 3,
+                  cwd: workspaceA,
+                  fromRef: baselineA.ref,
+                  toRef: checkpointReturnA.ref,
+                  added: "Returned native A output",
+                  removed: "Initial A",
+                },
+                {
+                  from: 1,
+                  to: 2,
+                  cwd: workspaceB,
+                  fromRef: baselineB.ref,
+                  toRef: checkpointB.ref,
+                  added: "Native B output",
+                  removed: "Initial B",
+                },
+                {
+                  from: 2,
+                  to: 3,
+                  cwd: workspaceA,
+                  fromRef: returnBaselineA.ref,
+                  toRef: checkpointReturnA.ref,
+                  added: "Returned native A output",
+                  removed: "Native A output",
+                },
+                {
+                  from: 1,
+                  to: 3,
+                  cwd: workspaceA,
+                  fromRef: checkpointA.ref,
+                  toRef: checkpointReturnA.ref,
+                  added: "Returned native A output",
+                  removed: "Native A output",
+                },
+              ];
+              yield* relocate(workspaceB, "future-B");
+              yield* fs.writeFileString(
+                `${workspaceA}/evidence.txt`,
+                "Uncaptured query distraction A\n",
+              );
+              yield* fs.writeFileString(
+                `${workspaceB}/evidence.txt`,
+                "Uncaptured query distraction B\n",
+              );
+              yield* verifyQueries(ranges);
+              assert.lengthOf(offers, 3);
+              yield* (yield* ProviderSessionManagerV2).closeInstance(instanceId);
+              yield* waitFor((p) => p.providerSessions.every((row) => row.status === "stopped"));
+              return {
+                ranges,
+                projection: yield* orchestrator.getThreadProjection(threadId),
+                baselineB,
+              };
+            }),
+          {
+            cwd: workspaceA,
+            databaseLayer,
+            serverConfigLayer,
+            runtimePolicyLayer: policyLayer,
+            runEffectWorker: false,
+          },
+        );
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const projections = yield* ProjectionStore.ProjectionStoreV2;
+            assert.deepEqual(yield* projections.getThreadProjection(threadId), finished.projection);
+            yield* verifyQueries(finished.ranges);
+            assert.isTrue(
+              (yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild).valid,
+            );
+            assert.deepEqual(yield* projections.getThreadProjection(threadId), finished.projection);
+            yield* verifyQueries(finished.ranges);
+            const realStore = yield* CheckpointStore;
+            const query = yield* CheckpointDiffQuery.make.pipe(
+              Effect.provide(
+                Layer.mock(ThreadManagement.ThreadManagementService)({
+                  getCheckpointContext: () =>
+                    projections
+                      .getCheckpointContext(threadId)
+                      .pipe(
+                        Effect.mapError(
+                          (cause) => new OrchestratorProjectionError({ threadId, cause }),
+                        ),
+                      ),
+                }),
+              ),
+            );
+            const originalOid = (yield* git(workspaceB, [
+              "rev-parse",
+              finished.baselineB.ref,
+            ])).trim();
+            yield* git(workspaceB, ["update-ref", "-d", finished.baselineB.ref]);
+            const missing = yield* query
+              .getFullThreadDiff({ threadId, toTurnCount: 2 })
+              .pipe(Effect.flip);
+            assert.instanceOf(missing, CheckpointRefUnavailableError);
+            assert.equal(missing.checkpoint, "from");
+            yield* git(workspaceB, ["update-ref", finished.baselineB.ref, originalOid]);
+            assert.isTrue(
+              yield* realStore.hasCheckpointRef({
+                cwd: workspaceB,
+                checkpointRef: finished.baselineB.ref,
+              }),
+            );
+            yield* verifyQueries(finished.ranges);
+          }).pipe(
+            Effect.provide(
+              ProjectionMaintenance.layer.pipe(
+                Layer.provideMerge(
+                  Layer.mergeAll(
+                    ProjectionStore.layer,
+                    EventStore.layer,
+                    checkpointStoreLayer.pipe(
+                      Layer.provide(
+                        VcsDriverRegistry.layer.pipe(
+                          Layer.provide(Layer.mergeAll(VcsProcess.layer, serverConfigLayer)),
+                          Layer.provide(NodeServices.layer),
+                        ),
+                      ),
+                    ),
+                  ).pipe(Layer.provideMerge(databaseLayer)),
                 ),
               ),
             ),

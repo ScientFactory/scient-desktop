@@ -258,6 +258,13 @@ it.live(
         yield* eventSink.write({
           events: [
             {
+              id: EventId.make("inherited-read-baseline"),
+              type: "checkpoint.captured",
+              threadId,
+              occurredAt: now,
+              payload: baseline,
+            },
+            {
               id: EventId.make("inherited-read-checkpoint"),
               type: "checkpoint.captured",
               threadId,

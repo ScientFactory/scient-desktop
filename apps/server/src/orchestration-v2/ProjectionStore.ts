@@ -205,10 +205,11 @@ const ProjectionCheckpointContext = Schema.Struct({
   ),
   checkpoints: Schema.Array(
     OrchestrationV2CheckpointJsonSchema.mapFields(
-      ({ scopeId, runId, appRunOrdinal, status, ref }) => ({
+      ({ scopeId, runId, appRunOrdinal, ordinalWithinScope, status, ref }) => ({
         scopeId,
         runId,
         appRunOrdinal,
+        ordinalWithinScope,
         status,
         ref,
       }),
@@ -4227,7 +4228,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             `,
               sql`
               SELECT scope_id AS "scopeId", run_id AS "runId",
-                app_run_ordinal AS "appRunOrdinal", status,
+                app_run_ordinal AS "appRunOrdinal", ordinal_within_scope AS "ordinalWithinScope", status,
                 json_extract(payload_json, '$.ref') AS ref
               FROM orchestration_v2_projection_checkpoints
               WHERE thread_id = ${threadId}
@@ -5804,10 +5805,11 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               cwd,
             })),
             checkpoints: projection.checkpoints.map(
-              ({ scopeId, runId, appRunOrdinal, status, ref }) => ({
+              ({ scopeId, runId, appRunOrdinal, ordinalWithinScope, status, ref }) => ({
                 scopeId,
                 runId,
                 appRunOrdinal,
+                ordinalWithinScope,
                 status,
                 ref,
               }),

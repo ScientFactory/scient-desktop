@@ -19,7 +19,10 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { checkpointRefForScopeOrdinal } from "../orchestration-v2/CheckpointService.ts";
+import {
+  checkpointRefForScopeOrdinal,
+  isWorkspaceBoundRootScopeId,
+} from "../orchestration-v2/CheckpointService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import {
   CheckpointDiffResultInvalidError,
@@ -155,24 +158,70 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      const fromCheckpointRef =
-        input.fromTurnCount === 0
-          ? (() => {
-              // The root scope is shared by every run in this thread. Its
-              // runId tracks the latest owner, while ordinal zero stays the baseline.
-              const firstScope = projection.checkpointScopes.find(
-                (scope) => scope.kind === "root_run",
-              );
-              return firstScope === undefined
-                ? undefined
-                : checkpointRefForScopeOrdinal({
-                    scopeId: firstScope.id,
-                    ordinalWithinScope: 0,
-                  });
-            })()
-          : readyCheckpoints.find((checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount)
-              ?.ref;
-      if (fromCheckpointRef === undefined) {
+      const workspaceRoots = projection.checkpointScopes.filter(
+        (scope) => scope.kind === "root_run" && scope.cwd === toScope.cwd,
+      );
+      const workspaceRootIds = new Set(workspaceRoots.map((scope) => scope.id));
+      const baselines = projection.checkpoints.filter(
+        (checkpoint) =>
+          checkpoint.status === "ready" &&
+          checkpoint.runId === null &&
+          checkpoint.appRunOrdinal === null &&
+          workspaceRootIds.has(checkpoint.scopeId) &&
+          checkpoint.ordinalWithinScope < input.toTurnCount,
+      );
+      let fromCheckpointRef;
+      if (input.fromTurnCount === 0) {
+        // A new workspace can first enter at a nonzero thread ordinal. Use its
+        // earliest recorded ready boundary, including historical roots at that cwd.
+        fromCheckpointRef = baselines.toSorted(
+          (a, b) =>
+            a.ordinalWithinScope - b.ordinalWithinScope || a.scopeId.localeCompare(b.scopeId),
+        )[0]?.ref;
+        if (fromCheckpointRef === undefined) {
+          const legacyRoot = workspaceRoots
+            .toSorted((a, b) => a.id.localeCompare(b.id))
+            .find(
+              (scope) =>
+                !isWorkspaceBoundRootScopeId(scope.id) &&
+                !projection.checkpoints.some(
+                  (checkpoint) =>
+                    checkpoint.scopeId === scope.id &&
+                    checkpoint.runId === null &&
+                    checkpoint.appRunOrdinal === null,
+                ),
+            );
+          if (legacyRoot !== undefined)
+            fromCheckpointRef = checkpointRefForScopeOrdinal({
+              scopeId: legacyRoot.id,
+              ordinalWithinScope: 0,
+            });
+        }
+      } else {
+        const fromCheckpoint = readyCheckpoints.find(
+          (checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount,
+        );
+        const fromScope = projection.checkpointScopes.find(
+          (scope) => scope.id === fromCheckpoint?.scopeId,
+        );
+        fromCheckpointRef =
+          fromScope?.cwd === toScope.cwd
+            ? fromCheckpoint?.ref
+            : fromScope === undefined
+              ? undefined
+              : baselines.find(
+                  (checkpoint) =>
+                    checkpoint.scopeId === toScope.id &&
+                    checkpoint.ordinalWithinScope === input.fromTurnCount,
+                )?.ref;
+      }
+      if (
+        fromCheckpointRef === undefined ||
+        !(yield* checkpointStore.hasCheckpointRef({
+          cwd: toScope.cwd,
+          checkpointRef: fromCheckpointRef,
+        }))
+      ) {
         return yield* new CheckpointRefUnavailableError({
           operation,
           threadId: input.threadId,
