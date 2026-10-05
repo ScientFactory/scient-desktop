@@ -9,6 +9,11 @@ import {
   ScientMathSourceToolbar,
   useScientFileEditorBindings,
 } from "~/scient/fileSurfaces/scientFileEditorBindings";
+import {
+  applyScientMarkdownRename,
+  ScientDocumentSessionAdmissionFailure,
+  scientDocumentSessionFile,
+} from "~/scient/fileSurfaces/scientDocumentSession";
 // SCIENT-FORK:END
 import { useAtomValue } from "@effect/atom-react";
 import { Spinner } from "~/components/ui/spinner";
@@ -85,7 +90,6 @@ import type {
 import { isAbsolutePath } from "~/terminal-links";
 import { workspaceFileHostPath } from "./filePath";
 import { ScrollArea } from "~/components/ui/scroll-area";
-import { Button } from "~/components/ui/button";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { buildFileReviewComment } from "~/reviewCommentContext";
@@ -113,10 +117,7 @@ import { useMarkdownPersistenceLease } from "~/scient/markdownEditor/persistence
 import { useMarkdownPersistenceGuards } from "~/scient/markdownEditor/persistence/useMarkdownPersistenceGuards";
 import { useMarkdownSourcePersistence } from "~/scient/markdownEditor/persistence/useMarkdownSourcePersistence";
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
-import {
-  documentSessionIsCurrent,
-  markdownPersistenceRegistry,
-} from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
+import { documentSessionIsCurrent } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { workspacePdfSourceForPreview } from "~/scient/pdf/pdfSource";
 import {
   ScientFileFreshnessNotices,
@@ -133,7 +134,6 @@ import {
   MEDIA_FAILURE_COPY,
   readFailureBlocksPreview,
   readOnlyNotice,
-  refreshFailureNoticeCopy,
 } from "~/scient/fileSurfaces/fileFailureCopy";
 import { FileReadFailure } from "~/scient/fileSurfaces/FileReadFailure";
 import {
@@ -181,10 +181,7 @@ import {
 } from "./filePreviewMode";
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
 import {
-  clearProjectFileQueryData,
   getOptimisticProjectFileQueryData,
-  projectReadFailure,
-  refreshProjectEntriesQuery,
   setProjectFileQueryData,
 } from "./projectFilesQueryState";
 
@@ -1478,34 +1475,14 @@ export default function FilePreviewPanel({
     authoritativeSnapshot: queriedFile.authoritativeData,
     workspaceMutationId,
   });
-  // The editor keeps showing its last confirmed version when a refresh read
-  // fails; this is why it failed, so the notice can say the file moved.
-  const markdownRefreshFailure =
-    markdownSnapshot && !markdownSnapshot.pending
-      ? projectReadFailure(markdownSnapshot.error)
-      : null;
-  const markdownRefreshCopy = refreshFailureNoticeCopy(markdownRefreshFailure, hostOs);
-  // Once admitted, the retained draft is the editor's display truth even when
-  // an unrelated cached query fails or temporarily returns an older snapshot.
-  const file =
-    markdownSnapshot && relativePath !== null
-      ? {
-          ...queriedFile,
-          error: null,
-          failure: null,
-          failureReason: null,
-          failureOsErrorCode: null,
-          isPending: false,
-          data: {
-            relativePath,
-            contents: markdownSnapshot.draftSource,
-            revision: markdownSnapshot.baselineRevision,
-            byteLength: queriedFile.data?.byteLength ?? 0,
-            truncated: false,
-            readOnly: false,
-          },
-        }
-      : queriedFile;
+  // SCIENT-FORK:START — a document session's draft is the displayed file
+  const { markdownRefreshFailure, markdownRefreshCopy, file } = scientDocumentSessionFile(
+    queriedFile,
+    markdownSnapshot,
+    relativePath,
+    hostOs,
+  );
+  // SCIENT-FORK:END
   // Rendered documents and media own their layout. Word wrap only applies to
   // the raw text surfaces that feed the Pierre file renderer/editor.
   const showsRawText =
@@ -1791,25 +1768,17 @@ export default function FilePreviewPanel({
                         (file.data?.truncated ?? false)
                       }
                       label={relativePath.slice(relativePath.lastIndexOf("/") + 1)}
-                      onRenamed={(destinationRelativePath, revision) => {
-                        markdownPersistenceRegistry.forgetClean({
+                      onRenamed={(destinationRelativePath, revision) =>
+                        applyScientMarkdownRename({
                           environmentId,
                           cwd,
                           relativePath,
-                        });
-                        if (file.data) {
-                          setProjectFileQueryData(
-                            environmentId,
-                            cwd,
-                            destinationRelativePath,
-                            file.data.contents,
-                            revision,
-                          );
-                        }
-                        clearProjectFileQueryData(environmentId, cwd, relativePath);
-                        refreshProjectEntriesQuery(environmentId, cwd);
-                        onOpenFile(destinationRelativePath);
-                      }}
+                          fileData: file.data,
+                          destinationRelativePath,
+                          revision,
+                          onOpenFile,
+                        })
+                      }
                     />
                   ) : undefined
                 }
@@ -2020,38 +1989,19 @@ export default function FilePreviewPanel({
               refreshKey={viewerRefreshKey}
             />
           ) : awaitingMarkdownLease && admissionError ? (
-            <>
-              <div
-                role="alert"
-                className="shrink-0 border-b border-warning/24 bg-warning-surface px-3 py-2 scient-reading-ui text-xs text-warning-foreground"
-              >
-                <p>
-                  This file could not be opened safely for editing. The last available preview is
-                  read-only.
-                </p>
-                <p>
-                  {admissionError instanceof Error
-                    ? admissionError.message
-                    : "The current disk version could not be verified."}
-                </p>
-                <Button size="xs" variant="outline" onClick={retryAdmission}>
-                  Try again
-                </Button>
-              </div>
-              {relativePath && file.data ? (
-                // SCIENT-FORK:START
-                <StaticTextFileSurface
-                  cwd={cwd}
-                  relativePath={relativePath}
-                  contents={file.data.contents}
-                  resolvedTheme={resolvedTheme}
-                  wordWrap={wordWrap}
-                  onPostRender={onFilePostRender}
-                />
-              ) : // SCIENT-FORK:END
-              null}
-            </>
-          ) : awaitingMarkdownLease ? (
+            // SCIENT-FORK:START — document session could not be admitted
+            <ScientDocumentSessionAdmissionFailure
+              admissionError={admissionError}
+              onRetry={retryAdmission}
+              cwd={cwd}
+              relativePath={relativePath}
+              contents={file.data?.contents}
+              resolvedTheme={resolvedTheme}
+              wordWrap={wordWrap}
+              onPostRender={onFilePostRender}
+            />
+          ) : // SCIENT-FORK:END
+          awaitingMarkdownLease ? (
             <div
               className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground"
               aria-label="Opening editor"
