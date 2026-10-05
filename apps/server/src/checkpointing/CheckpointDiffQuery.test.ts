@@ -395,3 +395,119 @@ it.effect("keeps equal-zero reads empty without looking up metadata or Git", () 
     ),
   );
 });
+
+it.effect.each(["historical", "workspace-bound"] as const)(
+  "keeps an implicit historical zero before newer explicit baseline metadata: %s",
+  (laterKind) => {
+    const projection = makeProjection();
+    const laterScopeId = laterKind === "historical" ? secondScopeId : workspaceScopeId;
+    const legacyRef = checkpointRefForScopeOrdinal({
+      scopeId: firstScopeId,
+      ordinalWithinScope: 0,
+    });
+    const diff = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
+      Effect.succeed("full historical diff"),
+    );
+    const hasRef = vi.fn(
+      (_input: Parameters<CheckpointStore.CheckpointStore["Service"]["hasCheckpointRef"]>[0]) =>
+        Effect.succeed(true),
+    );
+    return Effect.gen(function* () {
+      const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+      assert.equal(
+        (yield* query.getFullThreadDiff({ threadId, toTurnCount: 2, ignoreWhitespace: false }))
+          .diff,
+        "full historical diff",
+      );
+      assert.deepEqual(
+        hasRef.mock.calls.map(([input]) => input),
+        [{ cwd: "/repo", checkpointRef: legacyRef }],
+      );
+      assert.deepEqual(
+        diff.mock.calls.map(([input]) => input),
+        [
+          {
+            cwd: "/repo",
+            fromCheckpointRef: legacyRef,
+            toCheckpointRef: secondRef,
+            fallbackFromToHead: false,
+            ignoreWhitespace: false,
+          },
+        ],
+      );
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          projection: Effect.succeed({
+            ...projection,
+            checkpointScopes: projection.checkpointScopes
+              .toReversed()
+              .map((scope) =>
+                scope.id === secondScopeId ? { ...scope, id: laterScopeId } : scope,
+              ),
+            checkpoints: [
+              {
+                scopeId: laterScopeId,
+                runId: null,
+                appRunOrdinal: null,
+                ordinalWithinScope: 1,
+                status: "ready",
+                ref: baselineRef,
+              },
+              { ...projection.checkpoints[0]!, scopeId: laterScopeId },
+            ],
+          }),
+          diffCheckpoints: diff,
+          hasCheckpointRef: hasRef,
+        }),
+      ),
+    );
+  },
+);
+
+it.effect.each(["historical", "workspace-bound"] as const)(
+  "refuses to narrow history when an eligible implicit legacy source ref is absent: %s",
+  (laterKind) => {
+    const projection = makeProjection();
+    const laterScopeId = laterKind === "historical" ? secondScopeId : workspaceScopeId;
+    const legacyRef = checkpointRefForScopeOrdinal({
+      scopeId: firstScopeId,
+      ordinalWithinScope: 0,
+    });
+    const diff = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
+      Effect.succeed("unexpected narrowed diff"),
+    );
+    return Effect.gen(function* () {
+      const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+      const error = yield* query.getFullThreadDiff({ threadId, toTurnCount: 2 }).pipe(Effect.flip);
+      assert.instanceOf(error, CheckpointRefUnavailableError);
+      assert.equal(error.checkpoint, "from");
+      assert.equal(error.turnCount, 0);
+      assert.lengthOf(diff.mock.calls, 0);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          projection: Effect.succeed({
+            ...projection,
+            checkpointScopes: projection.checkpointScopes.map((scope) =>
+              scope.id === secondScopeId ? { ...scope, id: laterScopeId } : scope,
+            ),
+            checkpoints: [
+              {
+                scopeId: laterScopeId,
+                runId: null,
+                appRunOrdinal: null,
+                ordinalWithinScope: 1,
+                status: "ready",
+                ref: baselineRef,
+              },
+              { ...projection.checkpoints[0]!, scopeId: laterScopeId },
+            ],
+          }),
+          diffCheckpoints: diff,
+          hasCheckpointRef: (input) => Effect.succeed(input.checkpointRef !== legacyRef),
+        }),
+      ),
+    );
+  },
+);
