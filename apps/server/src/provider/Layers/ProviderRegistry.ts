@@ -62,6 +62,12 @@ import {
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import type { ProviderSnapshotSource } from "../builtInProviderCatalog.ts";
+// SCIENT-FORK:START — model merge policy for authoritative catalogs.
+import {
+  mergeScientProviderModel,
+  scientRetainMissingProviderModels,
+} from "./ScientProviderModelMerge.ts";
+// SCIENT-FORK:END
 
 const loadProviders = (
   providerSources: ReadonlyArray<ProviderSnapshotSource>,
@@ -118,29 +124,10 @@ export function upsertProviderWorkspaceSnapshot(
 }
 
 const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean => {
-  // Claude's probe returns T3's curated versioned catalog together with the
-  // current settings-defined custom models. Treat it as authoritative so SDK
-  // aliases or models from an older catalog cannot survive a refresh.
-  if (provider.driver === ProviderDriverKind.make("claudeAgent")) {
-    return false;
-  }
-
-  // Droid's ACP catalog is likewise authoritative: models are discovered live
-  // from the CLI, and a model Factory removes or revokes must not linger in
-  // the picker. Same state-aware policy as OpenCode below — retain during
-  // pending initial probes and failed installed-probe refreshes, replace on
-  // successful discovery.
-  // Scient Agent lists its models live from the running agent, the same way.
-  if (
-    provider.driver === ProviderDriverKind.make("droid") ||
-    provider.driver === ProviderDriverKind.make("pi") ||
-    provider.driver === ProviderDriverKind.make("scient")
-  ) {
-    const isPendingInitialProbe =
-      provider.enabled && !provider.installed && provider.status === "warning";
-    const didInstalledProviderProbeFail = provider.installed && provider.status === "error";
-    return isPendingInitialProbe || didInstalledProviderProbeFail;
-  }
+  // SCIENT-FORK:START — Claude, Droid, Pi and Scient Agent catalogs are authoritative.
+  const scientRetain = scientRetainMissingProviderModels(provider);
+  if (scientRetain !== undefined) return scientRetain;
+  // SCIENT-FORK:END
 
   if (provider.driver === ProviderDriverKind.make("acpRegistry")) {
     // ACP Registry discovery probes return the agent's complete inventory, so
@@ -202,25 +189,11 @@ const mergeProviderModels = (
 
   const previousBySlug = new Map(previousModels.map((model) => [model.slug, model] as const));
   const mergedModels = nextModels.map((model) => {
-    // A successful Pi or Scient Agent inventory explicitly describes the
-    // current model's options, including that it has none.
-    if (
-      provider.driver === ProviderDriverKind.make("pi") ||
-      provider.driver === ProviderDriverKind.make("scient")
-    ) {
-      return model;
-    }
+    // SCIENT-FORK:START — Pi, Scient Agent and Droid model authority.
+    const scientModel = mergeScientProviderModel(provider, model, previousBySlug);
+    if (scientModel !== undefined) return scientModel;
+    // SCIENT-FORK:END
     const previousModel = previousBySlug.get(model.slug);
-    if (provider.driver === ProviderDriverKind.make("droid")) {
-      // Droid uses the contract's nullable capability shape as an authority
-      // marker: null means the per-model ladder was not observed, while an
-      // empty descriptor list means the model was observed and has no effort
-      // selector. Only the unknown state may inherit a last-known value.
-      if (previousModel && model.capabilities === null && previousModel.capabilities !== null) {
-        return { ...model, capabilities: previousModel.capabilities };
-      }
-      return model;
-    }
     if (!previousModel || hasModelCapabilities(model) || !hasModelCapabilities(previousModel)) {
       return model;
     }
