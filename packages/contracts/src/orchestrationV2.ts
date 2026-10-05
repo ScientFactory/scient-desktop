@@ -1391,6 +1391,15 @@ export const OrchestrationV2UserMessageInputIntent = Schema.Literals([
 export type OrchestrationV2UserMessageInputIntent =
   typeof OrchestrationV2UserMessageInputIntent.Type;
 
+/** Inert presentation provenance; these origin IDs grant no execution ownership. */
+export const OrchestrationV2ForkInitialization = Schema.Struct({
+  transferId: ContextTransferId,
+  contextHandoffId: ContextHandoffId,
+  threadId: ThreadId,
+  runId: RunId,
+});
+export type OrchestrationV2ForkInitialization = typeof OrchestrationV2ForkInitialization.Type;
+
 const OrchestrationV2TurnItemBaseFields = {
   /** Group portable historical records without adopting an executable run. */
   historyTurnId: Schema.optional(TurnId),
@@ -1648,6 +1657,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("handoff"),
+    forkInitialization: Schema.optional(OrchestrationV2ForkInitialization),
     contextHandoffId: ContextHandoffId,
     fromProviderThreadIds: Schema.Array(ProviderThreadId),
     toProviderThreadId: ProviderThreadId,
@@ -2403,6 +2413,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("handoff"),
+    forkInitialization: Schema.optional(OrchestrationV2ForkInitialization),
     contextHandoffId: ContextHandoffId,
     fromProviderThreadIds: Schema.Array(ProviderThreadId),
     toProviderThreadId: ProviderThreadId,

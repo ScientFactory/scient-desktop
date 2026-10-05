@@ -6427,6 +6427,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               updatedAt: now,
               type: "handoff",
               contextHandoffId: activeHandoff.id,
+              ...(portableForkHandoff !== null && pendingForkTransfer?.type === "fork"
+                ? {
+                    forkInitialization: {
+                      transferId: pendingForkTransfer.id,
+                      contextHandoffId: activeHandoff.id,
+                      threadId: command.threadId,
+                      runId,
+                    },
+                  }
+                : {}),
               fromProviderThreadIds: activeHandoff.fromProviderThreadIds,
               toProviderThreadId: activeHandoff.toProviderThreadId,
               fromProviderInstanceIds: Array.from(

@@ -1442,3 +1442,78 @@ it("preserves provider-initiated work identity without admitting an internal com
     }),
   ).toBe(false);
 });
+
+describe("inert fork initialization handoff provenance", () => {
+  const handoff = {
+    id: "copied-handoff",
+    threadId: "grand",
+    runId: null,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 1,
+    status: "completed",
+    title: "Translated copy",
+    startedAt: now,
+    completedAt: now,
+    updatedAt: now,
+    inheritedFrom: {
+      threadId: "child",
+      itemId: "original-handoff",
+      runId: "child-run",
+      status: "completed",
+    },
+    type: "handoff",
+    contextHandoffId: "initialization-context",
+    fromProviderThreadIds: [],
+    toProviderThreadId: "historical-provider",
+    fromProviderInstanceIds: [],
+    toProviderInstanceId: "omp",
+    strategy: "full_thread_summary",
+  };
+  const proof = {
+    transferId: "fork-transfer",
+    contextHandoffId: "initialization-context",
+    threadId: "child",
+    runId: "child-run",
+  };
+  it("preserves causal IDs in Type and JSON codecs without restoring live ownership", () => {
+    const item = decodeOrchestrationV2TurnItem({
+      ...handoff,
+      forkInitialization: proof,
+    });
+    expect(decodeForkTypeJson(encodeForkTypeJson(item))).toEqual(item);
+    const json = encodeOrchestrationV2TurnItemJson(item);
+    expect(decodeOrchestrationV2TurnItemJson(json)).toEqual(item);
+    expect(item.runId).toBeNull();
+    expect(item.nativeItemRef).toBeNull();
+    expect(json).toHaveProperty("forkInitialization", proof);
+  });
+  it("keeps older optional-absent handoffs readable", () => {
+    const item = decodeOrchestrationV2TurnItem(handoff);
+    expect(decodeForkTypeJson(encodeForkTypeJson(item))).toEqual(item);
+    expect(item).not.toHaveProperty("forkInitialization");
+  });
+  it("rejects an incomplete causal proof instead of silently accepting it", () => {
+    expect(() =>
+      decodeOrchestrationV2TurnItem({
+        ...handoff,
+        forkInitialization: { transferId: "fork-transfer", threadId: "child", runId: "child-run" },
+      }),
+    ).toThrow();
+    const json = {
+      ...handoff,
+      startedAt: DateTime.formatIso(now),
+      completedAt: DateTime.formatIso(now),
+      updatedAt: DateTime.formatIso(now),
+    };
+    expect(() =>
+      decodeOrchestrationV2TurnItemJson({
+        ...json,
+        forkInitialization: { ...proof, runId: null },
+      }),
+    ).toThrow();
+  });
+});

@@ -207,50 +207,101 @@ function assistantMessage(updatedAt = "2026-06-20T00:00:03.000Z") {
 }
 
 describe("fork initialization context in the native feed", () => {
-  it.each(["fork", "provider_handoff", "merge_back", "missing", "later-run", "inherited"] as const)(
-    "removes only the exact local initialization; %s remains truthful",
-    (kind) => {
-      const now = DateTime.makeUnsafe("2026-10-04T00:00:00Z");
-      const handoff = decodeBoundaryItem({
-        ...base("fork-initialization-context", "2026-10-04T00:00:00Z", 2),
-        runId: "fork-first-run",
-        type: "handoff",
-        title: "Fork context",
-        contextHandoffId: "context-1",
-        fromProviderThreadIds: [],
-        toProviderThreadId: "provider-1",
-        fromProviderInstanceIds: [],
-        toProviderInstanceId: "codex",
-        strategy: "full_thread_summary",
+  it.each([
+    "fork",
+    "provider_handoff",
+    "merge_back",
+    "missing",
+    "later-run",
+    "inherited",
+    "proven-inherited",
+  ] as const)("removes only the exact local initialization; %s remains truthful", (kind) => {
+    const now = DateTime.makeUnsafe("2026-10-04T00:00:00Z");
+    const handoff = decodeBoundaryItem({
+      ...base("fork-initialization-context", "2026-10-04T00:00:00Z", 2),
+      runId: "fork-first-run",
+      type: "handoff",
+      title: "Fork context",
+      contextHandoffId: "context-1",
+      ...(kind === "proven-inherited"
+        ? {
+            runId: null,
+            nodeId: null,
+            providerThreadId: null,
+            inheritedFrom: {
+              threadId: "child",
+              itemId: "original-handoff",
+              runId: "child-first-run",
+              status: "completed",
+            },
+            forkInitialization: {
+              transferId: "old-fork-transfer",
+              contextHandoffId: "context-1",
+              threadId: "child",
+              runId: "child-first-run",
+            },
+          }
+        : {}),
+      fromProviderThreadIds: [],
+      toProviderThreadId: "provider-1",
+      fromProviderInstanceIds: [],
+      toProviderInstanceId: "codex",
+      strategy: "full_thread_summary",
+    });
+    const transfer = decodeFeedTransfer({
+      id: "transfer-1",
+      type: kind === "provider_handoff" || kind === "merge_back" ? kind : "fork",
+      sourceThreadId: "source",
+      targetThreadId: threadId,
+      sourcePoint: { threadId: "source" },
+      basePoint: null,
+      sourceProviderInstanceId: "codex",
+      targetProviderInstanceId: "codex",
+      targetRunId: kind === "later-run" ? "later-run" : "fork-first-run",
+      status: "consumed",
+      resolution: { strategy: "portable_context", contextHandoffId: "context-1" },
+      createdBy: "user",
+      error: null,
+      createdAt: now,
+      updatedAt: now,
+      consumedAt: now,
+    });
+    const row = projected(
+      handoff,
+      2,
+      kind === "inherited" || kind === "proven-inherited" ? "inherited" : "local",
+    );
+    const initial = buildThreadFeed([row]);
+    expect(initial).toHaveLength(kind === "proven-inherited" ? 0 : 1);
+    const reloaded = buildThreadFeed([row], {
+      contextTransfers: kind === "missing" ? undefined : [transfer],
+    });
+    expect(reloaded).toHaveLength(kind === "fork" || kind === "proven-inherited" ? 0 : 1);
+    expect(row.item).toBe(handoff);
+    if (kind === "proven-inherited") {
+      const later = decodeBoundaryItem({
+        ...handoff,
+        id: "later-real-switch",
+        ordinal: 3,
+        contextHandoffId: "later-provider-context",
+        forkInitialization: undefined,
+        title: "Provider handoff",
+        toProviderInstanceId: "claudeAgent",
+        inheritedFrom: {
+          threadId: "child",
+          itemId: "later-real-switch",
+          runId: "child-second-run",
+          status: "completed",
+        },
       });
-      const transfer = decodeFeedTransfer({
-        id: "transfer-1",
-        type: kind === "provider_handoff" || kind === "merge_back" ? kind : "fork",
-        sourceThreadId: "source",
-        targetThreadId: threadId,
-        sourcePoint: { threadId: "source" },
-        basePoint: null,
-        sourceProviderInstanceId: "codex",
-        targetProviderInstanceId: "codex",
-        targetRunId: kind === "later-run" ? "later-run" : "fork-first-run",
-        status: "consumed",
-        resolution: { strategy: "portable_context", contextHandoffId: "context-1" },
-        createdBy: "user",
-        error: null,
-        createdAt: now,
-        updatedAt: now,
-        consumedAt: now,
+      const feed = buildThreadFeed([row, projected(later, 3, "inherited")]);
+      expect(feed).toHaveLength(1);
+      expect(feed[0]).toMatchObject({
+        type: "activity-group",
+        activities: [{ projectedItem: { item: later } }],
       });
-      const row = projected(handoff, 2, kind === "inherited" ? "inherited" : "local");
-      const initial = buildThreadFeed([row]);
-      expect(initial).toHaveLength(1);
-      const reloaded = buildThreadFeed([row], {
-        contextTransfers: kind === "missing" ? undefined : [transfer],
-      });
-      expect(reloaded).toHaveLength(kind === "fork" ? 0 : 1);
-      expect(row.item).toBe(handoff);
-    },
-  );
+    }
+  });
 });
 
 describe("buildThreadFeed", () => {

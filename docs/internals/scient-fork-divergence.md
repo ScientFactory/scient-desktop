@@ -22,7 +22,9 @@ one is active, otherwise it selects the latest completed assistant response.
 Every path opens one confirmation form. It proposes the server's next automatic
 fork title, which the user may replace. Leaving the proposal untouched keeps
 title allocation on the server, so concurrent forks still receive a
-collision-safe number. **New worktree** is off by default. Turning it on creates
+collision-safe number. The preview includes active and archived siblings in the
+origin project and uses captured fork lineage to recognize generated numbering.
+**New worktree** is off by default. Turning it on creates
 a dedicated Git worktree at the selected historical checkpoint, or a frozen
 current-file snapshot for a running-turn fork. It is available only when that
 baseline can be captured safely. Leaving it off

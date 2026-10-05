@@ -909,3 +909,86 @@ candidate. Aggregate attachment preflight, remaining core/provider composition,
 dependency-ordered cleanup, final documentation/catalog refresh, complete local
 gates/build/artifact checks and independent final review remain active. No whole
 alignment or manual-review readiness is inferred from these scoped results.
+
+### Repeated forks, archived routes, and remaining final gates
+
+Aggregate attachment preflight is integrated at
+`283cc1b56b1cef8704b9a16ed4461b6c1f3bd966`. Its root composition passes
+541 tests across 21 complete files, fresh web/mobile compilers, scoped style and
+strict original-base provenance. Admission covers compressed/native-picked and
+pasted attachments, retained queued references and background outbox uploads;
+recovery bytes remain preserved. Evidence is
+`root-attachment-delivery-adoption.json` and
+`root-attachment-composition-qualification-1791165296923253000.json` in the
+external alignment review directory. This is source qualification; unchanged
+process identities do not establish renderer quiescence or final device acceptance.
+
+The isolated composition `c60296de15f2a14ae412f11762c435ddab2b3b59`
+(tree `ba717d336cb4867470cf4319335b74d094acff49`) combines seventeen reviewed
+paths. Its production-config web run passes 333 tests across ten complete files.
+Another 181 tests across ten files are carried from unchanged server/shared/mobile
+source at `6d62e1abc1dec6774ac339eff1a03a9d3b82606d`; 514 unique cases across
+twenty files are represented, not freshly rerun. Web/client compilers are fresh;
+four other package compilers remain exact prior-source proofs. Formatting,
+whitespace and strict provenance pass. Lint retains one reproduced inherited
+dialog warning; compiler suggestions and renderer/act fixture warnings are
+recorded. The earlier web wrapper failed Babel resolution from root cwd; the
+corrected apps/web cwd passed without a source change. See
+`root-fork-archive-composition-qualified-c602.json` and
+`root-archived-route-independent-preservation-review-c602.md`.
+
+- Fork initialization carries optional inert original transfer/handoff/thread/run
+  provenance through V2 persistence and inherited history. Exact matching
+  initialization has no second handoff divider; genuine later switches remain
+  visible and backend context delivery remains intact. Two real registered
+  NativeSessionAdapterV2/Orchestrator/EventSink/SQLite cases cover child, grandchild
+  and great-grandchild, source deletion, rebuild and the next portable native
+  offer. The typed transport is controlled, not a vendor process/account. Older
+  already-copied rows with lost causal facts remain visible; the retained old
+  GRAND is not retroactively repaired. See
+  `fork-handoff-provenance-qualified-handoff.md`.
+- Title preview consumes the real shell's source lineage and existing same-scope
+  archive subscription. Untouched previews leave allocation to the server;
+  authored titles and accepted retries remain protected. Mounted fixtures prove
+  delayed archive data, not the actual archive subscription lifecycle. See
+  `fork-title-preview-qualified-handoff-283cc.md`.
+- Archived routes mount the existing detail consumer before an active-shell row
+  arrives. Explicit/canonical deletion controls cleanup; reserved drafts retain
+  their wait. Eight mounted route cases exercise actual shared atoms and HTTP/RPC
+  codecs, including tombstones, transient fallback and promotion identity. They
+  replace heavy ChatView presentation, not its complete behavior. See
+  `archived-route-qualified-handoff-283cc.md`.
+
+Delivery of this seventeen-path composition is **not performed**. Independent
+review found delivery Vite PID15693 on port5879 watching the actual checkout;
+source changes can HMR its renderer. Seven stable process identities and an
+unchanged backend entry are insufficient to authorize refresh over active work.
+The retained review apps remain untouched. See
+`root-fork-archive-delivery-independent-safety-review-c602.md`.
+
+Actual browser observations still belong to frozen
+`19efc756b53128a4b94dea5d011746b3ddc26d13`. The separately reviewed text-only
+multiwindow edit/Stop/reload/Stash sequence and generic-file edit sequence are
+bounded proofs: the latter retains exact 116-byte resource contents in the actual
+emitted SCIC, without a cancelled-source duplicate. They do not jointly prove
+multiwindow file editing or native Save. Its archived GRAND direct route remains
+blank and its inherited initialization remains visible; zero dividers in a blank
+view is no acceptance result. See
+`queue-two-window-edit-independent-evidence-audit-19ef.md`,
+`queue-file-edit-independent-evidence-review-19ef.md` and
+`fork-of-fork-browser-regression-19ef.md`.
+
+The full alignment still requires remaining core/provider composition and
+retirement, final-source documentation/catalog refresh, complete applicable
+checks/layout/build, current archive/helper/PDF-worker inspection, independent
+immutable review and actual repaired-app/manual acceptance. The scientific UI
+matrix covers Compute, documents/PDF, Sources, annotations, LaTeX, reader tabs,
+voice and analysis artifacts; it is prepared, not executed. Current native PDF
+Export/Cancel/Retry/Save, roster/runtime management, queue visual comparison and
+relevant installed-client/platform/vendor paths remain separate gates. Historical
+native PDF evidence and controlled peers do not close them. Final runner audit
+also requires explicit candidate identity, private environments, serialized
+admission and source-to-build-output attestation before fresh final execution.
+See `scientific-ui-acceptance-matrix-prepared-6d62.md` and
+`final-runner-readiness-audit-c602.md`. No full alignment or manual-review readiness
+is claimed by these scoped results.

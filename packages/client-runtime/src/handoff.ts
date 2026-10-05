@@ -6,6 +6,8 @@ import type {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 
+import { resolveForkInitialization } from "@t3tools/shared/orchestrationV2ForkInitialization";
+
 /**
  * The subset of a projection run that handoff rows read. Kept minimal so the
  * timeline can hold a content-stable snapshot: run status/timestamps churn on
@@ -70,22 +72,9 @@ export function isForkInitializationHandoff(
   row: OrchestrationV2ProjectedTurnItem,
   transfers: ReadonlyArray<OrchestrationV2ContextTransfer> | undefined,
 ): boolean {
-  const item = row.item;
-  if (
-    row.visibility !== "local" ||
-    item.type !== "handoff" ||
-    item.runId === null ||
-    item.inheritedFrom !== undefined
-  )
-    return false;
+  if (row.visibility === "synthetic") return false;
   return (
-    transfers?.some(
-      (transfer) =>
-        transfer.type === "fork" &&
-        transfer.targetThreadId === item.threadId &&
-        transfer.targetRunId === item.runId &&
-        transfer.resolution?.strategy === "portable_context" &&
-        transfer.resolution.contextHandoffId === item.contextHandoffId,
-    ) ?? false
+    resolveForkInitialization(row.item, row.visibility === "local" ? transfers : undefined) !==
+    undefined
   );
 }
