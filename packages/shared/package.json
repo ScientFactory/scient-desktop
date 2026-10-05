@@ -402,6 +402,10 @@
     "./scientCodexPolicy": {
       "types": "./src/scientCodexPolicy.ts",
       "import": "./src/scientCodexPolicy.ts"
+    },
+    "./diffCacheKey": {
+      "types": "./src/diffCacheKey.ts",
+      "import": "./src/diffCacheKey.ts"
     }
   },
   "scripts": {
