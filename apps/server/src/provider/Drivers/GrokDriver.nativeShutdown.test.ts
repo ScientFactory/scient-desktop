@@ -472,7 +472,7 @@ it.layer(testLayer)("Grok factory native shutdown", (it) => {
               expect.objectContaining({
                 mcpServers: [
                   expect.objectContaining({
-                    name: "t3-code",
+                    name: "scient",
                     env: expect.arrayContaining([
                       { name: "T3_ACP_MCP_ENDPOINT", value: bound.endpoint },
                       { name: "T3_ACP_MCP_AUTHORIZATION", value: bound.authorizationHeader },
