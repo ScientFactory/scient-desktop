@@ -1491,23 +1491,31 @@ export const layer: Layer.Layer<
         compact = false,
       ) =>
         Effect.gen(function* () {
+          const usesRuntimeInstruction = session.driver === "codex" && !compact;
+          let runtimeInstruction = usesRuntimeInstruction
+            ? preparedSkills.runtimeInstruction
+            : undefined;
           const validateCurrent = (text: string) =>
             Effect.fromResult(
               validateProviderCurrentInput({
                 text,
                 attachments: message.attachments,
                 attachmentsDir: serverConfig.attachmentsDir,
+                ...(runtimeInstruction === undefined ? {} : { runtimeInstruction }),
               }),
             );
-          let preparedUserText = userText;
+          let preparedUserText = usesRuntimeInstruction ? preparedSkills.baseText : userText;
           let currentInput = compact
             ? userText
             : yield* validateCurrent(preparedUserText).pipe(
                 Effect.catchTag("ProviderCurrentInputError", (cause) => {
                   const fallback = preparedSkills.textWithoutCatalogMarker;
                   if (fallback === undefined) return Effect.fail(cause);
-                  preparedUserText = fallback;
-                  return validateCurrent(fallback);
+                  preparedUserText = usesRuntimeInstruction ? preparedSkills.baseText : fallback;
+                  runtimeInstruction = usesRuntimeInstruction
+                    ? preparedSkills.runtimeInstructionWithoutCatalogMarker
+                    : undefined;
+                  return validateCurrent(preparedUserText);
                 }),
               );
           // A failed turn/start can leave the requested turn absent from
@@ -1610,8 +1618,11 @@ export const layer: Layer.Layer<
               Effect.gen(function* () {
                 const fallback = preparedSkills.textWithoutCatalogMarker;
                 if (fallback === undefined) return yield* cause;
-                currentInput = compact ? fallback : yield* validateCurrent(fallback);
-                preparedUserText = fallback;
+                preparedUserText = usesRuntimeInstruction ? preparedSkills.baseText : fallback;
+                runtimeInstruction = usesRuntimeInstruction
+                  ? preparedSkills.runtimeInstructionWithoutCatalogMarker
+                  : undefined;
+                currentInput = compact ? fallback : yield* validateCurrent(preparedUserText);
                 return yield* prepareDelivery();
               }),
             ),
@@ -1635,6 +1646,7 @@ export const layer: Layer.Layer<
             ...(noteContinuation ? promptedInput : turnInput),
             message: {
               ...turnInput.message,
+              ...(runtimeInstruction === undefined ? {} : { runtimeInstruction }),
               text:
                 context === ""
                   ? preparedUserText

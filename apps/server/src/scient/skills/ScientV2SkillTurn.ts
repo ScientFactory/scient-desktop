@@ -70,8 +70,12 @@ export const prepareScientV2SkillScope = Effect.fnUntraced(function* (input: {
     );
   const skillTurn = prepare(deliverable);
   const text = skillTurn.input ?? input.text;
-  const withoutCatalogMarker = prepare(false).input ?? input.text;
+  const withoutCatalog = prepare(false);
+  const withoutCatalogMarker = withoutCatalog.input ?? input.text;
   return {
+    baseText: input.text,
+    runtimeInstruction: skillTurn.runtimeInstruction,
+    runtimeInstructionWithoutCatalogMarker: withoutCatalog.runtimeInstruction,
     text,
     textWithoutCatalogMarker: text === withoutCatalogMarker ? undefined : withoutCatalogMarker,
     // Preparation is inert: shared context validation owns when this scope

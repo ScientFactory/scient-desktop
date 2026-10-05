@@ -69,6 +69,19 @@ describe("turn-local Scient skill routing", () => {
       prepareScientSkillTurn(wrapped, skills, releases, undefined, []).skillScope.skills,
     ).toEqual([automatic]);
   });
+  it("exposes only generated orientation separately from user-authored markers", () => {
+    const text = "[Scient selected skills for this turn:\nuser-authored $unknown\n]";
+    const prepared = prepareScientSkillTurn(text, skills, releases, mcpProjection, [explicit.name]);
+    expect(prepared.runtimeInstruction).toContain(`{"name":"${explicit.name}"}`);
+    expect(prepared.runtimeInstruction).not.toContain("user-authored");
+    expect(prepared.input).toBe(`${text}\n\n${prepared.runtimeInstruction}`);
+    expect(prepared.skillScope.skills).toEqual([explicit, automatic]);
+    const unselected = prepareScientSkillTurn(text, skills, releases);
+    expect(unselected.input).toBe(text);
+    expect(unselected.runtimeInstruction).toBeUndefined();
+    expect(unselected.skillScope.skills).toEqual([automatic]);
+  });
+
   it("never injects descriptions, including large multilingual metadata", () => {
     const longDescription = "מחקר 科学 🧪 ".repeat(200);
     const described = { ...automatic, description: longDescription };
