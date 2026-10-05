@@ -7,13 +7,6 @@ import {
   ChatGptHandoffState,
 } from "./providerSetup.ts";
 import * as Schema from "effect/Schema";
-import {
-  CustomModelSaveInput,
-  CustomModelRemoveInput,
-  CustomModelTestInput,
-  CustomModelsSettings,
-  CustomModelError,
-} from "./customModels.ts";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import {
@@ -424,6 +417,14 @@ import {
   WsServerCancelProviderRuntimeRpc,
 } from "./scient/providerConnectionRpcs.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient custom model RPCs.
+import {
+  SCIENT_CUSTOM_MODEL_WS_METHODS,
+  WsServerSaveCustomModelRpc,
+  WsServerRemoveCustomModelRpc,
+  WsServerTestCustomModelRpc,
+} from "./scient/customModelRpcs.ts";
+// SCIENT-FORK:END
 
 export const WS_METHODS = {
   // Project registry methods
@@ -551,9 +552,9 @@ export const WS_METHODS = {
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverRemoveKeybinding: "server.removeKeybinding",
   serverGetSettings: "server.getSettings",
-  serverSaveCustomModel: "server.saveCustomModel",
-  serverRemoveCustomModel: "server.removeCustomModel",
-  serverTestCustomModel: "server.testCustomModel",
+  // SCIENT-FORK:START — Scient custom model methods.
+  ...SCIENT_CUSTOM_MODEL_WS_METHODS,
+  // SCIENT-FORK:END
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverSearchAcpRegistry: "server.searchAcpRegistry",
@@ -826,17 +827,6 @@ const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });
 
-const WsServerSaveCustomModelRpc = Rpc.make(WS_METHODS.serverSaveCustomModel, {
-  payload: CustomModelSaveInput,
-  success: CustomModelsSettings,
-  error: Schema.Union([CustomModelError, EnvironmentAuthorizationError]),
-});
-const WsServerRemoveCustomModelRpc = Rpc.make(WS_METHODS.serverRemoveCustomModel, {
-  payload: CustomModelRemoveInput,
-  success: CustomModelsSettings,
-  error: Schema.Union([CustomModelError, EnvironmentAuthorizationError]),
-});
-
 const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
   payload: Schema.Struct({
     patch: ServerSettingsPatch,
@@ -844,11 +834,6 @@ const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
   }),
   success: ServerSettings,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
-});
-const WsServerTestCustomModelRpc = Rpc.make(WS_METHODS.serverTestCustomModel, {
-  payload: CustomModelTestInput,
-  success: Schema.Struct({ revision: Schema.Int }),
-  error: Schema.Union([CustomModelError, EnvironmentAuthorizationError]),
 });
 
 const WsVoiceCorrectTranscriptRpc = Rpc.make(WS_METHODS.voiceCorrectTranscript, {
