@@ -1455,7 +1455,3 @@ export interface LocalApi {
     setClientSettings: (settings: ClientSettings) => Promise<void>;
   };
 }
-
-// SCIENT-FORK:START — Scient keeps the environment-bound API surface in a Scient module.
-export type { EnvironmentApi } from "./scient/environmentApi.ts";
-// SCIENT-FORK:END
