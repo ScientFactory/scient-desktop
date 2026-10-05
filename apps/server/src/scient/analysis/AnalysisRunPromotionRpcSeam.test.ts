@@ -9,7 +9,10 @@ function source(relativePath: string): string {
 
 describe("analysis run promotion RPC seam", () => {
   it("keeps the command typed, authenticated as a write, and mounted through AnalysisService", () => {
-    const contracts = source("../../../../../packages/contracts/src/rpc.ts");
+    const contracts = [
+      source("../../../../../packages/contracts/src/rpc.ts"),
+      source("../../../../../packages/contracts/src/scient/scientificRpcs.ts"),
+    ].join("\n");
     expect(contracts).toContain('analysisPromoteRun: "analysis.promoteRun"');
     expect(contracts).toContain("WsAnalysisPromoteRunRpc");
 
