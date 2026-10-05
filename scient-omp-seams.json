@@ -117,6 +117,11 @@
       "path": "scripts/qualify-managed-runtime-catalog.ts",
       "anchor": "if (provider === \"omp\") await verifyRpc",
       "purpose": "Publish an Oh My Pi release only after the server's RPC qualification passes."
+    },
+    {
+      "path": "apps/web/src/scient/sessionLogic/providerOptions.ts",
+      "anchor": "ProviderDriverKind.make(\"omp\")",
+      "purpose": "List Oh My Pi in the model picker."
     }
   ],
   "upstreamMounts": [
@@ -209,11 +214,6 @@
       "path": "apps/web/src/components/settings/providerDriverMeta.ts",
       "anchor": "settingsSchema: OmpSettings",
       "purpose": "List Oh My Pi in provider settings."
-    },
-    {
-      "path": "apps/web/src/session-logic.ts",
-      "anchor": "ProviderDriverKind.make(\"omp\")",
-      "purpose": "List Oh My Pi in the model picker and project open-url activity."
     },
     {
       "path": "knip.jsonc",
