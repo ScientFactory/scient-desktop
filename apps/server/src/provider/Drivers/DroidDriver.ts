@@ -27,6 +27,7 @@ import { IdAllocatorV2 } from "../../orchestration-v2/IdAllocator.ts";
 import { ProviderContinuationRequests } from "../../orchestration-v2/ProviderContinuationRequests.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import { ProviderDriverError } from "../Errors.ts";
+import { makeNativeSessionShutdown } from "../NativeSessionShutdown.ts";
 import { makeDroidAdapter } from "../Layers/DroidAdapter.ts";
 import {
   buildInitialDroidProviderSnapshot,
@@ -253,34 +254,41 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
           Effect.suspend(() => status?.reportAccountRejected(message) ?? Effect.void),
       });
       const nativeLogger = yield* makeAcpNativeLoggerFactory();
-      const orchestrationAdapter = makeDroidAdapterV2({
-        instanceId,
-        settings: effectiveConfig,
-        environment: processEnv,
-        sensitiveEnvironmentValues,
-        makeRuntime: makeAcpRuntime,
-        childProcessSpawner: spawner,
-        crypto,
-        fileSystem,
-        serverConfig,
-        idAllocator: yield* IdAllocatorV2,
-        selfInvocation: yield* resolveSelfInvocation().pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderDriverError({
-                driver: DRIVER_KIND,
-                instanceId,
-                detail: "Could not resolve the Droid MCP bridge command.",
-                cause,
-              }),
+      const nativeSessions = yield* makeNativeSessionShutdown(
+        makeDroidAdapterV2({
+          instanceId,
+          settings: effectiveConfig,
+          environment: processEnv,
+          sensitiveEnvironmentValues,
+          makeRuntime: makeAcpRuntime,
+          childProcessSpawner: spawner,
+          crypto,
+          fileSystem,
+          serverConfig,
+          idAllocator: yield* IdAllocatorV2,
+          selfInvocation: yield* resolveSelfInvocation().pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderDriverError({
+                  driver: DRIVER_KIND,
+                  instanceId,
+                  detail: "Could not resolve the Droid MCP bridge command.",
+                  cause,
+                }),
+            ),
           ),
-        ),
-        continuationRequests: yield* ProviderContinuationRequests,
-        nativeLogging: (threadId) =>
-          nativeLogger({ provider: DRIVER_KIND, threadId, nativeEventLogger: eventLoggers.native }),
-        onAuthenticationRejected: (message) =>
-          Effect.suspend(() => status?.reportAccountRejected(message) ?? Effect.void),
-      });
+          continuationRequests: yield* ProviderContinuationRequests,
+          nativeLogging: (threadId) =>
+            nativeLogger({
+              provider: DRIVER_KIND,
+              threadId,
+              nativeEventLogger: eventLoggers.native,
+            }),
+          onAuthenticationRejected: (message) =>
+            Effect.suspend(() => status?.reportAccountRejected(message) ?? Effect.void),
+        }),
+      );
+      const orchestrationAdapter = nativeSessions.adapter;
       const textGeneration = yield* makeDroidTextGeneration(
         effectiveConfig,
         processEnv,
@@ -294,7 +302,7 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
               environment: processEnv,
               spawner,
             }),
-            adapter.stopAll(),
+            nativeSessions.closeSessions,
           );
 
       // A full probe: one Droid session shared by status, models and skills.

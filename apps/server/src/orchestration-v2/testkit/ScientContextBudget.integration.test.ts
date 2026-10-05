@@ -43,7 +43,7 @@ import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
 
 const instanceId = ProviderInstanceId.make("acp");
 const selection = { instanceId, model: "controlled-budget-model" };
-const currentInput = 'Keep this exact request: "🧪"\nDo not edit it.';
+const defaultCurrentInput = 'Keep this exact request: "🧪"\nDo not edit it.';
 const waitFor = Effect.fnUntraced(function* (
   threadId: ThreadId,
   predicate: (projection: OrchestrationV2ThreadProjection) => boolean,
@@ -69,6 +69,7 @@ const cases: ReadonlyArray<{
   readonly size: ForkContextHandoffSize;
   readonly historyBytes: number;
   readonly window: number;
+  readonly currentInput?: string;
   readonly override?: unknown;
   readonly path?:
     | "fork"
@@ -84,6 +85,25 @@ const cases: ReadonlyArray<{
   readonly refused?: boolean;
 }> = [
   { name: "standard", size: "standard", historyBytes: 150_000, window: 1_000_000, included: true },
+  {
+    name: "maximum-current-input-and-retained-history",
+    size: "standard",
+    historyBytes: 150_000,
+    currentInput: "u".repeat(120_000),
+    window: 1_000_000,
+    path: "fork",
+    included: true,
+  },
+  {
+    name: "mandatory-current-input-exhausts-handoff-window",
+    size: "standard",
+    historyBytes: 150_000,
+    currentInput: "u".repeat(120_000),
+    window: 56_000,
+    path: "fork",
+    included: false,
+    refused: true,
+  },
   {
     name: "large-fork",
     size: "large",
@@ -198,6 +218,7 @@ for (const test of cases) {
       Effect.scoped(
         Effect.gen(function* () {
           const name = `scient-budget-${test.name}`;
+          const currentInput = test.currentInput ?? defaultCurrentInput;
           const cwd = yield* checkpointWorkspace(name);
           const source = ThreadId.make(`${name}:source`);
           const forkPath = test.path === "fork" || test.path === "fork-switch";
@@ -216,6 +237,7 @@ for (const test of cases) {
             : selection;
           const historicalText = `WHOLE_HISTORY_START:${"x".repeat(test.historyBytes)}:WHOLE_HISTORY_END`;
           const offers: string[] = [];
+          const windowRequests: ModelSelection[] = [];
           let openings = 0;
           const opened = yield* Deferred.make<void>();
           const releaseOpen = yield* Deferred.make<void>();
@@ -284,6 +306,7 @@ for (const test of cases) {
                       ...runtime,
                       getModelContextWindow: (requested: ModelSelection) => {
                         assert.deepEqual(requested, { ...selection, instanceId: ownedInstance });
+                        windowRequests.push(requested);
                         return test.window;
                       },
                     })),
@@ -497,6 +520,16 @@ for (const test of cases) {
             );
             assert.ok(current?.type === "user_message");
             assert.equal(current.text, currentInput);
+            if (test.currentInput !== undefined) {
+              assert.isTrue(
+                windowRequests.some(
+                  (requested) =>
+                    requested.instanceId === targetSelection.instanceId &&
+                    requested.model === targetSelection.model,
+                ),
+                "The selected destination model supplies the composed-context allowance",
+              );
+            }
             if (!test.refused) {
               assert.equal(offers.length, 1);
               assert.isTrue(offers[0]!.endsWith(currentInput));
@@ -548,8 +581,25 @@ for (const test of cases) {
                 ?.history?.messages.find((message) => message.text === historicalText)?.text,
               scientPolicy ? historicalText : undefined,
             );
-            if (test.refused) assert.equal(offers.length, 0);
-            else {
+            if (test.refused) {
+              assert.equal(offers.length, 0);
+              const failure = settled.turnItems.find(
+                (item) => item.type === "error" && item.runId === settled.runs.at(-1)?.id,
+              );
+              assert.ok(failure?.type === "error");
+              assert.include(failure.failure.message, "Insufficient context allowance");
+              assert.isFalse(
+                handoff.delivery?.status === "inline" || handoff.delivery?.status === "injected",
+              );
+              assert.isFalse(
+                settled.providerTurns.some(
+                  (turn) =>
+                    turn.runAttemptId === settled.runs.at(-1)?.activeAttemptId &&
+                    (turn.nativeAcceptance === "accepted" || turn.acceptedAt !== undefined),
+                ),
+                "Mandatory context overflow cannot claim native acceptance",
+              );
+            } else {
               assert.equal(offers.length, 1);
               assert.isTrue(offers[0]!.endsWith(currentInput));
               assert.equal(offers[0]!.includes(historicalText), test.included);
