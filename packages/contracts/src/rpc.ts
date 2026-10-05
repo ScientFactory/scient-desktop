@@ -70,14 +70,6 @@ import {
   FilesystemBrowseError,
 } from "./filesystem.ts";
 import {
-  EnvironmentFileChangeEvent,
-  EnvironmentFileLinkResolution,
-  EnvironmentFileLinkResolveInput,
-  EnvironmentFilePrepareError,
-  EnvironmentFilePrepareInput,
-  EnvironmentFilePrepareResult,
-} from "./fileOpening.ts";
-import {
   AgentSessionImportInput,
   AgentSessionImportProjectChangedError,
   AgentSessionImportProjectNotFoundError,
@@ -425,6 +417,14 @@ import {
   WsServerTestCustomModelRpc,
 } from "./scient/customModelRpcs.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient file opening RPCs.
+import {
+  SCIENT_FILE_OPENING_WS_METHODS,
+  WsFilesystemPrepareFileOpenRpc,
+  WsFilesystemResolveFileLinkRpc,
+  WsFilesystemSubscribeFileChangesRpc,
+} from "./scient/fileOpeningRpcs.ts";
+// SCIENT-FORK:END
 
 export const WS_METHODS = {
   // Project registry methods
@@ -455,9 +455,9 @@ export const WS_METHODS = {
 
   // Filesystem methods
   filesystemBrowse: "filesystem.browse",
-  filesystemPrepareFileOpen: "filesystem.prepareFileOpen",
-  filesystemResolveFileLink: "filesystem.resolveFileLink",
-  filesystemSubscribeFileChanges: "filesystem.subscribeFileChanges",
+  // SCIENT-FORK:START — Scient file opening methods.
+  ...SCIENT_FILE_OPENING_WS_METHODS,
+  // SCIENT-FORK:END
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
   assetsCreateUrl: "assets.createUrl",
@@ -1328,25 +1328,6 @@ const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
   payload: FilesystemBrowseInput,
   success: FilesystemBrowseResult,
   error: Schema.Union([FilesystemBrowseError, EnvironmentAuthorizationError]),
-});
-
-const WsFilesystemPrepareFileOpenRpc = Rpc.make(WS_METHODS.filesystemPrepareFileOpen, {
-  payload: EnvironmentFilePrepareInput,
-  success: EnvironmentFilePrepareResult,
-  error: Schema.Union([EnvironmentFilePrepareError, EnvironmentAuthorizationError]),
-});
-
-const WsFilesystemResolveFileLinkRpc = Rpc.make(WS_METHODS.filesystemResolveFileLink, {
-  payload: EnvironmentFileLinkResolveInput,
-  success: EnvironmentFileLinkResolution,
-  error: Schema.Union([EnvironmentFilePrepareError, EnvironmentAuthorizationError]),
-});
-
-const WsFilesystemSubscribeFileChangesRpc = Rpc.make(WS_METHODS.filesystemSubscribeFileChanges, {
-  payload: EnvironmentFilePrepareInput,
-  success: EnvironmentFileChangeEvent,
-  error: Schema.Union([EnvironmentFilePrepareError, EnvironmentAuthorizationError]),
-  stream: true,
 });
 
 const WsAgentSessionsScanRpc = Rpc.make(WS_METHODS.agentSessionsScan, {
