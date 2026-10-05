@@ -1,0 +1,800 @@
+import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import { afterEach, describe, expect, it } from "vite-plus/test";
+
+import {
+  discoverProductionInputs,
+  PRODUCTION_ENTRIES,
+  NATIVE_SOURCE_EXTENSIONS,
+  formatReport,
+  inspectLivecode,
+  runLivecode,
+  runtimeImports,
+} from "./check-livecode.mjs";
+
+const directories = [];
+afterEach(() => {
+  for (const directory of directories.splice(0))
+    NodeFS.rmSync(directory, { recursive: true, force: true });
+});
+
+function fixture() {
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-livecode-test-"));
+  directories.push(root);
+  function write(path, content) {
+    NodeFS.mkdirSync(NodePath.dirname(NodePath.join(root, path)), { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(root, path),
+      typeof content === "string" ? content : JSON.stringify(content),
+    );
+  }
+  write("apps/server/src/main.ts", "export const main = true;");
+  const options = { root, entries: ["apps/server/src/main.ts"] };
+  const inspect = () => inspectLivecode(options);
+  const test = (name) =>
+    inspect().tests.find((entry) => entry.test === `apps/server/src/${name}.test.ts`);
+  return { root, write, options, inspect, test };
+}
+
+describe("runtime import syntax", () => {
+  it("follows runtime imports/re-exports/CommonJS, but excludes every type-only form", () => {
+    const result = runtimeImports(
+      "syntax.ts",
+      `
+      import './side-effect';
+      import {} from './empty';
+      import value, { type Shape, other } from './mixed';
+      import type { Erased } from './erased';
+      import { type AlsoErased } from './also-erased';
+      export type { Erased } from './export-erased';
+      export { type AlsoErased } from './named-erased';
+      export { value } from './exported';
+      export * from './star';
+      export * as ns from './namespace';
+      export {} from './empty-export';
+      type DynamicType = import('./dynamic-type').Shape;
+      import Alias = require('./equals');
+      import type TypeAlias = require('./type-equals');
+      declare module './ambient' { import Ambient from './ambient-import'; }
+      const comment = "import './fake-string'"; // import './fake-comment'
+      void import('./dynamic');
+      void import(\`./template\`);
+      const cjs = require('./cjs');
+    `,
+    );
+    expect(result.imports.map((entry) => entry.specifier)).toEqual([
+      "./side-effect",
+      "./empty",
+      "./mixed",
+      "./exported",
+      "./star",
+      "./namespace",
+      "./empty-export",
+      "./equals",
+      "./dynamic",
+      "./template",
+      "./cjs",
+    ]);
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it("reports computed imports and malformed source instead of silently losing edges", () => {
+    expect(
+      runtimeImports("dynamic.ts", "void import(variable); require(path);").diagnostics,
+    ).toHaveLength(2);
+    expect(
+      runtimeImports("invalid.ts", "import {").diagnostics.some((entry) => entry.kind === "error"),
+    ).toBe(true);
+  });
+});
+
+describe("production subject reachability", () => {
+  it("declares every current production HTML/build and file-routed marketing input", () => {
+    const inputs = discoverProductionInputs(NodePath.resolve(import.meta.dirname, ".."));
+    expect(inputs).toContain("apps/web/src/scient/documentPage/main.tsx");
+    expect(inputs.filter((input) => !PRODUCTION_ENTRIES.includes(input))).toEqual([]);
+  });
+
+  it("rejects newly added HTML inputs and marketing pages until their roots are declared", () => {
+    const f = fixture();
+    f.write(
+      "apps/web/vite.config.ts",
+      "export default { build: { rolldownOptions: { input: { main: new URL('./index.html', import.meta.url), document: new URL('./document.html', import.meta.url) } } } };",
+    );
+    f.write("apps/web/index.html", '<script type="module" src="/src/bootstrap.ts"></script>');
+    f.write("apps/web/document.html", '<script type="module" src="/src/document.ts"></script>');
+    f.write("apps/web/src/bootstrap.ts", "export const bootstrap = true;");
+    f.write("apps/web/src/document.ts", "import './readiness';");
+    f.write("apps/web/src/readiness.ts", "export const ready = true;");
+    f.write("apps/web/src/readiness.test.ts", "import './readiness';");
+    f.write("apps/marketing/src/pages/new.astro", "<p>New page</p>");
+    const entries = [...f.options.entries, ...discoverProductionInputs(f.root)];
+    expect(inspectLivecode({ root: f.root, entries }).tests[0].status).toBe("live");
+    expect(
+      f.inspect().diagnostics.filter((entry) => entry.message.includes("entry list")),
+    ).toHaveLength(3);
+    expect(runLivecode(["--strict"], f.options).exitCode).toBe(1);
+    f.write("apps/marketing/src/pages/another.astro", "<p>Another page</p>");
+    expect(
+      inspectLivecode({ root: f.root, entries }).diagnostics.some((entry) =>
+        entry.file.endsWith("another.astro"),
+      ),
+    ).toBe(true);
+  });
+
+  it("finds a dead subject even when its dependencies and test support are live", () => {
+    const f = fixture();
+    f.write("apps/server/src/main.ts", "import './support'; import type { Dead } from './Dead';");
+    f.write("apps/server/src/support.ts", "export const support = true;");
+    f.write("apps/server/src/Dead.ts", "import './support'; export interface Dead {}");
+    f.write("apps/server/src/Dead.regression.test.ts", "import './Dead'; import './support';");
+    expect(f.inspect().tests[0].status).toBe("mixed");
+    const result = inspectLivecode({
+      ...f.options,
+      supportMetadata: {
+        "apps/server/src/Dead.regression.test.ts": {
+          reason: "Fixture construction only",
+          modules: ["apps/server/src/support.ts"],
+        },
+      },
+    }).tests[0];
+    expect(result.status).toBe("dead");
+    expect(result.subjects).toEqual(["apps/server/src/Dead.ts"]);
+    expect(result.imports).toEqual(["apps/server/src/Dead.ts", "apps/server/src/support.ts"]);
+    expect(f.inspect().reachableFiles).not.toContain("apps/server/src/Dead.ts");
+  });
+
+  it("traverses cyclic test helpers, fixtures and other tests to the subject frontier", () => {
+    const f = fixture();
+    f.write("apps/server/src/dead.ts", "export const dead = true;");
+    f.write("apps/server/src/dead.test.ts", "import './helper';");
+    f.write(
+      "apps/server/src/helper.ts",
+      "import { expect } from 'vite-plus/test'; import './testkit/helper';",
+    );
+    f.write(
+      "apps/server/src/testkit/helper.ts",
+      "import './cycle'; import '../dead'; import '../other.test';",
+    );
+    f.write("apps/server/src/testkit/cycle.ts", "import './helper';");
+    f.write(
+      "apps/server/src/other.test.ts",
+      "import './sample.testFixtures'; import './sample.test-fixtures'; import './LiveTestHelpers';",
+    );
+    f.write("apps/server/src/sample.testFixtures.ts", "import './dead';");
+    f.write("apps/server/src/sample.test-fixtures.ts", "import './dead';");
+    f.write("apps/server/src/LiveTestHelpers.ts", "import './dead';");
+    expect(f.test("dead").subjects).toEqual(["apps/server/src/dead.ts"]);
+    expect(f.test("dead").status).toBe("dead");
+  });
+
+  it("follows repository helper conventions and keeps helpers in their own tests", () => {
+    const f = fixture();
+    f.write("apps/server/src/dead.ts", "export const dead = true;");
+    const helpers = [
+      "test-fixtures",
+      "mobileTheme.test-support",
+      "orchestrationV2TestFixtures",
+      "OrchestrationEngineHarness.integration",
+    ];
+    for (const helper of helpers) f.write(`apps/server/src/${helper}.ts`, "import './dead';");
+    f.write(
+      "apps/server/src/consumer.test.ts",
+      helpers.map((name) => `import './${name}';`).join("\n"),
+    );
+    expect(f.test("consumer").subjects).toEqual(["apps/server/src/dead.ts"]);
+    expect(f.test("consumer").subjectWitnesses["apps/server/src/dead.ts"]).toHaveLength(3);
+    f.write(
+      "apps/server/src/mobileTheme.test-support.ts",
+      "export const stylesheet = 'synthetic';",
+    );
+    f.write("apps/server/src/mobileTheme.test.ts", "import './mobileTheme.test-support';");
+    expect(f.test("mobileTheme").status).toBe("no-subject");
+    f.write("apps/server/src/hostProcess.ts", "export const host = true;");
+    f.write("apps/server/src/main.ts", "import './hostProcess';");
+    f.write(
+      "apps/server/src/testUtils/fakeCli.ts",
+      "import '../hostProcess'; export const writeFakeCli = () => true;",
+    );
+    f.write("apps/server/src/testUtils/fakeCli.test.ts", "import './fakeCli';");
+    f.write(
+      "apps/server/src/testUtils/weightedShardSequencer.ts",
+      "export const sequence = () => [];",
+    );
+    f.write(
+      "apps/server/src/testUtils/weightedShardSequencer.test.ts",
+      "import './weightedShardSequencer';",
+    );
+    const tests = f.inspect().tests.filter((test) => test.test.includes("testUtils/"));
+    expect(tests.map((test) => test.status)).toEqual(["dead", "dead"]);
+    expect(tests[0].subjects).toEqual(["apps/server/src/testUtils/fakeCli.ts"]);
+  });
+
+  it("attributes actual Vitest loads and partial mocks but excludes full substitutions", () => {
+    const f = fixture();
+    f.write("apps/server/src/real.ts", "export const real = true;");
+    const cases = {
+      full: "import './real'; vi.mock('./real', () => ({ real: false }));",
+      partial:
+        "vi.mock('./real', async (importOriginal) => ({ ...(await importOriginal<typeof import('./real')>()) }));",
+      actual:
+        "vi.mock('./real', () => ({})); await vi.importActual<typeof import('./real')>('./real');",
+      dynamicFull: "vi.mock(import('./real'), () => ({}));",
+      dynamicPartial: "vi.mock(import('./real'), async (original) => await original());",
+      alias: "import { vi as testApi } from 'vitest'; await testApi.importActual('./real');",
+      shadow:
+        "vi.mock('./real', (original) => { const wrap = (original) => original(); return {}; });",
+      typesOnly:
+        "vi.mock('./real', (original) => { type Shape = typeof import('./real'); return {}; });",
+    };
+    for (const [name, code] of Object.entries(cases))
+      f.write(`apps/server/src/${name}.test.ts`, code);
+    for (const name of ["partial", "actual", "dynamicPartial", "alias"])
+      expect(f.test(name).subjects).toEqual(["apps/server/src/real.ts"]);
+    for (const name of ["full", "dynamicFull", "shadow", "typesOnly"])
+      expect(f.test(name).status).toBe("no-subject");
+    expect(f.inspect().diagnostics).toEqual([]);
+  });
+
+  it("keeps real static subjects under non-hoisted doMock, including strict decisions", () => {
+    const f = fixture();
+    f.write("apps/server/src/main.ts", "import './live';");
+    f.write("apps/server/src/live.ts", "export const calculate = () => 1;");
+    f.write("apps/server/src/dead.ts", "export const calculate = () => 1;");
+    f.write("apps/server/src/deadFixture.ts", "export const fixture = true;");
+    f.write("apps/server/src/test-fixtures.ts", "import './deadFixture';");
+    f.write(
+      "apps/server/src/staticMixed.test.ts",
+      "import { calculate } from './live'; import './test-fixtures'; vi.doMock('./live', () => ({ calculate: () => 0 })); calculate();",
+    );
+    expect(f.test("staticMixed")).toMatchObject({
+      status: "mixed",
+      liveSubjects: ["apps/server/src/live.ts"],
+      deadSubjects: ["apps/server/src/deadFixture.ts"],
+    });
+    expect(runLivecode(["--strict"], f.options).exitCode).toBe(0);
+    f.write(
+      "apps/server/src/staticDead.test.ts",
+      "import { calculate } from './dead'; vi.doMock('./dead', () => ({ calculate: () => 0 })); calculate();",
+    );
+    expect(f.test("staticDead").status).toBe("dead");
+    expect(runLivecode(["--strict"], f.options).exitCode).toBe(1);
+    expect(f.inspect().diagnostics).toEqual([]);
+  });
+
+  it("retains possible real dynamic loads across doMock and doUnmock ordering", () => {
+    const f = fixture();
+    f.write("apps/server/src/real.ts", "export const calculate = () => 1;");
+    const cases = {
+      before: "await import('./real'); vi.doMock('./real', () => ({}));",
+      unmock: "vi.mock('./real', () => ({})); vi.doUnmock('./real'); await import('./real');",
+      after: "vi.doMock('./real', () => ({})); await import('./real');",
+      uncertain:
+        "vi.mock('./real', () => ({})); if (condition) vi.doUnmock('./real'); await import('./real');",
+      acrossFunctions:
+        "vi.mock('./real', () => ({})); const load = () => import('./real'); function reset() { vi.doUnmock('./real'); }",
+      full: "vi.mock('./real', () => ({})); await import('./real');",
+      partial: "vi.mock('./real', async (original) => ({ ...(await original()) }));",
+    };
+    for (const [name, code] of Object.entries(cases))
+      f.write(`apps/server/src/${name}.test.ts`, code);
+    for (const name of ["before", "unmock", "after", "uncertain", "acrossFunctions"]) {
+      expect(f.test(name).subjects).toEqual(["apps/server/src/real.ts"]);
+      expect(
+        f
+          .inspect()
+          .diagnostics.some(
+            (entry) =>
+              entry.file.endsWith(`/${name}.test.ts`) &&
+              entry.message.includes("Possible real dynamic import retained"),
+          ),
+      ).toBe(true);
+    }
+    expect(f.test("full").status).toBe("no-subject");
+    expect(f.test("partial").subjects).toEqual(["apps/server/src/real.ts"]);
+  });
+
+  it("honors actual production imports of test support and exposes that unusual edge", () => {
+    const f = fixture();
+    f.write("apps/server/src/main.ts", "import './dead.test';");
+    f.write("apps/server/src/dead.test.ts", "import './dead';");
+    f.write("apps/server/src/dead.ts", "export const dead = true;");
+    expect(f.test("dead").status).toBe("live");
+    expect(f.inspect().diagnostics[0].message).toContain("Production imports test support");
+  });
+
+  it("follows dynamic imports, runtime barrels, directory imports and built extensions", () => {
+    const f = fixture();
+    f.write(
+      "apps/server/src/main.ts",
+      "void import('./barrel.js'); require('./common.cjs'); import './routeTree.gen';",
+    );
+    f.write("apps/server/src/routeTree.gen.ts", "export const routes = true;");
+    f.write("apps/server/src/barrel.ts", "export * from './feature';");
+    f.write("apps/server/src/feature/index.ts", "export * from './live';");
+    f.write("apps/server/src/feature/live.ts", "export const live = true;");
+    f.write("apps/server/src/common.cts", "export const common = true;");
+    f.write("apps/server/src/live.test.ts", "import './feature/live'; import './common.cjs';");
+    expect(f.test("live").status).toBe("live");
+    expect(f.inspect().reachableFiles).toContain("apps/server/src/routeTree.gen.ts");
+    expect(f.inspect().diagnostics).toEqual([]);
+  });
+
+  it("distinguishes all-dead, mixed, all-live and no-runtime-subject tests", () => {
+    const f = fixture();
+    f.write("apps/server/src/main.ts", "import './used';");
+    f.write("apps/server/src/used.ts", "export const used = true;");
+    f.write("apps/server/src/unused.ts", "export interface Unused {}");
+    f.write("apps/server/src/allDead.test.ts", "import './unused';");
+    f.write("apps/server/src/mixed.test.ts", "import './unused'; import './used';");
+    f.write("apps/server/src/allLive.test.ts", "import './used';");
+    f.write(
+      "apps/server/src/noSubject.test.ts",
+      "import type { Unused } from './unused'; import { it } from 'vite-plus/test';",
+    );
+    expect(f.inspect().tests.map((test) => test.status)).toEqual([
+      "dead",
+      "live",
+      "mixed",
+      "no-subject",
+    ]);
+    expect(f.test("mixed").deadSubjects).toEqual(["apps/server/src/unused.ts"]);
+  });
+
+  it("still reports dead supporting imports when the conventionally named subject is live", () => {
+    const f = fixture();
+    f.write("apps/server/src/main.ts", "import './used';");
+    f.write("apps/server/src/used.ts", "export const used = true;");
+    f.write("apps/server/src/old-engine.ts", "export const engine = true;");
+    f.write("apps/server/src/used.test.ts", "import './used'; import './old-engine';");
+    expect(f.test("used")).toMatchObject({
+      status: "mixed",
+      subjects: ["apps/server/src/old-engine.ts", "apps/server/src/used.ts"],
+      deadSubjects: ["apps/server/src/old-engine.ts"],
+      deadImports: ["apps/server/src/old-engine.ts"],
+    });
+    expect(runLivecode(["--strict"], f.options).exitCode).toBe(0);
+    expect(formatReport(f.inspect())).toContain(
+      "unreachable subject: apps/server/src/old-engine.ts",
+    );
+  });
+
+  it("retains directly asserted live modules alongside a named offline corpus builder", () => {
+    const f = fixture();
+    f.write("apps/server/src/main.ts", "import './contract'; import './wireContract';");
+    f.write("apps/server/src/conformance.ts", "export const buildCorpus = () => []; ");
+    f.write("apps/server/src/contract.ts", "export const normalize = () => true;");
+    f.write("apps/server/src/wireContract.ts", "export const validate = () => true;");
+    f.write(
+      "apps/server/src/conformance.test.ts",
+      "import { buildCorpus } from './conformance'; import { normalize } from './contract'; import { validate } from './wireContract'; import { expect } from 'vite-plus/test'; expect(normalize()).toBe(true); expect(validate()).toBe(true); expect(buildCorpus()).toEqual([]);",
+    );
+    expect(f.test("conformance")).toMatchObject({
+      status: "mixed",
+      liveSubjects: ["apps/server/src/contract.ts", "apps/server/src/wireContract.ts"],
+      deadSubjects: ["apps/server/src/conformance.ts"],
+    });
+    expect(runLivecode(["--strict"], f.options).exitCode).toBe(0);
+  });
+
+  it("resolves inherited tsconfig path aliases and ignores data and external dependencies", () => {
+    const f = fixture();
+    f.write("tsconfig.base.json", {
+      compilerOptions: { paths: { "~/*": ["./apps/server/src/*"] } },
+    });
+    f.write("apps/server/tsconfig.json", { extends: "../../tsconfig.base.json" });
+    f.write(
+      "apps/server/src/main.ts",
+      "import '~/live'; import '~/icon.svg'; import 'node:fs'; import './node_modules/external.ts'; import './dead.ts?raw';",
+    );
+    f.write("apps/server/src/live.ts", "export const live = true;");
+    f.write("apps/server/src/dead.ts", "export const dead = true;");
+    f.write("apps/server/src/live.test.ts", "import '~/live';");
+    expect(f.test("live").status).toBe("live");
+    expect(f.inspect().reachableFiles).not.toContain("apps/server/src/dead.ts");
+    expect(f.inspect().diagnostics).toEqual([]);
+  });
+
+  it("resolves private package exports without treating unused or type-only exports as roots", () => {
+    const f = fixture();
+    f.write("packages/private/package.json", {
+      name: "@fixture/private",
+      private: true,
+      exports: {
+        "./live": { types: "./src/type-only.ts", import: "./src/live.ts" },
+        "./unused": "./src/unused.ts",
+      },
+    });
+    f.write("packages/private/src/type-only.ts", "export interface Shape {}");
+    f.write("packages/private/src/live.ts", "export const live = true;");
+    f.write("packages/private/src/unused.ts", "export const unused = true;");
+    f.write("apps/server/src/main.ts", "import '@fixture/private/live';");
+    f.write("apps/server/src/package.test.ts", "import '@fixture/private/unused';");
+    expect(f.test("package").status).toBe("dead");
+    expect(f.inspect().reachableFiles).toContain("packages/private/src/live.ts");
+    expect(f.inspect().reachableFiles).not.toContain("packages/private/src/type-only.ts");
+  });
+
+  it("seeds published runtime exports, wildcard exports and both runtime conditions", () => {
+    const f = fixture();
+    f.write("packages/public/package.json", {
+      name: "@fixture/public",
+      exports: {
+        ".": { types: "./src/types.ts", import: "./src/esm.ts", require: "./src/cjs.cts" },
+        "./feature/*": "./src/feature/*.ts",
+      },
+    });
+    for (const file of ["types.ts", "esm.ts", "cjs.cts", "feature/one.ts"])
+      f.write(`packages/public/src/${file}`, "export const value = true;");
+    f.write(
+      "apps/server/src/published.test.ts",
+      "import '@fixture/public'; import '@fixture/public/feature/one';",
+    );
+    expect(f.test("published").status).toBe("live");
+    expect(f.inspect().productionEntries).toContain("packages/public/src/cjs.cts");
+    expect(f.inspect().reachableFiles).not.toContain("packages/public/src/types.ts");
+  });
+
+  it("matches the pinned Expo native extensions and Metro winners without loading config", () => {
+    const mobileRequire = NodeModule.createRequire(
+      NodePath.resolve(import.meta.dirname, "../apps/mobile/package.json"),
+    );
+    const expoRequire = NodeModule.createRequire(mobileRequire.resolve("expo/metro-config"));
+    const metroRequire = NodeModule.createRequire(expoRequire.resolve("@expo/metro-config"));
+    const configDirectory = NodePath.dirname(metroRequire.resolve("@expo/config/package.json"));
+    const { getBareExtensions } = metroRequire(
+      NodePath.join(configDirectory, "build/paths/extensions.js"),
+    );
+    const sourceExts = [
+      ...getBareExtensions([], { isTS: true, isReact: true, isModern: true }),
+      "cjs",
+    ];
+    expect(NATIVE_SOURCE_EXTENSIONS).toEqual(sourceExts.map((extension) => `.${extension}`));
+    const configSource = NodeFS.readFileSync(
+      NodePath.resolve(import.meta.dirname, "../apps/mobile/metro.config.js"),
+      "utf8",
+    );
+    expect(configSource).not.toMatch(/\bsourceExts\s*:/u);
+    const { resolve } = metroRequire("metro-resolver");
+    const cases = [
+      { files: ["widget.mjs", "widget.js"], expected: ["widget.mjs"] },
+      { files: ["widget.mts", "widget.cts", "widget.astro", "widget.js"], expected: ["widget.js"] },
+      { files: ["widget.ts", "widget.tsx", "widget.mjs"], expected: ["widget.ts"] },
+      {
+        files: [
+          "widget.ios.mjs",
+          "widget.android.mjs",
+          "widget.native.mjs",
+          "widget.mjs",
+          "widget.js",
+        ],
+        expected: ["widget.android.mjs", "widget.ios.mjs"],
+      },
+      { files: ["widget.mjs", "widget/index.ts"], expected: ["widget.mjs"] },
+      { files: ["widget.json", "widget.cjs"], expected: [] },
+    ];
+    for (const { files, expected } of cases) {
+      const f = fixture();
+      f.write("apps/mobile/index.ts", "import './src/widget';");
+      for (const file of files)
+        f.write(
+          `apps/mobile/src/${file}`,
+          file.endsWith(".json") ? "{}" : "export const value = true;",
+        );
+      const winners = new Set();
+      for (const platform of ["ios", "android"]) {
+        const winner = resolve(
+          {
+            originModulePath: NodePath.join(f.root, "apps/mobile/index.ts"),
+            sourceExts,
+            preferNativePlatform: true,
+            assetExts: new Set(),
+            getPackageForModule: () => null,
+            fileSystemLookup(path) {
+              if (!NodeFS.existsSync(path)) return { exists: false };
+              return {
+                exists: true,
+                type: NodeFS.statSync(path).isDirectory() ? "d" : "f",
+                realPath: path,
+              };
+            },
+          },
+          "./src/widget",
+          platform,
+        ).filePath;
+        if (!winner.endsWith(".json"))
+          winners.add(NodePath.relative(NodePath.join(f.root, "apps/mobile/src"), winner));
+      }
+      expect([...winners].sort()).toEqual(expected);
+      const result = inspectLivecode({ root: f.root, entries: ["apps/mobile/index.ts"] });
+      expect(
+        result.reachableFiles
+          .filter((path) => path.includes("/widget"))
+          .map((path) => path.slice("apps/mobile/src/".length)),
+      ).toEqual(expected);
+      expect(result.diagnostics).toEqual([]);
+      if (expected.includes("widget.mjs") && files.includes("widget.js")) {
+        f.write("apps/mobile/src/winner.test.ts", "import './widget.mjs';");
+        f.write("apps/mobile/src/shadowed.test.ts", "import './widget.js';");
+        const tests = inspectLivecode({ root: f.root, entries: ["apps/mobile/index.ts"] }).tests;
+        expect(tests.find((test) => test.test.endsWith("/winner.test.ts")).status).toBe("live");
+        expect(tests.find((test) => test.test.endsWith("/shadowed.test.ts")).status).toBe("dead");
+      }
+    }
+  });
+
+  it("unions mobile native platforms rather than dropping platform-only subjects", () => {
+    const f = fixture();
+    f.write("apps/mobile/index.ts", "import './src/widget';");
+    for (const platform of ["ios", "android", "native"])
+      f.write(`apps/mobile/src/widget.${platform}.tsx`, "export const widget = true;");
+    f.write("apps/mobile/src/widget.test.ts", "import './widget';");
+    const result = inspectLivecode({ root: f.root, entries: ["apps/mobile/index.ts"] });
+    expect(result.tests[0].status).toBe("live");
+    expect(result.tests[0].subjects).toHaveLength(2);
+    expect(result.reachableFiles).not.toContain("apps/mobile/src/widget.native.tsx");
+  });
+
+  it("resolves mobile platform winners without retaining unused generic dependencies", () => {
+    const f = fixture();
+    f.write("apps/mobile/index.ts", "import './src/widget';");
+    f.write("apps/mobile/src/widget.tsx", "import './genericOnly';");
+    f.write("apps/mobile/src/widget.ios.tsx", "import './iosOnly';");
+    f.write("apps/mobile/src/widget.android.tsx", "export * from './widget.native';");
+    f.write("apps/mobile/src/widget.native.tsx", "import '@fixture/shared';");
+    for (const name of ["genericOnly", "iosOnly"])
+      f.write(`apps/mobile/src/${name}.ts`, "export const value = true;");
+    f.write("packages/native/package.json", {
+      name: "@fixture/shared",
+      private: true,
+      exports: "./src/index.ts",
+    });
+    f.write("packages/native/src/index.ts", "import './feature';");
+    f.write("packages/native/src/feature.ts", "export const generic = true;");
+    f.write("packages/native/src/feature.android.ts", "export const android = true;");
+    f.write("packages/native/src/feature.ios.ts", "export const ios = true;");
+    f.write("apps/mobile/src/generic.test.ts", "import './widget.tsx';");
+    const result = inspectLivecode({ root: f.root, entries: ["apps/mobile/index.ts"] });
+    expect(result.tests[0].status).toBe("dead");
+    expect(result.reachableFiles).not.toContain("apps/mobile/src/widget.tsx");
+    expect(result.reachableFiles).not.toContain("apps/mobile/src/genericOnly.ts");
+    expect(result.reachableFiles).toContain("apps/mobile/src/widget.native.tsx");
+    expect(result.reachableFiles).toContain("packages/native/src/feature.android.ts");
+    expect(result.reachableFiles).not.toContain("packages/native/src/feature.ios.ts");
+    expect(result.reachableFiles).not.toContain("packages/native/src/feature.ts");
+  });
+
+  it("selects one extension and file before directory, and validates inherited config errors", () => {
+    const f = fixture();
+    f.write("apps/server/src/main.ts", "import './widget';");
+    for (const name of ["widget.ts", "widget.tsx", "widget.js", "widget/index.ts"])
+      f.write(`apps/server/src/${name}`, "export const value = true;");
+    expect(f.inspect().reachableFiles.filter((file) => file.includes("widget"))).toEqual([
+      "apps/server/src/widget.ts",
+    ]);
+    f.write("apps/server/src/widget.test.ts", "import './widget.tsx';");
+    expect(f.test("widget").status).toBe("dead");
+    f.write("tsconfig.base.json", { compilerOptions: { target: "invalid-target" } });
+    f.write("apps/server/tsconfig.json", { extends: "../../tsconfig.base.json" });
+    expect(runLivecode(["--strict"], f.options).output).toContain("Invalid tsconfig");
+    expect(runLivecode(["--strict"], f.options).exitCode).toBe(1);
+    f.write("apps/server/tsconfig.json", { extends: "./missing-config.json" });
+    expect(runLivecode(["--strict"], f.options).output).toContain("missing-config.json");
+  });
+
+  it("honors blocked exact package subpaths and the most specific wildcard", () => {
+    const f = fixture();
+    f.write("packages/private/package.json", {
+      name: "@fixture/private",
+      private: true,
+      exports: {
+        "./*": "./src/*.ts",
+        "./feature/*": "./src/special/*.ts",
+        "./feature/blocked": null,
+      },
+    });
+    f.write("packages/private/src/special/one.ts", "export const value = true;");
+    f.write("packages/private/src/feature/one.ts", "export const unused = true;");
+    f.write("packages/private/src/special/blocked.ts", "export const blocked = true;");
+    f.write("apps/server/src/main.ts", "import '@fixture/private/feature/one';");
+    expect(f.inspect().reachableFiles).toContain("packages/private/src/special/one.ts");
+    expect(f.inspect().reachableFiles).not.toContain("packages/private/src/feature/one.ts");
+    f.write("apps/server/src/main.ts", "import '@fixture/private/feature/blocked';");
+    expect(runLivecode(["--strict"], f.options).exitCode).toBe(1);
+    expect(f.inspect().reachableFiles).not.toContain("packages/private/src/special/blocked.ts");
+  });
+
+  it("serializes published roots and parent witnesses independently of filesystem creation order", () => {
+    const a = fixture();
+    const b = fixture();
+    const files = [
+      ["packages/a/package.json", { name: "a", exports: "./src/index.ts" }],
+      ["packages/b/package.json", { name: "b", exports: "./src/index.ts" }],
+      ["packages/a/src/index.ts", "import 'b';"],
+      ["packages/b/src/index.ts", "export const value = true;"],
+      ["apps/server/src/subject.test.ts", "import 'b';"],
+    ];
+    for (const [path, code] of files) a.write(path, code);
+    for (const [path, code] of [...files].reverse()) b.write(path, code);
+    expect(JSON.stringify(a.inspect())).toBe(JSON.stringify(b.inspect()));
+  });
+
+  it("follows Astro frontmatter/client imports and executable URLs without treating URL existence checks as imports", () => {
+    const f = fixture();
+    f.write(
+      "apps/marketing/src/pages/index.astro",
+      `---\nimport '../server';\n---\n<h1>Hi</h1>\n<script>import '../client';</script>`,
+    );
+    f.write("apps/marketing/src/server.ts", "export const server = true;");
+    f.write("apps/marketing/src/client.ts", "export const client = true;");
+    f.write(
+      "apps/marketing/src/client.test.ts",
+      "import './client'; new URL('./missing.ts', import.meta.url);",
+    );
+    f.write("apps/server/src/main.ts", "new Worker(new URL('./worker.ts', import.meta.url));");
+    f.write("apps/server/src/worker.ts", "export const worker = true;");
+    const result = inspectLivecode({
+      root: f.root,
+      entries: [...f.options.entries, "apps/marketing/src/pages/index.astro"],
+    });
+    expect(result.reachableFiles).toEqual(
+      expect.arrayContaining([
+        "apps/marketing/src/server.ts",
+        "apps/marketing/src/client.ts",
+        "apps/server/src/worker.ts",
+      ]),
+    );
+    expect(result.tests[0].subjects).toEqual(["apps/marketing/src/client.ts"]);
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it("normalizes worker URLs and diagnoses missing execution inputs only when reached", () => {
+    const f = fixture();
+    f.write(
+      "apps/server/src/main.ts",
+      "const workerUrl = new URL('./worker.ts?worker#entry', import.meta.url); new Worker(workerUrl); new SharedWorker(new URL('./shared.ts#hash', import.meta.url));",
+    );
+    f.write("apps/server/src/worker.ts", "export const worker = true;");
+    f.write("apps/server/src/shared.ts", "export const shared = true;");
+    f.write("apps/server/src/dormant.ts", "new Worker(new URL('./missing.ts', import.meta.url));");
+    f.write(
+      "apps/server/src/existence.test.ts",
+      "new URL('./missing.ts?worker', import.meta.url);",
+    );
+    expect(f.inspect().reachableFiles).toEqual(
+      expect.arrayContaining(["apps/server/src/worker.ts", "apps/server/src/shared.ts"]),
+    );
+    expect(f.inspect().diagnostics).toEqual([]);
+    expect(f.test("existence").status).toBe("no-subject");
+    f.write(
+      "apps/server/src/main.ts",
+      "new Worker(new URL('./missing.ts?worker', import.meta.url));",
+    );
+    expect(runLivecode(["--strict"], f.options).exitCode).toBe(1);
+    expect(f.inspect().diagnostics[0].message).toContain("./missing.ts?worker");
+    expect(
+      runtimeImports("worker.ts", "new Worker(new URL(path, import.meta.url));").diagnostics[0]
+        .kind,
+    ).toBe("warning");
+  });
+
+  it("surfaces missing entry points and local edges for strict qualification", () => {
+    const f = fixture();
+    f.write("apps/server/src/main.ts", "import './missing';");
+    const result = runLivecode(["--strict"], {
+      root: f.root,
+      entries: [...f.options.entries, "apps/server/src/missing-entry.ts"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.report.diagnostics.map((entry) => entry.message)).toEqual([
+      "Unresolved local runtime import: ./missing",
+      "Missing production entry point",
+    ]);
+    expect(runLivecode([], f.options).exitCode).toBe(0);
+  });
+
+  it("keeps generated output, dependency copies and references out of the audit", () => {
+    const f = fixture();
+    f.write("apps/server/src/dead.ts", "export const dead = true;");
+    f.write("apps/server/src/dead.test.ts", "import './dead';");
+    for (const directory of [
+      "apps/server/dist",
+      "apps/server/node_modules",
+      "apps/marketing/.astro",
+      "apps/desktop/.electron-runtime",
+      "apps/server/.scient-next",
+      ".repos/reference",
+    ]) {
+      f.write(`${directory}/irrelevant.test.ts`, "import './missing';");
+    }
+    expect(f.inspect().summary).toMatchObject({ tests: 1, sourceFiles: 3, dead: 1 });
+    expect(f.inspect().diagnostics).toEqual([]);
+  });
+
+  it("supports reasoned exact-path allowlists without making the subject live", () => {
+    const f = fixture();
+    f.write("apps/server/src/dead.ts", "export const dead = true;");
+    f.write("apps/server/src/dead.test.ts", "import './dead';");
+    f.write("allowlist.json", [
+      {
+        test: "apps/server/src/dead.test.ts",
+        reason: "Retained migration utility, exercised by an offline operator.",
+      },
+    ]);
+    const result = runLivecode(["--strict", "--allowlist", "allowlist.json"], f.options);
+    expect(result.exitCode).toBe(0);
+    expect(result.report.summary).toMatchObject({ dead: 0, allowed: 1 });
+    expect(result.report.reachableFiles).not.toContain("apps/server/src/dead.ts");
+    expect(result.output).toContain("allowlisted: Retained migration utility");
+    f.write("allowlist.json", [{ test: "apps/server/src/dead.test.ts", reason: " " }]);
+    expect(runLivecode(["--strict", "--allowlist", "allowlist.json"], f.options).exitCode).toBe(1);
+    f.write("allowlist.json", [{ test: "deleted.test.ts", reason: "Old exemption" }]);
+    expect(runLivecode(["--allowlist", "allowlist.json"], f.options).output).toContain(
+      "missing test",
+    );
+  });
+
+  it("rejects duplicate allowlist entries instead of silently overriding review reasons", () => {
+    const f = fixture();
+    f.write("apps/server/src/dead.ts", "export const dead = true;");
+    f.write("apps/server/src/dead.test.ts", "import './dead';");
+    const entry = { test: "apps/server/src/dead.test.ts", reason: "Reviewed offline tool" };
+    f.write("allowlist.json", [entry, { ...entry, reason: "Second reason" }]);
+    const result = runLivecode(
+      ["--strict", "--format", "json", "--allowlist", "allowlist.json"],
+      f.options,
+    );
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.output).error).toContain("duplicate");
+  });
+
+  it("provides CLI help and actionable strict/configuration failure guidance", () => {
+    const f = fixture();
+    const help = runLivecode(["--strict", "--help"], { root: "unused" });
+    expect(help.exitCode).toBe(0);
+    expect(help.output).toContain("Usage: node scripts/check-livecode.mjs");
+    expect(help.output).toContain('"reason": "reviewed rationale"');
+    f.write("apps/server/src/dead.ts", "export const dead = true;");
+    f.write("apps/server/src/dead.test.ts", "import './dead';");
+    const failure = runLivecode(["--strict"], f.options);
+    expect(failure.exitCode).toBe(1);
+    expect(failure.output).toContain("Repair guidance:");
+    expect(failure.output).toContain("MIXED and NO-SUBJECT");
+    expect(failure.output).toContain("Do not add dummy imports");
+    expect(runLivecode([], f.options).output).not.toContain("Repair guidance:");
+    f.write("apps/server/src/main.ts", "import './missing';");
+    expect(runLivecode(["--strict"], f.options).output).toContain(
+      "Repair unresolved runtime imports",
+    );
+    const config = runLivecode(
+      ["--strict", "--format", "json", "--allowlist", "missing.json"],
+      f.options,
+    );
+    expect(config.exitCode).toBe(1);
+    expect(JSON.parse(config.output)).toMatchObject({
+      error: expect.any(String),
+      guidance: expect.any(Array),
+      usage: expect.any(String),
+    });
+    expect(runLivecode(["--allowlist", "missing.json"], f.options).output).toContain(
+      "Repair guidance:",
+    );
+  });
+
+  it("renders readable and JSON reports, failing only when strict was requested", () => {
+    const f = fixture();
+    f.write("apps/server/src/dead.ts", "export const dead = true;");
+    f.write("apps/server/src/dead.test.ts", "import './dead';");
+    const ordinary = runLivecode([], f.options);
+    expect(ordinary.exitCode).toBe(0);
+    expect(ordinary.output).toContain("DEAD apps/server/src/dead.test.ts");
+    const strict = runLivecode(["--strict", "--format", "json"], f.options);
+    expect(strict.exitCode).toBe(1);
+    expect(JSON.parse(strict.output)).toEqual(ordinary.report);
+    expect(formatReport(strict.report)).toBe(ordinary.output);
+    expect(runLivecode(["--format"], f.options).exitCode).toBe(0);
+    expect(runLivecode(["--strict", "--unknown"], f.options).exitCode).toBe(1);
+  });
+});
