@@ -404,18 +404,6 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
-import {
-  ProviderSkillManagementError,
-  ProviderSkillSetEnabledInput,
-  ProviderSkillSetEnabledResult,
-  ScientSkillDocument,
-  ScientSkillInventory,
-  ScientSkillListInput,
-  ScientSkillManagementError,
-  ScientSkillReadDocumentInput,
-  ScientSkillSetProjectPreferenceInput,
-  ScientSkillSetUserActivationInput,
-} from "./scientSkills.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
 // SCIENT-FORK:START — Scient analysis and compute RPCs.
 import {
@@ -424,6 +412,16 @@ import {
   WsAnalysisInspectRuntimesRpc,
   WsScientificRpcGroup,
 } from "./scient/scientificRpcs.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Scient skill RPCs.
+import {
+  SCIENT_SKILL_WS_METHODS,
+  WsSkillsListRpc,
+  WsSkillsReadDocumentRpc,
+  WsSkillsSetProjectPreferenceRpc,
+  WsSkillsSetUserActivationRpc,
+  WsProviderSkillsSetEnabledRpc,
+} from "./scient/skillRpcs.ts";
 // SCIENT-FORK:END
 
 export const WS_METHODS = {
@@ -446,12 +444,9 @@ export const WS_METHODS = {
   ...SCIENT_SCIENTIFIC_WS_METHODS,
   // SCIENT-FORK:END
 
-  // Scient-owned reusable skills
-  skillsList: "skills.list",
-  skillsReadDocument: "skills.readDocument",
-  skillsSetProjectPreference: "skills.setProjectPreference",
-  skillsSetUserActivation: "skills.setUserActivation",
-  providerSkillsSetEnabled: "providerSkills.setEnabled",
+  // SCIENT-FORK:START — Scient skill methods.
+  ...SCIENT_SKILL_WS_METHODS,
+  // SCIENT-FORK:END
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -908,36 +903,6 @@ const WsVoiceCorrectTranscriptRpc = Rpc.make(WS_METHODS.voiceCorrectTranscript, 
   payload: VoiceTranscriptCorrectionRequest,
   success: VoiceTranscriptCorrectionResult,
   error: Schema.Union([VoiceTranscriptCorrectionError, EnvironmentAuthorizationError]),
-});
-
-const WsSkillsListRpc = Rpc.make(WS_METHODS.skillsList, {
-  payload: ScientSkillListInput,
-  success: ScientSkillInventory,
-  error: Schema.Union([ScientSkillManagementError, EnvironmentAuthorizationError]),
-});
-
-const WsSkillsReadDocumentRpc = Rpc.make(WS_METHODS.skillsReadDocument, {
-  payload: ScientSkillReadDocumentInput,
-  success: ScientSkillDocument,
-  error: Schema.Union([ScientSkillManagementError, EnvironmentAuthorizationError]),
-});
-
-const WsSkillsSetProjectPreferenceRpc = Rpc.make(WS_METHODS.skillsSetProjectPreference, {
-  payload: ScientSkillSetProjectPreferenceInput,
-  success: ScientSkillInventory,
-  error: Schema.Union([ScientSkillManagementError, EnvironmentAuthorizationError]),
-});
-
-const WsSkillsSetUserActivationRpc = Rpc.make(WS_METHODS.skillsSetUserActivation, {
-  payload: ScientSkillSetUserActivationInput,
-  success: ScientSkillInventory,
-  error: Schema.Union([ScientSkillManagementError, EnvironmentAuthorizationError]),
-});
-
-const WsProviderSkillsSetEnabledRpc = Rpc.make(WS_METHODS.providerSkillsSetEnabled, {
-  payload: ProviderSkillSetEnabledInput,
-  success: ProviderSkillSetEnabledResult,
-  error: Schema.Union([ProviderSkillManagementError, EnvironmentAuthorizationError]),
 });
 
 const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
