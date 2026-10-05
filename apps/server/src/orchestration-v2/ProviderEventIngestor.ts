@@ -32,6 +32,10 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import { ProviderAdapterV2Event } from "./ProviderAdapter.ts";
 import { makeProviderFailureTurnItem } from "./ProviderFailure.ts";
+import {
+  AttachmentReservationReconciliation,
+  reconcileReservationsBestEffort,
+} from "./AttachmentReservationReconciliation.ts";
 
 export class ProviderEventNormalizeError extends Schema.TaggedError<ProviderEventNormalizeError>()(
   "ProviderEventNormalizeError",
@@ -259,6 +263,7 @@ export const layer: Layer.Layer<
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const analytics = yield* ProviderTurnAnalytics;
+    const reconciliation = yield* AttachmentReservationReconciliation;
     const completedTurnAnalytics = new Set<string>();
 
     const makeDomainEvent = (
@@ -561,6 +566,18 @@ export const layer: Layer.Layer<
             .pipe(Effect.mapError(mapWriteError));
           return result.storedEvents;
         }).pipe(
+          Effect.tap((storedEvents) =>
+            reconcileReservationsBestEffort(
+              storedEvents.flatMap(({ event }) =>
+                event.type === "message.updated"
+                  ? event.payload.attachments.map((a) => a.id)
+                  : event.type === "turn-item.updated" && event.payload.type === "assistant_message"
+                    ? (event.payload.attachments ?? []).map((a) => a.id)
+                    : [],
+              ),
+              reconciliation,
+            ),
+          ),
           Effect.tap((storedEvents) =>
             Effect.gen(function* () {
               if (storedEvents.length === 0 || input.event.type !== "provider_turn.updated") return;

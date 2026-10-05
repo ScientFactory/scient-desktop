@@ -14,7 +14,7 @@ import {
   resolveAttachmentPath,
 } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
-import { reserveAttachment } from "./AttachmentFileUse.ts";
+import { reserveAttachment, type AttachmentReservationOwner } from "./AttachmentFileUse.ts";
 
 export class AttachmentClaimError extends Schema.TaggedError<AttachmentClaimError>()(
   "AttachmentClaimError",
@@ -37,6 +37,9 @@ export interface ClaimedAttachments {
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly claimedPaths: ReadonlyArray<string>;
   readonly releasePins: Effect.Effect<void>;
+  readonly bindReceipt: (
+    owner: Extract<AttachmentReservationOwner, { kind: "command" }>,
+  ) => Effect.Effect<void, AttachmentClaimError>;
 }
 
 export function attachmentIsPendingUpload(attachment: ChatAttachment): boolean {
@@ -74,6 +77,7 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
         attachments: [],
         claimedPaths: [],
         releasePins: Effect.void,
+        bindReceipt: () => Effect.void,
       } satisfies ClaimedAttachments;
     if (
       new Set(input.attachments.map((attachment) => attachment.id)).size !==
@@ -87,6 +91,11 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
     const fileSystem = yield* FileSystem.FileSystem;
     const claimedPaths: string[] = [];
     const releases: Array<Effect.Effect<void>> = [];
+    const ready: Array<
+      (
+        owner: AttachmentReservationOwner,
+      ) => Effect.Effect<void, import("effect/PlatformError").PlatformError>
+    > = [];
     const releasePins = Effect.suspend(() =>
       Effect.forEach(releases, (release) => release, { discard: true }),
     );
@@ -97,6 +106,7 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
           if (!attachmentIsPendingUpload(attachment)) {
             const pin = yield* reserveAttachment(attachment);
             releases.push(pin.release);
+            ready.push(pin.ready);
             return attachment;
           }
           const claim = planAttachmentClaim({
@@ -114,6 +124,7 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
             { publication: true },
           );
           releases.push(pin.release);
+          ready.push(pin.ready);
           const info = yield* fileSystem.stat(claim.currentPath).pipe(
             Effect.mapError(
               (cause) =>
@@ -174,6 +185,26 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
         releaseClaimedAttachments(claimedPaths).pipe(Effect.andThen(releasePins)),
       ),
     );
-    return { attachments, claimedPaths, releasePins } satisfies ClaimedAttachments;
+    return {
+      attachments,
+      claimedPaths,
+      releasePins,
+      bindReceipt: (owner) =>
+        Effect.forEach(ready, (publish) => publish(owner), { discard: true }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new AttachmentClaimError({
+                message: "Could not record attachment receipt ownership.",
+                cause,
+              }),
+          ),
+          Effect.onError(() =>
+            releaseClaimedAttachments(claimedPaths).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.andThen(releasePins),
+            ),
+          ),
+        ),
+    } satisfies ClaimedAttachments;
   },
 );

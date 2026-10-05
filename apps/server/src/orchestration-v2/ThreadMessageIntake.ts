@@ -1,6 +1,6 @@
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { appendUserInputAttachmentPaths } from "../provider/userInputAttachments.ts";
-import type { ChatAttachment, OrchestrationV2Command } from "@t3tools/contracts";
+import { CommandId, type ChatAttachment, type OrchestrationV2Command } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
@@ -11,6 +11,7 @@ import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as AttachmentClaims from "./AttachmentClaims.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import { reconcileReservationsBestEffort } from "./AttachmentReservationReconciliation.ts";
 
 // These dispatcher failures occur in receipt validation or planning, before
 // commitCommand. Generic dispatch errors can follow a commit and remain uncertain.
@@ -115,6 +116,7 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
     // rollback boundary: any failure before dispatch removes every new copy.
     const claimedPaths: string[] = [];
     const pinReleases: Array<Effect.Effect<void>> = [];
+    const claims: AttachmentClaims.ClaimedAttachments[] = [];
     const releasePins = Effect.suspend(() =>
       Effect.forEach(pinReleases, (release) => release, { discard: true }),
     );
@@ -127,6 +129,7 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
         });
         claimedPaths.push(...claimed.claimedPaths);
         pinReleases.push(claimed.releasePins);
+        claims.push(claimed);
         Object.defineProperty(attachmentsByQuestionId, questionId, {
           value: claimed.attachments,
           enumerable: true,
@@ -141,6 +144,18 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
           (cause) => new AttachmentClaims.AttachmentClaimError({ message: cause.issue }),
         ),
       );
+      yield* Effect.forEach(
+        claims,
+        (claim) =>
+          claim.bindReceipt({
+            kind: "command",
+            threadId: command.threadId,
+            commandId: command.commandId,
+            commandType: command.type,
+            target: { type: "question", requestId: command.requestId },
+          }),
+        { discard: true },
+      );
       return { answers, attachmentsByQuestionId };
     }).pipe(
       Effect.onError(() =>
@@ -154,6 +169,11 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
         attachmentsByQuestionId: prepared.attachmentsByQuestionId,
       })
       .pipe(
+        Effect.onExit(() =>
+          reconcileReservationsBestEffort(
+            claims.flatMap((claim) => claim.attachments.map((a) => a.id)),
+          ),
+        ),
         Effect.tap((result) => {
           // A replayed receipt reports the first attempt's answer, so this
           // attempt's copies go unreferenced and are released. The resolved
@@ -197,6 +217,16 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
     threadId: command.threadId,
     attachments: command.attachments ?? [],
   });
+  yield* claimed.bindReceipt({
+    kind: "command",
+    threadId: command.threadId,
+    commandId: command.commandId,
+    commandType: command.type,
+    target:
+      command.type === "message.dispatch"
+        ? { type: "message", messageId: command.messageId }
+        : { type: "run", runId: command.runId },
+  });
   return yield* threads
     .dispatch({
       ...command,
@@ -212,6 +242,7 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
         : {}),
     })
     .pipe(
+      Effect.onExit(() => reconcileReservationsBestEffort(claimed.attachments.map((a) => a.id))),
       Effect.tap((result) =>
         releaseUnusedClaims(
           claimed.claimedPaths,
@@ -241,7 +272,15 @@ export const sendToThread = Effect.fn("ThreadMessageIntake.sendToThread")(functi
 ) {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const claimed = yield* AttachmentClaims.claimPendingAttachments(input);
+  yield* claimed.bindReceipt({
+    kind: "command",
+    threadId: input.threadId,
+    commandId: input.commandId,
+    commandType: "message.dispatch",
+    target: { type: "message", messageId: input.messageId },
+  });
   return yield* threads.sendToThread({ ...input, attachments: claimed.attachments }).pipe(
+    Effect.onExit(() => reconcileReservationsBestEffort(claimed.attachments.map((a) => a.id))),
     Effect.tap((result) =>
       releaseUnusedClaims(claimed.claimedPaths, result.message.attachments).pipe(
         Effect.andThen(claimed.releasePins),
@@ -289,6 +328,16 @@ export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(functi
     threadId: input.threadId,
     attachments: input.initialMessage.attachments,
   });
+  yield* claimed.bindReceipt({
+    kind: "command",
+    threadId: input.threadId,
+    commandId: CommandId.make(`${input.commandId}:initial-message`),
+    commandType: "message.dispatch",
+    target:
+      input.initialMessage.messageId === undefined
+        ? { type: "initial-message" }
+        : { type: "message", messageId: input.initialMessage.messageId },
+  });
   return yield* launches
     .launch({
       ...input,
@@ -307,6 +356,7 @@ export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(functi
       },
     })
     .pipe(
+      Effect.onExit(() => reconcileReservationsBestEffort(claimed.attachments.map((a) => a.id))),
       Effect.tap((result) =>
         releaseUnusedClaims(
           claimed.claimedPaths,

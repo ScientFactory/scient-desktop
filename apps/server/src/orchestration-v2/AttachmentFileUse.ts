@@ -2,7 +2,14 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import type { ChatAttachment } from "@t3tools/contracts";
+import {
+  ChatAttachment,
+  CommandId,
+  MessageId,
+  RunId,
+  RuntimeRequestId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -23,12 +30,62 @@ export class AttachmentFileUseError extends Schema.TaggedError<AttachmentFileUse
   { attachmentId: Schema.String, cause: Schema.optional(Schema.Defect()) },
 ) {}
 
-const reservationDirectory = (stateDir: string, id: string) =>
+export const reservationDirectory = (stateDir: string, id: string) =>
   NodePath.join(
     stateDir,
     "attachment-file-use",
     NodeCrypto.createHash("sha256").update(id.toLowerCase()).digest("hex"),
   );
+
+export const AttachmentReservationOwner = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("message-publication"),
+    threadId: ThreadId,
+    messageId: MessageId,
+  }),
+  Schema.Struct({ kind: Schema.Literal("generated-publication"), threadId: ThreadId }),
+  Schema.Struct({
+    kind: Schema.Literal("command"),
+    threadId: ThreadId,
+    commandId: CommandId,
+    commandType: Schema.Literals([
+      "message.dispatch",
+      "queued-run.edit",
+      "runtime-request.respond",
+      "legacy-queue.import",
+    ]),
+    target: Schema.Union([
+      Schema.Struct({ type: Schema.Literal("message"), messageId: MessageId }),
+      Schema.Struct({ type: Schema.Literal("run"), runId: RunId }),
+      Schema.Struct({ type: Schema.Literal("question"), requestId: RuntimeRequestId }),
+      Schema.Struct({ type: Schema.Literal("initial-message") }),
+    ]),
+  }),
+]);
+export type AttachmentReservationOwner = typeof AttachmentReservationOwner.Type;
+export const ReadyAttachmentReservation = Schema.Struct({
+  version: Schema.Literal(1),
+  attachment: ChatAttachment,
+  owner: AttachmentReservationOwner,
+});
+const encodeReservation = Schema.encodeSync(Schema.fromJsonString(ReadyAttachmentReservation));
+
+/** Publish reconciliation metadata only after this operation's actual reads/copies finish. */
+const readyReservation =
+  (
+    fs: FileSystem.FileSystem,
+    arbitration: Semaphore.Semaphore,
+    token: string,
+    attachment: ChatAttachment,
+  ) =>
+  (owner: AttachmentReservationOwner) =>
+    arbitration.withPermit(
+      Effect.gen(function* () {
+        const temporary = `${token}.ready`;
+        yield* fs.writeFileString(temporary, encodeReservation({ version: 1, attachment, owner }));
+        yield* fs.rename(temporary, token);
+      }).pipe(Effect.uninterruptible),
+    );
 
 /**
  * Reservations survive process loss. Only the operation's proven receipt or
@@ -41,7 +98,8 @@ export const reserveAttachment = Effect.fn("AttachmentFileUse.reserve")(function
 ) {
   // Historical opaque IDs cannot be selective-prune candidates. Preserve their
   // pass-through compatibility without inventing a managed ownership identity.
-  if (parseThreadSegmentFromAttachmentId(attachment.id) === null) return { release: Effect.void };
+  if (parseThreadSegmentFromAttachmentId(attachment.id) === null)
+    return { release: Effect.void, ready: (_owner: AttachmentReservationOwner) => Effect.void };
   const fs = yield* FileSystem.FileSystem;
   const config = yield* ServerConfig;
   const arbitration = yield* AttachmentFileArbitration;
@@ -74,6 +132,7 @@ export const reserveAttachment = Effect.fn("AttachmentFileUse.reserve")(function
       ),
     );
   return {
+    ready: readyReservation(fs, arbitration, token, attachment),
     release: arbitration
       .withPermit(fs.remove(token, { force: true }))
       .pipe(Effect.orDie, Effect.uninterruptible),
@@ -94,8 +153,8 @@ export const attachmentHasReservations = Effect.fn("AttachmentFileUse.hasReserva
   );
 });
 
-/** Promise publishers have no durable receipt owner; retain their reservation. */
-export const reserveUnreconciledPublication = (attachmentsDir: string, attachmentId: string) =>
+/** Each Promise publication retains its active token until all physical work finishes. */
+export const reserveGeneratedImagePublication = (attachmentsDir: string, attachmentId: string) =>
   Effect.runPromise(
     Effect.gen(function* () {
       const arbitration = yield* AttachmentFileArbitration;
@@ -113,5 +172,27 @@ export const reserveUnreconciledPublication = (attachmentsDir: string, attachmen
           }),
         )
         .pipe(Effect.uninterruptible);
+      return {
+        published: (attachment: ChatAttachment, threadId: ThreadId) =>
+          Effect.runPromise(
+            arbitration
+              .withPermit(
+                Effect.promise(async () => {
+                  const token = NodePath.join(directory, path);
+                  await NodeFSP.writeFile(
+                    `${token}.ready`,
+                    encodeReservation({
+                      version: 1,
+                      attachment,
+                      owner: { kind: "generated-publication", threadId },
+                    }),
+                    { flag: "wx" },
+                  );
+                  await NodeFSP.rename(`${token}.ready`, token);
+                }),
+              )
+              .pipe(Effect.uninterruptible),
+          ),
+      };
     }),
   );

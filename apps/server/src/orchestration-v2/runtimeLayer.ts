@@ -1,4 +1,5 @@
 import { layer as attachmentRollbackPruneLayer } from "./AttachmentRollbackPruneService.ts";
+import { layer as attachmentReconciliationLayer } from "./AttachmentReservationReconciliation.ts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
@@ -85,6 +86,9 @@ const storesLayer = Layer.mergeAll(
   effectOutboxLayer,
   turnItemPositionStoreLayer,
 );
+const attachmentReconciliationProvided = attachmentReconciliationLayer.pipe(
+  Layer.provide(storesLayer),
+);
 
 export const OrchestrationV2EventSinkLayerLive = eventSinkLayer.pipe(Layer.provide(storesLayer));
 const eventSinkProvided = OrchestrationV2EventSinkLayerLive;
@@ -107,7 +111,14 @@ export const ProjectServiceLayerLive = projectServiceLayer.pipe(
 );
 
 const providerEventIngestorProvided = providerEventIngestorLayer.pipe(
-  Layer.provide(Layer.mergeAll(eventSinkProvided, idAllocatorLayer, projectionStoreLayer)),
+  Layer.provide(
+    Layer.mergeAll(
+      eventSinkProvided,
+      idAllocatorLayer,
+      projectionStoreLayer,
+      attachmentReconciliationProvided,
+    ),
+  ),
 );
 
 const checkpointServiceProvided = checkpointServiceLayer.pipe(Layer.provide(idAllocatorLayer));
@@ -294,6 +305,7 @@ const effectExecutorProvided = effectExecutorLayer.pipe(
             projectionStoreLayer,
             threadCommandExecutorLayer,
             providerSessionManagerProvided,
+            attachmentReconciliationProvided,
           ),
         ),
       ),
@@ -325,6 +337,7 @@ const providerRuntimeRecoveryProvided = providerRuntimeRecoveryLayer.pipe(
 );
 
 export const OrchestrationV2LayerLive = Layer.mergeAll(
+  attachmentReconciliationProvided,
   conversationForkProvided,
   storesLayer,
   threadCommandExecutorLayer,

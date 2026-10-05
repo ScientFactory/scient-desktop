@@ -69,7 +69,7 @@ export const persistChatAttachments = Effect.fn("AttachmentPersistence.persistCh
         };
         // This API publishes before client admission. Keep its durable reservation
         // until an explicit receipt owner can reconcile the separate operation.
-        yield* reserveAttachment(persisted, { publication: true }).pipe(
+        const reservation = yield* reserveAttachment(persisted, { publication: true }).pipe(
           Effect.mapError(
             (cause) =>
               new PersistChatAttachmentsError({
@@ -118,6 +118,21 @@ export const persistChatAttachments = Effect.fn("AttachmentPersistence.persistCh
               }),
           ),
         );
+        yield* reservation
+          .ready({
+            kind: "message-publication",
+            threadId: input.threadId,
+            messageId: input.messageId,
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new PersistChatAttachmentsError({
+                  message: "Could not record attachment publication.",
+                  cause,
+                }),
+            ),
+          );
         return persisted;
       }),
       { concurrency: 2 },
