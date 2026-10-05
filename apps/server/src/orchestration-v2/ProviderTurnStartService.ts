@@ -1582,6 +1582,68 @@ export const layer: Layer.Layer<
               .map((turn) => turn.ordinal),
           ) + 1,
         shouldStartProviderTurn: runControls.shouldStartProviderTurn,
+        cancelBeforeProviderTurn: () =>
+          Effect.gen(function* () {
+            if (!(yield* runControls.hasUnpairedRunInterruptRequest())) return undefined;
+            const current = yield* projectionStore.getThreadRecords(input.threadId, [
+              "runs",
+              "attempts",
+              "nodes",
+              "providerThreads",
+              "providerTurns",
+            ]);
+            const previous = current.providerTurns.findLast(
+              (turn) => turn.providerThreadId === providerThread.id,
+            );
+            const previousAttempt = current.attempts.find(
+              (candidate) => candidate.id === previous?.runAttemptId,
+            );
+            const previousRun = current.runs.find(
+              (candidate) => candidate.id === previousAttempt?.runId,
+            );
+            const owner: EventSink.PendingStartOwner = {
+              threadId: input.threadId,
+              runId: run.id,
+              activeAttemptId: attempt.id,
+              rootNodeId: rootNode.id,
+              checkpointScopeId: checkpointScope.id,
+              runOrdinal: run.ordinal,
+              providerThread: runningProviderThread,
+              interruptRequestId: idAllocator.derive.runSignalTurnItem({
+                runId: run.id,
+                signal: "interrupt-request",
+              }),
+              interruptResultId: idAllocator.derive.runSignalTurnItem({
+                runId: run.id,
+                signal: "interrupt-result",
+              }),
+              ...(previous === undefined ||
+              previousAttempt === undefined ||
+              previousRun === undefined
+                ? {}
+                : {
+                    retainedTurn: {
+                      id: previous.id,
+                      attemptId: previousAttempt.id,
+                      runId: previousRun.id,
+                      runOrdinal: previousRun.ordinal,
+                    },
+                  }),
+            };
+            if (!EventSink.matchesPendingStartOwner(current, owner)) return undefined;
+            const live = yield* providerSessions.get(providerSessionId);
+            if (Option.isNone(live) || live.value !== session) return undefined;
+            if (owner.retainedTurn !== undefined) {
+              // The new turn was never offered. Stop retained work through its real
+              // previous native turn, preserving shared-session and receipt identity.
+              yield* session.interruptTurn({
+                providerThread: runningProviderThread,
+                providerTurnId: owner.retainedTurn.id,
+                requestRuntimeRestart: true,
+              });
+            }
+            return owner;
+          }),
         shouldFinalizeRun: runControls.shouldFinalizeRun,
         hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
         message: {
