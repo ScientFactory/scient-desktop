@@ -195,12 +195,113 @@ function validateBaseline(baseline, upstream, asOf, candidateEntries, cwd) {
   return result;
 }
 
+// Explicitly bounded formats, not an arbitrary unsupported-path allowance.
+const exceptionFormats = new Map([
+  [".md", "markdown"],
+  [".yaml", "yaml"],
+  [".yml", "yaml"],
+  [".sh", "shell"],
+  [".bash", "shell"],
+  [".css", "css"],
+  [".rs", "rust"],
+  [".xml", "xml"],
+]);
+
+function validateFormatExceptions(input, upstream, asOf, original, current, cwd) {
+  if (input === undefined) return new Map();
+  if (!date(asOf ?? ""))
+    throw new Error("Format exceptions require an explicit valid --as-of YYYY-MM-DD");
+  if (
+    !input ||
+    typeof input !== "object" ||
+    input.schemaVersion !== 1 ||
+    input.kind !== "reviewed-format-exceptions" ||
+    input.upstream !== upstream ||
+    !Array.isArray(input.entries)
+  )
+    throw new Error("Format exception schema/upstream mismatch");
+  const result = new Map();
+  for (const entry of input.entries) {
+    const before = original.get(entry.path),
+      after = current.get(entry.path);
+    if (
+      typeof entry.path !== "string" ||
+      result.has(entry.path) ||
+      exceptionFormats.get(NodePath.extname(entry.path)) !== entry.format ||
+      !entry.format ||
+      !before ||
+      !after ||
+      before.type !== "blob" ||
+      after.type !== "blob" ||
+      !["100644", "100755"].includes(before.mode) ||
+      !["100644", "100755"].includes(after.mode) ||
+      before.blob !== entry.upstreamBlob ||
+      after.blob !== entry.candidateBlob ||
+      before.mode !== entry.upstreamMode ||
+      after.mode !== entry.candidateMode ||
+      !/^[a-f0-9]{64}$/.test(entry.findingFingerprint ?? "")
+    )
+      throw new Error(
+        "Format exception needs an exact known regular format, blobs, modes and fingerprint",
+      );
+    if (
+      typeof entry.owner !== "string" ||
+      !entry.owner.trim() ||
+      typeof entry.reason !== "string" ||
+      !entry.reason.trim()
+    )
+      throw new Error("Format exception requires owner and reason");
+    if (!date(entry.expiresAt ?? "") || entry.expiresAt < asOf)
+      throw new Error("Invalid or expired format exception");
+    const record = entry.reviewRecord,
+      stored = current.get(record);
+    if (
+      typeof record !== "string" ||
+      !record.startsWith("docs/") ||
+      NodePath.posix.normalize(record) !== record ||
+      record.includes("\\") ||
+      !stored ||
+      stored.type !== "blob" ||
+      !["100644", "100755"].includes(stored.mode) ||
+      stored.blob !== entry.reviewBlob
+    )
+      throw new Error("Format exception needs its exact committed regular docs/ review blob");
+    const bytes = git(cwd, ["cat-file", "blob", stored.blob]);
+    if (bytes.includes(0) || !utf8(bytes).trim())
+      throw new Error("Format exception review must be nonempty UTF-8 text");
+    result.set(entry.path, entry);
+  }
+  return result;
+}
+
+function patchFor(cwd, upstreamTree, candidateTree, path) {
+  return utf8(
+    git(cwd, [
+      "-c",
+      "diff.algorithm=myers",
+      "-c",
+      "diff.indentHeuristic=false",
+      "diff",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--no-color",
+      "--no-renames",
+      "--unified=0",
+      upstreamTree,
+      candidateTree,
+      "--",
+      path,
+    ]),
+  );
+}
+
 /** Inventory all changed upstream paths; candidate-only files are listed without an origin claim. */
 export function inspectScientDivergence({
   cwd = process.cwd(),
   upstream,
   candidate,
   baseline,
+  formatExceptions,
   asOf,
 } = {}) {
   const report = {
@@ -240,6 +341,17 @@ export function inspectScientDivergence({
       }
     }
     const reviewed = validateBaseline(baseline, upstream, asOf, current, cwd);
+    const formats = validateFormatExceptions(
+      formatExceptions,
+      upstream,
+      asOf,
+      original,
+      current,
+      cwd,
+    );
+    if (formatExceptions !== undefined)
+      report.scope += "; exact reviewed-format exceptions do not add syntax/marker parsers";
+    const matchedFormats = new Set();
     const matched = new Set();
     for (const path of [...current.keys()].filter((path) => !original.has(path)).sort(order))
       report.candidateOnly.push(path);
@@ -258,12 +370,31 @@ export function inspectScientDivergence({
           JSON.stringify({ path, upstreamBlob: before.blob, kind, ...content }),
         );
         const review = !unresolved && reviewed.get(fingerprint);
+        const formatReview = kind === "unsupported-language" && formats.get(path);
+        if (formatReview && formatReview.findingFingerprint !== fingerprint)
+          throw new Error(`Stale format exception fingerprint: ${path}`);
+        if (formatReview) matchedFormats.add(path);
         if (review) matched.add(fingerprint);
         file.findings.push({
           kind,
           ...content,
           fingerprint,
-          disposition: unresolved ? "unresolved" : review ? "reviewed-historical-debt" : "new-debt",
+          disposition: formatReview
+            ? "reviewed-format-exception"
+            : unresolved
+              ? "unresolved"
+              : review
+                ? "reviewed-historical-debt"
+                : "new-debt",
+          ...(formatReview
+            ? {
+                formatException: {
+                  format: formatReview.format,
+                  parserLimit: `No AST comment/marker parser for ${formatReview.format}`,
+                  review: formatReview,
+                },
+              }
+            : {}),
           ...(review ? { review } : {}),
         });
       };
@@ -309,6 +440,12 @@ export function inspectScientDivergence({
       const parsed = commentIntervals(path, text);
       file.intervals = parsed.intervals;
       if (parsed.status !== "parsed") {
+        if (parsed.status === "unsupported-language" && formats.has(path)) {
+          // A format review cannot mask an unresolved/undecodable diff. Ordinary
+          // default reports keep their existing unsupported-language behavior.
+          if (!hunks(patchFor(cwd, upstreamTree, candidateTree, path)).length)
+            throw new Error(`Unresolved diff cannot receive a format exception: ${path}`);
+        }
         finding(
           parsed.status,
           { candidateBlob: after.blob, details: parsed.details ?? parsed.errors ?? [] },
@@ -320,24 +457,7 @@ export function inspectScientDivergence({
         finding("generated-content", { candidateBlob: after.blob });
         continue;
       }
-      const patch = utf8(
-        git(cwd, [
-          "-c",
-          "diff.algorithm=myers",
-          "-c",
-          "diff.indentHeuristic=false",
-          "diff",
-          "--no-ext-diff",
-          "--no-textconv",
-          "--no-color",
-          "--no-renames",
-          "--unified=0",
-          upstreamTree,
-          candidateTree,
-          "--",
-          path,
-        ]),
-      );
+      const patch = patchFor(cwd, upstreamTree, candidateTree, path);
       const changes = hunks(patch);
       if (!changes.length) {
         finding("unresolved-diff", { candidateBlob: after.blob }, true);
@@ -369,7 +489,17 @@ export function inspectScientDivergence({
       }
     }
     report.unmatchedBaseline = [...reviewed.keys()].filter((id) => !matched.has(id)).sort(order);
+    if (formatExceptions) {
+      report.unmatchedFormatExceptions = [...formats.keys()]
+        .filter((path) => !matchedFormats.has(path))
+        .sort(order);
+      if (report.unmatchedFormatExceptions.length)
+        throw new Error(
+          `Unmatched/nonwaivable format exceptions: ${report.unmatchedFormatExceptions.join(", ")}`,
+        );
+    }
     report.counts = { marked: 0, "new-debt": 0, "reviewed-historical-debt": 0, unresolved: 0 };
+    if (formatExceptions) report.counts["reviewed-format-exception"] = 0;
     for (const file of report.files)
       for (const item of file.findings) report.counts[item.disposition]++;
     report.ratchet =
@@ -403,12 +533,21 @@ if (invokedAsMain) {
     while (args.length) {
       const arg = args.shift();
       if (arg === "--ratchet") ratchet = true;
-      else if (["--upstream", "--candidate", "--baseline", "--as-of"].includes(arg) && args.length)
-        options[arg.slice(2).replace("as-of", "asOf")] = args.shift();
+      else if (
+        ["--upstream", "--candidate", "--baseline", "--format-exceptions", "--as-of"].includes(
+          arg,
+        ) &&
+        args.length
+      )
+        options[
+          arg.slice(2).replace("as-of", "asOf").replace("format-exceptions", "formatExceptions")
+        ] = args.shift();
       else throw new Error(`Unknown or incomplete option: ${arg}`);
     }
     if (options.baseline)
       options.baseline = JSON.parse(NodeFS.readFileSync(options.baseline, "utf8"));
+    if (options.formatExceptions)
+      options.formatExceptions = JSON.parse(NodeFS.readFileSync(options.formatExceptions, "utf8"));
     const report = inspectScientDivergence(options);
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     process.exitCode =
