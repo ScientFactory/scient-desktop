@@ -1,10 +1,10 @@
-// SCIENT-FORK:START — the local voice bridge lives in a Scient module.
-import type { DesktopVoiceBridge } from "./scient/desktopVoiceBridge.ts";
-// SCIENT-FORK:END
+// SCIENT-FORK:START — Scient desktop bridge members live in a Scient module.
 import type {
-  DesktopDocumentPageRenderInput,
-  DesktopDocumentPageRenderOutcome,
-} from "./scientDocumentExport.ts";
+  DesktopAssetCopyRequest,
+  DesktopAssetCopyResult,
+  ScientDesktopBridge,
+} from "./scient/desktopBridge.ts";
+// SCIENT-FORK:END
 import * as Schema from "effect/Schema";
 
 import {
@@ -37,21 +37,6 @@ import type {
   DesktopPreviewPdfExportArtifact,
 } from "./scient/desktopPreview.ts";
 // SCIENT-FORK:END
-// SCIENT-FORK:START — conversation files the OS opened with Scient.
-import type {
-  DesktopConversationFileReleaseRequest,
-  DesktopConversationFileUploadCancelRequest,
-  DesktopConversationFileUploadRequest,
-  DesktopConversationFileUploadResult,
-  DesktopOpenedConversationFile,
-} from "./scientConversationImport.ts";
-// SCIENT-FORK:END
-import {
-  AssetCopyRequest,
-  AssetCopyResult,
-  type AssetCopyRequest as AssetCopyRequestType,
-  type AssetCopyResult as AssetCopyResultType,
-} from "@scientfactory/document-artifacts";
 import type {
   DesktopAppActivationRequest,
   DesktopAppActivationResponse,
@@ -549,10 +534,13 @@ export const PickFolderOptionsSchema = Schema.Struct({
   targetEnvironmentId: Schema.optionalKey(Schema.String),
 });
 
-export const DesktopAssetCopyRequestSchema = AssetCopyRequest;
-export type DesktopAssetCopyRequest = AssetCopyRequestType;
-export const DesktopAssetCopyResultSchema = AssetCopyResult;
-export type DesktopAssetCopyResult = AssetCopyResultType;
+// SCIENT-FORK:START — Scient asset copy contracts live in scient/desktopBridge.ts.
+export {
+  DesktopAssetCopyRequestSchema,
+  DesktopAssetCopyResultSchema,
+} from "./scient/desktopBridge.ts";
+export type { DesktopAssetCopyRequest, DesktopAssetCopyResult };
+// SCIENT-FORK:END
 
 /**
  * A file returned by the desktop theme-file picker. Oversized files carry an
@@ -1185,24 +1173,8 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
 export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access", "microphone"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
-export interface DesktopBridge {
-  /** Scient: macOS conversations with unread completed answers; zero clears the badge. */
-  setUnreadAnswerCount?: (count: number) => Promise<boolean>;
-  // SCIENT-FORK:START — conversation files the OS opened with Scient.
-  /** Scient: removes and returns the `.scic` files opened with Scient that await import. */
-  takeOpenedConversationFiles?: () => Promise<ReadonlyArray<DesktopOpenedConversationFile>>;
-  /** Scient: called when the OS opens another `.scic` with Scient; then take them. */
-  onConversationFilesOpened?: (listener: () => void) => () => void;
-  /** Scient: streams an opened `.scic` to a signed import upload URL. */
-  uploadOpenedConversationFile?: (
-    request: DesktopConversationFileUploadRequest,
-  ) => Promise<DesktopConversationFileUploadResult>;
-  /** Scient: stops one upload attempt, or keeps it from starting; that attempt ends `cancelled`. */
-  cancelOpenedConversationFileUpload?: (
-    request: DesktopConversationFileUploadCancelRequest,
-  ) => Promise<void>;
-  /** Scient: gives up an opened `.scic`; its token then fails `file-unavailable`. */
-  releaseOpenedConversationFile?: (request: DesktopConversationFileReleaseRequest) => Promise<void>;
+// SCIENT-FORK:START — Scient members live in ScientDesktopBridge (scient/desktopBridge.ts).
+export interface DesktopBridge extends ScientDesktopBridge {
   // SCIENT-FORK:END
   getAppBranding: () => DesktopAppBranding | null;
   /** The desktop client's OS platform, read from Electron's preload process. */
@@ -1281,16 +1253,6 @@ export interface DesktopBridge {
   pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
   /** Optional while older desktop shells can host a newer web client. */
   pickProjectFavicon?: (initialPath?: string) => Promise<string | null>;
-  saveAssetCopy: (request: DesktopAssetCopyRequest) => Promise<DesktopAssetCopyResult>;
-  /** Optional while older desktop shells can host a newer web client. */
-  revealSavedAsset?: (path: string) => Promise<void>;
-  /**
-   * Print one captured Scient document page in a hidden, isolated window.
-   * Optional while older desktop shells can host a newer web client.
-   */
-  renderDocumentPagePdf?: (
-    input: DesktopDocumentPageRenderInput,
-  ) => Promise<DesktopDocumentPageRenderOutcome>;
   /**
    * Multi-select JSON file picker that opens in the VS Code extensions
    * directory when one exists. Optional: older desktop builds lack it, and
@@ -1300,8 +1262,6 @@ export interface DesktopBridge {
   /** Resolve the absolute path of an OS-dropped file or folder in Electron. */
   getPathForFile?: (file: File) => string | null;
   setTheme: (theme: DesktopTheme) => Promise<void>;
-  /** Write an already-encoded PNG image to the native system clipboard. */
-  copyPngToClipboard?: (png: Uint8Array) => Promise<void>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },
@@ -1325,10 +1285,6 @@ export interface DesktopBridge {
   /** Present when the desktop shell can perform an ordered plain-text paste. */
   pasteAsText?: () => Promise<void>;
   onMenuAction: (listener: (action: string) => void) => () => void;
-  /** Optional while older desktop shells can host a newer web client. */
-  reloadMainWindow?: (ignoreCache: boolean) => Promise<boolean>;
-  /** Optional while older desktop shells can host a newer web client. */
-  onReloadBlocked?: (listener: () => void) => () => void;
   onSnapShotEvent?: (listener: (event: DesktopSnapShotEvent) => void) => () => void;
   /**
    * Quit-confirmation hint pushes. Optional: older desktop builds never emit
@@ -1354,15 +1310,10 @@ export interface DesktopBridge {
    * Electron desktop build; web builds have `preview === undefined`.
    */
   preview?: DesktopPreviewBridge;
-  /**
-   * Desktop-only local voice transcription surface. Present iff the renderer is
-   * hosted by the Electron desktop build; web builds have `voice === undefined`.
-   */
-  voice?: DesktopVoiceBridge;
 }
 
 // SCIENT-FORK:START — the local voice bridge lives in scient/desktopVoiceBridge.ts.
-export type { DesktopVoiceBridge };
+export type { DesktopVoiceBridge } from "./scient/desktopVoiceBridge.ts";
 // SCIENT-FORK:END
 
 /** Renderer callback invoked by Electron with a fresh user gesture before display-media capture. */
