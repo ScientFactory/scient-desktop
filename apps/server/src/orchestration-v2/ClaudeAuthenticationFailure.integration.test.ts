@@ -180,9 +180,6 @@ for (const reason of [
             invalidations.set(instanceId, (invalidations.get(instanceId) ?? 0) + 1);
           }),
           orchestrationAdapter: adapter,
-          get adapter(): never {
-            throw new Error("Auth proof must use native V2 execution");
-          },
           get textGeneration(): never {
             throw new Error("Auth proof must not generate auxiliary text");
           },

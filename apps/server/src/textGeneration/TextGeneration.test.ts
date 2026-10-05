@@ -56,7 +56,6 @@ const makeStubInstance = (
     snapshot: options
       ? ({ getSnapshot: options.snapshot } as ProviderInstance["snapshot"])
       : ({} as ProviderInstance["snapshot"]),
-    adapter: {} as ProviderInstance["adapter"],
 
     orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
     textGeneration,

@@ -94,13 +94,6 @@ const providerInstance = {
   enabled: true,
   // No supportedRuntimeModes: every runtime mode runs as stored.
   snapshot: { getSnapshot: Effect.succeed({}) } as unknown as ProviderInstance["snapshot"],
-  adapter: new Proxy({} as ProviderInstance["adapter"], {
-    get: (_target, operation) => {
-      throw new Error(
-        `V2 fixtures must not execute the legacy adapter operation ${String(operation)}`,
-      );
-    },
-  }),
   orchestrationAdapter,
   textGeneration: {} as ProviderInstance["textGeneration"],
 } satisfies ProviderInstance;

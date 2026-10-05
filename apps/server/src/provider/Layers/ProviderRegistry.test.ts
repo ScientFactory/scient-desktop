@@ -1451,7 +1451,6 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
                 streamChanges: Stream.empty,
                 applyUsageLimits: () => Effect.void,
               },
-              adapter: {} as ProviderInstance["adapter"],
               orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
               textGeneration: {} as ProviderInstance["textGeneration"],
             } satisfies ProviderInstance;
@@ -1840,7 +1839,6 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
               streamChanges: Stream.empty,
               applyUsageLimits: () => Effect.void,
             },
-            adapter: {} as ProviderInstance["adapter"],
             orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
           } satisfies ProviderInstance;
@@ -1943,7 +1941,6 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
             },
             snapshotForCwd,
             invalidateCaches: Ref.update(cacheInvalidations, (count) => count + 1),
-            adapter: {} as ProviderInstance["adapter"],
             orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
           });
@@ -2187,7 +2184,6 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
                 streamChanges: Stream.empty,
                 applyUsageLimits: () => Effect.void,
               },
-              adapter: {} as ProviderInstance["adapter"],
               orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
               textGeneration: {} as ProviderInstance["textGeneration"],
             },
@@ -2215,7 +2211,6 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
                 streamChanges: Stream.empty,
                 applyUsageLimits: () => Effect.void,
               },
-              adapter: {} as ProviderInstance["adapter"],
               orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
               textGeneration: {} as ProviderInstance["textGeneration"],
             },
@@ -2407,7 +2402,6 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
               streamChanges: Stream.fromPubSub(changes),
               applyUsageLimits: () => Effect.void,
             },
-            adapter: {} as ProviderInstance["adapter"],
             orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
           } satisfies ProviderInstance;
@@ -2558,7 +2552,6 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
               refresh: Effect.never,
               streamChanges: Stream.fromPubSub(sourceChanges),
             },
-            adapter: {} as ProviderInstance["adapter"],
             orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
           } satisfies ProviderInstance;
@@ -2717,7 +2710,6 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
                 streamChanges: Stream.fromPubSub(changes),
                 applyUsageLimits: () => Effect.void,
               },
-              adapter: {} as ProviderInstance["adapter"],
               orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
               textGeneration: {} as ProviderInstance["textGeneration"],
             } satisfies ProviderInstance;
@@ -2819,7 +2811,6 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
               streamChanges: Stream.empty,
               applyUsageLimits: () => Effect.void,
             },
-            adapter: {} as ProviderInstance["adapter"],
             orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
           } satisfies ProviderInstance;
@@ -2947,7 +2938,6 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
               streamChanges: Stream.empty,
               applyUsageLimits: () => Effect.void,
             },
-            adapter: {} as ProviderInstance["adapter"],
             orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
           });

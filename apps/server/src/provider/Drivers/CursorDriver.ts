@@ -42,7 +42,6 @@ import {
   makeCursorCommandCatalog,
 } from "../Layers/CursorProvider.ts";
 import * as CursorSdkCatalog from "../Layers/CursorSdkCatalog.ts";
-import { makeCursorAdapter } from "../Layers/CursorAdapter.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -309,11 +308,6 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         auth.requireApiKey,
         auth.withAccess,
       );
-      const adapter = yield* makeCursorAdapter(effectiveConfig, {
-        instanceId,
-        environment: effectiveProcessEnv,
-      });
-
       // A skill scan cannot make the provider itself unusable. Before the first
       // complete scan there is no catalog to preserve; retry on refresh.
       const readMachineSkills = (yield* makeCursorMachineSkillCatalog(effectiveProcessEnv).pipe(
@@ -419,7 +413,6 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
                 ),
                 Effect.flatMap((skills) => snapshotForCwd(cwd, skills)),
               ),
-        adapter,
         orchestrationAdapter,
         textGeneration,
         managedRuntimeActions: managedRuntime.actions,

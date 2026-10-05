@@ -34,14 +34,12 @@ import { makeCodexTextGeneration } from "../../textGeneration/CodexTextGeneratio
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
-import * as ProviderEventLoggers from "../Layers/ProviderEventLoggers.ts";
 import {
   createCodexAdapterV2,
   type CodexAdapterV2DriverEnv,
 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";
 import { resolveCodexLaunchArgs } from "../Layers/codexLaunchArgs.ts";
 
 import * as ResetCreditCoordinator from "../Layers/resetCreditCoordinator.ts";
@@ -128,7 +126,6 @@ export type CodexDriverEnv =
   | HttpClient.HttpClient
   | ModelManifest.ModelManifest
   | Path.Path
-  | ProviderEventLoggers.ProviderEventLoggers
   | ServerConfig.ServerConfig
   | ServerSettings.ServerSettingsService
   | ServerSecretStore.ServerSecretStore
@@ -188,10 +185,6 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       const pathService = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
-      // SCIENT-FORK:START — native event logging shared with retained library clients.
-      // Production execution is owned by CodexAdapterV2.
-      const eventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
-      // SCIENT-FORK:END
       const modelManifest = yield* ModelManifest.ModelManifest;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const homeLayout = yield* resolveCodexHomeLayout(config);
@@ -361,15 +354,6 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
             }),
         ),
       );
-      // SCIENT-FORK:START — retained library compatibility, scoped to this instance.
-      // The registry exposes orchestrationAdapter to the V2 execution runtime.
-      const adapter = yield* makeCodexAdapter(effectiveConfig, {
-        instanceId,
-        environment: processEnv,
-        models: snapshot.getSnapshot.pipe(Effect.map((value) => value.models)),
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-      });
-      // SCIENT-FORK:END
       const textGeneration = yield* makeCodexTextGeneration(
         effectiveConfig,
         processEnv,
@@ -480,9 +464,6 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         snapshotForCwd,
         consumeResetCredit,
         orchestrationAdapter,
-        // SCIENT-FORK:START — retained library adapter compatibility.
-        adapter,
-        // SCIENT-FORK:END
         textGeneration,
         voiceTranscriptCorrection,
         connectionActions,

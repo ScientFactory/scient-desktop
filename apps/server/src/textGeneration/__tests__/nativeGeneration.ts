@@ -58,7 +58,6 @@ export const makeNativeTextGeneration = (
         skills: [],
       }),
     },
-    adapter: {} as ProviderInstance["adapter"],
     orchestrationAdapter: {
       instanceId,
       driver: ProviderDriverKind.make(driver),

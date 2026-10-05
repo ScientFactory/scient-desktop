@@ -60,11 +60,6 @@ import { makeAntigravityAdapterV2 } from "../../orchestration-v2/Adapters/Antigr
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { deriveProviderInstanceConfigMap } from "../Layers/ProviderInstanceRegistryHydration.ts";
-import { makeAntigravityAdapter } from "../Layers/AntigravityAdapter.ts";
-import {
-  makeAntigravityCompatibilityAdapter,
-  mapLegacyAntigravityCreationError,
-} from "../Layers/AntigravityCompatibilityAdapter.ts";
 import * as ProviderEventLoggers from "../Layers/ProviderEventLoggers.ts";
 import { makeAntigravityProvider } from "../Layers/AntigravityProvider.ts";
 import * as ModelManifest from "../ModelManifest.ts";
@@ -149,7 +144,6 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
       const serverSettings = yield* ServerSettings.ServerSettingsService;
-      const legacyContext = yield* Effect.context<LegacyAntigravityDriverEnv | Scope.Scope>();
       const auth: AntigravityAuthConfig = {
         authMethod: settings.authMethod,
         apiKey: settings.apiKey,
@@ -543,25 +537,6 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
             threadId,
           }),
       });
-      const acpAdapter = yield* makeAntigravityAdapter(settings, {
-        instanceId,
-        makeRuntime,
-        withProcess: authFlow.withProcess,
-        defaultModel,
-        onSessionStarted: provider.onSessionStarted,
-        onConfigOptionsUpdated: provider.onConfigOptionsUpdated,
-        onAvailableCommands: provider.onAvailableCommands,
-        onAuthRequired: provider.onAuthRequired,
-        ...(loggers.native ? { nativeEventLogger: loggers.native } : {}),
-      });
-      const legacyInstance = LegacyAntigravityDriver.create(createInput).pipe(
-        Effect.provide(legacyContext),
-        Effect.mapError(mapLegacyAntigravityCreationError),
-      );
-      const adapter = yield* makeAntigravityCompatibilityAdapter({
-        acp: acpAdapter,
-        makeLegacy: legacyInstance.pipe(Effect.map((instance) => instance.adapter)),
-      });
       const generation = yield* makeAntigravityGeneration({
         profileDirectory,
         defaultModel,
@@ -679,7 +654,6 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
                     }),
                 ),
               ),
-        adapter,
         orchestrationAdapter,
         textGeneration: generation.textGeneration,
         voiceTranscriptCorrection,

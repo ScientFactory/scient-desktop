@@ -19,7 +19,6 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
@@ -30,11 +29,7 @@ import {
 } from "../../orchestration-v2/Adapters/AcpRegistryAdapterV2.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import type { TextGeneration } from "../../textGeneration/TextGeneration.ts";
-import {
-  ProviderAdapterValidationError,
-  ProviderDriverError,
-  type ProviderAdapterError,
-} from "../Errors.ts";
+import { ProviderDriverError } from "../Errors.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import { makeAcpRegistryManagedRuntimeActions } from "../../scient/providerLifecycle/AcpRegistryManagedRuntimeActions.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
@@ -45,7 +40,6 @@ import {
 } from "../ProviderDriver.ts";
 import { providerModelsFromSettings } from "../providerSnapshot.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
-import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import {
   haveProviderSnapshotSettingsChanged,
   makeProviderSnapshotSettingsSource,
@@ -97,54 +91,6 @@ const makeUnsupportedTextGeneration = (): TextGeneration["Service"] => {
     generateThreadTitle: () => unsupported("generateThreadTitle"),
   };
 };
-
-/**
- * SCIENT-FORK:START — the v1 turn path has no ACP Registry implementation.
- *
- * Upstream deleted the v1 provider turn engine outright, so it never shipped
- * a `ProviderAdapterShape` for the ACP Registry provider it introduced. The
- * fork still routes turns through `Layers/ProviderService.ts`, and
- * `ProviderInstance` carries both adapter shapes, so this driver has to
- * declare one for v1.
- *
- * Rather than cast or fabricate a working adapter, this states the gap
- * explicitly: every operation that would drive an ACP Registry session fails
- * with a real `ProviderAdapterValidationError`, and the read-only operations
- * report the truth (no sessions, nothing to stop, no events). This mirrors
- * `makeUnsupportedTextGeneration` above — the same "this provider does not
- * serve this surface" contract, expressed in the v1 error channel.
- */
-const makeUnsupportedTurnAdapter = (): ProviderAdapterShape<ProviderAdapterError> => {
-  const unsupported = (operation: string) =>
-    Effect.fail(
-      new ProviderAdapterValidationError({
-        provider: DRIVER_KIND,
-        operation,
-        issue:
-          "ACP Registry sessions run through the orchestration-v2 engine and are not reachable from the v1 turn path.",
-      }),
-    );
-  return {
-    provider: DRIVER_KIND,
-    capabilities: {
-      sessionModelSwitch: "unsupported",
-      supportsConversationRollback: false,
-    },
-    startSession: () => unsupported("startSession"),
-    sendTurn: () => unsupported("sendTurn"),
-    interruptTurn: () => unsupported("interruptTurn"),
-    respondToRequest: () => unsupported("respondToRequest"),
-    respondToUserInput: () => unsupported("respondToUserInput"),
-    stopSession: () => unsupported("stopSession"),
-    readThread: () => unsupported("readThread"),
-    rollbackThread: () => unsupported("rollbackThread"),
-    listSessions: () => Effect.succeed([]),
-    hasSession: () => Effect.succeed(false),
-    stopAll: () => Effect.void,
-    streamEvents: Stream.empty,
-  };
-};
-// SCIENT-FORK:END
 
 function modelsFromDiscovery(
   discovery:
@@ -875,7 +821,6 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             Effect.tap(() => controller.refreshMethods ?? Effect.void),
           ),
         },
-        adapter: makeUnsupportedTurnAdapter(),
         orchestrationAdapter,
         textGeneration: makeUnsupportedTextGeneration(),
         acpSessionManagement: {
