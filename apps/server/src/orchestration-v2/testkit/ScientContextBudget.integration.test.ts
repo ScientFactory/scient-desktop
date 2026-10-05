@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { initializeScientProject } from "@scientfactory/project-init";
 import {
@@ -33,6 +34,7 @@ import { dispatchScientOperation } from "../../scient/operations/AgentOperationD
 import * as ScientSkillSession from "../../scient/skills/ScientSkillSession.ts";
 import * as ScientSkillPolicy from "../../scient/skills/ScientSkillPolicy.ts";
 import * as ScientSkillRegistry from "../../scient/skills/ScientSkillRegistry.ts";
+import { prepareScientV2SkillScope } from "../../scient/skills/ScientV2SkillTurn.ts";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Fiber from "effect/Fiber";
@@ -59,6 +61,8 @@ import { EventSinkV2 } from "../EventSink.ts";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import { LegacyV1ThreadImporter } from "../legacy/LegacyV1ThreadImporter.ts";
+import { scientHandoffByteBudget } from "../ContextHandoffBudget.ts";
+import { deliverContextHandoffs } from "../ContextHandoffDelivery.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
 
@@ -139,7 +143,29 @@ const cases: ReadonlyArray<{
   readonly included: boolean;
   readonly refused?: boolean;
   readonly skills?: boolean;
+  readonly retainedScope?: boolean;
+  readonly optionalMarker?: boolean;
 }> = [
+  {
+    name: "issued-scope-survives-rejected-merge-back",
+    size: "standard",
+    historyBytes: 100,
+    window: 1_000_000,
+    path: "fork",
+    included: true,
+    skills: true,
+    retainedScope: true,
+  },
+  {
+    name: "optional-marker-straddles-shared-window",
+    size: "standard",
+    historyBytes: 100,
+    window: 1_000_000,
+    path: "fork",
+    included: false,
+    skills: true,
+    optionalMarker: true,
+  },
   { name: "standard", size: "standard", historyBytes: 150_000, window: 1_000_000, included: true },
   {
     name: "maximum-current-input-and-retained-history",
@@ -283,6 +309,23 @@ for (const test of cases) {
                 McpSessionRegistry.McpSessionRegistry,
               )
             : undefined;
+          const publishedThreads: ThreadId[] = [];
+          const replaceSkillScope = skillRegistry?.replaceSkillScope;
+          const publications =
+            skillRegistry && replaceSkillScope
+              ? vi.spyOn(skillRegistry, "replaceSkillScope").mockImplementation((threadId, scope) =>
+                  replaceSkillScope(threadId, scope).pipe(
+                    Effect.tap(() =>
+                      Effect.sync(() => {
+                        publishedThreads.push(threadId);
+                      }),
+                    ),
+                  ),
+                )
+              : undefined;
+          yield* Effect.addFinalizer(() => Effect.sync(() => publications?.mockRestore()));
+          const publishedTo = (threadId: ThreadId) =>
+            publishedThreads.filter((id) => id === threadId).length;
           if (test.skills) {
             yield* Effect.promise(() => initializeScientProject({ root: cwd }));
             const fs = yield* FileSystem.FileSystem;
@@ -295,6 +338,9 @@ for (const test of cases) {
           }
           let beforeSkillScope: McpInvocationScope | undefined;
           let skillToken: string | undefined;
+          let modelWindow = test.window;
+          let markerFreeInput: string | undefined;
+          let markerFreeContext: string | undefined;
           const source = ThreadId.make(`${name}:source`);
           const forkPath = test.path === "fork" || test.path === "fork-switch";
           const switchPath =
@@ -312,6 +358,7 @@ for (const test of cases) {
             : selection;
           const historicalText = `WHOLE_HISTORY_START:${"x".repeat(test.historyBytes)}:WHOLE_HISTORY_END`;
           const offers: string[] = [];
+          const offeredScopes: McpInvocationScope[] = [];
           const windowRequests: ModelSelection[] = [];
           let openings = 0;
           const opened = yield* Deferred.make<void>();
@@ -330,7 +377,10 @@ for (const test of cases) {
                 continuations: { offer: () => Effect.die("No continuation in budget proof") },
                 open: (openInput, publish) =>
                   Effect.gen(function* () {
-                    if (test.preparedSize !== undefined && openInput.threadId === target) {
+                    if (
+                      (test.preparedSize !== undefined || test.optionalMarker) &&
+                      openInput.threadId === target
+                    ) {
                       yield* Deferred.succeed(opened, undefined);
                       yield* Deferred.await(releaseOpen);
                     }
@@ -364,6 +414,11 @@ for (const test of cases) {
                         Effect.die("No executable user decision in the budget fixture"),
                       send: (input) =>
                         Effect.gen(function* () {
+                          if (skillRegistry && openInput.threadId === target && skillToken) {
+                            const issued = yield* skillRegistry.resolve(skillToken);
+                            assert.ok(issued);
+                            offeredScopes.push(issued);
+                          }
                           offers.push(input.message.text);
                           yield* publish({
                             type: "text",
@@ -394,7 +449,7 @@ for (const test of cases) {
                       getModelContextWindow: (requested: ModelSelection) => {
                         assert.deepEqual(requested, { ...selection, instanceId: ownedInstance });
                         windowRequests.push(requested);
-                        return test.window;
+                        return modelWindow;
                       },
                     })),
                   ),
@@ -537,6 +592,59 @@ for (const test of cases) {
                 creationSource: "web",
               });
             yield* send("first");
+            if (test.optionalMarker) {
+              yield* Deferred.await(opened).pipe(Effect.timeout("10 seconds"));
+              const preparedProjection = yield* orchestrator.getThreadProjection(target);
+              const providerThread = preparedProjection.providerThreads.at(-1);
+              assert.ok(providerThread);
+              const pending = preparedProjection.contextHandoffs.filter(
+                (candidate) => candidate.targetRunId === preparedProjection.runs.at(-1)?.id,
+              );
+              assert.equal(pending.length, 1);
+              const prepared = yield* prepareScientV2SkillScope({
+                threadId: target,
+                driver: ProviderDriverKind.make("codex"),
+                mcpSessionInjection: true,
+                projectRoot: cwd,
+                text: currentInput,
+                selectedScientSkillNames: ["project-method"],
+              }).pipe(Effect.provide(skillPlannerLayer));
+              assert.ok(prepared.textWithoutCatalogMarker);
+              assert.include(prepared.text, "Scient skill scope");
+              assert.notInclude(prepared.textWithoutCatalogMarker, "Scient skill scope");
+              const deliveryAt = (window: number, userText: string) =>
+                deliverContextHandoffs({
+                  handoffs: pending,
+                  providerThread,
+                  budget: scientHandoffByteBudget({
+                    size: test.size,
+                    environmentOverride: undefined,
+                    userText,
+                    attachments: [],
+                    providerThread,
+                    nativeContextEstimate: 0,
+                    modelContextWindow: window,
+                  }),
+                  alreadyDeliveredItemIds: new Set(),
+                  persist: () => Effect.void,
+                }).pipe(Effect.result);
+              // Find a witness at the actual whole-header boundary, then let
+              // the worker independently use that same native-reported window.
+              for (let window = 16_000; window <= 20_000; window++) {
+                const without = yield* deliveryAt(window, prepared.textWithoutCatalogMarker);
+                if (without._tag === "Failure") continue;
+                const withMarker = yield* deliveryAt(window, prepared.text);
+                assert.equal(withMarker._tag, "Failure");
+                if (withMarker._tag === "Failure")
+                  assert.equal(withMarker.failure._tag, "ContextHandoffBudgetError");
+                modelWindow = window;
+                markerFreeInput = prepared.textWithoutCatalogMarker;
+                markerFreeContext = without.success.context;
+                break;
+              }
+              assert.ok(markerFreeInput, "A real marker must straddle the selected native window");
+              yield* Deferred.succeed(releaseOpen, undefined);
+            }
             if (test.path === "import-queued") {
               const queued = yield* orchestrator.getThreadProjection(target);
               assert.equal(queued.runs.at(-1)?.status, "queued");
@@ -620,7 +728,8 @@ for (const test of cases) {
             }
             if (!test.refused) {
               assert.equal(offers.length, 1);
-              assert.isTrue(offers[0]!.endsWith(currentInput));
+              if (test.skills) assert.include(offers[0]!, currentInput);
+              else assert.isTrue(offers[0]!.endsWith(currentInput));
               assert.equal(
                 offers[0]!.includes(historicalText),
                 test.included,
@@ -721,7 +830,8 @@ for (const test of cases) {
               );
             } else {
               assert.equal(offers.length, 1);
-              assert.isTrue(offers[0]!.endsWith(currentInput));
+              if (test.skills) assert.include(offers[0]!, currentInput);
+              else assert.isTrue(offers[0]!.endsWith(currentInput));
               assert.equal(offers[0]!.includes(historicalText), test.included);
               assert.notInclude(
                 offers[0]!.replace(historicalText, ""),
@@ -738,6 +848,163 @@ for (const test of cases) {
                   handoff.delivery?.omittedItemIds?.includes(historicalId) ?? false,
                   !test.included,
                 );
+              }
+              if (skillRegistry && (test.retainedScope || test.optionalMarker)) {
+                assert.ok(skillToken);
+                const issued = yield* skillRegistry.resolve(skillToken);
+                assert.ok(issued);
+                assert.ok(issued.skillScope);
+                assert.ok(issued.skillScope.catalog);
+                assert.equal(issued.skillScope.catalog.status, "complete");
+                assert.equal(issued.skillScope.releases.size, 1);
+                assert.deepEqual(
+                  offeredScopes,
+                  [issued],
+                  "The real issued scope must be usable at the native offer boundary",
+                );
+                assert.equal(publishedTo(target), 1);
+                yield* Effect.logInfo({
+                  fixture: test.name,
+                  nativeModelWindow: modelWindow,
+                  nativeOfferCount: offers.length,
+                  scopePublicationCount: publishedTo(target),
+                  visibleReleaseCount: issued.skillScope.releases.size,
+                });
+                const listed = yield* dispatchScientOperation(
+                  "skills.list",
+                  listScientSkillsForInvocation(),
+                ).pipe(
+                  Effect.provideService(AgentInvocationContext, scientInvocationForMcp(issued)),
+                );
+                assert.equal(listed.scope.status, "complete");
+                const loaded = yield* dispatchScientOperation(
+                  "skills.load",
+                  loadScientSkillForInvocation({ name: "project-method" }),
+                ).pipe(
+                  Effect.provideService(AgentInvocationContext, scientInvocationForMcp(issued)),
+                );
+                assert.include(loaded.instructions, "Preserve the evidence.");
+                if (test.optionalMarker) {
+                  assert.ok(markerFreeInput);
+                  assert.ok(markerFreeContext);
+                  assert.equal(
+                    offers[0],
+                    `${markerFreeContext}\n\nUser message:\n${markerFreeInput}`,
+                  );
+                  assert.notInclude(offers[0]!, "Scient skill scope");
+                  assert.include(offers[0]!, "`project-method` (selected by the user)");
+                  assert.equal(handoff.delivery?.status, "inline");
+                  assert.equal(settled.runs.at(-1)?.status, "completed");
+                  assert.equal(settled.providerTurns.length, 1);
+                }
+                if (test.retainedScope) {
+                  assert.include(offers[0]!, "Scient skill scope");
+                  const child = ThreadId.make(`${name}:delta`);
+                  yield* orchestrator.dispatch({
+                    type: "thread.fork",
+                    sourceThreadId: target,
+                    targetThreadId: child,
+                    sourcePoint: { type: "latest_stable" },
+                    commandId: CommandId.make(`${name}:delta-fork`),
+                    createdBy: "user",
+                    creationSource: "web",
+                  });
+                  yield* establish(child, "delta", "NEW_DELTA_FOR_MERGE_BACK");
+                  yield* waitFor(
+                    child,
+                    (projection) => projection.runs.at(-1)?.status === "completed",
+                  );
+                  yield* orchestrator.dispatch({
+                    type: "thread.merge_back",
+                    sourceThreadId: child,
+                    targetThreadId: target,
+                    sourcePoint: { type: "latest_stable" },
+                    commandId: CommandId.make(`${name}:merge-back`),
+                    createdBy: "user",
+                    creationSource: "web",
+                  });
+                  const merged = yield* orchestrator.getThreadProjection(target);
+                  assert.isTrue(
+                    merged.contextTransfers.some(
+                      (candidate) =>
+                        candidate.type === "merge_back" &&
+                        candidate.sourceThreadId === child &&
+                        candidate.targetThreadId === target,
+                    ),
+                  );
+                  const priorOffers = offers.length;
+                  const priorOpenings = openings;
+                  const priorPublications = publishedTo(target);
+                  modelWindow = 56_000;
+                  yield* orchestrator.dispatch({
+                    type: "message.dispatch",
+                    threadId: target,
+                    commandId: CommandId.make(`${name}:rejected`),
+                    messageId: MessageId.make(`${name}:rejected`),
+                    text: "u".repeat(120_000),
+                    selectedScientSkillNames: [],
+                    attachments: [],
+                    modelSelection: selection,
+                    dispatchMode: { type: "start_immediately" },
+                    createdBy: "user",
+                    creationSource: "web",
+                  });
+                  const refused = yield* waitFor(
+                    target,
+                    (projection) => projection.runs.at(-1)?.status === "failed",
+                  );
+                  assert.equal(offers.length, priorOffers);
+                  assert.equal(
+                    openings,
+                    priorOpenings,
+                    "The refusal must preserve the same native session",
+                  );
+                  assert.equal(publishedTo(target), priorPublications);
+                  const preserved = yield* skillRegistry.resolve(skillToken);
+                  assert.deepEqual(
+                    preserved,
+                    issued,
+                    "Rejected replacement cannot clear a previously usable issued grant",
+                  );
+                  assert.ok(preserved);
+                  const stillLoaded = yield* dispatchScientOperation(
+                    "skills.load",
+                    loadScientSkillForInvocation({ name: "project-method" }),
+                  ).pipe(
+                    Effect.provideService(
+                      AgentInvocationContext,
+                      scientInvocationForMcp(preserved),
+                    ),
+                  );
+                  assert.deepEqual(stillLoaded, loaded);
+                  const failure = refused.turnItems.find(
+                    (item) => item.type === "error" && item.runId === refused.runs.at(-1)?.id,
+                  );
+                  assert.ok(failure?.type === "error");
+                  assert.include(failure.failure.message, "Insufficient context allowance");
+                  assert.isTrue(
+                    refused.contextHandoffs.some(
+                      (candidate) =>
+                        candidate.strategy === "fork_delta_summary" &&
+                        candidate.history?.messages.some(
+                          (message) => message.text === "NEW_DELTA_FOR_MERGE_BACK",
+                        ),
+                    ),
+                  );
+                  assert.isFalse(
+                    refused.providerTurns.some(
+                      (turn) =>
+                        turn.runAttemptId === refused.runs.at(-1)?.activeAttemptId &&
+                        (turn.nativeAcceptance === "accepted" || turn.acceptedAt !== undefined),
+                    ),
+                  );
+                  assert.deepEqual(
+                    refused.messages.find(
+                      (message) => message.id === MessageId.make(`${name}:rejected`),
+                    )?.selectedScientSkillNames,
+                    [],
+                  );
+                }
               }
               if (test.path === "recovery") {
                 yield* (yield* ProviderSessionManagerV2).closeInstance(instanceId);
