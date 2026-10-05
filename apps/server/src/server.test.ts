@@ -19,6 +19,7 @@ import {
   ORCHESTRATION_PROTOCOL_HEADER,
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
   type OrchestrationV2ThreadStreamItem,
+  type OrchestrationV2ThreadProjection,
   type OrchestrationV2ShellStreamItem,
   DEFAULT_SERVER_SETTINGS,
   DroidSettings,
@@ -80,6 +81,8 @@ import {
   projectedSubagentsToRuntime,
   deriveAgentPanelModel,
 } from "../../../packages/client-runtime/src/state/subagentRuntime.ts";
+import { applyOrchestrationV2ProjectionEvent } from "../../../packages/client-runtime/src/state/orchestrationV2Projection.ts";
+import { projectThreadProjectionForWire } from "./orchestration-v2/WireProjection.ts";
 import { historicalSubagentsToRuntime } from "../../../packages/client-runtime/src/state/historicalSubagentRuntime.ts";
 import { assert, it } from "@effect/vitest";
 import { assertFailure, assertInclude, assertTrue } from "@effect/vitest/utils";
@@ -1506,6 +1509,7 @@ const withFirstWsAckHeld = (
   wsUrl: string,
   held: Deferred.Deferred<void>,
   release: Deferred.Deferred<void>,
+  ready?: Deferred.Deferred<void>,
 ) => {
   let holdNextAck = true;
   return Layer.effect(RpcClient.Protocol)(
@@ -1517,11 +1521,14 @@ const withFirstWsAckHeld = (
           if (request._tag !== "Ack" || !holdNextAck) {
             return send;
           }
-          holdNextAck = false;
-          return Deferred.succeed(held, undefined).pipe(
-            Effect.andThen(Deferred.await(release)),
-            Effect.andThen(send),
-          );
+          return Effect.gen(function* () {
+            // Shell metadata prefixes must drain before the live producer attaches.
+            if (ready !== undefined && !(yield* Deferred.isDone(ready))) return yield* send;
+            holdNextAck = false;
+            yield* Deferred.succeed(held, undefined);
+            yield* Deferred.await(release);
+            return yield* send;
+          });
         },
       }),
     ),
@@ -12084,11 +12091,165 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   );
 
   it.effect(
+    "detaches an overflowing V2 shell producer before held ACK release and recovers removed entries",
+    () =>
+      Effect.gen(function* () {
+        const attached = yield* Deferred.make<void>();
+        const detached = yield* Deferred.make<void>();
+        const held = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let observeLive = false;
+        const app = yield* buildAppUnderTest({
+          transformApplicationEventStore: (events) => ({
+            ...events,
+            streamProjectedApplicationEvents: (input) =>
+              !observeLive
+                ? events.streamProjectedApplicationEvents(input)
+                : Stream.unwrap(
+                    Deferred.succeed(attached, undefined).pipe(
+                      Effect.as(
+                        events
+                          .streamProjectedApplicationEvents(input)
+                          .pipe(Stream.ensuring(Deferred.succeed(detached, undefined))),
+                      ),
+                    ),
+                  ),
+          }),
+        });
+        const fs = yield* FileSystem.FileSystem;
+        const workspaceRoot = yield* fs.makeTempDirectoryScoped({
+          prefix: "scient-shell-overflow-",
+        });
+        const projectId = ProjectId.make("shell-overflow-removed-project");
+        yield* app.v2.projects.create({
+          commandId: CommandId.make("shell-overflow-create-project"),
+          projectId,
+          title: "Removed project",
+          workspaceRoot,
+        });
+        const seeded = yield* seedV2StreamThread(app);
+        const archivedId = ThreadId.make("shell-overflow-archived-thread");
+        const archived = yield* seedV2StreamThread(app, archivedId);
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const initial = yield* collectV2ShellCatchup(wsUrl);
+        const initialSnapshot = initial[0];
+        assertTrue(initialSnapshot?.kind === "snapshot");
+        assert.isTrue(
+          initialSnapshot.snapshot.projects.some((project) => project.id === projectId),
+        );
+        assert.isTrue(initialSnapshot.snapshot.threads.some((thread) => thread.id === archivedId));
+        const cursor = initialSnapshot.snapshot.snapshotSequence;
+        observeLive = true;
+        const reader = yield* makeWsRpcClient.pipe(
+          Effect.flatMap((client) =>
+            client[ORCHESTRATION_V2_WS_METHODS.subscribeShell]({ afterSequence: cursor }).pipe(
+              Stream.runDrain,
+            ),
+          ),
+          Effect.provide(withFirstWsAckHeld(wsUrl, held, release, attached)),
+          Effect.result,
+          Effect.forkScoped,
+        );
+        yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined));
+        yield* Deferred.await(attached);
+        yield* app.v2.eventSink.write({
+          events: [
+            {
+              id: EventId.make("shell-held-first-live-update"),
+              type: "thread.metadata-updated",
+              threadId: transferV2ThreadId,
+              occurredAt: seeded.thread.updatedAt,
+              payload: { ...seeded.thread, title: "First live shell update" },
+            },
+          ],
+        });
+        yield* TestClock.adjust(Duration.millis(100));
+        yield* Deferred.await(held);
+        yield* app.v2.eventSink.write({
+          events: Array.from({ length: 1_100 }, (_, index) => {
+            const threadId = ThreadId.make(`shell-held-overflow-${index}`);
+            return {
+              id: EventId.make(`shell-held-overflow-${index}`),
+              type: "thread.created" as const,
+              threadId,
+              occurredAt: seeded.thread.updatedAt,
+              payload: {
+                ...seeded.thread,
+                id: threadId,
+                title: `Shell committed ${index}`,
+                lineage: { ...seeded.thread.lineage, rootThreadId: threadId },
+              },
+            };
+          }),
+        });
+        yield* Deferred.await(detached);
+        assert.isFalse(yield* Deferred.isDone(release));
+        yield* app.v2.eventSink.write({
+          events: [
+            {
+              id: EventId.make("shell-overflow-delete-thread"),
+              type: "thread.deleted",
+              threadId: transferV2ThreadId,
+              occurredAt: seeded.thread.updatedAt,
+              payload: { ...seeded.thread, deletedAt: seeded.thread.updatedAt },
+            },
+            {
+              id: EventId.make("shell-overflow-archive-thread"),
+              type: "thread.archived",
+              threadId: archivedId,
+              occurredAt: archived.thread.updatedAt,
+              payload: { ...archived.thread, archivedAt: archived.thread.updatedAt },
+            },
+          ],
+        });
+        yield* app.v2.projects.delete({
+          commandId: CommandId.make("shell-overflow-delete-project"),
+          projectId,
+        });
+        assertTrue(Option.isNone(yield* app.v2.projects.getShell(projectId)));
+        assertTrue(
+          (yield* app.v2.threads.getThreadProjection(transferV2ThreadId)).thread.deletedAt !== null,
+        );
+        assertTrue(
+          (yield* app.v2.threads.getThreadProjection(archivedId)).thread.archivedAt !== null,
+        );
+        yield* Deferred.succeed(release, undefined);
+        const result = yield* Fiber.join(reader);
+        assertTrue(result._tag === "Failure");
+        assert.equal(result.failure._tag, "OrchestrationV2GetShellSnapshotError");
+        const recovered = yield* collectV2ShellCatchup(wsUrl, cursor);
+        const snapshot = recovered[0];
+        assertTrue(snapshot?.kind === "snapshot");
+        assert.isFalse(snapshot.snapshot.projects.some((project) => project.id === projectId));
+        assert.isFalse(
+          snapshot.snapshot.threads.some(
+            (thread) => thread.id === transferV2ThreadId || thread.id === archivedId,
+          ),
+        );
+        assert.deepEqual(recovered.at(-1), { kind: "synchronized" });
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
     "coalesces live V2 tool updates without crossing interleaved message or terminal boundaries",
     () =>
       Effect.gen(function* () {
         const app = yield* buildAppUnderTest();
-        const seeded = yield* seedV2StreamThread(app);
+        yield* seedV2StreamThread(app);
+        const fixture = transferV2TurnEvents(ProviderDriverKind.make("codex"), 0, false);
+        const run = fixture.find((event) => event.type === "run.created");
+        assertTrue(run?.type === "run.created");
+        const userMessage = fixture.find(
+          (event) => event.type === "message.updated" && event.payload.role === "user",
+        );
+        const userItem = fixture.find(
+          (event) => event.type === "turn-item.updated" && event.payload.type === "user_message",
+        );
+        assertTrue(userMessage?.type === "message.updated");
+        assertTrue(
+          userItem?.type === "turn-item.updated" && userItem.payload.type === "user_message",
+        );
+        const seededRun = yield* app.v2.eventSink.write({ events: [run, userMessage, userItem] });
         const received = yield* Queue.unbounded<OrchestrationV2ThreadStreamItem>();
         const wsUrl = yield* getWsServerUrl("/ws");
         const reader = yield* withWsRpcClient(wsUrl, (client) =>
@@ -12097,12 +12258,14 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             requestCompletionMarker: true,
           }).pipe(Stream.runForEach((item) => Queue.offer(received, item))),
         ).pipe(Effect.forkScoped);
-        yield* collectQueueUntil(
+        const initial = yield* collectQueueUntil(
           received,
           (item) => item.kind === "synchronized",
           "initial live tool subscription",
         );
-        const fixture = transferV2TurnEvents(ProviderDriverKind.make("codex"), 0, false);
+        const snapshot = initial.find((item) => item.kind === "snapshot");
+        assertTrue(snapshot?.kind === "snapshot");
+        assert.equal(snapshot.projection.runs[0]?.id, run.payload.id);
         const tool = fixture.find(
           (event) =>
             event.type === "turn-item.updated" && event.payload.type === "command_execution",
@@ -12170,8 +12333,24 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           projection.messages.find((entry) => entry.id === message.payload.id)?.text,
           "Evidence checkpoint",
         );
+        const clientProjection = events.reduce<OrchestrationV2ThreadProjection | null>(
+          (current, item) => applyOrchestrationV2ProjectionEvent(current, item.event),
+          snapshot.projection,
+        );
+        assertTrue(clientProjection !== null);
+        const expected = projectThreadProjectionForWire(projection);
+        assert.deepEqual(clientProjection.messages, expected.messages);
+        assert.deepEqual(clientProjection.turnItems, expected.turnItems);
+        assert.deepEqual(clientProjection.visibleTurnItems, expected.visibleTurnItems);
+        assert.deepEqual(clientProjection.runs, expected.runs);
+        assert.deepEqual(
+          clientProjection.visibleTurnItems.map((row) => row.sourceItemId),
+          [userItem.payload.id, tool.payload.id],
+        );
+        assert.equal(clientProjection.visibleTurnItems.at(-1)?.item.status, "completed");
+        assert.equal(clientProjection.turnItems.length, 2);
         yield* Fiber.interrupt(reader);
-        const replay = yield* collectV2ThreadCatchup(wsUrl, seeded.sequence);
+        const replay = yield* collectV2ThreadCatchup(wsUrl, seededRun.at(-1)!.sequence);
         assert.equal(replay.filter((item) => item.kind === "event").length, 102);
         assert.deepEqual(replay.at(-1), { kind: "synchronized" });
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
