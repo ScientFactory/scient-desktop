@@ -339,9 +339,9 @@
       "purpose": "Retain versioned Scient Skills release copy in the release-owned catalog; this is presentation history, not execution authority."
     },
     {
-      "path": "apps/web/src/scient/sessionLogic/activityWorkLog.ts",
+      "path": "apps/web/src/scient/skills/scientSkillUsageLabel.ts",
       "anchor": "export function scientSkillUsageLabel(",
-      "purpose": "Label managed Scient skill loads in work-log rows through the shared provider-prefix resolver; session-logic reuses it for V2 dynamic-tool rows (session-logic.test.ts)."
+      "purpose": "Label managed Scient skill loads in V2 dynamic-tool work-log rows through the shared provider-prefix resolver (session-logic.test.ts)."
     }
   ]
 }

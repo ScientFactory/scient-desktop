@@ -1,16 +1,8 @@
-import {
-  EventId,
-  RunId,
-  ThreadId,
-  TurnId,
-  TurnItemId,
-  type OrchestrationThreadActivity,
-  type OrchestrationV2TurnItem,
-} from "@t3tools/contracts";
+import { RunId, ThreadId, TurnItemId, type OrchestrationV2TurnItem } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { deriveTimelineEntriesFromVisibleTurnItems, deriveWorkLogEntries } from "./session-logic";
+import { deriveTimelineEntriesFromVisibleTurnItems } from "./session-logic";
 import {
   deriveMessagesTimelineRows,
   workEntryDisplayLabel,
@@ -37,21 +29,6 @@ const baseItem = {
   completedAt: now,
   updatedAt: now,
 };
-
-function makeActivity(
-  overrides: Partial<OrchestrationThreadActivity> = {},
-): OrchestrationThreadActivity {
-  return {
-    id: EventId.make("diagnostic"),
-    createdAt: "2026-09-05T00:00:00.000Z",
-    kind: "runtime.error",
-    tone: "error",
-    summary: "Runtime error",
-    payload: { message: retainedMessage },
-    turnId: TurnId.make("turn-1"),
-    ...overrides,
-  };
-}
 
 function workEntry(item: OrchestrationV2TurnItem) {
   const [entry] = deriveTimelineEntriesFromVisibleTurnItems({
@@ -87,18 +64,6 @@ function errorItem(
 }
 
 describe("runtime diagnostics in the work log", () => {
-  it("keeps a concise error label and retains the technical message for expansion", () => {
-    const [entry] = deriveWorkLogEntries([makeActivity()]);
-
-    expect(entry).toMatchObject({
-      label: "The agent encountered a problem",
-      detail: retainedMessage,
-    });
-    expect(entry && workEntryDisplayLabel(entry, undefined)).toBe(
-      "The agent encountered a problem",
-    );
-  });
-
   it("keeps the issue heading and the full diagnostic beyond its truncated title", () => {
     const entry = workEntry(errorItem({ title: warningSummary }));
 
@@ -184,57 +149,6 @@ describe("runtime diagnostics in the work log", () => {
       "The agent encountered a problem",
     );
     expect(diagnostic.groupedEntries[0]?.detail).toBe(retainedMessage);
-  });
-
-  it("keeps an Oh My Pi browser action visible and clickable", () => {
-    const [entry] = deriveWorkLogEntries([
-      makeActivity({
-        kind: "runtime.warning",
-        tone: "info",
-        summary: "Oh My Pi requested a browser action.",
-        payload: {
-          message: "Oh My Pi requested a browser action.",
-          detail: {
-            kind: "open-url",
-            url: "https://example.com/authorize",
-          },
-        },
-      }),
-    ]);
-
-    expect(entry?.externalUrl).toEqual({ href: "https://example.com/authorize" });
-    expect(entry?.detail).toContain("https://example.com/authorize");
-  });
-
-  it("links an OAuth browser action through its loopback launch URL", () => {
-    const [entry] = deriveWorkLogEntries([
-      makeActivity({
-        kind: "runtime.warning",
-        tone: "info",
-        summary: "Oh My Pi requested a browser action.",
-        payload: {
-          message: "Oh My Pi requested a browser action.",
-          detail: {
-            kind: "open-url",
-            url: "https://auth.example.com/authorize",
-            launchUrl: "http://127.0.0.1:43199/launch",
-          },
-        },
-      }),
-    ]);
-
-    expect(entry?.externalUrl).toEqual({ href: "http://127.0.0.1:43199/launch" });
-    expect(entry?.detail).toContain("https://auth.example.com/authorize");
-    expect(entry?.detail).not.toContain("127.0.0.1");
-  });
-
-  it("does not interpret an unrelated activity message as a runtime diagnostic", () => {
-    const [entry] = deriveWorkLogEntries([
-      makeActivity({ kind: "tool.completed", tone: "tool", summary: "Read file" }),
-    ]);
-
-    expect(entry?.label).toBe("Read file");
-    expect(entry?.detail).toBeUndefined();
   });
 
   it("does not turn an unrelated tool payload message into a diagnostic", () => {

@@ -46,16 +46,12 @@ import * as Equal from "effect/Equal";
 import { shallow } from "zustand/vanilla/shallow";
 // SCIENT-FORK:START — Scient work-log rows, plan rows and skill labels.
 import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-presentation";
-import { type ToolLifecycleItemType, type TurnId } from "@t3tools/contracts";
+import { type TurnId } from "@t3tools/contracts";
 import type { TurnPlanEntry } from "./scient/sessionLogic/activityTimeline";
-import { scientSkillUsageLabel } from "./scient/sessionLogic/activityWorkLog";
+import { scientSkillUsageLabel } from "./scient/skills/scientSkillUsageLabel";
 // SCIENT-FORK:END
 
 export { formatDuration } from "@t3tools/shared/orchestrationTiming";
-
-// SCIENT-FORK:START — the V1 activity work-log derivation lives in a Scient module.
-export { deriveWorkLogEntries } from "./scient/sessionLogic/activityWorkLog";
-// SCIENT-FORK:END
 
 // SCIENT-FORK:START — Scient provider picker options live in a Scient module.
 export { PROVIDER_OPTIONS, type ProviderPickerKind } from "./scient/sessionLogic/providerOptions";
@@ -117,13 +113,6 @@ export interface WorkLogEntry {
   readonly toolLifecycleStatus?: WorkLogToolLifecycleStatus;
   readonly structuredPayload?: OrchestrationV2TurnItem;
   readonly sourceItemType?: OrchestrationV2TurnItem["type"];
-  // SCIENT-FORK:START — V1 activities speak the tool-lifecycle item vocabulary
-  // ("mcp_tool_call", "collab_agent_tool_call", …), which upstream's V2
-  // turn-item union does not contain. The V1 derivation keeps its own value
-  // here and maps onto `itemType` where an equivalent V2 type exists, so both
-  // derivations still feed one work-log row type.
-  readonly lifecycleItemType?: ToolLifecycleItemType;
-  // SCIENT-FORK:END
   readonly projectedItem?: OrchestrationV2ProjectedTurnItem;
 }
 

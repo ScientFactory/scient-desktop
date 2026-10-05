@@ -1,6 +1,4 @@
 import {
-  classifyTaskAgentKind,
-  EventId,
   MessageId,
   RuntimeRequestId,
   CheckpointId,
@@ -15,7 +13,6 @@ import {
   ThreadId,
   TurnId,
   TurnItemId,
-  type OrchestrationThreadActivity,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2RunAttempt,
@@ -32,7 +29,6 @@ import {
   deriveActiveWorkStartedAt,
   deriveTimelineEntries,
   deriveTimelineEntriesWithState,
-  deriveWorkLogEntries,
   deriveActivePlanState,
   deriveCanInterruptRunningThread,
   deriveTimelineEntriesFromVisibleTurnItems,
@@ -54,43 +50,6 @@ import {
 } from "./session-logic";
 import { makeStreamingTimelineFixture, makeThreadProjectionFixture } from "./test-fixtures";
 import type { ChatMessage } from "./types";
-
-let nextActivityId = 0;
-
-function makeActivity(overrides: {
-  id?: string;
-  createdAt?: string;
-  kind?: string;
-  summary?: string;
-  tone?: OrchestrationThreadActivity["tone"];
-  payload?: Record<string, unknown>;
-  turnId?: string;
-  sequence?: number;
-}): OrchestrationThreadActivity {
-  // Fixtures model post-ingestion rows: ingestion stamps agentKind on every
-  // task.* payload. Pass an explicit agentKind to model legacy rows.
-  const rawPayload = overrides.payload ?? {};
-  const payload =
-    overrides.kind?.startsWith("task.") && !("agentKind" in rawPayload)
-      ? {
-          ...rawPayload,
-          agentKind: classifyTaskAgentKind({
-            taskType: typeof rawPayload.taskType === "string" ? rawPayload.taskType : undefined,
-            agentId: typeof rawPayload.agentId === "string" ? rawPayload.agentId : undefined,
-          }),
-        }
-      : rawPayload;
-  return {
-    id: EventId.make(overrides.id ?? `activity-${nextActivityId++}`),
-    createdAt: overrides.createdAt ?? "2026-02-23T00:00:00.000Z",
-    kind: overrides.kind ?? "tool.started",
-    summary: overrides.summary ?? "Tool call",
-    tone: overrides.tone ?? "tool",
-    payload,
-    turnId: overrides.turnId ? TurnId.make(overrides.turnId) : null,
-    ...(overrides.sequence !== undefined ? { sequence: overrides.sequence } : {}),
-  };
-}
 
 describe("V2 session presentation", () => {
   it("uses run status as the settlement boundary", () => {
@@ -704,89 +663,6 @@ describe("V2 session presentation", () => {
     }
   });
 
-  it("shows a concise work-log label when an agent loads a Scient skill", () => {
-    const item = {
-      type: "mcpToolCall",
-      server: "t3-code",
-      tool: "scient_skill_load",
-      arguments: {
-        name: "workspace-readiness-review",
-      },
-      status: "completed",
-    };
-    const [entry] = deriveWorkLogEntries([
-      makeActivity({
-        id: "scient-skill-loaded",
-        kind: "tool.completed",
-        summary: "t3-code · scient_skill_load",
-        payload: {
-          itemType: "mcp_tool_call",
-          title: "Load a Scient skill",
-          data: { item },
-        },
-      }),
-    ]);
-
-    expect(entry?.label).toBe("Used Workspace Readiness Review");
-    expect(entry?.toolTitle).toBe("Used Workspace Readiness Review");
-    expect(entry?.toolData).toEqual(item);
-  });
-
-  it("does not claim a failed Scient skill load was used", () => {
-    const item = {
-      type: "mcpToolCall",
-      server: "t3-code",
-      tool: "scient_skill_load",
-      arguments: { name: "scient-skill-authoring" },
-      status: "failed",
-    };
-    const [entry] = deriveWorkLogEntries([
-      makeActivity({
-        id: "scient-skill-failed",
-        kind: "tool.completed",
-        summary: "t3-code · scient_skill_load",
-        payload: {
-          itemType: "mcp_tool_call",
-          title: "Load a Scient skill",
-          data: { item },
-        },
-      }),
-    ]);
-
-    expect(entry?.label).toBe("Couldn't load Scient Skill Authoring");
-    expect(entry?.toolTitle).toBe("Couldn't load Scient Skill Authoring");
-  });
-
-  it.each([
-    ["inProgress", "Clicking in the preview browser"],
-    ["completed", "Clicked in the preview browser"],
-    ["failed", "Failed to click in the preview browser"],
-  ] as const)(
-    "preserves Claude MCP identity behind generic titles while %s",
-    (status, displayName) => {
-      const data = {
-        toolName: "mcp__t3_code__preview_click",
-        input: { selector: "#submit" },
-        ...(status === "inProgress"
-          ? {}
-          : { result: { type: "tool_result", is_error: status === "failed", content: "Result" } }),
-      };
-      const [entry] = deriveWorkLogEntries([
-        makeActivity({
-          kind: status === "inProgress" ? "tool.updated" : "tool.completed",
-          summary: "MCP tool call",
-          payload: { itemType: "mcp_tool_call", title: "MCP tool call", status, data },
-        }),
-      ]);
-
-      expect(entry).toMatchObject({ toolTitle: "MCP tool call", toolData: data });
-      expect(resolveWorkEntryToolPresentation(entry!)).toEqual({
-        displayName,
-        icon: "browser",
-      });
-    },
-  );
-
   it("anchors feedback before later committed turns without reordering canonical history", () => {
     const threadId = ThreadId.make("thread-feedback-order");
     const messageItem = (input: {
@@ -1198,6 +1074,83 @@ describe("native provider presentation in the v2 timeline", () => {
       expect(entry).toMatchObject({ kind: "work", entry: { label: toolName } });
     },
   );
+
+  it.each([
+    ["running", "Clicking in the preview browser"],
+    ["completed", "Clicked in the preview browser"],
+    ["failed", "Failed to click in the preview browser"],
+  ] as const)(
+    "preserves Claude MCP identity behind generic titles while %s",
+    (status, displayName) => {
+      const item = {
+        ...base,
+        type: "dynamic_tool" as const,
+        status,
+        title: "MCP tool call",
+        toolName: "mcp__t3_code__preview_click",
+        input: { selector: "#submit" },
+        ...(status === "running" ? {} : { output: "Result" }),
+      } satisfies OrchestrationV2TurnItem;
+      const [entry] = deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: [visible(item)],
+        optimisticMessages: [],
+      });
+      if (entry?.kind !== "work") throw new Error("Expected a tool work entry");
+
+      expect(entry.entry.toolTitle).toBe("MCP tool call");
+      expect(resolveWorkEntryToolPresentation(entry.entry)).toEqual({
+        displayName,
+        icon: "browser",
+      });
+    },
+  );
+
+  it("keeps context compaction as a normal work-log entry", () => {
+    const item = {
+      ...base,
+      type: "compaction" as const,
+      driver: null,
+    } satisfies OrchestrationV2TurnItem;
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [visible(item)],
+      optimisticMessages: [],
+    });
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ kind: "work", entry: { label: "Context compacted" } });
+  });
+
+  it("shows a concise, severe provider failure and leaves the technical detail inspectable", () => {
+    const failure = {
+      ...base,
+      status: "failed" as const,
+      type: "error" as const,
+      failure: {
+        class: "provider_error" as const,
+        message: "technical detail",
+        code: "turn_start_failed",
+        retryable: false,
+      },
+    } satisfies OrchestrationV2TurnItem;
+    const notice = {
+      ...base,
+      id: TurnItemId.make("native-notice"),
+      type: "system_notice" as const,
+      message: "Provider reported a warning",
+    } satisfies OrchestrationV2TurnItem;
+    const [failureEntry, noticeEntry] = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [visible(failure), { ...visible(notice), position: 1 }],
+      optimisticMessages: [],
+    });
+    if (failureEntry?.kind !== "work" || noticeEntry?.kind !== "work") {
+      throw new Error("Expected work entries");
+    }
+
+    expect(failureEntry.entry.detail).toBe("technical detail");
+    expect(failureEntry.entry.label).not.toBe("technical detail");
+    expect(workEntrySignalsSevereFailure(failureEntry.entry)).toBe(true);
+    expect(workEntrySignalsSevereFailure(noticeEntry.entry)).toBe(false);
+  });
 
   it("keeps async answers in the question row, including incrementally appended replies", () => {
     const requestId = RuntimeRequestId.make("question");
@@ -1813,46 +1766,6 @@ describe("image asset requests", () => {
 });
 
 describe("deriveTimelineEntries", () => {
-  it("folds the message each submitted answer names, and a live answer's async-answer message", () => {
-    const userMessage = (id: string, text: string, second: number) => ({
-      id: MessageId.make(id),
-      role: "user" as const,
-      text,
-      runId: null,
-      createdAt: `2026-02-23T00:00:0${second}.000Z`,
-      updatedAt: `2026-02-23T00:00:0${second}.000Z`,
-      streaming: false,
-    });
-    const answer = (requestId: string, second: number, messageId?: string) =>
-      makeActivity({
-        kind: "user-input.answer-submitted",
-        summary: "Question answer submitted",
-        createdAt: `2026-02-23T00:00:0${second}.000Z`,
-        turnId: "answer-turn",
-        payload: {
-          requestId,
-          answers: { color: "Blue" },
-          attachmentsByQuestionId: {},
-          ...(messageId === undefined ? {} : { messageId }),
-        },
-      });
-    const entries = deriveTimelineEntries(
-      [
-        userMessage("plain-message", "Keep me", 1),
-        userMessage("imp-attempt-000002", "Blue", 2),
-        userMessage("async-answer:live-request", "Green", 3),
-      ],
-      [],
-      deriveWorkLogEntries([
-        answer("imported-request", 2, "imp-attempt-000002"),
-        answer("live-request", 3),
-      ]),
-    );
-    expect(
-      entries.flatMap((entry) => (entry.kind === "message" ? [entry.message.text] : [])),
-    ).toEqual(["Keep me"]);
-  });
-
   const streamingMessage = {
     id: MessageId.make("streaming-message"),
     role: "assistant" as const,
@@ -2102,45 +2015,6 @@ describe("deriveTimelineEntries", () => {
   });
 });
 
-describe("deriveWorkLogEntries context window handling", () => {
-  it("excludes context window updates from the work log", () => {
-    const entries = deriveWorkLogEntries([
-      makeActivity({
-        id: "context-1",
-        turnId: "turn-1",
-        kind: "context-window.updated",
-        summary: "Context window updated",
-        tone: "info",
-      }),
-      makeActivity({
-        id: "tool-1",
-        turnId: "turn-1",
-        kind: "tool.completed",
-        summary: "Ran command",
-        tone: "tool",
-      }),
-    ]);
-
-    expect(entries).toHaveLength(1);
-    expect(entries[0]?.label).toBe("Ran command");
-  });
-
-  it("keeps context compaction activities as normal work log entries", () => {
-    const entries = deriveWorkLogEntries([
-      makeActivity({
-        id: "compaction-1",
-        turnId: "turn-1",
-        kind: "context-compaction",
-        summary: "Context compacted",
-        tone: "info",
-      }),
-    ]);
-
-    expect(entries).toHaveLength(1);
-    expect(entries[0]?.label).toBe("Context compacted");
-  });
-});
-
 describe("isLatestRunSettled", () => {
   const latestRun = {
     runId: RunId.make("run-1"),
@@ -2303,445 +2177,6 @@ describe("deriveActiveWorkStartedAt", () => {
   });
 });
 
-describe("deriveWorkLogEntries quiet-timeline guarantee", () => {
-  it("concurrent subagents replace their launch tools with one lifecycle row", () => {
-    const activities: OrchestrationThreadActivity[] = [];
-    for (let agent = 0; agent < 5; agent += 1) {
-      activities.push(
-        makeActivity({
-          kind: "tool.updated",
-          summary: "Subagent task",
-          payload: {
-            toolCallId: `launch-${agent}`,
-            itemType: "collab_agent_tool_call",
-            status: "inProgress",
-            data: { toolName: agent % 2 === 0 ? "Agent" : "Task" },
-          },
-          turnId: "turn-batch",
-          sequence: agent - 10,
-        }),
-      );
-      expect(deriveWorkLogEntries(activities)).toHaveLength(0);
-    }
-    for (let agent = 0; agent < 5; agent += 1) {
-      const taskId = `task-${agent}`;
-      const toolUseId = `launch-${agent}`;
-      expect(deriveWorkLogEntries(activities)).toHaveLength(agent === 0 ? 0 : 1);
-      activities.push(
-        makeActivity({
-          id: `started-${agent}`,
-          kind: "task.started",
-          summary: "Task started",
-          payload: { taskId, toolUseId, taskType: "local_agent" },
-          turnId: "turn-batch",
-          sequence: agent * 20 - 1,
-        }),
-      );
-      const runningEntries = deriveWorkLogEntries(activities);
-      expect(runningEntries).toHaveLength(1);
-      expect(runningEntries[0]!.id).toBe("started-0");
-      expect(runningEntries[0]!.agentSpawn?.agentTaskIds).toHaveLength(agent + 1);
-      // Progress ticks (several per agent) + attributed tool rows.
-      for (let tick = 0; tick < 4; tick += 1) {
-        activities.push(
-          makeActivity({
-            kind: "task.progress",
-            summary: `agent ${agent} tick ${tick}`,
-            tone: "info",
-            payload: { taskId, toolUseId, summary: `working ${tick}`, role: "explorer" },
-            turnId: "turn-batch",
-            sequence: agent * 20 + tick,
-          }),
-        );
-        activities.push(
-          makeActivity({
-            kind: "tool.completed",
-            summary: "Read",
-            payload: { itemType: "dynamic_tool_call", agentId: taskId },
-            sequence: agent * 20 + 10 + tick,
-          }),
-        );
-      }
-      activities.push(
-        makeActivity({
-          kind: "task.completed",
-          summary: "Task completed",
-          tone: "info",
-          payload: {
-            taskId,
-            toolUseId,
-            status: "completed",
-            summary: `agent ${agent} done`,
-            role: "explorer",
-          },
-          turnId: "turn-batch",
-          sequence: agent * 20 + 19,
-        }),
-        makeActivity({
-          kind: "tool.completed",
-          summary: "Subagent task",
-          payload: { toolCallId: toolUseId, status: "completed" },
-          turnId: "turn-batch",
-          sequence: agent * 20 + 19,
-        }),
-      );
-    }
-
-    const entries = deriveWorkLogEntries(activities);
-    // A1 CTA design: all direct spawns in one turn collapse into ONE
-    // call-to-action row carrying the batch's agent ids.
-    const spawnRows = entries.filter((entry) => entry.agentSpawn !== undefined);
-    expect(spawnRows).toHaveLength(1);
-    expect(spawnRows[0]!.agentSpawn!.agentTaskIds).toHaveLength(5);
-    expect(spawnRows[0]!.agentSpawn!.workflowId).toBeNull();
-    // No agent-attributed tool rows leak into the main log.
-    expect(entries.some((entry) => entry.sourceActivityKind?.startsWith("tool."))).toBe(false);
-  });
-
-  it("shows Droid's sub-agents as one row and a wait on one as a step that keeps its start", () => {
-    // What the server stores for two Droid Task calls and a blocking TaskOutput
-    // (Droid 0.231.0): the Task calls are sub-agents, not tool rows.
-    const at = (seconds: number) => new Date(Date.UTC(2026, 9, 1, 9, 0, seconds)).toISOString();
-    const launch = (taskId: string, title: string, sequence: number) => [
-      makeActivity({
-        id: `started-${taskId}`,
-        kind: "task.started",
-        summary: "Task started",
-        tone: "info",
-        payload: { taskId, toolUseId: taskId, taskType: "subagent", title, role: "explorer" },
-        turnId: "turn-droid",
-        createdAt: at(0),
-        sequence,
-      }),
-    ];
-    const wait = (
-      kind: "tool.updated" | "tool.completed",
-      seconds: number,
-      status: string,
-      title: string,
-      sequence: number,
-    ) =>
-      makeActivity({
-        kind,
-        summary: title,
-        payload: { itemType: "collab_agent_tool_call", toolCallId: "wait-1", status, title },
-        turnId: "turn-droid",
-        createdAt: at(seconds),
-        sequence,
-      });
-    const waitingTitle = "Waiting for sub-agent · Review the host (up to 10 min)";
-    const running = [
-      ...launch("task-a", "Review the host", 1),
-      ...launch("task-b", "Audit the build", 2),
-      wait("tool.updated", 5, "inProgress", waitingTitle, 3),
-      wait("tool.updated", 40, "inProgress", waitingTitle, 4),
-    ];
-
-    const live = deriveWorkLogEntries(running);
-    expect(live.map((entry) => entry.agentSpawn?.agentTaskIds ?? entry.label)).toEqual([
-      ["task-a", "task-b"],
-      waitingTitle,
-    ]);
-    // The timer on a running step counts from its first update, not its latest.
-    expect(live[1]).toMatchObject({
-      toolLifecycleStatus: "inProgress",
-      startedAt: at(5),
-      createdAt: at(40),
-    });
-
-    const done = deriveWorkLogEntries([
-      ...running,
-      wait("tool.completed", 95, "completed", "Waited for sub-agent · Review the host", 5),
-    ]);
-    expect(done).toHaveLength(2);
-    expect(done[1]).toMatchObject({
-      label: "Waited for sub-agent · Review the host",
-      toolLifecycleStatus: "completed",
-      startedAt: at(5),
-    });
-  });
-
-  it("a workflow run and its members collapse into one CTA row keyed to the coordinator", () => {
-    const entries = deriveWorkLogEntries([
-      makeActivity({
-        kind: "task.progress",
-        summary: "coordinator",
-        tone: "info",
-        payload: { taskId: "wf-1", taskType: "local_workflow", workflowName: "math-check" },
-        sequence: 1,
-      }),
-      makeActivity({
-        kind: "task.progress",
-        summary: "member",
-        tone: "info",
-        payload: { taskId: "wf-1:wf:0", status: "running", parentAgentId: "wf-1" },
-        sequence: 2,
-      }),
-      makeActivity({
-        kind: "task.completed",
-        summary: "member done",
-        tone: "info",
-        payload: { taskId: "wf-1:wf:1", status: "completed", parentAgentId: "wf-1" },
-        sequence: 3,
-      }),
-    ]);
-    const spawnRows = entries.filter((entry) => entry.agentSpawn !== undefined);
-    expect(spawnRows).toHaveLength(1);
-    expect(spawnRows[0]!.agentSpawn!.workflowId).toBe("wf-1");
-    expect(spawnRows[0]!.agentSpawn!.agentTaskIds).toEqual(
-      expect.arrayContaining(["wf-1", "wf-1:wf:0", "wf-1:wf:1"]),
-    );
-  });
-
-  it("keeps unrelated tools and failed launches, including failures after a task starts", () => {
-    const entries = deriveWorkLogEntries([
-      makeActivity({
-        kind: "tool.completed",
-        summary: "Bash",
-        payload: { itemType: "command_execution", command: "ls" },
-      }),
-      makeActivity({
-        id: "unlinked-failure",
-        kind: "tool.completed",
-        summary: "Subagent task",
-        tone: "error",
-        payload: { toolCallId: "unlinked", status: "failed" },
-      }),
-      makeActivity({
-        id: "linked-task",
-        kind: "task.started",
-        summary: "Task started",
-        payload: { taskId: "agent", toolUseId: "linked", taskType: "local_agent" },
-      }),
-      makeActivity({
-        id: "linked-failure",
-        kind: "tool.completed",
-        summary: "Subagent task",
-        payload: { toolCallId: "linked", status: "failed" },
-      }),
-      makeActivity({
-        id: "orphan-completion",
-        kind: "tool.completed",
-        summary: "Subagent task",
-        payload: {
-          toolCallId: "orphan",
-          itemType: "collab_agent_tool_call",
-          status: "completed",
-          data: { toolName: "Agent" },
-        },
-      }),
-      makeActivity({
-        id: "send-input",
-        kind: "tool.updated",
-        payload: {
-          toolCallId: "send-input",
-          itemType: "collab_agent_tool_call",
-          status: "inProgress",
-          data: { toolName: "send_input" },
-        },
-      }),
-      makeActivity({
-        id: "active-launch-error",
-        kind: "tool.updated",
-        tone: "error",
-        payload: {
-          toolCallId: "active-launch-error",
-          itemType: "collab_agent_tool_call",
-          status: "inProgress",
-          data: { toolName: "Task" },
-        },
-      }),
-    ]);
-    expect(entries).toHaveLength(7);
-    expect(entries.map((entry) => entry.id)).toEqual(
-      expect.arrayContaining(["unlinked-failure", "linked-task", "linked-failure"]),
-    );
-  });
-
-  it("folds timelineBypass agent rows into one CTA (Codex children, workflow members)", () => {
-    // Codex children carry their parent's spawn turn (spawnTurnId stamping),
-    // which is what batches a fleet into one CTA.
-    const entries = deriveWorkLogEntries([
-      makeActivity({
-        kind: "task.progress",
-        summary: "child work",
-        tone: "info",
-        payload: { taskId: "child-1", timelineBypass: true },
-        turnId: "turn-spawn",
-      }),
-      makeActivity({
-        kind: "task.progress",
-        summary: "child work again",
-        tone: "info",
-        payload: { taskId: "child-2", timelineBypass: true },
-        turnId: "turn-spawn",
-      }),
-    ]);
-    // Not suppressed outright (a Codex fleet's rows are ALL bypassed and
-    // still need a CTA anchor) — but never more than the batch's single row.
-    expect(entries).toHaveLength(1);
-    expect(entries[0]!.agentSpawn?.agentTaskIds).toEqual(["child-1", "child-2"]);
-  });
-
-  it("timelineBypass non-agent rows (background shells) stay suppressed", () => {
-    const entries = deriveWorkLogEntries([
-      makeActivity({
-        kind: "task.progress",
-        summary: "stall",
-        tone: "info",
-        payload: { taskId: "sh-1", taskType: "local_bash", timelineBypass: true },
-      }),
-    ]);
-    expect(entries).toHaveLength(0);
-  });
-
-  it("drops task.updated and tool.progress from the work log (fold input only)", () => {
-    const entries = deriveWorkLogEntries([
-      makeActivity({
-        kind: "task.updated",
-        summary: "Task running",
-        tone: "info",
-        payload: { taskId: "task-1", status: "running" },
-      }),
-      makeActivity({
-        kind: "tool.progress",
-        summary: "Read",
-        tone: "info",
-        payload: { taskId: "task-1", toolName: "Read" },
-      }),
-    ]);
-    expect(entries).toHaveLength(0);
-  });
-});
-
-describe("rerun workflows", () => {
-  it("turn-less direct spawns do not collapse into one global batch", () => {
-    // Rows that lost their turn id (defensive path) group per task, so two
-    // unrelated turn-less spawns never merge into one immortal CTA.
-    const entries = deriveWorkLogEntries([
-      makeActivity({
-        kind: "task.started",
-        summary: "Task started",
-        payload: { taskId: "loose-1", taskType: "local_agent", role: "a" },
-        sequence: 1,
-      }),
-      makeActivity({
-        kind: "task.started",
-        summary: "Task started",
-        payload: { taskId: "loose-2", taskType: "local_agent", role: "b" },
-        sequence: 2,
-      }),
-    ]);
-    const spawnRows = entries.filter((entry) => entry.agentSpawn !== undefined);
-    expect(spawnRows).toHaveLength(2);
-    expect(spawnRows.map((row) => row.agentSpawn!.agentTaskIds)).toEqual([
-      ["loose-1"],
-      ["loose-2"],
-    ]);
-  });
-
-  it("each workflow run gets its own CTA row (distinct coordinator ids)", () => {
-    const entries = deriveWorkLogEntries([
-      makeActivity({
-        kind: "task.progress",
-        summary: "run 1",
-        tone: "info",
-        payload: { taskId: "wf-run1", taskType: "local_workflow", workflowName: "math-check" },
-        turnId: "turn-1",
-        sequence: 1,
-      }),
-      makeActivity({
-        kind: "task.completed",
-        summary: "run 1 done",
-        tone: "info",
-        payload: { taskId: "wf-run1", status: "completed", taskType: "local_workflow" },
-        turnId: "turn-1",
-        sequence: 2,
-      }),
-      makeActivity({
-        kind: "task.progress",
-        summary: "run 2",
-        tone: "info",
-        payload: { taskId: "wf-run2", taskType: "local_workflow", workflowName: "math-check" },
-        turnId: "turn-2",
-        sequence: 3,
-      }),
-    ]);
-    const spawnRows = entries.filter((entry) => entry.agentSpawn !== undefined);
-    expect(spawnRows.map((row) => row.agentSpawn!.workflowId)).toEqual(["wf-run1", "wf-run2"]);
-    expect(spawnRows.map((row) => row.turnId)).toEqual(["turn-1", "turn-2"]);
-  });
-});
-
-describe("session activity performance", () => {
-  it("reuses entries for unchanged activities", () => {
-    const activities = ["status", "diff", "log"].map((command, index) =>
-      makeActivity({
-        id: `stable-tool-${index}`,
-        kind: "tool.completed",
-        sequence: index,
-        payload: {
-          itemType: "command_execution",
-          data: { toolCallId: `stable-tool-${index}`, item: { command: ["git", command] } },
-        },
-      }),
-    );
-
-    const initialEntries = deriveWorkLogEntries(activities.slice(0, 2));
-    const appendedEntries = deriveWorkLogEntries(activities);
-    expect(appendedEntries[0]).toBe(initialEntries[0]);
-    expect(appendedEntries[1]).toBe(initialEntries[1]);
-  });
-
-  // Cache reuse is the deterministic performance contract; absolute wall-clock
-  // budgets are not portable across shared CI runners.
-  it("reuses entries when appending to 20,000 ordered tool activities", () => {
-    const activities = Array.from({ length: 20_000 }, (_, index) =>
-      makeActivity({
-        id: `benchmark-tool-${index}`,
-        createdAt: new Date(1_700_000_000_000 + index).toISOString(),
-        kind: "tool.completed",
-        summary: "Ran command",
-        sequence: index,
-        payload: {
-          itemType: "command_execution",
-          title: "Ran command",
-          data: {
-            toolCallId: `benchmark-tool-${index}`,
-            item: { command: ["git", "status"] },
-          },
-        },
-      }),
-    );
-    const initialEntries = deriveWorkLogEntries(activities);
-    expect(initialEntries).toHaveLength(20_000);
-    const updatedActivities = [
-      ...activities,
-      makeActivity({
-        id: "benchmark-tool-appended",
-        createdAt: new Date(1_700_000_000_000 + activities.length).toISOString(),
-        kind: "tool.completed",
-        summary: "Ran command",
-        sequence: activities.length,
-        payload: {
-          itemType: "command_execution",
-          title: "Ran command",
-          data: { toolCallId: "benchmark-tool-appended", item: { command: ["git", "diff"] } },
-        },
-      }),
-    ];
-
-    const updatedEntries = deriveWorkLogEntries(updatedActivities);
-    expect(updatedEntries).toHaveLength(20_001);
-    expect(initialEntries.every((entry, index) => updatedEntries[index] === entry)).toBe(true);
-    expect(updatedEntries.at(-1)).toMatchObject({
-      id: "benchmark-tool-appended",
-      command: "git diff",
-      toolLifecycleStatus: "completed",
-    });
-  });
-});
-
 it("renders automatic completion as a work entry instead of a user bubble", () => {
   const now = DateTime.makeUnsafe("2026-09-09T00:00:00Z");
   const item = {
@@ -2800,78 +2235,4 @@ it("renders automatic completion as a work entry instead of a user bubble", () =
       ],
     })[0]?.kind,
   ).toBe("message");
-});
-
-describe("issue ownership", () => {
-  it.each(["checkpoint.capture.failed", "checkpoint.diff.failed"])(
-    "does not replay %s as a chat failure",
-    (kind) => {
-      expect(
-        deriveWorkLogEntries([
-          makeActivity({
-            kind,
-            tone: "error",
-            summary: "Internal checkpoint error",
-            payload: { detail: "git status exited with 1" },
-          }),
-        ]),
-      ).toEqual([]);
-    },
-  );
-  it("shows concise real turn and Stop failures and leaves unknown failures inspectable", () => {
-    for (const kind of [
-      "runtime.error",
-      "provider.turn.start.failed",
-      "provider.turn.interrupt.failed",
-      "provider.session.stop.failed",
-      "extension.failed",
-    ]) {
-      const [entry] = deriveWorkLogEntries([
-        makeActivity({
-          kind,
-          tone: "error",
-          summary: "Operation failed",
-          payload: { detail: "technical detail" },
-        }),
-      ]);
-      expect(entry).toBeDefined();
-      expect(entry?.detail).toBe("technical detail");
-      expect(workEntrySignalsSevereFailure(entry!)).toBe(kind !== "extension.failed");
-      expect(entry?.label).not.toBe("technical detail");
-    }
-  });
-  it("routes a retryable approval failure to its card instead of duplicating it in chat", () => {
-    const requested = makeActivity({
-      kind: "approval.requested",
-      tone: "approval",
-      payload: { requestId: "retry", requestKind: "command" },
-    });
-    const failed = makeActivity({
-      kind: "provider.approval.respond.failed",
-      tone: "error",
-      payload: { requestId: "retry", detail: "transport failure" },
-    });
-    expect(
-      deriveWorkLogEntries([requested, failed]).some(
-        (entry) => entry.sourceActivityKind === failed.kind,
-      ),
-    ).toBe(false);
-    expect(
-      deriveWorkLogEntries([failed]).some((entry) => entry.sourceActivityKind === failed.kind),
-    ).toBe(true);
-  });
-});
-
-it("does not resurface a failed request attempt after a successful retry", () => {
-  const entries = deriveWorkLogEntries([
-    makeActivity({
-      kind: "provider.user-input.respond.failed",
-      tone: "error",
-      payload: { requestId: "resolved", detail: "connection failed" },
-    }),
-    makeActivity({ kind: "user-input.resolved", payload: { requestId: "resolved" } }),
-  ]);
-  expect(
-    entries.some((entry) => entry.sourceActivityKind === "provider.user-input.respond.failed"),
-  ).toBe(false);
 });
