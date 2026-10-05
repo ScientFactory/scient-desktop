@@ -59,11 +59,12 @@ import {
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import type { ProviderSnapshotSource } from "../builtInProviderCatalog.ts";
-// SCIENT-FORK:START — model merge, transient state and reload.
+// SCIENT-FORK:START — model merge, transient state, reload and instance actions.
 import {
   mergeScientProviderModel,
   scientRetainMissingProviderModels,
 } from "./ScientProviderModelMerge.ts";
+import { makeScientProviderInstanceActions } from "./ScientProviderInstanceActions.ts";
 import { makeScientProviderReload } from "./ScientProviderReload.ts";
 import {
   makeScientProviderTransientState,
@@ -718,33 +719,14 @@ export const ProviderRegistryLive = Layer.effect(
       return yield* instance.snapshot.resolveMaintenance(options);
     });
 
-    const getProviderConnectionActionsForInstance = Effect.fn(
-      "getProviderConnectionActionsForInstance",
-    )(function* (instanceId: ProviderInstanceId) {
-      const instance = (yield* Ref.get(liveSubsRef)).get(instanceId);
-      return instance?.connectionActions;
-    });
-
-    const getProviderManagedRuntimeActionsForInstance = Effect.fn(
-      "getProviderManagedRuntimeActionsForInstance",
-    )(function* (instanceId: ProviderInstanceId) {
-      const instance = (yield* Ref.get(liveSubsRef)).get(instanceId);
-      return instance?.managedRuntimeActions;
-    });
-
-    const getProviderSkillActionsForInstance = Effect.fn("getProviderSkillActionsForInstance")(
-      function* (instanceId: ProviderInstanceId) {
-        const instance = (yield* Ref.get(liveSubsRef)).get(instanceId);
-        return instance?.skillActions;
-      },
-    );
-
-    const getVoiceTranscriptCorrectionForInstance = Effect.fn(
-      "getVoiceTranscriptCorrectionForInstance",
-    )(function* (instanceId: ProviderInstanceId) {
-      const instance = (yield* Ref.get(liveSubsRef)).get(instanceId);
-      return instance?.voiceTranscriptCorrection;
-    });
+    // SCIENT-FORK:START — per-instance action lookups.
+    const {
+      getProviderConnectionActionsForInstance,
+      getProviderManagedRuntimeActionsForInstance,
+      getProviderSkillActionsForInstance,
+      getVoiceTranscriptCorrectionForInstance,
+    } = makeScientProviderInstanceActions(liveSubsRef);
+    // SCIENT-FORK:END
 
     /**
      * Diff the aggregator's live-source set against the current
