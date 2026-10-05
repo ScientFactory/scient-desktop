@@ -5,6 +5,10 @@ import * as NodeURL from "node:url";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
+  CommandId,
+  EventId,
+  ProjectId,
+  type OrchestrationV2ThreadProjection,
   EnvironmentId,
   MessageId,
   NodeId,
@@ -57,6 +61,9 @@ import { makeProviderInstanceRegistry } from "../Layers/ProviderInstanceRegistry
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../Services/ProviderRegistry.ts";
 import { LegacyAntigravityDriver } from "./LegacyAntigravityDriver.ts";
+import { OrchestratorV2 } from "../../orchestration-v2/Orchestrator.ts";
+import { makeOrchestratorV2ReplayLayerWithRegistry } from "../../orchestration-v2/testkit/ProviderReplayHarness.ts";
+import { checkpointWorkspace } from "../../orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
 
 const first = ProviderInstanceId.make("legacy-agy-shutdown-target");
 const second = ProviderInstanceId.make("legacy-agy-shutdown-peer");
@@ -74,6 +81,7 @@ const decodeRequest = Schema.decodeSync(
   ),
 );
 const encodeSourceString = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
+const encodeIdleEvidence = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
 const stores = Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
@@ -935,5 +943,211 @@ it.layer(testLayer, { excludeTestServices: true })("Legacy factory native shutdo
           expect(yield* launch.handle.isRunning).toBe(true);
       }).pipe(Effect.scoped),
     20_000,
+  );
+  it.effect.skipIf(windowsHost)(
+    "ordinary next send recovers an idle native death with the observed conversation",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* harness();
+        yield* h.mutator.reconcile({
+          ...h.configMap,
+          [first]: {
+            ...h.configMap[first]!,
+            config: { ...h.configMap[first]!.config, enabled: true },
+          },
+        });
+        const config = yield* ServerConfig;
+        const cwd = yield* checkpointWorkspace("legacy-idle-recovery");
+        const threadId = ThreadId.make("legacy-agy-idle-recovery");
+        const modelSelection = h.input(first).modelSelection;
+        const layer = makeOrchestratorV2ReplayLayerWithRegistry(
+          { name: "legacy-idle-recovery", runtimePolicyOverride: { cwd } },
+          ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
+            Layer.provide(Layer.succeed(ProviderInstanceRegistry, h.registry)),
+          ),
+          {
+            databaseLayer: SqlitePersistenceMemory,
+            configureMcp: false,
+            serverConfigLayer: Layer.succeed(ServerConfig, config),
+          },
+        );
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* OrchestratorV2;
+          const store = yield* ProjectionStore.ProjectionStoreV2;
+          const waitFor = (predicate: (p: OrchestrationV2ThreadProjection) => boolean) =>
+            Effect.scoped(
+              Effect.gen(function* () {
+                const cursor = yield* orchestrator.getThreadEventSequence(threadId);
+                const pull = yield* Stream.toPull(
+                  orchestrator.streamStoredEventsFrom({ threadId, afterSequence: cursor }),
+                );
+                const initial = yield* orchestrator.getThreadProjection(threadId);
+                const result = yield* Stream.concat(
+                  Stream.succeed(initial),
+                  Stream.fromPull(Effect.succeed(pull)).pipe(
+                    Stream.mapEffect(() => orchestrator.getThreadProjection(threadId)),
+                  ),
+                ).pipe(Stream.filter(predicate), Stream.runHead, Effect.timeout("20 seconds"));
+                return Option.getOrThrow(result);
+              }),
+            );
+          const send = (ordinal: number, text: string) =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`legacy-idle-send:${ordinal}`),
+              messageId: MessageId.make(`legacy-idle-user:${ordinal}`),
+              threadId,
+              text,
+              attachments: [],
+              dispatchMode: { type: "start_immediately" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+          const projectId = ProjectId.make("legacy-idle-project");
+          const now = DateTime.formatIso(yield* DateTime.now);
+          yield* (yield* EventSink.EventSinkV2).commitProjectCommand({
+            commandId: CommandId.make("legacy-idle-project-create"),
+            projectId,
+            commandType: "project.create",
+            acceptedAt: yield* DateTime.now,
+            event: {
+              eventId: EventId.make("legacy-idle-project-event"),
+              type: "project.created",
+              aggregateKind: "project",
+              aggregateId: projectId,
+              occurredAt: now,
+              commandId: null,
+              causationEventId: null,
+              correlationId: null,
+              metadata: {},
+              payload: {
+                projectId,
+                title: "Legacy idle recovery",
+                workspaceRoot: cwd,
+                defaultModelSelection: null,
+                scripts: [],
+                createdAt: now,
+                updatedAt: now,
+              },
+            },
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("legacy-idle-create"),
+            threadId,
+            projectId,
+            title: "Legacy idle recovery",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+            createdBy: "user",
+            creationSource: "web",
+          });
+          yield* send(1, "first idle turn");
+          const completed = yield* waitFor(
+            (p) => p.runs[0]?.status === "completed" && p.runs[0]?.checkpointId !== null,
+          );
+          const originalThread = completed.providerThreads.find((p) => p.nativeThreadRef !== null)!;
+          const observed = originalThread.nativeThreadRef!;
+          expect(observed.strength).toBe("strong");
+          const originalSessionId = originalThread.providerSessionId!;
+          const owned = h.launches.filter((p) => p.instanceId === first);
+          expect(owned).toHaveLength(1);
+          expect(yield* owned[0]!.handle.isRunning).toBe(true);
+          expect(owned[0]!.args).toEqual(
+            expect.arrayContaining([
+              "--model",
+              "mock-model",
+              "--effort",
+              "high",
+              "stream-json",
+              "--dangerously-skip-permissions",
+            ]),
+          );
+          expect(owned[0]!.cwd).toBe(cwd);
+          expect(
+            completed.messages.filter((m) => m.role === "assistant").map((m) => m.text),
+          ).toEqual(["turn-1:first idle turn"]);
+          expect(completed.providerTurns.map((p) => p.status)).toEqual(["completed"]);
+          // This exact completed owner dies while idle; no Stop, explicit reopen
+          // or supplied future native ID drives the second user command.
+          yield* Effect.sync(() => process.kill(Number(owned[0]!.handle.pid), "SIGTERM"));
+          const idleExit = yield* owned[0]!.handle.exitCode.pipe(Effect.exit);
+          expect(Exit.isFailure(idleExit)).toBe(true);
+          if (Exit.isFailure(idleExit)) expect(Cause.pretty(idleExit.cause)).toContain("SIGTERM");
+          expect(yield* owned[0]!.handle.isRunning).toBe(false);
+          const dead = yield* waitFor((p) =>
+            p.providerSessions.some((s) => s.id === originalSessionId && s.status === "error"),
+          );
+          expect(dead.runs.map((r) => r.status)).toEqual(["completed"]);
+          expect(dead.providerTurns.map((p) => p.status)).toEqual(["completed"]);
+          expect(dead.messages.filter((m) => m.role === "assistant").map((m) => m.text)).toEqual([
+            "turn-1:first idle turn",
+          ]);
+          expect(dead.turnItems.some((i) => i.type === "error")).toBe(false);
+          expect(yield* h.readRequests(first)).toHaveLength(1);
+          yield* send(2, "after idle crash");
+          const recovered = yield* waitFor((p) =>
+            ["completed", "failed", "interrupted"].includes(p.runs[1]?.status ?? ""),
+          );
+          const fresh = yield* store.getThreadSnapshot(threadId);
+          const events = yield* (yield* EventStore.EventStoreV2)
+            .read({ threadId })
+            .pipe(Stream.runCollect);
+          const launches = h.launches.filter((p) => p.instanceId === first);
+          const requests = yield* h.readRequests(first);
+          const evidence = {
+            completed,
+            dead,
+            fresh,
+            events,
+            requests,
+            launches: launches.map((p) => ({
+              args: p.args,
+              cwd: p.cwd,
+              pid: Number(p.handle.pid),
+            })),
+          };
+          expect(recovered.runs[1]?.status, yield* encodeIdleEvidence(evidence)).toBe("completed");
+          expect(recovered.runs.map((r) => r.status)).toEqual(["completed", "completed"]);
+          expect(recovered.providerTurns.map((p) => p.status)).toEqual(["completed", "completed"]);
+          expect(recovered.turnItems.some((i) => i.type === "error")).toBe(false);
+          expect(
+            recovered.messages.filter((m) => m.role === "assistant").map((m) => m.text),
+          ).toEqual(["turn-1:first idle turn", "turn-1:after idle crash"]);
+          expect(recovered.messages.every((m) => !m.streaming)).toBe(true);
+          expect(launches).toHaveLength(2);
+          expect(Number(launches[1]!.handle.pid)).not.toBe(Number(owned[0]!.handle.pid));
+          expect(launches[1]!.args).toEqual(
+            expect.arrayContaining([
+              "--model",
+              "mock-model",
+              "--effort",
+              "high",
+              "--conversation",
+              observed.nativeId,
+              "--dangerously-skip-permissions",
+            ]),
+          );
+          expect(launches[1]!.cwd).toBe(cwd);
+          expect(
+            recovered.providerThreads.every(
+              (p) => p.nativeThreadRef?.nativeId === observed.nativeId,
+            ),
+          ).toBe(true);
+          expect(
+            recovered.providerSessions.filter((s) => s.status === "error").map((s) => s.id),
+          ).toEqual([originalSessionId]);
+          expect(requests.map((r) => r.message.content.split("\n\n").at(-1))).toEqual([
+            "first idle turn",
+            "after idle crash",
+          ]);
+          expect(h.credentialLaunches).toHaveLength(0);
+          expect(fresh.projection).toEqual(recovered);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.scoped),
+    60_000,
   );
 });
