@@ -1,7 +1,11 @@
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { ProviderDriverKind, ProviderReplayTranscript } from "@t3tools/contracts";
+import type {
+  ProviderDriverKind,
+  ProviderReplayTranscript,
+  ResponseStreamingMode,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -204,6 +208,7 @@ export function runOrchestratorV2ProviderReplayScenario<
     /** Auth integration tests must supply the actual snapshot registry. */
     readonly providerRegistryLayer?: Layer.Layer<ProviderRegistry.ProviderRegistry>;
     readonly runtimePolicyLayer?: Layer.Layer<RuntimePolicy.RuntimePolicyV2>;
+    readonly responseStreamingMode?: ResponseStreamingMode;
     /** Inject an external Git process failure while retaining native checkpoint services. */
     readonly vcsProcessLayer?: Layer.Layer<VcsProcess.VcsProcess>;
     // Start continuation runs for provider wake turns, as the live runtime does.
@@ -321,6 +326,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     /** Auth integration tests must supply the actual snapshot registry. */
     readonly providerRegistryLayer?: Layer.Layer<ProviderRegistry.ProviderRegistry>;
     readonly runtimePolicyLayer?: Layer.Layer<RuntimePolicy.RuntimePolicyV2>;
+    readonly responseStreamingMode?: ResponseStreamingMode;
     /** Inject an external Git process failure while retaining native checkpoint services. */
     readonly vcsProcessLayer?: Layer.Layer<VcsProcess.VcsProcess>;
     // Start continuation runs for provider wake turns, as the live runtime does.
@@ -374,7 +380,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     options.runContinuationWorker === true ? ProviderContinuationRequests.layer : Layer.empty;
   const providedRegistryLayer = registryLayer.pipe(Layer.provide(continuationRequestsLayer));
   const serverSettingsLayer = ServerSettings.layerTest({
-    responseStreamingMode: "turn",
+    responseStreamingMode: options.responseStreamingMode ?? "turn",
     ...(options.continueThreadsAfterServerUpdate === undefined
       ? {}
       : { continueThreadsAfterServerUpdate: options.continueThreadsAfterServerUpdate }),
