@@ -31,7 +31,6 @@ import * as Context from "effect/Context";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -57,6 +56,12 @@ import {
   layer as threadCommandExecutorLayer,
 } from "./ThreadCommandExecutor.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
+// SCIENT-FORK:START — owned finalization and private subscription lifetime.
+import {
+  makeOwnedRunFinalizer,
+  makeRunEventSubscriptionLifetime,
+} from "./scient-fork/RunExecutionFinalization.ts";
+// SCIENT-FORK:END
 
 export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
@@ -968,85 +973,12 @@ export const layer: Layer.Layer<
               ),
             ),
           );
-          // SCIENT-FORK:START — serialize terminal commit with held registration, not with native callbacks.
-          // An interrupt receipt can commit even when this superseded root cannot finalize.
-          const supersededInterruptResultWritten = yield* Ref.make(false);
-          const writeOwnedFinalRunEvents = (final: Parameters<typeof writeFinalRunEvents>[0]) =>
-            Effect.gen(function* () {
-              if (
-                yield* (
-                  input.session.droidSteerTerminalHeld?.(input.attempt.id, final.terminal.status) ??
-                    Effect.succeed(false)
-                )
-              )
-                return false;
-              let committedSideEffect = false;
-              const write = writeFinalRunEvents({
-                ...final,
-                ...(final.hasUnpairedRunInterruptRequest === undefined
-                  ? {}
-                  : {
-                      hasUnpairedRunInterruptRequest: () =>
-                        Ref.get(supersededInterruptResultWritten).pipe(
-                          Effect.flatMap((written) =>
-                            written
-                              ? Effect.succeed(false)
-                              : final.hasUnpairedRunInterruptRequest!(),
-                          ),
-                        ),
-                    }),
-                refreshAfterTurn: Effect.sync(() => {
-                  committedSideEffect = true;
-                }),
-              }).pipe(
-                Effect.tap((committed) =>
-                  !committed && committedSideEffect
-                    ? Ref.set(supersededInterruptResultWritten, true)
-                    : Effect.void,
-                ),
-              );
-              let committed: boolean;
-              while (true) {
-                const decision = yield* input.session.driver !== "droid"
-                  ? write.pipe(
-                      Effect.map((result) => ({ type: "written", committed: result }) as const),
-                    )
-                  : threadDispatch.withLock(
-                      input.run.threadId,
-                      Effect.gen(function* () {
-                        if (
-                          yield* (
-                            input.session.droidSteerTerminalHeld?.(input.attempt.id, "completed") ??
-                              Effect.succeed(false)
-                          )
-                        )
-                          return { type: "recheck-held" } as const;
-                        return { type: "written", committed: yield* write } as const;
-                      }),
-                    );
-                if (decision.type === "written") {
-                  committed = decision.committed;
-                  break;
-                }
-                // A new hold may have committed after the outside probe. Its real
-                // status-aware drop dispatch needs this same nonrecursive permit.
-                if (
-                  yield* (
-                    input.session.droidSteerTerminalHeld?.(
-                      input.attempt.id,
-                      final.terminal.status,
-                    ) ?? Effect.succeed(false)
-                  )
-                )
-                  return false;
-                // Reacquire and recheck: an outside drop is not authority to write
-                // through another registration or a superseding execution owner.
-              }
-              if (committedSideEffect) {
-                yield* final.refreshAfterTurn;
-              }
-              return committed;
-            });
+          // SCIENT-FORK:START — finalize against held registration without locking native callbacks.
+          const writeOwnedFinalRunEvents = yield* makeOwnedRunFinalizer(
+            input,
+            threadDispatch,
+            writeFinalRunEvents,
+          );
           // SCIENT-FORK:END
           const cancelledStartOwner = yield* Ref.make<EventSink.PendingStartOwner | undefined>(
             undefined,
@@ -1204,11 +1136,15 @@ export const layer: Layer.Layer<
             input.session.subscribeEvents === undefined
               ? { events: input.session.events, close: Effect.void }
               : yield* input.session.subscribeEvents;
-          const closeEventSubscription = yield* Effect.cached(eventSubscription.close);
+          // SCIENT-FORK:START — share one private subscription close with ingestion and startup cleanup.
+          const subscriptionLifetime = yield* makeRunEventSubscriptionLifetime(
+            eventSubscription.close,
+          );
+          // SCIENT-FORK:END
           const inheritedBackgroundTurnItems = yield* (
             input.loadInheritedBackgroundTurnItems?.() ?? Effect.succeed([])
           ).pipe(
-            Effect.onError(() => closeEventSubscription),
+            Effect.onError(() => subscriptionLifetime.close),
             Effect.mapError(
               (cause) =>
                 new RunExecutionStartError({
@@ -1783,14 +1719,12 @@ export const layer: Layer.Layer<
                 ),
               );
             }),
-            Effect.ensuring(closeEventSubscription),
+            Effect.ensuring(subscriptionLifetime.close),
             Effect.forkDetach,
           );
-          // An unstarted child can be interrupted before installing its finalizer.
-          // Share one close with the child so either path retires the subscription.
-          const interruptProviderEvents = Fiber.interrupt(providerEventFiber).pipe(
-            Effect.ensuring(closeEventSubscription),
-          );
+          // SCIENT-FORK:START — retire an interrupted subscription even before child startup.
+          const interruptProviderEvents = subscriptionLifetime.interrupt(providerEventFiber);
+          // SCIENT-FORK:END
 
           if (
             input.shouldStartProviderTurn !== undefined &&
