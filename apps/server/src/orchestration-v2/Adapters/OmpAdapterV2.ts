@@ -13,6 +13,7 @@ import * as Exit from "effect/Exit";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -104,6 +105,8 @@ export interface OmpAdapterV2Options extends Pick<
   readonly serverConfig: ServerConfig["Service"];
   readonly makeProcess: OmpProcessFactory;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  readonly eventQueueByteLimit?: number;
+  readonly eventQueueItemLimit?: number;
 }
 const JsonString = Schema.fromJsonString(Schema.String);
 const encodeJsonString = Schema.encodeSync(JsonString);
@@ -140,6 +143,16 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
   return makeNativeSessionAdapterV2({
     settleIdleSubagents: true,
     ...options,
+    eventQueueLimits: {
+      maxBytes: Math.max(1, options.eventQueueByteLimit ?? 32 * 1024 * 1024),
+      maxItems: Math.max(1, options.eventQueueItemLimit ?? 8192),
+      globalFactor: 4,
+    },
+    eventQueueStorage: {
+      fileSystem: options.fileSystem,
+      path: options.path,
+      directory: options.serverConfig.stateDir,
+    },
     mcpSessionInjection: true,
     defaultCwd: options.serverConfig.cwd,
     driver: target.driverKind,
@@ -336,16 +349,19 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
             );
           redaction = client.redaction;
           let confirmedExit: OmpProcessExit | undefined;
-          const shutdownObserved = Effect.suspend(() =>
-            confirmedExit !== undefined
-              ? Effect.succeed(confirmedExit)
-              : client.shutdown.pipe(
-                  Effect.tap((exit) =>
-                    Effect.sync(() => {
-                      if (exit.code !== null || exit.exited === true) confirmedExit = exit;
-                    }),
+          const shutdownPermit = yield* Semaphore.make(1);
+          const shutdownObserved = shutdownPermit.withPermit(
+            Effect.suspend(() =>
+              confirmedExit !== undefined
+                ? Effect.succeed(confirmedExit)
+                : client.shutdown.pipe(
+                    Effect.tap((exit) =>
+                      Effect.sync(() => {
+                        if (exit.code !== null || exit.exited === true) confirmedExit = exit;
+                      }),
+                    ),
                   ),
-                ),
+            ).pipe(Effect.uninterruptible),
           );
           ownedShutdown = shutdownObserved;
           yield* Effect.addFinalizer(() => shutdownObserved.pipe(Effect.ignore));

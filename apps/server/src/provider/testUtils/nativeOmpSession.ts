@@ -40,6 +40,9 @@ const decodeSettings = Schema.decodeEffect(OmpSettings);
 /** Real native OMP conversation ownership for isolated transport and CLI fixtures. */
 export const nativeOmpSession = Effect.fnUntraced(function* (input: {
   readonly root: string;
+  readonly adapter?: ReturnType<typeof makeOmpAdapterV2>;
+  readonly eventQueueByteLimit?: number;
+  readonly eventQueueItemLimit?: number;
   readonly cwd?: string;
   readonly stateDir: string;
   readonly attachmentsDir: string;
@@ -55,35 +58,44 @@ export const nativeOmpSession = Effect.fnUntraced(function* (input: {
   readonly continuations?: Parameters<typeof makeOmpAdapterV2>[0]["continuations"];
   readonly makeProcess: Parameters<typeof makeOmpAdapterV2>[0]["makeProcess"];
 }) {
+  const consumerScope = yield* Effect.scope;
   const scope = yield* Scope.make();
   yield* Effect.addFinalizer((exit) => Scope.close(scope, exit));
   return yield* Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const allocator = yield* IdAllocator.IdAllocatorV2;
-    const adapter = makeOmpAdapterV2({
-      target: input.target,
-      instanceId: input.instanceId,
-      settings: yield* decodeSettings({
-        binaryPath: input.binaryPath,
+    const adapter =
+      input.adapter ??
+      makeOmpAdapterV2({
+        ...(input.eventQueueByteLimit === undefined
+          ? {}
+          : { eventQueueByteLimit: input.eventQueueByteLimit }),
+        ...(input.eventQueueItemLimit === undefined
+          ? {}
+          : { eventQueueItemLimit: input.eventQueueItemLimit }),
+        target: input.target,
+        instanceId: input.instanceId,
+        settings: yield* decodeSettings({
+          binaryPath: input.binaryPath,
+          ...(input.homePath ? { homePath: input.homePath } : {}),
+        }),
         ...(input.homePath ? { homePath: input.homePath } : {}),
-      }),
-      ...(input.homePath ? { homePath: input.homePath } : {}),
-      environment: input.environment,
-      fileSystem: yield* FileSystem.FileSystem,
-      path: yield* Path.Path,
-      crypto: yield* Crypto.Crypto,
-      spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
-      idAllocator: allocator,
-      serverConfig: {
-        ...config,
-        cwd: input.cwd ?? input.root,
-        stateDir: input.stateDir,
-        attachmentsDir: input.attachmentsDir,
-      },
-      makeProcess: input.makeProcess,
-      ...(input.nativeEventLogger ? { nativeEventLogger: input.nativeEventLogger } : {}),
-      continuations: input.continuations ?? { offer: () => Effect.void },
-    });
+        environment: input.environment,
+        fileSystem: yield* FileSystem.FileSystem,
+        path: yield* Path.Path,
+        crypto: yield* Crypto.Crypto,
+        spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+        idAllocator: allocator,
+        serverConfig: {
+          ...config,
+          cwd: input.cwd ?? input.root,
+          stateDir: input.stateDir,
+          attachmentsDir: input.attachmentsDir,
+        },
+        makeProcess: input.makeProcess,
+        ...(input.nativeEventLogger ? { nativeEventLogger: input.nativeEventLogger } : {}),
+        continuations: input.continuations ?? { offer: () => Effect.void },
+      });
     const policy = {
       cwd: input.cwd ?? input.root,
       runtimeMode: "full-access" as const,
@@ -98,6 +110,19 @@ export const nativeOmpSession = Effect.fnUntraced(function* (input: {
       modelSelection: input.modelSelection,
       runtimePolicy: policy,
     });
+    let consumerStarted = false;
+    if (runtime.eventConsumer) {
+      const consumer = runtime.eventConsumer;
+      yield* consumer.retain;
+      yield* Scope.addFinalizer(
+        consumerScope,
+        Scope.close(scope, Exit.void).pipe(
+          // A started stream owns its own EOF/cancel finalizer in its reader
+          // scope; only an unpublished fixture reader needs this fallback.
+          Effect.andThen(Effect.suspend(() => (consumerStarted ? Effect.void : consumer.dispose))),
+        ),
+      );
+    }
     const providerThread = yield* input.resumeProviderThread
       ? runtime.resumeThread({
           threadId: input.threadId,
@@ -135,7 +160,12 @@ export const nativeOmpSession = Effect.fnUntraced(function* (input: {
     let ordinal = 0;
     let activeTurnId: ProviderTurnId | undefined;
     let latestProviderThread = providerThread;
-    const events = runtime.events.pipe(
+    const events = Stream.unwrap(
+      Effect.sync(() => {
+        consumerStarted = true;
+        return runtime.events;
+      }),
+    ).pipe(
       Stream.tap((event) =>
         Effect.sync(() => {
           if (event.type === "provider_thread.updated") latestProviderThread = event.providerThread;

@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - synchronous SQL/replay identity guards require host-platform absolute-path semantics without filesystem canonicalization.
 import {
   CheckpointId,
   CheckpointRef,
@@ -10,6 +11,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "node:crypto";
+import * as NodePath from "node:path";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -24,7 +26,21 @@ import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 
 const CHECKPOINT_REFS_PREFIX = "refs/t3/orchestration-v2/checkpoints";
-const ROOT_CHECKPOINT_SCOPE_NAME = "root";
+const ROOT_WORKSPACE_SCOPE_NAME_PREFIX = "root-workspace-v1-";
+
+const rootWorkspaceScopeName = (cwd: string) =>
+  `${ROOT_WORKSPACE_SCOPE_NAME_PREFIX}${NodeCrypto.createHash("sha256").update(cwd).digest("hex")}`;
+
+/** Only newly allocated workspace roots carry this binding; historical roots stay readable. */
+export const isWorkspaceBoundRootScopeId = (id: CheckpointScopeId): boolean =>
+  /^checkpoint-scope:thread:[^:]+:name:root-workspace-v1-/.test(id);
+
+export const rootScopeWorkspaceMatches = (scope: OrchestrationV2CheckpointScope): boolean =>
+  !isWorkspaceBoundRootScopeId(scope.id) ||
+  (scope.kind === "root_run" &&
+    NodePath.isAbsolute(scope.cwd) &&
+    scope.id ===
+      `checkpoint-scope:thread:${encodeURIComponent(scope.threadId)}:name:${rootWorkspaceScopeName(scope.cwd)}`);
 
 export class CheckpointRootScopePrepareError extends Schema.TaggedError<CheckpointRootScopePrepareError>()(
   "CheckpointRootScopePrepareError",
@@ -191,9 +207,12 @@ function makeRootRunScope(input: {
   readonly createdAt: DateTime.Utc;
 }) {
   return Effect.gen(function* () {
+    if (!NodePath.isAbsolute(input.cwd)) {
+      return yield* Effect.fail("Root checkpoint workspace must be captured as an absolute path.");
+    }
     const scopeId = yield* input.idAllocator.allocate.checkpointScope({
       threadId: input.threadId,
-      name: ROOT_CHECKPOINT_SCOPE_NAME,
+      name: rootWorkspaceScopeName(input.cwd),
     });
     return {
       id: scopeId,
@@ -276,12 +295,21 @@ export const layer: Layer.Layer<
     const isGitCheckpointable = (cwd: string) =>
       checkpointStore.isGitRepository(cwd).pipe(Effect.orElseSucceed(() => false));
 
-    const ensureScope: CheckpointServiceV2Shape["ensureScope"] = (scope) => Effect.succeed(scope);
+    const ensureScope: CheckpointServiceV2Shape["ensureScope"] = (scope) =>
+      rootScopeWorkspaceMatches(scope)
+        ? Effect.succeed(scope)
+        : Effect.fail(
+            new CheckpointScopeEnsureError({
+              scopeId: scope.id,
+              cause: "The checkpoint root no longer matches its captured workspace identity.",
+            }),
+          );
 
     const captureBaseline: CheckpointServiceV2Shape["captureBaseline"] = (input) =>
       withWorkspaceLock(
         input.scope.cwd,
         Effect.gen(function* () {
+          yield* ensureScope(input.scope);
           if (!(yield* isGitCheckpointable(input.scope.cwd))) {
             return;
           }
@@ -319,6 +347,7 @@ export const layer: Layer.Layer<
         withWorkspaceLock(
           input.scope.cwd,
           Effect.gen(function* () {
+            yield* ensureScope(input.scope);
             const checkpointRef = checkpointRefForScopeOrdinal({
               scopeId: input.scope.id,
               ordinalWithinScope: input.ordinalWithinScope,
@@ -372,6 +401,7 @@ export const layer: Layer.Layer<
       withWorkspaceLock(
         input.scope.cwd,
         Effect.gen(function* () {
+          yield* ensureScope(input.scope);
           const checkpointId = yield* checkpointIdForScopeOrdinal(idAllocator, {
             scopeId: input.scope.id,
             ordinalWithinScope: input.ordinalWithinScope,
@@ -511,6 +541,7 @@ export const layer: Layer.Layer<
       withWorkspaceLock(
         input.scope.cwd,
         Effect.gen(function* () {
+          yield* ensureScope(input.scope);
           if (input.checkpoint.status !== "ready") {
             return yield* new CheckpointRestoreError({
               scopeId: input.scope.id,
@@ -547,10 +578,14 @@ export const layer: Layer.Layer<
     const deleteStaleRefs: CheckpointServiceV2Shape["deleteStaleRefs"] = (input) =>
       withWorkspaceLock(
         input.scope.cwd,
-        checkpointStore.deleteCheckpointRefs({
-          cwd: input.scope.cwd,
-          checkpointRefs: input.checkpoints.map((checkpoint) => checkpoint.ref),
-        }),
+        ensureScope(input.scope).pipe(
+          Effect.andThen(
+            checkpointStore.deleteCheckpointRefs({
+              cwd: input.scope.cwd,
+              checkpointRefs: input.checkpoints.map((checkpoint) => checkpoint.ref),
+            }),
+          ),
+        ),
       ).pipe(
         Effect.mapError(
           (cause) =>

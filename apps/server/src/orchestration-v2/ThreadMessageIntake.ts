@@ -102,6 +102,15 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
     const config = yield* ServerConfig.ServerConfig;
     const incomingByQuestionId = command.attachmentsByQuestionId;
     yield* AttachmentClaims.validateAttachmentLimits(Object.values(incomingByQuestionId).flat());
+    if (
+      Object.values(incomingByQuestionId)
+        .flat()
+        .some((attachment) => !AttachmentClaims.attachmentIsPendingUpload(attachment))
+    ) {
+      return yield* new AttachmentClaims.AttachmentClaimError({
+        message: "Question attachment must be a pending upload.",
+      });
+    }
     // Claims accumulate across questions, so all of preparation shares one
     // rollback boundary: any failure before dispatch removes every new copy.
     const claimedPaths: string[] = [];

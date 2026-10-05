@@ -167,7 +167,29 @@ export const layer: Layer.Layer<
             ),
             Effect.catchCause(() => Effect.succeed(input.inheritedBackgroundTurnItems)),
           ),
-        shouldStartProviderTurn: () => isCurrentAttemptInStatus("running"),
+        shouldStartProviderTurn: () =>
+          isCurrentAttemptInStatus("running").pipe(
+            Effect.flatMap((current) =>
+              current
+                ? projectionStore
+                    .hasUnpairedRunInterruptRequest(
+                      input.threadId,
+                      idAllocator.derive.runSignalTurnItem({
+                        runId: input.runId,
+                        signal: "interrupt-request",
+                      }),
+                      idAllocator.derive.runSignalTurnItem({
+                        runId: input.runId,
+                        signal: "interrupt-result",
+                      }),
+                    )
+                    .pipe(
+                      Effect.map((requested) => !requested),
+                      Effect.catchCause(() => Effect.succeed(false)),
+                    )
+                : Effect.succeed(false),
+            ),
+          ),
         shouldFinalizeRun: () =>
           projectionStore.getRuntimeRecoveryProjection(input.threadId).pipe(
             Effect.map((current) => {
@@ -306,6 +328,8 @@ export const layer: Layer.Layer<
           cause: `Run ${runId} is missing its execution projection state.`,
         });
       }
+      const source = message.notification?.source;
+      const providerWork = source?.kind === "provider_work" ? source : undefined;
       // Settles a run that never reached the provider: one signal turn item plus
       // terminal run, attempt and root node, written only while the run is still
       // the current starting attempt.
@@ -396,7 +420,11 @@ export const layer: Layer.Layer<
           });
         },
       );
-      if (message.attachments.length === 0 && message.text.trimStart().startsWith("/")) {
+      if (
+        providerWork === undefined &&
+        message.attachments.length === 0 &&
+        message.text.trimStart().startsWith("/")
+      ) {
         const isEmptyCompaction =
           message.text.trim().toLowerCase() === "/compact" && !projection.hasConversation;
         // Preparing a run may already point the thread at a newly selected
@@ -586,40 +614,65 @@ export const layer: Layer.Layer<
       });
       const { isCurrentAttemptInStatus } = runControls;
 
-      const resolvedRuntimePolicy = yield* runtimePolicy.resolve({
-        thread: {
-          ...projection.thread,
-          runtimeMode:
-            run.runtimeMode ?? run.legacyQueue?.runtimeMode ?? projection.thread.runtimeMode,
-          interactionMode:
-            run.interactionMode ??
-            run.legacyQueue?.interactionMode ??
-            projection.thread.interactionMode,
-        },
-        modelSelection: run.modelSelection,
-      });
+      const resolvedRuntimePolicy =
+        providerWork?.runtimePolicy ??
+        (yield* runtimePolicy.resolve({
+          thread: {
+            ...projection.thread,
+            runtimeMode:
+              run.runtimeMode ?? run.legacyQueue?.runtimeMode ?? projection.thread.runtimeMode,
+            interactionMode:
+              run.interactionMode ??
+              run.legacyQueue?.interactionMode ??
+              projection.thread.interactionMode,
+          },
+          modelSelection: run.modelSelection,
+        }));
       const existingSessionProjection = projection.providerSessions.find(
         (candidate) => candidate.id === providerSessionId,
       );
       const sessionResult = yield* Effect.result(
-        providerSessions.open({
-          threadId: projection.thread.id,
-          providerSessionId,
-          modelSelection: run.modelSelection,
-          runtimePolicy: resolvedRuntimePolicy,
-          ...(existingSessionProjection === undefined
-            ? {}
-            : { resumeFromSession: existingSessionProjection }),
-          ...(providerThread.nativeThreadRef?.nativeId == null
-            ? {}
-            : { initialNativeThreadId: providerThread.nativeThreadRef.nativeId }),
-          ...(providerThread.nativeMetadata?.itemIdentityVersion === undefined
-            ? {}
-            : {
-                initialProviderItemIdentityVersion:
-                  providerThread.nativeMetadata.itemIdentityVersion,
-              }),
-        }),
+        providerWork !== undefined
+          ? Effect.gen(function* () {
+              const owned = yield* providerSessions.get(providerWork.providerSessionId);
+              if (
+                Option.isNone(owned) ||
+                providerWork.providerSessionId !== providerSessionId ||
+                providerWork.providerThreadId !== providerThread.id ||
+                projection.thread.activeProviderThreadId !== providerThread.id ||
+                owned.value.instanceId !== run.providerInstanceId ||
+                owned.value.providerSession.cwd !== resolvedRuntimePolicy.cwd ||
+                checkpointScope.cwd !== resolvedRuntimePolicy.cwd ||
+                existingSessionProjection === undefined ||
+                !["ready", "running", "waiting"].includes(existingSessionProjection.status) ||
+                !modelSelectionsEqual(providerWork.modelSelection, run.modelSelection) ||
+                run.runtimeMode !== resolvedRuntimePolicy.runtimeMode ||
+                run.interactionMode !== resolvedRuntimePolicy.interactionMode
+              )
+                return yield* new ProviderTurnStartError({
+                  runId,
+                  cause: "Buffered native work no longer owns its captured execution session.",
+                });
+              return owned.value;
+            })
+          : providerSessions.open({
+              threadId: projection.thread.id,
+              providerSessionId,
+              modelSelection: run.modelSelection,
+              runtimePolicy: resolvedRuntimePolicy,
+              ...(existingSessionProjection === undefined
+                ? {}
+                : { resumeFromSession: existingSessionProjection }),
+              ...(providerThread.nativeThreadRef?.nativeId == null
+                ? {}
+                : { initialNativeThreadId: providerThread.nativeThreadRef.nativeId }),
+              ...(providerThread.nativeMetadata?.itemIdentityVersion === undefined
+                ? {}
+                : {
+                    initialProviderItemIdentityVersion:
+                      providerThread.nativeMetadata.itemIdentityVersion,
+                  }),
+            }),
       );
       const prepareHistoryBeforeStart = (runIds?: ReadonlyArray<RunId>) =>
         Effect.gen(function* () {
@@ -642,7 +695,12 @@ export const layer: Layer.Layer<
           return undefined;
         });
       if (sessionResult._tag === "Failure") {
-        if (input.willRetry === true) return yield* sessionResult.failure;
+        // A disposed buffered generation cannot be recreated by retrying session startup.
+        if (
+          input.willRetry === true &&
+          !(providerWork !== undefined && sessionResult.failure._tag === "ProviderTurnStartError")
+        )
+          return yield* sessionResult.failure;
         yield* settleStartFailure({
           signal: "provider-session-open-failure",
           title: "Provider session failed to open",
@@ -667,9 +725,11 @@ export const layer: Layer.Layer<
           });
           return undefined;
         });
-      let effectiveHandoffs = handoffs;
+      let effectiveHandoffs = providerWork === undefined ? handoffs : [];
       let completedNativeFork = nativeForkTransfer;
       const loadedProviderThread = yield* Effect.gen(function* () {
+        // Adoption consumes the existing generation; it cannot reload or replace its native owner.
+        if (providerWork !== undefined) return providerThread;
         if (nativeForkTransfer !== undefined) {
           if (projection.thread.conversationFork != null) {
             const frozen = nativeForkTransfer.frozenSource;
@@ -1475,10 +1535,11 @@ export const layer: Layer.Layer<
           ),
         );
       const deliverySession =
-        effectiveHandoffs.length === 0 &&
-        uncoveredMissedItems.length === 0 &&
-        restartNote === "" &&
-        !noteContinuation
+        providerWork !== undefined ||
+        (effectiveHandoffs.length === 0 &&
+          uncoveredMissedItems.length === 0 &&
+          restartNote === "" &&
+          !noteContinuation)
           ? session
           : makeDeliverySession(session, startWithHandoffs);
       yield* runExecution.startRootRun({
@@ -1529,6 +1590,7 @@ export const layer: Layer.Layer<
           attachments: message.attachments,
           createdBy: message.createdBy,
           creationSource: message.creationSource,
+          ...(message.notification === undefined ? {} : { notification: message.notification }),
           ...(message.scheduledTaskId === undefined
             ? {}
             : { scheduledTaskId: message.scheduledTaskId }),

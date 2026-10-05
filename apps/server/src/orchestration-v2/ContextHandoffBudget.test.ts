@@ -17,6 +17,8 @@ import {
   type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Cause from "effect/Cause";
+import * as Exit from "effect/Exit";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
@@ -1027,3 +1029,44 @@ describe("Scient serialized handoff allowance", () => {
     assert.equal(scientHandoffByteBudget({ ...input, modelContextWindow: 16_000 }), 0);
   });
 });
+
+it.effect.each(["after-record", "before-agent"] as const)(
+  "native context interruption retains an uncertain pending receipt without claiming delivery: %s",
+  (scenario) =>
+    Effect.gen(function* () {
+      let durable = handoff;
+      let injectCalls = 0;
+      const result = yield* deliverContextHandoffs({
+        handoffs: [handoff],
+        providerThread,
+        budget: 16_000,
+        alreadyDeliveredItemIds: new Set(),
+        persist: (value) =>
+          Effect.sync(() => {
+            durable = value;
+          }).pipe(Effect.andThen(scenario === "after-record" ? Effect.interrupt : Effect.void)),
+        inject: () =>
+          Effect.sync(() => {
+            injectCalls++;
+          }).pipe(Effect.andThen(Effect.interrupt)),
+      }).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(result));
+      if (Exit.isFailure(result)) assert.isTrue(Cause.hasInterruptsOnly(result.cause));
+      assert.equal(durable.delivery?.status, "pending");
+      assert.equal(durable.delivery?.nativeThreadId, providerThread.nativeThreadRef?.nativeId);
+      assert.equal(injectCalls, scenario === "after-record" ? 0 : 1);
+      // Native pending delivery cannot be claimed as notSent or resent into the
+      // same thread merely because no acceptance acknowledgement was observed.
+      const retry = yield* deliverContextHandoffs({
+        handoffs: [durable],
+        providerThread,
+        budget: 16_000,
+        alreadyDeliveredItemIds: new Set(),
+        persist: () => Effect.die("Ambiguous receipt must remain intact"),
+        inject: () => Effect.die("Ambiguous context must not be injected twice"),
+      }).pipe(Effect.result);
+      assert.equal(retry._tag, "Failure");
+      if (retry._tag === "Failure")
+        assert.equal(retry.failure._tag, "ContextHandoffDeliveryUncertainError");
+    }),
+);

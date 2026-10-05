@@ -1504,8 +1504,12 @@ export const layer: Layer.Layer<
                 yield* finalizeRootRun(terminal);
               }),
             ),
-            Effect.catchCause((cause) =>
-              Ref.get(rootRunFinalized).pipe(
+            Effect.catchCause((cause) => {
+              if (Cause.hasInterruptsOnly(cause))
+                return Effect.failCause(
+                  Cause.fromReasons<never>(cause.reasons.filter(Cause.isInterruptReason)),
+                );
+              return Ref.get(rootRunFinalized).pipe(
                 Effect.flatMap((finalized) =>
                   Effect.logWarning("orchestration V2 provider event ingestion failed", {
                     runId: input.run.id,
@@ -1562,8 +1566,8 @@ export const layer: Layer.Layer<
                     ),
                   ),
                 ),
-              ),
-            ),
+              );
+            }),
             Effect.ensuring(eventSubscription.close),
             Effect.forkDetach,
           );
@@ -1597,6 +1601,9 @@ export const layer: Layer.Layer<
             message: input.message,
             modelSelection: input.modelSelection,
             runtimePolicy: input.runtimePolicy,
+            ...(input.shouldStartProviderTurn === undefined
+              ? {}
+              : { shouldStartProviderTurn: input.shouldStartProviderTurn }),
           };
           const compact =
             input.message.attachments.length === 0 &&
@@ -1616,6 +1623,12 @@ export const layer: Layer.Layer<
           yield* startTurn.pipe(
             Effect.catchCause((cause) =>
               Effect.gen(function* () {
+                if (Cause.hasInterruptsOnly(cause)) {
+                  yield* Fiber.interrupt(providerEventFiber);
+                  return yield* Effect.failCause(
+                    Cause.fromReasons<never>(cause.reasons.filter(Cause.isInterruptReason)),
+                  );
+                }
                 const error = Cause.squash(cause);
                 const receipt =
                   isNativeStartReceiptError(error) &&
