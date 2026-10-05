@@ -544,6 +544,34 @@ export const OrchestrationV2RunBackgroundWorkCancelled = Schema.Struct({
 export type OrchestrationV2RunBackgroundWorkCancelled =
   typeof OrchestrationV2RunBackgroundWorkCancelled.Type;
 
+/** The immutable execution settings of an already-started native generation. */
+export const OrchestrationV2ProviderRuntimePolicy = Schema.Struct({
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
+  cwd: Schema.NullOr(Schema.String),
+  approvalPolicy: Schema.optional(Schema.Unknown),
+  sandboxPolicy: Schema.optional(Schema.Unknown),
+  reasoningEffort: Schema.optional(Schema.String),
+});
+export type OrchestrationV2ProviderRuntimePolicy = typeof OrchestrationV2ProviderRuntimePolicy.Type;
+
+// SCIENT-FORK:START — one durable intent; native readiness is deliberately absent.
+export const OrchestrationV2DroidHeldSteer = Schema.Struct({
+  revision: CommandId,
+  messageId: MessageId,
+  sourceAttemptId: RunAttemptId,
+  sourceRootNodeId: NodeId,
+  sourceProviderTurnId: ProviderTurnId,
+  sourceProviderSessionId: ProviderSessionId,
+  modelSelection: ModelSelection,
+  runtimePolicy: OrchestrationV2ProviderRuntimePolicy,
+  phase: Schema.Literals(["held", "pre_admission"]),
+  /** Describes an uncertain claim after crash; cannot recreate a live lease. */
+  admissionLease: Schema.optional(Schema.String),
+});
+export type OrchestrationV2DroidHeldSteer = typeof OrchestrationV2DroidHeldSteer.Type;
+// SCIENT-FORK:END
+
 export const OrchestrationV2Run = Schema.Struct({
   id: RunId,
   threadId: ThreadId,
@@ -559,6 +587,10 @@ export const OrchestrationV2Run = Schema.Struct({
   activeAttemptId: Schema.NullOr(RunAttemptId),
   status: OrchestrationV2RunStatus,
   queuePosition: Schema.optional(Schema.NullOr(PositiveInt)),
+  /** SCIENT: registration and pre-admission retain the original execution owner. */
+  heldDroidSteer: Schema.optional(OrchestrationV2DroidHeldSteer),
+  /** Policy carried from the admitted intent to its replacement start. */
+  steeringRuntimePolicy: Schema.optional(OrchestrationV2ProviderRuntimePolicy),
   /** Restart recovery holds the queue until the user explicitly resumes it. */
   queueHeld: Schema.optional(Schema.Boolean),
   /** Captured legacy queue options; only an explicit resume grants delivery authority. */
@@ -1082,17 +1114,6 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
   answers: Schema.optional(ProviderUserInputAnswers),
 });
 export type OrchestrationV2RuntimeRequest = typeof OrchestrationV2RuntimeRequest.Type;
-
-/** The immutable execution settings of an already-started native generation. */
-export const OrchestrationV2ProviderRuntimePolicy = Schema.Struct({
-  runtimeMode: RuntimeMode,
-  interactionMode: ProviderInteractionMode,
-  cwd: Schema.NullOr(Schema.String),
-  approvalPolicy: Schema.optional(Schema.Unknown),
-  sandboxPolicy: Schema.optional(Schema.Unknown),
-  reasoningEffort: Schema.optional(Schema.String),
-});
-export type OrchestrationV2ProviderRuntimePolicy = typeof OrchestrationV2ProviderRuntimePolicy.Type;
 
 const SubagentNotificationSource = Schema.Struct({
   kind: Schema.Literal("subagent"),
@@ -3176,6 +3197,16 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  * send them.
  */
 const OrchestrationV2InternalCommand = Schema.Union([
+  // SCIENT: revision checked internal admission, never an RPC command or replay authority.
+  Schema.Struct({
+    type: Schema.Literal("droid-steer.admission"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    revision: CommandId,
+    operation: Schema.Literals(["claim", "defer", "complete", "drop"]),
+    lease: Schema.optional(Schema.String),
+  }),
   /** Adopt buffered native work from the exact live session; never send a user prompt. */
   Schema.Struct({
     type: Schema.Literal("provider-work.admit"),

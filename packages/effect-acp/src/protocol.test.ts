@@ -230,6 +230,135 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
     }),
   );
 
+  it.effect(
+    "fences the whole decoded array before a yielding logger and through ordered updates and responses",
+    () =>
+      Effect.gen(function* () {
+        const { stdio, input, output } = yield* makeInMemoryStdio();
+        const order: string[] = [];
+        const logged = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const ended = yield* Deferred.make<void>();
+        const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+          stdio,
+          serverRequestMethods: new Set(),
+          logIncoming: true,
+          logger: (event) =>
+            event.stage === "decoded"
+              ? Effect.sync(() => {
+                  order.push("logged");
+                }).pipe(
+                  Effect.andThen(Deferred.succeed(logged, undefined)),
+                  Effect.andThen(Deferred.await(release)),
+                )
+              : Effect.void,
+          onDecodedBatch: (phase) =>
+            Effect.sync(() => {
+              order.push(phase);
+            }).pipe(
+              Effect.andThen(
+                phase === "end"
+                  ? Deferred.succeed(ended, undefined).pipe(Effect.asVoid)
+                  : Effect.void,
+              ),
+            ),
+          onNotification: () =>
+            Effect.sync(() => {
+              order.push("update");
+            }),
+          onResponse: () =>
+            Effect.sync(() => {
+              order.push("response");
+            }),
+        });
+        yield* transport.clientProtocol.run(0, () => Effect.void).pipe(Effect.forkScoped);
+        yield* transport.clientProtocol.send(0, {
+          _tag: "Request",
+          id: "7",
+          tag: "session/set_config_option",
+          payload: { sessionId: "session-1", configId: "model", value: "a" },
+          headers: [],
+        });
+        yield* Queue.take(output);
+        const frame = new TextEncoder().encode(
+          [
+            JSON.stringify({
+              jsonrpc: "2.0",
+              method: "session/update",
+              params: {
+                sessionId: "session-1",
+                update: {
+                  sessionUpdate: "agent_message_chunk",
+                  content: { type: "text", text: "first" },
+                },
+              },
+            }),
+            JSON.stringify({ jsonrpc: "2.0", id: 7, result: {} }),
+            JSON.stringify({
+              jsonrpc: "2.0",
+              method: "session/update",
+              params: {
+                sessionId: "session-1",
+                update: {
+                  sessionUpdate: "agent_message_chunk",
+                  content: { type: "text", text: "last" },
+                },
+              },
+            }),
+            "",
+          ].join("\n"),
+        );
+        yield* Queue.offer(input, frame);
+        yield* Deferred.await(logged);
+        assert.deepEqual(order, ["begin", "logged"]);
+        yield* Deferred.succeed(release, undefined);
+        yield* Deferred.await(ended);
+        assert.deepEqual(order, ["begin", "logged", "update", "response", "update", "end"]);
+      }),
+  );
+
+  it.effect(
+    "observes a decoded array with logging disabled and closes its fence on interruption",
+    () =>
+      Effect.gen(function* () {
+        const { stdio, input } = yield* makeInMemoryStdio();
+        const order: string[] = [];
+        const entered = yield* Deferred.make<void>();
+        const readerScope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(readerScope, Exit.void));
+        yield* AcpProtocol.makeAcpPatchedProtocol({
+          stdio,
+          serverRequestMethods: new Set(),
+          onDecodedBatch: (phase) =>
+            Effect.sync(() => {
+              order.push(phase);
+            }),
+          onNotification: () =>
+            Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+        }).pipe(Effect.provideService(Scope.Scope, readerScope));
+        yield* Queue.offer(
+          input,
+          new TextEncoder().encode(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              method: "session/update",
+              params: {
+                sessionId: "session-1",
+                update: {
+                  sessionUpdate: "agent_message_chunk",
+                  content: { type: "text", text: "last" },
+                },
+              },
+            }) + "\n",
+          ),
+        );
+        yield* Deferred.await(entered);
+        assert.deepEqual(order, ["begin"]);
+        yield* Scope.close(readerScope, Exit.void);
+        assert.deepEqual(order, ["begin", "failed"]);
+      }),
+  );
+
   it.effect("reports a request as sent only when it is handed to the writer", () =>
     Effect.gen(function* () {
       const { stdio, output } = yield* makeInMemoryStdio();

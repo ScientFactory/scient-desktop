@@ -699,6 +699,7 @@ export const layer: Layer.Layer<
 
       const resolvedRuntimePolicy =
         providerWork?.runtimePolicy ??
+        run.steeringRuntimePolicy ??
         (yield* runtimePolicy.resolve({
           thread: {
             ...projection.thread,

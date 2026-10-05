@@ -162,6 +162,10 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
       );
     },
     outputTruncationMessage: (runtime) => runtimes.get(runtime)?.requestLimitBreach?.()?.message,
+    // SCIENT-FORK:START — held intent requires a final live native reservation.
+    droidHeldSteering: true,
+    preserveRuntimeOnSettledInterrupt: true,
+    // SCIENT-FORK:END
     terminalizeRunOwnedItemsOnFailure: true,
     terminateRuntimeProcessGroupOnInterrupt: true,
     applyRuntimePolicy: (runtime, policy) =>

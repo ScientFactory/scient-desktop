@@ -1,3 +1,4 @@
+import { DroidSteerDeferred, DroidSteerUncertain } from "./Adapters/DroidSteerSafety.ts";
 import { CommandId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -345,7 +346,127 @@ export const executorLayer: Layer.Layer<
                     }),
                 ),
               );
-          case "provider-turn.restart":
+          case "provider-turn.restart": {
+            // SCIENT-FORK:START — a held effect is an admission request, not permission to cancel.
+            if (
+              effect.id ===
+              `effect:${effect.commandId}:droid-held-steer:${effect.request.providerTurnId}`
+            ) {
+              const request = effect.request;
+              return Effect.gen(function* () {
+                const read = threads.getThreadRecords(effect.threadId, [
+                  "runs",
+                  "providerThreads",
+                  "providerTurns",
+                ]);
+                const initial = yield* read;
+                const run = initial.runs.find((run) => run.id === request.runId);
+                const held = run?.heldDroidSteer;
+                if (
+                  held?.revision !== effect.commandId ||
+                  run?.activeAttemptId !== request.interruptedAttemptId ||
+                  run.status !== "running"
+                )
+                  return;
+                const owner = yield* providerSessions.get(request.providerSessionId);
+                if (
+                  Option.isNone(owner) ||
+                  owner.value.reserveDroidSteer === undefined ||
+                  owner.value.consumeDroidSteer === undefined
+                )
+                  return yield* new DroidSteerUncertain({
+                    message:
+                      "Held Droid admission has no live native owner; recovery must not replay it.",
+                  });
+                const session = owner.value;
+                let lease = held.admissionLease;
+                const command = (operation: "claim" | "defer" | "complete", token: string) =>
+                  threads.dispatch({
+                    type: "droid-steer.admission",
+                    commandId: CommandId.make(`droid-${operation}:${token}`),
+                    threadId: effect.threadId,
+                    runId: request.runId,
+                    revision: effect.commandId,
+                    operation,
+                    lease: token,
+                  });
+                if (held.phase === "pre_admission") {
+                  // A persisted claim never authorizes cancel after reopen. Only this live consumed token can finish SQL.
+                  if (lease === undefined || session.droidSteerConsumed?.(lease) !== true)
+                    return yield* new DroidSteerUncertain({
+                      message:
+                        "Uncertain Droid pre-admission requires explicit recovery; no native replay.",
+                    });
+                } else {
+                  lease = yield* session.reserveDroidSteer!({
+                    attemptId: held.sourceAttemptId,
+                    providerTurnId: held.sourceProviderTurnId,
+                    revision: held.revision,
+                  });
+                  if (lease === undefined) return yield* new DroidSteerDeferred();
+                  const token = lease;
+                  yield* command("claim", token).pipe(
+                    Effect.catch((error) => {
+                      const lostReadiness = session.validateDroidSteer?.(token) !== true;
+                      session.invalidateDroidSteer?.();
+                      return Effect.fail(lostReadiness ? new DroidSteerDeferred() : error);
+                    }),
+                  );
+                  const claimed = yield* read;
+                  const current = claimed.runs.find(
+                    (run) => run.id === request.runId,
+                  )?.heldDroidSteer;
+                  if (current?.revision !== effect.commandId || current.admissionLease !== lease)
+                    return;
+                  const providerThread = claimed.providerThreads.find(
+                    (thread) => thread.id === request.providerThreadId,
+                  );
+                  if (providerThread === undefined)
+                    return yield* new DroidSteerUncertain({
+                      message: "Held Droid provider thread is missing.",
+                    });
+                  const consumed = yield* session.consumeDroidSteer!({
+                    providerThread,
+                    providerTurnId: request.providerTurnId,
+                    droidSteerLease: lease,
+                  }).pipe(
+                    Effect.mapError((error) =>
+                      session.droidSteerConsumed?.(lease) === true
+                        ? new DroidSteerUncertain({
+                            message: `Native Droid admission failed after consumption: ${error.message}`,
+                          })
+                        : error,
+                    ),
+                  );
+                  if (!consumed) {
+                    yield* command("defer", lease);
+                    return yield* new DroidSteerDeferred();
+                  }
+                }
+                const settled = yield* read;
+                const current = settled.runs.find(
+                  (run) => run.id === request.runId,
+                )?.heldDroidSteer;
+                if (current?.revision !== effect.commandId) return;
+                if (
+                  settled.providerTurns.some(
+                    (turn) => turn.id === request.providerTurnId && turn.status === "running",
+                  )
+                )
+                  return yield* new DroidSteerDeferred();
+                yield* command("complete", lease);
+              }).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: request.type,
+                      cause,
+                    }),
+                ),
+              );
+            }
+            // SCIENT-FORK:END
             return providerTurnControl
               .interruptAndAwaitTerminal({
                 threadId: effect.threadId,
@@ -392,6 +513,7 @@ export const executorLayer: Layer.Layer<
                     }),
                 ),
               );
+          }
           case "runtime-request.respond":
             return runtimeRequests
               .respond({
@@ -754,6 +876,10 @@ export const layerWithOptions = (
           }
 
           const failure = Cause.findErrorOption(exit.cause);
+          const deferredDroidSteer =
+            Option.isSome(failure) && failure.value.cause instanceof DroidSteerDeferred;
+          const uncertainDroidSteer =
+            Option.isSome(failure) && failure.value.cause instanceof DroidSteerUncertain;
           const awaitingNativeReceipt =
             effect.request.type === "provider-run.interrupt" &&
             Option.isSome(failure) &&
@@ -761,22 +887,26 @@ export const layerWithOptions = (
             failure.value.cause.reason === "receipt_pending";
           const error = Cause.pretty(exit.cause);
           const nonRetryable = isNonRetryableProviderTurnControlFailure(effect.request.type, error);
-          yield* Effect.logWarning("Orchestration effect execution failed", {
-            effectId: effect.id,
-            effectType: effect.request.type,
-            attemptCount: effect.attemptCount,
-            nonRetryable,
-            error,
-          });
+          yield* deferredDroidSteer
+            ? Effect.void
+            : Effect.logWarning("Orchestration effect execution failed", {
+                effectId: effect.id,
+                effectType: effect.request.type,
+                attemptCount: effect.attemptCount,
+                nonRetryable,
+                error,
+              });
           // Prefer succeed for terminal interrupt races so the outbox does not
           // keep a failed interrupt around; fail only when we must not retry.
           const updated = nonRetryable
             ? yield* outbox
                 .succeed({ effectId: effect.id, workerId })
                 .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
-            : effect.attemptCount >= maxAttempts &&
-                !awaitingNativeReceipt &&
-                effect.request.type !== "attachment.rollback-prune"
+            : uncertainDroidSteer ||
+                (effect.attemptCount >= maxAttempts &&
+                  !awaitingNativeReceipt &&
+                  !deferredDroidSteer &&
+                  effect.request.type !== "attachment.rollback-prune")
               ? yield* outbox
                   .fail({ effectId: effect.id, workerId, error })
                   .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
@@ -785,7 +915,9 @@ export const layerWithOptions = (
                     effectId: effect.id,
                     workerId,
                     error,
-                    delayMs: Math.min(30_000, 100 * 2 ** Math.max(0, effect.attemptCount - 1)),
+                    delayMs: deferredDroidSteer
+                      ? 100
+                      : Math.min(30_000, 100 * 2 ** Math.max(0, effect.attemptCount - 1)),
                   })
                   .pipe(Effect.onError((cause) => requeueClaim(effect, cause)));
           if (!updated) {
