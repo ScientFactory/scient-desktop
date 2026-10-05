@@ -54,8 +54,7 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { ProviderAdapterRegistry } from "../../provider/Services/ProviderAdapterRegistry.ts";
-import { resolveForkModelWindow } from "./context/modelContextWindow.ts";
+import { resolveNativeModelContextWindow } from "./NativeModelContextWindow.ts";
 import { nativeThreadKey } from "./context/nativeThreadKey.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import {
@@ -241,7 +240,6 @@ function usageFromPayload(payload: unknown): ModelContextUsage | undefined {
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const settings = yield* ServerSettingsService;
-  const registry = yield* Effect.serviceOption(ProviderAdapterRegistry);
   const crypto = yield* Crypto.Crypto;
   const tokenCapOverride = yield* handoffTokenCapOverride.pipe(
     Effect.orElseSucceed(() => undefined),
@@ -540,11 +538,10 @@ const make = Effect.gen(function* () {
     // cannot size a destination, especially after a model switch.
     const modelWindow =
       input.modelContextWindow ??
-      (yield* resolveForkModelWindow({
-        threadId: thread.id,
+      (yield* resolveNativeModelContextWindow({
         modelSelection: input.modelSelection ?? thread.modelSelection,
         settings: serverSettings,
-        registry: Option.getOrUndefined(registry),
+        reported: undefined,
         sql,
       }).pipe(
         Effect.mapError(fail(thread.id, "Unable to resolve the destination model capacity.")),
