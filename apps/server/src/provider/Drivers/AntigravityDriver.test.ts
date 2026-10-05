@@ -492,7 +492,7 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
           );
           expect(create?.params?.mcpServers).toEqual([
             expect.objectContaining({
-              name: "t3-code",
+              name: "scient",
               env: expect.arrayContaining([
                 { name: "T3_ACP_MCP_ENDPOINT", value: native.mcp.endpoint },
                 { name: "T3_ACP_MCP_AUTHORIZATION", value: native.mcp.authorizationHeader },
