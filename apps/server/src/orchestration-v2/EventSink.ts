@@ -12,10 +12,10 @@ import {
   type PendingStartOwner,
 } from "./scient-fork/PendingStartOwner.ts";
 import { retainCommittedQuestionAnswers } from "./scient-fork/committedQuestionAnswers.ts";
+import { makeSourcePlanConsumer } from "./scient-fork/sourcePlanConsumption.ts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import {
   CommandId,
-  EventId,
   type OrchestrationV2Run,
   OrchestrationV2RunJson,
   OrchestrationV2DomainEvent,
@@ -48,7 +48,6 @@ import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
-import { sourcePlanFingerprint } from "./SourcePlan.ts";
 import { applyLegacyHistoryRepairGuards } from "./legacy/LegacyHistoryRepairGuards.ts";
 
 const decodeSourcePlanRun = Schema.decodeUnknownEffect(
@@ -331,12 +330,10 @@ const baseLayer: Layer.Layer<
             : [],
         ),
       );
+      // SCIENT-FORK:START — an accepted native turn consumes the plan it started from.
+      const consumeSourcePlan = makeSourcePlanConsumer({ sql, projectionStore });
       return Effect.gen(function* () {
         const normalized: OrchestrationV2DomainEvent[] = [];
-        const pendingPlans = new Map<
-          string,
-          Extract<OrchestrationV2DomainEvent, { type: "plan.updated" }>["payload"]
-        >();
         for (const event of events) {
           const positioned = yield* event.type === "turn-item.updated"
             ? turnItemPositions
@@ -347,108 +344,12 @@ const baseLayer: Layer.Layer<
                 .pipe(Effect.map((payload) => ({ ...event, payload })))
             : Effect.succeed(event);
           normalized.push(positioned);
-          if (event.type === "plan.updated") {
-            pendingPlans.set(`${event.threadId}\u0000${event.payload.id}`, event.payload);
-          }
-          if (event.type !== "provider-turn.updated") continue;
-          const turn = event.payload;
-          if (
-            turn.acceptedAt === undefined ||
-            turn.nativeAcceptance !== "accepted" ||
-            turn.runAttemptId === null ||
-            turn.nativeTurnRef === null ||
-            turn.startedAt === null ||
-            turn.status === "pending"
-          )
-            continue;
-          // Read only canonical committed owners, within the enclosing append transaction.
-          // A callback for a child, replaced attempt, or pooled sibling cannot consume a plan.
-          const rows = yield* sql<{ readonly payload_json: string }>`
-            SELECT r.payload_json
-            FROM orchestration_v2_projection_runs r
-            JOIN orchestration_v2_projection_run_attempts a
-              ON a.attempt_id = ${turn.runAttemptId}
-             AND a.run_id = r.run_id AND a.thread_id = r.thread_id
-            JOIN orchestration_v2_projection_nodes n
-              ON n.node_id = ${turn.nodeId} AND n.thread_id = r.thread_id
-             AND n.run_id = r.run_id
-            JOIN orchestration_v2_projection_provider_threads p
-              ON p.provider_thread_id = ${turn.providerThreadId} AND p.thread_id = r.thread_id
-            WHERE r.thread_id = ${event.threadId}
-              AND r.status IN ('running', 'waiting')
-              AND json_extract(r.payload_json, '$.activeAttemptId') = a.attempt_id
-              AND json_extract(r.payload_json, '$.rootNodeId') = n.node_id
-              AND json_extract(r.payload_json, '$.sourcePlanFingerprint') IS NOT NULL
-              AND r.provider_thread_id = p.provider_thread_id
-              AND r.provider_instance_id = p.provider_instance_id
-              AND p.last_run_ordinal = r.ordinal
-              AND a.provider_thread_id = p.provider_thread_id
-              AND a.provider_instance_id = p.provider_instance_id
-              AND p.driver = ${turn.nativeTurnRef.driver}
-              AND (a.provider_turn_id IS NULL OR a.provider_turn_id = ${turn.id})
-              AND json_extract(a.payload_json, '$.rootNodeId') = n.node_id
-              AND n.kind = 'root_turn' AND n.parent_node_id IS NULL
-              AND n.provider_thread_id = p.provider_thread_id
-              AND (n.provider_turn_id IS NULL OR n.provider_turn_id = ${turn.id})
-            LIMIT 1`;
-          if (rows[0] === undefined) continue;
-          const run = yield* decodeSourcePlanRun(rows[0].payload_json);
-          if (
-            (event.runId !== undefined && event.runId !== run.id) ||
-            (event.nodeId !== undefined && event.nodeId !== run.rootNodeId) ||
-            (event.providerInstanceId !== undefined &&
-              event.providerInstanceId !== run.providerInstanceId) ||
-            (event.driver !== undefined && event.driver !== turn.nativeTurnRef.driver)
-          )
-            continue;
-          const ref = run.sourcePlanRef ?? run.legacyQueue?.sourceProposedPlan;
-          if (ref === undefined) continue;
-          const targetThread = yield* projectionStore.getThread(event.threadId);
-          const sourceThread = yield* projectionStore.getThreadShell(ref.threadId);
-          if (
-            targetThread.deletedAt !== null ||
-            targetThread.archivedAt !== null ||
-            targetThread.activeProviderThreadId !== turn.providerThreadId ||
-            sourceThread === null ||
-            sourceThread.deletedAt !== null ||
-            sourceThread.archivedAt !== null ||
-            sourceThread.projectId !== targetThread.projectId
-          )
-            continue;
-          const key = `${ref.threadId}\u0000${ref.planId}`;
-          const plan =
-            pendingPlans.get(key) ?? (yield* projectionStore.getPlan(ref.threadId, ref.planId));
-          if (
-            plan?.kind !== "proposed_plan" ||
-            plan.id !== ref.planId ||
-            plan.threadId !== ref.threadId ||
-            plan.status !== "active" ||
-            sourcePlanFingerprint(plan) !== run.sourcePlanFingerprint
-          )
-            continue;
-          const consumed: Extract<OrchestrationV2DomainEvent, { type: "plan.updated" }> = {
-            id: EventId.make(`${event.id}:source-plan-consumed`),
-            type: "plan.updated",
-            threadId: plan.threadId,
-            ...(plan.runId === null ? {} : { runId: plan.runId }),
-            nodeId: plan.nodeId,
-            occurredAt: event.occurredAt,
-            payload: {
-              ...plan,
-              status: "completed",
-              consumedBy: {
-                threadId: event.threadId,
-                runId: run.id,
-                runAttemptId: turn.runAttemptId,
-                providerTurnId: turn.id,
-              },
-            },
-          };
-          normalized.push(consumed);
-          pendingPlans.set(key, consumed.payload);
+          const consumed = yield* consumeSourcePlan(event);
+          if (consumed !== undefined) normalized.push(consumed);
         }
         return normalized;
       });
+      // SCIENT-FORK:END
     };
 
     const applyStoredEvents = (storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>) =>
