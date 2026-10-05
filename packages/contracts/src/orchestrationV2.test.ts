@@ -16,6 +16,7 @@ import {
   ProviderInstanceId,
   ProviderReplayTranscript,
   ProviderThreadId,
+  ProviderSessionId,
   RunId,
   ThreadId,
   TrimmedNonEmptyString,
@@ -25,6 +26,7 @@ import {
   OrchestrationV2Checkpoint,
   OrchestrationV2CheckpointScope,
   OrchestrationV2Command,
+  OrchestrationV2Notification,
   OrchestrationV2LimitRecoveryUpdate,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderCapabilities,
@@ -203,6 +205,7 @@ const LegacySubscribeThreadInput = Schema.Struct({
 const decodeLegacyShellStreamItem = Schema.decodeUnknownSync(LegacyShellStreamItem);
 const decodeLegacySubscribeThreadInput = Schema.decodeUnknownSync(LegacySubscribeThreadInput);
 const decodeOrchestrationV2Command = Schema.decodeUnknownSync(OrchestrationV2Command);
+const isOrchestrationV2Command = Schema.is(OrchestrationV2Command);
 const decodeOrchestrationV2TurnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem);
 const decodeOrchestrationV2TurnItemJson = Schema.decodeUnknownSync(OrchestrationV2TurnItemJson);
 const encodeOrchestrationV2TurnItemJson = Schema.encodeSync(OrchestrationV2TurnItemJson);
@@ -1400,4 +1403,42 @@ describe("limit recovery choice updates", () => {
   ])("accepts an explicit independent choice %j", (choice) => {
     expect(decode({ ...identity, ...choice })).toEqual({ ...identity, ...choice });
   });
+});
+
+it("preserves provider-initiated work identity without admitting an internal command from a client", () => {
+  const notification = {
+    source: {
+      kind: "provider_work",
+      workId: "extension-work-1",
+      providerThreadId: ProviderThreadId.make("native-thread:work"),
+      providerSessionId: ProviderSessionId.make("session:work"),
+      modelSelection: { instanceId: ProviderInstanceId.make("pi"), model: "fixture-model" },
+      runtimePolicy: {
+        runtimeMode: "approval-required",
+        interactionMode: "plan",
+        cwd: "/synthetic/project",
+      },
+    },
+    outcome: "updated",
+    summary: "Provider started work",
+  } as const;
+  const codec = Schema.fromJsonString(OrchestrationV2Notification);
+  const encoded = Schema.encodeSync(codec)(notification);
+  expect(Schema.decodeSync(codec)(encoded)).toEqual(notification);
+  expect(
+    isOrchestrationV2Command({
+      type: "provider-work.admit",
+      commandId: "command:work",
+      messageId: "message:work",
+      threadId: "thread:work",
+      providerThreadId: "native-thread:work",
+      providerSessionId: "session:work",
+      providerInstanceId: "pi",
+      driver: "pi",
+      workId: "extension-work-1",
+      modelSelection: notification.source.modelSelection,
+      runtimePolicy: notification.source.runtimePolicy,
+      detail: "Provider started work",
+    }),
+  ).toBe(false);
 });

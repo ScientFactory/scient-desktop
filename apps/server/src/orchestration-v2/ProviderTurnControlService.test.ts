@@ -513,6 +513,7 @@ it.effect.each([
   "old-attempt",
   "replaced-binding",
   "settled-run",
+  "terminal-receipt",
   "archived-thread",
   "deleted-thread",
   "wrong-root",
@@ -733,6 +734,11 @@ it.effect.each([
               ...node,
               rootNodeId: NodeId.make("foreign-root"),
             })),
+          }));
+        if (kind === "terminal-receipt")
+          yield* Ref.update(projection, (current) => ({
+            ...current,
+            providerTurns: [{ ...receipt, status: "completed" as const, completedAt: now }],
           }));
         const dependencies = Layer.mergeAll(
           Layer.mock(ProjectionStore.ProjectionStoreV2)({

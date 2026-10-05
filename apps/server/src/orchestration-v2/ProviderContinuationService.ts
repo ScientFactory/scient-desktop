@@ -1,14 +1,31 @@
-import { CommandId, type OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import { CommandId, MessageId, type OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProviderContinuationRequests from "./ProviderContinuationRequests.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 
+const encodeWorkIdentity = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+
 const CONTINUATION_MESSAGE_TEXT = "Background task completed.";
+
+function initiatedWorkRetryIdentity(
+  request: ProviderContinuationRequests.ProviderContinuationRequest,
+) {
+  const initiated = request.initiated;
+  return initiated === undefined
+    ? undefined
+    : encodeWorkIdentity([
+        initiated.providerInstanceId,
+        initiated.providerSessionId,
+        request.providerThreadId,
+        initiated.workId,
+      ]);
+}
 
 function delegatedCompletionText(taskIds: ReadonlyArray<string>): string {
   const taskList = taskIds.join(", ");
@@ -81,7 +98,10 @@ export const workerLive = Layer.effectDiscard(
       });
 
     const dispatchContinuation = Effect.fn("ProviderContinuationService.dispatchContinuation")(
-      function* (request: ProviderContinuationRequests.ProviderContinuationRequest) {
+      function* (
+        request: ProviderContinuationRequests.ProviderContinuationRequest,
+        initiatedIdentity: string | undefined,
+      ) {
         const projection = yield* threads.getThreadRecords(
           request.threadId,
           ["messages", "runs", "providerTurns"],
@@ -102,6 +122,7 @@ export const workerLive = Layer.effectDiscard(
               delegatedCompletionRetryKey(request, request.delegatedCompletion),
             );
           }
+          if (initiatedIdentity !== undefined) yield* clearRetryAttempt(initiatedIdentity);
           // No continuation turn will start to clear the adapter's sticky offer.
           if (request.clearIfCurrent !== undefined) {
             yield* request.clearIfCurrent();
@@ -110,6 +131,43 @@ export const workerLive = Layer.effectDiscard(
             // drop callback.
             yield* request.dispatchIfCurrent(Effect.void);
           }
+          return;
+        }
+        if (request.initiated !== undefined) {
+          if (
+            initiatedIdentity === undefined ||
+            request.dispatchIfCurrent === undefined ||
+            request.clearIfCurrent === undefined
+          ) {
+            if (initiatedIdentity !== undefined) yield* clearRetryAttempt(initiatedIdentity);
+            if (request.clearIfCurrent !== undefined) yield* request.clearIfCurrent();
+            return;
+          }
+          const identity = initiatedIdentity;
+          const dispatch = threads.dispatch({
+            type: "provider-work.admit",
+            commandId: CommandId.make(`provider-work:${identity}`),
+            messageId: MessageId.make(`provider-work:${identity}`),
+            threadId: request.threadId,
+            providerThreadId: request.providerThreadId,
+            driver: request.driver,
+            ...request.initiated,
+            detail: request.detail ?? "Provider started background work.",
+          });
+          yield* request.dispatchIfCurrent(dispatch).pipe(
+            Effect.tap(() => clearRetryAttempt(identity)),
+            Effect.catchTag("OrchestratorProviderWorkDeferredError", () =>
+              Effect.gen(function* () {
+                const delay = yield* nextRetryDelay(identity);
+                // Keep the exact offer, buffer and command identity. Re-enter
+                // the producer's generation guard on every dispatch attempt.
+                yield* Effect.sleep(`${delay} millis`).pipe(
+                  Effect.andThen(requests.offer(request)),
+                  Effect.forkScoped,
+                );
+              }),
+            ),
+          );
           return;
         }
         if (request.delegatedCompletion !== undefined) {
@@ -181,8 +239,9 @@ export const workerLive = Layer.effectDiscard(
     );
 
     yield* requests.take.pipe(
-      Effect.flatMap((request) =>
-        dispatchContinuation(request).pipe(
+      Effect.flatMap((request) => {
+        const initiatedIdentity = initiatedWorkRetryIdentity(request);
+        return dispatchContinuation(request, initiatedIdentity).pipe(
           Effect.catchCause((cause) =>
             Effect.gen(function* () {
               yield* Effect.logWarning("orchestration-v2.provider-continuation.dispatch-failed", {
@@ -190,6 +249,10 @@ export const workerLive = Layer.effectDiscard(
                 providerThreadId: request.providerThreadId,
                 cause,
               });
+              if (request.initiated !== undefined) {
+                if (initiatedIdentity !== undefined) yield* clearRetryAttempt(initiatedIdentity);
+                if (request.clearIfCurrent !== undefined) yield* request.clearIfCurrent();
+              }
               if (request.delegatedCompletion !== undefined) {
                 const completion = request.delegatedCompletion;
                 const retryKey = delegatedCompletionRetryKey(request, completion);
@@ -224,8 +287,8 @@ export const workerLive = Layer.effectDiscard(
               }
             }),
           ),
-        ),
-      ),
+        );
+      }),
       Effect.forever,
       Effect.forkScoped,
     );

@@ -19,7 +19,7 @@ import {
   OrchestrationV2Subagent,
   OrchestrationV2TurnItem,
   ProviderApprovalDecision,
-  ProviderInteractionMode,
+  OrchestrationV2ProviderRuntimePolicy,
   ProviderDriverKind,
   ProviderInstanceId,
   PositiveInt,
@@ -27,7 +27,6 @@ import {
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
-  RuntimeMode,
   RuntimeRequestId,
   RunAttemptId,
   RunId,
@@ -44,14 +43,7 @@ import type {
   ProviderSelectionTransitionPlan,
 } from "./ProviderSelectionTransition.ts";
 
-export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
-  runtimeMode: RuntimeMode,
-  interactionMode: ProviderInteractionMode,
-  cwd: Schema.NullOr(Schema.String),
-  approvalPolicy: Schema.optional(Schema.Unknown),
-  sandboxPolicy: Schema.optional(Schema.Unknown),
-  reasoningEffort: Schema.optional(Schema.String),
-});
+export const ProviderAdapterV2RuntimePolicy = OrchestrationV2ProviderRuntimePolicy;
 export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePolicy.Type;
 
 export const ProviderAdapterV2TurnMessage = Schema.Struct({
@@ -61,6 +53,7 @@ export const ProviderAdapterV2TurnMessage = Schema.Struct({
   createdBy: OrchestrationV2ConversationMessage.fields.createdBy,
   creationSource: OrchestrationV2ConversationMessage.fields.creationSource,
   scheduledTaskId: OrchestrationV2ConversationMessage.fields.scheduledTaskId,
+  notification: OrchestrationV2ConversationMessage.fields.notification,
   senderThreadId: OrchestrationV2ConversationMessage.fields.senderThreadId,
 });
 export type ProviderAdapterV2TurnMessage = typeof ProviderAdapterV2TurnMessage.Type;
@@ -417,6 +410,8 @@ export interface ProviderAdapterV2TurnInput {
   readonly message: ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
+  /** Recheck after native preparation and immediately before the prompt write. */
+  readonly shouldStartProviderTurn?: () => Effect.Effect<boolean>;
 }
 
 export interface ProviderAdapterV2SteerInput {

@@ -1088,3 +1088,32 @@ describe("ThreadSettlementServiceV2 single-thread sweeps", () => {
     ),
   );
 });
+
+it.effect("a native merge respects Scient's default opt-out for automatic settlement", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const state = yield* Ref.make<"open" | "merged">("open");
+      const fixture = yield* makeHarness({
+        snapshot: makeSnapshot([
+          makeThread("merge-opt-out", {
+            branch: "saved-feature",
+            latestUserMessageAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+          }),
+        ]),
+        branchPullRequest: () => Ref.get(state).pipe(Effect.map(makeBranchPullRequest)),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+        yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+        yield* Ref.set(state, "merged");
+        yield* fixture.publishMerge;
+        yield* Queue.take(fixture.snapshotReads);
+        yield* service.drain;
+        assert.strictEqual(DEFAULT_SERVER_SETTINGS.sidebarAutoSettleOnMerge, false);
+        assert.strictEqual((yield* Ref.get(fixture.branchCalls)).length, 2);
+        assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+      }).pipe(Effect.provide(fixture.layer));
+    }),
+  ),
+);
