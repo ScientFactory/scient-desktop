@@ -1904,27 +1904,7 @@ export function makePiAdapterV2(
           dispatchIfCurrent: (dispatch) =>
             Effect.suspend(() => {
               if (!isCurrent()) return Effect.succeedNone;
-              return dispatch.pipe(
-                Effect.map(Option.some),
-                Effect.catch((error) => {
-                  // A predecessor's checkpoint can still be settling. Re-offer
-                  // the same generation; Stop/scope loss invalidate this token.
-                  if (
-                    isCurrent() &&
-                    recordString(error, "cause") ===
-                      "Provider-initiated work no longer owns an idle native thread."
-                  ) {
-                    return Effect.sleep("100 millis").pipe(
-                      Effect.andThen(
-                        Effect.suspend(() => (isCurrent() ? bus.offer(request) : Effect.void)),
-                      ),
-                      Effect.forkIn(scope),
-                      Effect.as(Option.none()),
-                    );
-                  }
-                  return Effect.fail(error);
-                }),
-              );
+              return dispatch.pipe(Effect.map(Option.some));
             }),
           clearIfCurrent: () => disposeBufferedWork(work),
         };

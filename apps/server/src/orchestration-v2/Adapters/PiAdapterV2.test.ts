@@ -4140,6 +4140,51 @@ describe("PiRpc early process exit", () => {
 });
 
 describe("Pi captured work admission fences", () => {
+  it.effect("propagates permanent native owner refusal without a producer-local retry", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const offered =
+        yield* Queue.unbounded<
+          import("../ProviderContinuationRequests.ts").ProviderContinuationRequest
+        >();
+      const { runtime } = yield* openRuntime(
+        fake,
+        "default",
+        THREAD_ID,
+        SESSION_ID,
+        undefined,
+        undefined,
+        {
+          offer: (packet) => Queue.offer(offered, packet).pipe(Effect.asVoid),
+        },
+      );
+      yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      fake.queueState({ model: { provider: "fixture", id: "synthetic" } });
+      yield* fake.emit({ type: "agent_start" });
+      const packet = yield* Queue.take(offered);
+      const refusal = {
+        _tag: "OrchestratorDispatchError",
+        cause: "Provider-initiated work no longer owns an idle native thread.",
+      };
+      assert.strictEqual(
+        yield* packet.dispatchIfCurrent!(Effect.fail(refusal)).pipe(Effect.flip),
+        refusal,
+      );
+      yield* TestClock.adjust(Duration.millis(500));
+      assert.equal(yield* Queue.size(offered), 0);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      yield* packet.clearIfCurrent!();
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      assert.isTrue(
+        Option.isNone(yield* packet.dispatchIfCurrent!(Effect.die("stale dispatch ran"))),
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("checks exact Stop after selection and before native prompt wire", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;

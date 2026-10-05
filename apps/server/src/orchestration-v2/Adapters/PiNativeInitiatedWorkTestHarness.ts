@@ -8,6 +8,8 @@ import {
   MessageId,
   EnvironmentId,
   ProviderSessionId,
+  ProviderInstanceId,
+  ProviderThreadId,
   ThreadId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
@@ -17,6 +19,7 @@ import * as Deferred from "effect/Deferred";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import { CheckpointStore } from "../../checkpointing/CheckpointStore.ts";
@@ -30,7 +33,11 @@ import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import * as ProjectStore from "../ProjectStore.ts";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
 import * as ProviderInstances from "../../provider/Services/ProviderInstanceRegistry.ts";
-import { OrchestratorV2 } from "../Orchestrator.ts";
+import { OrchestratorProviderWorkDeferredError, OrchestratorV2 } from "../Orchestrator.ts";
+import type { ProviderAdapterV2Event } from "../ProviderAdapter.ts";
+import { EventSinkV2 } from "../EventSink.ts";
+import { checkpointRefForScopeOrdinal } from "../CheckpointService.ts";
+import { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
 import { makeLayerEffect } from "../ProviderAdapterRegistry.ts";
 import {
   ProviderContinuationRequests,
@@ -42,9 +49,20 @@ import { makePiAdapterV2 } from "./PiAdapterV2.ts";
 import { makePiRpcConnection, type PiRpcRecord } from "./PiRpc.ts";
 import { fixture, serve, decodeRecord, json } from "./PiNativeTestHarness.ts";
 
-export type PiNativeInitiatedScenario = "plain" | "captured" | "stop" | "close" | "barrier";
+const isProviderWorkDeferred = Schema.is(OrchestratorProviderWorkDeferredError);
+
+export type PiNativeInitiatedScenario =
+  | "plain"
+  | "captured"
+  | "stop"
+  | "close"
+  | "barrier"
+  | "barrier-stop"
+  | "barrier-answer"
+  | "barrier-foreign";
 
 export const runNativeInitiatedWorkScenario = (scenario: PiNativeInitiatedScenario) => {
+  const barrier = scenario.startsWith("barrier");
   const restricted = scenario === "captured" || scenario === "stop" || scenario === "close";
   return Effect.scoped(
     Effect.gen(function* () {
@@ -61,6 +79,11 @@ export const runNativeInitiatedWorkScenario = (scenario: PiNativeInitiatedScenar
       };
       const offered = yield* Deferred.make<ProviderContinuationRequest>();
       const offerEvents = yield* Queue.unbounded<ProviderContinuationRequest>();
+      const deferredAttempts = yield* Queue.unbounded<OrchestratorProviderWorkDeferredError>();
+      const staleAttempt = yield* Deferred.make<void>();
+      const discarded = yield* Deferred.make<void>();
+      let workCommandId: CommandId | undefined;
+      let readyAdmissionChecks = 0;
       const releaseOffer = yield* Deferred.make<void>();
       const captureEntered = yield* Deferred.make<void>();
       const releaseCapture = yield* Deferred.make<void>();
@@ -88,6 +111,8 @@ export const runNativeInitiatedWorkScenario = (scenario: PiNativeInitiatedScenar
       const requests: Array<Record<string, unknown>> = [];
       const offers: ProviderContinuationRequest[] = [];
       const wire: PiRpcRecord[] = [];
+      const terminals: Array<Extract<ProviderAdapterV2Event, { type: "turn.terminal" }>> = [];
+      let latestNativeState: PiRpcRecord | undefined;
       let opens = 0;
       let loads = 0;
       const base = yield* serve(async (request, response) => {
@@ -137,8 +162,10 @@ export const runNativeInitiatedWorkScenario = (scenario: PiNativeInitiatedScenar
         `
 import fs from "node:fs/promises";
 export default function(pi) {
-  pi.registerCommand("synthetic-arm", { description: "Synthetic native work", handler: async (_args, ctx) => {
-    ctx.ui.notify("Native extension armed.", "info");
+  let armed = false;
+  const arm = () => {
+    if (armed) return;
+    armed = true;
     void (async () => {
       while (true) {
         try { await fs.access(${json(`${cwd}/wake`)}); break; } catch {}
@@ -146,6 +173,11 @@ export default function(pi) {
       }
       pi.sendMessage({ customType: "synthetic-native-work", content: "Finish the native extension task.", display: true }, { triggerTurn: true });
     })();
+  };
+  ${scenario === "barrier-answer" ? 'pi.on("agent_start", () => arm());' : ""}
+  pi.registerCommand("synthetic-arm", { description: "Synthetic native work", handler: async (_args, ctx) => {
+    ctx.ui.notify("Native extension armed.", "info");
+    arm();
   }});
 }`,
       );
@@ -170,24 +202,42 @@ export default function(pi) {
             continuationRequests: {
               ...bus,
               offer: (request) =>
-                Effect.sync(() => offers.push(request)).pipe(
+                Effect.sync(() => {
+                  if (!barrier) offers.push(request);
+                }).pipe(
                   Effect.andThen(Deferred.succeed(offered, request)),
-                  Effect.andThen(Queue.offer(offerEvents, request)),
+                  Effect.andThen(barrier ? Effect.void : Queue.offer(offerEvents, request)),
                   Effect.andThen(restricted ? Deferred.await(releaseOffer) : Effect.void),
                   Effect.andThen(
                     bus.offer({
                       ...request,
+                      clearIfCurrent: () =>
+                        request.clearIfCurrent!().pipe(
+                          Effect.tap(() => Deferred.succeed(discarded, undefined)),
+                        ),
                       dispatchIfCurrent: (effect) =>
-                        request.dispatchIfCurrent!(
-                          beforeAdmission(request).pipe(
-                            Effect.andThen(effect),
-                            Effect.tapCause((c) =>
-                              scenario === "barrier"
-                                ? Effect.logError(Cause.pretty(c))
+                        Effect.gen(function* () {
+                          // The worker requeues this guarded request directly. Observe
+                          // actual guard attempts rather than another producer offer.
+                          if (barrier) {
+                            offers.push(request);
+                            yield* Queue.offer(offerEvents, request);
+                          }
+                          return yield* request.dispatchIfCurrent!(
+                            beforeAdmission(request).pipe(Effect.andThen(effect)),
+                          ).pipe(
+                            Effect.tap((result) =>
+                              Option.isNone(result)
+                                ? Deferred.succeed(staleAttempt, undefined).pipe(Effect.asVoid)
                                 : Effect.void,
                             ),
-                          ),
-                        ),
+                            Effect.tapError((error) =>
+                              isProviderWorkDeferred(error)
+                                ? Queue.offer(deferredAttempts, error).pipe(Effect.asVoid)
+                                : Effect.void,
+                            ),
+                          );
+                        }),
                     }),
                   ),
                 ),
@@ -208,6 +258,17 @@ export default function(pi) {
                   request: (record, timeout) =>
                     Effect.sync(() => wire.push(record)).pipe(
                       Effect.andThen(connection.request(record, timeout)),
+                      Effect.tap((data) =>
+                        Effect.sync(() => {
+                          if (
+                            record.type === "get_state" &&
+                            data !== null &&
+                            typeof data === "object" &&
+                            !Array.isArray(data)
+                          )
+                            latestNativeState = data as PiRpcRecord;
+                        }),
+                      ),
                     ),
                 })),
               ),
@@ -220,6 +281,13 @@ export default function(pi) {
                   Effect.andThen(adapter.openSession(input)),
                   Effect.map((runtime) => ({
                     ...runtime,
+                    events: runtime.events.pipe(
+                      Stream.tap((event) =>
+                        Effect.sync(() => {
+                          if (event.type === "turn.terminal") terminals.push(event);
+                        }),
+                      ),
+                    ),
                     startTurn: (input) =>
                       runtime
                         .startTurn(input)
@@ -275,13 +343,11 @@ export default function(pi) {
                 run: (input: VcsProcess.VcsProcessInput) =>
                   Effect.gen(function* () {
                     if (
-                      (scenario === "captured" || scenario === "barrier") &&
+                      (scenario === "captured" || barrier) &&
                       !heldCapture &&
                       input.operation === VcsProcess.CHECKPOINT_CAPTURE_OPERATION &&
                       input.args.includes("fetch") &&
-                      input.args.some((arg) =>
-                        arg.endsWith(scenario === "barrier" ? "/ordinal/1" : "/ordinal/2"),
-                      )
+                      input.args.some((arg) => arg.endsWith(barrier ? "/ordinal/1" : "/ordinal/2"))
                     ) {
                       heldCapture = true;
                       captureCwd = input.cwd;
@@ -300,44 +366,64 @@ export default function(pi) {
         const orchestrator = yield* OrchestratorV2;
         const projects = yield* ProjectStore.ProjectStoreV2;
         const admissionManager = yield* ProviderSessionManagerV2;
-        if (scenario === "barrier")
+        const receipts = yield* CommandReceiptStoreV2;
+        const checkpointStore = yield* CheckpointStore;
+        if (barrier)
           beforeAdmission = (request) =>
             Effect.gen(function* () {
               const p = yield* orchestrator.getThreadProjection(h.threadId);
               const native = p.providerThreads.find((row) => row.id === request.providerThreadId);
               const session = yield* admissionManager.get(request.initiated!.providerSessionId);
-              yield* Effect.logInfo("pi-native-pre-admission", {
-                offer: request.initiated,
-                thread: {
-                  archivedAt: p.thread.archivedAt,
-                  deletedAt: p.thread.deletedAt,
-                  activeProviderThreadId: p.thread.activeProviderThreadId,
-                  providerInstanceId: p.thread.providerInstanceId,
-                },
-                native,
-                liveSession: Option.isSome(session)
-                  ? {
-                      driver: session.value.driver,
-                      instanceId: session.value.instanceId,
-                      session: session.value.providerSession,
-                    }
-                  : null,
-                sessions: p.providerSessions,
-                runs: p.runs.map((run) => ({
-                  id: run.id,
-                  status: run.status,
-                  checkpointId: run.checkpointId,
-                })),
-                checkpoints: p.checkpoints.map((checkpoint) => ({
-                  id: checkpoint.id,
-                  status: checkpoint.status,
-                })),
-                messages: p.messages.map((message) => ({
-                  role: message.role,
-                  streaming: message.streaming,
-                })),
-              });
-            }).pipe(Effect.orDie);
+              assert.isTrue(Option.isSome(session));
+              assert.equal(native?.providerSessionId, request.initiated!.providerSessionId);
+              assert.equal(request.initiated!.modelSelection.instanceId, h.instanceId);
+              assert.equal(request.initiated!.modelSelection.model, "scient-test/synthetic");
+              const thinkingLevel = latestNativeState?.thinkingLevel;
+              if (typeof thinkingLevel !== "string")
+                return yield* Effect.die("Native capture lacks a genuine thinking level");
+              assert.deepEqual(request.initiated!.modelSelection.options, [
+                { id: "thinkingLevel", value: thinkingLevel },
+              ]);
+              assert.equal(request.initiated!.runtimePolicy.cwd, cwd);
+              if (p.runs[0]?.status === "completed") {
+                const parent = p.checkpoints.find((c) => c.id === p.runs[0]!.checkpointId)!;
+                assert.equal(parent.status, "ready");
+                assert.equal(p.providerTurns[0]?.status, "completed");
+                assert.equal(
+                  p.checkpointScopes.find((scope) => scope.id === parent.scopeId)?.cwd,
+                  cwd,
+                );
+                assert.isTrue(
+                  yield* checkpointStore.hasCheckpointRef({ cwd, checkpointRef: parent.ref }),
+                );
+                assert.isFalse(
+                  yield* checkpointStore.hasCheckpointRef({
+                    cwd: workspaceB,
+                    checkpointRef: parent.ref,
+                  }),
+                );
+                assert.equal(
+                  yield* git(cwd, ["show", `${parent.ref}:native-answer.txt`]),
+                  "Initial A\n",
+                );
+                assert.isFalse(p.messages.some((m) => m.runId === p.runs[0]!.id && m.streaming));
+                if (scenario === "barrier-answer") {
+                  const answer = p.messages.find(
+                    (message) => message.runId === p.runs[0]!.id && message.role === "assistant",
+                  );
+                  assert.equal(answer?.text, "Actual extension answer: שלום π.");
+                  assert.isFalse(answer?.streaming);
+                }
+                assert.lengthOf(
+                  wire.filter((record) => record.type === "prompt"),
+                  1,
+                );
+                readyAdmissionChecks++;
+              }
+            }).pipe(
+              Effect.orDie,
+              Effect.tapCause((cause) => Deferred.succeed(wireFailure, cause).pipe(Effect.asVoid)),
+            );
         const projectId = ProjectId.make("pi-real-initiated-project");
         const now = DateTime.formatIso(yield* DateTime.now);
         yield* projects.apply({
@@ -382,7 +468,7 @@ export default function(pi) {
                 Stream.runHead,
                 Effect.timeout("20 seconds"),
                 Effect.tapCause(() =>
-                  scenario === "barrier"
+                  barrier
                     ? orchestrator.getThreadProjection(h.threadId).pipe(
                         Effect.flatMap((projection) =>
                           Effect.logInfo("pi-native-post-barrier", {
@@ -450,30 +536,193 @@ export default function(pi) {
           commandId: CommandId.make("pi-real-arm"),
           messageId: MessageId.make("pi-real-arm"),
           threadId: h.threadId,
-          text: "/synthetic-arm",
+          text:
+            scenario === "barrier-answer"
+              ? "Produce the durable foreground answer."
+              : "/synthetic-arm",
           dispatchMode: { type: "start_immediately" },
           attachments: [],
           createdBy: "user",
           creationSource: "web",
         });
-        const foreground =
-          scenario === "barrier"
-            ? (yield* Deferred.await(captureEntered).pipe(Effect.timeout("10 seconds")),
-              yield* orchestrator.getThreadProjection(h.threadId))
-            : yield* waitFor((p) => p.runs[0]?.status === "completed");
-        assert.lengthOf(requests, 0);
+        const foreground = barrier
+          ? (yield* Deferred.await(captureEntered).pipe(Effect.timeout("10 seconds")),
+            yield* orchestrator.getThreadProjection(h.threadId))
+          : yield* waitFor((p) => p.runs[0]?.status === "completed");
+        if (scenario === "barrier-answer") assert.lengthOf(requests, 1);
+        else assert.lengthOf(requests, 0);
         yield* fs.writeFileString(`${cwd}/wake`, "start");
-        if (scenario === "barrier") {
+        if (barrier) {
           const first = yield* Queue.take(offerEvents).pipe(Effect.timeout("10 seconds"));
           const repeated = yield* Queue.take(offerEvents).pipe(Effect.timeout("10 seconds"));
           assert.equal(first.initiated?.workId, repeated.initiated?.workId);
+          assert.deepEqual(first.initiated, repeated.initiated);
+          const firstDeferred = yield* Queue.take(deferredAttempts).pipe(
+            Effect.timeout("10 seconds"),
+          );
+          const repeatedDeferred = yield* Queue.take(deferredAttempts).pipe(
+            Effect.timeout("10 seconds"),
+          );
+          assert.equal(firstDeferred.workId, first.initiated!.workId);
+          assert.equal(firstDeferred.commandId, repeatedDeferred.commandId);
+          workCommandId = firstDeferred.commandId;
+          assert.isTrue(Option.isNone(yield* receipts.getByCommandId(workCommandId)));
           const waiting = yield* orchestrator.getThreadProjection(h.threadId);
           assert.lengthOf(waiting.runs, 1);
           assert.equal(waiting.runs[0]?.status, "waiting");
+          assert.lengthOf(waiting.providerTurns, 1);
+          assert.isFalse(
+            waiting.messages.some((m) => m.notification?.source.kind === "provider_work"),
+          );
+          const parentScopeId = waiting.nodes.find(
+            (node) => node.id === waiting.runs[0]!.rootNodeId,
+          )!.checkpointScopeId!;
+          assert.isFalse(
+            yield* checkpointStore.hasCheckpointRef({
+              cwd,
+              checkpointRef: checkpointRefForScopeOrdinal({
+                scopeId: parentScopeId,
+                ordinalWithinScope: 1,
+              }),
+            }),
+          );
+          assert.equal(readyAdmissionChecks, 0);
           assert.lengthOf(
             wire.filter((r) => r.type === "prompt"),
             1,
           );
+          if (scenario === "barrier-foreign") {
+            // A projected owner replacement is an admission input, not a
+            // substitute for native transport activity or producer guards.
+            yield* (yield* EventSinkV2).write({
+              events: [
+                {
+                  id: EventId.make("pi-native-foreign-owner"),
+                  type: "thread.metadata-updated",
+                  threadId: h.threadId,
+                  occurredAt: yield* DateTime.now,
+                  payload: {
+                    ...waiting.thread,
+                    activeProviderThreadId: ProviderThreadId.make("pi-native-foreign-owner"),
+                    updatedAt: yield* DateTime.now,
+                  },
+                },
+              ],
+            });
+            yield* Deferred.await(discarded).pipe(Effect.timeout("10 seconds"));
+            assert.lengthOf(offers, 3);
+            assert.equal(new Set(offers.map((offer) => offer.initiated?.workId)).size, 1);
+            const rejected = yield* receipts.getByCommandId(workCommandId);
+            assert.isTrue(Option.isSome(rejected));
+            if (Option.isSome(rejected)) assert.equal(rejected.value.status, "rejected");
+            assert.isTrue(
+              Option.isNone(
+                yield* first.dispatchIfCurrent!(Effect.die("permanently refused generation ran")),
+              ),
+            );
+            yield* Deferred.succeed(releaseCapture, undefined);
+            const refused = yield* waitFor((p) => p.runs[0]?.status === "completed");
+            assert.lengthOf(refused.runs, 1);
+            assert.lengthOf(refused.providerTurns, 1);
+            assert.lengthOf(
+              terminals.filter((event) => event.runOrdinal === 1),
+              1,
+            );
+            assert.lengthOf(
+              terminals.filter((event) => event.runOrdinal === 2),
+              0,
+            );
+            assert.isFalse(
+              refused.messages.some(
+                (message) => message.notification?.source.kind === "provider_work",
+              ),
+            );
+            assert.equal(opens, 1);
+            assert.lengthOf(
+              wire.filter((record) => record.type === "prompt"),
+              1,
+            );
+            assert.lengthOf(requests, 1);
+            yield* admissionManager.close(first.initiated!.providerSessionId);
+            return;
+          }
+          if (scenario === "barrier-stop") {
+            const nativeSessionId = first.initiated!.providerSessionId;
+            for (const refusal of ["foreign-thread", "changed-instance", "changed-cwd"] as const) {
+              const failed = yield* admissionManager
+                .open({
+                  threadId:
+                    refusal === "foreign-thread"
+                      ? ThreadId.make("pi-native-foreign-owner")
+                      : h.threadId,
+                  providerSessionId: nativeSessionId,
+                  modelSelection:
+                    refusal === "changed-instance"
+                      ? {
+                          ...selection,
+                          instanceId: ProviderInstanceId.make("pi-native-other-instance"),
+                        }
+                      : selection,
+                  runtimePolicy: {
+                    ...first.initiated!.runtimePolicy,
+                    cwd: refusal === "changed-cwd" ? workspaceB : cwd,
+                  },
+                })
+                .pipe(Effect.exit);
+              assert.isTrue(Exit.isFailure(failed));
+              if (Exit.isFailure(failed))
+                assert.include(
+                  Cause.pretty(failed.cause),
+                  refusal === "foreign-thread"
+                    ? "does not support attaching"
+                    : refusal === "changed-instance"
+                      ? "another configured instance"
+                      : "replacement provider session",
+                );
+              assert.equal(opens, 1);
+              const current = yield* admissionManager.get(nativeSessionId);
+              assert.isTrue(Option.isSome(current));
+              if (Option.isSome(current))
+                assert.isTrue(yield* current.value.hasPendingBackgroundWork!);
+              assert.isTrue(Option.isNone(yield* receipts.getByCommandId(workCommandId)));
+            }
+            yield* admissionManager.close(nativeSessionId);
+            assert.isTrue(Option.isNone(yield* admissionManager.get(nativeSessionId)));
+            let staleDispatches = 0;
+            assert.isTrue(
+              Option.isNone(yield* first.dispatchIfCurrent!(Effect.sync(() => staleDispatches++))),
+            );
+            yield* first.clearIfCurrent!();
+            assert.equal(staleDispatches, 0);
+            yield* Deferred.await(staleAttempt).pipe(Effect.timeout("10 seconds"));
+            assert.isAtLeast(offers.length, 3);
+            yield* Deferred.succeed(releaseCapture, undefined);
+            const stopped = yield* waitFor((p) => p.runs[0]?.status === "completed");
+            assert.lengthOf(stopped.runs, 1);
+            assert.lengthOf(stopped.providerTurns, 1);
+            assert.lengthOf(
+              terminals.filter((event) => event.runOrdinal === 1),
+              1,
+            );
+            assert.lengthOf(
+              terminals.filter((event) => event.runOrdinal === 2),
+              0,
+            );
+            assert.isFalse(
+              stopped.messages.some(
+                (message) => message.notification?.source.kind === "provider_work",
+              ),
+            );
+            assert.isTrue(Option.isNone(yield* receipts.getByCommandId(workCommandId)));
+            assert.equal(opens, 1);
+            assert.lengthOf(
+              wire.filter((record) => record.type === "prompt"),
+              1,
+            );
+            assert.lengthOf(requests, 1);
+            assert.equal(new Set(offers.map((offer) => offer.initiated?.workId)).size, 1);
+            return;
+          }
           yield* Deferred.succeed(releaseCapture, undefined);
         }
         if (restricted) {
@@ -755,11 +1004,30 @@ export default function(pi) {
           assert.equal(yield* fs.readFileString(`${workspaceB}/native-answer.txt`), "Initial B\n");
         }
         const nativeRun = completed.runs[1]!;
-        if (scenario === "barrier") {
+        const nativeTerminals = terminals.filter((event) => event.runOrdinal === 2);
+        assert.lengthOf(nativeTerminals, 1);
+        assert.equal(nativeTerminals[0]?.status, "completed");
+        assert.equal(nativeTerminals[0]?.providerTurnId, completed.providerTurns[1]?.id);
+        if (barrier) {
           assert.isAtLeast(offers.length, 2);
           assert.equal(new Set(offers.map((o) => o.initiated?.workId)).size, 1);
+          assert.equal(readyAdmissionChecks, 1);
+          const receipt = yield* receipts.getByCommandId(workCommandId!);
+          assert.isTrue(Option.isSome(receipt));
+          if (Option.isSome(receipt)) assert.equal(receipt.value.status, "accepted");
+          assert.lengthOf(
+            completed.runs.filter((run) => run.id === nativeRun.id && run.status === "completed"),
+            1,
+          );
+          assert.lengthOf(
+            completed.providerTurns.filter(
+              (turn) => turn.nodeId === nativeRun.rootNodeId && turn.status === "completed",
+            ),
+            1,
+          );
         } else assert.lengthOf(offers, 1);
-        assert.lengthOf(requests, restricted ? 3 : 1);
+        if (scenario === "barrier-answer") assert.lengthOf(requests, 2);
+        else assert.lengthOf(requests, restricted ? 3 : 1);
         assert.equal(opens, restricted ? 2 : 1);
         assert.equal(loads, restricted ? 2 : 1);
         assert.lengthOf(
