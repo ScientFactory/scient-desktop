@@ -1,6 +1,12 @@
 import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-presentation";
 import { useBoundedAnswerFollow } from "./useBoundedAnswerFollow";
-import { useReaderScrollInput, useSaveReadingPosition } from "./readerScrolling";
+import {
+  timelineRowsKey,
+  type RestingAtReadingEnd,
+  useReaderScrollInput,
+  useReadingBookkeepingFrame,
+  useSaveReadingPosition,
+} from "./readerScrolling";
 import { countUnreadBelow, unreadMessagesForThread } from "./unreadTimelineMessages";
 import {
   readerAtReadingEnd,
@@ -400,11 +406,6 @@ function TimelineListFooter({ composerInset }: { readonly composerInset: number 
   );
 }
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
-/** Which rows are listed: a new or removed row changes it, a row changing size does not. */
-function timelineRowsKey(data: readonly unknown[]) {
-  const last = data.at(-1) as { id?: string } | undefined;
-  return `${data.length}:${last?.id ?? ""}`;
-}
 /** Older-history pages a missing saved message may load before falling back. */
 const MAX_READING_HISTORY_PAGES = 2;
 
@@ -1263,12 +1264,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   // Where the reader last rested at the reading end: the on-screen distance
   // to the end of the last message's text, and where that end sat in the
   // content. Null when not at the end.
-  const restingAtReadingEndRef = useRef<{
-    gap: number;
-    contentEnd: number;
-    /** The rows at rest (count and last row): only their size changes are kept in view. */
-    rowsKey: string;
-  } | null>(null);
+  const restingAtReadingEndRef = useRef<RestingAtReadingEnd | null>(null);
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
     if (restoringThreadPosition || positionHistoryLoading || state?.data !== rows) return;
@@ -1429,73 +1425,24 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     reportContentOverflow,
   ]);
 
-  // Row size changes arrive many times per frame while an answer streams, and
-  // new rows or state arrive on top of them. The position, unread and end
-  // bookkeeping runs at most once per frame, with the latest state.
-  const handleScrollRef = useRef(handleScroll);
-  useLayoutEffect(() => {
-    handleScrollRef.current = handleScroll;
+  // SCIENT-FORK:START — per-frame position, unread and end bookkeeping.
+  const handleScrollOnNextFrame = useReadingBookkeepingFrame({
+    handleScroll,
+    listRef,
+    contentInsetEndAdjustment,
+    restingAtReadingEndRef,
+    readerInputRef,
+    scheduleBookkeepingRef,
+    isWorking,
+    revealActive,
+    interactionSettling,
+    timelinePositioningPending,
+    citationPositioning,
+    restoringThreadPosition,
+    anchoredEndSpace,
+    disclosureToggleSettling,
   });
-  // While the reader rests at the end of an idle thread, late layout (a
-  // resized window, a diagram or image finishing its render) keeps the end of
-  // the last message's text where it was. New rows, streaming, reveals, and
-  // content the reader just toggled never move the reader.
-  const idleEndKeeping =
-    !isWorking &&
-    !revealActive &&
-    !interactionSettling &&
-    !timelinePositioningPending &&
-    !citationPositioning &&
-    !restoringThreadPosition &&
-    !anchoredEndSpace &&
-    !disclosureToggleSettling;
-  const idleEndKeepingRef = useRef(idleEndKeeping);
-  useLayoutEffect(() => {
-    idleEndKeepingRef.current = idleEndKeeping;
-  });
-  const keepReadingEndInView = useCallback(() => {
-    const resting = restingAtReadingEndRef.current;
-    const list = listRef.current;
-    const viewport = list?.getScrollableNode();
-    if (!idleEndKeepingRef.current || !resting || !list || !viewport) return;
-    const state = list.getState();
-    // New rows grow below the reader and never move them; a frame with the
-    // reader's own scrolling input is theirs, whatever else changed in it.
-    if (readerInputRef.current || timelineRowsKey(state.data) !== resting.rowsKey) return;
-    // Measured on screen: the list's own positions can trail the rendered rows.
-    const gap = readingEndGapOnScreen(state, viewport, contentInsetEndAdjustment);
-    if (gap === null) return;
-    // Only content moving the text end counts. A scroll alone (the reader, a
-    // minimap or citation jump, find in page) leaves the text end where it is
-    // in the content, and is the reader's new position; content above that
-    // the list already compensated for leaves the on-screen gap unchanged.
-    const contentEnd = gap + viewport.scrollTop;
-    if (Math.abs(contentEnd - resting.contentEnd) <= 1) return;
-    const grown = gap - resting.gap;
-    if (grown > 1) viewport.scrollTop += grown;
-  }, [contentInsetEndAdjustment, listRef]);
-  const keepReadingEndInViewRef = useRef(keepReadingEndInView);
-  useLayoutEffect(() => {
-    keepReadingEndInViewRef.current = keepReadingEndInView;
-  });
-  const bookkeepingFrameRef = useRef<number | null>(null);
-  const handleScrollOnNextFrame: () => void = useCallback(() => {
-    if (bookkeepingFrameRef.current !== null) return;
-    bookkeepingFrameRef.current = requestAnimationFrame(() => {
-      bookkeepingFrameRef.current = null;
-      keepReadingEndInViewRef.current();
-      handleScrollRef.current();
-    });
-  }, []);
-  useLayoutEffect(() => {
-    scheduleBookkeepingRef.current = handleScrollOnNextFrame;
-  }, [handleScrollOnNextFrame]);
-  useEffect(
-    () => () => {
-      if (bookkeepingFrameRef.current !== null) cancelAnimationFrame(bookkeepingFrameRef.current);
-    },
-    [],
-  );
+  // SCIENT-FORK:END
   useEffect(() => {
     handleScrollOnNextFrame();
   }, [handleScroll, handleScrollOnNextFrame, rows.length]);
