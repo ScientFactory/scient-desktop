@@ -211,7 +211,7 @@ export function cursorMcpServers(
     return undefined;
   }
   return {
-    "t3-code": {
+    scient: {
       type: "http",
       url: session.endpoint,
       headers: {
