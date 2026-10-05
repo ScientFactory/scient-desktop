@@ -102,7 +102,8 @@ it.layer(layer, { excludeTestServices: true })("real Pi native V2 context recove
             const inputs = [
               "a".repeat(8000),
               "b".repeat(8000),
-              "c".repeat(outcome === "still-full" ? 50000 : 32000),
+              "c".repeat(outcome === "still-full" ? 50000 : 32000) +
+                (outcome === "success" ? " Unique recovered pending task pi-native-success." : ""),
             ];
             if (outcome === "success") inputs.push("/compact");
             for (const [index, input] of inputs.entries()) {
@@ -161,7 +162,19 @@ it.layer(layer, { excludeTestServices: true })("real Pi native V2 context recove
                 requests.filter((body) => Array.isArray(body.tools) && body.tools.length > 0),
                 2,
               );
-            } else assert.isAtLeast(requests.length, 5);
+            } else {
+              assert.isAtLeast(requests.length, 5);
+              assert.equal(
+                requests
+                  .filter((body) => Array.isArray(body.tools) && body.tools.length > 0)
+                  .reduce(
+                    (occurrences, body) => occurrences + json(body).split(inputs[2]!).length - 1,
+                    0,
+                  ),
+                1,
+                "the exact recovered pending payload reaches the model once",
+              );
+            }
           }),
         ),
       60000,
