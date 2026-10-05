@@ -389,7 +389,6 @@ export default defineConfig({
         "apps/server/src/provider/Layers/CursorAdapter.test.ts": 1,
         "apps/server/src/provider/Layers/CursorProvider.test.ts": 1,
         "apps/server/src/provider/Layers/ProviderService.test.ts": 2,
-        "apps/server/src/provider/Layers/ProviderSessionReaper.test.ts": 12,
         "apps/server/src/provider/acp/CursorAcpSupport.test.ts": 1,
       }).map(([file, maxOccurrences]) => {
         const rule: ["error", { maxOccurrences: number }] = ["error", { maxOccurrences }];
