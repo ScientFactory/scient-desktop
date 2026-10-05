@@ -1001,7 +1001,6 @@ const buildAppUnderTest = (options?: {
               getVoiceTranscriptCorrectionForInstance: () =>
                 // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
                 Effect.succeed<ProviderVoiceTranscriptCorrection | undefined>(undefined),
-              stopProviderSessions: () => Effect.void,
               setProviderManagedRuntimeSummary: () => Effect.succeed([]),
               setProviderMaintenanceActionState: () => Effect.succeed([]),
               setProviderConnectionOperation: () => Effect.succeed([]),

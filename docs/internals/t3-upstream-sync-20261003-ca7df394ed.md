@@ -845,3 +845,67 @@ ancestry qualification, built-app/packaged smoke and manual acceptance are
 separate gates; none is inferred from this merge receipt.
 
 The independently reviewed divergence inventory is integrated at `687b37199c8f322dfe6d155c7fe0f8ed25c0b42f`, with ordered parents `19efc756b53128a4b94dea5d011746b3ddc26d13` and `66f598c48ee968e27b1a53ed1316a3d98549fdcc`. Its three new script/test/guide blobs match the reviewed donor; the maintainer index adds one guide link. Exact composed qualification passes 29 Node regressions, scripts typecheck, scoped formatting/lint and whitespace checks. Executable-alias invocation and required source-blob validation retain their fail-closed regression coverage. The inventory remains advisory: unresolved scope and historical debt stay visible, and no reviewed-debt baseline or CI activation is introduced. This metadata-only delivery preserves the existing development-signing repair and changes no runtime behavior or upstream cursor. Final composed qualification and application acceptance remain separate.
+
+### Whole-alignment client quality and controlled app acceptance
+
+The reviewed client composition reaches `c988124a4d7862dc343bd0da196c428bbeabe66d`
+(tree `a717c541ef5640ad3ef4fcce6c141412a0e130b7`), retaining the preceding
+`f026c5b906df4b45c5a2bb2e7566e73de3db3271` unused V1 registry removal. All
+fourteen integrated client blobs equal their independently reviewed donors;
+unrelated compiler configuration is preserved. This work extends the original
+alignment quality scope beyond the defect handoff.
+
+- Compute and slow-request receipts honor the saved clock preference, retain
+  local date/year where required, and omit malformed times. Donor
+  `6e2f7ff8e02b8faa29823290ff20cfd4ceabbf9c` has 73 passing cases across three
+  complete files, a passing web compiler and formatting checks. Executed baseline
+  comparison confirms the same 17 existing lint warnings, with none added.
+- Mobile shows an unsupported requested access mode without inventing a selected
+  effective mode or changing server permission policy. Outbox and option-memory
+  consumers use canonical model-selection equality: equivalent option ordering
+  or omitted/empty options cause no redundant metadata update; real changes still
+  synchronize before delivery. Donor
+  `c75fbdd2c16d7f5248d58b99cc57f5a95ad2ce9e` has 100 passing cases across eight
+  complete files, passing mobile/shared compilers and formatting, and no new lint
+  warnings. Actual mounted settings and outbox delivery paths are covered;
+  native mobile interaction remains separate.
+
+The separate synthetic app stays frozen at
+`19efc756b53128a4b94dea5d011746b3ddc26d13`. Actual browser actions through
+production V2 persistence and controlled ACP stdio establish the following bounded
+conditions; they do not qualify the newer composition or live vendor accounts:
+
+- An ordinary-answer fork shows one Scient boundary and no redundant initial
+  generic handoff. A later explicit provider-instance change shows its handoff.
+  Backend context delivery remains intact.
+- Actual SCIC upload/preview/import, application export and reimport retain inert
+  historical approval/tool/plan/reasoning/system history. New current-owner live
+  approval requests survive reload and settle once through Approve/Decline;
+  changing future permissions is exercised independently of historical authority.
+- Successful unheld work drains automatically in FIFO order. Stop retains a hold
+  across reload and later foreground completion; idle keyboard reorder, held-head
+  Send and explicit whole-queue Resume are exercised. Text-only queued-edit
+  extraction, Stop/reload recovery and ordinary-draft stash restoration pass.
+- A real controlled-peer transport closure fails the running turn while holding
+  its queued successor across reload. One explicit Resume receipt releases it;
+  bounded SQL through sequence787 and one native completion prove delivery with
+  captured Supervised permissions unchanged. The earlier custom error-marker
+  simulation remains unqualified as failure evidence.
+
+External evidence and independent audits are in
+`reviews/orchestration-v2-alignment-20261003/`: `interim-browser-acceptance-19ef.md`,
+`queue-real-transport-failure-19ef.md`,
+`queue-transport-failure-edit-stop-independent-evidence-audit-19ef.md`,
+`receipt-clock-qualified-handoff.md`, and
+`mobile-policy-equality-local-commit-handoff.md`. These task records are in the
+umbrella workspace, not product runtime inputs.
+
+The startup wrapper timed out awaiting owned log markers; separate process,
+endpoint and browser observations establish the live app, not a passing startup
+marker gate. Current native window/PDF Save, screenshots, pointer drag, multiwindow
+edit ownership, final-source scientific surfaces and full app acceptance remain
+unqualified. The earlier successful native PDF proof belongs to its older exact
+candidate. Aggregate attachment preflight, remaining core/provider composition,
+dependency-ordered cleanup, final documentation/catalog refresh, complete local
+gates/build/artifact checks and independent final review remain active. No whole
+alignment or manual-review readiness is inferred from these scoped results.
