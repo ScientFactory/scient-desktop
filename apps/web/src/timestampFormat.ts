@@ -87,17 +87,18 @@ const timestampFormatterCache = new Map<string, Intl.DateTimeFormat>();
 function getTimestampFormatter(
   timestampFormat: TimestampFormat,
   includeSeconds: boolean,
+  includeDate = false,
 ): Intl.DateTimeFormat {
-  const cacheKey = `${timestampFormat}:${includeSeconds ? "seconds" : "minutes"}`;
+  const cacheKey = `${timestampFormat}:${includeSeconds ? "seconds" : "minutes"}:${includeDate}`;
   const cachedFormatter = timestampFormatterCache.get(cacheKey);
   if (cachedFormatter) {
     return cachedFormatter;
   }
 
-  const formatter = new Intl.DateTimeFormat(
-    timestampLocale,
-    getTimestampFormatOptions(timestampFormat, includeSeconds),
-  );
+  const formatter = new Intl.DateTimeFormat(timestampLocale, {
+    ...getTimestampFormatOptions(timestampFormat, includeSeconds),
+    ...(includeDate ? ({ year: "numeric", month: "numeric", day: "numeric" } as const) : {}),
+  });
   timestampFormatterCache.set(cacheKey, formatter);
   return formatter;
 }
@@ -111,6 +112,13 @@ export function formatTimestamp(isoDate: string, timestampFormat: TimestampForma
   const date = parseTimestampDate(isoDate);
   if (!date) return "";
   return getTimestampFormatter(timestampFormat, true).format(date);
+}
+
+/** A complete local receipt date and time, using the same clock preference as chat. */
+export function formatDateTimeTimestamp(isoDate: string, timestampFormat: TimestampFormat): string {
+  const date = parseTimestampDate(isoDate);
+  if (!date) return "";
+  return getTimestampFormatter(timestampFormat, true, true).format(date);
 }
 
 // Deliberately not the host locale: the tooltip's ordinal suffix and
