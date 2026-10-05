@@ -8386,6 +8386,81 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
+  it.effect("refuses a source-ID native fork before reading or reverting source history", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "source-id-refusal";
+      const transcript = makeCodexReplayTranscript({
+        scenario: "codex-source-id-refusal",
+        entries: [
+          ...codexReplayPreamble({
+            nativeThreadId,
+            nativeTurnId: "source-turn",
+            prompt: "unused",
+          }).slice(0, 5),
+          {
+            type: "expect_outbound",
+            label: "thread/fork",
+            frame: {
+              id: 3,
+              method: "thread/fork",
+              params: { threadId: nativeThreadId, config: CodexAdapterV2.CODEX_THREAD_CONFIG },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "thread/fork/source-id",
+            frame: {
+              id: 3,
+              result: codexReplayThreadResult({ nativeThreadId, forkedFromId: nativeThreadId }),
+            },
+          },
+        ],
+      });
+      const outbound: Array<string> = [];
+      const h = yield* makeCodexReplayHarness(
+        transcript,
+        () => Effect.void,
+        (method) =>
+          Effect.sync(() => {
+            outbound.push(method);
+          }),
+      );
+      const source = h.providerThread;
+      const sourceBefore = JSON.stringify(source);
+      const now = yield* DateTime.now;
+      const first = codexReplaySourceTurn({
+        id: "source-first",
+        ordinal: 1,
+        nativeId: null,
+        providerThreadId: source.id,
+        now,
+      });
+      const later = codexReplaySourceTurn({
+        id: "source-later",
+        ordinal: 2,
+        nativeId: "later-native-turn",
+        providerThreadId: source.id,
+        now,
+      });
+      const error = yield* h.runtime
+        .forkThread({
+          sourceProviderThread: source,
+          sourceProviderTurns: [first, later],
+          providerTurnId: first.id,
+          targetThreadId: ThreadId.make("source-id-refusal-target"),
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(error, ProviderAdapterForkThreadError);
+      assert.include(errorCauseChainText(error), "source native thread");
+      assert.deepEqual(
+        outbound,
+        ["initialize", "thread/start", "thread/fork"],
+        "A source-ID response must not authorize read/revert/resume/start of its source",
+      );
+      assert.equal(JSON.stringify(h.providerThread), sourceBefore);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
   it.effect(
     "falls back to fork-local thread/revert on paginated history when the source turn lacks a native reference",
     () =>

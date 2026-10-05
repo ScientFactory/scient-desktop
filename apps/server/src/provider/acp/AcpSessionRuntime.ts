@@ -1150,6 +1150,10 @@ export interface AcpSessionRuntimeStartResult {
 export interface AcpSessionActivationOptions {
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly acpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
+  // SCIENT-FORK:START — Trusted fork-only identity fence.
+  /** Trusted same-instance fork fence; never transmitted to the agent. */
+  readonly rejectSourceSessionId?: boolean;
+  // SCIENT-FORK:END
 }
 
 export class AcpSessionRuntime extends Context.Service<
@@ -2965,7 +2969,19 @@ export const make = (
               acp.agent.forkSession(requestPayload),
             );
           }),
-          Effect.flatMap((response) => adoptSession(response.sessionId, response)),
+          // SCIENT-FORK:START — Refuse source reuse before adopting response settings.
+          Effect.flatMap((response) =>
+            activationOptions?.rejectSourceSessionId === true && response.sessionId === sessionId
+              ? Effect.fail(
+                  new EffectAcpErrors.AcpRequestError({
+                    code: -32603,
+                    errorMessage:
+                      "ACP fork returned the source native thread instead of a new conversation.",
+                  }),
+                )
+              : adoptSession(response.sessionId, response),
+          ),
+          // SCIENT-FORK:END
         ),
       listSessions: (cursor) => {
         const requestPayload = {

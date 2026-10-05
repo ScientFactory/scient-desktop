@@ -6508,6 +6508,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           forkThread: (threadInput) =>
             Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(threadInput.sourceProviderThread);
+              // SCIENT-FORK:START — Refuse source reuse before fork-local mutation.
+              const sourceBelongsToInstance =
+                threadInput.sourceProviderThread.providerInstanceId === adapterOptions.instanceId;
               const boundary = yield* resolveCodexForkBoundary(threadInput);
               const response = yield* ensureInitialized.pipe(
                 Effect.andThen(
@@ -6537,6 +6540,15 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                     }),
                 ),
               );
+              if (sourceBelongsToInstance && response.thread.id === threadId) {
+                return yield* new ProviderAdapterForkThreadError({
+                  driver: CODEX_PROVIDER,
+                  providerThreadId: threadInput.sourceProviderThread.id,
+                  cause:
+                    "Codex fork returned the source native thread instead of a new conversation.",
+                });
+              }
+              // SCIENT-FORK:END
               let forkedThread = response.thread;
               if (boundary.rollbackTurnCount > 0) {
                 // Reached only when the selected source turn has no native

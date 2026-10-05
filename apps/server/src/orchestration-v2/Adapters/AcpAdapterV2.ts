@@ -8122,11 +8122,26 @@ export function makeAcpAdapterV2(
                     driver,
                     forkInput.sourceProviderThread,
                   );
+                  // SCIENT-FORK:START — Keep source ownership until a distinct fork exists.
+                  const sourceBelongsToInstance =
+                    forkInput.sourceProviderThread.providerInstanceId === options.instanceId;
                   prepareTerminalEnvironment(forkInput.targetThreadId);
-                  const forked = yield* runtime.forkSession(
-                    sourceSessionId,
-                    acpMcpActivation(forkInput.targetThreadId, self, input.configureMcp !== false),
-                  );
+                  const forked = yield* runtime.forkSession(sourceSessionId, {
+                    ...acpMcpActivation(
+                      forkInput.targetThreadId,
+                      self,
+                      input.configureMcp !== false,
+                    ),
+                    ...(sourceBelongsToInstance ? { rejectSourceSessionId: true } : {}),
+                  });
+                  if (sourceBelongsToInstance && forked.sessionId === sourceSessionId) {
+                    return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                      driver,
+                      detail:
+                        "ACP fork returned the source native thread instead of a new conversation.",
+                    });
+                  }
+                  // SCIENT-FORK:END
                   rememberTerminalEnvironment(forked.sessionId, forkInput.targetThreadId);
                   yield* Ref.set(activeSessionId, forked.sessionId);
                   yield* Ref.set(activeSessionSetup, forked);
