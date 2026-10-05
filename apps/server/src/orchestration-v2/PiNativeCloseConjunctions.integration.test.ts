@@ -91,10 +91,14 @@ for (const scenario of [
   { key: "pending-session-rejected", pending: true, all: false, lateAck: false },
   { key: "pending-instance-positive", pending: true, all: true, lateAck: true },
   { key: "pending-instance-rejected", pending: true, all: true, lateAck: false },
+  { key: "pending-shutdown-positive", pending: true, all: true, lateAck: true },
 ]) {
+  const shutdown = scenario.key === "pending-shutdown-positive";
   const caseArtifacts = artifacts === undefined ? undefined : `${artifacts}/${scenario.key}`;
   it.live(
-    `keeps ${scenario.key} native ownership truthful across administrative close and reuse`,
+    shutdown
+      ? "ends pending native subscription normally and fences positive ACK across shutdown"
+      : `keeps ${scenario.key} native ownership truthful across administrative close and reuse`,
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -366,6 +370,64 @@ rl.createInterface({ input: process.stdin }).on("line", line => {
                   ),
                   1,
                 );
+              }
+              if (shutdown) {
+                const sourceOwner = yield* manager.get(session.id);
+                assert.isTrue(Option.isSome(sourceOwner));
+                if (Option.isNone(sourceOwner)) return yield* Effect.die("Source owner missing");
+                const subscription = yield* sourceOwner.value.subscribeEvents!;
+                yield* manager.shutdown;
+                const subscriptionExit = yield* subscription.events.pipe(
+                  Stream.runCollect,
+                  Effect.timeout("10 seconds"),
+                  Effect.exit,
+                );
+                assert.isTrue(Exit.isSuccess(subscriptionExit), "Shutdown must end normally");
+                for (const owned of processes) {
+                  const exit = yield* Deferred.await(owned.exit).pipe(Effect.timeout("10 seconds"));
+                  assert.isTrue(Exit.isSuccess(exit));
+                  if (Exit.isSuccess(exit)) assert.equal(exit.value, 0);
+                  assert.isFalse(processIsLive(owned.pid));
+                }
+                const owners = yield* Effect.forEach([session.id, siblingSessionId], (ownedId) =>
+                  Effect.gen(function* () {
+                    return {
+                      providerSessionId: ownedId,
+                      live: yield* manager.get(ownedId),
+                      closeState: yield* manager.getCloseState!(ownedId),
+                    };
+                  }),
+                );
+                for (const owner of owners) {
+                  assert.isTrue(Option.isNone(owner.live));
+                  assert.isTrue(Option.isNone(owner.closeState));
+                }
+                const after = yield* snapshot("shutdown-normal-eof-and-both-native-exits");
+                const pending = after.projection.providerTurns.find((row) => row.id === turn.id)!;
+                assert.exists(pending);
+                assert.equal(pending.nativeAcceptance, "unknown");
+                assert.isUndefined(pending.acceptedAt);
+                assert.lengthOf(
+                  after.stored.filter(
+                    (row) =>
+                      row.event.type === "provider-turn.updated" &&
+                      row.event.payload.id === turn.id &&
+                      (row.event.payload.nativeAcceptance === "accepted" ||
+                        row.event.payload.acceptedAt !== undefined),
+                  ),
+                  0,
+                );
+                const late = after.wire
+                  .filter((row) => row.pid === oldProcess.pid && row.kind === "out")
+                  .map((row) => row.record);
+                assert.deepInclude(late, { type: "response", command: "prompt", success: true });
+                assert.lengthOf(processes, 2);
+                if (caseArtifacts !== undefined)
+                  yield* fs.writeFileString(
+                    `${caseArtifacts}/shutdown-subscription.json`,
+                    encodeJson({ subscriptionExit, owners }),
+                  );
+                return;
               }
               // This is the exact-instance administrative lifecycle used by Auth,
               // not public run.interrupt: failed retirement is allowed, false live ownership is not.
