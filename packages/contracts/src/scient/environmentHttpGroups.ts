@@ -123,6 +123,25 @@ import {
   ScientConversationImportUpload,
 } from "../scientConversationImport.ts";
 
+/** Scient reasons inside environmentHttp's EnvironmentInternalErrorReason, in wire order. */
+export const SCIENT_ENVIRONMENT_INTERNAL_ERROR_REASONS = [
+  "orchestration_dispatch_failed",
+  "scient_project_inspection_failed",
+  "scient_project_initialization_failed",
+  "scient_sources_operation_failed",
+  "scient_latex_build_failed",
+  "scient_latex_navigation_failed",
+  "scient_latex_toolchain_failed",
+  "scient_latex_install_failed",
+  "scient_markdown_operation_failed",
+  "scient_analytics_consent_update_failed",
+  "scient_analytics_deletion_failed",
+  "scient_thread_queue_operation_failed",
+  "scient_conversation_export_failed",
+  "scient_conversation_import_failed",
+  "scient_word_export_failed",
+] as const;
+
 export class ScientThreadQueueOperationError extends Schema.TaggedError<ScientThreadQueueOperationError>()(
   "ScientThreadQueueOperationError",
   { message: Schema.String },

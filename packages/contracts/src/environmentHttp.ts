@@ -62,6 +62,7 @@ import {
 } from "./relay.ts";
 // SCIENT-FORK:START — Scient HTTP groups live in a Scient module.
 import {
+  SCIENT_ENVIRONMENT_INTERNAL_ERROR_REASONS,
   ScientThreadQueueOperationError,
   makeScientEnvironmentHttpGroups,
 } from "./scient/environmentHttpGroups.ts";
@@ -117,22 +118,8 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "project_mutation_failed",
   "orchestration_snapshot_failed",
   "orchestration_thread_snapshot_failed",
-  "orchestration_dispatch_failed",
-  "scient_project_inspection_failed",
-  "scient_project_initialization_failed",
-  "scient_sources_operation_failed",
-  "scient_latex_build_failed",
-  "scient_latex_navigation_failed",
-  "scient_latex_toolchain_failed",
-  "scient_latex_install_failed",
-  "scient_markdown_operation_failed",
-  "scient_analytics_consent_update_failed",
-  "scient_analytics_deletion_failed",
-  // SCIENT-FORK:START
-  "scient_thread_queue_operation_failed",
-  "scient_conversation_export_failed",
-  "scient_conversation_import_failed",
-  "scient_word_export_failed",
+  // SCIENT-FORK:START — Scient internal error reasons.
+  ...SCIENT_ENVIRONMENT_INTERNAL_ERROR_REASONS,
   // SCIENT-FORK:END
   "orchestration_thread_bounded_snapshot_failed",
   "orchestration_thread_history_failed",
