@@ -1,3 +1,7 @@
+import {
+  browserActionPresentation,
+  foldedQuestionAnswerMessageIds,
+} from "./scient/threadTimeline/presentation";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import {
   activityIssuePolicy,
@@ -1046,6 +1050,7 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
               : (item.toolName ?? "Tool call")),
         toolTitle: skillUsageLabel ?? title ?? item.toolName ?? "Tool",
         toolData: { input: item.input, output: item.output },
+        ...browserActionPresentation(item.input, item.output),
       };
     }
     case "approval_request":
@@ -1133,13 +1138,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
     return undefined;
   };
 
-  const foldedAnswerMessageIds = new Set(
-    input.visibleTurnItems.flatMap(({ item }) =>
-      item.type === "user_input_request" && item.questionAnswer
-        ? [`async-answer:${item.questionAnswer.requestId}`]
-        : [],
-    ),
-  );
+  const foldedAnswerMessageIds = foldedQuestionAnswerMessageIds(input.visibleTurnItems);
   for (const row of input.visibleTurnItems) {
     const { item } = row;
     if (turnItemIsWorkspacePreparation(item)) continue;
@@ -1522,17 +1521,21 @@ function reuseTimelineEntries(
     return null;
   }
   // Answer rows can replace a message already present in the retained prefix.
-  if (
-    appended &&
-    input.visibleTurnItems
-      .slice(before.visibleTurnItems.length)
-      .some(
+  if (appended) {
+    const appendedItems = input.visibleTurnItems.slice(before.visibleTurnItems.length);
+    const foldedAnswerIds = appendedItems.some(({ item }) => item.type === "user_message")
+      ? foldedQuestionAnswerMessageIds(input.visibleTurnItems)
+      : undefined;
+    if (
+      appendedItems.some(
         ({ item }) =>
           (item.type === "user_input_request" && item.questionAnswer !== undefined) ||
-          (item.type === "user_message" && item.messageId.startsWith("async-answer:")),
+          (item.type === "user_message" &&
+            (item.messageId.startsWith("async-answer:") || foldedAnswerIds?.has(item.messageId))),
       )
-  )
-    return null;
+    )
+      return null;
+  }
   const replacements = new Map<
     OrchestrationV2ProjectedTurnItem,
     OrchestrationV2ProjectedTurnItem
