@@ -20,6 +20,7 @@ import * as DateTime from "effect/DateTime";
 import * as FileSystem from "effect/FileSystem";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { CodexProviderCapabilitiesV2 } from "../Adapters/CodexAdapterV2.ts";
 import { makeLayer } from "../ProviderAdapterRegistry.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
@@ -282,6 +283,42 @@ it.effect(
       const plain = yield* orchestrator.getThreadProjection(threadId);
       assert.isUndefined(plain.thread.forkLineage);
       assert.notProperty(plain.thread, "conversationForkBoundaries");
+      const sql = yield* SqlClient.SqlClient;
+      const assertNoDestination = Effect.gen(function* () {
+        assert.deepEqual(
+          yield* sql`SELECT thread_id FROM orchestration_v2_projection_threads WHERE thread_id = ${command.newThreadId}`,
+          [],
+        );
+        assert.deepEqual(
+          yield* sql`SELECT context_transfer_id FROM orchestration_v2_projection_context_transfers WHERE target_thread_id = ${command.newThreadId}`,
+          [],
+        );
+        assert.deepEqual(
+          yield* sql`SELECT command_id FROM orchestration_command_receipts WHERE command_id = ${command.commandId}`,
+          [],
+        );
+        assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), plain);
+      });
+      const available = yield* forks.getOptions(command);
+      assert.isTrue(available.available);
+      assert.equal(available.sourceAssistantMessageId, command.sourceAssistantMessageId);
+      yield* assertNoDestination;
+      const evidenceBytes = yield* fs.readFile(sourcePath!);
+      yield* fs.remove(sourcePath!);
+      const unavailable = yield* forks.getOptions(command);
+      assert.isFalse(unavailable.available);
+      assert.include(unavailable.reason!, attachment.name);
+      yield* assertNoDestination;
+      yield* fs.writeFile(sourcePath!, evidenceBytes);
+      assert.deepEqual(yield* fs.readFile(sourcePath!), evidenceBytes);
+      assert.deepEqual(yield* forks.getOptions(command), available);
+      yield* assertNoDestination;
+      // Options are advice: dispatch still probes the actual source again.
+      yield* fs.remove(sourcePath!);
+      const missing = yield* forks.dispatch(command).pipe(Effect.flip);
+      assert.include(missing.message, attachment.name);
+      yield* assertNoDestination;
+      yield* fs.writeFile(sourcePath!, evidenceBytes);
       const receipt = yield* forks.dispatch(command);
       const target = yield* orchestrator.getThreadProjection(command.newThreadId);
       assert.equal(target.thread.forkLineage?.originThreadId, threadId);

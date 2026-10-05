@@ -351,7 +351,35 @@ it.live(
             workspaceMode: "local" as const,
           };
           const forks = yield* ConversationForkService;
+          const assertNoForkAdviceMutation = Effect.gen(function* () {
+            assert.equal(
+              (yield* Effect.result((yield* ProjectionStoreV2).getThreadProjection(childId)))._tag,
+              "Failure",
+            );
+            assert.deepEqual(
+              (yield* orchestrator.getThreadProjection(threadId)).contextTransfers,
+              completed.contextTransfers,
+            );
+            assert.isTrue(
+              Option.isNone(
+                yield* (yield* CommandReceiptStoreV2).getByCommandId(forkCommand.commandId),
+              ),
+            );
+            assert.deepEqual(
+              (yield* orchestrator.getThreadProjection(threadId)).turnItems,
+              completed.turnItems,
+            );
+          });
+          const available = yield* forks.getOptions(forkCommand);
+          assert.isTrue(available.available);
+          assert.equal(available.sourceAssistantMessageId, assistant.messageId);
+          yield* assertNoForkAdviceMutation;
+          const evidenceBytes = yield* fileSystem.readFile(stored);
           yield* fileSystem.remove(stored);
+          const unavailable = yield* forks.getOptions(forkCommand);
+          assert.isFalse(unavailable.available);
+          assert.include(unavailable.reason!, attachment.name);
+          yield* assertNoForkAdviceMutation;
           assert.equal((yield* Effect.result(forks.dispatch(forkCommand)))._tag, "Failure");
           assert.equal(
             (yield* Effect.result((yield* ProjectionStoreV2).getThreadProjection(childId)))._tag,
@@ -366,7 +394,15 @@ it.live(
             (yield* orchestrator.getThreadProjection(threadId)).turnItems,
             completed.turnItems,
           );
-          yield* fileSystem.writeFileString(stored, "evidence");
+          yield* fileSystem.writeFile(stored, evidenceBytes);
+          assert.deepEqual(yield* fileSystem.readFile(stored), evidenceBytes);
+          assert.deepEqual(yield* forks.getOptions(forkCommand), available);
+          yield* assertNoForkAdviceMutation;
+          yield* fileSystem.remove(stored);
+          const missingAfterAdvice = yield* forks.dispatch(forkCommand).pipe(Effect.flip);
+          assert.include(missingAfterAdvice.message, attachment.name);
+          yield* assertNoForkAdviceMutation;
+          yield* fileSystem.writeFile(stored, evidenceBytes);
           yield* forks.dispatch(forkCommand);
           const child = yield* orchestrator.getThreadProjection(childId);
           assert.deepEqual(child.runtimeRequests, []);
