@@ -2896,6 +2896,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               text: codexSkillMentionText(turnInput.message.text),
               attachments: turnInput.message.attachments,
               attachmentsDir: serverConfig.attachmentsDir,
+              ...(turnInput.message.runtimeInstruction === undefined
+                ? {}
+                : { runtimeInstruction: turnInput.message.runtimeInstruction }),
             });
             if (text.length > 0) {
               inputItems.push({

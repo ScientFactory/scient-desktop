@@ -97,6 +97,8 @@ it.effect.each([
       providerTurns: [],
       nodes: [],
       attempts: [],
+      messages: [],
+      turnItems: [],
       checkpoints: [{ id: checkpointId, scopeId, status: "ready", appRunOrdinal: null }],
       checkpointScopes: [{ id: scopeId, cwd }],
       runs: [{ id: "later-run", ordinal: 1, status: "completed", rootNodeId: null }],
@@ -162,7 +164,14 @@ it.effect.each([
                 yield* fs.remove(otherFile).pipe(Effect.orDie);
               }),
           }),
-          Layer.mock(EventSinkV2)({ write: () => Effect.succeed([]) }),
+          Layer.mock(EventSinkV2)({
+            write: () => Effect.succeed([]),
+            writeWithEffects: ({ effects }) =>
+              Effect.sync(() => {
+                assert.deepEqual(effects, []);
+                return [];
+              }),
+          }),
           Layer.mock(ProviderSessionManagerV2)({
             open: () =>
               Effect.succeed({

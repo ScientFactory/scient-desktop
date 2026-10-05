@@ -164,6 +164,7 @@ export function providerMessageTextWithAttachmentPaths(input: {
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly attachmentsDir: string;
+  readonly runtimeInstruction?: string | undefined;
 }): string {
   let text = input.text;
   const appendContext = (context: string | undefined) => {
@@ -219,6 +220,7 @@ export function providerMessageTextWithAttachmentPaths(input: {
     );
   }
 
+  appendContext(input.runtimeInstruction);
   return text;
 }
 

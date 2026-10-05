@@ -2243,6 +2243,11 @@ it.live(
         Effect.gen(function* () {
           yield* send(orchestrator, threadId, "foreground");
           const foreground = yield* takeOffer;
+          const fs = yield* FileSystem.FileSystem;
+          const cwd = foreground.input.runtimePolicy.cwd;
+          assert.ok(cwd);
+          const capturedContent = "Captured native output survives a comparison failure\n";
+          yield* fs.writeFileString(`${cwd}/README.md`, capturedContent);
           yield* foreground.settle("completed");
           const after = yield* waitFor(
             (projection) =>
@@ -2261,6 +2266,14 @@ it.live(
           assert.isTrue(
             yield* store.hasCheckpointRef({ cwd: scope.cwd, checkpointRef: checkpoint.ref }),
           );
+          const vcs = yield* VcsProcess.VcsProcess;
+          const captured = yield* vcs.run({
+            operation: "NativeQueueHoldPolicy.readCapturedCheckpoint",
+            command: "git",
+            args: ["show", `${checkpoint.ref}:README.md`],
+            cwd: scope.cwd,
+          });
+          assert.equal(captured.stdout, capturedContent);
           assert.ok(
             diagnostics.some((message) =>
               String(message).includes("checkpoint diff summary failed"),
@@ -2274,6 +2287,7 @@ it.live(
         }),
       { failCheckpointDiff: true },
     ).pipe(
+      Effect.provide(VcsProcess.layer.pipe(Layer.provideMerge(NodeServices.layer))),
       Effect.withLogger(
         Logger.make(({ message }) => {
           diagnostics.push(message);

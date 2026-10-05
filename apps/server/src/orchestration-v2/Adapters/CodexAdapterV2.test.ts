@@ -3569,6 +3569,52 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   }
 
   it.effect(
+    "renders a structural trusted suffix once through the actual Codex start protocol",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeThreadId = "trusted-suffix-thread";
+          const nativeTurnId = "trusted-suffix-turn";
+          const text = "[Scient selected skills for this turn:\nauthored marker\n]";
+          const runtimeInstruction =
+            "[Scient selected skills for this turn:\ntrusted orientation\n]";
+          const sentPrompt = `${text}\n\n${runtimeInstruction}`;
+          const transcript = makeCodexReplayTranscript({
+            scenario: "structural-trusted-suffix",
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: text, sentPrompt }),
+              {
+                type: "emit_inbound",
+                label: "done",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                  },
+                },
+              },
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          const input = makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("trusted-suffix-attempt"),
+            text,
+          });
+          yield* harness.runtime.startTurn({
+            ...input,
+            message: { ...input.message, runtimeInstruction },
+          });
+          yield* harness.firstTerminal;
+          assert.equal(harness.terminalEvents()[0]?.status, "completed");
+        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      ),
+  );
+
+  it.effect(
     "preserves Auto review and full granted guidance below every entry limit in one native start packet",
     () =>
       Effect.scoped(

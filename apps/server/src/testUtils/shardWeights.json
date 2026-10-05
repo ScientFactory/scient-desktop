@@ -4,7 +4,6 @@
   "src/checkpointing/CheckpointStore.test.ts": 0.6,
   "src/device/sshDeviceScript.test.ts": 2.9,
   "src/git/GitManager.test.ts": 18.7,
-  "src/orchestration/Layers/CheckpointReactor.test.ts": 7.1,
   "src/orchestration/Layers/OrchestrationEngine.test.ts": 1.4,
   "src/orchestration/Layers/ProjectionPipeline.test.ts": 0.5,
   "src/orchestration/Layers/ProviderCommandReactor.test.ts": 3.8,

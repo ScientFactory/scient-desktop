@@ -1,3 +1,4 @@
+import { providerMessageTextWithAttachmentPaths } from "../AttachmentPrompt.ts";
 import { assert, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -444,7 +445,12 @@ for (const test of cases) {
                             assert.ok(issued);
                             offeredScopes.push(issued);
                           }
-                          offers.push(input.message.text);
+                          offers.push(
+                            providerMessageTextWithAttachmentPaths({
+                              ...input.message,
+                              attachmentsDir: cwd,
+                            }),
+                          );
                           yield* publish({
                             type: "text",
                             id: `${name}:answer:${offers.length}`,

@@ -50,6 +50,8 @@ export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePoli
 export const ProviderAdapterV2TurnMessage = Schema.Struct({
   messageId: MessageId,
   text: Schema.String,
+  // Server-generated orientation only; explicit selection metadata owns skill authority.
+  runtimeInstruction: Schema.optional(Schema.String),
   attachments: Schema.Array(ChatAttachment),
   createdBy: OrchestrationV2ConversationMessage.fields.createdBy,
   creationSource: OrchestrationV2ConversationMessage.fields.creationSource,

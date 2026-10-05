@@ -31,6 +31,7 @@ import {
   listScientSkillsForInvocation,
   loadScientSkillForInvocation,
 } from "../../mcp/toolkits/skills/handlers.ts";
+import { providerMessageTextWithAttachmentPaths } from "../../orchestration-v2/AttachmentPrompt.ts";
 import { AcpProviderCapabilitiesV2 } from "../../orchestration-v2/Adapters/AcpAdapterV2.ts";
 import { makeNativeSessionAdapterV2 } from "../../orchestration-v2/Adapters/NativeSessionAdapterV2.ts";
 import { runDaemonWithOptions } from "../../orchestration-v2/EffectWorker.ts";
@@ -46,7 +47,7 @@ import * as ScientSkillPolicy from "./ScientSkillPolicy.ts";
 import * as ScientSkillRegistry from "./ScientSkillRegistry.ts";
 import * as ScientSkillSession from "./ScientSkillSession.ts";
 import { prepareScientSkillTurn } from "./ScientSkillInvocation.ts";
-import { prepareScientV2SkillTurn } from "./ScientV2SkillTurn.ts";
+import { prepareScientV2SkillScope, prepareScientV2SkillTurn } from "./ScientV2SkillTurn.ts";
 
 const registryLayer = McpSessionRegistry.layer.pipe(
   Layer.provide(
@@ -143,7 +144,14 @@ for (const driverName of ["codex", "cursor", "antigravity"] as const) {
                   Effect.gen(function* () {
                     const scope = yield* registry.resolve(token);
                     assert.isDefined(scope);
-                    yield* Queue.offer(offered, { text: turn.message.text, token, scope: scope! });
+                    yield* Queue.offer(offered, {
+                      text: providerMessageTextWithAttachmentPaths({
+                        ...turn.message,
+                        attachmentsDir: cwd,
+                      }),
+                      token,
+                      scope: scope!,
+                    });
                     yield* publish({ type: "terminal", status: "completed" });
                   }),
               };
@@ -283,6 +291,61 @@ const priorScope = prepareScientSkillTurn(
   ],
   new Map([[skillReleaseKey(release), release]]),
 ).skillScope;
+
+it.effect(
+  "prepares both structural suffixes inertly and publishes the same selected scope once",
+  () =>
+    Effect.gen(function* () {
+      const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const threadId = ThreadId.make("structural-skill-suffix");
+      const issued = yield* registry.issue({
+        threadId,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        capabilities: new Set(["skills:read"]),
+      });
+      McpProviderSession.setMcpProviderSession(issued.config);
+      const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
+      const before = yield* registry.resolve(token);
+      const baseText = "[Scient selected skills for this turn:\nauthored marker\n]";
+      const prepared = yield* prepareScientV2SkillScope({
+        threadId,
+        driver: ProviderDriverKind.make("codex"),
+        mcpSessionInjection: true,
+        projectRoot: undefined,
+        text: baseText,
+        selectedScientSkillNames: [release.name],
+      }).pipe(
+        Effect.provideService(ScientSkillSession.ScientSkillSessionPlanner, {
+          resolve: () =>
+            Effect.succeed({
+              delivery: "mcp" as const,
+              catalogStatus: "complete" as const,
+              skills: priorScope.skills,
+              releases: priorScope.releases,
+              diagnostics: [],
+            }),
+        }),
+        Effect.ensuring(Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
+      );
+      assert.equal(prepared.baseText, baseText);
+      assert.equal(prepared.text, `${baseText}\n\n${prepared.runtimeInstruction}`);
+      assert.include(prepared.runtimeInstruction!, "Scient skill scope for this turn");
+      assert.include(prepared.runtimeInstruction!, "Scient selected skills for this turn");
+      assert.notInclude(prepared.runtimeInstruction!, "authored marker");
+      assert.equal(
+        prepared.textWithoutCatalogMarker,
+        `${baseText}\n\n${prepared.runtimeInstructionWithoutCatalogMarker}`,
+      );
+      assert.notInclude(prepared.runtimeInstructionWithoutCatalogMarker!, "Scient skill scope");
+      assert.include(prepared.runtimeInstructionWithoutCatalogMarker!, "Scient selected skills");
+      assert.deepEqual(yield* registry.resolve(token), before);
+      yield* prepared.publish;
+      const after = yield* registry.resolve(token);
+      assert.deepEqual(after?.skillScope?.skills, priorScope.skills);
+      assert.deepEqual(after?.skillScope?.releases, priorScope.releases);
+      assert.notEqual(after?.skillScope?.catalog?.digest, before?.skillScope?.catalog?.digest);
+    }).pipe(Effect.provide(registryLayer)),
+);
 
 it.effect("replaces incomplete empty authority without claiming a complete empty catalog", () =>
   Effect.gen(function* () {
