@@ -1,3 +1,5 @@
+import { AgentSpawnMemberRow } from "~/scient/presentation/AgentSpawnMemberRow";
+import { TurnPlanTimelineRow } from "~/scient/presentation/TurnPlanTimelineRow";
 import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-presentation";
 import { useBoundedAnswerFollow } from "./useBoundedAnswerFollow";
 import { countUnreadBelow, unreadMessagesForThread } from "./unreadTimelineMessages";
@@ -58,8 +60,6 @@ import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/s
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import {
   emptyAgentPanelModel,
-  formatSubagentModelLabel,
-  formatSubagentTokenCount,
   isActiveSubagentStatus,
   isTerminalSubagentStatus,
   type AgentPanelModel,
@@ -3258,100 +3258,6 @@ function ProposedPlanTimelineRow({
   );
 }
 
-/** Inline folded plan chip: one row per turn that produced plan/todo steps. */
-const TurnPlanTimelineRow = memo(function TurnPlanTimelineRow({
-  row,
-}: {
-  row: Extract<TimelineRow, { kind: "turn-plan" }>;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const { steps } = row.turnPlan.plan;
-  const completedCount = steps.filter((step) => step.status === "completed").length;
-  const allDone = completedCount === steps.length;
-  const label =
-    steps.find((step) => step.status === "inProgress")?.step ??
-    steps.find((step) => step.status === "pending")?.step ??
-    steps.at(-1)?.step ??
-    "Plan";
-  const Chevron = expanded ? ChevronDownIcon : ChevronRightIcon;
-
-  return (
-    <div className="min-w-0 px-1 py-0.5">
-      <button
-        type="button"
-        className="flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-0.5 py-0.5 text-left text-xs leading-5 transition-colors duration-150 hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((value) => !value)}
-      >
-        <Chevron className="size-3.5 shrink-0 text-muted-foreground/65" />
-        {steps.length > 1 ? (
-          <span aria-hidden className="flex shrink-0 items-center gap-0.5">
-            {steps.map((step) => (
-              <span
-                key={step.step}
-                className={cn(
-                  "h-[3px] w-2.5 rounded-full",
-                  step.status === "completed"
-                    ? "bg-success"
-                    : step.status === "inProgress"
-                      ? "bg-primary"
-                      : "bg-muted-foreground/25",
-                )}
-              />
-            ))}
-          </span>
-        ) : null}
-        <span
-          className={cn(
-            "min-w-0 truncate",
-            allDone ? "text-muted-foreground/65" : "font-medium text-foreground/85",
-          )}
-        >
-          {label}
-        </span>
-        {steps.length > 1 ? (
-          <span className="shrink-0 text-muted-foreground/50 tabular-nums">
-            {completedCount}/{steps.length}
-          </span>
-        ) : null}
-      </button>
-      {expanded ? (
-        <div className="mt-0.5 space-y-px pl-6">
-          {steps.map((step) => (
-            <div key={step.step} className="flex items-baseline gap-2 text-xs leading-5">
-              <span
-                className={cn(
-                  "w-3 shrink-0 text-center font-mono text-3xs",
-                  step.status === "completed"
-                    ? "text-success"
-                    : step.status === "inProgress"
-                      ? "text-primary"
-                      : "text-muted-foreground/40",
-                )}
-                aria-hidden
-              >
-                {step.status === "completed" ? "✓" : step.status === "inProgress" ? "●" : "○"}
-              </span>
-              <span
-                className={cn(
-                  "min-w-0",
-                  step.status === "completed"
-                    ? "text-muted-foreground/55"
-                    : step.status === "inProgress"
-                      ? "text-foreground/90"
-                      : "text-muted-foreground/70",
-                )}
-              >
-                {step.step}
-              </span>
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-});
-
 type V2EventTone = "muted" | "warning" | "danger" | "success";
 
 function v2EventPresentation(item: OrchestrationV2TurnItem): {
@@ -5731,7 +5637,14 @@ const AgentSpawnRow = memo(function AgentSpawnRow(props: {
       {expanded ? (
         <div className="ms-7 mt-0.5 flex flex-col">
           {agents.map((agent) => (
-            <AgentSpawnMemberRow key={agent.id} agent={agent} onToggleEntry={props.onToggleEntry} />
+            <AgentSpawnMemberRow
+              key={agent.id}
+              agent={agent}
+              onToggleEntry={props.onToggleEntry}
+              WorkingTimer={WorkingTimer}
+              failedToolIconClassName={failedToolIconClassName}
+              toolCallExpandedBodyClassName={toolCallExpandedBodyClassName}
+            />
           ))}
           <button
             type="button"
@@ -5746,128 +5659,6 @@ const AgentSpawnRow = memo(function AgentSpawnRow(props: {
   );
 });
 
-const AGENT_MEMBER_STATUS_LABEL: Record<RuntimeSubagent["status"], string> = {
-  pending: "Working",
-  running: "Working",
-  waiting: "Working",
-  idle: "Idle",
-  completed: "Completed",
-  failed: "Failed",
-  cancelled: "Stopped",
-  interrupted: "Stopped",
-};
-
-function AgentSpawnMemberRow({
-  agent,
-  onToggleEntry,
-}: {
-  agent: RuntimeSubagent;
-  onToggleEntry?: ((collapsed: boolean) => void) | undefined;
-}) {
-  const [open, setOpen] = useState(false);
-  const activeStatus = isActiveSubagentStatus(agent.status);
-  const activity = activeStatus
-    ? (agent.progress ?? (agent.lastToolName ? `▸ ${agent.lastToolName}` : null))
-    : (agent.error ?? agent.result ?? agent.progress ?? null);
-  const durationMs =
-    agent.startedAt && agent.completedAt
-      ? Date.parse(agent.completedAt) - Date.parse(agent.startedAt)
-      : null;
-  const meta = [
-    durationMs !== null && durationMs >= 0 ? formatDuration(durationMs) : null,
-    agent.usage?.totalTokens !== undefined && agent.usage.totalTokens > 0
-      ? `${formatSubagentTokenCount(agent.usage.totalTokens)} tok`
-      : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-  // Settled members show their metrics; anything other than success keeps
-  // the status word so the outcome remains explicit.
-  const statusLabel =
-    activeStatus || !meta
-      ? AGENT_MEMBER_STATUS_LABEL[agent.status]
-      : agent.status === "completed"
-        ? meta
-        : `${AGENT_MEMBER_STATUS_LABEL[agent.status]} · ${meta}`;
-  const role =
-    agent.role && agent.role.trim().toLowerCase() !== agent.title.trim().toLowerCase()
-      ? agent.role
-      : null;
-  const firstLine = activity?.split("\n").find((line) => line.trim().length > 0) ?? null;
-  const body = [activity?.trim() || null, formatSubagentModelLabel(agent.model, agent.effort)]
-    .filter(Boolean)
-    .join("\n\n");
-  const canExpand = body.length > 0;
-  const toggleOpen = () => {
-    onToggleEntry?.(open);
-    setOpen((value) => !value);
-  };
-
-  return (
-    <div
-      role={canExpand ? "button" : undefined}
-      tabIndex={canExpand ? 0 : undefined}
-      aria-label={canExpand ? `${agent.title}, ${statusLabel}` : undefined}
-      aria-expanded={canExpand ? open : undefined}
-      onClick={canExpand ? toggleOpen : undefined}
-      onKeyDown={
-        canExpand
-          ? (e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                toggleOpen();
-              }
-            }
-          : undefined
-      }
-      className={cn(
-        "flex flex-col rounded-md px-1 py-1 transition-colors",
-        canExpand &&
-          "cursor-pointer hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
-      )}
-    >
-      <div className="flex select-none items-center gap-1.5">
-        <p className="flex min-w-0 flex-1 items-baseline gap-1.5 text-sm leading-relaxed">
-          <span
-            className={cn(
-              "min-w-0 truncate",
-              agent.status === "failed" ? failedToolIconClassName : "text-foreground/80",
-            )}
-          >
-            {agent.title}
-          </span>
-          {role ? (
-            <span className="scient-reading-micro max-w-28 shrink-0 truncate rounded-sm border border-border/60 px-1 font-mono text-muted-foreground">
-              {role}
-            </span>
-          ) : null}
-        </p>
-        <span className="scient-reading-compact shrink-0 font-mono tabular-nums text-muted-foreground">
-          {activeStatus && agent.startedAt ? (
-            <>
-              {`${statusLabel} · `}
-              <WorkingTimer createdAt={agent.startedAt} />
-            </>
-          ) : (
-            statusLabel
-          )}
-        </span>
-      </div>
-      {!open && firstLine ? (
-        <p className="truncate text-xs text-muted-foreground">{firstLine}</p>
-      ) : null}
-      {open ? (
-        <div
-          className="mt-1 cursor-default rounded-md bg-muted/40 px-3 py-2"
-          onClick={stopRowToggle}
-          onPointerDown={stopRowToggle}
-        >
-          <pre className={toolCallExpandedBodyClassName}>{body}</pre>
-        </div>
-      ) : null}
-    </div>
-  );
-}
 function remarkThoughtPreview(fallback: string) {
   return (tree: Root) => {
     const plainText = (node: Root | RootContent): string => {
