@@ -684,6 +684,12 @@ const make = Effect.gen(function* () {
       ),
     getOptions: (input) =>
       inspect(input, ThreadId.make(`scient-options:${input.originThreadId}`)).pipe(
+        Effect.tap(({ plan }) =>
+          copier.checkSources({
+            threadId: ThreadId.make(`scient-options:${input.originThreadId}`),
+            attachments: plan.attachmentCopies.map(({ source }) => source),
+          }),
+        ),
         Effect.map(({ source, checkpointAvailable, localAvailable }): ForkOptions => ({
           available: true,
           localAvailable,
@@ -696,7 +702,9 @@ const make = Effect.gen(function* () {
           sourceRunningRunId: source.kind === "running-turn" ? source.runId : null,
         })),
         Effect.catch((cause) =>
-          !isDispatchError(cause) && !isPlanError(cause)
+          !isDispatchError(cause) &&
+          !isPlanError(cause) &&
+          !(isAttachmentCopyError(cause) && cause.reason === "source-unavailable")
             ? Effect.fail(
                 new OrchestrationDispatchCommandError({
                   message: cause.message,

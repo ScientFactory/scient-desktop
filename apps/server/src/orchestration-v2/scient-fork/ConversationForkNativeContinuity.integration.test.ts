@@ -117,7 +117,10 @@ const waitCompleted = Effect.fn("NativeFork.waitCompleted")(function* (
   return complete.value;
 });
 
-const createSource = Effect.fn("NativeFork.createSource")(function* (cwd: string) {
+const createSource = Effect.fn("NativeFork.createSource")(function* (
+  cwd: string,
+  expectedStatus: "completed" | "failed" | "interrupted" = "completed",
+) {
   const orchestrator = yield* OrchestratorV2;
   const sink = yield* EventSinkV2;
   const now = yield* DateTime.now;
@@ -173,18 +176,24 @@ const createSource = Effect.fn("NativeFork.createSource")(function* (cwd: string
     createdBy: "user",
     creationSource: "web",
   });
-  return yield* waitCompleted(sourceId);
+  return yield* waitCompleted(sourceId, expectedStatus);
 });
 
 for (const scenario of [
   "unchanged",
+  "completed-reply-interrupted-run",
+  "completed-reply-failed-run",
   "deleted",
   "native-failure",
   "changed-instance",
   "appended",
   "reverted",
 ] as const) {
-  it.live(`retained native continuity preserves the frozen prefix: ${scenario}`, () =>
+  const title =
+    scenario === "completed-reply-interrupted-run" || scenario === "completed-reply-failed-run"
+      ? `completed durable reply admits portable continuation: ${scenario}`
+      : `retained native continuity preserves the frozen prefix: ${scenario}`;
+  it.live(title, () =>
     Effect.scoped(
       Effect.gen(function* () {
         const name = `scient-native-fork-continuity-${scenario}`;
@@ -199,6 +208,30 @@ for (const scenario of [
           materializeReplayTranscriptWorkspace(recorded, cwd),
         );
         const entries = [...transcript.entries];
+        const sourceStatus =
+          scenario === "completed-reply-interrupted-run"
+            ? "interrupted"
+            : scenario === "completed-reply-failed-run"
+              ? "failed"
+              : "completed";
+        if (sourceStatus !== "completed") {
+          // Keep the actual completed assistant item, then let the native decoder
+          // and worker durably settle its owning run with the later terminal status.
+          const terminalIndex = entries.findIndex(
+            (entry) => entry.type === "emit_inbound" && entry.label === "turn/completed/source",
+          );
+          const terminal = entries[terminalIndex];
+          assert.ok(terminal?.type === "emit_inbound");
+          entries[terminalIndex] = {
+            ...terminal,
+            frame: decodeFrame(
+              encodeFrame(terminal.frame).replace(
+                '"status":"completed"',
+                `"status":"${sourceStatus}"`,
+              ),
+            ),
+          };
+        }
         const replayTranscript = { ...transcript, entries };
         const driver = yield* CodexReplay.makeReplayDriver(replayTranscript);
         const targetModelSelection =
@@ -219,7 +252,8 @@ for (const scenario of [
           const sink = yield* EventSinkV2;
           const forks = yield* ConversationForkService;
           const now = yield* DateTime.now;
-          const source = yield* createSource(cwd);
+          const source = yield* createSource(cwd, sourceStatus);
+          assert.equal(source.runs[0]?.status, sourceStatus);
           if (scenario === "native-failure") {
             const sourceRun = source.runs[0];
             const providerTurn = source.providerTurns[0];
@@ -273,6 +307,22 @@ for (const scenario of [
             (item) => item.type === "assistant_message" && item.status === "completed",
           );
           assert.ok(answer?.type === "assistant_message");
+          assert.equal(answer.runId, source.runs[0]?.id);
+          assert.isFalse(answer.streaming);
+          assert.equal(answer.text, "source fork seed ok");
+          const persistedSource = yield* (yield* ProjectionStoreV2).getThreadProjection(sourceId);
+          assert.equal(persistedSource.runs[0]?.status, sourceStatus);
+          assert.ok(
+            persistedSource.turnItems.some(
+              (item) =>
+                item.id === answer.id &&
+                item.status === "completed" &&
+                item.type === "assistant_message" &&
+                !item.streaming &&
+                item.runId === answer.runId,
+            ),
+            "The selected completed answer must survive SQL settlement of its own run",
+          );
           const forkCommand = {
             type: "thread.fork" as const,
             commandId: CommandId.make("scient-native-fork"),
@@ -289,6 +339,40 @@ for (const scenario of [
             "The accepted retained fork must durably own its native continuity proof",
           );
           assert.equal(frozen.contextTransfers[0]?.status, "pending");
+          if (sourceStatus !== "completed") {
+            // An unsuccessful native turn cannot be cloned. Fork admission still
+            // preserves its independently completed durable reply as portable history.
+            assert.isUndefined(frozen.contextTransfers[0]?.frozenSource);
+            assert.include(
+              frozen.contextTransfers[0]?.portableReason ?? "",
+              "completed native conversation",
+            );
+            assert.deepEqual(
+              frozen.messages.map((message) => message.text),
+              [THREAD_FORK_NATIVE_SOURCE_PROMPT, "source fork seed ok"],
+            );
+            const inheritedAnswer = frozen.visibleTurnItems.find(
+              (row) => row.item.type === "assistant_message" && row.item.text === answer.text,
+            )?.item;
+            assert.ok(inheritedAnswer?.type === "assistant_message");
+            assert.equal(inheritedAnswer.status, "completed");
+            assert.isFalse(inheritedAnswer.streaming);
+            assert.equal(inheritedAnswer.inheritedFrom?.runId, answer.runId);
+            assert.equal(inheritedAnswer.inheritedFrom?.itemId, answer.id);
+            assert.lengthOf(frozen.runs, 0);
+            assert.lengthOf(frozen.providerThreads, 0, "Admission must not execute a provider");
+            const repeated = yield* forks.dispatch(forkCommand);
+            assert.equal(repeated.sequence, receipt.sequence);
+            const reloaded = yield* (yield* ProjectionStoreV2).getThreadProjection(targetId);
+            assert.lengthOf(reloaded.contextTransfers, 1);
+            assert.deepEqual(reloaded.visibleTurnItems, frozen.visibleTurnItems);
+            assert.equal(
+              (yield* orchestrator.getThreadProjection(sourceId)).runs[0]?.status,
+              sourceStatus,
+            );
+            assert.isNull((yield* Ref.get(driver.state)).failure);
+            return;
+          }
           assert.equal(
             frozen.contextTransfers[0]?.frozenSource?.providerTurnId,
             source.providerTurns[0]?.id,
