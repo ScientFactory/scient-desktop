@@ -14,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexReplay from "effect-codex-app-server/replay";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -45,6 +46,7 @@ import { makeDriverLayer } from "../ProviderAdapterRegistry.ts";
 import {
   ProviderAdapterOpenSessionError,
   type ProviderTextSnapshotOwner,
+  type ProviderTextSnapshotBatch,
 } from "../ProviderAdapter.ts";
 import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
 import { ProjectionStoreV2, layerMemory } from "../ProjectionStore.ts";
@@ -298,6 +300,21 @@ for (const scenario of [
     title: "cancels the capture waiter before SQL finishes without hanging or publishing a child",
   },
   {
+    mode: "cancel-ordinary",
+    streaming: "paragraph",
+    clean: false,
+    control: "cancel-ordinary",
+    title:
+      "delivers the original ordinary prefix without recapture after cancel before carrier consumption",
+  },
+  {
+    mode: "sql-ordinary",
+    streaming: "paragraph",
+    clean: false,
+    control: "sql-ordinary",
+    title: "delivers the original ordinary prefix without recapture after raw SQL failure",
+  },
+  {
     mode: "pooled",
     streaming: "turn",
     clean: false,
@@ -429,9 +446,11 @@ for (const scenario of [
         const prefix =
           mode === "empty"
             ? ""
-            : scenario.streaming === "paragraph"
-              ? "Ready paragraph.\n\n```ts\nheld"
-              : "Held in memory so far. ";
+            : ["cancel-ordinary", "sql-ordinary"].includes(scenario.control)
+              ? "Ready paragraph.\n\n"
+              : scenario.streaming === "paragraph"
+                ? "Ready paragraph.\n\n```ts\nheld"
+                : "Held in memory so far. ";
         const suffix =
           scenario.control === "healthy" ? "\n```\n\nThen the rest.\n\n" : "Then the rest.";
         const threadId = ThreadId.make(`native-fork-${mode}-source`);
@@ -628,6 +647,8 @@ for (const scenario of [
         const received = yield* Deferred.make<void>();
         const carrierHeld = yield* Deferred.make<void>();
         const releaseCarrier = yield* Deferred.make<void>();
+        const snapshotBatches: ProviderTextSnapshotBatch[] = [];
+        const retiredTokens: symbol[] = [];
         const normalFrame = yield* Deferred.make<void>();
         const planCommitted = yield* Deferred.make<void>();
         yield* Effect.addFinalizer(() => Deferred.succeed(releaseCarrier, undefined));
@@ -653,6 +674,7 @@ for (const scenario of [
         const captureCommitted = yield* Deferred.make<void>();
         const filteredItemCommitted = yield* Deferred.make<void>();
         let rawCaptureCount = 0;
+        let rawCaptureFailure = "";
         yield* Effect.addFinalizer(() => Deferred.succeed(releaseCapture, undefined));
         yield* Effect.addFinalizer(() => Deferred.succeed(releaseEmission, undefined));
         const realClock = yield* Clock.Clock;
@@ -773,8 +795,27 @@ for (const scenario of [
                         : {
                             textSnapshots: {
                               ...runtime.textSnapshots,
+                              release: (token) =>
+                                runtime
+                                  .textSnapshots!.release(token)
+                                  .pipe(
+                                    Effect.tap(() => Effect.sync(() => retiredTokens.push(token))),
+                                  ),
                               events: runtime.textSnapshots.events.pipe(
                                 Stream.tap((event) => {
+                                  if (
+                                    event.type === "internal.text_snapshot" &&
+                                    ["cancel-ordinary", "sql-ordinary"].includes(scenario.control)
+                                  )
+                                    return Effect.sync(() => snapshotBatches.push(event)).pipe(
+                                      Effect.andThen(
+                                        scenario.control === "cancel-ordinary"
+                                          ? Deferred.succeed(carrierHeld, undefined).pipe(
+                                              Effect.andThen(Deferred.await(releaseCarrier)),
+                                            )
+                                          : Effect.void,
+                                      ),
+                                    );
                                   if (
                                     event.type === "internal.text_snapshot" &&
                                     ["eof", "pre-delta", "detach"].includes(scenario.control)
@@ -876,7 +917,13 @@ for (const scenario of [
                       yield* Deferred.succeed(captureQueued, undefined);
                       yield* Deferred.await(releaseCapture);
                     }
-                    const result = yield* sink.captureRunningForkText!(input);
+                    const result = yield* sink.captureRunningForkText!(input).pipe(
+                      Effect.tapCause((cause) =>
+                        Effect.sync(() => {
+                          rawCaptureFailure = Cause.pretty(cause);
+                        }),
+                      ),
+                    );
                     yield* Deferred.succeed(captureCommitted, undefined);
                     return result;
                   }),
@@ -1035,14 +1082,14 @@ for (const scenario of [
                 source.messages,
               );
             }
-            if (scenario.control === "sql")
+            if (["sql", "sql-ordinary"].includes(scenario.control))
               yield* sql.unsafe(`CREATE TRIGGER reject_buffer_item BEFORE INSERT ON orchestration_events
               WHEN NEW.event_type = 'turn-item.updated' AND json_extract(NEW.payload_json, '$.type') = 'assistant_message'
               BEGIN SELECT RAISE(ABORT, 'controlled raw-item SQL failure'); END`);
             let forking = yield* forks.dispatch(command).pipe(Effect.forkScoped);
             yield* Effect.raceFirst(
               Deferred.await(
-                ["eof", "pre-delta", "detach"].includes(scenario.control)
+                ["eof", "pre-delta", "detach", "cancel-ordinary"].includes(scenario.control)
                   ? carrierHeld
                   : captureQueued,
               ),
@@ -1061,6 +1108,176 @@ for (const scenario of [
             const beforeSql = yield* orchestrator.getThreadProjection(threadId);
             assert.isFalse(beforeSql.messages.some((message) => message.text === prefix));
             assert.equal(beforeSql.runs[0]?.status, "running");
+            if (["cancel-ordinary", "sql-ordinary"].includes(scenario.control)) {
+              assert.lengthOf(snapshotBatches, 1);
+              const batch = snapshotBatches[0]!;
+              assert.equal(batch.owner.threadId, threadId);
+              assert.equal(batch.owner.runId, source.runs[0]!.id);
+              assert.equal(batch.owner.activeAttemptId, source.attempts[0]!.id);
+              assert.equal(batch.owner.rootNodeId, source.runs[0]!.rootNodeId);
+              assert.equal(batch.owner.runOrdinal, source.runs[0]!.ordinal);
+              assert.equal(
+                batch.owner.providerSessionId,
+                source.providerThreads[0]!.providerSessionId,
+              );
+              assert.equal(batch.owner.providerInstanceId, modelSelection.instanceId);
+              assert.equal(batch.owner.driver, CodexAdapterV2.CODEX_DRIVER_KIND);
+              assert.equal(batch.owner.nativeThreadId, nativeThreadId);
+              assert.equal(batch.owner.nativeTurnId, nativeTurnId);
+              const capturedItem = batch.events.find((event) => event.type === "turn_item.updated");
+              const capturedMessage = batch.events.find(
+                (event) => event.type === "message.updated",
+              );
+              assert.ok(capturedItem?.type === "turn_item.updated");
+              assert.ok(capturedItem.turnItem.type === "assistant_message");
+              assert.ok(capturedMessage?.type === "message.updated");
+              assert.equal(capturedItem.turnItem.text, prefix);
+              assert.equal(capturedMessage.message.text, prefix);
+              if (scenario.control === "cancel-ordinary") {
+                yield* Fiber.interrupt(forking).pipe(Effect.timeout("15 seconds"));
+                assert.include(retiredTokens, batch.token);
+                assert.equal(rawCaptureCount, 0);
+                yield* Deferred.succeed(releaseCarrier, undefined);
+              } else {
+                yield* Deferred.succeed(releaseCapture, undefined);
+                const rejected = yield* Fiber.join(forking).pipe(
+                  Effect.exit,
+                  Effect.timeout("15 seconds"),
+                );
+                assert.equal(rejected._tag, "Failure");
+                assert.equal(rawCaptureCount, 1);
+                assert.include(rawCaptureFailure, "controlled raw-item SQL failure");
+                yield* capture("rawSqlRefused", { rawCaptureFailure });
+                const rolledBack = yield* orchestrator.getThreadProjection(threadId);
+                assert.deepEqual(rolledBack.messages, source.messages);
+                assert.deepEqual(rolledBack.turnItems, source.turnItems);
+                yield* sql.unsafe("DROP TRIGGER reject_buffer_item");
+              }
+              assert.isFalse(yield* Deferred.isDone(captureCommitted));
+              // Only the original scheduled flush may deliver this prefix. Native suffix,
+              // terminal frames and a second snapshot remain excluded until SQL proves it.
+              yield* Deferred.succeed(releaseEmission, undefined);
+              const ordinary = yield* waitFor(threadId, (p) =>
+                p.turnItems.some(
+                  (item) =>
+                    item.id === capturedItem.turnItem.id &&
+                    item.type === "assistant_message" &&
+                    item.text === prefix,
+                ),
+              ).pipe(
+                Effect.onExit((exit) =>
+                  capture("ordinaryWaitExit", {
+                    tag: exit._tag,
+                    rawCaptureCount,
+                    retired: retiredTokens.includes(batch.token),
+                    snapshotCount: snapshotBatches.length,
+                  }).pipe(
+                    Effect.andThen(
+                      Effect.gen(function* () {
+                        yield* capture(
+                          "ordinaryWaitState",
+                          yield* orchestrator.getThreadProjection(threadId),
+                        );
+                        yield* capture(
+                          "ordinaryWaitEvents",
+                          yield* (yield* EventStoreV2).read({}).pipe(Stream.runCollect),
+                        );
+                        yield* capture("ordinaryWaitReceipts", [...receipts]);
+                      }),
+                    ),
+                  ),
+                ),
+              );
+              const item = ordinary.turnItems.find((item) => item.id === capturedItem.turnItem.id);
+              const message = ordinary.messages.find(
+                (message) => message.id === capturedMessage.message.id,
+              );
+              assert.ok(item?.type === "assistant_message");
+              assert.ok(message);
+              assert.equal(item.messageId, message.id);
+              assert.equal(item.nodeId, capturedItem.turnItem.nodeId);
+              assert.equal(item.status, "running");
+              assert.isTrue(item.streaming);
+              assert.equal(message.text, prefix);
+              assert.isTrue(message.streaming);
+              assert.deepEqual(ordinary.runs, source.runs);
+              assert.deepEqual(ordinary.attempts, source.attempts);
+              assert.deepEqual(ordinary.providerThreads, source.providerThreads);
+              assert.deepEqual(ordinary.providerTurns, source.providerTurns);
+              assert.equal(item.runId, batch.owner.runId);
+              assert.equal(item.providerThreadId, batch.owner.providerThreadId);
+              assert.equal(item.providerTurnId, batch.owner.providerTurnId);
+              assert.deepEqual(item.nativeItemRef, capturedItem.turnItem.nativeItemRef);
+              assert.lengthOf(
+                ordinary.messages.filter((m) => m.id === message.id),
+                1,
+              );
+              assert.lengthOf(
+                ordinary.turnItems.filter((i) => i.id === item.id),
+                1,
+              );
+              assert.equal(rawCaptureCount, scenario.control === "cancel-ordinary" ? 0 : 1);
+              assert.lengthOf(snapshotBatches, 1);
+              assert.isFalse(yield* Deferred.isDone(captureCommitted));
+              assert.equal(
+                receipts.filter((r) => r.method === "item/agentMessage/delta").length,
+                1,
+              );
+              assert.isFalse(
+                receipts.some(
+                  (r) => r.method === "item/completed" || r.method === "turn/completed",
+                ),
+              );
+              assert.equal(
+                (yield* (yield* ProjectionStoreV2).getThread(forkId).pipe(Effect.exit))._tag,
+                "Failure",
+              );
+              assert.isTrue(
+                Option.isNone(yield* (yield* CommandReceiptStoreV2).getByCommandId(forkCommandId)),
+              );
+              assert.isEmpty(yield* (yield* EffectOutboxV2).listByCommandId(forkCommandId));
+              yield* capture("ordinaryWithoutRecapture", ordinary);
+              gate.releaseAll();
+              yield* Fiber.join(starting);
+              yield* waitFor(threadId, (p) =>
+                p.providerTurns.some((turn) => turn.status === "completed"),
+              );
+              yield* worker.drain(12);
+              const completed = yield* waitFor(threadId, (p) => p.runs[0]?.status === "completed");
+              const finalItem = completed.turnItems.find((i) => i.id === item.id);
+              assert.ok(finalItem?.type === "assistant_message");
+              assert.equal(finalItem.text, finalText);
+              assert.equal(finalItem.status, "completed");
+              assert.isFalse(finalItem.streaming);
+              assert.equal(completed.messages.find((m) => m.id === message.id)?.text, finalText);
+              assert.lengthOf(
+                completed.messages.filter((m) => m.id === message.id),
+                1,
+              );
+              assert.lengthOf(
+                completed.turnItems.filter((i) => i.id === item.id),
+                1,
+              );
+              const stored = yield* (yield* EventStoreV2).read({}).pipe(Stream.runCollect);
+              assert.lengthOf(
+                stored.filter(
+                  ({ event }) =>
+                    event.threadId === threadId &&
+                    event.type === "turn-item.updated" &&
+                    event.payload.id === item.id &&
+                    event.payload.type === "assistant_message" &&
+                    !event.payload.streaming,
+                ),
+                1,
+              );
+              yield* capture("completedSource", completed);
+              yield* capture("storedEvents", stored);
+              assert.isFalse(yield* Deferred.isDone(captureCommitted));
+              assert.equal(rawCaptureCount, scenario.control === "cancel-ordinary" ? 0 : 1);
+              assert.lengthOf(snapshotBatches, 1);
+              yield* manager.closeInstance(modelSelection.instanceId);
+              return { frozen: null, completed: yield* orchestrator.getThreadProjection(threadId) };
+            }
             if (scenario.control === "pre-delta") {
               gate.release("after-running-fork");
               yield* Deferred.await(laterReceived).pipe(Effect.timeout("15 seconds"));

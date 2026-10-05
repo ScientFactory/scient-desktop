@@ -90,3 +90,37 @@ it.effect(
       }),
     ),
 );
+
+it.effect(
+  "successful snapshot enqueue preserves the original ordinary dirty flush without recapture",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const emitted = yield* Ref.make<ProviderTextDeltaUpdate[]>([]);
+        const coalescer = yield* makeProviderTextDeltaCoalescer({
+          flushIntervalMs: 50,
+          emit: (update) => Ref.update(emitted, (values) => [...values, update]),
+        });
+        yield* coalescer.append({ turnId: "root", itemId: "answer", delta: "original prefix" });
+        const queued = yield* coalescer.withSnapshot("root", Effect.succeed);
+        assert.equal(queued.items[0]?.text, "original prefix");
+        assert.isEmpty(yield* Ref.get(emitted));
+        yield* TestClock.adjust("50 millis");
+        assert.deepEqual(yield* Ref.get(emitted), [
+          { turnId: "root", itemId: "answer", text: "original prefix", completed: false },
+        ]);
+        assert.isTrue(
+          Option.isSome(
+            yield* coalescer.withWatermark("root", queued.watermark, Effect.succeed("same cutoff")),
+          ),
+        );
+        yield* TestClock.adjust("50 millis");
+        assert.lengthOf(yield* Ref.get(emitted), 1);
+        yield* coalescer.complete({ turnId: "root", itemId: "answer" });
+        assert.deepEqual(
+          (yield* Ref.get(emitted)).filter((update) => update.completed),
+          [{ turnId: "root", itemId: "answer", text: "original prefix", completed: true }],
+        );
+      }),
+    ),
+);

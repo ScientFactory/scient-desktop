@@ -128,19 +128,8 @@ export const makeProviderTextDeltaCoalescer = Effect.fn("makeProviderTextDeltaCo
                   completed: false,
                 })),
             };
-            const result = yield* use(snapshot);
-            yield* Ref.update(
-              buffered,
-              (values) =>
-                new Map(
-                  Array.from(
-                    values,
-                    ([key, item]) =>
-                      [key, item.turnId === turnId ? { ...item, dirty: false } : item] as const,
-                  ),
-                ),
-            );
-            return result;
+            // Snapshot enqueue leaves the ordinary drain responsible for dirty delivery.
+            return yield* use(snapshot);
           }),
         ),
       withWatermark: (turnId, watermark, use) =>
