@@ -2366,8 +2366,14 @@ export function makePiAdapterV2(
         }
         const resumeId = existing?.nativeThreadRef?.nativeId;
         const needsNewSession = resumeId == null && registrationAttempted;
+        const launchState =
+          resumeId != null && !registrationAttempted && input.initialNativeThreadId === resumeId
+            ? yield* request({ type: "get_state" })
+            : undefined;
+        const launchAlreadyBound =
+          launchState !== undefined && recordString(launchState, "sessionFile") === resumeId;
         registrationAttempted = true;
-        if (resumeId != null || needsNewSession) {
+        if ((resumeId != null && !launchAlreadyBound) || needsNewSession) {
           lastNativeThreadId = resumeId ?? lastNativeThreadId;
           // Even a failed lifecycle operation can change Pi's native session.
           // Never leave the old app binding or model defaults usable afterward.
@@ -2387,7 +2393,7 @@ export function makePiAdapterV2(
             return yield* protocolError("A Pi extension cancelled the session switch");
           }
         }
-        const stateData = yield* request({ type: "get_state" });
+        const stateData = launchAlreadyBound ? launchState : yield* request({ type: "get_state" });
         if (!modelsDiscovered) {
           const modelsData = yield* request({ type: "get_available_models" }).pipe(
             Effect.orElseSucceed(() => undefined),
