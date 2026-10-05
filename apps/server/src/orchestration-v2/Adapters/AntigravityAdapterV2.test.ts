@@ -227,6 +227,52 @@ describe("AntigravityAdapterV2 client file system", () => {
       );
       assert.equal(pasted.content, "pasted");
 
+      const dotNotes = path.join(workspace, "..notes");
+      yield* writeTextFile(
+        { sessionId: "mock-session-1", path: dotNotes, content: "file notes" },
+        context("fs/write_text_file"),
+      );
+      assert.equal(yield* fileSystem.readFileString(dotNotes), "file notes");
+      const dotNotesRead = yield* readTextFile(
+        { sessionId: "mock-session-1", path: dotNotes },
+        context("fs/read_text_file"),
+      );
+      assert.equal(dotNotesRead.content, "file notes");
+      yield* fileSystem.remove(dotNotes);
+      const nestedNotes = path.join(dotNotes, "nested", "entry.txt");
+      yield* writeTextFile(
+        { sessionId: "mock-session-1", path: nestedNotes, content: "nested notes" },
+        context("fs/write_text_file"),
+      );
+      assert.equal(yield* fileSystem.readFileString(nestedNotes), "nested notes");
+      const nestedNotesRead = yield* readTextFile(
+        { sessionId: "mock-session-1", path: nestedNotes },
+        context("fs/read_text_file"),
+      );
+      assert.equal(nestedNotesRead.content, "nested notes");
+
+      const parentRead = yield* readTextFile(
+        { sessionId: "mock-session-1", path: path.join(workspace, "..") },
+        context("fs/read_text_file"),
+      ).pipe(Effect.flip);
+      assert.include(parentRead.message, "outside the session workspace");
+      const sibling = path.join(outside, "sibling");
+      yield* fileSystem.makeDirectory(sibling);
+      const siblingFile = path.join(sibling, "secret.txt");
+      yield* fileSystem.writeFileString(siblingFile, "sibling secret");
+      const siblingTraversal = `${workspace}${path.sep}${path.relative(workspace, siblingFile)}`;
+      const siblingRead = yield* readTextFile(
+        { sessionId: "mock-session-1", path: siblingTraversal },
+        context("fs/read_text_file"),
+      ).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(siblingRead), "parent traversal cannot read a sibling");
+      const siblingWrite = yield* writeTextFile(
+        { sessionId: "mock-session-1", path: siblingTraversal, content: "overwritten" },
+        context("fs/write_text_file"),
+      ).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(siblingWrite), "parent traversal cannot write a sibling");
+      assert.equal(yield* fileSystem.readFileString(siblingFile), "sibling secret");
+
       const outsideRead = yield* readTextFile(
         { sessionId: "mock-session-1", path: outsideFile },
         context("fs/read_text_file"),
