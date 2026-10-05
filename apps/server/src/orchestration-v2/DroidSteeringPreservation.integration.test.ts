@@ -18,6 +18,7 @@ import {
   OrchestrationV2CheckpointScopeJson,
   OrchestrationV2CheckpointJson,
   type RunId,
+  type RunAttemptId,
 } from "@t3tools/contracts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Context from "effect/Context";
@@ -46,6 +47,16 @@ import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import { makeDroidAdapterV2, type DroidAdapterV2Options } from "./Adapters/DroidAdapterV2.ts";
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { EffectOutboxV2 } from "./EffectOutbox.ts";
+import { EventStoreV2 } from "./EventStore.ts";
+import {
+  ThreadCommandExecutor,
+  layer as threadCommandExecutorLayer,
+} from "./ThreadCommandExecutor.ts";
+import {
+  ProviderAdapterTurnStartError,
+  type ProviderAdapterV2SessionRuntime,
+  type ProviderAdapterV2TurnInput,
+} from "./ProviderAdapter.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
@@ -161,6 +172,17 @@ type NativeHooks = {
   cancel?: Effect.Effect<void> | undefined;
   afterCancel?: Effect.Effect<void> | undefined;
   failAfterCancel?: boolean;
+  afterStart?: (
+    input: ProviderAdapterV2TurnInput,
+  ) => Effect.Effect<void, ProviderAdapterTurnStartError>;
+  ownerConfigured?: Effect.Effect<void>;
+  terminalProbe?: (input: {
+    attemptId: RunAttemptId;
+    status: Parameters<NonNullable<ProviderAdapterV2SessionRuntime["droidSteerTerminalHeld"]>>[1];
+    held: boolean;
+  }) => Effect.Effect<void>;
+  lockRequested?: Effect.Effect<void>;
+  lockAcquired?: Effect.Effect<void>;
 };
 const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
   const fs = yield* FileSystem.FileSystem;
@@ -286,7 +308,56 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
     selfInvocation: yield* resolveSelfInvocation(),
     onAuthenticationRejected: () => Effect.die("Synthetic Droid must not authenticate"),
   } satisfies DroidAdapterV2Options;
-  const adapter = makeDroidAdapterV2(adapterOptions);
+  const nativeAdapter = makeDroidAdapterV2(adapterOptions);
+  const terminalProbes: Array<{
+    attemptId: RunAttemptId;
+    status: Parameters<NonNullable<ProviderAdapterV2SessionRuntime["droidSteerTerminalHeld"]>>[1];
+    held: boolean;
+  }> = [];
+  const adapter = {
+    ...nativeAdapter,
+    openSession: (input: Parameters<typeof nativeAdapter.openSession>[0]) =>
+      nativeAdapter.openSession(input).pipe(
+        Effect.map((runtime) => ({
+          ...runtime,
+          startTurn: (turn: ProviderAdapterV2TurnInput) =>
+            runtime
+              .startTurn(turn)
+              .pipe(Effect.andThen(Effect.suspend(() => hooks.afterStart?.(turn) ?? Effect.void))),
+          ...(runtime.configureDroidSteerOwner === undefined
+            ? {}
+            : {
+                configureDroidSteerOwner: (
+                  owner: Parameters<
+                    NonNullable<ProviderAdapterV2SessionRuntime["configureDroidSteerOwner"]>
+                  >[0],
+                ) =>
+                  runtime.configureDroidSteerOwner!(owner).pipe(
+                    Effect.andThen(Effect.suspend(() => hooks.ownerConfigured ?? Effect.void)),
+                  ),
+              }),
+          ...(runtime.droidSteerTerminalHeld === undefined
+            ? {}
+            : {
+                droidSteerTerminalHeld: (
+                  attemptId: RunAttemptId,
+                  status: Parameters<
+                    NonNullable<ProviderAdapterV2SessionRuntime["droidSteerTerminalHeld"]>
+                  >[1],
+                ) =>
+                  runtime.droidSteerTerminalHeld!(attemptId, status).pipe(
+                    Effect.tap((held) =>
+                      Effect.suspend(() => {
+                        const probe = { attemptId, status, held };
+                        terminalProbes.push(probe);
+                        return hooks.terminalProbe?.(probe) ?? Effect.void;
+                      }),
+                    ),
+                  ),
+              }),
+        })),
+      ),
+  };
   const otherAdapter = makeDroidAdapterV2({
     ...adapterOptions,
     instanceId: otherSelection.instanceId,
@@ -303,8 +374,38 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
         runtimePolicyLayer: policyLayer,
         serverConfigLayer: Layer.succeed(Config.ServerConfig, config),
       },
-    ).pipe(Layer.provideMerge(databaseLayer)),
+    ).pipe(Layer.provideMerge(Layer.merge(databaseLayer, threadCommandExecutorLayer))),
   );
+  const locks = Context.get(services, ThreadCommandExecutor);
+  const actualWithLock = locks.withLock;
+  const lockTrace: Array<{ phase: string; id: number; key: ThreadId }> = [];
+  let nextLockId = 0;
+  const observeWithLock: ThreadCommandExecutor["Service"]["withLock"] = (key, effect) =>
+    Effect.suspend(() => {
+      const id = ++nextLockId;
+      lockTrace.push({ phase: "requested", id, key });
+      return (hooks.lockRequested ?? Effect.void).pipe(
+        Effect.andThen(
+          actualWithLock(
+            key,
+            Effect.sync(() => {
+              lockTrace.push({ phase: "acquired", id, key });
+            }).pipe(
+              Effect.andThen(Effect.suspend(() => hooks.lockAcquired ?? Effect.void)),
+              Effect.andThen(effect),
+            ),
+          ),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            lockTrace.push({ phase: "released", id, key });
+          }),
+        ),
+      );
+    });
+  // Observe the exact shared executor object; every acquisition still delegates
+  // to its real nonrecursive keyed semaphore.
+  Object.assign(locks, { withLock: observeWithLock });
   const orchestrator = Context.get(services, OrchestratorV2);
   const rawWorker = Context.get(services, OrchestrationEffectWorkerV2);
   const worker = {
@@ -335,6 +436,7 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
   const receipts = Context.get(services, CommandReceiptStoreV2);
   const outbox = Context.get(services, EffectOutboxV2);
   const sql = Context.get(services, SqlClient.SqlClient);
+  const eventStore = Context.get(services, EventStoreV2);
   yield* orchestrator.dispatch({
     type: "thread.create",
     commandId: CommandId.make(`${name}:create`),
@@ -448,6 +550,11 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
       assert.equal(persisted.activeAttemptId, projected.activeAttemptId);
       assert.deepEqual(persisted.heldDroidSteer, projected.heldDroidSteer);
     }
+    const nodes =
+      yield* sql`SELECT node_id, status, payload_json FROM orchestration_v2_projection_nodes WHERE thread_id = ${threadId} ORDER BY node_id`;
+    const allEffects =
+      yield* sql`SELECT effect_id, command_id, status, payload_json FROM orchestration_v2_effect_outbox WHERE thread_id = ${threadId} ORDER BY effect_id`;
+    const events = yield* eventStore.read({ threadId }).pipe(Stream.runCollect);
     const phases = (yield* fs.readFileString(`${controls}/phases.ndjson`))
       .trim()
       .split("\n")
@@ -461,6 +568,12 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
       runs,
       attempts,
       scopes,
+      nodes,
+      allEffects,
+      events,
+      pids,
+      terminalProbes,
+      lockTrace,
       projection,
       outgoing: protocol.filter((event) => event.direction === "outgoing"),
       trace,
@@ -479,7 +592,19 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
             native.cwd === cwd && native.model === selection.model && native.autonomy === "normal",
         ),
       );
-    return { projection, commandEffects, trace, runs, scopes, phases };
+    return {
+      projection,
+      commandEffects,
+      trace,
+      runs,
+      scopes,
+      phases,
+      nodes,
+      allEffects,
+      events,
+      lockTrace,
+      terminalProbes,
+    };
   });
   const release = (gate: string) => fs.writeFileString(`${controls}/${gate}`, "release");
   const start = Effect.fnUntraced(function* () {
@@ -575,6 +700,9 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
     sql,
     manager,
     hooks,
+    pids,
+    terminalProbes,
+    lockTrace,
     send,
     waitFor,
     waitDecoded,
@@ -1226,6 +1354,178 @@ for (const window of ["held", "probe", "pre-admission"] as const)
         }),
       ),
   );
+
+it.live(
+  "finalizes typed native startup failure when held Steer commits after its outside no-hold probe",
+  () =>
+    nativeCase("finalization-registration-race", "normal", (h) =>
+      Effect.gen(function* () {
+        const nativeStarted = yield* Deferred.make<void>();
+        const failStart = yield* Deferred.make<void>();
+        const ownerConfigured = yield* Deferred.make<void>();
+        const releaseRegistration = yield* Deferred.make<void>();
+        const outsideProbe = yield* Deferred.make<void>();
+        const finalizerRequestedLock = yield* Deferred.make<void>();
+        let failureProbed = false;
+        let captureFirstFinalizerLock = true;
+        const firstCommand = CommandId.make(`${h.name}:send:first`);
+        const heldCommand = CommandId.make(`${h.name}:send:follow-up`);
+        h.hooks.afterStart = (turn) =>
+          Deferred.succeed(nativeStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(failStart)),
+            Effect.andThen(
+              Effect.fail(
+                new ProviderAdapterTurnStartError({
+                  driver: turn.providerThread.driver,
+                  threadId: turn.threadId,
+                  runId: turn.runId,
+                  providerThreadId: turn.providerThread.id,
+                  cause: "Synthetic typed non-stream failure after actual native start",
+                }),
+              ),
+            ),
+          );
+        h.hooks.ownerConfigured = Deferred.succeed(ownerConfigured, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseRegistration)),
+        );
+        h.hooks.terminalProbe = (probe) =>
+          Effect.gen(function* () {
+            if (probe.status === "failed" && !probe.held) {
+              failureProbed = true;
+              yield* Deferred.succeed(outsideProbe, undefined);
+            }
+          });
+        h.hooks.lockRequested = Effect.suspend(() =>
+          failureProbed
+            ? Deferred.succeed(finalizerRequestedLock, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        );
+        h.hooks.lockAcquired = Effect.suspend(() => {
+          if (!failureProbed || !captureFirstFinalizerLock) return Effect.void;
+          captureFirstFinalizerLock = false;
+          return h.observe("held-SQL-committed-before-first-finalizer-probe", heldCommand).pipe(
+            Effect.tap((snapshot) =>
+              Effect.sync(() => {
+                assert.equal(snapshot.projection.runs[0]!.heldDroidSteer!.revision, heldCommand);
+                assert.equal(snapshot.projection.runs[0]!.status, "running");
+              }),
+            ),
+            Effect.asVoid,
+            Effect.orDie,
+          );
+        });
+        yield* Effect.gen(function* () {
+          yield* h.send("first");
+          const startWorker = yield* h.worker.drain(12).pipe(Effect.forkScoped);
+          yield* Deferred.await(nativeStarted).pipe(Effect.timeout("15 seconds"));
+          const initial = yield* h.waitFor(
+            (p) =>
+              p.providerTurns.some((turn) => turn.status === "running") &&
+              p.turnItems.some(
+                (item) => item.type === "command_execution" && item.status === "running",
+              ),
+          );
+          assert.lengthOf(initial.runs, 1);
+          assert.lengthOf(initial.attempts, 1);
+          assert.equal(initial.runs[0]!.status, "running");
+          assert.isUndefined(initial.runs[0]!.heldDroidSteer);
+          const owner = yield* h.native(initial);
+          assert.isFalse(owner.droidSteerConsumed?.() ?? false);
+          const registration = yield* h
+            .send("follow-up", initial.runs[0]!.id)
+            .pipe(Effect.forkScoped);
+          yield* Deferred.await(ownerConfigured).pipe(Effect.timeout("15 seconds"));
+          const registrationLock = h.lockTrace.findLast((entry) => entry.phase === "acquired")!;
+          assert.isFalse(
+            h.lockTrace.some(
+              (entry) => entry.id === registrationLock.id && entry.phase === "released",
+            ),
+          );
+          yield* Deferred.succeed(failStart, undefined);
+          yield* Deferred.await(outsideProbe).pipe(Effect.timeout("15 seconds"));
+          yield* Deferred.await(finalizerRequestedLock).pipe(Effect.timeout("15 seconds"));
+          const requested = h.lockTrace.findLast((entry) => entry.phase === "requested")!;
+          assert.equal(requested.key, h.threadId);
+          assert.isFalse(
+            h.lockTrace.some((entry) => entry.id === requested.id && entry.phase === "acquired"),
+          );
+          const beforeCommit = yield* h.observe(
+            "outside-no-hold-probe-while-public-registration-owns-permit",
+            firstCommand,
+          );
+          assert.isUndefined(beforeCommit.projection.runs[0]!.heldDroidSteer);
+          assert.equal(beforeCommit.projection.runs[0]!.status, "running");
+          assert.deepEqual(beforeCommit.trace, ["first"]);
+          assert.deepEqual(h.terminalProbes, [
+            { attemptId: initial.attempts[0]!.id, status: "failed", held: false },
+          ]);
+          yield* Deferred.succeed(releaseRegistration, undefined);
+          yield* Fiber.join(registration).pipe(Effect.timeout("15 seconds"));
+          yield* Fiber.join(startWorker).pipe(
+            Effect.timeout("15 seconds"),
+            Effect.tapError(() =>
+              h.observe("finalizer-deadline-before-cleanup", heldCommand).pipe(Effect.asVoid),
+            ),
+          );
+          const final = yield* h.observe(
+            "non-stream-finalizer-returned-before-cleanup",
+            heldCommand,
+          );
+          assert.equal(final.projection.runs[0]!.status, "failed");
+          assert.isUndefined(final.projection.runs[0]!.heldDroidSteer);
+          assert.lengthOf(final.projection.runs, 1);
+          assert.lengthOf(final.projection.attempts, 1);
+          assert.equal(final.projection.attempts[0]!.status, "failed");
+          assert.equal(final.projection.runs[0]!.activeAttemptId, initial.runs[0]!.activeAttemptId);
+          assert.equal(final.projection.runs[0]!.rootNodeId, initial.runs[0]!.rootNodeId);
+          assert.equal(
+            final.projection.nodes.find((node) => node.id === initial.runs[0]!.rootNodeId)!.status,
+            "failed",
+          );
+          assert.deepEqual(final.trace, ["first"]);
+          assert.lengthOf(
+            final.projection.turnItems.filter((item) => item.type === "error"),
+            1,
+          );
+          assert.lengthOf(
+            final.projection.turnItems.filter(
+              (item) => item.type === "system_notice" && item.message.includes("not delivered"),
+            ),
+            1,
+          );
+          assert.lengthOf(
+            final.events.filter(
+              (stored) =>
+                stored.event.type === "run.updated" && stored.event.payload.status === "failed",
+            ),
+            1,
+          );
+          assert.isFalse(
+            final.commandEffects.some(
+              (effect) => effect.status === "pending" || effect.status === "running",
+            ),
+          );
+          assert.isTrue(
+            final.commandEffects.some(
+              (effect) =>
+                effect.request.type === "provider-turn.restart" && effect.status === "succeeded",
+            ),
+          );
+          assert.isTrue(
+            h.terminalProbes.some((probe) => probe.status === "completed" && probe.held),
+          );
+          assert.equal(h.pids.length, 1);
+        }).pipe(
+          Effect.ensuring(
+            Effect.all([
+              Deferred.succeed(failStart, undefined),
+              Deferred.succeed(releaseRegistration, undefined),
+            ]),
+          ),
+        );
+      }),
+    ),
+);
 
 it.live("drops held Droid input on actual native failure before old finalization", () =>
   nativeCase("source-failure", "normal", (h) =>

@@ -1005,21 +1005,43 @@ export const layer: Layer.Layer<
                     : Effect.void,
                 ),
               );
-              const committed = yield* input.session.driver !== "droid"
-                ? write
-                : threadDispatch.withLock(
-                    input.run.threadId,
-                    Effect.gen(function* () {
-                      if (
-                        yield* (
-                          input.session.droidSteerTerminalHeld?.(input.attempt.id, "completed") ??
-                            Effect.succeed(false)
+              let committed: boolean;
+              while (true) {
+                const decision = yield* input.session.driver !== "droid"
+                  ? write.pipe(
+                      Effect.map((result) => ({ type: "written", committed: result }) as const),
+                    )
+                  : threadDispatch.withLock(
+                      input.run.threadId,
+                      Effect.gen(function* () {
+                        if (
+                          yield* (
+                            input.session.droidSteerTerminalHeld?.(input.attempt.id, "completed") ??
+                              Effect.succeed(false)
+                          )
                         )
-                      )
-                        return false;
-                      return yield* write;
-                    }),
-                  );
+                          return { type: "recheck-held" } as const;
+                        return { type: "written", committed: yield* write } as const;
+                      }),
+                    );
+                if (decision.type === "written") {
+                  committed = decision.committed;
+                  break;
+                }
+                // A new hold may have committed after the outside probe. Its real
+                // status-aware drop dispatch needs this same nonrecursive permit.
+                if (
+                  yield* (
+                    input.session.droidSteerTerminalHeld?.(
+                      input.attempt.id,
+                      final.terminal.status,
+                    ) ?? Effect.succeed(false)
+                  )
+                )
+                  return false;
+                // Reacquire and recheck: an outside drop is not authority to write
+                // through another registration or a superseding execution owner.
+              }
               if (committedSideEffect) {
                 yield* final.refreshAfterTurn;
               }

@@ -58,6 +58,10 @@ import {
 } from "./ProviderAdapter.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
+import {
+  ThreadCommandExecutor,
+  layer as threadCommandExecutorLayer,
+} from "./ThreadCommandExecutor.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 
 const driver = ProviderDriverKind.make("codex");
@@ -3616,6 +3620,76 @@ it.effect("refreshes pull requests only once when startup failure closes its eve
   }),
 );
 
+for (const declineFinalWrite of [false, true]) {
+  it.effect(
+    `rechecks Droid holds outside the real permit and does not retry a ${declineFinalWrite ? "declined" : "committed"} final write`,
+    () =>
+      Effect.gen(function* () {
+        const ingestionStarted = yield* Deferred.make<void>();
+        const probes: string[] = [];
+        let presenceChecks = 0;
+        let drops = 0;
+        const result = yield* captureRootRunTermination({
+          key: `droid-finalization-recheck:${declineFinalWrite}`,
+          shouldFinalizeRun: () => Effect.succeed(true),
+          declineFinalWrite,
+          events: () =>
+            Stream.unwrap(
+              Deferred.succeed(ingestionStarted, undefined).pipe(Effect.as(Stream.never)),
+            ),
+          startTurn: (turn) =>
+            Deferred.await(ingestionStarted).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new ProviderAdapterTurnStartError({
+                    driver: turn.providerThread.driver,
+                    threadId: turn.threadId,
+                    providerThreadId: turn.providerThread.id,
+                    runId: turn.runId,
+                    cause: "typed non-stream startup failure",
+                  }),
+                ),
+              ),
+            ),
+          droidTerminalHeld: (ids, locks) => (attemptId, status) =>
+            Effect.gen(function* () {
+              assert.equal(attemptId, ids.attemptId);
+              probes.push(status);
+              if (status === "completed") return ++presenceChecks <= 2;
+              if (probes.length === 1) return false;
+              // The canonical native drop follows this same nonrecursive executor.
+              // A status substitution inside its permit cannot finish this callback.
+              yield* locks.withLock(
+                ids.threadId,
+                Effect.sync(() => {
+                  drops++;
+                }),
+              );
+              return false;
+            }),
+        });
+        assert.deepEqual(probes, [
+          "failed",
+          "completed",
+          "failed",
+          "completed",
+          "failed",
+          "completed",
+        ]);
+        assert.equal(drops, 2);
+        assert.lengthOf(result.guards, 1, "A failed current-owner CAS is final, not another retry");
+        assert.deepEqual(
+          result.observed,
+          declineFinalWrite ? [] : ["run:failed", "pull-requests-refreshed"],
+        );
+        assert.equal(
+          result.written.filter((item) => item.type === "error").length,
+          declineFinalWrite ? 0 : 1,
+        );
+      }),
+  );
+}
+
 it.effect("keeps completed runs completed when pull request refresh fails", () =>
   Effect.gen(function* () {
     const { observed } = yield* captureRootRunTermination({
@@ -3948,6 +4022,10 @@ function captureRootRunTermination(input: {
     ids: BackgroundScenarioIds,
   ) => Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;
   readonly startTurn?: ProviderAdapterV2SessionRuntime["startTurn"];
+  readonly droidTerminalHeld?: (
+    ids: BackgroundScenarioIds,
+    locks: ThreadCommandExecutor["Service"],
+  ) => NonNullable<ProviderAdapterV2SessionRuntime["droidSteerTerminalHeld"]>;
   readonly refreshAfterTurn?: Effect.Effect<void>;
   readonly ingestNormalized?: (
     ids: BackgroundScenarioIds,
@@ -4033,7 +4111,12 @@ function captureRootRunTermination(input: {
         appThread: { id: ids.threadId } as OrchestrationV2AppThread,
         providerSessionId: ProviderSessionId.make(`session:${input.key}`),
         session: {
-          driver,
+          driver: input.droidTerminalHeld === undefined ? driver : ProviderDriverKind.make("droid"),
+          ...(input.droidTerminalHeld === undefined
+            ? {}
+            : {
+                droidSteerTerminalHeld: input.droidTerminalHeld(ids, yield* ThreadCommandExecutor),
+              }),
           events: Stream.empty,
           subscribeEvents: Effect.succeed({
             events:
@@ -4115,7 +4198,7 @@ function captureRootRunTermination(input: {
           },
         },
       });
-    }).pipe(Effect.provide(testLayer));
+    }).pipe(Effect.provide(testLayer.pipe(Layer.provideMerge(threadCommandExecutorLayer))));
 
     yield* Deferred.await(ingestionDone);
     return {
