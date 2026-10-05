@@ -16,6 +16,7 @@ import {
   type OrchestrationV2Command,
   OrchestrationV2RunJson,
   OrchestrationV2CheckpointScopeJson,
+  OrchestrationV2CheckpointJson,
   type RunId,
 } from "@t3tools/contracts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
@@ -32,7 +33,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { AcpProtocolLogEvent } from "effect-acp/protocol";
 import * as Config from "../config.ts";
@@ -58,6 +59,9 @@ const decodeMessageContext = Schema.decodeUnknownSync(OrchestrationMessageContex
 const decodeRunJson = Schema.decodeSync(Schema.fromJsonString(OrchestrationV2RunJson));
 const decodeCheckpointScopeJson = Schema.decodeSync(
   Schema.fromJsonString(OrchestrationV2CheckpointScopeJson),
+);
+const decodeCheckpointJson = Schema.decodeSync(
+  Schema.fromJsonString(OrchestrationV2CheckpointJson),
 );
 const decodeNativePrompt = Schema.decodeUnknownSync(
   Schema.Struct({
@@ -109,6 +113,7 @@ function onPrompt(message) {
   const text = full.match(/<user_request>\\n([\\s\\S]*)\\n<\\/user_request>$/)?.[1] ?? full;
   fs.appendFileSync(controls + "/phases.ndjson", JSON.stringify({text, cwd: process.cwd(), model: state.model, autonomy: state.autonomy}) + "\\n");
   pending.push(message);
+  if (text === "ordinary-restart" || text.endsWith("User message:\\nordinary-restart")) fs.writeFileSync("ordinary-restart.txt", JSON.stringify({cwd: process.cwd(), autonomy: state.autonomy}));
   if (text === "first") {
     if (variant === "foreground-task" || variant === "background") {
       task();
@@ -380,6 +385,7 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
       | "context"
       | "attachments"
       | "selectedScientSkillNames"
+      | "dispatchMode"
     >
   >;
   const send = Effect.fnUntraced(function* (
@@ -476,7 +482,7 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
             native.cwd === cwd && native.model === selection.model && native.autonomy === "normal",
         ),
       );
-    return { projection, commandEffects, trace, scopes, phases };
+    return { projection, commandEffects, trace, runs, scopes, phases };
   });
   const release = (gate: string) => fs.writeFileString(`${controls}/${gate}`, "release");
   const start = Effect.fnUntraced(function* () {
@@ -579,6 +585,7 @@ const fixture = Effect.fnUntraced(function* (name: string, variant = "normal") {
     protocol,
     release,
     observe,
+    record,
     start,
     stop,
     native,
@@ -1536,9 +1543,139 @@ it.live(
             .providerSessionId,
           initial.providerThreads[0]!.providerSessionId,
         );
+        yield* h.send("fifo-1", undefined, true);
+        yield* h.send("fifo-2", undefined, true);
+        const queued = yield* h.orchestrator.getThreadProjection(h.threadId);
+        const fifo = queued.runs.filter((run) => run.status === "queued");
+        const fifoMessages = queued.messages.filter((candidate) =>
+          fifo.some((run) => run.userMessageId === candidate.id),
+        );
+        const ordinaryCommand = yield* h.send("ordinary-restart", target.id, false, {
+          dispatchMode: { type: "restart_active", targetRunId: target.id },
+          modelSelection: h.selection,
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+        });
+        const replacementStarted = yield* advance(h, adopted, ordinaryCommand, (event) =>
+          JSON.stringify(event.payload).includes("ordinary-restart"),
+        );
+        const ordinary = replacementStarted.runs.find((run) => run.id === target.id)!;
+        const restarted = yield* h.waitFor((p) =>
+          p.providerTurns.some(
+            (turn) => turn.runAttemptId === ordinary.activeAttemptId && turn.status === "running",
+          ),
+        );
+        const ordinaryNative = yield* h.observe("ordinary-restart-native-and-sql", ordinaryCommand);
+        const ordinaryRoot = restarted.nodes.find((node) => node.id === ordinary.rootNodeId)!;
+        const ordinaryScope = decodeCheckpointScopeJson(
+          ordinaryNative.scopes.find((scope) => scope.scope_id === ordinaryRoot.checkpointScopeId)!
+            .payload_json,
+        );
+        assert.equal(ordinaryScope.cwd, futureCwd);
+        const ordinaryPhase = ordinaryNative.phases.at(-1)!;
+        assert.match(ordinaryPhase.text, /(?:^|User message:\n)ordinary-restart$/u);
+        assert.deepEqual(
+          [ordinaryPhase.cwd, ordinaryPhase.model, ordinaryPhase.autonomy],
+          [futureCwd, h.selection.model, "normal"],
+          "The public ordinary restart must use its own workspace and supervised permissions",
+        );
+        assert.equal(ordinary.runtimeMode, "approval-required");
+        assert.equal(ordinary.interactionMode, "default");
+        assert.deepEqual(ordinary.modelSelection, h.selection);
+        assert.equal(ordinary.providerInstanceId, h.selection.instanceId);
+        assert.isUndefined(ordinary.heldDroidSteer);
+        assert.isUndefined(ordinary.steeringRuntimePolicy);
+        assert.deepEqual(
+          decodeRunJson(ordinaryNative.runs.find((run) => run.run_id === target.id)!.payload_json),
+          ordinary,
+        );
+        assert.notEqual(ordinary.activeAttemptId, target.activeAttemptId);
+        assert.notEqual(ordinary.rootNodeId, target.rootNodeId);
+        assert.equal(
+          restarted.attempts.find((attempt) => attempt.id === target.activeAttemptId)!.status,
+          "superseded",
+        );
+        assert.equal(
+          restarted.attempts.find((attempt) => attempt.id === ordinary.activeAttemptId)!.status,
+          "running",
+        );
+        assert.equal(
+          restarted.providerTurns.find((turn) => turn.runAttemptId === ordinary.activeAttemptId)!
+            .nodeId,
+          ordinary.rootNodeId,
+        );
+        assert.deepEqual(restarted.attempts[0], adopted.attempts[0]);
+        assert.deepEqual(
+          restarted.nodes.find((node) => node.id === initial.runs[0]!.rootNodeId),
+          adopted.nodes.find((node) => node.id === initial.runs[0]!.rootNodeId),
+        );
+        assert.deepEqual(restarted.providerTurns[0], adopted.providerTurns[0]);
+        assert.deepEqual(
+          restarted.messages.find((candidate) => candidate.id === message.id),
+          rebound,
+        );
+        assert.deepEqual(
+          restarted.runs.filter((run) => run.status === "queued"),
+          fifo,
+        );
+        assert.deepEqual(
+          restarted.messages.filter((candidate) =>
+            fifoMessages.some((old) => old.id === candidate.id),
+          ),
+          fifoMessages,
+        );
+        assert.deepEqual(yield* h.wire, [
+          "first",
+          "cancel",
+          native.phases[1]!.text,
+          "cancel",
+          ordinaryPhase.text,
+        ]);
         yield* h.stop(target.id);
         yield* h.worker.drain(12);
         yield* h.waitFor((p) => p.runs[0]?.status === "interrupted");
+        yield* h.worker.drain(12);
+        const stopped = yield* h.waitFor((p) =>
+          p.checkpoints.some(
+            (checkpoint) =>
+              checkpoint.scopeId === ordinaryScope.id &&
+              checkpoint.nodeId === ordinary.rootNodeId &&
+              checkpoint.status === "ready" &&
+              checkpoint.ordinalWithinScope > 0,
+          ),
+        );
+        const checkpoint = stopped.checkpoints.find(
+          (candidate) => candidate.scopeId === ordinaryScope.id && candidate.ordinalWithinScope > 0,
+        )!;
+        const checkpointRows = yield* h.sql<{
+          payload_json: string;
+        }>`SELECT payload_json FROM orchestration_v2_projection_checkpoints WHERE checkpoint_id = ${checkpoint.id}`;
+        assert.deepEqual(decodeCheckpointJson(checkpointRows[0]!.payload_json), checkpoint);
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const actualCheckpoint = yield* spawner.string(
+          ChildProcess.make("git", ["show", `${checkpoint.ref}:ordinary-restart.txt`], {
+            cwd: futureCwd,
+          }),
+        );
+        assert.equal(actualCheckpoint, JSON.stringify({ cwd: futureCwd, autonomy: "normal" }));
+        assert.isFalse(yield* h.fs.exists(`${targetCwd}/ordinary-restart.txt`));
+        assert.deepEqual(
+          stopped.runs.filter((run) => run.status === "queued"),
+          fifo.map((run) => ({ ...run, queueHeld: true })),
+        );
+        assert.deepEqual(
+          stopped.messages.filter((candidate) =>
+            fifoMessages.some((old) => old.id === candidate.id),
+          ),
+          fifoMessages,
+        );
+        yield* h.observe("ordinary-restart-stopped-with-checkpoint", ordinaryCommand);
+        yield* h.record("ordinary-checkpoint-ref-proof", {
+          checkpointRows,
+          checkpoint,
+          ordinaryScope,
+          actualCheckpoint,
+        });
       }),
     ),
 );

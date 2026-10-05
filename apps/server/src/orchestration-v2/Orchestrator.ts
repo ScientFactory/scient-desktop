@@ -4560,11 +4560,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const restartedRun: OrchestrationV2Run = {
         ...targetRun,
         heldDroidSteer: undefined,
-        ...(input.admittedDroidSteer === undefined
-          ? {}
-          : {
-              steeringRuntimePolicy: input.admittedDroidSteer.runtimePolicy,
-            }),
+        steeringRuntimePolicy: input.admittedDroidSteer?.runtimePolicy,
         runtimeMode: executionThread.runtimeMode,
         interactionMode: executionThread.interactionMode,
         providerInstanceId: input.modelSelection.instanceId,
