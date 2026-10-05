@@ -46,8 +46,11 @@ export const prepareScientV2SkillTurn = Effect.fnUntraced(function* (input: {
     { discard: true },
   );
   const tools = scientToolProjectionForProvider(input.driver);
+  // An empty catalog has no release delivery, but still replaces the exact
+  // authority of a supported MCP transport on this turn.
   const deliverable =
-    plan.delivery === "mcp" &&
+    ScientSkillSession.scientSkillDeliveryForProvider(input.driver) === "mcp" &&
+    plan.delivery !== "unsupported" &&
     input.mcpSessionInjection === true &&
     mcpSession?.capabilities.has("skills:read") === true;
   const skillTurn = prepareScientSkillTurn(
