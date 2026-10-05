@@ -101,7 +101,7 @@ import {
   type ProjectionRecords,
   type ProjectionCheckpointContext,
 } from "./ProjectionStore.ts";
-import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
+import type { ProviderAdapterV2Shape, ProviderAdapterV2SessionRuntime } from "./ProviderAdapter.ts";
 import {
   ProviderAdapterRegistryV2,
   ProviderAdapterRegistryLookupError,
@@ -9767,6 +9767,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     {
       readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
       readonly effects: ReadonlyArray<PendingOrchestrationEffectV2>;
+      readonly providerWorkOwner?: ProviderAdapterV2SessionRuntime;
       readonly cancelUnsettledEffects?: {
         readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
         readonly reason: string;
@@ -9782,6 +9783,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     const events = yield* Ref.make<Array<OrchestrationV2DomainEvent>>([]);
     const effects = yield* Ref.make<Array<PendingOrchestrationEffectV2>>([]);
+    let providerWorkOwner: ProviderAdapterV2SessionRuntime | undefined;
     let cancelUnsettledEffects:
       | {
           readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
@@ -9935,6 +9937,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             threadId: command.threadId,
             workId: command.workId,
           });
+        providerWorkOwner = session.value;
         yield* dispatchMessage(
           {
             type: "message.dispatch",
@@ -10233,6 +10236,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     return {
       events: yield* Ref.get(events),
       effects: yield* Ref.get(effects),
+      ...(providerWorkOwner === undefined ? {} : { providerWorkOwner }),
       ...(cancelUnsettledEffects === undefined ? {} : { cancelUnsettledEffects }),
     };
   });
@@ -10387,7 +10391,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return { sequence: resultSequence, storedEvents: [] } satisfies OrchestratorV2DispatchResult;
     }
     const acceptedAt = plan.events.at(-1)?.occurredAt ?? (yield* DateTime.now);
-    const committed = yield* eventSink
+    const commit = eventSink
       .commitCommand({
         commandId: command.commandId,
         threadId: commandThreadId(command),
@@ -10409,6 +10413,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
+
+    // Thread → native generation → SQL. The cached planning owner is rechecked
+    // inside the fence; physical shutdown never runs while that fence is held.
+    const committed = yield* command.type === "provider-work.admit"
+      ? Effect.gen(function* () {
+          if (plan.providerWorkOwner === undefined)
+            return yield* new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause: "Provider-initiated work has no native admission owner.",
+            });
+          const result = yield* providerSessions.withProviderWorkAdmission(
+            command,
+            plan.providerWorkOwner,
+            commit,
+          );
+          if (Option.isNone(result))
+            return yield* new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause: "Provider-initiated work lost its native generation before admission.",
+            });
+          return result.value;
+        })
+      : commit;
 
     if (committed.receipt.status === "rejected") {
       return yield* new OrchestratorCommandPreviouslyRejectedError({

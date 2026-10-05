@@ -269,6 +269,7 @@ it.effect(
       const sessionManagerLayer = Layer.succeed(
         ProviderSessionManager.ProviderSessionManagerV2,
         ProviderSessionManager.ProviderSessionManagerV2.of({
+          withProviderWorkAdmission: () => Effect.die("Unused native generation admission"),
           resolveMcpInvocationPolicy: () =>
             Effect.die("MCP invocation policy is not used in this fixture."),
           shutdown: Effect.void,

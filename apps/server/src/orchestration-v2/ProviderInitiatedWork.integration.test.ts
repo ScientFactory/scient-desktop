@@ -36,6 +36,7 @@ import * as RuntimePolicy from "./RuntimePolicy.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import {
@@ -167,6 +168,8 @@ const withInitiatedWork = <A, E, R>(
             openSession: (input) =>
               Effect.gen(function* () {
                 const now = yield* DateTime.now;
+                const generationFence = yield* Semaphore.make(1);
+                let live = true;
                 let nativeThread = {
                   id: ProviderThreadId.make("native-provider-thread:initiated"),
                   driver,
@@ -245,8 +248,10 @@ const withInitiatedWork = <A, E, R>(
                   });
                 yield* Effect.addFinalizer(() =>
                   Effect.sync(() => {
+                    live = false;
+                    buffered.clear();
                     closed++;
-                  }),
+                  }).pipe(generationFence.withPermits(1)),
                 );
                 return {
                   instanceId,
@@ -254,6 +259,27 @@ const withInitiatedWork = <A, E, R>(
                   providerSessionId: input.providerSessionId,
                   mcpSessionInjection: true,
                   providerSession: nativeSession,
+                  withInitiatedWorkAdmission: (identity, commit) =>
+                    Effect.gen(function* () {
+                      if (
+                        !live ||
+                        !buffered.has(identity.workId) ||
+                        identity.threadId !== threadId ||
+                        identity.providerThreadId !== nativeThread.id ||
+                        identity.providerSessionId !== input.providerSessionId ||
+                        identity.providerInstanceId !== instanceId ||
+                        identity.driver !== driver
+                      )
+                        return Option.none();
+                      return Option.some(yield* commit);
+                    }).pipe(generationFence.withPermits(1)),
+                  invalidateInitiatedWork: (reserve = Effect.succeed(true)) =>
+                    Effect.gen(function* () {
+                      if (!(yield* reserve)) return false;
+                      live = false;
+                      buffered.clear();
+                      return true;
+                    }).pipe(generationFence.withPermits(1)),
                   events: Stream.fromQueue(events),
                   ensureThread: (thread) =>
                     Effect.sync(() => {

@@ -417,6 +417,8 @@ interface PiThreadState {
 
 // ── adapter ───────────────────────────────────────────────────
 
+const runtimePoliciesEqual = Schema.toEquivalence(ProviderAdapter.ProviderAdapterV2RuntimePolicy);
+
 export function makePiAdapterV2(
   options: PiAdapterV2Options,
 ): ProviderAdapter.ProviderAdapterV2Shape {
@@ -601,12 +603,29 @@ export function makePiAdapterV2(
       let bufferedWork: BufferedPiWork | null = null;
       let nativeSelection: ModelSelection | null = null;
       let workOrdinal = 0;
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => {
-          stopRequested = true;
+      // Only logical generation mutation/accepted SQL commit uses this fence.
+      // Never acquire the mapper or thread lock, perform native I/O, or join a
+      // process while holding it. Mapper → generation and thread → generation
+      // → SQL are the only admission lock orders.
+      const generationAdmissionFence = yield* Semaphore.make(1);
+      let generationAdmissionClosed = false;
+      const invalidateNativeGeneration = (
+        stopping: boolean,
+        work?: BufferedPiWork,
+        reserve: Effect.Effect<boolean> = Effect.succeed(true),
+      ) =>
+        Effect.gen(function* () {
+          if (work !== undefined && bufferedWork !== work) return false;
+          if (!(yield* reserve)) return false;
+          generationAdmissionClosed = true;
           bufferedWork = null;
-        }),
-      );
+          if (stopping) stopRequested = true;
+          return true;
+        }).pipe(generationAdmissionFence.withPermits(1));
+      yield* Effect.addFinalizer(() => invalidateNativeGeneration(true));
+      // The parent may close finalizers in parallel. Fence logical closure
+      // first inside the ordered transport scope, before its native teardown.
+      yield* Scope.addFinalizer(connectionScope, invalidateNativeGeneration(true));
       const capturedRuntimePolicy = { ...input.runtimePolicy, cwd };
       const captureNativeSelection = (data: unknown) => {
         const model = recordField(data, "model");
@@ -742,9 +761,14 @@ export function makePiAdapterV2(
           ),
           Effect.catchTags({
             PiRpcTimeoutError: (error) =>
-              connection.terminate.pipe(Effect.andThen(Effect.fail(error))),
+              invalidateNativeGeneration(false).pipe(
+                Effect.andThen(connection.terminate),
+                Effect.andThen(Effect.fail(error)),
+              ),
           }),
-          Effect.onInterrupt(() => connection.terminate),
+          Effect.onInterrupt(() =>
+            invalidateNativeGeneration(false).pipe(Effect.andThen(connection.terminate)),
+          ),
         );
 
       const tokenUsageFromStats = (
@@ -1803,7 +1827,7 @@ export function makePiAdapterV2(
           return;
         const message = "Pi native session identity changed unexpectedly.";
         forcedSessionFailure = message;
-        stopRequested = true;
+        yield* invalidateNativeGeneration(true);
         if (state.activeTurn !== null) {
           state.activeTurn.broken = true;
           state.activeTurn.failure = makeProviderFailure({
@@ -1877,14 +1901,9 @@ export function makePiAdapterV2(
       };
 
       const disposeBufferedWork = (work: BufferedPiWork) =>
-        sessionEventPermit.withPermits(1)(
-          Effect.gen(function* () {
-            if (bufferedWork !== work) return;
-            bufferedWork = null;
-            stopRequested = true;
-            yield* connection.terminate;
-          }),
-        );
+        Effect.gen(function* () {
+          if (yield* invalidateNativeGeneration(true, work)) yield* connection.terminate;
+        });
       const offerBufferedWork = Effect.fnUntraced(function* (work: BufferedPiWork) {
         const bus = options.continuationRequests;
         if (bus === undefined) return;
@@ -1912,7 +1931,7 @@ export function makePiAdapterV2(
       });
 
       const refuseUnownedWork = Effect.fnUntraced(function* (detail: string) {
-        stopRequested = true;
+        yield* invalidateNativeGeneration(true);
         forcedSessionFailure = detail;
         yield* updateProviderSession("error", detail);
         yield* connection.terminate;
@@ -1962,13 +1981,19 @@ export function makePiAdapterV2(
                   runtimePolicy: capturedRuntimePolicy,
                   records: [event],
                 };
-                bufferedWork = work;
+                const captured = yield* Effect.sync(() => {
+                  if (generationAdmissionClosed || stopRequested) return false;
+                  bufferedWork = work;
+                  return true;
+                }).pipe(generationAdmissionFence.withPermits(1));
+                if (!captured) return;
                 sessionEntity = { ...sessionEntity, model: nativeSelection.model };
                 yield* updateProviderSession("running", null);
                 yield* offerBufferedWork(work).pipe(Effect.forkIn(scope));
                 return;
               }
               unsolicitedActivityDetected = true;
+              yield* invalidateNativeGeneration(true);
               yield* updateProviderSession("error", PI_UNSOLICITED_ACTIVITY_ERROR);
               yield* connection.terminate;
               return;
@@ -2387,7 +2412,7 @@ export function makePiAdapterV2(
                 );
                 return;
               }
-              stopRequested = true;
+              yield* invalidateNativeGeneration(true);
               yield* connection.terminate;
               return;
             }
@@ -2415,6 +2440,7 @@ export function makePiAdapterV2(
         Effect.catchCause((cause) =>
           sessionEventPermit.withPermits(1)(
             Effect.gen(function* () {
+              yield* invalidateNativeGeneration(false);
               // Transport death finalizes any live turn. Stop-with-restart
               // closes the provider stream cleanly; only an unexpected death
               // is surfaced as an event-stream failure.
@@ -2755,6 +2781,26 @@ export function makePiAdapterV2(
         get providerSession() {
           return sessionEntity;
         },
+        invalidateInitiatedWork: (reserve) => invalidateNativeGeneration(true, undefined, reserve),
+        withInitiatedWorkAdmission: (identity, commit) =>
+          Effect.gen(function* () {
+            const work = bufferedWork;
+            if (
+              generationAdmissionClosed ||
+              stopRequested ||
+              work === null ||
+              identity.threadId !== boundThreadId ||
+              identity.providerThreadId !== work.providerThread.id ||
+              identity.providerSessionId !== input.providerSessionId ||
+              identity.providerInstanceId !== options.instanceId ||
+              identity.driver !== PI_PROVIDER ||
+              identity.workId !== work.workId ||
+              !modelSelectionsEqual(identity.modelSelection, work.modelSelection) ||
+              !runtimePoliciesEqual(identity.runtimePolicy, work.runtimePolicy)
+            )
+              return Option.none();
+            return Option.some(yield* commit);
+          }).pipe(generationAdmissionFence.withPermits(1)),
         events: Stream.fromQueue(events),
         hasPendingBackgroundWork: Effect.sync(() => bufferedWork !== null),
         hasPendingBackgroundWorkForThread: (thread) =>
@@ -2945,9 +2991,7 @@ export function makePiAdapterV2(
                 !(yield* turnInput.shouldStartProviderTurn())
               ) {
                 if (adoptedWork !== null) {
-                  bufferedWork = null;
-                  stopRequested = true;
-                  yield* connection.terminate;
+                  yield* disposeBufferedWork(adoptedWork);
                 }
                 return yield* Effect.interrupt;
               }
@@ -2957,7 +3001,19 @@ export function makePiAdapterV2(
                 return yield* protocolError(
                   "Pi native work started while a prompt was being prepared",
                 );
-              state.activeTurn = activeTurn;
+              const transferred = yield* Effect.sync(() => {
+                if (
+                  generationAdmissionClosed ||
+                  stopRequested ||
+                  (adoptedWork !== null && bufferedWork !== adoptedWork)
+                )
+                  return false;
+                state.activeTurn = activeTurn;
+                if (adoptedWork !== null) bufferedWork = null;
+                return true;
+              }).pipe(generationAdmissionFence.withPermits(1));
+              if (!transferred)
+                return yield* protocolError("Pi native generation was disposed before adoption");
               activeTurn.providerTurn = { ...activeTurn.providerTurn, nativeAcceptance: "unknown" };
               if (adoptedWork === null && compactCommand !== null) {
                 yield* connection.send(compactRpcRecord(compactCommand));
@@ -2992,7 +3048,6 @@ export function makePiAdapterV2(
                 yield* Queue.offer(connection.events, { type: "t3.flush_extension_errors" });
               }
               if (adoptedWork !== null) {
-                bufferedWork = null;
                 for (const record of adoptedWork.records) yield* handleSessionEvent(record);
               }
             }).pipe(
@@ -3011,8 +3066,7 @@ export function makePiAdapterV2(
               Effect.tapError(() =>
                 Effect.gen(function* () {
                   if (state.activeTurn === activeTurn) state.activeTurn = null;
-                  stopRequested = true;
-                  bufferedWork = null;
+                  yield* invalidateNativeGeneration(true);
                   forcedSessionFailure = "Pi prompt delivery could not be confirmed.";
                   yield* updateProviderSession(
                     "error",
@@ -3136,7 +3190,7 @@ export function makePiAdapterV2(
             ) {
               // Pi's generic abort does not cancel manual compaction. Terminate
               // so Stop covers user /compact as well as detached recovery compact.
-              stopRequested = true;
+              yield* invalidateNativeGeneration(true);
               if (interruptInput.requestRuntimeRestart === true && !turn.settleWhenIdle) {
                 yield* request({ type: "abort" }, 2_000).pipe(Effect.ignore);
               }

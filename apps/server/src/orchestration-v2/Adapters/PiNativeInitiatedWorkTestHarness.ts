@@ -20,6 +20,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import { CheckpointStore } from "../../checkpointing/CheckpointStore.ts";
@@ -34,7 +35,11 @@ import * as ProjectStore from "../ProjectStore.ts";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
 import * as ProviderInstances from "../../provider/Services/ProviderInstanceRegistry.ts";
 import { OrchestratorProviderWorkDeferredError, OrchestratorV2 } from "../Orchestrator.ts";
-import type { ProviderAdapterV2Event } from "../ProviderAdapter.ts";
+import type {
+  ProviderAdapterV2Event,
+  ProviderAdapterV2Shape,
+  ProviderAdapterV2SessionRuntime,
+} from "../ProviderAdapter.ts";
 import { EventSinkV2 } from "../EventSink.ts";
 import { checkpointRefForScopeOrdinal } from "../CheckpointService.ts";
 import { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
@@ -46,7 +51,7 @@ import {
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
 import { makePiAdapterV2 } from "./PiAdapterV2.ts";
-import { makePiRpcConnection, type PiRpcRecord } from "./PiRpc.ts";
+import { makePiRpcConnection, type PiRpcRecord, type PiRpcConnection } from "./PiRpc.ts";
 import { fixture, serve, decodeRecord, json } from "./PiNativeTestHarness.ts";
 
 const isProviderWorkDeferred = Schema.is(OrchestratorProviderWorkDeferredError);
@@ -61,7 +66,43 @@ export type PiNativeInitiatedScenario =
   | "barrier-answer"
   | "barrier-foreign";
 
-export const runNativeInitiatedWorkScenario = (scenario: PiNativeInitiatedScenario) => {
+export interface PiNativeGenerationAdmissionProbe {
+  readonly databaseLayer?: (
+    h: Effect.Success<ReturnType<typeof fixture>>,
+  ) => typeof SqlitePersistenceMemory;
+  readonly extensionPrelude?: (h: Effect.Success<ReturnType<typeof fixture>>) => string;
+  readonly observeConnection?: (connection: PiRpcConnection) => void;
+  readonly wrapOpen?: (
+    open: ReturnType<ProviderAdapterV2Shape["openSession"]>,
+  ) => ReturnType<ProviderAdapterV2Shape["openSession"]>;
+  readonly wrapRuntime?: (
+    runtime: ProviderAdapterV2SessionRuntime,
+  ) => ProviderAdapterV2SessionRuntime;
+  readonly decorateWorkRequest?: (
+    request: ProviderContinuationRequest,
+  ) => ProviderContinuationRequest;
+  readonly verify: (context: {
+    readonly fixture: Effect.Success<ReturnType<typeof fixture>>;
+    readonly cwd: string;
+    readonly workspaceB: string;
+    readonly foreground: OrchestrationV2ThreadProjection;
+    readonly orchestrator: OrchestratorV2["Service"];
+    readonly manager: ProviderSessionManagerV2["Service"];
+    readonly receipts: CommandReceiptStoreV2["Service"];
+    readonly offers: ReadonlyArray<ProviderContinuationRequest>;
+    readonly wire: ReadonlyArray<PiRpcRecord>;
+    readonly requests: ReadonlyArray<Record<string, unknown>>;
+    readonly wake: Effect.Effect<void>;
+    readonly waitFor: (
+      predicate: (projection: OrchestrationV2ThreadProjection) => boolean,
+    ) => Effect.Effect<OrchestrationV2ThreadProjection>;
+  }) => Effect.Effect<void, never, Scope.Scope>;
+}
+
+export const runNativeInitiatedWorkScenario = (
+  scenario: PiNativeInitiatedScenario,
+  probe?: PiNativeGenerationAdmissionProbe,
+) => {
   const barrier = scenario.startsWith("barrier");
   const restricted = scenario === "captured" || scenario === "stop" || scenario === "close";
   return Effect.scoped(
@@ -161,6 +202,7 @@ export const runNativeInitiatedWorkScenario = (scenario: PiNativeInitiatedScenar
         `${h.profile}/extensions/native-work.ts`,
         `
 import fs from "node:fs/promises";
+${probe?.extensionPrelude?.(h) ?? ""}
 export default function(pi) {
   let armed = false;
   const arm = () => {
@@ -181,7 +223,9 @@ export default function(pi) {
   }});
 }`,
       );
-      const database = SqlitePersistenceMemory;
+      const decorateWorkRequest = (packet: ProviderContinuationRequest) =>
+        probe?.decorateWorkRequest?.(packet) ?? packet;
+      const database = probe?.databaseLayer?.(h) ?? SqlitePersistenceMemory;
       const projectsLayer = ProjectStore.layer.pipe(Layer.provide(database));
       const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
         Layer.provide(
@@ -209,41 +253,46 @@ export default function(pi) {
                   Effect.andThen(barrier ? Effect.void : Queue.offer(offerEvents, request)),
                   Effect.andThen(restricted ? Deferred.await(releaseOffer) : Effect.void),
                   Effect.andThen(
-                    bus.offer({
-                      ...request,
-                      clearIfCurrent: () =>
-                        request.clearIfCurrent!().pipe(
-                          Effect.tap(() => Deferred.succeed(discarded, undefined)),
-                        ),
-                      dispatchIfCurrent: (effect) =>
-                        Effect.gen(function* () {
-                          // The worker requeues this guarded request directly. Observe
-                          // actual guard attempts rather than another producer offer.
-                          if (barrier) {
-                            offers.push(request);
-                            yield* Queue.offer(offerEvents, request);
-                          }
-                          return yield* request.dispatchIfCurrent!(
-                            beforeAdmission(request).pipe(Effect.andThen(effect)),
-                          ).pipe(
-                            Effect.tap((result) =>
-                              Option.isNone(result)
-                                ? Deferred.succeed(staleAttempt, undefined).pipe(Effect.asVoid)
-                                : Effect.void,
-                            ),
-                            Effect.tapError((error) =>
-                              isProviderWorkDeferred(error)
-                                ? Queue.offer(deferredAttempts, error).pipe(Effect.asVoid)
-                                : Effect.void,
-                            ),
-                          );
-                        }),
-                    }),
+                    bus.offer(
+                      decorateWorkRequest({
+                        ...request,
+                        clearIfCurrent: () =>
+                          request.clearIfCurrent!().pipe(
+                            Effect.tap(() => Deferred.succeed(discarded, undefined)),
+                          ),
+                        dispatchIfCurrent: (effect) =>
+                          Effect.gen(function* () {
+                            // The worker requeues this guarded request directly. Observe
+                            // actual guard attempts rather than another producer offer.
+                            if (barrier) {
+                              offers.push(request);
+                              yield* Queue.offer(offerEvents, request);
+                            }
+                            return yield* request.dispatchIfCurrent!(
+                              beforeAdmission(request).pipe(Effect.andThen(effect)),
+                            ).pipe(
+                              Effect.tap((result) =>
+                                Option.isNone(result)
+                                  ? Deferred.succeed(staleAttempt, undefined).pipe(Effect.asVoid)
+                                  : Effect.void,
+                              ),
+                              Effect.tapError((error) =>
+                                isProviderWorkDeferred(error)
+                                  ? Queue.offer(deferredAttempts, error).pipe(Effect.asVoid)
+                                  : Effect.void,
+                              ),
+                            );
+                          }),
+                      }),
+                    ),
                   ),
                 ),
             },
             makeConnection: (input) =>
               makePiRpcConnection(input).pipe(
+                Effect.tap((connection) =>
+                  Effect.sync(() => probe?.observeConnection?.(connection)),
+                ),
                 Effect.map((connection) => ({
                   ...connection,
                   send: (record) =>
@@ -278,7 +327,10 @@ export default function(pi) {
               ...adapter,
               openSession: (input) =>
                 Effect.sync(() => opens++).pipe(
-                  Effect.andThen(adapter.openSession(input)),
+                  Effect.andThen(
+                    probe?.wrapOpen?.(adapter.openSession(input)) ?? adapter.openSession(input),
+                  ),
+                  Effect.map((runtime) => probe?.wrapRuntime?.(runtime) ?? runtime),
                   Effect.map((runtime) => ({
                     ...runtime,
                     events: runtime.events.pipe(
@@ -549,6 +601,23 @@ export default function(pi) {
           ? (yield* Deferred.await(captureEntered).pipe(Effect.timeout("10 seconds")),
             yield* orchestrator.getThreadProjection(h.threadId))
           : yield* waitFor((p) => p.runs[0]?.status === "completed");
+        if (probe !== undefined) {
+          yield* probe.verify({
+            fixture: h,
+            cwd,
+            workspaceB,
+            foreground,
+            orchestrator,
+            manager: admissionManager,
+            receipts,
+            offers,
+            wire,
+            requests,
+            wake: fs.writeFileString(`${cwd}/wake`, "start").pipe(Effect.orDie),
+            waitFor: (predicate) => waitFor(predicate).pipe(Effect.orDie),
+          });
+          return;
+        }
         if (scenario === "barrier-answer") assert.lengthOf(requests, 1);
         else assert.lengthOf(requests, 0);
         yield* fs.writeFileString(`${cwd}/wake`, "start");
