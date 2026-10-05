@@ -4,24 +4,25 @@ import {
   type ProviderTextSnapshotProjection,
 } from "./ProviderAdapter.ts";
 import {
+  readOwnedNativeModelCapacity,
   recordNativeModelContextWindow,
   type NativeModelCapacityOwner,
 } from "./scient-fork/NativeModelContextWindow.ts";
-import { modelSelectionsEqual } from "@t3tools/shared/model";
-import * as NodeCrypto from "node:crypto";
+import {
+  pendingStartOwnerIsCurrent,
+  type PendingStartOwner,
+} from "./scient-fork/PendingStartOwner.ts";
+import { retainCommittedQuestionAnswers } from "./scient-fork/committedQuestionAnswers.ts";
+import { makeSourcePlanConsumer } from "./scient-fork/sourcePlanConsumption.ts";
+import {
+  readCurrentRunningForkOwner,
+  runningForkAuthorityChanged,
+} from "./scient-fork/runningForkSource.ts";
 import {
   CommandId,
-  EventId,
   type OrchestrationV2Run,
-  type OrchestrationV2ProviderThread,
-  type OrchestrationV2ExecutionNode,
-  type TurnItemId,
-  type ProviderTurnId,
-  OrchestrationV2RunJson,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
-  OrchestrationV2TurnItemJson,
-  OrchestrationV2ConversationMessageJson,
   ProviderThreadId,
   RunAttemptId,
   RunId,
@@ -50,15 +51,8 @@ import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
-import { sourcePlanFingerprint } from "./SourcePlan.ts";
-import {
-  readLegacyCitationRepairSource,
-  readLegacyQuestionInsertionOwner,
-} from "./legacy/LegacyHistoryRepairOwnership.ts";
-
-const decodeSourcePlanRun = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(OrchestrationV2RunJson),
-);
+import { applyLegacyHistoryRepairGuards } from "./legacy/LegacyHistoryRepairGuards.ts";
+import { legacyQueueImportReusesMessageIdentity } from "./legacy/LegacyQueueImportIdentity.ts";
 
 /**
  * ERRORS
@@ -97,112 +91,12 @@ export type EventSinkV2Error = typeof EventSinkV2Error.Type;
 /**
  * SERVICE DEFINITION
  */
-/** The captured owner of a locally declined start, never a native acceptance receipt. */
-export interface PendingStartOwner {
-  readonly threadId: ThreadId;
-  readonly runId: RunId;
-  readonly activeAttemptId: RunAttemptId;
-  readonly rootNodeId: NodeId;
-  readonly checkpointScopeId: OrchestrationV2ExecutionNode["checkpointScopeId"];
-  readonly runOrdinal: number;
-  readonly providerThread: Pick<
-    OrchestrationV2ProviderThread,
-    "id" | "driver" | "providerInstanceId" | "providerSessionId" | "nativeThreadRef"
-  >;
-  readonly interruptRequestId: TurnItemId;
-  readonly interruptResultId: TurnItemId;
-  readonly retainedTurn?: {
-    readonly id: ProviderTurnId;
-    readonly attemptId: RunAttemptId;
-    readonly runId: RunId;
-    readonly runOrdinal: number;
-  };
-}
-
-export function matchesPendingStartOwner(
-  current: ProjectionStore.ProjectionRecords<
-    "runs" | "attempts" | "nodes" | "providerThreads" | "providerTurns"
-  >,
-  owner: PendingStartOwner,
-): boolean {
-  const run = current.runs.find((row) => row.id === owner.runId);
-  const attempt = current.attempts.find((row) => row.id === owner.activeAttemptId);
-  const root = current.nodes.find((row) => row.id === owner.rootNodeId);
-  const thread = current.providerThreads.find((row) => row.id === owner.providerThread.id);
-  const ref = thread?.nativeThreadRef;
-  const capturedRef = owner.providerThread.nativeThreadRef;
-  const retained = owner.retainedTurn;
-  const priorTurn =
-    retained === undefined
-      ? undefined
-      : current.providerTurns.find((row) => row.id === retained.id);
-  const priorAttempt =
-    retained === undefined
-      ? undefined
-      : current.attempts.find((row) => row.id === retained.attemptId);
-  const priorRun =
-    retained === undefined ? undefined : current.runs.find((row) => row.id === retained.runId);
-  const priorOwnerMatches =
-    retained !== undefined &&
-    priorTurn?.runAttemptId === retained.attemptId &&
-    priorTurn.providerThreadId === owner.providerThread.id &&
-    priorTurn.nodeId === priorAttempt?.rootNodeId &&
-    priorAttempt?.runId === retained.runId &&
-    priorAttempt.providerInstanceId === owner.providerThread.providerInstanceId &&
-    priorAttempt.providerThreadId === owner.providerThread.id &&
-    priorRun?.ordinal === retained.runOrdinal &&
-    ["completed", "interrupted", "cancelled", "failed"].includes(priorRun.status) &&
-    priorRun.threadId === owner.threadId &&
-    priorRun.rootNodeId === priorAttempt.rootNodeId &&
-    priorRun.providerThreadId === owner.providerThread.id &&
-    priorRun.providerInstanceId === owner.providerThread.providerInstanceId &&
-    retained.runOrdinal < owner.runOrdinal;
-  return (
-    current.thread.id === owner.threadId &&
-    current.thread.archivedAt === null &&
-    current.thread.deletedAt === null &&
-    current.thread.activeProviderThreadId === owner.providerThread.id &&
-    run?.status === "running" &&
-    run.ordinal === owner.runOrdinal &&
-    run.activeAttemptId === owner.activeAttemptId &&
-    run.rootNodeId === owner.rootNodeId &&
-    run.providerThreadId === owner.providerThread.id &&
-    run.providerInstanceId === owner.providerThread.providerInstanceId &&
-    attempt?.status === "running" &&
-    attempt.runId === owner.runId &&
-    attempt.rootNodeId === owner.rootNodeId &&
-    attempt.providerThreadId === owner.providerThread.id &&
-    attempt.providerInstanceId === owner.providerThread.providerInstanceId &&
-    attempt.providerTurnId === null &&
-    root?.status === "running" &&
-    root.kind === "root_turn" &&
-    root.parentNodeId === null &&
-    root.checkpointScopeId === owner.checkpointScopeId &&
-    root.threadId === owner.threadId &&
-    root.runId === owner.runId &&
-    root.rootNodeId === owner.rootNodeId &&
-    root.providerThreadId === owner.providerThread.id &&
-    root.providerTurnId === null &&
-    thread?.appThreadId === owner.threadId &&
-    thread.providerInstanceId === owner.providerThread.providerInstanceId &&
-    thread.providerSessionId === owner.providerThread.providerSessionId &&
-    thread.driver === owner.providerThread.driver &&
-    (ref === null
-      ? capturedRef === null
-      : capturedRef !== null &&
-        ref?.driver === capturedRef.driver &&
-        ref?.nativeId === capturedRef.nativeId &&
-        ref?.strength === capturedRef.strength &&
-        ref?.fingerprint === capturedRef.fingerprint &&
-        ref?.ordinal === capturedRef.ordinal) &&
-    (thread.lastRunOrdinal === owner.runOrdinal ||
-      (priorOwnerMatches && thread.lastRunOrdinal === retained?.runOrdinal)) &&
-    (retained === undefined || priorOwnerMatches) &&
-    !current.providerTurns.some(
-      (turn) => turn.runAttemptId === owner.activeAttemptId || turn.nodeId === owner.rootNodeId,
-    )
-  );
-}
+// SCIENT-FORK:START — declined-start owner, kept importable from EventSink.
+export {
+  matchesPendingStartOwner,
+  type PendingStartOwner,
+} from "./scient-fork/PendingStartOwner.ts";
+// SCIENT-FORK:END
 
 export interface EventSinkV2Shape {
   readonly captureRunningForkText?: (input: {
@@ -423,246 +317,10 @@ const baseLayer: Layer.Layer<
               return true;
           }
         });
-        // Native callback settlement reports the original question, without the
-        // answer just committed by the application. Only lifecycle ingestion
-        // opts into this guard; explicit canonical edits do not.
-        return yield* Effect.forEach(
-          cancellationGuarded,
-          (event) =>
-            Effect.gen(function* () {
-              if (
-                event.type !== "turn-item.updated" ||
-                event.payload.type !== "user_input_request" ||
-                event.payload.status !== "completed" ||
-                event.payload.questionAnswer !== undefined ||
-                event.payload.nativeItemRef === null
-              )
-                return event;
-              const incoming = event.payload;
-              const incomingRef = incoming.nativeItemRef;
-              if (incomingRef === null) return event;
-              const [row] = yield* sql<{ payload_json: string }>`
-            SELECT payload_json FROM orchestration_v2_projection_turn_items
-            WHERE thread_id = ${event.threadId} AND turn_item_id = ${incoming.id}`;
-              if (row === undefined) return event;
-              const current = yield* decodePositionedItem(row.payload_json);
-              if (
-                current.type !== "user_input_request" ||
-                current.status !== "completed" ||
-                current.questionAnswer === undefined ||
-                current.responseMode === "message" ||
-                current.requestId !== incoming.requestId ||
-                current.threadId !== incoming.threadId ||
-                current.runId !== incoming.runId ||
-                current.nodeId !== incoming.nodeId ||
-                current.providerThreadId !== incoming.providerThreadId ||
-                current.providerTurnId !== incoming.providerTurnId ||
-                current.nativeItemRef?.driver !== incomingRef.driver ||
-                current.nativeItemRef?.nativeId !== incomingRef.nativeId ||
-                current.nativeItemRef?.strength !== incomingRef.strength
-              )
-                return event;
-              return { ...event, payload: { ...incoming, questionAnswer: current.questionAnswer } };
-            }),
-          { concurrency: 1 },
-        );
+        // SCIENT-FORK:START — keep an answer the app already committed.
+        return yield* retainCommittedQuestionAnswers(sql, cancellationGuarded);
+        // SCIENT-FORK:END
       });
-
-    const decodePositionedItem = Schema.decodeUnknownEffect(
-      Schema.fromJsonString(OrchestrationV2TurnItemJson),
-    );
-    const guardTurnItemPositionRepairs = Effect.fn("EventSink.guardTurnItemPositionRepairs")(
-      function* (events: ReadonlyArray<OrchestrationV2DomainEvent>) {
-        const repaired: OrchestrationV2DomainEvent[] = [];
-        for (const event of events) {
-          if (
-            event.type !== "turn-item.updated" ||
-            !event.id.startsWith("migration:v1:history:position:")
-          ) {
-            repaired.push(event);
-            continue;
-          }
-          const rows = yield* sql<{ payload_json: string; ordinal: number }>`
-          SELECT items.payload_json, positions.ordinal
-          FROM orchestration_v2_projection_turn_items AS items
-          JOIN orchestration_v2_turn_item_positions AS positions
-            ON positions.thread_id = items.thread_id AND positions.turn_item_id = items.turn_item_id
-          WHERE items.thread_id = ${event.threadId} AND items.turn_item_id = ${event.payload.id}`;
-          const current = rows[0];
-          if (current === undefined) continue;
-          const item = yield* decodePositionedItem(current.payload_json);
-          // Only legacy runless items may acquire missing historical grouping.
-          // Reread inside this transaction; never replace a V2 edit or explicit association.
-          const historyTurnId =
-            item.historyTurnId ??
-            (item.runId === null &&
-            (item.id.startsWith("migration:v1:turn-item:") ||
-              item.id.startsWith("migration:v1:history:"))
-              ? event.payload.historyTurnId
-              : undefined);
-          if (item.ordinal === current.ordinal && historyTurnId === item.historyTurnId) continue;
-          const digest = NodeCrypto.createHash("sha256")
-            .update(current.payload_json)
-            .update(historyTurnId ?? "")
-            .digest("hex");
-          repaired.push({
-            ...event,
-            id: EventId.make(
-              `migration:v1:history:position:v2:${item.id}:${current.ordinal}:${digest}`,
-            ),
-            occurredAt: item.updatedAt,
-            payload: {
-              ...item,
-              ordinal: current.ordinal,
-              ...(historyTurnId === undefined ? {} : { historyTurnId }),
-            },
-          });
-        }
-        return repaired;
-      },
-    );
-
-    const decodeHistoricalMessage = Schema.decodeUnknownEffect(
-      Schema.fromJsonString(OrchestrationV2ConversationMessageJson),
-    );
-    const guardLegacyCitationRepairs = Effect.fn("EventSink.guardLegacyCitationRepairs")(function* (
-      events: ReadonlyArray<OrchestrationV2DomainEvent>,
-    ) {
-      const repaired: OrchestrationV2DomainEvent[] = [];
-      for (const event of events) {
-        if (!event.id.startsWith("migration:v1:history:citation:")) {
-          repaired.push(event);
-          continue;
-        }
-        const messageId =
-          event.type === "message.updated"
-            ? event.payload.id
-            : event.type === "turn-item.updated" && event.payload.type === "assistant_message"
-              ? event.payload.messageId
-              : undefined;
-        if (messageId === undefined) continue;
-        const [source] = yield* readLegacyCitationRepairSource(sql, event.threadId, messageId);
-        if (source === undefined) continue;
-        // Entity compaction can remove the original message event. The
-        // retained import ledger and exact inert item identity survive it.
-        const [ownedRow] = yield* sql<{ payload_json: string }>`
-            SELECT payload_json FROM orchestration_v2_projection_turn_items
-            WHERE thread_id = ${event.threadId} AND turn_item_id = ${`migration:v1:turn-item:${messageId}`}`;
-        if (ownedRow === undefined) continue;
-        const owned = yield* decodePositionedItem(ownedRow.payload_json);
-        if (
-          owned.type !== "assistant_message" ||
-          owned.id !== `migration:v1:turn-item:${messageId}` ||
-          owned.threadId !== event.threadId ||
-          owned.messageId !== messageId ||
-          owned.runId !== null ||
-          owned.nodeId !== null ||
-          owned.nativeItemRef !== null ||
-          owned.providerThreadId !== null ||
-          owned.providerTurnId !== null ||
-          owned.parentItemId !== null
-        )
-          continue;
-        if (event.type === "message.updated") {
-          const [row] = yield* sql<{ payload_json: string }>`
-              SELECT payload_json FROM orchestration_v2_projection_messages
-              WHERE thread_id = ${event.threadId} AND message_id = ${messageId}`;
-          if (row === undefined) continue;
-          const current = yield* decodeHistoricalMessage(row.payload_json);
-          if (
-            current.threadId !== event.threadId ||
-            current.id !== messageId ||
-            current.role !== "assistant" ||
-            current.runId !== null ||
-            current.nodeId !== null ||
-            current.text !== source.text ||
-            current.text === event.payload.text
-          )
-            continue;
-          const payload = { ...current, text: event.payload.text };
-          const digest = NodeCrypto.createHash("sha256")
-            .update(row.payload_json)
-            .update(payload.text)
-            .digest("hex");
-          repaired.push({
-            ...event,
-            id: EventId.make(`migration:v1:history:citation:message:${messageId}:${digest}`),
-            occurredAt: current.updatedAt,
-            payload,
-          });
-        } else if (
-          event.type === "turn-item.updated" &&
-          event.payload.type === "assistant_message"
-        ) {
-          if (event.payload.id !== `migration:v1:turn-item:${messageId}`) continue;
-          const current = owned;
-          if (current.text !== source.text || current.text === event.payload.text) continue;
-          const payload = { ...current, text: event.payload.text };
-          const digest = NodeCrypto.createHash("sha256")
-            .update(ownedRow.payload_json)
-            .update(payload.text)
-            .digest("hex");
-          repaired.push({
-            ...event,
-            id: EventId.make(`migration:v1:history:citation:item:${messageId}:${digest}`),
-            occurredAt: current.updatedAt,
-            payload,
-          });
-        }
-      }
-      return repaired;
-    });
-
-    // Generation-two submitted answers are new inert facts beside the original
-    // audit. Reread durable ownership and existing projection in this transaction:
-    // compaction may remove the original insertion event after a user edits it.
-    const guardLegacyQuestionInsertions = Effect.fn("EventSink.guardLegacyQuestionInsertions")(
-      function* (events: ReadonlyArray<OrchestrationV2DomainEvent>) {
-        const accepted: OrchestrationV2DomainEvent[] = [];
-        const prefix = "migration:v1:history:answer:";
-        for (const event of events) {
-          if (event.type !== "turn-item.updated" || !event.payload.id.startsWith(prefix)) {
-            accepted.push(event);
-            continue;
-          }
-          const item = event.payload;
-          const activityId = item.id.slice(prefix.length);
-          const owner = yield* readLegacyQuestionInsertionOwner(
-            sql,
-            event.threadId,
-            item.id,
-            activityId,
-          );
-          const source = owner[0];
-          if (
-            source === undefined ||
-            item.type !== "user_input_request" ||
-            item.questionAnswer === undefined ||
-            item.threadId !== event.threadId ||
-            item.runId !== null ||
-            item.nodeId !== null ||
-            item.providerThreadId !== null ||
-            item.providerTurnId !== null ||
-            item.nativeItemRef !== null ||
-            item.parentItemId !== null ||
-            item.status !== "completed" ||
-            item.requestId !== `migration:v1:answer:${activityId}` ||
-            item.historyTurnId !== (source.turn_id ?? undefined)
-          ) {
-            return yield* new EventSinkWriteError({
-              eventCount: 1,
-              cause: "Historical submitted answer has no matching inert legacy owner.",
-            });
-          }
-          const current = yield* sql<{ turn_item_id: string }>`
-          SELECT turn_item_id FROM orchestration_v2_projection_turn_items
-          WHERE thread_id = ${event.threadId} AND turn_item_id = ${item.id}`;
-          if (current.length > 0) continue;
-          accepted.push({ ...event, payload: { ...item, ordinal: source.ordinal } });
-        }
-        return accepted;
-      },
-    );
 
     const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
       const runOrdinals = new Map(
@@ -672,12 +330,10 @@ const baseLayer: Layer.Layer<
             : [],
         ),
       );
+      // SCIENT-FORK:START — an accepted native turn consumes the plan it started from.
+      const consumeSourcePlan = makeSourcePlanConsumer({ sql, projectionStore });
       return Effect.gen(function* () {
         const normalized: OrchestrationV2DomainEvent[] = [];
-        const pendingPlans = new Map<
-          string,
-          Extract<OrchestrationV2DomainEvent, { type: "plan.updated" }>["payload"]
-        >();
         for (const event of events) {
           const positioned = yield* event.type === "turn-item.updated"
             ? turnItemPositions
@@ -688,108 +344,13 @@ const baseLayer: Layer.Layer<
                 .pipe(Effect.map((payload) => ({ ...event, payload })))
             : Effect.succeed(event);
           normalized.push(positioned);
-          if (event.type === "plan.updated") {
-            pendingPlans.set(`${event.threadId}\u0000${event.payload.id}`, event.payload);
-          }
-          if (event.type !== "provider-turn.updated") continue;
-          const turn = event.payload;
-          if (
-            turn.acceptedAt === undefined ||
-            turn.nativeAcceptance !== "accepted" ||
-            turn.runAttemptId === null ||
-            turn.nativeTurnRef === null ||
-            turn.startedAt === null ||
-            turn.status === "pending"
-          )
-            continue;
-          // Read only canonical committed owners, within the enclosing append transaction.
-          // A callback for a child, replaced attempt, or pooled sibling cannot consume a plan.
-          const rows = yield* sql<{ readonly payload_json: string }>`
-            SELECT r.payload_json
-            FROM orchestration_v2_projection_runs r
-            JOIN orchestration_v2_projection_run_attempts a
-              ON a.attempt_id = ${turn.runAttemptId}
-             AND a.run_id = r.run_id AND a.thread_id = r.thread_id
-            JOIN orchestration_v2_projection_nodes n
-              ON n.node_id = ${turn.nodeId} AND n.thread_id = r.thread_id
-             AND n.run_id = r.run_id
-            JOIN orchestration_v2_projection_provider_threads p
-              ON p.provider_thread_id = ${turn.providerThreadId} AND p.thread_id = r.thread_id
-            WHERE r.thread_id = ${event.threadId}
-              AND r.status IN ('running', 'waiting')
-              AND json_extract(r.payload_json, '$.activeAttemptId') = a.attempt_id
-              AND json_extract(r.payload_json, '$.rootNodeId') = n.node_id
-              AND json_extract(r.payload_json, '$.sourcePlanFingerprint') IS NOT NULL
-              AND r.provider_thread_id = p.provider_thread_id
-              AND r.provider_instance_id = p.provider_instance_id
-              AND p.last_run_ordinal = r.ordinal
-              AND a.provider_thread_id = p.provider_thread_id
-              AND a.provider_instance_id = p.provider_instance_id
-              AND p.driver = ${turn.nativeTurnRef.driver}
-              AND (a.provider_turn_id IS NULL OR a.provider_turn_id = ${turn.id})
-              AND json_extract(a.payload_json, '$.rootNodeId') = n.node_id
-              AND n.kind = 'root_turn' AND n.parent_node_id IS NULL
-              AND n.provider_thread_id = p.provider_thread_id
-              AND (n.provider_turn_id IS NULL OR n.provider_turn_id = ${turn.id})
-            LIMIT 1`;
-          if (rows[0] === undefined) continue;
-          const run = yield* decodeSourcePlanRun(rows[0].payload_json);
-          if (
-            (event.runId !== undefined && event.runId !== run.id) ||
-            (event.nodeId !== undefined && event.nodeId !== run.rootNodeId) ||
-            (event.providerInstanceId !== undefined &&
-              event.providerInstanceId !== run.providerInstanceId) ||
-            (event.driver !== undefined && event.driver !== turn.nativeTurnRef.driver)
-          )
-            continue;
-          const ref = run.sourcePlanRef ?? run.legacyQueue?.sourceProposedPlan;
-          if (ref === undefined) continue;
-          const targetThread = yield* projectionStore.getThread(event.threadId);
-          const sourceThread = yield* projectionStore.getThreadShell(ref.threadId);
-          if (
-            targetThread.deletedAt !== null ||
-            targetThread.archivedAt !== null ||
-            targetThread.activeProviderThreadId !== turn.providerThreadId ||
-            sourceThread === null ||
-            sourceThread.deletedAt !== null ||
-            sourceThread.archivedAt !== null ||
-            sourceThread.projectId !== targetThread.projectId
-          )
-            continue;
-          const key = `${ref.threadId}\u0000${ref.planId}`;
-          const plan =
-            pendingPlans.get(key) ?? (yield* projectionStore.getPlan(ref.threadId, ref.planId));
-          if (
-            plan?.kind !== "proposed_plan" ||
-            plan.id !== ref.planId ||
-            plan.threadId !== ref.threadId ||
-            plan.status !== "active" ||
-            sourcePlanFingerprint(plan) !== run.sourcePlanFingerprint
-          )
-            continue;
-          const consumed: Extract<OrchestrationV2DomainEvent, { type: "plan.updated" }> = {
-            id: EventId.make(`${event.id}:source-plan-consumed`),
-            type: "plan.updated",
-            threadId: plan.threadId,
-            ...(plan.runId === null ? {} : { runId: plan.runId }),
-            nodeId: plan.nodeId,
-            occurredAt: event.occurredAt,
-            payload: {
-              ...plan,
-              status: "completed",
-              consumedBy: {
-                threadId: event.threadId,
-                runId: run.id,
-                runAttemptId: turn.runAttemptId,
-                providerTurnId: turn.id,
-              },
-            },
-          };
-          normalized.push(consumed);
-          pendingPlans.set(key, consumed.payload);
+          const consumption = consumeSourcePlan(event);
+          const consumed = consumption === undefined ? undefined : yield* consumption;
+          if (consumed !== undefined) normalized.push(consumed);
         }
         return normalized;
       });
+      // SCIENT-FORK:END
     };
 
     const applyStoredEvents = (storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>) =>
@@ -833,18 +394,10 @@ const baseLayer: Layer.Layer<
 
       const storedEvents = yield* sql.withTransaction(
         Effect.gen(function* () {
-          const insertionGuarded =
-            input.guardLegacyQuestionInsertions === true
-              ? yield* guardLegacyQuestionInsertions(input.events)
-              : input.events;
-          const citationGuarded =
-            input.guardLegacyCitationRepairs === true
-              ? yield* guardLegacyCitationRepairs(insertionGuarded)
-              : insertionGuarded;
-          const positionGuarded =
-            input.guardTurnItemPositionRepairs === true
-              ? yield* guardTurnItemPositionRepairs(citationGuarded)
-              : citationGuarded;
+          // SCIENT-FORK:START — legacy V1 history repairs recheck ownership in this transaction.
+          const legacyRepairs = applyLegacyHistoryRepairGuards(sql, input, input.events);
+          const positionGuarded = legacyRepairs === undefined ? input.events : yield* legacyRepairs;
+          // SCIENT-FORK:END
           const normalized = yield* normalizeEvents(
             input.guardPendingUserInputCancellations === true
               ? yield* guardUserInputCancellations(positionGuarded)
@@ -904,115 +457,31 @@ const baseLayer: Layer.Layer<
               };
             }
 
-            if (input.pendingStartOwner !== undefined) {
-              const owner = input.pendingStartOwner;
-              const current = yield* projectionStore.getThreadRecords(input.threadId, [
-                "runs",
-                "attempts",
-                "nodes",
-                "providerThreads",
-                "providerTurns",
-              ]);
-              if (
-                owner.threadId !== input.threadId ||
-                owner.runId !== input.runId ||
-                owner.activeAttemptId !== input.activeAttemptId ||
-                !matchesPendingStartOwner(current, owner) ||
-                !owner.effects.every(
-                  (effect) =>
-                    effect.threadId === owner.threadId &&
-                    effect.request.type === "checkpoint.capture" &&
-                    effect.request.runId === owner.runId &&
-                    effect.request.scopeId === owner.checkpointScopeId,
-                ) ||
-                !(yield* projectionStore.hasUnpairedRunInterruptRequest(
-                  input.threadId,
-                  owner.interruptRequestId,
-                  owner.interruptResultId,
-                ))
-              ) {
-                return {
-                  committed: false as const,
-                  storedEvents: [] as ReadonlyArray<OrchestrationV2StoredEvent>,
-                };
-              }
+            // SCIENT-FORK:START — a declined start commits only while its owner is current.
+            if (
+              input.pendingStartOwner !== undefined &&
+              !(yield* pendingStartOwnerIsCurrent(projectionStore, input, input.pendingStartOwner))
+            ) {
+              return {
+                committed: false as const,
+                storedEvents: [] as ReadonlyArray<OrchestrationV2StoredEvent>,
+              };
             }
+            // SCIENT-FORK:END
 
+            // SCIENT-FORK:START — record a Codex context window only for its current launch owner.
             const capacityOwner = input.nativeModelCapacityOwner;
-            let capacity: number | undefined;
-            if (capacityOwner !== undefined) {
-              const usage = input.events.find((event) => event.type === "provider-turn.updated");
-              const turn = usage?.type === "provider-turn.updated" ? usage.payload : undefined;
-              if (
-                turn?.nativeTurnRef?.driver !== "codex" ||
-                turn.nativeTurnRef.nativeId === null ||
-                turn.nativeAcceptance !== "accepted" ||
-                turn.status !== "running" ||
-                turn.tokenUsage?.maxTokens == null ||
-                !Number.isFinite(turn.tokenUsage.maxTokens) ||
-                turn.tokenUsage.maxTokens <= 0 ||
-                turn.runAttemptId !== input.activeAttemptId ||
-                turn.providerThreadId !== capacityOwner.providerThreadId ||
-                usage?.threadId !== input.threadId ||
-                usage.runId !== input.runId ||
-                usage.nodeId !== turn.nodeId ||
-                usage.providerInstanceId !== capacityOwner.modelSelection.instanceId ||
-                usage.driver !== "codex" ||
-                !/^codex-launch:v1:[a-f0-9]{64}$/.test(capacityOwner.launchFingerprint)
-              )
-                return {
-                  committed: false as const,
-                  storedEvents: [] as ReadonlyArray<OrchestrationV2StoredEvent>,
-                };
-              const owners = yield* sql<{ readonly payload_json: string }>`
-                SELECT r.payload_json FROM orchestration_v2_projection_runs r
-                JOIN orchestration_v2_projection_run_attempts a ON a.attempt_id = ${input.activeAttemptId}
-                  AND a.run_id = r.run_id AND a.thread_id = r.thread_id
-                JOIN orchestration_v2_projection_nodes n ON n.node_id = ${turn.nodeId}
-                  AND n.run_id = r.run_id AND n.thread_id = r.thread_id
-                JOIN orchestration_v2_projection_provider_threads p ON p.provider_thread_id = ${capacityOwner.providerThreadId}
-                  AND p.thread_id = r.thread_id
-                JOIN orchestration_v2_projection_provider_sessions s ON s.provider_session_id = ${capacityOwner.providerSessionId}
-                  AND s.provider_instance_id = r.provider_instance_id AND s.driver = 'codex'
-                JOIN orchestration_v2_projection_provider_session_bindings b ON b.provider_session_id = s.provider_session_id
-                  AND b.thread_id = r.thread_id
-                JOIN orchestration_v2_projection_threads t ON t.thread_id = r.thread_id
-                LEFT JOIN orchestration_v2_projection_provider_turns v ON v.provider_turn_id = ${turn.id}
-                WHERE r.run_id = ${input.runId} AND r.thread_id = ${input.threadId}
-                  AND json_extract(r.payload_json, '$.rootNodeId') = n.node_id
-                  AND r.provider_thread_id = p.provider_thread_id AND r.provider_instance_id = p.provider_instance_id
-                  AND r.provider_instance_id = ${capacityOwner.modelSelection.instanceId}
-                  AND p.provider_session_id = s.provider_session_id AND p.driver = 'codex'
-                  AND p.last_run_ordinal = r.ordinal
-                  AND json_extract(p.payload_json, '$.nativeThreadRef.nativeId') = ${capacityOwner.nativeThreadId}
-                  AND json_extract(p.payload_json, '$.nativeThreadRef.driver') = 'codex'
-                  AND a.status = 'running'
-                  AND a.provider_thread_id = p.provider_thread_id AND a.provider_instance_id = p.provider_instance_id
-                  AND json_extract(a.payload_json, '$.rootNodeId') = n.node_id
-                  AND (a.provider_turn_id IS NULL OR a.provider_turn_id = ${turn.id})
-                  AND (json_extract(a.payload_json, '$.nativeThreadId') IS NULL OR json_extract(a.payload_json, '$.nativeThreadId') = ${capacityOwner.nativeThreadId})
-                  AND n.kind = 'root_turn' AND n.parent_node_id IS NULL AND n.provider_thread_id = p.provider_thread_id
-                  AND (n.provider_turn_id IS NULL OR n.provider_turn_id = ${turn.id})
-                  AND t.deleted_at IS NULL AND t.archived_at IS NULL
-                  AND json_extract(t.payload_json, '$.activeProviderThreadId') = p.provider_thread_id
-                  AND (v.provider_turn_id IS NULL OR (v.thread_id = r.thread_id AND v.provider_thread_id = p.provider_thread_id
-                    AND v.node_id = n.node_id AND v.run_attempt_id = a.attempt_id AND v.status = 'running'
-                    AND json_extract(v.payload_json, '$.nativeTurnRef.driver') = 'codex'
-                    AND json_extract(v.payload_json, '$.nativeTurnRef.nativeId') = ${turn.nativeTurnRef.nativeId}))
-                LIMIT 1`;
-              if (
-                owners[0] === undefined ||
-                !modelSelectionsEqual(
-                  (yield* decodeSourcePlanRun(owners[0].payload_json)).modelSelection,
-                  capacityOwner.modelSelection,
-                )
-              )
-                return {
-                  committed: false as const,
-                  storedEvents: [] as ReadonlyArray<OrchestrationV2StoredEvent>,
-                };
-              capacity = turn.tokenUsage.maxTokens;
+            const capacity =
+              capacityOwner === undefined
+                ? undefined
+                : yield* readOwnedNativeModelCapacity(sql, input, capacityOwner);
+            if (capacityOwner !== undefined && capacity === undefined) {
+              return {
+                committed: false as const,
+                storedEvents: [] as ReadonlyArray<OrchestrationV2StoredEvent>,
+              };
             }
+            // SCIENT-FORK:END
             const normalized = yield* normalizeEvents(
               input.guardPendingUserInputCancellations === true
                 ? yield* guardUserInputCancellations(input.events)
@@ -1115,67 +584,10 @@ const baseLayer: Layer.Layer<
         return { receipt: existing.value, storedEvents };
       });
 
-    const readRunningForkOwner = Effect.fnUntraced(function* (owner: ProviderTextSnapshotOwner) {
-      const current = yield* projectionStore.getThreadProjection(owner.threadId);
-      const project = yield* projectStore.get(current.thread.projectId);
-      const run = current.runs.find((row) => row.id === owner.runId);
-      const attempt = current.attempts.find((row) => row.id === owner.activeAttemptId);
-      const root = current.nodes.find((row) => row.id === owner.rootNodeId);
-      const thread = current.providerThreads.find((row) => row.id === owner.providerThreadId);
-      const turn = current.providerTurns.find((row) => row.id === owner.providerTurnId);
-      const session = current.providerSessions.find((row) => row.id === owner.providerSessionId);
-      const stopRequested = current.turnItems.some(
-        (item) =>
-          item.runId === owner.runId &&
-          item.type === "run_interrupt_request" &&
-          !current.turnItems.some(
-            (result) => result.runId === owner.runId && result.type === "run_interrupt_result",
-          ),
-      );
-      if (
-        stopRequested ||
-        current.thread.archivedAt !== null ||
-        current.thread.deletedAt !== null ||
-        Option.isNone(project) ||
-        project.value.deletedAt !== null ||
-        run === undefined ||
-        !["running", "waiting"].includes(run.status) ||
-        run.activeAttemptId !== owner.activeAttemptId ||
-        run.rootNodeId !== owner.rootNodeId ||
-        run.ordinal !== owner.runOrdinal ||
-        run.providerInstanceId !== owner.providerInstanceId ||
-        run.providerThreadId !== owner.providerThreadId ||
-        attempt?.runId !== owner.runId ||
-        attempt.rootNodeId !== owner.rootNodeId ||
-        attempt.providerInstanceId !== owner.providerInstanceId ||
-        attempt.providerThreadId !== owner.providerThreadId ||
-        (attempt.providerTurnId !== null && attempt.providerTurnId !== owner.providerTurnId) ||
-        attempt.status !== "running" ||
-        root?.runId !== owner.runId ||
-        root.threadId !== owner.threadId ||
-        !["running", "waiting"].includes(root.status) ||
-        thread?.providerSessionId !== owner.providerSessionId ||
-        thread.providerInstanceId !== owner.providerInstanceId ||
-        thread.driver !== owner.driver ||
-        thread.lastRunOrdinal !== owner.runOrdinal ||
-        thread.nativeThreadRef?.driver !== owner.driver ||
-        thread.nativeThreadRef?.nativeId !== owner.nativeThreadId ||
-        thread.nativeThreadRef.strength !== "strong" ||
-        turn?.runAttemptId !== owner.activeAttemptId ||
-        turn.nodeId !== owner.rootNodeId ||
-        turn.providerThreadId !== owner.providerThreadId ||
-        turn.nativeTurnRef?.driver !== owner.driver ||
-        turn.nativeTurnRef?.nativeId !== owner.nativeTurnId ||
-        turn.nativeTurnRef.strength !== "strong" ||
-        turn.nativeAcceptance !== "accepted" ||
-        !["running", "waiting"].includes(turn.status) ||
-        session?.providerInstanceId !== owner.providerInstanceId ||
-        session.driver !== owner.driver ||
-        ["stopped", "error"].includes(session.status)
-      )
-        return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
-      return current;
-    });
+    // SCIENT-FORK:START — the captured owner of a running-fork text snapshot.
+    const readRunningForkOwner = (owner: ProviderTextSnapshotOwner) =>
+      readCurrentRunningForkOwner({ projectionStore, projectStore }, owner);
+    // SCIENT-FORK:END
 
     const captureRunningForkText = Effect.fn("EventSink.captureRunningForkText")(function* (
       input: Parameters<NonNullable<EventSinkV2Shape["captureRunningForkText"]>>[0],
@@ -1243,6 +655,7 @@ const baseLayer: Layer.Layer<
             return { ...existing, committed: false as const, cancelledEffectIds: [] };
           }
 
+          // SCIENT-FORK:START — a running-fork source commits only while its authority holds.
           if (input.runningForkSource !== undefined) {
             const { owner, capture } = input.runningForkSource;
             const current = yield* readRunningForkOwner(owner).pipe(
@@ -1255,64 +668,30 @@ const baseLayer: Layer.Layer<
                   }),
               ),
             );
-            const before = capture.projection;
-            const project = yield* projectStore.get(before.thread.projectId);
-            const root = current.nodes.find((node) => node.id === owner.rootNodeId);
-            const priorRoot = before.nodes.find((node) => node.id === owner.rootNodeId);
-            // Text beyond the acknowledged cutoff is harmless. Changes in
-            // control or workspace authority cannot replace the captured source.
-            if (
-              current.runs.find((run) => run.id === owner.runId)?.status !==
-                before.runs.find((run) => run.id === owner.runId)?.status ||
-              current.providerTurns.find((turn) => turn.id === owner.providerTurnId)?.status !==
-                before.providerTurns.find((turn) => turn.id === owner.providerTurnId)?.status ||
-              root?.status !== priorRoot?.status ||
-              current.thread.projectId !== before.thread.projectId ||
-              current.thread.providerInstanceId !== before.thread.providerInstanceId ||
-              !modelSelectionsEqual(current.thread.modelSelection, before.thread.modelSelection) ||
-              current.thread.runtimeMode !== before.thread.runtimeMode ||
-              current.thread.interactionMode !== before.thread.interactionMode ||
-              current.thread.activeProviderThreadId !== before.thread.activeProviderThreadId ||
-              current.thread.branch !== before.thread.branch ||
-              current.thread.worktreePath !== before.thread.worktreePath ||
-              current.thread.workspaceAuthorityRevision !==
-                before.thread.workspaceAuthorityRevision ||
-              current.thread.rollbackRequestId !== before.thread.rollbackRequestId ||
-              current.thread.rollbackCompletedRequestId !==
-                before.thread.rollbackCompletedRequestId ||
-              current.thread.conversationFork?.status !== before.thread.conversationFork?.status ||
-              root?.checkpointScopeId !== priorRoot?.checkpointScopeId ||
-              Option.isNone(project) ||
-              project.value.workspaceRoot !== capture.workspaceRoot
-            )
+            const project = yield* projectStore.get(capture.projection.thread.projectId);
+            if (runningForkAuthorityChanged(owner, capture, current, project))
               return yield* new EventSinkWriteError({
                 commandId: input.commandId,
                 eventCount: input.events.length,
                 cause: new ProviderTextSnapshotError({ reason: "owner-lost" }),
               });
           }
+          // SCIENT-FORK:END
 
-          // An import creates a message identity. Recheck under the same transaction
-          // as its receipt so a competing admission cannot replace existing history.
-          if (input.commandType === "legacy-queue.import") {
-            for (const event of input.events) {
-              if (event.type !== "message.updated") continue;
-              const existing = yield* sql<{ readonly message_id: string }>`
-                SELECT message_id FROM orchestration_v2_projection_messages
-                WHERE message_id = ${event.payload.id}
-                LIMIT 1
-              `;
-              if (existing.length > 0) {
-                return yield* new EventSinkWriteError({
-                  commandId: input.commandId,
-                  eventCount: input.events.length,
-                  cause: new Error(
-                    "The legacy queue message identity already belongs to conversation history.",
-                  ),
-                });
-              }
-            }
+          // SCIENT-FORK:START — a legacy queue import cannot reuse a history message identity.
+          if (
+            input.commandType === "legacy-queue.import" &&
+            (yield* legacyQueueImportReusesMessageIdentity(sql, input.events))
+          ) {
+            return yield* new EventSinkWriteError({
+              commandId: input.commandId,
+              eventCount: input.events.length,
+              cause: new Error(
+                "The legacy queue message identity already belongs to conversation history.",
+              ),
+            });
           }
+          // SCIENT-FORK:END
 
           const normalized = yield* normalizeEvents(input.events);
           const storedEvents = yield* eventStore.append({

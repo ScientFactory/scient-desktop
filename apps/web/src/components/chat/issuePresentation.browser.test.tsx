@@ -1,10 +1,10 @@
 import "../../index.css";
 import {
+  CheckpointId,
+  CheckpointScopeId,
   EnvironmentId,
-  EventId,
   MessageId,
   RunId,
-  TurnId,
   RuntimeRequestId,
   ThreadId,
   NodeId,
@@ -26,11 +26,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { page } from "vitest/browser";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
-import {
-  deriveTimelineEntries,
-  deriveWorkLogEntries,
-  deriveTimelineEntriesFromVisibleTurnItems,
-} from "../../session-logic";
+import { deriveTimelineEntriesFromVisibleTurnItems } from "../../session-logic";
 
 const listRef = createRef<LegendListRef>();
 const env = EnvironmentId.make("issue-presentation-fixture");
@@ -78,39 +74,55 @@ it("keeps a successful answer clean and puts retry feedback on its approval", as
   });
   document.body.append(host);
   const root = createRoot(host);
-  const date = "2026-09-29T00:00:00.000Z";
-  const turnId = TurnId.make("fixture-turn");
-  const activities = [
+  const date = DateTime.makeUnsafe("2026-09-29T00:00:00.000Z");
+  const threadId = ThreadId.make("fixture-thread");
+  const runId = RunId.make("fixture-run");
+  const itemBase = {
+    threadId,
+    runId,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    status: "completed" as const,
+    title: null,
+    startedAt: date,
+    completedAt: date,
+    updatedAt: date,
+  };
+  const items: ReadonlyArray<OrchestrationV2TurnItem> = [
     {
-      id: EventId.make("capture-failure"),
-      kind: "checkpoint.capture.failed",
-      tone: "error" as const,
-      summary: "Checkpoint capture failed",
-      createdAt: date,
-      turnId,
-      payload: {
-        detail:
-          "VCS process failed in GitVcsDriver.checkpoints.captureCheckpoint: git status (/example/project) exited with 1 - Changed files exceed the checkpoint capture size limit (512 MiB per file, 1 GiB total).",
-      },
-    },
-  ];
-  const messages = [
-    {
-      id: MessageId.make("user"),
-      role: "user" as const,
+      ...itemBase,
+      id: TurnItemId.make("user"),
+      ordinal: 0,
+      type: "user_message",
+      messageId: MessageId.make("user"),
+      inputIntent: "turn_start",
       text: "hey, are you there?",
-      runId: RunId.make("fixture-run"),
-      createdAt: date,
-      updatedAt: date,
-      streaming: false,
+      attachments: [],
+      createdBy: "user",
+      creationSource: "web",
     },
     {
-      id: MessageId.make("answer"),
-      role: "assistant" as const,
+      ...itemBase,
+      id: TurnItemId.make("capture-failure"),
+      ordinal: 1,
+      status: "failed",
+      title:
+        "VCS process failed in GitVcsDriver.checkpoints.captureCheckpoint: git status (/example/project) exited with 1 - Changed files exceed the checkpoint capture size limit (512 MiB per file, 1 GiB total).",
+      type: "checkpoint",
+      checkpointId: CheckpointId.make("capture-failure"),
+      scopeId: CheckpointScopeId.make("fixture-scope"),
+      files: [],
+    },
+    {
+      ...itemBase,
+      id: TurnItemId.make("answer"),
+      ordinal: 2,
+      type: "assistant_message",
+      messageId: MessageId.make("answer"),
       text: "Here. What do you need?",
-      runId: RunId.make("fixture-run"),
-      createdAt: date,
-      updatedAt: date,
       streaming: false,
     },
   ];
@@ -122,11 +134,16 @@ it("keeps a successful answer clean and puts retry feedback on its approval", as
             <MessagesTimeline
               {...base}
               routeThreadKey="fixture"
-              timelineEntries={deriveTimelineEntries(
-                messages,
-                [],
-                deriveWorkLogEntries(activities),
-              )}
+              timelineEntries={deriveTimelineEntriesFromVisibleTurnItems({
+                optimisticMessages: [],
+                visibleTurnItems: items.map((item, position) => ({
+                  position,
+                  visibility: "local",
+                  sourceThreadId: threadId,
+                  sourceItemId: item.id,
+                  item,
+                })),
+              })}
             />
           </div>
           <div style={{ padding: "24px", borderTop: "1px solid #ddd" }}>
@@ -135,7 +152,7 @@ it("keeps a successful answer clean and puts retry feedback on its approval", as
                 requestId: RuntimeRequestId.make("approval"),
                 responseCapability: "live" as const,
                 requestKind: "command",
-                createdAt: date,
+                createdAt: DateTime.formatIso(date),
                 detail: "git status",
                 responseError: "Approval could not be sent. Try again.",
               }}

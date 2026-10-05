@@ -25,7 +25,8 @@
     "packages/contracts/src/scientSkillSelection.ts",
     "packages/contracts/src/scientSkills.ts",
     "packages/contracts/src/scientThreadQueue.ts",
-    "packages/scient-operations/src/operation.ts"
+    "packages/scient-operations/src/operation.ts",
+    "packages/contracts/src/scient/skillRpcs.ts"
   ],
   "skillDiffSignals": [
     "@scientfactory/scient-skills",
@@ -223,7 +224,7 @@
     },
     {
       "path": "packages/contracts/src/rpc.ts",
-      "anchor": "providerSkillsSetEnabled",
+      "anchor": "...SCIENT_SKILL_WS_METHODS",
       "purpose": "Register Scient inventory, personal activation, and capability-gated provider-native mutation contracts."
     },
     {
@@ -337,6 +338,11 @@
       "path": "apps/web/src/scient/releaseNotes/catalog.ts",
       "anchor": "id: \"scient-skills\"",
       "purpose": "Retain versioned Scient Skills release copy in the release-owned catalog; this is presentation history, not execution authority."
+    },
+    {
+      "path": "apps/web/src/scient/skills/scientSkillUsageLabel.ts",
+      "anchor": "export function scientSkillUsageLabel(",
+      "purpose": "Label managed Scient skill loads in V2 dynamic-tool work-log rows through the shared provider-prefix resolver (session-logic.test.ts)."
     }
   ]
 }

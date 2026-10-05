@@ -7,13 +7,6 @@ import {
   ChatGptHandoffState,
 } from "./providerSetup.ts";
 import * as Schema from "effect/Schema";
-import {
-  CustomModelSaveInput,
-  CustomModelRemoveInput,
-  CustomModelTestInput,
-  CustomModelsSettings,
-  CustomModelError,
-} from "./customModels.ts";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import {
@@ -77,14 +70,6 @@ import {
   FilesystemBrowseError,
 } from "./filesystem.ts";
 import {
-  EnvironmentFileChangeEvent,
-  EnvironmentFileLinkResolution,
-  EnvironmentFileLinkResolveInput,
-  EnvironmentFilePrepareError,
-  EnvironmentFilePrepareInput,
-  EnvironmentFilePrepareResult,
-} from "./fileOpening.ts";
-import {
   AgentSessionImportInput,
   AgentSessionImportProjectChangedError,
   AgentSessionImportProjectNotFoundError,
@@ -102,23 +87,6 @@ import {
   AttachmentDeleteInput,
   AttachmentUploadSigningKeyError,
 } from "./assets.ts";
-import {
-  BrowserPdfExportError,
-  BrowserPdfExportInput,
-  BrowserPdfExportResult,
-} from "./browserPdfExport.ts";
-import {
-  ScientDocumentPdfExportError,
-  ScientDocumentPdfPrepared,
-  ScientDocumentPdfPublished,
-  ScientDocumentPdfPublishInput,
-  ScientDocumentPdfReleaseInput,
-  ScientMarkdownPdfPrepareInput,
-} from "./scientDocumentExport.ts";
-import {
-  ScientConversationExportError,
-  ScientConversationExportRequest,
-} from "./scientConversationExport.ts";
 import {
   PersistChatAttachmentsError,
   PersistChatAttachmentsInput,
@@ -232,17 +200,6 @@ import {
   RelayClientInstallProgressEventSchema,
   RelayClientStatusSchema,
 } from "./relayClient.ts";
-import {
-  ProviderConnectionCancelInput,
-  ProviderConnectionDisconnectInput,
-  ProviderConnectionError,
-  ProviderConnectionStartInput,
-  ProviderConnectionSubmitAuthorizationCodeInput,
-  ProviderRuntimeCancelInput,
-  ProviderRuntimePlan,
-  ProviderRuntimePlanInput,
-  ProviderRuntimeStartInput,
-} from "./providerLifecycle.ts";
 import {
   VoiceTranscriptCorrectionError,
   VoiceTranscriptCorrectionRequest,
@@ -404,71 +361,63 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
-import {
-  AnalysisCancelRunInput,
-  AnalysisCleanupProjectInput,
-  AnalysisCleanupResult,
-  AnalysisCleanupRunInput,
-  AnalysisConfigureRuntimeInput,
-  AnalysisGetRunInput,
-  AnalysisInspectRuntimesInput,
-  AnalysisListRunsInput,
-  AnalysisListRunsResult,
-  AnalysisOperationError,
-  AnalysisPromoteRunInput,
-  AnalysisPromoteRunResult,
-  AnalysisRunSnapshot,
-  AnalysisRunStreamEvent,
-  AnalysisRuntimeInspection,
-  AnalysisRuntimeProfile,
-  AnalysisStartRunInput,
-  AnalysisStorageSummary,
-  AnalysisStorageSummaryInput,
-  AnalysisSubscribeRunsInput,
-  AnalysisVerifyRuntimeInput,
-} from "./scientAnalysis.ts";
-import {
-  ComputeExecutionRecord,
-  ComputeExecutionOutputs,
-  ComputeGatewayError,
-  ComputeGetProjectSessionResult,
-  ComputeInspectRuntimesInput,
-  ComputeListProjectExecutionsInput,
-  ComputeListProjectExecutionsResult,
-  ComputeListProjectOutputsInput,
-  ComputeListProjectSessionsResult,
-  ComputeManagedRuntimeInput,
-  ComputeManagedRuntimeStatus,
-  ComputeManagedRuntimeStatusInput,
-  ComputeOperationError,
-  ComputeProjectExecutionCommandInput,
-  ComputeProjectInput,
-  ComputeProjectSessionCommandInput,
-  ComputeStopProjectSessionInput,
-  ComputeProjectSessionInput,
-  ComputeRuntimeInspection,
-  ComputeRuntimeInventory,
-  ComputeRuntimeVerification,
-  ComputeSessionRecord,
-  ComputeSessionStreamEvent,
-  ComputeVariableSnapshot,
-  ComputeStartProjectSessionInput,
-  ComputeSubmitProjectExecutionInput,
-  ComputeVerifyRuntimeInput,
-} from "./scientCompute.ts";
-import {
-  ProviderSkillManagementError,
-  ProviderSkillSetEnabledInput,
-  ProviderSkillSetEnabledResult,
-  ScientSkillDocument,
-  ScientSkillInventory,
-  ScientSkillListInput,
-  ScientSkillManagementError,
-  ScientSkillReadDocumentInput,
-  ScientSkillSetProjectPreferenceInput,
-  ScientSkillSetUserActivationInput,
-} from "./scientSkills.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
+// SCIENT-FORK:START — Scient analysis and compute RPCs.
+import {
+  SCIENT_ANALYSIS_STREAM_WS_METHODS,
+  SCIENT_SCIENTIFIC_WS_METHODS,
+  WsAnalysisInspectRuntimesRpc,
+  WsScientificRpcGroup,
+} from "./scient/scientificRpcs.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Scient skill RPCs.
+import {
+  SCIENT_SKILL_WS_METHODS,
+  WsSkillsListRpc,
+  WsSkillsReadDocumentRpc,
+  WsSkillsSetProjectPreferenceRpc,
+  WsSkillsSetUserActivationRpc,
+  WsProviderSkillsSetEnabledRpc,
+} from "./scient/skillRpcs.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Scient provider connection and runtime RPCs.
+import {
+  SCIENT_PROVIDER_CONNECTION_WS_METHODS,
+  WsServerStartProviderConnectionRpc,
+  WsServerCancelProviderConnectionRpc,
+  WsServerSubmitProviderAuthorizationCodeRpc,
+  WsServerDisconnectProviderRpc,
+  WsServerPlanProviderRuntimeRpc,
+  WsServerStartProviderRuntimeRpc,
+  WsServerCancelProviderRuntimeRpc,
+} from "./scient/providerConnectionRpcs.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Scient custom model RPCs.
+import {
+  SCIENT_CUSTOM_MODEL_WS_METHODS,
+  WsServerSaveCustomModelRpc,
+  WsServerRemoveCustomModelRpc,
+  WsServerTestCustomModelRpc,
+} from "./scient/customModelRpcs.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Scient file opening RPCs.
+import {
+  SCIENT_FILE_OPENING_WS_METHODS,
+  WsFilesystemPrepareFileOpenRpc,
+  WsFilesystemResolveFileLinkRpc,
+  WsFilesystemSubscribeFileChangesRpc,
+} from "./scient/fileOpeningRpcs.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Scient document PDF export RPCs.
+import {
+  SCIENT_DOCUMENT_PDF_WS_METHODS,
+  WsDocumentsPublishBrowserPdfExportRpc,
+  WsDocumentsPrepareMarkdownPdfRpc,
+  WsDocumentsPrepareConversationPdfRpc,
+  WsDocumentsPublishDocumentPdfRpc,
+  WsDocumentsReleaseDocumentPdfRpc,
+} from "./scient/documentPdfRpcs.ts";
+// SCIENT-FORK:END
 
 export const WS_METHODS = {
   // Project registry methods
@@ -486,62 +435,28 @@ export const WS_METHODS = {
   projectsEnsureScratch: "projects.ensureScratch",
   projectsCreateNew: "projects.createNew",
 
-  // Scient-owned scientific analysis runtime methods
-  analysisInspectRuntimes: "analysis.inspectRuntimes",
-  analysisConfigureRuntime: "analysis.configureRuntime",
-  analysisVerifyRuntime: "analysis.verifyRuntime",
-  analysisStartRun: "analysis.startRun",
-  analysisCancelRun: "analysis.cancelRun",
-  analysisListRuns: "analysis.listRuns",
-  analysisGetRun: "analysis.getRun",
-  analysisStorageSummary: "analysis.storageSummary",
-  analysisCleanupRun: "analysis.cleanupRun",
-  analysisCleanupProject: "analysis.cleanupProject",
-  analysisPromoteRun: "analysis.promoteRun",
+  // SCIENT-FORK:START — Scient analysis and compute methods.
+  ...SCIENT_SCIENTIFIC_WS_METHODS,
+  // SCIENT-FORK:END
 
-  // Scient-owned stateful scientific compute methods
-  computeInspectRuntimes: "compute.inspectRuntimes",
-  computeRuntimeInventory: "compute.runtimeInventory",
-  computeVerifyRuntime: "compute.verifyRuntime",
-  computeManagedRuntimeStatus: "compute.managedRuntimeStatus",
-  computeManageRuntime: "compute.manageRuntime",
-  computeCancelManagedRuntime: "compute.cancelManagedRuntime",
-  computeStartSession: "compute.startSession",
-  computeListSessions: "compute.listSessions",
-  computeGetSession: "compute.getSession",
-  computeRestartSession: "compute.restartSession",
-  computeStopSession: "compute.stopSession",
-  computeSubmitExecution: "compute.submitExecution",
-  computeCancelExecution: "compute.cancelExecution",
-  computeInterruptSession: "compute.interruptSession",
-  computeListExecutions: "compute.listExecutions",
-  computeListOutputs: "compute.listOutputs",
-  computeInspectVariables: "compute.inspectVariables",
-  subscribeComputeSessions: "subscribe.computeSessions",
-
-  // Scient-owned reusable skills
-  skillsList: "skills.list",
-  skillsReadDocument: "skills.readDocument",
-  skillsSetProjectPreference: "skills.setProjectPreference",
-  skillsSetUserActivation: "skills.setUserActivation",
-  providerSkillsSetEnabled: "providerSkills.setEnabled",
+  // SCIENT-FORK:START — Scient skill methods.
+  ...SCIENT_SKILL_WS_METHODS,
+  // SCIENT-FORK:END
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
 
   // Filesystem methods
   filesystemBrowse: "filesystem.browse",
-  filesystemPrepareFileOpen: "filesystem.prepareFileOpen",
-  filesystemResolveFileLink: "filesystem.resolveFileLink",
-  filesystemSubscribeFileChanges: "filesystem.subscribeFileChanges",
+  // SCIENT-FORK:START — Scient file opening methods.
+  ...SCIENT_FILE_OPENING_WS_METHODS,
+  // SCIENT-FORK:END
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
   assetsCreateUrl: "assets.createUrl",
-  documentsPublishBrowserPdfExport: "documents.publishBrowserPdfExport",
-  documentsPrepareMarkdownPdf: "documents.prepareMarkdownPdf",
-  documentsPublishDocumentPdf: "documents.publishDocumentPdf",
-  documentsPrepareConversationPdf: "documents.prepareConversationPdf",
-  documentsReleaseDocumentPdf: "documents.releaseDocumentPdf",
+  // SCIENT-FORK:START — Scient document PDF export methods.
+  ...SCIENT_DOCUMENT_PDF_WS_METHODS,
+  // SCIENT-FORK:END
   assetsPersistChatAttachments: "assets.persistChatAttachments",
   attachmentsCreateUploadUrl: "attachments.createUploadUrl",
   attachmentsDelete: "attachments.delete",
@@ -618,13 +533,9 @@ export const WS_METHODS = {
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
   serverRefreshProviders: "server.refreshProviders",
-  serverStartProviderConnection: "server.startProviderConnection",
-  serverCancelProviderConnection: "server.cancelProviderConnection",
-  serverSubmitProviderAuthorizationCode: "server.submitProviderAuthorizationCode",
-  serverDisconnectProvider: "server.disconnectProvider",
-  serverPlanProviderRuntime: "server.planProviderRuntime",
-  serverStartProviderRuntime: "server.startProviderRuntime",
-  serverCancelProviderRuntime: "server.cancelProviderRuntime",
+  // SCIENT-FORK:START — Scient provider connection and runtime methods.
+  ...SCIENT_PROVIDER_CONNECTION_WS_METHODS,
+  // SCIENT-FORK:END
   serverUpdateProvider: "server.updateProvider",
   serverUpdateServer: "server.updateServer",
   serverUpdateServerWithProgress: "server.updateServerWithProgress",
@@ -632,9 +543,9 @@ export const WS_METHODS = {
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverRemoveKeybinding: "server.removeKeybinding",
   serverGetSettings: "server.getSettings",
-  serverSaveCustomModel: "server.saveCustomModel",
-  serverRemoveCustomModel: "server.removeCustomModel",
-  serverTestCustomModel: "server.testCustomModel",
+  // SCIENT-FORK:START — Scient custom model methods.
+  ...SCIENT_CUSTOM_MODEL_WS_METHODS,
+  // SCIENT-FORK:END
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverSearchAcpRegistry: "server.searchAcpRegistry",
@@ -729,7 +640,9 @@ export const WS_METHODS = {
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
-  subscribeAnalysisRuns: "subscribeAnalysisRuns",
+  // SCIENT-FORK:START — Scient analysis run stream method.
+  ...SCIENT_ANALYSIS_STREAM_WS_METHODS,
+  // SCIENT-FORK:END
   subscribeDocumentBindingChanges: "documents.subscribeBindingChanges",
   projectsSubscribeFileChanges: "projects.subscribeFileChanges",
 } as const;
@@ -785,51 +698,6 @@ const WsServerUpdateProviderRpc = Rpc.make(WS_METHODS.serverUpdateProvider, {
   payload: ServerProviderUpdateInput,
   success: ServerProviderUpdatedPayload,
   error: Schema.Union([ServerProviderUpdateError, EnvironmentAuthorizationError]),
-});
-
-const WsServerStartProviderConnectionRpc = Rpc.make(WS_METHODS.serverStartProviderConnection, {
-  payload: ProviderConnectionStartInput,
-  success: ServerProviderUpdatedPayload,
-  error: Schema.Union([ProviderConnectionError, EnvironmentAuthorizationError]),
-});
-
-const WsServerCancelProviderConnectionRpc = Rpc.make(WS_METHODS.serverCancelProviderConnection, {
-  payload: ProviderConnectionCancelInput,
-  success: ServerProviderUpdatedPayload,
-  error: Schema.Union([ProviderConnectionError, EnvironmentAuthorizationError]),
-});
-
-const WsServerSubmitProviderAuthorizationCodeRpc = Rpc.make(
-  WS_METHODS.serverSubmitProviderAuthorizationCode,
-  {
-    payload: ProviderConnectionSubmitAuthorizationCodeInput,
-    success: ServerProviderUpdatedPayload,
-    error: Schema.Union([ProviderConnectionError, EnvironmentAuthorizationError]),
-  },
-);
-
-const WsServerDisconnectProviderRpc = Rpc.make(WS_METHODS.serverDisconnectProvider, {
-  payload: ProviderConnectionDisconnectInput,
-  success: ServerProviderUpdatedPayload,
-  error: Schema.Union([ProviderConnectionError, EnvironmentAuthorizationError]),
-});
-
-const WsServerPlanProviderRuntimeRpc = Rpc.make(WS_METHODS.serverPlanProviderRuntime, {
-  payload: ProviderRuntimePlanInput,
-  success: ProviderRuntimePlan,
-  error: Schema.Union([ProviderConnectionError, EnvironmentAuthorizationError]),
-});
-
-const WsServerStartProviderRuntimeRpc = Rpc.make(WS_METHODS.serverStartProviderRuntime, {
-  payload: ProviderRuntimeStartInput,
-  success: ServerProviderUpdatedPayload,
-  error: Schema.Union([ProviderConnectionError, EnvironmentAuthorizationError]),
-});
-
-const WsServerCancelProviderRuntimeRpc = Rpc.make(WS_METHODS.serverCancelProviderRuntime, {
-  payload: ProviderRuntimeCancelInput,
-  success: ServerProviderUpdatedPayload,
-  error: Schema.Union([ProviderConnectionError, EnvironmentAuthorizationError]),
 });
 
 const ProviderSetupRpcError = Schema.Union([ProviderSetupError, EnvironmentAuthorizationError]);
@@ -950,17 +818,6 @@ const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });
 
-const WsServerSaveCustomModelRpc = Rpc.make(WS_METHODS.serverSaveCustomModel, {
-  payload: CustomModelSaveInput,
-  success: CustomModelsSettings,
-  error: Schema.Union([CustomModelError, EnvironmentAuthorizationError]),
-});
-const WsServerRemoveCustomModelRpc = Rpc.make(WS_METHODS.serverRemoveCustomModel, {
-  payload: CustomModelRemoveInput,
-  success: CustomModelsSettings,
-  error: Schema.Union([CustomModelError, EnvironmentAuthorizationError]),
-});
-
 const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
   payload: Schema.Struct({
     patch: ServerSettingsPatch,
@@ -969,46 +826,11 @@ const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
   success: ServerSettings,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });
-const WsServerTestCustomModelRpc = Rpc.make(WS_METHODS.serverTestCustomModel, {
-  payload: CustomModelTestInput,
-  success: Schema.Struct({ revision: Schema.Int }),
-  error: Schema.Union([CustomModelError, EnvironmentAuthorizationError]),
-});
 
 const WsVoiceCorrectTranscriptRpc = Rpc.make(WS_METHODS.voiceCorrectTranscript, {
   payload: VoiceTranscriptCorrectionRequest,
   success: VoiceTranscriptCorrectionResult,
   error: Schema.Union([VoiceTranscriptCorrectionError, EnvironmentAuthorizationError]),
-});
-
-const WsSkillsListRpc = Rpc.make(WS_METHODS.skillsList, {
-  payload: ScientSkillListInput,
-  success: ScientSkillInventory,
-  error: Schema.Union([ScientSkillManagementError, EnvironmentAuthorizationError]),
-});
-
-const WsSkillsReadDocumentRpc = Rpc.make(WS_METHODS.skillsReadDocument, {
-  payload: ScientSkillReadDocumentInput,
-  success: ScientSkillDocument,
-  error: Schema.Union([ScientSkillManagementError, EnvironmentAuthorizationError]),
-});
-
-const WsSkillsSetProjectPreferenceRpc = Rpc.make(WS_METHODS.skillsSetProjectPreference, {
-  payload: ScientSkillSetProjectPreferenceInput,
-  success: ScientSkillInventory,
-  error: Schema.Union([ScientSkillManagementError, EnvironmentAuthorizationError]),
-});
-
-const WsSkillsSetUserActivationRpc = Rpc.make(WS_METHODS.skillsSetUserActivation, {
-  payload: ScientSkillSetUserActivationInput,
-  success: ScientSkillInventory,
-  error: Schema.Union([ScientSkillManagementError, EnvironmentAuthorizationError]),
-});
-
-const WsProviderSkillsSetEnabledRpc = Rpc.make(WS_METHODS.providerSkillsSetEnabled, {
-  payload: ProviderSkillSetEnabledInput,
-  success: ProviderSkillSetEnabledResult,
-  error: Schema.Union([ProviderSkillManagementError, EnvironmentAuthorizationError]),
 });
 
 const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
@@ -1488,196 +1310,6 @@ const WsProjectsCreateNewRpc = Rpc.make(WS_METHODS.projectsCreateNew, {
   error: Schema.Union([OrchestrationDispatchCommandError, EnvironmentAuthorizationError]),
 });
 
-const AnalysisRpcError = Schema.Union([AnalysisOperationError, EnvironmentAuthorizationError]);
-
-const WsAnalysisInspectRuntimesRpc = Rpc.make(WS_METHODS.analysisInspectRuntimes, {
-  payload: AnalysisInspectRuntimesInput,
-  success: AnalysisRuntimeInspection,
-  error: AnalysisRpcError,
-});
-
-const WsAnalysisConfigureRuntimeRpc = Rpc.make(WS_METHODS.analysisConfigureRuntime, {
-  payload: AnalysisConfigureRuntimeInput,
-  success: AnalysisRuntimeInspection,
-  error: AnalysisRpcError,
-});
-
-const WsAnalysisVerifyRuntimeRpc = Rpc.make(WS_METHODS.analysisVerifyRuntime, {
-  payload: AnalysisVerifyRuntimeInput,
-  success: AnalysisRuntimeProfile,
-  error: AnalysisRpcError,
-});
-
-const WsAnalysisStartRunRpc = Rpc.make(WS_METHODS.analysisStartRun, {
-  payload: AnalysisStartRunInput,
-  success: AnalysisRunSnapshot,
-  error: AnalysisRpcError,
-});
-
-const WsAnalysisCancelRunRpc = Rpc.make(WS_METHODS.analysisCancelRun, {
-  payload: AnalysisCancelRunInput,
-  success: AnalysisRunSnapshot,
-  error: AnalysisRpcError,
-});
-
-const WsAnalysisListRunsRpc = Rpc.make(WS_METHODS.analysisListRuns, {
-  payload: AnalysisListRunsInput,
-  success: AnalysisListRunsResult,
-  error: AnalysisRpcError,
-});
-
-const WsAnalysisGetRunRpc = Rpc.make(WS_METHODS.analysisGetRun, {
-  payload: AnalysisGetRunInput,
-  success: AnalysisRunSnapshot,
-  error: AnalysisRpcError,
-});
-
-const WsAnalysisStorageSummaryRpc = Rpc.make(WS_METHODS.analysisStorageSummary, {
-  payload: AnalysisStorageSummaryInput,
-  success: AnalysisStorageSummary,
-  error: AnalysisRpcError,
-});
-
-const WsAnalysisCleanupRunRpc = Rpc.make(WS_METHODS.analysisCleanupRun, {
-  payload: AnalysisCleanupRunInput,
-  success: AnalysisCleanupResult,
-  error: AnalysisRpcError,
-});
-
-const WsAnalysisCleanupProjectRpc = Rpc.make(WS_METHODS.analysisCleanupProject, {
-  payload: AnalysisCleanupProjectInput,
-  success: AnalysisCleanupResult,
-  error: AnalysisRpcError,
-});
-
-const WsAnalysisPromoteRunRpc = Rpc.make(WS_METHODS.analysisPromoteRun, {
-  payload: AnalysisPromoteRunInput,
-  success: AnalysisPromoteRunResult,
-  error: AnalysisRpcError,
-});
-
-const WsSubscribeAnalysisRunsRpc = Rpc.make(WS_METHODS.subscribeAnalysisRuns, {
-  payload: AnalysisSubscribeRunsInput,
-  success: AnalysisRunStreamEvent,
-  error: AnalysisRpcError,
-  stream: true,
-});
-
-const ComputeRpcError = Schema.Union([
-  ComputeGatewayError,
-  ComputeOperationError,
-  EnvironmentAuthorizationError,
-]);
-
-const WsComputeInspectRuntimesRpc = Rpc.make(WS_METHODS.computeInspectRuntimes, {
-  payload: ComputeInspectRuntimesInput,
-  success: ComputeRuntimeInspection,
-  error: ComputeRpcError,
-});
-
-const WsComputeRuntimeInventoryRpc = Rpc.make(WS_METHODS.computeRuntimeInventory, {
-  payload: Schema.Struct({}),
-  success: ComputeRuntimeInventory,
-  error: ComputeRpcError,
-});
-
-const WsComputeVerifyRuntimeRpc = Rpc.make(WS_METHODS.computeVerifyRuntime, {
-  payload: ComputeVerifyRuntimeInput,
-  success: ComputeRuntimeVerification,
-  error: ComputeRpcError,
-});
-
-const WsComputeManagedRuntimeStatusRpc = Rpc.make(WS_METHODS.computeManagedRuntimeStatus, {
-  payload: ComputeManagedRuntimeStatusInput,
-  success: ComputeManagedRuntimeStatus,
-  error: ComputeRpcError,
-});
-
-const WsComputeManageRuntimeRpc = Rpc.make(WS_METHODS.computeManageRuntime, {
-  payload: ComputeManagedRuntimeInput,
-  success: ComputeManagedRuntimeStatus,
-  error: ComputeRpcError,
-});
-
-const WsComputeCancelManagedRuntimeRpc = Rpc.make(WS_METHODS.computeCancelManagedRuntime, {
-  payload: ComputeManagedRuntimeStatusInput,
-  success: ComputeManagedRuntimeStatus,
-  error: ComputeRpcError,
-});
-
-const WsComputeStartSessionRpc = Rpc.make(WS_METHODS.computeStartSession, {
-  payload: ComputeStartProjectSessionInput,
-  success: ComputeSessionRecord,
-  error: ComputeRpcError,
-});
-
-const WsComputeListSessionsRpc = Rpc.make(WS_METHODS.computeListSessions, {
-  payload: ComputeProjectInput,
-  success: ComputeListProjectSessionsResult,
-  error: ComputeRpcError,
-});
-
-const WsComputeGetSessionRpc = Rpc.make(WS_METHODS.computeGetSession, {
-  payload: ComputeProjectSessionInput,
-  success: ComputeGetProjectSessionResult,
-  error: ComputeRpcError,
-});
-
-const WsComputeRestartSessionRpc = Rpc.make(WS_METHODS.computeRestartSession, {
-  payload: ComputeProjectSessionCommandInput,
-  success: ComputeSessionRecord,
-  error: ComputeRpcError,
-});
-
-const WsComputeStopSessionRpc = Rpc.make(WS_METHODS.computeStopSession, {
-  payload: ComputeStopProjectSessionInput,
-  success: ComputeSessionRecord,
-  error: ComputeRpcError,
-});
-
-const WsComputeSubmitExecutionRpc = Rpc.make(WS_METHODS.computeSubmitExecution, {
-  payload: ComputeSubmitProjectExecutionInput,
-  success: ComputeExecutionRecord,
-  error: ComputeRpcError,
-});
-
-const WsComputeCancelExecutionRpc = Rpc.make(WS_METHODS.computeCancelExecution, {
-  payload: ComputeProjectExecutionCommandInput,
-  success: ComputeExecutionRecord,
-  error: ComputeRpcError,
-});
-
-const WsComputeInterruptSessionRpc = Rpc.make(WS_METHODS.computeInterruptSession, {
-  payload: ComputeProjectSessionCommandInput,
-  success: ComputeSessionRecord,
-  error: ComputeRpcError,
-});
-
-const WsComputeListExecutionsRpc = Rpc.make(WS_METHODS.computeListExecutions, {
-  payload: ComputeListProjectExecutionsInput,
-  success: ComputeListProjectExecutionsResult,
-  error: ComputeRpcError,
-});
-
-const WsComputeListOutputsRpc = Rpc.make(WS_METHODS.computeListOutputs, {
-  payload: ComputeListProjectOutputsInput,
-  success: ComputeExecutionOutputs,
-  error: ComputeRpcError,
-});
-
-const WsComputeInspectVariablesRpc = Rpc.make(WS_METHODS.computeInspectVariables, {
-  payload: ComputeProjectSessionCommandInput,
-  success: ComputeVariableSnapshot,
-  error: ComputeRpcError,
-});
-
-const WsSubscribeComputeSessionsRpc = Rpc.make(WS_METHODS.subscribeComputeSessions, {
-  payload: ComputeProjectInput,
-  success: ComputeSessionStreamEvent,
-  error: ComputeRpcError,
-  stream: true,
-});
-
 const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
   payload: LaunchEditorInput,
   error: Schema.Union([ExternalLauncherError, EnvironmentAuthorizationError]),
@@ -1687,25 +1319,6 @@ const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
   payload: FilesystemBrowseInput,
   success: FilesystemBrowseResult,
   error: Schema.Union([FilesystemBrowseError, EnvironmentAuthorizationError]),
-});
-
-const WsFilesystemPrepareFileOpenRpc = Rpc.make(WS_METHODS.filesystemPrepareFileOpen, {
-  payload: EnvironmentFilePrepareInput,
-  success: EnvironmentFilePrepareResult,
-  error: Schema.Union([EnvironmentFilePrepareError, EnvironmentAuthorizationError]),
-});
-
-const WsFilesystemResolveFileLinkRpc = Rpc.make(WS_METHODS.filesystemResolveFileLink, {
-  payload: EnvironmentFileLinkResolveInput,
-  success: EnvironmentFileLinkResolution,
-  error: Schema.Union([EnvironmentFilePrepareError, EnvironmentAuthorizationError]),
-});
-
-const WsFilesystemSubscribeFileChangesRpc = Rpc.make(WS_METHODS.filesystemSubscribeFileChanges, {
-  payload: EnvironmentFilePrepareInput,
-  success: EnvironmentFileChangeEvent,
-  error: Schema.Union([EnvironmentFilePrepareError, EnvironmentAuthorizationError]),
-  stream: true,
 });
 
 const WsAgentSessionsScanRpc = Rpc.make(WS_METHODS.agentSessionsScan, {
@@ -1731,37 +1344,6 @@ const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   error: Schema.Union([AssetAccessError, EnvironmentAuthorizationError]),
 });
 
-const WsDocumentsPublishBrowserPdfExportRpc = Rpc.make(
-  WS_METHODS.documentsPublishBrowserPdfExport,
-  {
-    payload: BrowserPdfExportInput,
-    success: BrowserPdfExportResult,
-    error: Schema.Union([BrowserPdfExportError, EnvironmentAuthorizationError]),
-  },
-);
-const WsDocumentsPrepareMarkdownPdfRpc = Rpc.make(WS_METHODS.documentsPrepareMarkdownPdf, {
-  payload: ScientMarkdownPdfPrepareInput,
-  success: ScientDocumentPdfPrepared,
-  error: Schema.Union([ScientDocumentPdfExportError, EnvironmentAuthorizationError]),
-});
-const WsDocumentsPrepareConversationPdfRpc = Rpc.make(WS_METHODS.documentsPrepareConversationPdf, {
-  payload: ScientConversationExportRequest,
-  success: ScientDocumentPdfPrepared,
-  error: Schema.Union([
-    ScientDocumentPdfExportError,
-    ScientConversationExportError,
-    EnvironmentAuthorizationError,
-  ]),
-});
-const WsDocumentsPublishDocumentPdfRpc = Rpc.make(WS_METHODS.documentsPublishDocumentPdf, {
-  payload: ScientDocumentPdfPublishInput,
-  success: ScientDocumentPdfPublished,
-  error: Schema.Union([ScientDocumentPdfExportError, EnvironmentAuthorizationError]),
-});
-const WsDocumentsReleaseDocumentPdfRpc = Rpc.make(WS_METHODS.documentsReleaseDocumentPdf, {
-  payload: ScientDocumentPdfReleaseInput,
-  error: EnvironmentAuthorizationError,
-});
 const WsAssetsPersistChatAttachmentsRpc = Rpc.make(WS_METHODS.assetsPersistChatAttachments, {
   payload: PersistChatAttachmentsInput,
   success: PersistChatAttachmentsResult,
@@ -2403,37 +1985,9 @@ export const WsRepositoryRpcGroup = RpcGroup.make(
   WsAnalysisInspectRuntimesRpc,
 );
 
-export const WsScientificRpcGroup = RpcGroup.make(
-  WsAnalysisConfigureRuntimeRpc,
-  WsAnalysisVerifyRuntimeRpc,
-  WsAnalysisStartRunRpc,
-  WsAnalysisCancelRunRpc,
-  WsAnalysisListRunsRpc,
-  WsAnalysisGetRunRpc,
-  WsAnalysisStorageSummaryRpc,
-  WsAnalysisCleanupRunRpc,
-  WsAnalysisCleanupProjectRpc,
-  WsAnalysisPromoteRunRpc,
-  WsSubscribeAnalysisRunsRpc,
-  WsComputeInspectRuntimesRpc,
-  WsComputeRuntimeInventoryRpc,
-  WsComputeVerifyRuntimeRpc,
-  WsComputeManagedRuntimeStatusRpc,
-  WsComputeManageRuntimeRpc,
-  WsComputeCancelManagedRuntimeRpc,
-  WsComputeStartSessionRpc,
-  WsComputeListSessionsRpc,
-  WsComputeGetSessionRpc,
-  WsComputeRestartSessionRpc,
-  WsComputeStopSessionRpc,
-  WsComputeSubmitExecutionRpc,
-  WsComputeCancelExecutionRpc,
-  WsComputeInterruptSessionRpc,
-  WsComputeListExecutionsRpc,
-  WsComputeListOutputsRpc,
-  WsComputeInspectVariablesRpc,
-  WsSubscribeComputeSessionsRpc,
-);
+// SCIENT-FORK:START — the analysis and compute group lives in scient/scientificRpcs.ts.
+export { WsScientificRpcGroup };
+// SCIENT-FORK:END
 
 export const WsWorkspaceRpcGroup = RpcGroup.make(
   WsShellOpenInEditorRpc,

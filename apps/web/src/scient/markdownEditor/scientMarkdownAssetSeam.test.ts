@@ -3,10 +3,12 @@ import * as NodeFS from "node:fs";
 
 import { describe, expect, it } from "vite-plus/test";
 
-const contractSource = NodeFS.readFileSync(
-  new URL("../../../../../packages/contracts/src/environmentHttp.ts", import.meta.url),
-  "utf8",
-);
+const contractSource = [
+  "../../../../../packages/contracts/src/environmentHttp.ts",
+  "../../../../../packages/contracts/src/scient/environmentHttpGroups.ts",
+]
+  .map((path) => NodeFS.readFileSync(new URL(path, import.meta.url), "utf8"))
+  .join("\n");
 const serverSource = NodeFS.readFileSync(
   new URL("../../../../server/src/scient/markdown/http.ts", import.meta.url),
   "utf8",

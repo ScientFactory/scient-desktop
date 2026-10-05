@@ -1,7 +1,18 @@
 import { memo, useState } from "react";
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
+import type { TurnId } from "@t3tools/contracts";
 import type { MessagesTimelineRow } from "~/components/chat/MessagesTimeline.logic";
 import { cn } from "~/lib/utils";
+import type { ActivePlanState } from "~/session-logic";
+
+export interface TurnPlanEntry {
+  /** Stable per-turn row id (plans rewrite constantly; the row must not churn). */
+  id: string;
+  /** Anchor timestamp: the turn's first plan activity, so the chip renders where planning began. */
+  createdAt: string;
+  turnId: TurnId | null;
+  plan: ActivePlanState;
+}
 
 /** Inline folded plan chip: one row per turn that produced plan/todo steps. */
 export const TurnPlanTimelineRow = memo(function TurnPlanTimelineRow({
