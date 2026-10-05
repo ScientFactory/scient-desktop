@@ -14,7 +14,6 @@
   "src/project/AgentSessionScanner.test.ts": 4.3,
   "src/provider/CodexChatGptAuth.test.ts": 5.9,
   "src/provider/Drivers/AntigravityDriver.test.ts": 2,
-  "src/provider/Layers/CodexCollabRuntime.integration.test.ts": 3.4,
   "src/provider/Layers/CursorProvider.test.ts": 1.4,
   "src/provider/Layers/GrokProvider.test.ts": 0.7,
   "src/provider/Layers/ProviderService.test.ts": 0.5,
