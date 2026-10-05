@@ -419,6 +419,7 @@ function makeTestLayer(input: {
     readonly configureMcp?: boolean;
   }) => Effect.Effect<void>;
   readonly failReleaseEventWrites?: boolean;
+  readonly onAuthenticationFailure?: ProviderRegistry.ProviderRegistry["Service"]["setProviderAuthenticationFailure"];
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly hangSessionScopeClose?: boolean;
   readonly beforeUnload?: Effect.Effect<void>;
@@ -481,8 +482,10 @@ function makeTestLayer(input: {
           registryLayer,
           Layer.succeed(ProviderRegistry.ProviderRegistry, {
             ...makeProviderRegistryMock(),
-            setProviderAuthenticationFailure: () =>
-              Effect.die("Unexpected authentication invalidation in scripted manager test."),
+            setProviderAuthenticationFailure:
+              input.onAuthenticationFailure ??
+              (() =>
+                Effect.die("Unexpected authentication invalidation in scripted manager test.")),
           }),
           configuredEventSinkLayer,
           IdAllocator.layer,
@@ -540,7 +543,8 @@ function makeBrowserAccessProject(projectId: ProjectId): Project {
 
 function runBrowserAccessScenario(input: {
   readonly enableAgentBrowserAccess: boolean;
-  readonly projectOverride: boolean;
+  readonly enableAgentDeviceAccess?: boolean;
+  readonly projectOverride?: boolean;
   readonly deviceOverride?: boolean;
   readonly createThread?: boolean;
   readonly projectExists?: boolean;
@@ -578,6 +582,14 @@ function runBrowserAccessScenario(input: {
       yield* manager
         .open({ threadId, providerSessionId, modelSelection, runtimePolicy })
         .pipe(Effect.ignore);
+      const captured = (yield* Ref.get(mcpConfigs))[0];
+      assert.isDefined(captured);
+      const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const scope = yield* registry.resolve(
+        captured!.authorizationHeader.replace(/^Bearer\s+/, ""),
+      );
+      assert.isDefined(scope);
+      assert.deepEqual(scope!.capabilities, captured!.capabilities);
     }).pipe(
       Effect.provide(
         makeTestLayer({
@@ -587,9 +599,14 @@ function runBrowserAccessScenario(input: {
           projectServiceLayer,
           serverSettingsLayer: ServerSettings.layerTest({
             enableAgentBrowserAccess: input.enableAgentBrowserAccess,
+            ...(input.enableAgentDeviceAccess === undefined
+              ? {}
+              : { enableAgentDeviceAccess: input.enableAgentDeviceAccess }),
             projectSettingsOverrides: {
               [projectId]: {
-                enableAgentBrowserAccess: input.projectOverride,
+                ...(input.projectOverride === undefined
+                  ? {}
+                  : { enableAgentBrowserAccess: input.projectOverride }),
                 ...(input.deviceOverride === undefined
                   ? {}
                   : { enableAgentDeviceAccess: input.deviceOverride }),
@@ -1353,6 +1370,22 @@ it.effect("ProviderSessionManagerV2 fails browser access closed for a missing th
     assert.isDefined(captured);
     assert.equal(captured?.capabilities.has("preview"), false);
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 withholds only the overridden capability for a missing project",
+  () =>
+    Effect.gen(function* () {
+      const captured = yield* runBrowserAccessScenario({
+        enableAgentBrowserAccess: true,
+        enableAgentDeviceAccess: true,
+        deviceOverride: false,
+        projectExists: false,
+      });
+      assert.isDefined(captured);
+      assert.isTrue(captured!.capabilities.has("preview"));
+      assert.isFalse(captured!.capabilities.has("device"));
+    }),
 );
 
 it.effect("ProviderSessionManagerV2 revokes MCP credentials when release persistence fails", () =>
@@ -3896,3 +3929,95 @@ for (const driver of [
       }),
   );
 }
+
+it.effect(
+  "forwards only the owned native authentication control signal to the provider registry",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const failures = yield* Ref.make<
+        ReadonlyArray<{ readonly instanceId: ProviderInstanceId; readonly message: string }>
+      >([]);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:owned-native-auth");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const subscription = yield* runtime.subscribeEvents!;
+        const consumed = yield* subscription.events.pipe(
+          Stream.filter((event) => event.type === "turn.terminal"),
+          Stream.runHead,
+          Effect.forkScoped,
+        );
+        const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+        assert.ok(queue);
+        // Ordinary status and another driver's private signal confer no authority.
+        yield* Queue.offer(queue, {
+          type: "provider_session.updated",
+          driver: CODEX_DRIVER,
+          providerSession: {
+            ...runtime.providerSession,
+            status: "ready",
+            lastError: "Sign-in telemetry",
+            updatedAt: now,
+          },
+        });
+        yield* Queue.offer(queue, {
+          type: "authentication.invalidated",
+          driver: ProviderDriverKind.make("claudeAgent"),
+          message: "Foreign runtime",
+        });
+        yield* Queue.offer(queue, {
+          type: "authentication.invalidated",
+          driver: CODEX_DRIVER,
+          message: "OAuth access token has been revoked.",
+        });
+        yield* Queue.offer(queue, {
+          type: "turn.terminal",
+          driver: CODEX_DRIVER,
+          providerThreadId: idAllocator.derive.providerThread({
+            driver: CODEX_DRIVER,
+            nativeThreadId: "native-auth",
+          }),
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: CODEX_DRIVER,
+            nativeTurnId: "native-auth",
+          }),
+          runOrdinal: 1,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        assert.isTrue(Option.isSome(yield* Fiber.join(consumed)));
+        assert.deepEqual(yield* Ref.get(failures), [
+          {
+            instanceId: modelSelection.instanceId,
+            message: "OAuth access token has been revoked.",
+          },
+        ]);
+      }).pipe(
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 60_000,
+            onAuthenticationFailure: (failure) =>
+              Ref.update(failures, (current) => [...current, failure]).pipe(Effect.as([])),
+          }),
+        ),
+      );
+    }),
+);

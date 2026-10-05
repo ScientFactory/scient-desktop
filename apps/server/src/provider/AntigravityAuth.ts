@@ -58,6 +58,8 @@ interface OwnedProcess {
 
 export interface AntigravityAuth {
   readonly controller: ProviderAuthController;
+  /** Physical process teardown for connection actions; manager-owned sessions remain separate. */
+  readonly stopProcesses: Effect.Effect<void>;
   /** Tracks startup and the process scope so sign-out cannot leave cached credentials in memory. */
   readonly withProcess: <A, E, R>(
     stop: Effect.Effect<void>,
@@ -67,7 +69,7 @@ export interface AntigravityAuth {
 
 export type AntigravityAuthRuntime = Pick<
   AcpSessionRuntime["Service"],
-  "initialize" | "start" | "request"
+  "initialize" | "start" | "logout"
 >;
 
 export interface AntigravityAuthOptions<
@@ -479,7 +481,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
                   "This Antigravity version does not support sign-out. Update the provider.",
                 );
               }
-              yield* runtime.request("logout", {});
+              yield* runtime.logout;
               yield* options.onSignedOut;
             }).pipe(
               Effect.scoped,
@@ -555,5 +557,5 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
     }),
   );
 
-  return { controller, withProcess };
+  return { controller, withProcess, stopProcesses: stopOwnedProcesses };
 });

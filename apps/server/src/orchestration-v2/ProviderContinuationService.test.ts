@@ -1,5 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import {
+  ProviderInstanceId,
+  ProviderSessionId,
   MessageId,
   ProviderDriverKind,
   ProviderThreadId,
@@ -22,6 +24,11 @@ import * as IdAllocator from "./IdAllocator.ts";
 import * as ProviderContinuationRequests from "./ProviderContinuationRequests.ts";
 import * as ProviderContinuationService from "./ProviderContinuationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import {
+  OrchestratorDispatchError,
+  OrchestratorProjectionError,
+  OrchestratorProviderWorkDeferredError,
+} from "./Orchestrator.ts";
 
 const threadId = ThreadId.make("thread-provider-continuation");
 const providerThreadId = ProviderThreadId.make("provider-thread-continuation");
@@ -818,3 +825,200 @@ describe("ProviderContinuationService", () => {
     });
   });
 });
+
+it.effect.each(["admit", "stop", "replace"] as const)(
+  "retains deferred initiated identity and re-enters its generation guard: %s",
+  (scenario) =>
+    Effect.gen(function* () {
+      const commands: Array<
+        Parameters<ThreadManagementService.ThreadManagementService["Service"]["dispatch"]>[0]
+      > = [];
+      const firstAttempt = yield* Deferred.make<void>();
+      const instanceId = ProviderInstanceId.make("initiated-clock-instance");
+      const initiated = {
+        providerInstanceId: instanceId,
+        providerSessionId: ProviderSessionId.make("initiated-clock-session"),
+        workId: "one-generation",
+        modelSelection: { instanceId, model: "clock-model" },
+        runtimePolicy: {
+          cwd: "/repo",
+          runtimeMode: "full-access" as const,
+          interactionMode: "default" as const,
+        },
+      };
+      const guard = yield* makeGuard();
+      const dispatchIfCurrent = yield* guard.capture;
+      let clears = 0;
+      const threads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getThreadRecords: () => Effect.succeed(projection),
+        dispatch: (command) =>
+          Effect.gen(function* () {
+            commands.push(command);
+            if (commands.length === 1) {
+              yield* Deferred.succeed(firstAttempt, undefined);
+              return yield* new OrchestratorProviderWorkDeferredError({
+                commandId: command.commandId,
+                threadId,
+                workId: initiated.workId,
+              });
+            }
+            return { sequence: 1, storedEvents: [] };
+          }),
+      });
+      const worker = ProviderContinuationService.workerLive.pipe(
+        Layer.provide(
+          Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, threads),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        yield* requests.offer({
+          ...request(dispatchIfCurrent),
+          initiated,
+          clearIfCurrent: () =>
+            Effect.sync(() => {
+              clears++;
+            }),
+        });
+        yield* Deferred.await(firstAttempt);
+        yield* Effect.yieldNow;
+        assert.lengthOf(commands, 1);
+        assert.equal(clears, 0);
+        if (scenario === "stop") yield* guard.invalidate;
+        if (scenario === "replace") yield* guard.capture;
+        yield* TestClock.adjust("99 millis");
+        assert.lengthOf(commands, 1);
+        yield* TestClock.adjust("1 millis");
+        yield* Effect.yieldNow;
+        assert.equal(clears, 0);
+        if (scenario === "admit") {
+          assert.lengthOf(commands, 2);
+          assert.deepEqual(commands[1], commands[0]);
+        } else assert.lengthOf(commands, 1);
+        yield* TestClock.adjust("5 seconds");
+        yield* Effect.yieldNow;
+        assert.lengthOf(commands, scenario === "admit" ? 2 : 1);
+      }).pipe(
+        Effect.provide(Layer.merge(ProviderContinuationRequests.layer, worker)),
+        Effect.scoped,
+      );
+    }),
+);
+
+it.effect.each(["archive", "delete", "read-failure", "dispatch-failure"] as const)(
+  "resets deferred initiated retry bookkeeping after permanent disposal: %s",
+  (scenario) =>
+    Effect.gen(function* () {
+      const commands: Array<
+        Parameters<ThreadManagementService.ThreadManagementService["Service"]["dispatch"]>[0]
+      > = [];
+      const attempts = yield* Queue.unbounded<void>();
+      const disposed = yield* Queue.unbounded<void>();
+      const guard = yield* makeGuard();
+      const instanceId = ProviderInstanceId.make("retry-cleanup-instance");
+      const initiated = {
+        providerInstanceId: instanceId,
+        providerSessionId: ProviderSessionId.make("retry-cleanup-session"),
+        workId: "synthetic-counter-reset",
+        modelSelection: { instanceId, model: "fixture" },
+        runtimePolicy: {
+          cwd: "/repo",
+          runtimeMode: "full-access" as const,
+          interactionMode: "default" as const,
+        },
+      };
+      let dropping = false;
+      let eligible = false;
+      let clears = 0;
+      const threads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getThreadRecords: () =>
+          Effect.suspend(() => {
+            if (dropping && scenario === "read-failure")
+              return Effect.fail(new OrchestratorProjectionError({ threadId }));
+            return Effect.succeed({
+              ...projection,
+              thread: {
+                ...projection.thread,
+                archivedAt:
+                  dropping && scenario === "archive"
+                    ? DateTime.makeUnsafe("2026-10-05T00:00:00Z")
+                    : null,
+                deletedAt:
+                  dropping && scenario === "delete"
+                    ? DateTime.makeUnsafe("2026-10-05T00:00:00Z")
+                    : null,
+              },
+            });
+          }),
+        dispatch: (command) =>
+          Effect.gen(function* () {
+            commands.push(command);
+            if (dropping && scenario === "dispatch-failure")
+              return yield* new OrchestratorDispatchError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause: "Permanent owner failure",
+              });
+            if (eligible) return { sequence: 1, storedEvents: [] };
+            return yield* new OrchestratorProviderWorkDeferredError({
+              commandId: command.commandId,
+              threadId,
+              workId: initiated.workId,
+            });
+          }).pipe(Effect.ensuring(Queue.offer(attempts, undefined))),
+      });
+      const worker = ProviderContinuationService.workerLive.pipe(
+        Layer.provide(
+          Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, threads),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        const offer = Effect.fnUntraced(function* () {
+          yield* requests.offer({
+            ...request(yield* guard.capture),
+            initiated,
+            clearIfCurrent: () =>
+              Effect.sync(() => {
+                clears++;
+              }).pipe(Effect.andThen(Queue.offer(disposed, undefined)), Effect.asVoid),
+          });
+        });
+        yield* offer();
+        yield* Queue.take(attempts);
+        assert.lengthOf(commands, 1);
+        assert.equal(clears, 0);
+        dropping = true;
+        yield* TestClock.adjust("99 millis");
+        assert.equal(clears, 0);
+        yield* TestClock.adjust("1 millis");
+        yield* Queue.take(disposed);
+        assert.equal(clears, 1);
+        const afterDrop = scenario === "dispatch-failure" ? 2 : 1;
+        assert.lengthOf(commands, afterDrop);
+        while (Option.isSome(yield* Queue.poll(attempts))) {
+          /* consume the terminal attempt */
+        }
+        dropping = false;
+        // Reuse the synthetic identity to observe map reset rather than merely
+        // counting disposal. A leaked key would schedule this retry at 200ms.
+        yield* offer();
+        yield* Queue.take(attempts);
+        assert.lengthOf(commands, afterDrop + 1);
+        eligible = true;
+        yield* TestClock.adjust("99 millis");
+        assert.lengthOf(commands, afterDrop + 1);
+        yield* TestClock.adjust("1 millis");
+        yield* Queue.take(attempts);
+        assert.lengthOf(commands, afterDrop + 2);
+        assert.deepEqual(commands.at(-1), commands.at(-2));
+        assert.deepEqual(commands.at(-1), commands[0]);
+        assert.equal(clears, 1);
+        yield* TestClock.adjust("5 seconds");
+        assert.lengthOf(commands, afterDrop + 2);
+      }).pipe(
+        Effect.provide(Layer.merge(ProviderContinuationRequests.layer, worker)),
+        Effect.scoped,
+      );
+    }),
+);

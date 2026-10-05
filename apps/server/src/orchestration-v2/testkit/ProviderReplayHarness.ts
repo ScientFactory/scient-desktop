@@ -3,7 +3,11 @@ import type { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { ProviderDriverKind, ProviderReplayTranscript } from "@t3tools/contracts";
+import type {
+  ProviderDriverKind,
+  ProviderReplayTranscript,
+  ResponseStreamingMode,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -206,6 +210,9 @@ export function runOrchestratorV2ProviderReplayScenario<
     /** Auth integration tests must supply the actual snapshot registry. */
     readonly providerRegistryLayer?: Layer.Layer<ProviderRegistry.ProviderRegistry>;
     readonly runtimePolicyLayer?: Layer.Layer<RuntimePolicy.RuntimePolicyV2>;
+    readonly responseStreamingMode?: ResponseStreamingMode;
+    /** Inject an external Git process failure while retaining native checkpoint services. */
+    readonly vcsProcessLayer?: Layer.Layer<VcsProcess.VcsProcess>;
     // Start continuation runs for provider wake turns, as the live runtime does.
     // Off by default: most fixtures record no wake turn.
     readonly runContinuationWorker?: boolean;
@@ -344,6 +351,9 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     /** Auth integration tests must supply the actual snapshot registry. */
     readonly providerRegistryLayer?: Layer.Layer<ProviderRegistry.ProviderRegistry>;
     readonly runtimePolicyLayer?: Layer.Layer<RuntimePolicy.RuntimePolicyV2>;
+    readonly responseStreamingMode?: ResponseStreamingMode;
+    /** Inject an external Git process failure while retaining native checkpoint services. */
+    readonly vcsProcessLayer?: Layer.Layer<VcsProcess.VcsProcess>;
     // Start continuation runs for provider wake turns, as the live runtime does.
     // Off by default: most fixtures record no wake turn.
     readonly runContinuationWorker?: boolean;
@@ -400,7 +410,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   const serverSettingsLayer =
     options.serverSettingsLayer ??
     ServerSettings.layerTest({
-      responseStreamingMode: "turn",
+      responseStreamingMode: options.responseStreamingMode ?? "turn",
       ...(options.continueThreadsAfterServerUpdate === undefined
         ? {}
         : { continueThreadsAfterServerUpdate: options.continueThreadsAfterServerUpdate }),
@@ -437,7 +447,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     Layer.provide(Layer.mergeAll(storesLayer, eventSinkProvided, IdAllocator.layer)),
   );
   const vcsDriverRegistryLayer = VcsDriverRegistry.layer.pipe(
-    Layer.provide(VcsProcess.layer),
+    Layer.provide(options.vcsProcessLayer ?? VcsProcess.layer),
     Layer.provide(serverConfigLayer),
     Layer.provide(NodeServices.layer),
   );

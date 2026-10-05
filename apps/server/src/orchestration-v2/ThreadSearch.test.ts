@@ -158,6 +158,13 @@ it.layer(TestLayer)("ThreadSearch", (it) => {
         message(ThreadId.make("thread:deleted"), "deleted", "user", "needle deleted"),
         thread(ThreadId.make("thread:orphaned"), deletedProject),
         message(ThreadId.make("thread:orphaned"), "orphaned", "user", "needle orphaned"),
+        thread(ThreadId.make("thread:missing-project"), ProjectId.make("project:never-created")),
+        message(
+          ThreadId.make("thread:missing-project"),
+          "missing-project",
+          "user",
+          "needle unresolved project",
+        ),
       ];
       yield* Effect.forEach(events, projections.apply, { discard: true });
 
@@ -170,6 +177,7 @@ it.layer(TestLayer)("ThreadSearch", (it) => {
         ],
       );
       assert.lengthOf((yield* search.search({ query: "needle", limit: 1 })).matches, 1);
+      assert.deepEqual((yield* search.search({ query: "unresolved project" })).matches, []);
       // LIKE wildcards in the query match literally.
       assert.deepEqual((yield* search.search({ query: "ne%le" })).matches, []);
     }),

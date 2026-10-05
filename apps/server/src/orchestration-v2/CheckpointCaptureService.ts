@@ -93,6 +93,7 @@ export const layer: Layer.Layer<
         rootNode === undefined ||
         scope === undefined ||
         rootNode.checkpointScopeId !== scope.id ||
+        !CheckpointService.rootScopeWorkspaceMatches(scope) ||
         providerThread === undefined
       ) {
         return yield* new CheckpointCaptureExecutionError({

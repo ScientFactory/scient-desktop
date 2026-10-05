@@ -906,7 +906,9 @@ export function createEmptyThreadDraft(): ComposerThreadDraftState {
   };
 }
 
-function composerImageDedupKey(image: ComposerImageAttachment): string {
+export function composerImageDedupKey(
+  image: Pick<ComposerImageAttachment, "mimeType" | "sizeBytes" | "name">,
+): string {
   // Keep this independent from File.lastModified so dedupe is stable for hydrated
   // images reconstructed from localStorage (which get a fresh lastModified value).
   return `${image.mimeType}\u0000${image.sizeBytes}\u0000${image.name}`;
