@@ -893,8 +893,6 @@ export function useThreadOutboxDrain(): void {
           settings: sendSettings,
           attachments: prepared.attachments,
           itemCount: thread.itemCount,
-          inlineMessageContext:
-            currentConfig.environment.capabilities.inlineMessageContext === true,
         }),
       });
       const failure = reportFailure(deliveryResult, "start-turn");
@@ -1016,7 +1014,6 @@ export function useThreadOutboxDrain(): void {
               queuedMessage.attachments,
               prepared.attachments,
             ),
-            currentConfig.environment.capabilities.inlineMessageContext === true,
           ),
           uploadedAttachments: prepared.attachments,
           modelSelection: sendSettings.modelSelection,

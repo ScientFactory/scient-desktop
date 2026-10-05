@@ -5,16 +5,11 @@ export interface AnswerSource {
   readonly latestTurn?: OrchestrationLatestTurn | null | undefined;
 }
 
-/** An explicit null from a new server must not resurrect a reverted answer. */
+/** The native projection owns the latest answer, including clearing it after a revert. */
 export function completedAnswer(
   source: AnswerSource | null | undefined,
 ): ScientCompletedAnswer | null {
-  if (!source) return null;
-  if (source.latestCompletedAnswer !== undefined) return source.latestCompletedAnswer;
-  const turn = source.latestTurn;
-  return turn?.state === "completed" && turn.completedAt && turn.assistantMessageId
-    ? { turnId: turn.turnId, messageId: turn.assistantMessageId, completedAt: turn.completedAt }
-    : null;
+  return source?.latestCompletedAnswer ?? null;
 }
 
 export function hasUnreadAnswer(source: AnswerSource, lastVisitedAt: string | undefined): boolean {

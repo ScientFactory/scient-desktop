@@ -966,6 +966,9 @@ export const OrchestrationV2ContextHandoff = Schema.Struct({
   summaryMessageId: Schema.NullOr(MessageId),
   summaryText: Schema.String,
   // Optional fields keep existing preview events and projections readable without a migration.
+  /** Producer-owned history policy, never native execution authority. Absence is backward compatible:
+   * canonical fork/import provenance may still select Scient; ordinary history keeps generic policy. */
+  budgetPolicy: Schema.optional(Schema.Literal("scient")),
   history: Schema.optional(
     Schema.Struct({
       messages: Schema.Array(OrchestrationV2HistoricalMessage),

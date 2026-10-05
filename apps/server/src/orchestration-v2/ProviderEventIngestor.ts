@@ -1,3 +1,4 @@
+import type { NativeModelCapacityOwner } from "./scient-fork/NativeModelContextWindow.ts";
 import {
   NodeId,
   CommandId,
@@ -212,6 +213,7 @@ export interface ProviderEventIngestorV2Shape {
   ) => Effect.Effect<ReadonlyArray<OrchestrationV2DomainEvent>, ProviderEventIngestorV2Error>;
   readonly ingestNormalized: (
     input: ProviderEventIngestInput & {
+      readonly nativeModelCapacityOwner?: NativeModelCapacityOwner;
       /**
        * Atomically reject mutable provider state emitted by an attempt that
        * lost ownership while the adapter event was in flight.
@@ -367,7 +369,16 @@ export const layer: Layer.Layer<
                 payload: input.event.providerThread,
               }),
             ];
-          case "provider_turn.updated":
+          case "provider_turn.updated": {
+            const turn = input.event.providerTurn;
+            const usage = turn.tokenUsage;
+            // Keep raw adapter reports intact; invalid Codex capacity is unknown canonically.
+            const providerTurn =
+              input.event.driver === "codex" &&
+              usage?.maxTokens != null &&
+              (!Number.isFinite(usage.maxTokens) || usage.maxTokens < 0)
+                ? { ...turn, tokenUsage: { ...usage, maxTokens: null } }
+                : turn;
             return [
               ...(["completed", "interrupted", "failed", "cancelled"].includes(
                 input.event.providerTurn.status,
@@ -381,10 +392,11 @@ export const layer: Layer.Layer<
               yield* makeDomainEvent(input, {
                 type: "provider-turn.updated",
                 ...(input.event.threadId === undefined ? {} : { threadId: input.event.threadId }),
-                payload: input.event.providerTurn,
+                payload: providerTurn,
                 nodeId: input.event.providerTurn.nodeId,
               }),
             ];
+          }
           case "node.updated":
             return [
               yield* makeDomainEvent(input, {
@@ -541,6 +553,9 @@ export const layer: Layer.Layer<
               ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
               threadId: input.threadId,
               ...input.writeIfRunCurrent,
+              ...(input.nativeModelCapacityOwner === undefined
+                ? {}
+                : { nativeModelCapacityOwner: input.nativeModelCapacityOwner }),
               events,
             })
             .pipe(Effect.mapError(mapWriteError));

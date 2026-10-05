@@ -35,7 +35,6 @@ function delivered(stored: QueuedThreadMessage, itemCount = 2) {
     message: stored,
     settings,
     attachments: [],
-    inlineMessageContext: true,
     itemCount,
   });
 }
@@ -80,7 +79,6 @@ describe("existing thread outbox delivery", () => {
     const command = buildExistingThreadOutboxStartTurnInput({
       message: { ...message, text: "" },
       settings,
-      inlineMessageContext: true,
       itemCount: 0,
       attachments: [
         {

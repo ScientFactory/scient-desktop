@@ -1,3 +1,4 @@
+import { expandComposerCitationsForProvider } from "@t3tools/shared/composerCitations";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   ModelSelection,
@@ -1441,7 +1442,15 @@ export const layerWithOptions = (
               }),
             ).pipe(
               Effect.andThen(observeActivity(providerSessionId, markBusy(providerSessionId))),
-              Effect.andThen(runtime.startTurn(input)),
+              Effect.andThen(
+                runtime.startTurn({
+                  ...input,
+                  message: {
+                    ...input.message,
+                    text: expandComposerCitationsForProvider(input.message.text),
+                  },
+                }),
+              ),
               Effect.catch((error) =>
                 observeActivity(providerSessionId, markIdle(providerSessionId)).pipe(
                   Effect.andThen(Effect.fail(error)),
@@ -1450,7 +1459,15 @@ export const layerWithOptions = (
             ),
           steerTurn: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
-              Effect.andThen(runtime.steerTurn(input)),
+              Effect.andThen(
+                runtime.steerTurn({
+                  ...input,
+                  message: {
+                    ...input.message,
+                    text: expandComposerCitationsForProvider(input.message.text),
+                  },
+                }),
+              ),
             ),
           interruptTurn: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(

@@ -75,6 +75,8 @@ export async function previewSourceSha256(repoRoot: string): Promise<string> {
     "scripts/build-conversation-preview.sh",
     "scripts/build-conversation-preview.ps1",
     "scripts/build-desktop-artifact.ts",
+    "scripts/scient/conversationAssociation.ts",
+    "scripts/scient/wslNodePty.ts",
     "scripts/sign-macos.ts",
     "scripts/lib/conversation-preview-build.ts",
     "apps/desktop/scripts/conversation-file-type.mjs",

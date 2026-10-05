@@ -112,7 +112,6 @@ import {
   submitCodexFeedback,
   type CodexFeedbackSubmission,
 } from "@t3tools/client-runtime/state/threads";
-import { resolveThreadLastVisitedAt } from "./Sidebar.logic";
 import { derivePendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
 import {
   parseScopedThreadKey,
@@ -428,7 +427,6 @@ import {
   removeInlineContextReference,
   stripInlineContextReferences,
 } from "../lib/composerContextReferences";
-import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
 import {
   buildMessageContext,
   previewAnnotationContextLabel,
@@ -702,12 +700,6 @@ import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifa
 
 const TIMELINE_SCROLL_CANCEL_SENTINEL = Object.freeze({});
 const EMPTY_FEEDBACK_SUBMISSIONS: ReadonlyArray<CodexFeedbackSubmission> = [];
-// During an active turn the thread's updatedAt advances several times per
-// second, and every server-side visit is a full command dispatch plus a
-// broadcast to all shell subscribers. Mid-turn bumps carry no unread signal
-// (unread flips on run completions, which bypass the throttle), so one
-// watermark per interval is plenty.
-const VISIT_DISPATCH_THROTTLE_MS = 10_000;
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 function useDraftHeroLayoutTransition(
@@ -1867,12 +1859,6 @@ function ChatViewContent(props: ChatViewProps) {
   );
   // SCIENT-FORK:END
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
-  const activeThreadLocalLastVisitedAt = useUiStateStore(
-    (store) => store.threadLastVisitedAtById[routeThreadKey],
-  );
-  const visitThreadMutation = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
-  const lastDispatchedVisitRef = useRef<string | null>(null);
-  const lastVisitDispatchAtRef = useRef(0);
   const settings = useEnvironmentSettings(environmentId);
   const clientSettingsHydrated = useClientSettingsHydrated();
   const setStickyComposerModelSelection = useComposerDraftStore(
@@ -3226,70 +3212,6 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [openOrReuseProjectDraftThread],
   );
-
-  useEffect(() => {
-    if (!serverThread?.id) return;
-    const threadUpdatedAt = Date.parse(serverThread.updatedAt);
-    if (Number.isNaN(threadUpdatedAt)) return;
-    const effectiveLastVisitedAt = resolveThreadLastVisitedAt(
-      serverThread.lastVisitedAt,
-      activeThreadLocalLastVisitedAt,
-    );
-    const lastVisitedAt = effectiveLastVisitedAt ? Date.parse(effectiveLastVisitedAt) : NaN;
-    if (!Number.isNaN(lastVisitedAt) && lastVisitedAt >= threadUpdatedAt) return;
-
-    if (serverThread.lastVisitedAt !== undefined) {
-      // Server-tracked visited state: record the watermark server-side so it
-      // syncs across every device connected to the environment. Dedupe per
-      // watermark — the effect re-runs before the command's echo lands. The
-      // dedupe also keeps a mark-unread on the open thread sticky: the rewind
-      // leaves updatedAt untouched, so the already-dispatched key skips a
-      // fresh visit until new activity lands or the thread is reopened.
-      const dispatchKey = `${routeThreadKey}:${serverThread.updatedAt}`;
-      if (lastDispatchedVisitRef.current === dispatchKey) return;
-      const dispatch = () => {
-        lastDispatchedVisitRef.current = dispatchKey;
-        lastVisitDispatchAtRef.current = Date.now();
-        void visitThreadMutation({
-          environmentId: serverThread.environmentId,
-          input: { threadId: serverThread.id, visitedAt: serverThread.updatedAt },
-        });
-      };
-      // Unread prominence only flips on run completions (hasUnseenCompletion),
-      // so an unseen completion publishes immediately; mid-turn activity bumps
-      // — several per second while a turn streams — ride a trailing throttle,
-      // each rerun swapping the timer so the trailing dispatch carries the
-      // newest watermark.
-      const latestRunCompletedAtMs = serverThread.latestRun?.completedAt
-        ? Date.parse(serverThread.latestRun.completedAt)
-        : NaN;
-      const hasUnseenCompletion =
-        !Number.isNaN(latestRunCompletedAtMs) &&
-        (Number.isNaN(lastVisitedAt) || latestRunCompletedAtMs > lastVisitedAt);
-      const elapsed = Date.now() - lastVisitDispatchAtRef.current;
-      if (hasUnseenCompletion || elapsed >= VISIT_DISPATCH_THROTTLE_MS) {
-        dispatch();
-        return;
-      }
-      const timer = setTimeout(dispatch, VISIT_DISPATCH_THROTTLE_MS - elapsed);
-      return () => clearTimeout(timer);
-    }
-
-    markThreadVisited(
-      scopedThreadKey(scopeThreadRef(serverThread.environmentId, serverThread.id)),
-      serverThread.updatedAt,
-    );
-  }, [
-    activeThreadLocalLastVisitedAt,
-    markThreadVisited,
-    routeThreadKey,
-    serverThread?.environmentId,
-    serverThread?.id,
-    serverThread?.lastVisitedAt,
-    serverThread?.latestRun?.completedAt,
-    serverThread?.updatedAt,
-    visitThreadMutation,
-  ]);
 
   // Once a thread selects an environment, never substitute the primary
   // environment's config while the selected environment is still loading.
@@ -9684,9 +9606,6 @@ function ChatViewContent(props: ChatViewProps) {
                     "The previous request may have started. Open its thread to check before sending again.",
                   );
                 }
-                const supportsInlineMessageContext =
-                  appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
-                    .capabilities.inlineMessageContext === true;
                 requestMayHaveStarted = true;
                 const result = await startThreadTurn({
                   environmentId,
@@ -9696,15 +9615,9 @@ function ChatViewContent(props: ChatViewProps) {
                     message: {
                       messageId: newMessageId(),
                       role: "user",
-                      text:
-                        context && !supportsInlineMessageContext
-                          ? serializeLegacyContextMessage({
-                              text: target.text,
-                              records: context.records,
-                            })
-                          : target.text,
+                      text: target.text,
                       attachments,
-                      ...(context && supportsInlineMessageContext ? { context } : {}),
+                      ...(context ? { context } : {}),
                     },
                     modelSelection: target.selection,
                     titleSeed: title,
@@ -10117,21 +10030,6 @@ function ChatViewContent(props: ChatViewProps) {
                   ),
                 );
                 if (context === undefined) return {};
-                // Read the capability at dispatch time: the upload and persistence
-                // awaits above can span a server reconnect that changes it. Servers
-                // from before inline context drop the records and forward the links
-                // as literal text, so their turns carry the payload the legacy way.
-                const supportsInlineMessageContext =
-                  appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
-                    .capabilities.inlineMessageContext === true;
-                if (!supportsInlineMessageContext) {
-                  return {
-                    text: serializeLegacyContextMessage({
-                      text: outgoingMessageText,
-                      records: context.records,
-                    }),
-                  };
-                }
                 return { context };
               })(),
             },
@@ -10742,15 +10640,8 @@ function ChatViewContent(props: ChatViewProps) {
               message: {
                 messageId: messageIdForSend,
                 role: "user",
-                ...(appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)
-                  ?.environment.capabilities.inlineMessageContext === true
-                  ? { text: outgoingMessageText, ...(context ? { context } : {}) }
-                  : {
-                      text: serializeLegacyContextMessage({
-                        text: outgoingMessageText,
-                        records: context?.records ?? [],
-                      }),
-                    }),
+                text: outgoingMessageText,
+                ...(context ? { context } : {}),
                 attachments: [],
               },
               modelSelection: ctxSelectedModelSelection,

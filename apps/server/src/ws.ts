@@ -14,7 +14,6 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
-import * as SchemaAST from "effect/SchemaAST";
 import { rpcInitialItems } from "./rpcInitialItems.ts";
 import {
   OrchestrationDispatchCommandError,
@@ -35,7 +34,7 @@ import {
   type FileManagerRevealKind,
   type OrchestrationClientOrigin,
   type OrchestrationV2Command,
-  type ClientOrchestrationCommand,
+  type ThreadForkCommand,
   type GitActionProgressEvent,
   type GitManagerServiceError,
   type AcpRegistryImportSessionInput,
@@ -48,7 +47,6 @@ import {
   OrchestrationSearchThreadsError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_V2_WS_METHODS,
-  OrchestrationV2RpcSchemas,
   ORCHESTRATION_PROTOCOL_QUERY_PARAM,
   ORCHESTRATION_PROTOCOL_VERSION,
   OrchestrationV2GetShellSnapshotError,
@@ -1279,58 +1277,10 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
   },
 );
 
-// SCIENT-FORK:START — one wire tag, native V2 authority.
-// `ORCHESTRATION_WS_METHODS.dispatchCommand` and `ORCHESTRATION_V2_WS_METHODS.dispatchCommand`
-// are the same string, so `RpcGroup.make` can hold exactly one handler body under it.
-// `ClientOrchestrationCommand` is still the transport for commands `OrchestrationV2Command`
-// has no schema for, so the single body dispatches on the command itself.
-
-/** Command-type literals of a tagged schema, read from its AST. */
-const commandTypeLiterals = (ast: SchemaAST.AST): ReadonlyArray<string> => {
-  if (SchemaAST.isUnion(ast)) return ast.types.flatMap(commandTypeLiterals);
-  if (SchemaAST.isLiteral(ast)) return typeof ast.literal === "string" ? [ast.literal] : [];
-  if (SchemaAST.isObjects(ast)) {
-    const type = ast.propertySignatures.find((property) => property.name === "type");
-    return type === undefined ? [] : commandTypeLiterals(type.type);
-  }
-  return [];
-};
-
-/**
- * Every command type the V2 dispatch RPC accepts, read from its payload schema
- * so the list cannot drift from it.
- */
-const ORCHESTRATION_V2_COMMAND_TYPES: ReadonlySet<string> = new Set(
-  commandTypeLiterals(OrchestrationV2RpcSchemas.dispatchCommand.input.ast),
-);
-
-/**
- * Routes a `dispatchCommand` payload to the legacy engine.
- *
- * The rule: the V2 intake owns a command when — and only when —
- * `OrchestrationV2Command` declares a schema for that command's `type`. Everything
- * else is a retained compatibility command. The conversation fork has its own
- * V2 service; unsupported legacy commands fail explicitly. Deriving the
- * set from the schema keeps the other direction true too: a new V2 command type
- * routes to the V2 intake without anyone editing this file.
- *
- * `thread.fork` is the one tag both unions declare, and the tag alone cannot separate
- * them. V1's fork names `originThreadId`/`newThreadId`/`workspaceMode` and its result
- * carries `forkAttachmentIdMap`, which web reads; V2's fork names
- * `sourceThreadId`/`targetThreadId`/`sourcePoint` and its result is `{ sequence }`. The
- * tag cannot decide, so the fork's own fields do.
- *
- * The declared guard widens to all of `ClientOrchestrationCommand` on purpose: every
- * V1 union member satisfies it, so the legacy branch keeps upstream's own parameter
- * type, and the V2 branch is left holding only the V2 members V1 does not already
- * cover.
- */
-const isV1OnlyDispatchCommand = (
-  command: ClientOrchestrationCommand | OrchestrationV2Command,
-): command is ClientOrchestrationCommand =>
-  !ORCHESTRATION_V2_COMMAND_TYPES.has(command.type) ||
-  (command.type === "thread.fork" && "originThreadId" in command);
-// SCIENT-FORK:END
+/** Message-boundary forks use Scient's native service alongside native run commands. */
+const isConversationForkCommand = (
+  command: ThreadForkCommand | OrchestrationV2Command,
+): command is ThreadForkCommand => command.type === "thread.fork" && "originThreadId" in command;
 
 const makeWsRpcLayer = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
@@ -2263,25 +2213,18 @@ const makeWsRpcLayer = (
       const handlers0 = WsConversationRpcGroup.of({
         // Retained conversation-fork transport commits native V2 history and effects.
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
-          isV1OnlyDispatchCommand(command)
+          isConversationForkCommand(command)
             ? observeRpcEffect(
                 ORCHESTRATION_WS_METHODS.dispatchCommand,
-                command.type === "thread.fork"
-                  ? startup.enqueueCommand(conversationForks.dispatch(command)).pipe(
-                      Effect.mapError((cause) =>
-                        isOrchestrationDispatchCommandError(cause)
-                          ? cause
-                          : new OrchestrationDispatchCommandError({
-                              message: cause.message,
-                              cause,
-                            }),
-                      ),
-                    )
-                  : Effect.fail(
-                      new OrchestrationDispatchCommandError({
-                        message: "This legacy command is unsupported. Update the client.",
-                      }),
+                startup
+                  .enqueueCommand(conversationForks.dispatch(command))
+                  .pipe(
+                    Effect.mapError((cause) =>
+                      isOrchestrationDispatchCommandError(cause)
+                        ? cause
+                        : new OrchestrationDispatchCommandError({ message: cause.message, cause }),
                     ),
+                  ),
                 { "rpc.aggregate": "orchestration" },
               )
             : observeRpcEffect(

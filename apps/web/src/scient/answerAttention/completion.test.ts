@@ -32,14 +32,14 @@ describe("unread answers", () => {
     expect(hasUnreadAnswer({ latestCompletedAnswer: answer }, undefined)).toBe(false);
     expect(hasUnreadAnswer({ latestCompletedAnswer: answer }, "corrupt")).toBe(true);
   });
-  it("falls back only for old servers and only for successful answers", () => {
+  it("does not resurrect an answer absent from the native projection", () => {
     const completed = {
       ...latestTurn,
       state: "completed" as const,
       assistantMessageId: answer.messageId,
       completedAt: answer.completedAt,
     };
-    expect(completedAnswer({ latestTurn: completed })?.messageId).toBe(answer.messageId);
+    expect(completedAnswer({ latestTurn: completed })).toBeNull();
     expect(completedAnswer({ latestCompletedAnswer: null, latestTurn: completed })).toBeNull();
     expect(completedAnswer({ latestTurn: { ...completed, state: "interrupted" } })).toBeNull();
     expect(completedAnswer({ latestTurn: { ...completed, state: "error" } })).toBeNull();

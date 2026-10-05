@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => ({
   setPrompt: vi.fn(),
   artifacts: vi.fn(),
   runs: vi.fn(),
+  timestampFormat: "24-hour" as "12-hour" | "24-hour" | "locale",
 }));
 vi.mock("~/state/analysis", () => ({
   analysisEnvironment: {
@@ -50,7 +51,11 @@ vi.mock("~/state/analysis", () => ({
     cleanupProject: "cleanup",
   },
 }));
-vi.mock("~/hooks/useSettings", () => ({ useEnvironmentSettings: () => true }));
+vi.mock("~/hooks/useSettings", () => ({
+  useEnvironmentSettings: () => true,
+  useClientSettings: (selector: (settings: { timestampFormat: string }) => unknown) =>
+    selector({ timestampFormat: mocks.timestampFormat }),
+}));
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: (atom: string) => mocks.values.get(atom),
   useAtomRefresh: () => mocks.refresh,
@@ -251,6 +256,7 @@ async function click(label: string) {
 }
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.timestampFormat = "24-hour";
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   mocks.values.clear();
   mocks.values.set("runtimes", AsyncResult.success({ runtimes: [run().runtime] }));
@@ -276,6 +282,53 @@ afterEach(async () => {
 });
 
 describe("Compute batch lifecycle", () => {
+  it.each(["12-hour", "24-hour"] as const)(
+    "renders saved batch times using the %s preference",
+    async (timestampFormat) => {
+      mocks.timestampFormat = timestampFormat;
+      const base = run("first", "succeeded");
+      const first = {
+        ...base,
+        receipt: { ...base.receipt, startedAt: new Date(2026, 8, 15, 17, 4, 3).toISOString() },
+      };
+      const older = run("older", "failed");
+      mocks.values.set("run", AsyncResult.success(first));
+      mocks.values.set(
+        "runs",
+        AsyncResult.success({ runs: [first, older], hasMore: false, nextCursor: null }),
+      );
+      await render();
+      const expected = new Intl.DateTimeFormat(undefined, {
+        hour: "numeric",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: timestampFormat === "12-hour",
+      }).format(new Date(first.receipt.startedAt));
+      expect(container.querySelector('[data-run="first"]')?.textContent).toContain(expected);
+      expect(
+        container.querySelector('[aria-label="Local MATLAB run history"]')?.textContent,
+      ).toContain(expected);
+      expect(mocks.start).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps malformed historical batch times out of the visible receipt", async () => {
+    const base = run("malformed", "succeeded");
+    const malformed = { ...base, receipt: { ...base.receipt, startedAt: "not-a-date" } };
+    mocks.values.set("run", AsyncResult.success(malformed));
+    mocks.values.set(
+      "runs",
+      AsyncResult.success({
+        runs: [malformed, run("older", "failed")],
+        hasMore: false,
+        nextCursor: null,
+      }),
+    );
+    await render();
+    expect(container.querySelector('[data-run="malformed"]')?.textContent).toBe("Succeeded · ");
+    expect(container.textContent).not.toContain("Invalid Date");
+  });
+
   it("stops a reserved run without waiting for the start response", async () => {
     const pending = deferred<ReturnType<typeof success>>();
     mocks.start.mockReturnValue(pending.promise);

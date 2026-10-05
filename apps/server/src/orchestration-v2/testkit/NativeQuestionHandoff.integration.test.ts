@@ -22,6 +22,8 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
+import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import * as Claude from "../Adapters/ClaudeAdapterV2.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import * as Orchestrator from "../Orchestrator.ts";
@@ -340,14 +342,32 @@ it.live(
           if (assistant?.type !== "assistant_message")
             return assert.fail("Expected native assistant boundary");
           const childId = ThreadId.make("native-question-child");
-          yield* (yield* ConversationForkService).dispatch({
-            type: "thread.fork",
+          const forkCommand = {
+            type: "thread.fork" as const,
             commandId: CommandId.make("native-question-fork"),
             originThreadId: threadId,
             newThreadId: childId,
             sourceAssistantMessageId: assistant.messageId,
-            workspaceMode: "local",
-          });
+            workspaceMode: "local" as const,
+          };
+          const forks = yield* ConversationForkService;
+          yield* fileSystem.remove(stored);
+          assert.equal((yield* Effect.result(forks.dispatch(forkCommand)))._tag, "Failure");
+          assert.equal(
+            (yield* Effect.result((yield* ProjectionStoreV2).getThreadProjection(childId)))._tag,
+            "Failure",
+          );
+          assert.isTrue(
+            Option.isNone(
+              yield* (yield* CommandReceiptStoreV2).getByCommandId(forkCommand.commandId),
+            ),
+          );
+          assert.deepEqual(
+            (yield* orchestrator.getThreadProjection(threadId)).turnItems,
+            completed.turnItems,
+          );
+          yield* fileSystem.writeFileString(stored, "evidence");
+          yield* forks.dispatch(forkCommand);
           const child = yield* orchestrator.getThreadProjection(childId);
           assert.deepEqual(child.runtimeRequests, []);
           assert.deepEqual(child.providerSessions, []);

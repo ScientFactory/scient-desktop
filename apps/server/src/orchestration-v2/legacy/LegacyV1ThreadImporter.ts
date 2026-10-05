@@ -43,7 +43,7 @@ import {
   makeForkLineageQueries,
   toForkLineageMarker,
   type ProjectionForkLineageRow,
-} from "../scient-fork/ForkBoundaryReadModel.ts";
+} from "./LegacyForkLineageReader.ts";
 import { importLegacyHistory, prepareLegacyHistory } from "./LegacyScientHistory.ts";
 
 const IMPORT_EVENT_PREFIX = "migration:v1";
@@ -104,7 +104,7 @@ interface LegacyImportRow {
 
 // Increment only when a new missing-only historical repair is required. A
 // transcript timestamp alone cannot qualify imports made by older binaries.
-export const LEGACY_HISTORY_REPAIR_VERSION = 2;
+export const LEGACY_HISTORY_REPAIR_VERSION = 3;
 
 export interface LegacyV1ImportSummary {
   readonly importedThreadCount: number;

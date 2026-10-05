@@ -6,8 +6,7 @@ import {
   CheckpointScopeId,
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationV2CheckpointUnavailableError,
-  ORCHESTRATION_WS_METHODS,
-  type ClientOrchestrationCommand,
+  type ThreadForkCommand,
   WS_METHODS,
   type ChatAttachment,
   type MessageId,
@@ -42,27 +41,6 @@ import {
   request,
 } from "../rpc/client.ts";
 import type { EnvironmentSupervisor } from "../connection/supervisor.ts";
-// SCIENT-FORK:START — the V1 command contract still carries the two commands
-// upstream's V2 union dropped: `thread.section.set` and the conversation
-// `thread.fork` (which forks at a chosen transcript boundary rather than
-// forking a whole run). Both are dispatched over the shared
-// `orchestration.dispatchCommand` tag, whose payload accepts either union.
-type V1CommandType = ClientOrchestrationCommand["type"];
-type V1CommandOf<T extends V1CommandType> = Extract<
-  ClientOrchestrationCommand,
-  {
-    readonly type: T;
-  }
->;
-/** Command payload minus the envelope fields the client allocates itself. */
-type V1CommandInput<T extends V1CommandType> = Omit<
-  V1CommandOf<T>,
-  "type" | "commandId" | "createdAt"
-> & {
-  readonly commandId?: CommandId;
-};
-// SCIENT-FORK:END
-
 interface CommandMetadata {
   readonly commandId?: CommandId;
   readonly createdAt?: string;
@@ -251,11 +229,13 @@ export interface ForkThreadFromRunInput extends CommandMetadata {
   readonly title?: string;
 }
 
-// SCIENT-FORK:START — thread sections and conversation fork are V1-only
-// commands; their payload shapes are derived from `ClientOrchestrationCommand`
-// so they cannot drift from the wire contract.
-export type SetThreadSectionInput = V1CommandInput<"thread.section.set">;
-export type ForkThreadInput = V1CommandInput<"thread.fork">;
+export type SetThreadSectionInput = Omit<
+  Extract<OrchestrationV2Command, { readonly type: "thread.section.set" }>,
+  "type" | "commandId"
+> &
+  CommandMetadata;
+// SCIENT-FORK:START
+export type ForkThreadInput = Omit<ThreadForkCommand, "type" | "commandId"> & CommandMetadata;
 // SCIENT-FORK:END
 
 export interface MergeThreadBackInput extends CommandMetadata {
@@ -312,18 +292,16 @@ const allocateCommandId = Effect.fn("EnvironmentCommands.allocateCommandId")(fun
 const dispatch = (command: OrchestrationV2Command) =>
   request(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, command);
 
-// SCIENT-FORK:START — V1-only commands share the `orchestration.dispatchCommand`
-// tag with V2. The RPC payload accepts either union, so the V1 transport is the
-// same `request` call typed against `ClientOrchestrationCommand`.
-type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
+// SCIENT-FORK:START — dedicated conversation-boundary fork transport.
+type DispatchTag = typeof ORCHESTRATION_V2_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
   EnvironmentRpcSuccess<DispatchTag>,
   EnvironmentRpcFailure<DispatchTag> | EnvironmentRpcUnavailableError,
   Crypto.Crypto | EnvironmentSupervisor
 >;
 
-const dispatchV1 = (command: ClientOrchestrationCommand) =>
-  request(ORCHESTRATION_WS_METHODS.dispatchCommand, command);
+const dispatchConversationFork = (command: ThreadForkCommand) =>
+  request(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, command);
 // SCIENT-FORK:END
 
 const getProjection = (threadId: ThreadId) =>
@@ -608,7 +586,7 @@ export const visitThread = Effect.fn("EnvironmentCommands.visitThread")(function
 export const setThreadSection: (input: SetThreadSectionInput) => CommandEffect = Effect.fn(
   "EnvironmentCommands.setThreadSection",
 )(function* (input) {
-  return yield* dispatchV1({
+  return yield* dispatch({
     ...input,
     type: "thread.section.set",
     commandId: yield* allocateCommandId(input),
@@ -1074,7 +1052,7 @@ export const promoteQueuedRun = Effect.fn("EnvironmentCommands.promoteQueuedRun"
 export const forkThread: (input: ForkThreadInput) => CommandEffect = Effect.fn(
   "EnvironmentCommands.forkThread",
 )(function* (input) {
-  return yield* dispatchV1({
+  return yield* dispatchConversationFork({
     ...input,
     type: "thread.fork",
     commandId: input.commandId ?? CommandId.make(`client:thread-fork:${input.newThreadId}`),

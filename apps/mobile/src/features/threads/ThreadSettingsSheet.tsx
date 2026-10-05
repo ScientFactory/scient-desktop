@@ -81,7 +81,6 @@ import {
 } from "../layout/native-mail-search-toolbar";
 import { ModelRow, ChoiceRow } from "./ThreadSettingsRows";
 import {
-  compatibleRuntimeModeForChoices,
   RUNTIME_MODE_CHOICES,
   runtimeModeChoicesForSupportedModes,
   selectableChoices,
@@ -408,12 +407,9 @@ function ThreadSettingsSessionProvider(
       null,
     [isApplied, pendingModel, props.providerGroups],
   );
-  const runtimeModeChoices = runtimeModeChoicesForSupportedModes(
-    displayedModel?.supportedRuntimeModes,
-  );
-  const compatibleRuntimeMode = compatibleRuntimeModeForChoices(
-    props.runtimeMode,
-    runtimeModeChoices,
+  const runtimeModeChoices = useMemo(
+    () => runtimeModeChoicesForSupportedModes(displayedModel?.supportedRuntimeModes),
+    [displayedModel?.supportedRuntimeModes],
   );
 
   const hasLegacyModels = useMemo(
@@ -498,16 +494,11 @@ function ThreadSettingsSessionProvider(
 
   const value = useMemo<ThreadSettingsSessionValue>(
     () => ({
-      supportedRuntimeModes:
-        pendingModel?.supportedRuntimeModes ??
-        props.providerGroups
-          .flatMap((group) => group.models)
-          .find((option) => option.selection.instanceId === props.selectedModel?.instanceId)
-          ?.supportedRuntimeModes,
+      supportedRuntimeModes: displayedModel?.supportedRuntimeModes,
       environmentId: props.environmentId,
       providerInstanceId: props.providerInstanceId,
       providerGroups: props.providerGroups,
-      runtimeMode: compatibleRuntimeMode,
+      runtimeMode: props.runtimeMode,
       runtimeModeChoices,
       onUpdateRuntimeMode: props.onUpdateRuntimeMode,
       displayedDescriptors,
@@ -533,7 +524,7 @@ function ThreadSettingsSessionProvider(
     [
       applyOptionChange,
       commitPendingModel,
-      compatibleRuntimeMode,
+      displayedModel?.supportedRuntimeModes,
       displayedDescriptors,
       favoriteKeys,
       favoritesLoaded,
@@ -549,7 +540,7 @@ function ThreadSettingsSessionProvider(
       props.onUpdateRuntimeMode,
       props.providerGroups,
       props.runtimeMode,
-      props.selectedModel,
+      runtimeModeChoices,
       searchQuery,
       showLegacyToggle,
       toggleProvider,
@@ -809,7 +800,7 @@ function ThreadSettingsOptionsItem(props: {
             isLast
             label="Runtime"
             value={
-              session.supportedRuntimeModes &&
+              session.supportedRuntimeModes?.length &&
               !session.supportedRuntimeModes.includes(session.runtimeMode)
                 ? "Choose access"
                 : RUNTIME_MODE_CHOICES.find((choice) => choice.mode === session.runtimeMode)?.label
@@ -1021,10 +1012,7 @@ function ThreadSettingsChoiceContent(props: {
   const submenuContent =
     props.submenu.kind === "runtime"
       ? {
-          rows: RUNTIME_MODE_CHOICES.filter(
-            (choice) =>
-              !session.supportedRuntimeModes || session.supportedRuntimeModes.includes(choice.mode),
-          ).map((choice) => ({
+          rows: session.runtimeModeChoices.map((choice) => ({
             id: choice.mode,
             label: choice.label,
             description: choice.description,

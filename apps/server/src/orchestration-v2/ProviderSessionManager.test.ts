@@ -3,6 +3,11 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  MessageId,
+  RunId,
+  RunAttemptId,
+  NodeId,
+  ProviderTurnId,
   type ModelSelection,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
@@ -31,6 +36,10 @@ import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { HttpServer } from "effect/unstable/http";
 
+import {
+  serializeComposerCitation,
+  expandComposerCitationsForProvider,
+} from "@t3tools/shared/composerCitations";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import { makeProviderRegistryMock } from "../provider/testUtils/providerRegistryMock.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
@@ -261,6 +270,7 @@ function unimplemented(detail: string) {
 function makeProviderAdapter(
   state: Ref.Ref<TestProviderRuntimeState>,
   options: {
+    readonly driver?: ProviderDriverKind;
     readonly failEventStream?: boolean;
     readonly mcpSessionInjection?: boolean | "undeclared";
     readonly capabilities?: OrchestrationV2ProviderCapabilities;
@@ -276,11 +286,14 @@ function makeProviderAdapter(
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly hangSessionScopeClose?: boolean;
     readonly beforeUnload?: Effect.Effect<void>;
+    readonly startTurn?: ProviderAdapterV2SessionRuntime["startTurn"];
+    readonly steerTurn?: ProviderAdapterV2SessionRuntime["steerTurn"];
   } = {},
 ): ProviderAdapterV2Shape {
+  const driver = options.driver ?? CODEX_DRIVER;
   return {
     instanceId: ProviderInstanceId.make("codex"),
-    driver: CODEX_DRIVER,
+    driver,
     ...(options.mcpSessionInjection === "undeclared"
       ? {}
       : { mcpSessionInjection: options.mcpSessionInjection ?? true }),
@@ -330,13 +343,13 @@ function makeProviderAdapter(
 
         return {
           instanceId: ProviderInstanceId.make("codex"),
-          driver: CODEX_DRIVER,
+          driver,
           providerSessionId: input.providerSessionId,
-          providerSession: { ...session, cwd: input.runtimePolicy.cwd ?? session.cwd },
+          providerSession: { ...session, driver, cwd: input.runtimePolicy.cwd ?? session.cwd },
           events: options.failEventStream
             ? Stream.fail(
                 new ProviderAdapterEventStreamError({
-                  driver: CODEX_DRIVER,
+                  driver,
                   providerSessionId: input.providerSessionId,
                   cause: "process exited",
                 }),
@@ -358,8 +371,8 @@ function makeProviderAdapter(
                 },
               ],
             })).pipe(Effect.as(threadInput.providerThread)),
-          startTurn: () => Effect.void,
-          steerTurn: () => Effect.void,
+          startTurn: options.startTurn ?? (() => Effect.void),
+          steerTurn: options.steerTurn ?? (() => Effect.void),
           interruptTurn: () =>
             Ref.update(state, (current) => ({
               ...current,
@@ -389,6 +402,7 @@ function makeProviderAdapter(
 function makeTestLayer(input: {
   readonly state: Ref.Ref<TestProviderRuntimeState>;
   readonly idleTimeoutMs: number;
+  readonly driver?: ProviderDriverKind;
   readonly maxIdlePinMs?: number;
   readonly failEventStream?: boolean;
   readonly mcpSessionInjection?: boolean | "undeclared";
@@ -408,6 +422,8 @@ function makeTestLayer(input: {
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly hangSessionScopeClose?: boolean;
   readonly beforeUnload?: Effect.Effect<void>;
+  readonly startTurn?: ProviderAdapterV2SessionRuntime["startTurn"];
+  readonly steerTurn?: ProviderAdapterV2SessionRuntime["steerTurn"];
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
 }) {
@@ -416,6 +432,7 @@ function makeTestLayer(input: {
     : TestEventSinkLayer;
   const configuredAdapter = makeProviderAdapter(input.state, {
     failEventStream: input.failEventStream ?? false,
+    ...(input.driver === undefined ? {} : { driver: input.driver }),
     ...(input.mcpSessionInjection === undefined
       ? {}
       : { mcpSessionInjection: input.mcpSessionInjection }),
@@ -429,6 +446,8 @@ function makeTestLayer(input: {
       ? {}
       : { hangSessionScopeClose: input.hangSessionScopeClose }),
     ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
+    ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
+    ...(input.steerTurn === undefined ? {} : { steerTurn: input.steerTurn }),
   });
   const injectionEnabled = input.mcpInjectionEnabled;
   const registryLayer =
@@ -3708,6 +3727,169 @@ for (const predecessorState of ["live", "pending"] as const) {
                     assert.isUndefined(native.config.mcp_servers);
                   }
                 }),
+            }),
+          ),
+        );
+      }),
+  );
+}
+
+for (const driver of [
+  CODEX_DRIVER,
+  ProviderDriverKind.make("claudeAgent"),
+  ProviderDriverKind.make("cursor"),
+]) {
+  it.effect(
+    `ProviderSessionManagerV2 expands file quotes on native ${driver} starts and steering without changing source text`,
+    () =>
+      Effect.gen(function* () {
+        const state = yield* Ref.make(emptyState);
+        const sent = yield* Ref.make<ReadonlyArray<string>>([]);
+        const effect = Effect.gen(function* () {
+          const sink = yield* EventSink.EventSinkV2;
+          const ids = yield* IdAllocator.IdAllocatorV2;
+          const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+          const now = yield* DateTime.now;
+          const threadId = ThreadId.make("native-file-quote");
+          const providerSessionId = yield* ids.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+          });
+          yield* sink.write({
+            events: [yield* makeThreadCreatedEvent({ idAllocator: ids, threadId, now })],
+          });
+          const runtime = yield* manager.open({
+            threadId,
+            providerSessionId,
+            modelSelection,
+            runtimePolicy,
+          });
+          const projection = yield* (yield* ProjectionStore.ProjectionStoreV2).getThreadProjection(
+            threadId,
+          );
+          const baseThread = makeProviderThread({
+            idAllocator: ids,
+            threadId,
+            providerSessionId,
+            now,
+          });
+          const providerThread = {
+            ...baseThread,
+            driver,
+            nativeThreadRef: { ...baseThread.nativeThreadRef!, driver },
+          };
+          const quote = serializeComposerCitation({
+            kind: "file",
+            version: 1,
+            environmentId: EnvironmentId.make("remote-source"),
+            threadId: ThreadId.make("original-thread"),
+            cwd: "/original/worktree",
+            path: "notes.md",
+            revision: `sha256:${"a".repeat(64)}`,
+            origin: "draft",
+            sourceStart: 0,
+            sourceEnd: 50,
+            startLine: 1,
+            endLine: 4,
+            from: 1,
+            to: 12,
+            text: "Exact quote\n  with indentation",
+            prefix: "",
+            suffix: "",
+            comment: "Explain this.",
+          });
+          const prompt = `Explain ${quote}`;
+          const message = Object.freeze({
+            messageId: MessageId.make("native-file-quote-message"),
+            createdBy: "user" as const,
+            creationSource: "web" as const,
+            text: prompt,
+            attachments: [],
+          });
+          yield* sink.write({
+            events: [
+              {
+                id: yield* ids.allocate.event({ threadId }),
+                type: "message.updated",
+                threadId,
+                occurredAt: now,
+                payload: {
+                  id: message.messageId,
+                  threadId,
+                  runId: null,
+                  nodeId: null,
+                  createdBy: "user",
+                  creationSource: "web",
+                  role: "user",
+                  text: prompt,
+                  attachments: [],
+                  streaming: false,
+                  createdAt: now,
+                  updatedAt: now,
+                },
+              },
+            ],
+          });
+          const messagesBefore =
+            (yield* (yield* ProjectionStore.ProjectionStoreV2).getThreadProjection(threadId))
+              .messages;
+          assert.equal(messagesBefore[0]?.text, prompt);
+          yield* runtime.startTurn({
+            appThread: projection.thread,
+            threadId,
+            runId: RunId.make("native-file-quote-run"),
+            runOrdinal: 1,
+            providerTurnOrdinal: 1,
+            attemptId: RunAttemptId.make("native-file-quote-attempt"),
+            rootNodeId: NodeId.make("native-file-quote-node"),
+            providerThread,
+            message,
+            modelSelection,
+            runtimePolicy,
+          });
+          yield* runtime.steerTurn({
+            threadId,
+            runId: RunId.make("native-file-quote-run"),
+            providerThread,
+            providerTurnId: ProviderTurnId.make("native-file-quote-turn"),
+            message,
+          });
+          const inputs = yield* Ref.get(sent);
+          assert.deepEqual(inputs, [
+            expandComposerCitationsForProvider(prompt),
+            expandComposerCitationsForProvider(prompt),
+          ]);
+          for (const text of inputs) {
+            assert.include(text, '"cwd": "/original/worktree"');
+            assert.include(text, '"origin": "draft"');
+            assert.include(text, '"text": "Exact quote\\n  with indentation"');
+            assert.notInclude(text, "scient-file-citation:");
+          }
+          assert.equal(message.text, prompt);
+          assert.deepEqual(
+            (yield* (yield* ProjectionStore.ProjectionStoreV2).getThreadProjection(threadId))
+              .messages,
+            messagesBefore,
+          );
+          const plain = "Plain input [File quote](scient-file-citation://v2/?data=x)";
+          yield* runtime.steerTurn({
+            threadId,
+            runId: RunId.make("native-file-quote-run"),
+            providerThread,
+            providerTurnId: ProviderTurnId.make("native-file-quote-turn"),
+            message: { ...message, text: plain },
+          });
+          assert.equal((yield* Ref.get(sent)).at(-1), plain);
+        });
+        yield* effect.pipe(
+          Effect.provide(
+            makeTestLayer({
+              state,
+              idleTimeoutMs: 60_000,
+              driver,
+              configureMcp: false,
+              startTurn: (input) => Ref.update(sent, (values) => [...values, input.message.text]),
+              steerTurn: (input) => Ref.update(sent, (values) => [...values, input.message.text]),
             }),
           ),
         );

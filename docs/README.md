@@ -72,7 +72,7 @@ require a cosmetic folder migration.
 Everything below is for maintainers. Setup lives in the [root README](../README.md);
 policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../AGENTS.md).
 
-- [Architecture overview](./internals/overview.md)
+- [Architecture overview — live orchestration V2](./internals/overview.md)
 - [Unread answers and Dock badge](./internals/answer-attention.md)
 - [Workspace layout](../AGENTS.md#where-code-lives)
 - [Glossary](./internals/glossary.md)
@@ -89,6 +89,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Server updates](./internals/server-updates.md)
 - [Resource telemetry](./internals/resource-telemetry.md)
 - [Scient conversation-fork architecture](./internals/scient-fork-divergence.md)
+- [Context handoffs and delivery budgets](./internals/context-handoffs.md)
 - [Mobile navigation headers](./internals/mobile-navigation.md)
 - [Scient product analytics](./internals/product-analytics.md)
 - [Environment auth](./internals/environment-auth.md)
@@ -99,7 +100,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Scient onboarding](./internals/scient-onboarding.md)
 - [Scient skills core](./internals/scient-skills.md)
 - [Scient Sources foundation](./internals/scient-sources.md)
-- [Scient thread queue and upstream retirement seam](./internals/scient-thread-queue.md)
+- [Scient native V2 queue and recovery](./internals/scient-thread-queue.md)
 - [Scient conversation export](./internals/scient-conversation-export.md)
   - [Accepted export, conversion, and import proposal](./internals/scient-conversation-export-import-proposal.md)
 - [Scient sidebar sections and New thread row](./internals/scient-sidebar-sections.md)
@@ -131,6 +132,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [T3 foundation refresh (2026-08-07)](./internals/t3-foundation-refresh-20260807.md)
 - [Upstream maintenance and dated integration-record collection](../UPSTREAM.md)
 - [T3 upstream alignment protocol](./internals/upstream-alignment-protocol.md)
+- [Scient divergence inventory](./internals/scient-divergence-inventory.md)
 - [CI gates](./internals/ci.md)
 - [Engineering work artifacts](./internals/work-artifacts.md)
 

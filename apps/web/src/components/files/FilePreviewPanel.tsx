@@ -1,3 +1,11 @@
+// SCIENT-FORK:START
+import {
+  FILE_ACTIVE_RANGE_ATTRIBUTE,
+  SCIENT_FILE_UNSAFE_CSS,
+  StaticTextFileSurface,
+  type FilePostRender,
+} from "~/scient/fileSurfaces/StaticTextFileSurface";
+// SCIENT-FORK:END
 import { useAtomValue } from "@effect/atom-react";
 import { Spinner } from "~/components/ui/spinner";
 import type {
@@ -22,7 +30,7 @@ import {
 import { Editor } from "@pierre/diffs/editor";
 import { sourceMathController, sourceMathOwnsEvent } from "~/scient/math/input/sourceAdapter";
 import { MathInputTools } from "~/scient/math/input/MathInputTools";
-import { EditProvider, File, type FileOptions, Virtualizer } from "@pierre/diffs/react";
+import { EditProvider, File, Virtualizer } from "@pierre/diffs/react";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 import {
   isAtomCommandInterrupted,
@@ -153,7 +161,6 @@ import {
 import { installFileEditorDismissal } from "./fileEditorDismissal";
 import {
   FILE_LINK_REVEAL_ATTRIBUTE,
-  FILE_LINK_REVEAL_UNSAFE_CSS,
   FILE_SURFACE_SUBHEADER_CLASS,
   FileSurfaceAction,
   FileSurfaceFailure,
@@ -215,24 +222,6 @@ interface FilePreviewPanelProps {
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
 const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
 const RENDER_BROWSER_FILE_STORAGE_KEY = "t3code.renderBrowserFile";
-const FILE_ACTIVE_RANGE_ATTRIBUTE = "data-scient-active-range";
-const SCIENT_FILE_UNSAFE_CSS = `
-  ${FILE_LINK_REVEAL_UNSAFE_CSS}
-  :host([${FILE_ACTIVE_RANGE_ATTRIBUTE}]) [data-line][data-selected-line] {
-    background-color: light-dark(
-      color-mix(in srgb, var(--primary) 8%, transparent),
-      color-mix(in srgb, var(--primary) 12%, transparent)
-    ) !important;
-  }
-
-  :host([${FILE_ACTIVE_RANGE_ATTRIBUTE}]) [data-column-number][data-selected-line] {
-    background-color: light-dark(
-      color-mix(in srgb, var(--primary) 13%, transparent),
-      color-mix(in srgb, var(--primary) 18%, transparent)
-    ) !important;
-    color: var(--diffs-fg-number) !important;
-  }
-`;
 const FILE_EDITOR_ACTION_GUTTER_UNSAFE_CSS = `
   ${SCIENT_FILE_UNSAFE_CSS}
 
@@ -272,45 +261,6 @@ const ScientMarkdownFileSurface = lazy(() =>
   })),
 );
 const RENDER_TABLE_STORAGE_KEY = "t3code.renderTable";
-type FilePostRender = NonNullable<FileOptions<unknown>["onPostRender"]>;
-
-function StaticTextFileSurface(props: {
-  readonly contents: string;
-  readonly cwd: string;
-  readonly onPostRender: FilePostRender;
-  readonly relativePath: string;
-  readonly resolvedTheme: "light" | "dark";
-  readonly wordWrap: boolean;
-}) {
-  return (
-    <DiffWorkerPoolProvider>
-      <Virtualizer
-        className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
-        config={{ overscrollSize: 600, intersectionObserverMargin: 1200 }}
-      >
-        <File
-          file={{
-            name: props.relativePath,
-            contents: props.contents,
-            ...scientificSourceLanguageOverride(props.relativePath),
-            cacheKey: projectFileCacheKey(props.cwd, props.relativePath, props.contents),
-          }}
-          options={{
-            disableFileHeader: true,
-            overflow: props.wordWrap ? "wrap" : "scroll",
-            theme: resolveDiffThemeName(props.resolvedTheme),
-            preferredHighlighter: PREFERRED_HIGHLIGHTER,
-            themeType: props.resolvedTheme,
-            unsafeCSS: SCIENT_FILE_UNSAFE_CSS,
-            onPostRender: props.onPostRender,
-          }}
-          className="min-h-full"
-        />
-      </Virtualizer>
-    </DiffWorkerPoolProvider>
-  );
-}
-
 function WorkspaceImagePreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
@@ -2160,6 +2110,7 @@ export default function FilePreviewPanel({
                 </Button>
               </div>
               {relativePath && file.data ? (
+                // SCIENT-FORK:START
                 <StaticTextFileSurface
                   cwd={cwd}
                   relativePath={relativePath}
@@ -2168,7 +2119,8 @@ export default function FilePreviewPanel({
                   wordWrap={wordWrap}
                   onPostRender={onFilePostRender}
                 />
-              ) : null}
+              ) : // SCIENT-FORK:END
+              null}
             </>
           ) : awaitingMarkdownLease ? (
             <div
@@ -2208,6 +2160,7 @@ export default function FilePreviewPanel({
                   saveResolution={saveResolution}
                 />
               ) : (
+                // SCIENT-FORK:START
                 <StaticTextFileSurface
                   key={`${relativePath}:${resolvedTheme}:${file.data.revision}`}
                   cwd={cwd}
@@ -2217,6 +2170,7 @@ export default function FilePreviewPanel({
                   wordWrap={wordWrap}
                   onPostRender={onFilePostRender}
                 />
+                // SCIENT-FORK:END
               )
             ) : isLatexPreviewFile(relativePath) ? (
               <Suspense
@@ -2345,6 +2299,7 @@ export default function FilePreviewPanel({
                 delimiter={tableDelimiter}
               />
             ) : file.data.truncated ? (
+              // SCIENT-FORK:START
               <StaticTextFileSurface
                 key={`${relativePath}:${resolvedTheme}:${file.data.revision}`}
                 cwd={cwd}
@@ -2354,7 +2309,8 @@ export default function FilePreviewPanel({
                 wordWrap={wordWrap}
                 onPostRender={onFilePostRender}
               />
-            ) : isHostFile ? (
+            ) : // SCIENT-FORK:END
+            isHostFile ? (
               <SourceFilePreview
                 name={relativePath}
                 text={file.data.contents}

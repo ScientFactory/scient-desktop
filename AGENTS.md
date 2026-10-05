@@ -38,9 +38,13 @@ Terminology: `docs/internals/glossary.md`.
 
 - The server owns execution and workspace access. Clients may connect to another
   machine; client paths and credentials are not server paths and credentials.
-- Orchestration is event-sourced: commands pass through deciders, events are
-  persisted, and projectors build read models. Reactors perform side effects.
-  Preserve this path rather than treating projections as authoritative data.
+- Orchestration V2 is the live engine (`apps/server/src/orchestration-v2`).
+  `Orchestrator` serializes commands per thread; `EventSink` commits events,
+  projections, command receipts, and outbox effects transactionally. The effect
+  worker performs execution through V2 services and adapters. Native runs own
+  queued work; the Scient queue strip is its UI. Extend this path, not the
+  superseded V1 engine, reactors, provider service, or queue ledger. Legacy
+  readers are import/recovery boundaries, never execution authorities.
 - Server features are services and transports stay thin: a `ws.ts` RPC handler, HTTP route,
   MCP tool, scheduled task, or CLI entry decodes input, calls one service method, and maps
   errors. See [Effect services](docs/internals/effect-services.md).

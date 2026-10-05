@@ -521,6 +521,8 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly hasPendingBackgroundWorkForThread?: (
     providerThread: OrchestrationV2ProviderThread,
   ) => Effect.Effect<boolean>;
+  /** Trusted adapter-owned immutable hash of the actual native launch; never protocol metadata. */
+  readonly modelContextWindowLaunchFingerprint?: string;
   /**
    * Capacity for the requested model/options, independent of native thread usage.
    * `cwd` is the thread's working directory, for providers whose project config

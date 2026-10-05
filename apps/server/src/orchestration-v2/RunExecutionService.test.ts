@@ -3592,36 +3592,28 @@ function captureRootRunTermination(input: {
     const ingestionDone = yield* Deferred.make<void>();
     const captureTurnItem = (payload: OrchestrationV2TurnItem) =>
       Ref.update(writtenItems, (current) => [...current, payload]);
+    const captureEvents = Effect.fnUntraced(function* (
+      events: ReadonlyArray<OrchestrationV2DomainEvent>,
+    ) {
+      for (const event of events) {
+        if (event.type === "turn-item.updated") yield* captureTurnItem(event.payload);
+        if (event.type === "run.updated") {
+          yield* Ref.update(observed, (current) => [...current, `run:${event.payload.status}`]);
+        }
+      }
+      return [];
+    });
     const testLayer = RunExecutionService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
           Layer.mock(EventSink.EventSinkV2)({
-            write: (payload) =>
-              Effect.gen(function* () {
-                for (const event of payload.events) {
-                  if (event.type === "turn-item.updated") {
-                    yield* captureTurnItem(event.payload);
-                  }
-                }
-                return [];
-              }),
-            writeWithEffects: (payload) =>
-              Effect.gen(function* () {
-                for (const event of payload.events) {
-                  if (event.type === "turn-item.updated") {
-                    yield* captureTurnItem(event.payload);
-                  }
-                  if (event.type === "run.updated") {
-                    yield* Ref.update(observed, (current) => [
-                      ...current,
-                      `run:${event.payload.status}`,
-                    ]);
-                  }
-                }
-                return [];
-              }),
-            writeIfRunCurrent: () => Effect.succeed({ committed: true, storedEvents: [] }),
+            write: (payload) => captureEvents(payload.events),
+            writeWithEffects: (payload) => captureEvents(payload.events),
+            writeIfRunCurrent: (payload) =>
+              captureEvents(payload.events).pipe(
+                Effect.map((storedEvents) => ({ committed: true, storedEvents })),
+              ),
           }),
           IdAllocator.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({

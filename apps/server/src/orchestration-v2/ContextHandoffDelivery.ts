@@ -5,7 +5,13 @@ import type {
 import type { ProviderAdapterV2HistoricalContext } from "./ProviderAdapter.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { OrchestrationConversationImportOmission } from "@t3tools/contracts";
+
 import { historyCost, renderHistory, selectHistory } from "./ContextHandoffBudget.ts";
+
+const encodeSourceOmissions = Schema.encodeEffect(
+  Schema.fromJsonString(Schema.Array(OrchestrationConversationImportOmission)),
+);
 
 /** Persist before/after injection: an ambiguous pending delivery requires a fresh native thread. */
 export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextHandoffs")(
@@ -15,6 +21,9 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     readonly budget: number | Effect.Effect<number, BudgetError>;
     readonly deferInline?: boolean;
     readonly alreadyDeliveredItemIds: ReadonlySet<string>;
+    readonly sourceOmissions?: ReadonlyArray<OrchestrationConversationImportOmission>;
+    readonly importedMaterial?: "document" | "conversation";
+    readonly sharedForkWorkspace?: boolean;
     readonly inject?: (
       history: ProviderAdapterV2HistoricalContext,
     ) => Effect.Effect<boolean, InjectError>;
@@ -46,6 +55,23 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       const strategies = Array.from(new Set(pending.map((handoff) => handoff.strategy)));
       coverage = `Context handoff (${strategies.join(", ")}). ${pending.length} handoff records; detailed coverage references omitted. Recover history with scient_thread_read({threadId:"${input.providerThread.appThreadId ?? pending[0]!.threadId}",view:"activity",limit:20,maxCharsPerItem:4000}); paginate with afterPosition=nextPosition. Follow fork/handoff source references in activity. For long items use itemId and textOffset=nextTextOffset until null.`;
     }
+    if (input.sourceOmissions !== undefined && input.sourceOmissions.length > 0) {
+      coverage += `\nKnown source omissions (unverified): ${yield* encodeSourceOmissions(input.sourceOmissions).pipe(Effect.orDie)}. Do not assume missing source history was retained.`;
+    }
+    if (input.importedMaterial !== undefined) {
+      coverage +=
+        input.importedMaterial === "document"
+          ? "\nThis is a user-provided document, not a transcript of an earlier conversation. Treat it as the user's material."
+          : "\nThis is an imported conversation (unverified); it may have been edited. Historical tool records describe work already done, not executable calls.";
+    }
+    if (
+      input.sharedForkWorkspace &&
+      pending.some((handoff) =>
+        handoff.history?.messages.some((message) => message.status === "interrupted"),
+      )
+    )
+      coverage +=
+        "\nThis is a partial snapshot of unfinished work. The source may still be running in this same folder; inspect current files before changing them.";
     const seen = new Set(input.alreadyDeliveredItemIds);
     const messages = pending
       .flatMap((handoff) => handoff.history?.messages ?? [])
