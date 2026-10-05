@@ -158,6 +158,9 @@ import {
   ProviderAdapterV2,
   type ProviderAdapterV2Shape,
   type ProviderAdapterV2Event,
+  type ProviderAdapterV2InternalEvent,
+  type ProviderTextSnapshotOwner,
+  ProviderTextSnapshotError,
   type ProviderAdapterV2ForkThreadInput,
   type ProviderAdapterV2RollbackThreadInput,
   type ProviderAdapterV2RuntimePolicy,
@@ -1232,6 +1235,7 @@ export interface CodexAppServerClientFactoryShape {
     readonly threadId: ThreadId;
     readonly providerSessionId: OrchestrationV2ProviderSession["id"];
     readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
+    readonly onTermination?: CodexClient.CodexAppServerClientOptions["onTermination"];
     readonly settings: CodexSettings;
     readonly environment: NodeJS.ProcessEnv;
     /** Resolved once by the adapter and used verbatim by the production spawner. */
@@ -1456,7 +1460,12 @@ export const codexAppServerClientFactoryFromSettingsLayer: Layer.Layer<
                   logOutgoing: true,
                   logger: protocolLogger,
                 };
-          const context = yield* Layer.build(CodexClient.layerChildProcess(handle, clientOptions));
+          const context = yield* Layer.build(
+            CodexClient.layerChildProcess(handle, {
+              ...clientOptions,
+              ...(input.onTermination ? { onTermination: input.onTermination } : {}),
+            }),
+          );
           return yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
             Effect.provide(context),
           );
@@ -1624,7 +1633,21 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             }),
           )
           .digest("hex")}`;
+        const textGenerationEnded = yield* Deferred.make<never, ProviderTextSnapshotError>();
+        let textGenerationIsEnded = false;
         const client = yield* clientFactory.open({
+          onTermination: (cause) =>
+            Effect.sync(() => {
+              textGenerationIsEnded = true;
+            }).pipe(
+              Effect.andThen(
+                Deferred.fail(
+                  textGenerationEnded,
+                  new ProviderTextSnapshotError({ reason: "consumer-ended", cause }),
+                ),
+              ),
+              Effect.asVoid,
+            ),
           instanceId: adapterOptions.instanceId,
           threadId: input.threadId,
           providerSessionId: input.providerSessionId,
@@ -1685,7 +1708,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           model: input.modelSelection.model,
           now,
         });
-        const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+        const events = yield* Queue.unbounded<ProviderAdapterV2InternalEvent>();
         const rateLimitSnapshot = yield* Ref.make<CodexRateLimitSnapshot | undefined>(undefined);
         const limitedTurnItems = yield* Ref.make(
           new Map<ProviderThreadId, Extract<OrchestrationV2TurnItem, { type: "error" }>>(),
@@ -5587,12 +5610,129 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           completedAt: null,
         });
 
+        const textSnapshotOwners = new Map<
+          symbol,
+          {
+            readonly context: ActiveCodexTurnContext;
+            readonly owner: ProviderTextSnapshotOwner;
+          }
+        >();
+        const snapshotContext = Effect.fnUntraced(function* (owner: ProviderTextSnapshotOwner) {
+          const context = (yield* Ref.get(activeTurns)).get(owner.nativeTurnId);
+          if (
+            textGenerationIsEnded ||
+            context === undefined ||
+            context.subagent !== null ||
+            context.input.threadId !== owner.threadId ||
+            context.input.runId !== owner.runId ||
+            context.input.attemptId !== owner.activeAttemptId ||
+            context.rootNodeId !== owner.rootNodeId ||
+            context.input.runOrdinal !== owner.runOrdinal ||
+            context.providerTurnId !== owner.providerTurnId ||
+            context.providerThread.id !== owner.providerThreadId ||
+            context.providerThread.nativeThreadRef?.nativeId !== owner.nativeThreadId ||
+            context.providerThread.providerSessionId !== owner.providerSessionId ||
+            owner.providerSessionId !== input.providerSessionId ||
+            owner.providerInstanceId !== adapterOptions.instanceId ||
+            owner.driver !== CODEX_PROVIDER ||
+            (yield* Ref.get(interruptingNativeTurns)).has(owner.nativeTurnId)
+          )
+            return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
+          return context;
+        });
+        const nativeEvents = Stream.fromEffectRepeat(Queue.take(events));
         const runtime: ProviderAdapterV2SessionRuntime = {
           instanceId: adapterOptions.instanceId,
           driver: CODEX_PROVIDER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
-          events: Stream.fromEffectRepeat(Queue.take(events)),
+          events: nativeEvents.pipe(
+            Stream.filter(
+              (event): event is ProviderAdapterV2Event => event.type !== "internal.text_snapshot",
+            ),
+          ),
+          textSnapshots: {
+            events: nativeEvents,
+            ended: Deferred.await(textGenerationEnded),
+            request: (owner, token) =>
+              turnTerminalizationPermit.withPermit(
+                Effect.gen(function* () {
+                  const context = yield* snapshotContext(owner);
+                  yield* agentMessageDeltas.withSnapshot(owner.nativeTurnId, (snapshot) =>
+                    Effect.gen(function* () {
+                      const artifacts: ProviderAdapterV2Event[] = [];
+                      const finalItems = (yield* Ref.get(finalAnswerItemIdsByTurn)).get(
+                        owner.nativeTurnId,
+                      );
+                      const completedTexts = (yield* Ref.get(completedFinalAnswerTextsByTurn)).get(
+                        owner.nativeTurnId,
+                      );
+                      for (const item of snapshot.items) {
+                        if (
+                          finalItems?.has(item.itemId) &&
+                          ((completedTexts?.size ?? 0) > 0 ||
+                            finalItems.values().next().value !== item.itemId)
+                        )
+                          return yield* new ProviderTextSnapshotError({
+                            reason: "not-native-ready",
+                          });
+                        const built = yield* buildAgentMessageArtifacts(
+                          context,
+                          { id: item.itemId, text: item.text },
+                          false,
+                        );
+                        artifacts.push(
+                          { type: "node.updated", driver: CODEX_PROVIDER, node: built.node },
+                          {
+                            type: "message.updated",
+                            driver: CODEX_PROVIDER,
+                            message: built.message,
+                          },
+                          {
+                            type: "turn_item.updated",
+                            driver: CODEX_PROVIDER,
+                            turnItem: built.turnItem,
+                          },
+                        );
+                      }
+                      textSnapshotOwners.set(token, { context, owner });
+                      const offered = yield* Queue.offer(events, {
+                        type: "internal.text_snapshot",
+                        token,
+                        owner,
+                        watermark: snapshot.watermark,
+                        events: artifacts,
+                      });
+                      if (!offered)
+                        return yield* new ProviderTextSnapshotError({ reason: "consumer-ended" });
+                    }),
+                  );
+                }),
+              ),
+            withCurrent: (token, watermark, commit) =>
+              turnTerminalizationPermit.withPermit(
+                Effect.gen(function* () {
+                  const captured = textSnapshotOwners.get(token);
+                  if (captured === undefined)
+                    return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
+                  if ((yield* snapshotContext(captured.owner)) !== captured.context)
+                    return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
+                  if (watermark === undefined) return yield* commit;
+                  const result = yield* agentMessageDeltas.withWatermark(
+                    captured.owner.nativeTurnId,
+                    watermark,
+                    commit,
+                  );
+                  if (Option.isNone(result))
+                    return yield* new ProviderTextSnapshotError({ reason: "newer-delta" });
+                  return result.value;
+                }),
+              ),
+            release: (token) =>
+              Effect.sync(() => {
+                textSnapshotOwners.delete(token);
+              }),
+          },
           modelContextWindowLaunchFingerprint: configuration,
           getModelContextWindow: (selection) =>
             selection.instanceId === adapterOptions.instanceId
