@@ -2,12 +2,15 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  ChatAttachmentId,
+  CheckpointScopeId,
   EventId,
   MessageId,
   ProjectId,
   ProviderInstanceId,
   ProviderDriverKind,
   ThreadId,
+  RunId,
   RuntimeRequestId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -46,6 +49,10 @@ import {
   THREAD_FORK_NATIVE_TARGET_PROMPT,
 } from "../testkit/fixtures/shared.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
+import { CheckpointStore } from "../../checkpointing/CheckpointStore.ts";
+import { ServerConfig } from "../../config.ts";
+import { createAttachmentId, resolveAttachmentPath } from "../../attachmentStore.ts";
+import { makeProviderReplayGate } from "../testkit/ProviderReplayGate.testkit.ts";
 import { makeSqlitePersistenceLive } from "../../persistence/Layers/Sqlite.ts";
 
 const encodeFrame = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -57,7 +64,9 @@ const sourceId = ThreadId.make("scient-native-fork-source");
 const targetId = ThreadId.make("scient-native-fork-target");
 const waitCompleted = Effect.fn("NativeFork.waitCompleted")(function* (
   threadId: ThreadId,
-  expectedStatus: "completed" | "failed" = "completed",
+  expectedStatus: "completed" | "failed" | "interrupted" = "completed",
+  expectedRunId?: RunId,
+  requireReadyCheckpoint = false,
 ) {
   const orchestrator = yield* OrchestratorV2;
   const cursor = yield* orchestrator.getThreadEventSequence(threadId);
@@ -71,17 +80,37 @@ const waitCompleted = Effect.fn("NativeFork.waitCompleted")(function* (
       Stream.mapEffect(() => orchestrator.getThreadProjection(threadId)),
     ),
   ).pipe(
-    Stream.filter((projection) =>
-      ["completed", "failed", "interrupted", "cancelled"].includes(
-        projection.runs.at(-1)?.status ?? "",
-      ),
-    ),
+    Stream.filter((projection) => {
+      const run =
+        expectedRunId === undefined
+          ? projection.runs.at(-1)
+          : projection.runs.find((run) => run.id === expectedRunId);
+      if (!run || !["completed", "failed", "interrupted", "cancelled"].includes(run.status))
+        return false;
+      if (!requireReadyCheckpoint) return true;
+      const checkpoint = projection.checkpoints.find(
+        (checkpoint) => checkpoint.id === run.checkpointId,
+      );
+      return (
+        checkpoint?.status === "ready" &&
+        checkpoint.runId === run.id &&
+        projection.checkpoints.some(
+          (baseline) =>
+            baseline.scopeId === checkpoint.scopeId &&
+            baseline.runId === null &&
+            baseline.status === "ready",
+        )
+      );
+    }),
     Stream.runHead,
     Effect.timeout("15 seconds"),
   );
   assert.ok(Option.isSome(complete));
   assert.equal(
-    complete.value.runs.at(-1)?.status,
+    (expectedRunId === undefined
+      ? complete.value.runs.at(-1)
+      : complete.value.runs.find((run) => run.id === expectedRunId)
+    )?.status,
     expectedStatus,
     encodeFrame(complete.value.turnItems.filter((item) => item.type === "error")),
   );
@@ -1057,284 +1086,435 @@ it.live("a failed first turn retries the persisted clone instead of forking agai
   ),
 );
 
-it.live(
-  "native baseline rollback preserves a Scient fork's inherited transcript, work log and lineage",
-  () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const name = "scient-fork-baseline-rollback";
-        const cwd = yield* checkpointWorkspace(name);
-        const recorded = yield* readProviderReplayTranscript(
-          new URL(
-            "../testkit/fixtures/thread_fork_native/codex_transcript.ndjson",
-            import.meta.url,
-          ),
-        );
-        const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(
-          materializeReplayTranscriptWorkspace(recorded, cwd),
-        );
-        const entries = [...transcript.entries];
-        const sourceTerminalIndex = entries.findIndex(
-          (entry) => entry.type === "emit_inbound" && entry.label === "turn/completed/source",
-        );
-        assert.isAbove(sourceTerminalIndex, 0);
-        entries.splice(sourceTerminalIndex, 0, {
-          type: "emit_inbound",
-          label: "item/completed/source-work-log",
-          frame: {
-            method: "item/completed",
-            params: {
-              threadId: "native-source-thread",
-              turnId: "native-source-turn",
-              item: {
-                type: "commandExecution",
-                id: "native-source-work-log",
-                pluginId: null,
-                scriptPath: null,
-                command: "echo inherited evidence",
-                cwd,
-                processId: null,
-                source: "agent",
-                status: "completed",
-                commandActions: [],
-                aggregatedOutput: "inherited evidence",
-                exitCode: 0,
-                durationMs: 1,
-              },
-            },
-          },
-        });
-        const nativeFork = entries.find(
-          (entry) => entry.type === "emit_inbound" && entry.label === "thread/fork",
-        );
-        assert.ok(nativeFork?.type === "emit_inbound");
-        const revertedFrame = decodeFrame(
-          encodeFrame(nativeFork.frame).replace('"id":4', '"id":8'),
-        );
-        const exitIndex = entries.findIndex((entry) => entry.type === "runtime_exit");
-        assert.isAbove(exitIndex, 0);
-        entries.splice(
-          exitIndex,
-          0,
-          {
-            type: "expect_outbound",
-            label: "thread/read/fork-rollback",
-            frame: {
-              id: 6,
-              method: "thread/read",
-              params: { threadId: "native-fork-thread", includeTurns: false },
-            },
-          },
-          {
+for (const queuedAttachment of [false, true])
+  it.live(
+    queuedAttachment
+      ? "native rollback retains a held queued attachment through history pruning and replay"
+      : "native baseline rollback preserves a Scient fork's inherited transcript, work log and lineage",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const name = `scient-fork-baseline-rollback-${queuedAttachment}`;
+          const cwd = yield* checkpointWorkspace(name);
+          const recorded = yield* readProviderReplayTranscript(
+            new URL(
+              "../testkit/fixtures/thread_fork_native/codex_transcript.ndjson",
+              import.meta.url,
+            ),
+          );
+          const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(
+            materializeReplayTranscriptWorkspace(recorded, cwd),
+          );
+          const entries = [...transcript.entries];
+          const sourceTerminalIndex = entries.findIndex(
+            (entry) => entry.type === "emit_inbound" && entry.label === "turn/completed/source",
+          );
+          assert.isAbove(sourceTerminalIndex, 0);
+          entries.splice(sourceTerminalIndex, 0, {
             type: "emit_inbound",
-            label: "thread/read/fork-rollback",
+            label: "item/completed/source-work-log",
             frame: {
-              id: 6,
-              result: {
-                thread: {
-                  id: "native-fork-thread",
-                  historyMode: "paginated",
-                  status: { type: "idle" },
+              method: "item/completed",
+              params: {
+                threadId: "native-source-thread",
+                turnId: "native-source-turn",
+                item: {
+                  type: "commandExecution",
+                  id: "native-source-work-log",
+                  pluginId: null,
+                  scriptPath: null,
+                  command: "echo inherited evidence",
+                  cwd,
+                  processId: null,
+                  source: "agent",
+                  status: "completed",
+                  commandActions: [],
+                  aggregatedOutput: "inherited evidence",
+                  exitCode: 0,
+                  durationMs: 1,
                 },
               },
             },
-          },
-          {
-            type: "expect_outbound",
-            label: "thread/turns/list/fork-rollback",
-            frame: {
-              id: 7,
-              method: "thread/turns/list",
-              params: {
-                threadId: "native-fork-thread",
-                cursor: null,
-                limit: 1,
-                sortDirection: "desc",
-                itemsView: "summary",
+          });
+          const nativeFork = entries.find(
+            (entry) => entry.type === "emit_inbound" && entry.label === "thread/fork",
+          );
+          assert.ok(nativeFork?.type === "emit_inbound");
+          const revertedFrame = decodeFrame(
+            encodeFrame(nativeFork.frame).replace('"id":4', '"id":8'),
+          );
+          const exitIndex = entries.findIndex((entry) => entry.type === "runtime_exit");
+          assert.isAbove(exitIndex, 0);
+          entries.splice(
+            exitIndex,
+            0,
+            {
+              type: "expect_outbound",
+              label: "thread/read/fork-rollback",
+              frame: {
+                id: 6,
+                method: "thread/read",
+                params: { threadId: "native-fork-thread", includeTurns: false },
               },
             },
-          },
-          {
-            type: "emit_inbound",
-            label: "thread/turns/list/fork-rollback",
-            frame: {
-              id: 7,
-              result: {
-                data: [{ id: "native-fork-turn", items: [], status: "completed", error: null }],
-                nextCursor: null,
+            {
+              type: "emit_inbound",
+              label: "thread/read/fork-rollback",
+              frame: {
+                id: 6,
+                result: {
+                  thread: {
+                    id: "native-fork-thread",
+                    historyMode: "paginated",
+                    status: { type: "idle" },
+                  },
+                },
               },
             },
-          },
-          {
-            type: "expect_outbound",
-            label: "thread/revert/fork-baseline",
-            frame: {
-              id: 8,
-              method: "thread/revert",
-              params: { threadId: "native-fork-thread", beforeTurnId: "native-fork-turn" },
+            {
+              type: "expect_outbound",
+              label: "thread/turns/list/fork-rollback",
+              frame: {
+                id: 7,
+                method: "thread/turns/list",
+                params: {
+                  threadId: "native-fork-thread",
+                  cursor: null,
+                  limit: 1,
+                  sortDirection: "desc",
+                  itemsView: "summary",
+                },
+              },
             },
-          },
-          { type: "emit_inbound", label: "thread/revert/fork-baseline", frame: revertedFrame },
-        );
-        const replayTranscript = { ...transcript, entries };
-        const driver = yield* CodexReplay.makeReplayDriver(replayTranscript);
-        const layer = makeOrchestratorV2ReplayLayerWithRegistry(
-          { name, runtimePolicyOverride: { cwd } },
-          makeCodexProviderAdapterRegistryReplayLayer({ transcript: replayTranscript, driver }),
-          { configureMcp: false },
-        );
-        yield* Effect.gen(function* () {
-          const orchestrator = yield* OrchestratorV2;
-          const forks = yield* ConversationForkService;
-          const store = yield* ProjectionStoreV2;
-          const source = yield* createSource(cwd);
-          assert.ok(source.visibleTurnItems.some((row) => row.item.type === "command_execution"));
-          const sourceAnswer = source.messages.findLast((message) => message.role === "assistant");
-          assert.ok(sourceAnswer);
-          yield* forks.dispatch({
-            type: "thread.fork",
-            commandId: CommandId.make("scient-rollback-fork"),
-            originThreadId: sourceId,
-            newThreadId: targetId,
-            sourceAssistantMessageId: sourceAnswer.id,
-            workspaceMode: "local",
+            {
+              type: "emit_inbound",
+              label: "thread/turns/list/fork-rollback",
+              frame: {
+                id: 7,
+                result: {
+                  data: [{ id: "native-fork-turn", items: [], status: "completed", error: null }],
+                  nextCursor: null,
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "thread/revert/fork-baseline",
+              frame: {
+                id: 8,
+                method: "thread/revert",
+                params: { threadId: "native-fork-thread", beforeTurnId: "native-fork-turn" },
+              },
+            },
+            { type: "emit_inbound", label: "thread/revert/fork-baseline", frame: revertedFrame },
+          );
+          const replayTranscript = { ...transcript, entries };
+          const gate = makeProviderReplayGate(queuedAttachment ? ["turn/completed/fork"] : []);
+          yield* Effect.addFinalizer(() => Effect.sync(() => gate.releaseAll()));
+          if (queuedAttachment) {
+            const terminal = entries.find(
+              (entry) => entry.type === "emit_inbound" && entry.label === "turn/completed/fork",
+            );
+            assert.ok(terminal?.type === "emit_inbound");
+            const encoded = encodeFrame(terminal.frame);
+            entries[entries.indexOf(terminal)] = {
+              ...terminal,
+              frame: decodeFrame(encoded.replace('"status":"completed"', '"status":"interrupted"')),
+            };
+          }
+          const driver = yield* CodexReplay.makeReplayDriver(replayTranscript, {
+            beforeEmitInbound: (entry) =>
+              Effect.promise((signal) => gate.beforeEmit(entry.label, signal)),
           });
-          const frozen = yield* store.getThreadProjection(targetId);
-          const inheritedActivity = (yield* store.getTimelinePage(targetId, {
-            view: "activity",
-            limit: 100,
-          })).items;
-          const baselineExport = conversationSnapshotProjection(frozen, cwd).messages;
-          assert.lengthOf(frozen.runs, 0);
-          assert.ok(inheritedActivity.some((row) => row.item.type === "command_execution"));
-          yield* orchestrator.dispatch({
-            type: "message.dispatch",
-            commandId: CommandId.make("scient-rollback-local-send"),
-            threadId: targetId,
-            messageId: MessageId.make("scient-rollback-local-message"),
-            text: THREAD_FORK_NATIVE_TARGET_PROMPT,
-            attachments: [],
-            modelSelection,
-            dispatchMode: { type: "start_immediately" },
-            createdBy: "user",
-            creationSource: "web",
-          });
-          const executed = yield* waitCompleted(targetId);
-          const local = executed.runs[0];
-          assert.ok(local);
-          assert.isNotNull(local.rootNodeId);
-          assert.isNotNull(local.activeAttemptId);
-          assert.isNotNull(local.providerThreadId);
-          assert.isNotNull(local.checkpointId);
-          assert.lengthOf(
-            executed.providerTurns.filter((turn) => turn.runAttemptId === local.activeAttemptId),
-            1,
+          const layer = makeOrchestratorV2ReplayLayerWithRegistry(
+            { name, runtimePolicyOverride: { cwd } },
+            makeCodexProviderAdapterRegistryReplayLayer({ transcript: replayTranscript, driver }),
+            { configureMcp: false },
           );
-          const localAttempt = executed.attempts.find(
-            (attempt) => attempt.id === local.activeAttemptId,
-          );
-          const nativeTurn = executed.providerTurns.find(
-            (turn) => turn.runAttemptId === localAttempt?.id,
-          );
-          assert.equal(localAttempt?.status, "completed");
-          assert.equal(nativeTurn?.nativeTurnRef?.nativeId, "native-fork-turn");
-          assert.include(
-            conversationSnapshotProjection(executed, cwd).messages.map((message) => message.text),
-            THREAD_FORK_NATIVE_TARGET_PROMPT,
-          );
-          const baseline = executed.checkpoints.find(
-            (checkpoint) => checkpoint.runId === null && checkpoint.status === "ready",
-          );
-          assert.ok(baseline);
-          const rollbackId = CommandId.make("scient-rollback-to-baseline");
-          const cursor = yield* orchestrator.getThreadEventSequence(targetId);
-          const pull = yield* Stream.toPull(
-            orchestrator.streamStoredEventsFrom({ threadId: targetId, afterSequence: cursor }),
-          );
-          const receipt = yield* orchestrator.dispatch({
-            type: "checkpoint.rollback",
-            commandId: rollbackId,
-            threadId: targetId,
-            checkpointId: baseline.id,
-            scopeId: baseline.scopeId,
-            restoreFiles: false,
-          });
-          const observed = yield* Stream.concat(
-            Stream.succeed(yield* store.getThreadProjection(targetId)),
-            Stream.fromPull(Effect.succeed(pull)).pipe(
-              Stream.mapEffect(() => store.getThreadProjection(targetId)),
-            ),
-          ).pipe(
-            Stream.filter(
-              (projection) =>
-                projection.thread.rollbackCompletedRequestId === rollbackId ||
-                projection.thread.rollbackFailure !== null,
-            ),
-            Stream.runHead,
-            Effect.timeout("15 seconds"),
-          );
-          assert.ok(Option.isSome(observed));
-          const reverted = observed.value;
-          assert.isNull(reverted.thread.rollbackFailure);
-          assert.equal(reverted.thread.rollbackCompletedRequestId, rollbackId);
-          assert.equal(
-            (yield* orchestrator.dispatch({
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* OrchestratorV2;
+            const forks = yield* ConversationForkService;
+            const store = yield* ProjectionStoreV2;
+            const source = yield* createSource(cwd);
+            assert.ok(source.visibleTurnItems.some((row) => row.item.type === "command_execution"));
+            const sourceAnswer = source.messages.findLast(
+              (message) => message.role === "assistant",
+            );
+            assert.ok(sourceAnswer);
+            yield* forks.dispatch({
+              type: "thread.fork",
+              commandId: CommandId.make("scient-rollback-fork"),
+              originThreadId: sourceId,
+              newThreadId: targetId,
+              sourceAssistantMessageId: sourceAnswer.id,
+              workspaceMode: "local",
+            });
+            const frozen = yield* store.getThreadProjection(targetId);
+            const inheritedActivity = (yield* store.getTimelinePage(targetId, {
+              view: "activity",
+              limit: 100,
+            })).items;
+            const baselineExport = conversationSnapshotProjection(frozen, cwd).messages;
+            assert.lengthOf(frozen.runs, 0);
+            assert.ok(inheritedActivity.some((row) => row.item.type === "command_execution"));
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("scient-rollback-local-send"),
+              threadId: targetId,
+              messageId: MessageId.make("scient-rollback-local-message"),
+              text: THREAD_FORK_NATIVE_TARGET_PROMPT,
+              attachments: [],
+              modelSelection,
+              dispatchMode: { type: "start_immediately" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+            let queuedFile: { path: string; id: ChatAttachmentId } | undefined;
+            if (queuedAttachment) {
+              assert.isTrue(
+                yield* Effect.promise(() => gate.waitForReached("turn/completed/fork")).pipe(
+                  Effect.timeout("15 seconds"),
+                ),
+              );
+              const fs = yield* FileSystem.FileSystem;
+              const config = yield* ServerConfig;
+              const id = ChatAttachmentId.make(createAttachmentId(targetId)!);
+              const attachment = {
+                type: "file" as const,
+                id,
+                name: "queued.txt",
+                mimeType: "text/plain",
+                sizeBytes: 6,
+              };
+              const path = resolveAttachmentPath({
+                attachmentsDir: config.attachmentsDir,
+                attachment,
+              });
+              assert.ok(path);
+              yield* fs.makeDirectory(config.attachmentsDir, { recursive: true });
+              yield* fs.writeFileString(path, "queued");
+              queuedFile = { path, id };
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make("rollback-queue-admission"),
+                threadId: targetId,
+                messageId: MessageId.make("rollback-queued-message"),
+                text: "Retained queued payload",
+                attachments: [attachment],
+                dispatchMode: { type: "queue_after_active" },
+                createdBy: "user",
+                creationSource: "web",
+              });
+              gate.release("turn/completed/fork");
+            }
+            const executed = yield* waitCompleted(
+              targetId,
+              queuedAttachment ? "interrupted" : "completed",
+              (yield* store.getThreadProjection(targetId)).runs[0]!.id,
+              true,
+            );
+            const local = executed.runs[0];
+            assert.ok(local);
+            assert.isNotNull(local.rootNodeId);
+            assert.isNotNull(local.activeAttemptId);
+            assert.isNotNull(local.providerThreadId);
+            assert.isNotNull(local.checkpointId);
+            assert.lengthOf(
+              executed.providerTurns.filter((turn) => turn.runAttemptId === local.activeAttemptId),
+              1,
+            );
+            const localAttempt = executed.attempts.find(
+              (attempt) => attempt.id === local.activeAttemptId,
+            );
+            const nativeTurn = executed.providerTurns.find(
+              (turn) => turn.runAttemptId === localAttempt?.id,
+            );
+            assert.equal(localAttempt?.status, queuedAttachment ? "interrupted" : "completed");
+            assert.equal(nativeTurn?.nativeTurnRef?.nativeId, "native-fork-turn");
+            assert.include(
+              conversationSnapshotProjection(executed, cwd).messages.map((message) => message.text),
+              THREAD_FORK_NATIVE_TARGET_PROMPT,
+            );
+            const baseline = (yield* store.getThreadProjection(targetId)).checkpoints.find(
+              (checkpoint) => checkpoint.runId === null && checkpoint.status === "ready",
+            );
+            assert.ok(baseline);
+            const checkpoint = executed.checkpoints.find(
+              (entry) => entry.id === local.checkpointId,
+            );
+            assert.ok(checkpoint);
+            assert.equal(checkpoint.status, "ready");
+            assert.equal(checkpoint.runId, local.id);
+            assert.equal(checkpoint.scopeId, baseline.scopeId);
+            const checkpointScope = executed.checkpointScopes.find(
+              (scope) => scope.id === checkpoint.scopeId,
+            );
+            assert.ok(checkpointScope);
+            assert.equal(checkpointScope.cwd, cwd);
+            const checkpointStore = yield* CheckpointStore;
+            for (const ref of [checkpoint.ref, baseline.ref]) {
+              assert.isTrue(
+                yield* checkpointStore.hasCheckpointRef({
+                  cwd: checkpointScope.cwd,
+                  checkpointRef: ref,
+                }),
+              );
+            }
+            if (queuedFile) {
+              const rejected = yield* Effect.result(
+                orchestrator.dispatch({
+                  type: "checkpoint.rollback",
+                  commandId: CommandId.make("rollback-reject-wrong-scope"),
+                  threadId: targetId,
+                  checkpointId: baseline.id,
+                  scopeId: CheckpointScopeId.make("wrong-scope"),
+                  restoreFiles: false,
+                }),
+              );
+              assert.equal(rejected._tag, "Failure");
+              assert.equal(
+                yield* (yield* FileSystem.FileSystem).readFileString(queuedFile.path),
+                "queued",
+              );
+              assert.deepEqual(
+                (yield* store.getThreadProjection(targetId)).messages.find(
+                  (message) => message.id === MessageId.make("rollback-queued-message"),
+                ),
+                executed.messages.find(
+                  (message) => message.id === MessageId.make("rollback-queued-message"),
+                ),
+              );
+            }
+            const rollbackId = CommandId.make("scient-rollback-to-baseline");
+            const cursor = yield* orchestrator.getThreadEventSequence(targetId);
+            const pull = yield* Stream.toPull(
+              orchestrator.streamStoredEventsFrom({ threadId: targetId, afterSequence: cursor }),
+            );
+            const receipt = yield* orchestrator.dispatch({
               type: "checkpoint.rollback",
               commandId: rollbackId,
               threadId: targetId,
               checkpointId: baseline.id,
               scopeId: baseline.scopeId,
               restoreFiles: false,
-            })).sequence,
-            receipt.sequence,
-          );
-          assert.equal(reverted.runs.find((run) => run.id === local.id)?.status, "rolled_back");
-          assert.equal(
-            reverted.nodes.find((node) => node.id === local.rootNodeId)?.status,
-            "rolled_back",
-          );
-          assert.equal(
-            reverted.providerTurns.find((turn) => turn.id === nativeTurn?.id)?.runAttemptId,
-            local.activeAttemptId,
-          );
-          assert.equal(
-            reverted.attempts.find((attempt) => attempt.id === local.activeAttemptId)?.status,
-            "completed",
-          );
-          assert.equal(
-            reverted.checkpoints.find((checkpoint) => checkpoint.id === local.checkpointId)?.status,
-            "stale",
-          );
-          assert.equal(
-            reverted.checkpoints.find((checkpoint) => checkpoint.id === baseline.id)?.status,
-            "ready",
-          );
-          const owner = reverted.providerThreads.find(
-            (thread) => thread.id === local.providerThreadId,
-          );
-          assert.equal(owner?.nativeThreadRef?.nativeId, "native-fork-thread");
-          assert.isNull(owner?.lastRunOrdinal);
-          assert.isNull(owner?.nativeConversationHeadRef);
-          assert.deepEqual(conversationSnapshotProjection(reverted, cwd).messages, baselineExport);
-          assert.deepEqual(reverted.visibleTurnItems, frozen.visibleTurnItems);
-          assert.deepEqual(
-            (yield* store.getTimelinePage(targetId, { view: "activity", limit: 100 })).items,
-            inheritedActivity,
-          );
-          assert.deepEqual(reverted.thread.forkLineage, frozen.thread.forkLineage);
-          assert.deepEqual(
-            (yield* store.getShellSnapshot()).threads.find((thread) => thread.id === targetId)
-              ?.forkLineage,
-            frozen.thread.forkLineage,
-          );
-          assert.deepEqual(
-            (yield* store.getThreadProjection(sourceId)).visibleTurnItems,
-            source.visibleTurnItems,
-          );
-          const replayState = yield* Ref.get(driver.state);
-          assert.isNull(replayState.failure);
-          assert.equal(replayState.cursor, entries.length);
-        }).pipe(Effect.provide(layer));
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
-);
+            });
+            const observed = yield* Stream.concat(
+              Stream.succeed(yield* store.getThreadProjection(targetId)),
+              Stream.fromPull(Effect.succeed(pull)).pipe(
+                Stream.mapEffect(() => store.getThreadProjection(targetId)),
+              ),
+            ).pipe(
+              Stream.filter(
+                (projection) =>
+                  projection.thread.rollbackCompletedRequestId === rollbackId ||
+                  projection.thread.rollbackFailure !== null,
+              ),
+              Stream.runHead,
+              Effect.timeout("15 seconds"),
+            );
+            assert.ok(Option.isSome(observed));
+            const reverted = observed.value;
+            assert.isNull(reverted.thread.rollbackFailure);
+            assert.equal(reverted.thread.rollbackCompletedRequestId, rollbackId);
+            assert.equal(
+              (yield* orchestrator.dispatch({
+                type: "checkpoint.rollback",
+                commandId: rollbackId,
+                threadId: targetId,
+                checkpointId: baseline.id,
+                scopeId: baseline.scopeId,
+                restoreFiles: false,
+              })).sequence,
+              receipt.sequence,
+            );
+            assert.equal(reverted.runs.find((run) => run.id === local.id)?.status, "rolled_back");
+            assert.equal(
+              reverted.nodes.find((node) => node.id === local.rootNodeId)?.status,
+              "rolled_back",
+            );
+            assert.equal(
+              reverted.providerTurns.find((turn) => turn.id === nativeTurn?.id)?.runAttemptId,
+              local.activeAttemptId,
+            );
+            assert.equal(
+              reverted.attempts.find((attempt) => attempt.id === local.activeAttemptId)?.status,
+              queuedAttachment ? "interrupted" : "completed",
+            );
+            assert.equal(
+              reverted.checkpoints.find((checkpoint) => checkpoint.id === local.checkpointId)
+                ?.status,
+              "stale",
+            );
+            assert.equal(
+              reverted.checkpoints.find((checkpoint) => checkpoint.id === baseline.id)?.status,
+              "ready",
+            );
+            const owner = reverted.providerThreads.find(
+              (thread) => thread.id === local.providerThreadId,
+            );
+            assert.equal(owner?.nativeThreadRef?.nativeId, "native-fork-thread");
+            assert.isNull(owner?.lastRunOrdinal);
+            assert.isNull(owner?.nativeConversationHeadRef);
+            if (!queuedAttachment) {
+              assert.deepEqual(
+                conversationSnapshotProjection(reverted, cwd).messages,
+                baselineExport,
+              );
+              assert.deepEqual(reverted.visibleTurnItems, frozen.visibleTurnItems);
+            } else {
+              assert.ok(queuedFile);
+              const queued = reverted.runs.find(
+                (run) => run.userMessageId === MessageId.make("rollback-queued-message"),
+              );
+              assert.ok(queued);
+              assert.equal(queued.status, "queued");
+              assert.isTrue(queued.queueHeld);
+              const originalQueued = executed.messages.find(
+                (message) => message.id === queued.userMessageId,
+              );
+              assert.ok(originalQueued);
+              assert.deepEqual(
+                reverted.messages.find((message) => message.id === queued.userMessageId),
+                originalQueued,
+              );
+              assert.equal(
+                yield* (yield* FileSystem.FileSystem).readFileString(queuedFile.path),
+                "queued",
+              );
+              assert.include(
+                originalQueued.attachments.map((attachment) => attachment.id),
+                queuedFile.id,
+              );
+              assert.deepEqual(
+                reverted.visibleTurnItems.filter((row) => row.item.runId !== queued.id),
+                frozen.visibleTurnItems,
+              );
+            }
+            assert.deepEqual(
+              (yield* store.getTimelinePage(targetId, {
+                view: "activity",
+                limit: 100,
+              })).items.filter(
+                (row) =>
+                  !queuedAttachment ||
+                  row.item.runId !== reverted.runs.find((run) => run.status === "queued")?.id,
+              ),
+              inheritedActivity,
+            );
+            assert.deepEqual(reverted.thread.forkLineage, frozen.thread.forkLineage);
+            assert.deepEqual(
+              (yield* store.getShellSnapshot()).threads.find((thread) => thread.id === targetId)
+                ?.forkLineage,
+              frozen.thread.forkLineage,
+            );
+            assert.deepEqual(
+              (yield* store.getThreadProjection(sourceId)).visibleTurnItems,
+              source.visibleTurnItems,
+            );
+            const replayState = yield* Ref.get(driver.state);
+            assert.isNull(replayState.failure);
+            assert.equal(replayState.cursor, entries.length);
+          }).pipe(Effect.ensuring(Effect.sync(() => gate.releaseAll())), Effect.provide(layer));
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
