@@ -1094,7 +1094,10 @@ describe("native provider presentation in the v2 timeline", () => {
       });
       if (entry?.kind !== "work") throw new Error("Expected a tool work entry");
 
-      expect(entry.entry.toolTitle).toBe("MCP tool call");
+      expect(entry.entry).toMatchObject({
+        toolTitle: "MCP tool call",
+        toolData: { input: item.input, output: item.output },
+      });
       expect(resolveWorkEntryToolPresentation(entry.entry)).toEqual({
         displayName,
         icon: "browser",
