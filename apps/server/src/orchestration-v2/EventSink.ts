@@ -52,6 +52,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import { applyLegacyHistoryRepairGuards } from "./legacy/LegacyHistoryRepairGuards.ts";
+import { legacyQueueImportReusesMessageIdentity } from "./legacy/LegacyQueueImportIdentity.ts";
 
 /**
  * ERRORS
@@ -675,27 +676,20 @@ const baseLayer: Layer.Layer<
           }
           // SCIENT-FORK:END
 
-          // An import creates a message identity. Recheck under the same transaction
-          // as its receipt so a competing admission cannot replace existing history.
-          if (input.commandType === "legacy-queue.import") {
-            for (const event of input.events) {
-              if (event.type !== "message.updated") continue;
-              const existing = yield* sql<{ readonly message_id: string }>`
-                SELECT message_id FROM orchestration_v2_projection_messages
-                WHERE message_id = ${event.payload.id}
-                LIMIT 1
-              `;
-              if (existing.length > 0) {
-                return yield* new EventSinkWriteError({
-                  commandId: input.commandId,
-                  eventCount: input.events.length,
-                  cause: new Error(
-                    "The legacy queue message identity already belongs to conversation history.",
-                  ),
-                });
-              }
-            }
+          // SCIENT-FORK:START — a legacy queue import cannot reuse a history message identity.
+          if (
+            input.commandType === "legacy-queue.import" &&
+            (yield* legacyQueueImportReusesMessageIdentity(sql, input.events))
+          ) {
+            return yield* new EventSinkWriteError({
+              commandId: input.commandId,
+              eventCount: input.events.length,
+              cause: new Error(
+                "The legacy queue message identity already belongs to conversation history.",
+              ),
+            });
           }
+          // SCIENT-FORK:END
 
           const normalized = yield* normalizeEvents(input.events);
           const storedEvents = yield* eventStore.append({
