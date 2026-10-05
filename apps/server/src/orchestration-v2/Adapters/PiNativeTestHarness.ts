@@ -23,7 +23,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as ServerConfig from "../../config.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import * as ProviderAdapter from "../ProviderAdapter.ts";
-import { makePiAdapterV2 } from "./PiAdapterV2.ts";
+import { makePiAdapterV2, type PiAdapterV2Options } from "./PiAdapterV2.ts";
 
 export const binary = process.env.SCIENT_PI_TEST_BINARY;
 export const json = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -52,7 +52,7 @@ export const fixture = Effect.fnUntraced(function* (suffix: string) {
     interactionMode: "default",
     cwd: root,
   });
-  const adapter = makePiAdapterV2({
+  const adapterOptions: PiAdapterV2Options = {
     instanceId,
     settings: { enabled: true, binaryPath: binary!, launchArgs: "", customModels: [] },
     environment: {
@@ -68,7 +68,8 @@ export const fixture = Effect.fnUntraced(function* (suffix: string) {
     path,
     idAllocator: yield* IdAllocator.IdAllocatorV2,
     serverConfig: yield* ServerConfig.ServerConfig,
-  });
+  };
+  const adapter = makePiAdapterV2(adapterOptions);
   const open = (initialNativeThreadId?: string) =>
     adapter.openSession({
       threadId,
@@ -164,6 +165,7 @@ export const fixture = Effect.fnUntraced(function* (suffix: string) {
     modelSelection,
     policy,
     adapter,
+    adapterOptions,
     open,
     send,
     models,

@@ -55,6 +55,8 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Scope from "effect/Scope";
 import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
 import * as Path from "effect/Path";
@@ -66,6 +68,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   allocateFreshPiSessionFile,
+  cleanupFreshPiSessionFile,
   piInstanceStateRoot,
 } from "../../provider/pi/PiSessionFile.ts";
 import { randomUuidV4 } from "../RandomUuid.ts";
@@ -462,37 +465,64 @@ export function makePiAdapterV2(
       });
       // Pi lazily creates its default session file. An owned empty file lets
       // Pi write the native header before an empty thread is published.
+      let freshSession: { readonly sessionFile: string } | undefined;
+      let freshSessionPublished = false;
+      let initialBindingComplete = false;
+      const cleanupUnpublishedSession = Effect.suspend(() =>
+        freshSession === undefined || freshSessionPublished
+          ? Effect.void
+          : provideCacheFs(cleanupFreshPiSessionFile(freshSession)).pipe(Effect.orDie),
+      );
       const initialSessionFile =
         input.initialNativeThreadId ??
-        (yield* piInstanceStateRoot({
-          stateDir: options.serverConfig.stateDir,
-          instanceId: options.instanceId,
-        }).pipe(
-          Effect.flatMap((stateRoot) =>
-            randomUuidV4.pipe(
-              Effect.flatMap((fileId) => allocateFreshPiSessionFile({ stateRoot, fileId })),
+        (yield* Effect.acquireRelease(
+          piInstanceStateRoot({
+            stateDir: options.serverConfig.stateDir,
+            instanceId: options.instanceId,
+          }).pipe(
+            Effect.flatMap((stateRoot) =>
+              randomUuidV4.pipe(
+                Effect.flatMap((fileId) => allocateFreshPiSessionFile({ stateRoot, fileId })),
+              ),
+            ),
+            Effect.provide(
+              options.path === undefined ? NodePath.layer : Layer.succeed(Path.Path, options.path),
+            ),
+            Effect.provideService(FileSystem.FileSystem, options.fileSystem),
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapter.ProviderAdapterOpenSessionError({
+                  driver: PI_PROVIDER,
+                  providerSessionId: input.providerSessionId,
+                  cause,
+                }),
             ),
           ),
-          Effect.map((fresh) => fresh.sessionFile),
-          Effect.provide(
-            options.path === undefined ? NodePath.layer : Layer.succeed(Path.Path, options.path),
-          ),
-          Effect.provideService(FileSystem.FileSystem, options.fileSystem),
-          Effect.mapError(
-            (cause) =>
-              new ProviderAdapter.ProviderAdapterOpenSessionError({
-                driver: PI_PROVIDER,
-                providerSessionId: input.providerSessionId,
-                cause,
-              }),
-          ),
+          (fresh) =>
+            freshSessionPublished
+              ? Effect.void
+              : provideCacheFs(cleanupFreshPiSessionFile(fresh)).pipe(Effect.orDie),
+        ).pipe(
+          Effect.map((fresh) => {
+            freshSession = fresh;
+            return fresh.sessionFile;
+          }),
         ));
+      // The file finalizer is registered first so the connection and its child
+      // process are fully closed before an unpublished allocation is removed.
+      const connectionScope = yield* Scope.fork(scope, "sequential");
+      const rollbackStartup = (exit: Exit.Exit<unknown, unknown>) =>
+        freshSession === undefined || initialBindingComplete || Exit.isSuccess(exit)
+          ? Effect.void
+          : Scope.close(connectionScope, exit).pipe(Effect.andThen(cleanupUnpublishedSession));
       const connection: PiRpcConnection = yield* (options.makeConnection ?? makePiRpcConnection)({
         command: options.settings.binaryPath || "pi",
         args: [...launch.args, "--session", initialSessionFile],
         cwd,
         env: launch.env,
       }).pipe(
+        Scope.provide(connectionScope),
+        Effect.onExit((exit) => rollbackStartup(exit)),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, options.spawner),
         Effect.mapError(
           (cause) =>
@@ -2447,6 +2477,8 @@ export function makePiAdapterV2(
             driver: PI_PROVIDER,
             providerThread,
           });
+        if (nativeId === freshSession?.sessionFile) freshSessionPublished = true;
+        initialBindingComplete = true;
         return providerThread;
       });
 
@@ -2603,6 +2635,11 @@ export function makePiAdapterV2(
         },
         ensureThread: (threadInput) =>
           registerThread(threadInput).pipe(
+            Effect.onExit((exit) =>
+              threadInput.existingProviderThread?.nativeThreadRef?.nativeId == null
+                ? rollbackStartup(exit)
+                : Effect.void,
+            ),
             Effect.mapError(
               (cause) =>
                 new ProviderAdapter.ProviderAdapterEnsureThreadError({
