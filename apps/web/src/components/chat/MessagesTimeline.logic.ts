@@ -33,7 +33,6 @@ import {
   workEntryIndicatesToolNeutralStatus,
   workLogEntryIsToolLike,
   type TimelineEntry,
-  type TurnPlanEntry,
   type WorkLogEntry,
 } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
@@ -638,12 +637,6 @@ type MessagesTimelineRowContent =
       id: string;
       createdAt: string;
       proposedPlan: ProposedPlan;
-    }
-  | {
-      kind: "turn-plan";
-      id: string;
-      createdAt: string;
-      turnPlan: TurnPlanEntry;
     }
   | {
       kind: "working";
@@ -1771,16 +1764,6 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
-    if (timelineEntry.kind === "turn-plan") {
-      nextRows.push({
-        kind: "turn-plan",
-        id: timelineEntry.id,
-        createdAt: timelineEntry.createdAt,
-        turnPlan: timelineEntry.turnPlan,
-      });
-      continue;
-    }
-
     if (timelineEntry.kind === "event") {
       const item = timelineEntry.projectedItem.item;
       const groupKey =
@@ -2231,8 +2214,6 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
     case "proposed-plan":
       return a.proposedPlan === (b as typeof a).proposedPlan;
 
-    case "turn-plan":
-      return a.turnPlan === (b as typeof a).turnPlan;
     case "event":
       return (
         a.projectedItem === (b as typeof a).projectedItem &&

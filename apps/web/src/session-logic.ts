@@ -47,7 +47,6 @@ import { shallow } from "zustand/vanilla/shallow";
 // SCIENT-FORK:START — Scient work-log rows, plan rows and skill labels.
 import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-presentation";
 import { type TurnId } from "@t3tools/contracts";
-import type { TurnPlanEntry } from "./scient/presentation/TurnPlanTimelineRow";
 import { scientSkillUsageLabel } from "./scient/skills/scientSkillUsageLabel";
 // SCIENT-FORK:END
 
@@ -120,8 +119,6 @@ export type PendingApproval = ThreadPendingApproval;
 export type PendingUserInput = ThreadPendingUserInput;
 
 export interface ActivePlanState {
-  /** Turn the plan snapshot came from, for V1 activity-derived plans. */
-  readonly turnId?: TurnId | null;
   readonly createdAt: string;
   readonly runId: RunId | null;
   readonly explanation?: string | null;
@@ -159,12 +156,6 @@ export type TimelineEntry = (
       readonly kind: "proposed-plan";
       readonly createdAt: string;
       readonly proposedPlan: ProposedPlan;
-    }
-  | {
-      readonly id: string;
-      readonly kind: "turn-plan";
-      readonly createdAt: string;
-      readonly turnPlan: TurnPlanEntry;
     }
   | {
       readonly id: string;
@@ -603,10 +594,6 @@ export interface TimelineEntriesProjection {
   readonly input: TimelineEntriesInput;
   readonly entries: TimelineEntry[];
 }
-
-// SCIENT-FORK:START — the turn-plan row type lives beside its Scient renderer.
-export type { TurnPlanEntry } from "./scient/presentation/TurnPlanTimelineRow";
-// SCIENT-FORK:END
 
 export function deriveTimelineEntriesFromVisibleTurnItems(
   input: TimelineEntriesInput,

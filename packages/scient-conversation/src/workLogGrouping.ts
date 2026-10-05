@@ -39,8 +39,7 @@ export type GroupingTimelineEntry<W extends GroupingWork = GroupingWork> =
       readonly kind: "proposed-plan";
       readonly createdAt: string;
       readonly proposedPlan: { readonly turnId: TurnId | null };
-    }
-  | { readonly id: string; readonly kind: "turn-plan"; readonly createdAt: string };
+    };
 
 export interface GroupingLatestTurn {
   readonly turnId: TurnId;

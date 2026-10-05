@@ -1,5 +1,4 @@
 import { AgentSpawnMemberRow } from "~/scient/presentation/AgentSpawnMemberRow";
-import { TurnPlanTimelineRow } from "~/scient/presentation/TurnPlanTimelineRow";
 import { activityIssuePolicy } from "@t3tools/client-runtime/work-log/issue-presentation";
 import { useBoundedAnswerFollow } from "./useBoundedAnswerFollow";
 import { countUnreadBelow, unreadMessagesForThread } from "./unreadTimelineMessages";
@@ -2326,7 +2325,6 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
                 : (row.kind === "message" &&
                       row.message.role === "assistant" &&
                       !row.showAssistantMeta) ||
-                    row.kind === "turn-plan" ||
                     row.kind === "worktree-setup" ||
                     row.kind === "event" ||
                     row.kind === "attempt-fold"
@@ -2378,7 +2376,6 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       ) : null}
       {row.kind === "assistant-meta" ? <AssistantMetaTimelineRow row={row} /> : null}
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
-      {row.kind === "turn-plan" ? <TurnPlanTimelineRow row={row} /> : null}
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
       {row.kind === "worktree-setup" ? <WorktreeSetupTimelineRow row={row} /> : null}
       {row.kind === "event" ? <V2EventTimelineRow row={row} /> : null}
