@@ -268,7 +268,10 @@ export function makeNativeSessionAdapterV2(
             wakeOffered = false;
           }).pipe(Effect.andThen(events.spill)),
         );
-        yield* Effect.addFinalizer(() => Effect.sync(() => budget.release()));
+        if (options.eventQueueStorage) yield* events.onDispose(Effect.sync(() => budget.release()));
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => (options.eventQueueStorage ? budget.seal() : budget.release())),
+        );
         const emitBatch = (
           frames: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
           control: boolean,
@@ -1125,6 +1128,7 @@ export function makeNativeSessionAdapterV2(
           ...(native.getModelContextWindow === undefined
             ? {}
             : { getModelContextWindow: native.getModelContextWindow }),
+          ...(options.eventQueueStorage ? { eventConsumer: events.consumer } : {}),
           events: events.events.pipe(
             Stream.mapError(
               (cause) =>

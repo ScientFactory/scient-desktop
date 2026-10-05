@@ -7,6 +7,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -27,6 +28,35 @@ const fixture = Effect.fnUntraced(function* (limit = 64 * 1024, itemLimit = 8192
     Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
   );
   const instanceId = ProviderInstanceId.make("native-budget-instance");
+  const fs = yield* FileSystem.FileSystem;
+  let reads = 0;
+  let handles = 0;
+  const openFile: FileSystem.FileSystem["open"] = (name, options) =>
+    fs.open(name, options).pipe(
+      Effect.flatMap((file) =>
+        Effect.gen(function* () {
+          if (!name.endsWith("events.bin")) return file;
+          handles++;
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              handles--;
+            }),
+          );
+          const read: FileSystem.File["read"] = (bytes) =>
+            Effect.sync(() => {
+              reads++;
+            }).pipe(Effect.andThen(file.read(bytes)));
+          return new Proxy(file, {
+            get: (target, key, receiver) =>
+              key === "read" ? read : Reflect.get(target, key, receiver),
+          });
+        }),
+      ),
+    );
+  const fileSystem = new Proxy(fs, {
+    get: (target, key, receiver) =>
+      key === "open" ? openFile : Reflect.get(target, key, receiver),
+  });
   const waiting: {
     readonly peer: ReturnType<typeof scriptedOmpRpc>;
     readonly exited: Deferred.Deferred<void>;
@@ -100,7 +130,7 @@ const fixture = Effect.fnUntraced(function* (limit = 64 * 1024, itemLimit = 8192
           })),
         );
       },
-    });
+    }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
     adapter = session.adapter;
     return {
       ...session,
@@ -124,7 +154,7 @@ const fixture = Effect.fnUntraced(function* (limit = 64 * 1024, itemLimit = 8192
     NodeFS.readdirSync(root, { recursive: true })
       .filter((entry) => String(entry).endsWith("events.bin"))
       .map((entry) => NodePath.join(root, String(entry)));
-  return { open, locks, backlogs };
+  return { open, locks, backlogs, reads: () => reads, handles: () => handles };
 });
 
 const observe = Effect.fnUntraced(function* (
@@ -362,10 +392,51 @@ describe("native OMP event ingress budgets", () => {
         expect(NodeFS.statSync(NodePath.dirname(spilled[0]!)).mode & 0o777).toBe(0o700);
         expect(NodeFS.readFileSync(spilled[0]!, "utf8")).toContain("L".repeat(40_000));
         // All survivor traffic above happened before releasing or reading A.
-        // Explicit scope release must retain queued receipts after the file closes.
+        // Producer seal retains the consumer-owned disk cursor without reading it.
         yield* largest.close;
-        expect(NodeFS.existsSync(spilled[0]!)).toBe(false);
-        const observers = yield* Effect.forEach(sessions, observe);
+        expect(NodeFS.existsSync(spilled[0]!)).toBe(true);
+        expect(f.reads()).toBe(0);
+        const survivorObservers = yield* Effect.forEach(sessions.slice(1), observe);
+        const retired = [];
+        for (let generation = 0; generation < 3; generation++) {
+          const replacement = yield* f.open();
+          yield* start(replacement);
+          yield* replacement.peer.emit([delta("R".repeat(4000)), delta("x".repeat(256 * 1024))]);
+          yield* replacement.exited;
+          yield* replacement.close;
+          retired.push(replacement);
+          expect(replacement.peer.state.shutdowns).toBe(1);
+          expect(f.reads()).toBe(0);
+          expect(f.backlogs().filter((file) => NodeFS.statSync(file).size > 0)).toHaveLength(
+            generation + 2,
+          );
+          for (const survivor of sessions.slice(1)) {
+            yield* survivor.peer.emit([
+              {
+                type: "tool_execution_update",
+                toolCallId: "tool-1",
+                toolName: "read",
+                partialResult: { output: `After sealed generation ${generation}` },
+              },
+            ]);
+            yield* survivor.drain;
+            expect(survivor.runtime.providerSession.status).toBe("running");
+            expect(survivor.peer.state.shutdowns).toBe(0);
+          }
+        }
+        for (const replacement of retired) {
+          const reader = yield* observe(replacement);
+          expect(yield* reader.take((event) => event.type === "turn.terminal")).toMatchObject({
+            status: "failed",
+            threadDisposition: "broken",
+          });
+          yield* reader.ended;
+          expect(reader.events.filter((event) => event.type === "turn.terminal")).toHaveLength(1);
+          expect(reader.events.findLast((event) => event.type === "message.updated")).toMatchObject(
+            { message: { text: "R".repeat(4000), streaming: false } },
+          );
+        }
+        const observers = [yield* observe(largest), ...survivorObservers];
         expect(yield* observers[0]!.take((event) => event.type === "turn.terminal")).toMatchObject({
           status: "failed",
           threadDisposition: "broken",
@@ -414,6 +485,8 @@ describe("native OMP event ingress budgets", () => {
           yield* sessions[index]!.close;
         }
         expect(f.locks()).toHaveLength(0);
+        expect(f.handles()).toBe(0);
+        expect(f.backlogs()).toEqual([]);
       }),
     ),
   );

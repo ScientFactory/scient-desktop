@@ -42,6 +42,9 @@ export const nativeOmpOrchestration = Effect.fnUntraced(function* (
     readonly binaryPath?: string;
     readonly makeProcess?: Parameters<typeof makeOmpAdapterV2>[0]["makeProcess"];
     readonly receiptTimeoutMs?: number;
+    readonly decorateEventSink?: NonNullable<
+      Parameters<typeof makeOrchestratorV2ReplayLayerWithRegistry>[2]
+    >["decorateEventSink"];
   } = {},
 ) {
   const originalConfig = yield* ServerConfig.ServerConfig;
@@ -88,6 +91,7 @@ export const nativeOmpOrchestration = Effect.fnUntraced(function* (
     registry,
     {
       configureMcp: false,
+      ...(input.decorateEventSink ? { decorateEventSink: input.decorateEventSink } : {}),
       runEffectWorker: true,
       runContinuationWorker: true,
       serverConfigLayer: Layer.succeed(ServerConfig.ServerConfig, config),

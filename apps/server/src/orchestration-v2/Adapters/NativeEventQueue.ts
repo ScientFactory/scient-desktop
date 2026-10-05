@@ -1,10 +1,12 @@
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as ProviderAdapter from "../ProviderAdapter.ts";
@@ -23,7 +25,7 @@ const decode = Schema.decodeEffect(json);
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-/** Retain a contained owner's ordered receipts on disk behind one cursor, until owner release. */
+/** A published consumer owns retained receipts after producer sealing, until EOF or abandonment. */
 export const makeNativeEventQueue = Effect.fnUntraced(function* (
   storage?: NativeEventQueueStorage,
 ) {
@@ -35,6 +37,13 @@ export const makeNativeEventQueue = Effect.fnUntraced(function* (
     | { readonly spool: true };
   const queue = yield* Queue.unbounded<Entry, Cause.Done>();
   const permit = yield* Semaphore.make(1);
+  const resourceScope = yield* Scope.make();
+  let retained = false;
+  let sealed = false;
+  let disposed = false;
+  yield* Effect.addFinalizer(() =>
+    Effect.suspend(() => (retained ? Effect.void : Scope.close(resourceScope, Exit.void))),
+  );
   const file = storage
     ? yield* Effect.gen(function* () {
         yield* storage.fileSystem.makeDirectory(storage.directory, { recursive: true });
@@ -47,17 +56,16 @@ export const makeNativeEventQueue = Effect.fnUntraced(function* (
           flag: "w+",
           mode: 0o600,
         });
-      })
+      }).pipe(
+        Scope.provide(resourceScope),
+        Effect.onError(() => Scope.close(resourceScope, Exit.void)),
+      )
     : undefined;
   const token: Entry = { spool: true };
   let tokenQueued = false;
   let spilled = false;
   let end = 0n;
   let cursor = 0n;
-  let restored:
-    | Array<ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event> | undefined>
-    | undefined;
-  let restoredIndex = 0;
   const enqueueCursor = Effect.suspend(() => {
     if (tokenQueued || cursor === end) return Effect.void;
     tokenQueued = true;
@@ -98,65 +106,114 @@ export const makeNativeEventQueue = Effect.fnUntraced(function* (
     cursor += BigInt(4 + length);
     return frames;
   });
-  const spill = permit.withPermit(
-    Effect.gen(function* () {
-      if (!file) return false;
-      const entries: Entry[] = [];
-      for (;;) {
-        const next = Queue.takeUnsafe(queue);
-        if (next === undefined || next._tag === "Failure") break;
-        entries.push(next.value);
-      }
-      const start = end;
-      return yield* Effect.gen(function* () {
-        for (const entry of entries) if ("frames" in entry) yield* append(entry.frames);
-        // Every payload was physically written before either charge is returned.
-        spilled = true;
-        for (const entry of entries) if ("frames" in entry) entry.charge.release();
-        if (entries.some((entry) => "spool" in entry)) tokenQueued = false;
-        yield* enqueueCursor;
-        return true;
-      }).pipe(
-        Effect.catchCause(() =>
-          Effect.gen(function* () {
-            end = start;
-            yield* file.truncate(Number(start)).pipe(Effect.ignore);
-            yield* Queue.offerAll(queue, entries);
-            return false;
-          }),
-        ),
-      );
-    }).pipe(Effect.uninterruptible),
-  );
+  const spillUnsafe = Effect.gen(function* () {
+    if (!file || sealed || disposed) return false;
+    const entries: Entry[] = [];
+    for (;;) {
+      const next = Queue.takeUnsafe(queue);
+      if (next === undefined || next._tag === "Failure") break;
+      entries.push(next.value);
+    }
+    const start = end;
+    return yield* Effect.gen(function* () {
+      for (const entry of entries) if ("frames" in entry) yield* append(entry.frames);
+      // Every payload was physically written before either charge is returned.
+      spilled = true;
+      for (const entry of entries) if ("frames" in entry) entry.charge.release();
+      if (entries.some((entry) => "spool" in entry)) tokenQueued = false;
+      yield* enqueueCursor;
+      return true;
+    }).pipe(
+      Effect.catchCause(() =>
+        Effect.gen(function* () {
+          end = start;
+          yield* file.truncate(Number(start)).pipe(Effect.ignore);
+          yield* Queue.offerAll(queue, entries);
+          return false;
+        }),
+      ),
+    );
+  }).pipe(Effect.uninterruptible);
+  const spill = permit.withPermit(spillUnsafe);
   const endQueue = permit.withPermit(
     Effect.gen(function* () {
-      // File closure follows explicit owner release. An in-flight cursor or queued
-      // cursor can still drain the finite retained receipts after that closure.
-      if (file && restored === undefined) {
-        const remaining: Array<ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>> = [];
-        for (;;) {
-          if (cursor >= end) break;
-          remaining.push(yield* readDisk);
-        }
-        restored = remaining;
-      }
+      if (sealed || disposed) return;
+      // Seal without decoding unread disk. Failed transfer keeps actual memory
+      // batches charged until the consumer reads or explicitly abandons them.
+      if (retained && file) yield* spillUnsafe;
+      sealed = true;
       yield* Queue.end(queue);
+    }).pipe(Effect.uninterruptible),
+  );
+  const dispose = (reason: "eof" | "abandoned" | "unpublished") =>
+    permit.withPermit(
+      Effect.gen(function* () {
+        if (disposed) return;
+        disposed = true;
+        let abandonedItems = 0;
+        for (;;) {
+          const next = Queue.takeUnsafe(queue);
+          if (next === undefined || next._tag === "Failure") break;
+          if ("frames" in next.value) {
+            abandonedItems += next.value.charge.items;
+            next.value.charge.release();
+          }
+        }
+        if (reason === "abandoned")
+          yield* Effect.logWarning("orchestration-v2.native-event-consumer-abandoned", {
+            residentItems: abandonedItems,
+            unreadSpoolBytes: String(end - cursor),
+            disposition: "undelivered; consumer released",
+          });
+        if (reason !== "eof")
+          yield* Queue.failCause(queue, Cause.die("Native event consumer released before EOF."));
+        yield* Scope.close(resourceScope, Exit.void);
+      }).pipe(Effect.uninterruptible),
+    );
+  const retain = permit.withPermit(
+    Effect.sync(() => {
+      if (disposed) throw new Error("Native event consumer is already disposed.");
+      retained = true;
     }),
   );
-  yield* Effect.addFinalizer(() => endQueue.pipe(Effect.orDie));
+  yield* Effect.addFinalizer(() =>
+    endQueue.pipe(
+      Effect.andThen(
+        Effect.suspend(() => (!storage || retained ? Effect.void : dispose("unpublished"))),
+      ),
+      Effect.orDie,
+    ),
+  );
   const nextSpilled = permit.withPermit(
     Effect.gen(function* () {
-      if (restored !== undefined) {
-        const frames = restored[restoredIndex];
-        restored[restoredIndex++] = undefined;
-        if (frames !== undefined) return Option.some(frames);
-      } else if (cursor < end) return Option.some(yield* readDisk);
+      if (disposed) return yield* Effect.die("Native event consumer is already disposed.");
+      if (cursor < end) return Option.some(yield* readDisk);
       tokenQueued = false;
       return Option.none();
     }),
   );
+  let drained = false;
+  const data = (
+    storage ? Stream.fromEffectRepeat(Queue.take(queue)) : Stream.fromQueue(queue)
+  ).pipe(
+    Stream.flatMap((entry) => {
+      if ("frames" in entry)
+        return Stream.fromEffect(Effect.sync(() => entry.charge.release())).pipe(
+          Stream.flatMap(() => Stream.fromIterable(entry.frames)),
+        );
+      return Stream.unfold(undefined, () =>
+        nextSpilled.pipe(
+          Effect.map((next) =>
+            Option.isSome(next) ? ([next.value, undefined] as const) : undefined,
+          ),
+        ),
+      ).pipe(Stream.flatMap((frames) => Stream.fromIterable(frames)));
+    }),
+  );
   return {
     spill,
+    consumer: { retain, dispose: dispose("abandoned") },
+    onDispose: (finalizer: Effect.Effect<void>) => Scope.addFinalizer(resourceScope, finalizer),
     queued: Queue.size(queue),
     offer: (
       frames: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
@@ -164,6 +221,10 @@ export const makeNativeEventQueue = Effect.fnUntraced(function* (
     ) =>
       permit.withPermit(
         Effect.gen(function* () {
+          if (sealed || disposed) {
+            charge.release();
+            return yield* Effect.die("Native event producer is already sealed.");
+          }
           if (spilled) {
             yield* append(frames).pipe(
               Effect.flatMap(() =>
@@ -180,20 +241,17 @@ export const makeNativeEventQueue = Effect.fnUntraced(function* (
         }),
       ),
     end: endQueue.pipe(Effect.orDie),
-    events: Stream.fromQueue(queue).pipe(
-      Stream.flatMap((entry) => {
-        if ("frames" in entry)
-          return Stream.fromEffect(Effect.sync(() => entry.charge.release())).pipe(
-            Stream.flatMap(() => Stream.fromIterable(entry.frames)),
-          );
-        return Stream.unfold(undefined, () =>
-          nextSpilled.pipe(
-            Effect.map((next) =>
-              Option.isSome(next) ? ([next.value, undefined] as const) : undefined,
-            ),
+    events: storage
+      ? Stream.unwrap(retain.pipe(Effect.as(data))).pipe(
+          Stream.concat(
+            Stream.fromEffect(
+              Effect.sync(() => {
+                drained = true;
+              }),
+            ).pipe(Stream.drain),
           ),
-        ).pipe(Stream.flatMap((frames) => Stream.fromIterable(frames)));
-      }),
-    ),
+          Stream.onExit(() => dispose(drained ? "eof" : "abandoned")),
+        )
+      : data,
   };
 });

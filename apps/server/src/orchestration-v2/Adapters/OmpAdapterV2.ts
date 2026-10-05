@@ -13,6 +13,7 @@ import * as Exit from "effect/Exit";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -348,16 +349,19 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
             );
           redaction = client.redaction;
           let confirmedExit: OmpProcessExit | undefined;
-          const shutdownObserved = Effect.suspend(() =>
-            confirmedExit !== undefined
-              ? Effect.succeed(confirmedExit)
-              : client.shutdown.pipe(
-                  Effect.tap((exit) =>
-                    Effect.sync(() => {
-                      if (exit.code !== null || exit.exited === true) confirmedExit = exit;
-                    }),
+          const shutdownPermit = yield* Semaphore.make(1);
+          const shutdownObserved = shutdownPermit.withPermit(
+            Effect.suspend(() =>
+              confirmedExit !== undefined
+                ? Effect.succeed(confirmedExit)
+                : client.shutdown.pipe(
+                    Effect.tap((exit) =>
+                      Effect.sync(() => {
+                        if (exit.code !== null || exit.exited === true) confirmedExit = exit;
+                      }),
+                    ),
                   ),
-                ),
+            ).pipe(Effect.uninterruptible),
           );
           ownedShutdown = shutdownObserved;
           yield* Effect.addFinalizer(() => shutdownObserved.pipe(Effect.ignore));

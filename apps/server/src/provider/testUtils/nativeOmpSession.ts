@@ -58,6 +58,7 @@ export const nativeOmpSession = Effect.fnUntraced(function* (input: {
   readonly continuations?: Parameters<typeof makeOmpAdapterV2>[0]["continuations"];
   readonly makeProcess: Parameters<typeof makeOmpAdapterV2>[0]["makeProcess"];
 }) {
+  const consumerScope = yield* Effect.scope;
   const scope = yield* Scope.make();
   yield* Effect.addFinalizer((exit) => Scope.close(scope, exit));
   return yield* Effect.gen(function* () {
@@ -109,6 +110,19 @@ export const nativeOmpSession = Effect.fnUntraced(function* (input: {
       modelSelection: input.modelSelection,
       runtimePolicy: policy,
     });
+    let consumerStarted = false;
+    if (runtime.eventConsumer) {
+      const consumer = runtime.eventConsumer;
+      yield* consumer.retain;
+      yield* Scope.addFinalizer(
+        consumerScope,
+        Scope.close(scope, Exit.void).pipe(
+          // A started stream owns its own EOF/cancel finalizer in its reader
+          // scope; only an unpublished fixture reader needs this fallback.
+          Effect.andThen(Effect.suspend(() => (consumerStarted ? Effect.void : consumer.dispose))),
+        ),
+      );
+    }
     const providerThread = yield* input.resumeProviderThread
       ? runtime.resumeThread({
           threadId: input.threadId,
@@ -146,7 +160,12 @@ export const nativeOmpSession = Effect.fnUntraced(function* (input: {
     let ordinal = 0;
     let activeTurnId: ProviderTurnId | undefined;
     let latestProviderThread = providerThread;
-    const events = runtime.events.pipe(
+    const events = Stream.unwrap(
+      Effect.sync(() => {
+        consumerStarted = true;
+        return runtime.events;
+      }),
+    ).pipe(
       Stream.tap((event) =>
         Effect.sync(() => {
           if (event.type === "provider_thread.updated") latestProviderThread = event.providerThread;

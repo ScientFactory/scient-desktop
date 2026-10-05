@@ -56,6 +56,9 @@ export function makeNativeEventQueueBudget(limits?: NativeEventQueueLimits) {
         get closed() {
           return owner.closed;
         },
+        seal: () => {
+          owner.closed = true;
+        },
         inspect: (event: unknown) =>
           permit.withPermit(
             Effect.gen(function* () {
