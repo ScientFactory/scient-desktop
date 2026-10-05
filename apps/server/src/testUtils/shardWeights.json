@@ -1,5 +1,4 @@
 {
-  "integration/orchestrationEngine.integration.test.ts": 1.9,
   "integration/providerService.integration.test.ts": 0.5,
   "src/bin.test.ts": 0.8,
   "src/checkpointing/CheckpointStore.test.ts": 0.6,
