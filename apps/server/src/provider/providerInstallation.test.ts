@@ -41,9 +41,6 @@ function instance(kind = driver, id = instanceId): ProviderInstance {
     enabled: false,
     displayName: undefined,
     continuationIdentity: { driverKind: kind, continuationKey: instanceId },
-    get adapter(): never {
-      throw new Error("Installation must not start a legacy provider session.");
-    },
     get orchestrationAdapter(): never {
       throw new Error("Installation must not start a provider session.");
     },

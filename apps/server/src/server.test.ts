@@ -372,9 +372,6 @@ const nativeAdmissionInstance: ProviderInstance = {
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: () => Effect.die("This route fixture must not open a provider session"),
   },
-  get adapter(): never {
-    throw new Error("Native admission must not access a V1 adapter");
-  },
   snapshot: {
     getSnapshot: Effect.succeed({
       instanceId: defaultModelSelection.instanceId,
@@ -438,9 +435,6 @@ const providerSetupInstance: ProviderInstance = {
   },
   get orchestrationAdapter(): never {
     throw new Error("Provider setup must not start a V2 chat session.");
-  },
-  get adapter(): never {
-    throw new Error("Provider setup must not start a chat session.");
   },
   get snapshot(): never {
     throw new Error("Installation routing must not probe the provider.");
@@ -6272,9 +6266,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             get orchestrationAdapter(): never {
               throw new Error("This fixture must not start a V2 chat session");
             },
-            get adapter(): never {
-              throw new Error("Must not start a chat");
-            },
             get snapshot(): never {
               throw new Error("Must not probe");
             },
@@ -6375,9 +6366,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
         get orchestrationAdapter(): never {
           throw new Error("This fixture must not start a V2 chat session");
-        },
-        get adapter(): never {
-          throw new Error("Must not start a chat");
         },
         get snapshot(): never {
           throw new Error("Must not probe");
@@ -6527,9 +6515,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         get orchestrationAdapter(): never {
           throw new Error("This fixture must not start a V2 chat session");
         },
-        get adapter(): never {
-          throw new Error("Must not start a chat");
-        },
         get snapshot(): never {
           throw new Error("Must not probe");
         },
@@ -6603,9 +6588,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         continuationIdentity: { driverKind: ProviderDriverKind.make("droid"), continuationKey: id },
         get orchestrationAdapter(): never {
           throw new Error("This fixture must not start a V2 chat session");
-        },
-        get adapter(): never {
-          throw new Error("Must not start a chat");
         },
         get snapshot(): never {
           throw new Error("Must not probe");
@@ -6813,9 +6795,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             nativeAdapter
               .openSession(input)
               .pipe(Effect.map((runtime) => ({ ...runtime, uploadFeedback }))),
-        },
-        get adapter(): never {
-          throw new Error("Feedback must use the native V2 runtime");
         },
         get textGeneration(): never {
           throw new Error("Feedback must not generate text");
@@ -7496,9 +7475,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         get orchestrationAdapter(): never {
           throw new Error("Sign-in must not open native sessions");
         },
-        get adapter(): never {
-          throw new Error("Sign-in must not invoke retained adapters");
-        },
         get snapshot(): never {
           throw new Error("Sign-in must not probe snapshots");
         },
@@ -7795,7 +7771,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             get orchestrationAdapter(): never {
               throw new Error("Provider refresh must not start a V2 chat session");
             },
-            adapter: {} as ProviderInstance["adapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
           }) satisfies ProviderInstance,
       );
@@ -12817,9 +12792,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 }),
             })),
           ),
-      },
-      get adapter(): never {
-        throw new Error("Archive must use the native V2 runtime");
       },
       get textGeneration(): never {
         throw new Error("Archive must not generate text");

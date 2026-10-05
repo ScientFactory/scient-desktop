@@ -33,7 +33,6 @@ import {
 } from "../../orchestration-v2/Adapters/PiAdapterV2.ts";
 import { ProviderDriverError } from "../Errors.ts";
 // SCIENT-FORK:START — instance-owned runtime and custom-model integration.
-import { makePiAdapter } from "../Layers/PiAdapter.ts";
 import { makePiCustomModelsClientFactory } from "../pi/PiCustomModels.ts";
 import { makePiCustomModelsConnectionFactory } from "../pi/PiCustomModelsConnection.ts";
 import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
@@ -194,27 +193,6 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
         makeConnection,
         continuationRequests: yield* piContinuationRequestsIfProvided,
       });
-      // SCIENT-FORK:START — retained library adapter for compatibility callers.
-      // Production orchestration executes through `orchestrationAdapter`.
-      const adapter = yield* makePiAdapter({
-        binaryPath: effectiveConfig.binaryPath,
-        providerInstanceId: instanceId,
-        stateDir: serverConfig.stateDir,
-        attachmentsDir: serverConfig.attachmentsDir,
-        environment: processEnv,
-        makeRpcClient,
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderDriverError({
-              driver: DRIVER_KIND,
-              instanceId,
-              detail: cause.message,
-              cause,
-            }),
-        ),
-      );
-      // SCIENT-FORK:END
       const textGeneration = yield* makePiTextGeneration(
         effectiveConfig,
         processEnv,
@@ -286,14 +264,12 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv> = {
         snapshot,
         orchestrationAdapter,
         textGeneration,
-        // SCIENT-FORK:START — workspace probes and managed runtime actions belong
-        // to this instance; the adapter field retains library compatibility.
+        // SCIENT-FORK:START — workspace probes and managed runtime actions belong to this instance.
         snapshotForCwd: (cwd) =>
           checkPiProviderStatus(effectiveConfig, processEnv, cwd, makeRpcClient).pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             Effect.map(stampIdentity),
           ),
-        adapter,
         managedRuntimeActions: managedRuntime.actions,
         // SCIENT-FORK:END
       } satisfies ProviderInstance;

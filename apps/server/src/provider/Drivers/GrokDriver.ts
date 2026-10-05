@@ -20,10 +20,6 @@ import {
   withGrokSessionShutdown,
 } from "../../scient/providerLifecycle/GrokConnectionActions.ts";
 import { makeGrokManagedRuntimeResolution } from "../../scient/providerLifecycle/GrokManagedRuntimeActions.ts";
-import * as ProviderEventLoggers from "../Layers/ProviderEventLoggers.ts";
-// SCIENT-FORK:START — v1 adapter factory; see the construction site below.
-import { makeGrokAdapter } from "../Layers/GrokAdapter.ts";
-// SCIENT-FORK:END
 import * as ServerSettings from "../../serverSettings.ts";
 import { makeGrokTextGeneration } from "../../textGeneration/GrokTextGeneration.ts";
 import {
@@ -97,7 +93,6 @@ export type GrokDriverEnv =
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | Path.Path
-  | ProviderEventLoggers.ProviderEventLoggers
   | ServerConfig
   | ServerSettings.ServerSettingsService;
 
@@ -143,7 +138,6 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
       const path = yield* Path.Path;
       const serverSettings = yield* ServerSettingsService;
       const { cwd } = yield* ServerConfig;
-      const eventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
       const serverConfig = yield* ServerConfig;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
@@ -192,13 +186,6 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
           Effect.provideService(Path.Path, path),
         ),
       );
-      // SCIENT-FORK:START — retained library compatibility; V2 owns production execution.
-      const adapter = yield* makeGrokAdapter(effectiveConfig, {
-        environment: processEnv,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-        instanceId,
-      });
-      // SCIENT-FORK:END
       const nativeSessions = yield* makeNativeSessionShutdown(
         yield* GrokAdapterV2Driver.create({
           instanceId,
@@ -325,7 +312,6 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         snapshot,
         snapshotForCwd,
         skillActions,
-        adapter,
 
         orchestrationAdapter,
         textGeneration,

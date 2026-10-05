@@ -30,7 +30,6 @@ import { ompTarget } from "../omp/OmpTarget.ts";
 import { customModelDiscoverySnapshot } from "../../customModelCapabilities.ts";
 import { makeOmpTextGeneration } from "../../textGeneration/OmpTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { makeOmpAdapter } from "../Layers/OmpAdapter.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { checkOmpProviderStatus, makePendingOmpProvider } from "../Layers/OmpProvider.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -157,24 +156,6 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
           runtime: managedRuntime.summary,
         },
       });
-      const adapter = yield* makeOmpAdapter({
-        target: ompTarget,
-        binaryPath: launchConfig.binaryPath,
-        providerInstanceId: instanceId,
-        stateDir: serverConfig.stateDir,
-        attachmentsDir: serverConfig.attachmentsDir,
-        environment: processEnv,
-        makeProcess: makeRpcClient,
-        homePath: home || undefined,
-        profile: profile || undefined,
-        // The shared native provider event log, written from the adapter so a
-        // native agent's raw protocol frames stay diagnosable like every other
-        // provider's.
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-      }).pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.provideService(Path.Path, path),
-      );
       const orchestrationAdapter = makeOmpAdapterV2({
         target: ompTarget,
         instanceId,
@@ -307,7 +288,6 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
             Effect.provideService(Path.Path, path),
             Effect.map(stamp),
           ),
-        adapter,
         orchestrationAdapter,
         textGeneration,
         managedRuntimeActions: managedRuntime.actions,

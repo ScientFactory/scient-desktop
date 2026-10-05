@@ -34,13 +34,11 @@ import { makeLegacyAntigravityAdapterV2 } from "../../orchestration-v2/Adapters/
 import { IdAllocatorV2 } from "../../orchestration-v2/IdAllocator.ts";
 import { ProviderContinuationRequests } from "../../orchestration-v2/ProviderContinuationRequests.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { makeAntigravityAdapter } from "../Layers/LegacyAntigravityAdapter.ts";
 import {
   buildInitialAntigravityProviderSnapshot,
   checkAntigravityProviderStatus,
   enrichAntigravitySnapshot,
 } from "../Layers/LegacyAntigravityProvider.ts";
-import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import { makeNativeSessionShutdown } from "../NativeSessionShutdown.ts";
 import {
@@ -83,7 +81,6 @@ export type LegacyAntigravityDriverEnv =
   | HttpClient.HttpClient
   | IdAllocatorV2
   | Path.Path
-  | ProviderEventLoggers
   | PtyAdapter
   | ServerConfig
   | ServerSettingsService;
@@ -134,7 +131,6 @@ export const LegacyAntigravityDriver = {
       const serverConfig = yield* ServerConfig;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
-      const eventLoggers = yield* ProviderEventLoggers;
       // Antigravity is intentionally the Google-account/subscription provider.
       // Do not let ambient Gemini/API-key variables silently change billing or
       // make an unauthenticated account appear connected.
@@ -182,12 +178,6 @@ export const LegacyAntigravityDriver = {
           ),
         );
 
-      const adapter = yield* makeAntigravityAdapter(effectiveConfig, {
-        environment: processEnv,
-        attachmentsDir: serverConfig.attachmentsDir,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-        instanceId,
-      });
       const nativeSessions = yield* makeNativeSessionShutdown(
         makeLegacyAntigravityAdapterV2({
           instanceId,
@@ -288,7 +278,6 @@ export const LegacyAntigravityDriver = {
                   ),
                 ),
               ),
-        adapter,
         orchestrationAdapter,
         textGeneration,
         voiceTranscriptCorrection,

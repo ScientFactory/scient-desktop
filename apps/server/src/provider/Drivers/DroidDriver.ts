@@ -28,7 +28,6 @@ import { ProviderContinuationRequests } from "../../orchestration-v2/ProviderCon
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeNativeSessionShutdown } from "../NativeSessionShutdown.ts";
-import { makeDroidAdapter } from "../Layers/DroidAdapter.ts";
 import {
   buildInitialDroidProviderSnapshot,
   checkDroidProviderStatusWithCapabilities,
@@ -244,15 +243,6 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
 
       // Bound once the status exists; the adapter and probes report into it.
       let status: Effect.Success<ReturnType<typeof makeDroidProviderStatus>> | undefined;
-      const adapter = yield* makeDroidAdapter(effectiveConfig, {
-        environment: processEnv,
-        sensitiveEnvironmentValues,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-        instanceId,
-        makeAcpRuntime,
-        onAuthenticationRejected: (message) =>
-          Effect.suspend(() => status?.reportAccountRejected(message) ?? Effect.void),
-      });
       const nativeLogger = yield* makeAcpNativeLoggerFactory();
       const nativeSessions = yield* makeNativeSessionShutdown(
         makeDroidAdapterV2({
@@ -446,7 +436,6 @@ export const DroidDriver: ProviderDriver<DroidSettings, DroidDriverEnv> = {
                     : Effect.succeed(machineSnapshot),
                 ),
               ),
-        adapter,
         orchestrationAdapter,
         textGeneration,
         skillActions,

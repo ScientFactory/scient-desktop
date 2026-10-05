@@ -47,10 +47,9 @@ import type * as Scope from "effect/Scope";
 
 import type { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import type { ProviderAdapterV2Shape } from "../orchestration-v2/ProviderAdapter.ts";
-import type { ProviderAdapterError, ProviderDriverError } from "./Errors.ts";
+import type { ProviderDriverError } from "./Errors.ts";
 import type { ProviderAuthController } from "./Services/ProviderAuthService.ts";
 import type { ServerProviderShape } from "./Services/ServerProvider.ts";
-import type { ProviderAdapterShape } from "./Services/ProviderAdapter.ts";
 
 /**
  * Static metadata advertised by a driver. Used for default presentation
@@ -108,9 +107,6 @@ export interface ProviderInstance {
     ProviderConsumeResetCreditOutcome,
     ProviderDriverError
   >;
-  // Retained for legacy library compatibility. Production execution routes
-  // exclusively through orchestrationAdapter and V2 orchestration.
-  readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
   readonly orchestrationAdapter: ProviderAdapterV2Shape;
   readonly textGeneration: TextGeneration["Service"];
   readonly auth?: ProviderAuthController;
