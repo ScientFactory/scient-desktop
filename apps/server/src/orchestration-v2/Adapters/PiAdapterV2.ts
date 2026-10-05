@@ -119,6 +119,10 @@ import {
 } from "./piT3McpInjection.ts";
 import { PI_FILE_CHANGE_TOOLS } from "./piT3McpExtensionSource.ts";
 
+// SCIENT-FORK:START — native input eligibility in its owned pure module.
+import * as PiInput from "../scient-provider/PiInputCapabilities.ts";
+// SCIENT-FORK:END
+
 export const PI_PROVIDER = ProviderDriverKind.make("pi");
 const isNativeStartReceiptError = Schema.is(ProviderAdapter.ProviderAdapterTurnStartError);
 
@@ -563,11 +567,7 @@ export function makePiAdapterV2(
         .pipe(
           Effect.map((data) => {
             const commands = parsePiDiscoveredCommands(data);
-            nativeCommandNames = new Set([
-              "compact",
-              ...commands.slashCommands.map((command) => command.name),
-              ...commands.skills.map((skill) => `skill:${skill.name}`),
-            ]);
+            nativeCommandNames = PiInput.piNativeCommandNames(commands);
             return new Set(commands.skills.map((skill) => skill.name));
           }),
         );
@@ -2761,13 +2761,11 @@ export function makePiAdapterV2(
           );
         }
         const expandedText = skillNames === null ? text : expandPiSkillReference(text, skillNames);
-        const command = /^\/([^\s]+)(?:[ \t]|$)/u.exec(expandedText)?.[1];
-        if (attachments.length > 0 && command !== undefined && nativeCommandNames.has(command))
+        if (PiInput.piNativeCommandWithAttachments(expandedText, attachments, nativeCommandNames))
           return yield* protocolError("Pi native commands do not support attachments.");
-        if (attachments.some((attachment) => attachment.mimeType.startsWith("image/"))) {
+        if (PiInput.piHasImageAttachments(attachments)) {
           const state = nativeState ?? (yield* request({ type: "get_state" }));
-          const inputs = recordField(recordField(state, "model"), "input");
-          if (Array.isArray(inputs) && !inputs.includes("image"))
+          if (PiInput.piModelRefusesImages(state))
             return yield* protocolError("The selected Pi model has no image support.");
         }
         const images: Array<{ type: "image"; data: string; mimeType: string }> = [];
