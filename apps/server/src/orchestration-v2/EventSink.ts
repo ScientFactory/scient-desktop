@@ -14,7 +14,10 @@ import {
 } from "./scient-fork/PendingStartOwner.ts";
 import { retainCommittedQuestionAnswers } from "./scient-fork/committedQuestionAnswers.ts";
 import { makeSourcePlanConsumer } from "./scient-fork/sourcePlanConsumption.ts";
-import { modelSelectionsEqual } from "@t3tools/shared/model";
+import {
+  readCurrentRunningForkOwner,
+  runningForkAuthorityChanged,
+} from "./scient-fork/runningForkSource.ts";
 import {
   CommandId,
   type OrchestrationV2Run,
@@ -578,67 +581,10 @@ const baseLayer: Layer.Layer<
         return { receipt: existing.value, storedEvents };
       });
 
-    const readRunningForkOwner = Effect.fnUntraced(function* (owner: ProviderTextSnapshotOwner) {
-      const current = yield* projectionStore.getThreadProjection(owner.threadId);
-      const project = yield* projectStore.get(current.thread.projectId);
-      const run = current.runs.find((row) => row.id === owner.runId);
-      const attempt = current.attempts.find((row) => row.id === owner.activeAttemptId);
-      const root = current.nodes.find((row) => row.id === owner.rootNodeId);
-      const thread = current.providerThreads.find((row) => row.id === owner.providerThreadId);
-      const turn = current.providerTurns.find((row) => row.id === owner.providerTurnId);
-      const session = current.providerSessions.find((row) => row.id === owner.providerSessionId);
-      const stopRequested = current.turnItems.some(
-        (item) =>
-          item.runId === owner.runId &&
-          item.type === "run_interrupt_request" &&
-          !current.turnItems.some(
-            (result) => result.runId === owner.runId && result.type === "run_interrupt_result",
-          ),
-      );
-      if (
-        stopRequested ||
-        current.thread.archivedAt !== null ||
-        current.thread.deletedAt !== null ||
-        Option.isNone(project) ||
-        project.value.deletedAt !== null ||
-        run === undefined ||
-        !["running", "waiting"].includes(run.status) ||
-        run.activeAttemptId !== owner.activeAttemptId ||
-        run.rootNodeId !== owner.rootNodeId ||
-        run.ordinal !== owner.runOrdinal ||
-        run.providerInstanceId !== owner.providerInstanceId ||
-        run.providerThreadId !== owner.providerThreadId ||
-        attempt?.runId !== owner.runId ||
-        attempt.rootNodeId !== owner.rootNodeId ||
-        attempt.providerInstanceId !== owner.providerInstanceId ||
-        attempt.providerThreadId !== owner.providerThreadId ||
-        (attempt.providerTurnId !== null && attempt.providerTurnId !== owner.providerTurnId) ||
-        attempt.status !== "running" ||
-        root?.runId !== owner.runId ||
-        root.threadId !== owner.threadId ||
-        !["running", "waiting"].includes(root.status) ||
-        thread?.providerSessionId !== owner.providerSessionId ||
-        thread.providerInstanceId !== owner.providerInstanceId ||
-        thread.driver !== owner.driver ||
-        thread.lastRunOrdinal !== owner.runOrdinal ||
-        thread.nativeThreadRef?.driver !== owner.driver ||
-        thread.nativeThreadRef?.nativeId !== owner.nativeThreadId ||
-        thread.nativeThreadRef.strength !== "strong" ||
-        turn?.runAttemptId !== owner.activeAttemptId ||
-        turn.nodeId !== owner.rootNodeId ||
-        turn.providerThreadId !== owner.providerThreadId ||
-        turn.nativeTurnRef?.driver !== owner.driver ||
-        turn.nativeTurnRef?.nativeId !== owner.nativeTurnId ||
-        turn.nativeTurnRef.strength !== "strong" ||
-        turn.nativeAcceptance !== "accepted" ||
-        !["running", "waiting"].includes(turn.status) ||
-        session?.providerInstanceId !== owner.providerInstanceId ||
-        session.driver !== owner.driver ||
-        ["stopped", "error"].includes(session.status)
-      )
-        return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
-      return current;
-    });
+    // SCIENT-FORK:START — the captured owner of a running-fork text snapshot.
+    const readRunningForkOwner = (owner: ProviderTextSnapshotOwner) =>
+      readCurrentRunningForkOwner({ projectionStore, projectStore }, owner);
+    // SCIENT-FORK:END
 
     const captureRunningForkText = Effect.fn("EventSink.captureRunningForkText")(function* (
       input: Parameters<NonNullable<EventSinkV2Shape["captureRunningForkText"]>>[0],
@@ -706,6 +652,7 @@ const baseLayer: Layer.Layer<
             return { ...existing, committed: false as const, cancelledEffectIds: [] };
           }
 
+          // SCIENT-FORK:START — a running-fork source commits only while its authority holds.
           if (input.runningForkSource !== undefined) {
             const { owner, capture } = input.runningForkSource;
             const current = yield* readRunningForkOwner(owner).pipe(
@@ -718,42 +665,15 @@ const baseLayer: Layer.Layer<
                   }),
               ),
             );
-            const before = capture.projection;
-            const project = yield* projectStore.get(before.thread.projectId);
-            const root = current.nodes.find((node) => node.id === owner.rootNodeId);
-            const priorRoot = before.nodes.find((node) => node.id === owner.rootNodeId);
-            // Text beyond the acknowledged cutoff is harmless. Changes in
-            // control or workspace authority cannot replace the captured source.
-            if (
-              current.runs.find((run) => run.id === owner.runId)?.status !==
-                before.runs.find((run) => run.id === owner.runId)?.status ||
-              current.providerTurns.find((turn) => turn.id === owner.providerTurnId)?.status !==
-                before.providerTurns.find((turn) => turn.id === owner.providerTurnId)?.status ||
-              root?.status !== priorRoot?.status ||
-              current.thread.projectId !== before.thread.projectId ||
-              current.thread.providerInstanceId !== before.thread.providerInstanceId ||
-              !modelSelectionsEqual(current.thread.modelSelection, before.thread.modelSelection) ||
-              current.thread.runtimeMode !== before.thread.runtimeMode ||
-              current.thread.interactionMode !== before.thread.interactionMode ||
-              current.thread.activeProviderThreadId !== before.thread.activeProviderThreadId ||
-              current.thread.branch !== before.thread.branch ||
-              current.thread.worktreePath !== before.thread.worktreePath ||
-              current.thread.workspaceAuthorityRevision !==
-                before.thread.workspaceAuthorityRevision ||
-              current.thread.rollbackRequestId !== before.thread.rollbackRequestId ||
-              current.thread.rollbackCompletedRequestId !==
-                before.thread.rollbackCompletedRequestId ||
-              current.thread.conversationFork?.status !== before.thread.conversationFork?.status ||
-              root?.checkpointScopeId !== priorRoot?.checkpointScopeId ||
-              Option.isNone(project) ||
-              project.value.workspaceRoot !== capture.workspaceRoot
-            )
+            const project = yield* projectStore.get(capture.projection.thread.projectId);
+            if (runningForkAuthorityChanged(owner, capture, current, project))
               return yield* new EventSinkWriteError({
                 commandId: input.commandId,
                 eventCount: input.events.length,
                 cause: new ProviderTextSnapshotError({ reason: "owner-lost" }),
               });
           }
+          // SCIENT-FORK:END
 
           // An import creates a message identity. Recheck under the same transaction
           // as its receipt so a competing admission cannot replace existing history.
