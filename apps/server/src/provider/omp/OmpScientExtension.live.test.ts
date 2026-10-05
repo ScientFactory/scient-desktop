@@ -25,8 +25,11 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Option from "effect/Option";
+import { OmpSubagentLifecyclePayload } from "effect-omp-rpc/schema";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
+import * as Schema from "effect/Schema";
 
 import { customModelProviderId, type ResolvedModelConnection } from "../../customModels.ts";
 import { clearMcpProviderSession, setMcpProviderSession } from "../../mcp/McpProviderSession.ts";
@@ -62,7 +65,11 @@ const SCIENT_TOOL = "scient_fixture_echo";
 const TOKEN = "Bearer synthetic-scient-live-token";
 
 type ChatRequest = {
-  readonly messages?: ReadonlyArray<{ readonly role: string; readonly content?: unknown }>;
+  readonly messages?: ReadonlyArray<{
+    readonly role: string;
+    readonly content?: unknown;
+    readonly tool_call_id?: string;
+  }>;
   readonly tools?: ReadonlyArray<{ readonly function?: { readonly name?: string } }>;
 };
 
@@ -204,7 +211,7 @@ const makeScriptedStubModel = (
 };
 
 /** Streamable-HTTP MCP endpoint that checks the bearer token like Scient's. */
-const makeFakeScientMcp = () => {
+const makeFakeScientMcp = (echoResult?: string) => {
   const calls: Array<{ readonly method: string; readonly params: unknown }> = [];
   let rejected = 0;
   const server = NodeHttp.createServer((request, response) => {
@@ -241,7 +248,14 @@ const makeFakeScientMcp = () => {
                   },
                 ],
               }
-            : { content: [{ type: "text", text: `echo:${body.params?.arguments?.text ?? ""}` }] };
+            : {
+                content: [
+                  {
+                    type: "text",
+                    text: echoResult ?? `echo:${body.params?.arguments?.text ?? ""}`,
+                  },
+                ],
+              };
       response
         .writeHead(200, { "content-type": "application/json", "mcp-session-id": "live-session" })
         .end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }));
@@ -634,188 +648,370 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
     180_000,
   );
 
-  it.live(
-    "gives an in-process subagent the Scient tools over the session's one connection",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const root = yield* scopedRoot("subagent");
-          // The parent delegates once; the subagent, recognizable by OMP's
-          // `yield` tool, calls the Scient tool and yields; both then answer.
-          const requests: Array<ChatRequest & { readonly subagent: boolean }> = [];
-          const stub = NodeHttp.createServer((request, response) => {
-            void readBody(request).then((raw) => {
-              const body = JSON.parse(raw) as ChatRequest;
-              const names = body.tools?.map((tool) => tool.function?.name) ?? [];
-              const subagent = names.includes("yield");
-              requests.push({ ...body, subagent });
-              const results = (body.messages ?? [])
-                .filter((message) => message.role === "tool")
-                .map((message) => textOf(message.content));
-              const id = `chatcmpl-subagent-${requests.length}`;
-              const chunk = (delta: unknown, finish: string | null = null) =>
-                `data: ${JSON.stringify({
-                  id,
-                  object: "chat.completion.chunk",
-                  created: 1790000000,
-                  model: "stub-model",
-                  choices: [{ index: 0, delta, finish_reason: finish }],
-                })}\n\n`;
-              const call = (name: string, args: unknown) => {
-                response.write(
-                  chunk({
-                    tool_calls: [
-                      {
-                        index: 0,
-                        id: `call_subagent_${requests.length}`,
-                        type: "function",
-                        function: { name, arguments: JSON.stringify(args) },
-                      },
-                    ],
-                  }),
-                );
-                response.write(chunk({}, "tool_calls"));
-              };
-              response.writeHead(200, { "content-type": "text/event-stream" });
-              response.write(chunk({ role: "assistant", content: "" }));
-              if (!subagent && results.length === 0)
-                call("task", {
-                  i: "delegate",
-                  context: "Scient live qualification.",
-                  tasks: [{ agent: "task", task: "Call the Scient echo tool, then yield." }],
-                });
-              else if (subagent && results.length === 0 && names.includes(SCIENT_TOOL))
-                call(SCIENT_TOOL, { text: "subagent" });
-              else if (subagent && !results.some((text) => /yield|result/iu.test(text)))
-                call("yield", { data: { echoed: results.join(" ") } });
-              else {
-                response.write(chunk({ content: "SCIENT_LIVE_OK" }));
-                response.write(chunk({}, "stop"));
-              }
-              response.end("data: [DONE]\n\n");
+  for (const resultMode of ["exact", "wrong"] as const)
+    it.live(
+      resultMode === "exact"
+        ? "gives an in-process subagent the Scient tools over the session's one connection"
+        : "rejects a wrong echoed result from an installed delegated agent",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const root = yield* scopedRoot(`subagent-${resultMode}`);
+            const sentinel = `OIS01_ECHO_${NodePath.basename(root)}`;
+            const delivered = resultMode === "exact" ? sentinel : "OIS01_WRONG_ECHO";
+            let taskCallId: string | undefined;
+            let echoCallId: string | undefined;
+            let yieldCallId: string | undefined;
+            const nativeChildReceipts: Array<typeof OmpSubagentLifecyclePayload.Type> = [];
+            // The parent delegates once; the subagent, recognizable by OMP's
+            // `yield` tool, calls the Scient tool and yields; both then answer.
+            const requests: Array<ChatRequest & { readonly subagent: boolean }> = [];
+            const stub = NodeHttp.createServer((request, response) => {
+              void readBody(request).then((raw) => {
+                const body = JSON.parse(raw) as ChatRequest;
+                const names = body.tools?.map((tool) => tool.function?.name) ?? [];
+                const subagent = names.includes("yield");
+                requests.push({ ...body, subagent });
+                const results = (body.messages ?? [])
+                  .filter((message) => message.role === "tool")
+                  .map((message) => textOf(message.content));
+                const resultNotice = (body.messages ?? [])
+                  .filter((message) => message.role === "user")
+                  .map((message) => textOf(message.content))
+                  .findLast((text) => text.includes("<task-result id="));
+                const id = `chatcmpl-subagent-${requests.length}`;
+                const chunk = (delta: unknown, finish: string | null = null) =>
+                  `data: ${JSON.stringify({
+                    id,
+                    object: "chat.completion.chunk",
+                    created: 1790000000,
+                    model: "stub-model",
+                    choices: [{ index: 0, delta, finish_reason: finish }],
+                  })}\n\n`;
+                const call = (name: string, args: unknown) => {
+                  const callId = `call_subagent_${requests.length}`;
+                  if (name === "task") taskCallId = callId;
+                  if (name === SCIENT_TOOL) echoCallId = callId;
+                  if (name === "yield") yieldCallId = callId;
+                  response.write(
+                    chunk({
+                      tool_calls: [
+                        {
+                          index: 0,
+                          id: callId,
+                          type: "function",
+                          function: { name, arguments: JSON.stringify(args) },
+                        },
+                      ],
+                    }),
+                  );
+                  response.write(chunk({}, "tool_calls"));
+                };
+                response.writeHead(200, { "content-type": "text/event-stream" });
+                response.write(chunk({ role: "assistant", content: "" }));
+                if (!subagent && results.length === 0)
+                  call("task", {
+                    i: "delegate",
+                    context: "Scient live qualification.",
+                    tasks: [{ agent: "task", task: "Call the Scient echo tool, then yield." }],
+                  });
+                else if (subagent && results.length === 0 && names.includes(SCIENT_TOOL))
+                  call(SCIENT_TOOL, { text: "subagent" });
+                else if (
+                  subagent &&
+                  !(body.messages ?? []).some(
+                    (message) =>
+                      message.role === "tool" &&
+                      yieldCallId !== undefined &&
+                      message.tool_call_id === yieldCallId,
+                  )
+                )
+                  call("yield", {
+                    data: {
+                      echoed: textOf(
+                        (body.messages ?? []).find(
+                          (message) =>
+                            message.role === "tool" && message.tool_call_id === echoCallId,
+                        )?.content,
+                      ),
+                      sourceToolCallId: echoCallId,
+                    },
+                  });
+                else {
+                  response.write(
+                    chunk({
+                      // Async task results arrive as native user notices, after the spawn receipt.
+                      content: `SCIENT_LIVE_OK ${resultNotice ?? results.join(" ")}`,
+                    }),
+                  );
+                  response.write(chunk({}, "stop"));
+                }
+                response.end("data: [DONE]\n\n");
+              });
             });
-          });
-          const stubPort = yield* listen(stub);
-          const mcp = makeFakeScientMcp();
-          const mcpPort = yield* listen(mcp.server);
-          const instanceId = ProviderInstanceId.make("omp-scient-live-subagent");
-          const customModels = yield* makeStubModelFactory(
-            root,
-            `http://127.0.0.1:${stubPort}/v1`,
-            instanceId,
-          );
-          const model = encodeOmpModelSlug(customModelProviderId("stub"), "stub-model");
-          if (!model) return yield* Effect.die(new Error("The stub model slug did not encode."));
-          let launches = 0;
-          let shutdowns = 0;
-          let confirmed = false;
-          const mcpRegistry = Layer.succeed(McpSessionRegistry, {
-            issue: ({ threadId, providerInstanceId }) =>
-              Effect.succeed({
-                config: {
-                  environmentId: EnvironmentId.make("environment-omp-live"),
-                  threadId,
-                  providerSessionId: "provider-omp-live-subagent",
-                  providerInstanceId,
-                  endpoint: `http://127.0.0.1:${mcpPort}/mcp`,
-                  authorizationHeader: TOKEN,
-                  capabilities: new Set(["skills:read"] as const),
-                },
-              }),
-            resolve: () => Effect.succeed(undefined),
-            touch: () => Effect.void,
-            replaceSkillScope: () => Effect.void,
-            revokeProviderSession: () => Effect.void,
-            revokeThread: () => Effect.void,
-            revokeAll: Effect.void,
-          });
-          const f = yield* nativeOmpOrchestration({
-            cwd: NodePath.join(root, "cwd"),
-            stateDir: NodePath.join(root, "state"),
-            attachmentsDir: NodePath.join(root, "attachments"),
-            instanceId,
-            modelSelection: createModelSelection(instanceId, model),
-            target: ompQualifyTarget,
-            binaryPath: binary!,
-            environment: yield* isolatedEnvironment(root),
-            configureMcp: true,
-            mcpSessionRegistryLayer: mcpRegistry,
-            receiptTimeoutMs: 90_000,
-            makeProcess: (options) => {
-              launches++;
-              return customModels(options).pipe(
-                Effect.map((client) => ({
-                  ...client,
-                  shutdown: client.shutdown.pipe(
-                    Effect.tap((exit) =>
-                      Effect.sync(() => {
-                        shutdowns++;
-                        confirmed = exit.exited === true || exit.code !== null;
+            const stubPort = yield* listen(stub);
+            const mcp = makeFakeScientMcp(delivered);
+            const mcpPort = yield* listen(mcp.server);
+            const instanceId = ProviderInstanceId.make("omp-scient-live-subagent");
+            const customModels = yield* makeStubModelFactory(
+              root,
+              `http://127.0.0.1:${stubPort}/v1`,
+              instanceId,
+            );
+            const model = encodeOmpModelSlug(customModelProviderId("stub"), "stub-model");
+            if (!model) return yield* Effect.die(new Error("The stub model slug did not encode."));
+            let launches = 0;
+            let shutdowns = 0;
+            let confirmed = false;
+            const mcpRegistry = Layer.succeed(McpSessionRegistry, {
+              issue: ({ threadId, providerInstanceId }) =>
+                Effect.succeed({
+                  config: {
+                    environmentId: EnvironmentId.make("environment-omp-live"),
+                    threadId,
+                    providerSessionId: "provider-omp-live-subagent",
+                    providerInstanceId,
+                    endpoint: `http://127.0.0.1:${mcpPort}/mcp`,
+                    authorizationHeader: TOKEN,
+                    capabilities: new Set(["skills:read"] as const),
+                  },
+                }),
+              resolve: () => Effect.succeed(undefined),
+              touch: () => Effect.void,
+              replaceSkillScope: () => Effect.void,
+              revokeProviderSession: () => Effect.void,
+              revokeThread: () => Effect.void,
+              revokeAll: Effect.void,
+            });
+            const f = yield* nativeOmpOrchestration({
+              cwd: NodePath.join(root, "cwd"),
+              stateDir: NodePath.join(root, "state"),
+              attachmentsDir: NodePath.join(root, "attachments"),
+              instanceId,
+              modelSelection: createModelSelection(instanceId, model),
+              target: ompQualifyTarget,
+              binaryPath: binary!,
+              environment: yield* isolatedEnvironment(root),
+              configureMcp: true,
+              mcpSessionRegistryLayer: mcpRegistry,
+              receiptTimeoutMs: 90_000,
+              makeProcess: (options) => {
+                launches++;
+                return customModels(options).pipe(
+                  Effect.tap((client) =>
+                    Effect.logInfo("Installed OMP result proof", {
+                      mode: resultMode,
+                      version: client.version,
+                      runtimeVersion: client.runtimeVersion,
+                    }),
+                  ),
+                  Effect.map((client) => ({
+                    ...client,
+                    events: client.events.pipe(
+                      Stream.mapEffect((notification) =>
+                        Effect.sync(() => {
+                          if (
+                            notification._tag === "Event" &&
+                            notification.event.type === "subagent_lifecycle"
+                          ) {
+                            const receipt = Schema.decodeUnknownOption(OmpSubagentLifecyclePayload)(
+                              notification.event.payload,
+                            );
+                            if (Option.isSome(receipt)) nativeChildReceipts.push(receipt.value);
+                          }
+                          return notification;
+                        }),
+                      ),
+                    ),
+                    shutdown: client.shutdown.pipe(
+                      Effect.tap((exit) =>
+                        Effect.sync(() => {
+                          shutdowns++;
+                          confirmed = exit.exited === true || exit.code !== null;
+                        }),
+                      ),
+                    ),
+                  })),
+                );
+              },
+            });
+            yield* f.run(({ send, waitFor }) =>
+              Effect.gen(function* () {
+                yield* send("Delegate to a subagent.");
+                const terminal = yield* waitFor(
+                  (p) =>
+                    mcp.calls.some((call) => call.method === "tools/call") &&
+                    p.subagents.some((row) => row.status === "completed") &&
+                    p.providerThreads.every((row) => row.pendingBackgroundTasks?.length === 0) &&
+                    p.turnItems.some((item) => item.title === "Background result") &&
+                    p.runs.length === 2 &&
+                    p.runs.every((row) => row.status === "completed"),
+                );
+                expect(
+                  terminal.messages.some(
+                    (row) => row.role === "assistant" && row.text.includes("SCIENT_LIVE_OK"),
+                  ),
+                ).toBe(true);
+                expect(terminal.subagents).toHaveLength(1);
+                expect(echoCallId).toBeDefined();
+                expect(taskCallId).toBeDefined();
+                expect(yieldCallId).toBeDefined();
+                const roleToolContains = (
+                  subagent: boolean,
+                  callId: string | undefined,
+                  value: string,
+                ) =>
+                  callId !== undefined &&
+                  requests.some(
+                    (request) =>
+                      request.subagent === subagent &&
+                      (request.messages ?? []).some(
+                        (message) =>
+                          message.role === "tool" &&
+                          message.tool_call_id === callId &&
+                          textOf(message.content) === value,
+                      ),
+                  );
+                const childId = terminal.subagents[0]?.nativeTaskRef?.nativeId;
+                expect(childId).toBeDefined();
+                expect(
+                  nativeChildReceipts.some(
+                    (receipt) =>
+                      receipt.id === childId &&
+                      receipt.parentToolCallId === taskCallId &&
+                      receipt.status === "completed",
+                  ),
+                ).toBe(true);
+                const parentNotices = requests
+                  .filter((request) => !request.subagent)
+                  .flatMap((request) =>
+                    (request.messages ?? [])
+                      .filter((message) => message.role === "user")
+                      .map((message) => textOf(message.content)),
+                  );
+                const backgroundItems = terminal.turnItems.filter(
+                  (item) => item.type === "dynamic_tool" && item.title === "Background result",
+                );
+                expect(backgroundItems).toHaveLength(1);
+                const background = backgroundItems[0]!;
+                expect(background.status).toBe("completed");
+                expect(background.runId).not.toBe(terminal.runs[0]?.id);
+                expect(background.nativeItemRef?.strength).toBe("strong");
+                const canonicalNotice =
+                  background.type === "dynamic_tool" && typeof background.output === "string"
+                    ? background.output
+                    : "";
+                expect(parentNotices).toContain(canonicalNotice);
+                const containsYield = (text: string, value: string) => {
+                  if (
+                    !text.includes(`<task-result id="${childId}"`) ||
+                    !text.includes('status="completed"')
+                  )
+                    return false;
+                  const output = text.match(/<output>\n([\s\S]*?)\n<\/output>/)?.[1];
+                  if (!output) return false;
+                  const result = Schema.decodeSync(
+                    Schema.fromJsonString(
+                      Schema.Struct({
+                        echoed: Schema.String,
+                        sourceToolCallId: Schema.String,
                       }),
                     ),
-                  ),
-                })),
-              );
-            },
-          });
-          yield* f.run(({ send, waitFor }) =>
-            Effect.gen(function* () {
-              yield* send("Delegate to a subagent.");
-              const terminal = yield* waitFor(
-                (p) =>
-                  mcp.calls.some((call) => call.method === "tools/call") &&
-                  p.subagents.some((row) => row.status === "completed") &&
-                  p.providerThreads.every((row) => row.pendingBackgroundTasks?.length === 0) &&
-                  p.runs.length > 0 &&
-                  p.runs.every((row) => row.status === "completed"),
-              );
-              expect(
-                terminal.messages.some(
-                  (row) => row.role === "assistant" && row.text.includes("SCIENT_LIVE_OK"),
-                ),
-              ).toBe(true);
-              expect(launches).toBe(1);
-              yield* (yield* ProviderSessionManagerV2).shutdown;
-            }),
-          );
-          expect(shutdowns).toBe(1);
-          expect(confirmed).toBe(true);
+                  )(output);
+                  return result.echoed === value && result.sourceToolCallId === echoCallId;
+                };
+                const canonicalAnswer = terminal.messages.find(
+                  (row) => row.role === "assistant" && row.runId === background.runId,
+                );
+                const resultEvidence = (value: string) => ({
+                  childTool: roleToolContains(true, echoCallId, value),
+                  yieldedParent: parentNotices.some((text) => containsYield(text, value)),
+                  canonicalResult: containsYield(canonicalNotice, value),
+                  canonicalParent:
+                    canonicalAnswer?.text.includes(canonicalNotice) === true &&
+                    containsYield(canonicalAnswer.text, value),
+                });
+                const exactEvidence = resultEvidence(sentinel);
+                const requireExactResult = () => {
+                  expect(exactEvidence.childTool, "exact echo at child tool-call id").toBe(true);
+                  expect(
+                    exactEvidence.yieldedParent,
+                    "exact native result delivered to parent",
+                  ).toBe(true);
+                  expect(exactEvidence.canonicalResult, "exact durable background result").toBe(
+                    true,
+                  );
+                  expect(exactEvidence.canonicalParent, "exact canonical wake answer").toBe(true);
+                };
+                yield* Effect.logInfo("OIS01 deciding result boundaries", {
+                  mode: resultMode,
+                  taskCallId,
+                  echoCallId,
+                  yieldCallId,
+                  childId,
+                  wakeRunId: background.runId,
+                  exactEvidence,
+                });
+                if (resultMode === "exact") requireExactResult();
+                else {
+                  // The wrong echo traverses every actual boundary but fails the same predicate.
+                  expect(resultEvidence(delivered)).toEqual({
+                    childTool: true,
+                    yieldedParent: true,
+                    canonicalResult: true,
+                    canonicalParent: true,
+                  });
+                  expect(exactEvidence).toEqual({
+                    childTool: false,
+                    yieldedParent: false,
+                    canonicalResult: false,
+                    canonicalParent: false,
+                  });
+                  expect(requireExactResult).toThrow("exact echo at child tool-call id");
+                }
+                expect(launches).toBe(1);
+                yield* (yield* ProviderSessionManagerV2).shutdown;
+              }),
+            );
+            expect(shutdowns).toBe(1);
+            expect(confirmed).toBe(true);
 
-          // The subagent ran on the custom model and saw the Scient tool...
-          const subagent = requests.filter((request) => request.subagent);
-          expect(
-            subagent.length,
-            requests
-              .flatMap((request) => request.messages ?? [])
-              .filter((message) => message.role === "tool")
-              .map((message) => textOf(message.content))
-              .join("\n"),
-          ).toBeGreaterThan(0);
-          expect(subagent[0]?.tools?.map((tool) => tool.function?.name)).toContain(SCIENT_TOOL);
-          // ...and its call went through the session's bearer, over the MCP
-          // connection the parent opened: one initialize, one catalog.
-          expect(mcp.calls).toContainEqual({
-            method: "tools/call",
-            params: { name: SCIENT_TOOL, arguments: { text: "subagent" } },
-          });
-          expect(mcp.calls.filter((call) => call.method === "initialize")).toHaveLength(1);
-          expect(mcp.calls.filter((call) => call.method === "tools/list")).toHaveLength(1);
-          expect(mcp.rejected()).toBe(0);
-        }),
-      ).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            NodeServices.layer,
-            OmpExecutableGate.layer,
-            allocatorLayer,
-            ServerConfig.layerTest(process.cwd(), { prefix: "scient-installed-subagent-" }).pipe(
-              Layer.provide(NodeServices.layer),
+            // The subagent ran on the custom model and saw the Scient tool...
+            const subagent = requests.filter((request) => request.subagent);
+            expect(
+              subagent.length,
+              requests
+                .flatMap((request) => request.messages ?? [])
+                .filter((message) => message.role === "tool")
+                .map((message) => textOf(message.content))
+                .join("\n"),
+            ).toBeGreaterThan(0);
+            expect(subagent[0]?.tools?.map((tool) => tool.function?.name)).toContain(SCIENT_TOOL);
+            // ...and its call went through the session's bearer, over the MCP
+            // connection the parent opened: one initialize, one catalog.
+            expect(mcp.calls).toContainEqual({
+              method: "tools/call",
+              params: { name: SCIENT_TOOL, arguments: { text: "subagent" } },
+            });
+            expect(mcp.calls.filter((call) => call.method === "tools/call")).toHaveLength(1);
+            expect(mcp.calls.filter((call) => call.method === "initialize")).toHaveLength(1);
+            expect(mcp.calls.filter((call) => call.method === "tools/list")).toHaveLength(1);
+            expect(mcp.rejected()).toBe(0);
+          }),
+        ).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              OmpExecutableGate.layer,
+              allocatorLayer,
+              ServerConfig.layerTest(process.cwd(), { prefix: "scient-installed-subagent-" }).pipe(
+                Layer.provide(NodeServices.layer),
+              ),
             ),
           ),
         ),
-      ),
-    180_000,
-  );
+      180_000,
+    );
 
   it.live(
     "hides the same tools without an essential load mode",
