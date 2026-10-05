@@ -132,6 +132,7 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
   const materialized = yield* materializeFixtureInput({
     scenario: input.fixtureName,
     fixtureInput,
+    checkpointWorkspace: workspace,
     driver: input.driver.driver,
     modelSelection: input.driver.modelSelection,
   }).pipe(Effect.provide(IdAllocator.layer), provideDeterministicTestRuntime);
