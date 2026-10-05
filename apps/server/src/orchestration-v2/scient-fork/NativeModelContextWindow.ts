@@ -1,7 +1,6 @@
 /** Destination capacity, scoped to the selected provider instance and model. */
 import {
   ModelSelection,
-  OrchestrationV2RunJson,
   ServerSettings,
   type OrchestrationV2DomainEvent,
   type ProviderSessionId,
@@ -17,6 +16,7 @@ import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
 import { customModelProviderId } from "../../customModels.ts";
 import { droidCustomModelId } from "../../provider/droid/DroidCustomModels.ts";
+import { decodeRunRow } from "./projectionRowJson.ts";
 
 const RuntimeConfiguration = Schema.Struct({
   providers: ServerSettings.fields.providers,
@@ -117,8 +117,6 @@ export const resolveNativeModelContextWindow = Effect.fn("resolveNativeModelCont
   },
 );
 
-const decodeCapacityRun = Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2RunJson));
-
 /** The context window an accepted Codex turn reports, read inside the write transaction.
  * Undefined unless the captured launch owner still owns the run; the write must then not commit. */
 export const readOwnedNativeModelCapacity = (
@@ -191,7 +189,7 @@ export const readOwnedNativeModelCapacity = (
     if (
       owners[0] === undefined ||
       !modelSelectionsEqual(
-        (yield* decodeCapacityRun(owners[0].payload_json)).modelSelection,
+        (yield* decodeRunRow(owners[0].payload_json)).modelSelection,
         capacityOwner.modelSelection,
       )
     )

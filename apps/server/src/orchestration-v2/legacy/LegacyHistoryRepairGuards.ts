@@ -1,10 +1,5 @@
 /** Legacy V1 history repairs, rechecked inside the native event write transaction. */
-import {
-  EventId,
-  OrchestrationV2ConversationMessageJson,
-  OrchestrationV2TurnItemJson,
-  type OrchestrationV2DomainEvent,
-} from "@t3tools/contracts";
+import { EventId, type OrchestrationV2DomainEvent } from "@t3tools/contracts";
 import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -14,15 +9,12 @@ import {
   readLegacyCitationRepairSource,
   readLegacyQuestionInsertionOwner,
 } from "./LegacyHistoryRepairOwnership.ts";
+import { decodeMessageRow, decodeTurnItemRow } from "../scient-fork/projectionRowJson.ts";
 
 export class LegacyHistoryRepairError extends Schema.TaggedError<LegacyHistoryRepairError>()(
   "LegacyHistoryRepairError",
   { message: Schema.String },
 ) {}
-
-const decodePositionedItem = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(OrchestrationV2TurnItemJson),
-);
 
 const guardTurnItemPositionRepairs = Effect.fn("EventSink.guardTurnItemPositionRepairs")(function* (
   sql: SqlClient.SqlClient,
@@ -45,7 +37,7 @@ const guardTurnItemPositionRepairs = Effect.fn("EventSink.guardTurnItemPositionR
       WHERE items.thread_id = ${event.threadId} AND items.turn_item_id = ${event.payload.id}`;
     const current = rows[0];
     if (current === undefined) continue;
-    const item = yield* decodePositionedItem(current.payload_json);
+    const item = yield* decodeTurnItemRow(current.payload_json);
     // Only legacy runless items may acquire missing historical grouping.
     // Reread inside this transaction; never replace a V2 edit or explicit association.
     const historyTurnId =
@@ -73,9 +65,6 @@ const guardTurnItemPositionRepairs = Effect.fn("EventSink.guardTurnItemPositionR
   return repaired;
 });
 
-const decodeHistoricalMessage = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(OrchestrationV2ConversationMessageJson),
-);
 const guardLegacyCitationRepairs = Effect.fn("EventSink.guardLegacyCitationRepairs")(function* (
   sql: SqlClient.SqlClient,
   events: ReadonlyArray<OrchestrationV2DomainEvent>,
@@ -101,7 +90,7 @@ const guardLegacyCitationRepairs = Effect.fn("EventSink.guardLegacyCitationRepai
         SELECT payload_json FROM orchestration_v2_projection_turn_items
         WHERE thread_id = ${event.threadId} AND turn_item_id = ${`migration:v1:turn-item:${messageId}`}`;
     if (ownedRow === undefined) continue;
-    const owned = yield* decodePositionedItem(ownedRow.payload_json);
+    const owned = yield* decodeTurnItemRow(ownedRow.payload_json);
     if (
       owned.type !== "assistant_message" ||
       owned.id !== `migration:v1:turn-item:${messageId}` ||
@@ -120,7 +109,7 @@ const guardLegacyCitationRepairs = Effect.fn("EventSink.guardLegacyCitationRepai
           SELECT payload_json FROM orchestration_v2_projection_messages
           WHERE thread_id = ${event.threadId} AND message_id = ${messageId}`;
       if (row === undefined) continue;
-      const current = yield* decodeHistoricalMessage(row.payload_json);
+      const current = yield* decodeMessageRow(row.payload_json);
       if (
         current.threadId !== event.threadId ||
         current.id !== messageId ||

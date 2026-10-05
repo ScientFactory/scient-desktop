@@ -1,20 +1,12 @@
 /** A native turn accepted for a run started from a proposed plan marks that plan
  * consumed, inside the same write transaction. */
-import {
-  EventId,
-  OrchestrationV2RunJson,
-  type OrchestrationV2DomainEvent,
-} from "@t3tools/contracts";
+import { EventId, type OrchestrationV2DomainEvent } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import type * as ProjectionStore from "../ProjectionStore.ts";
 import { sourcePlanFingerprint } from "../SourcePlan.ts";
-
-const decodeSourcePlanRun = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(OrchestrationV2RunJson),
-);
+import { decodeRunRow } from "./projectionRowJson.ts";
 
 /** Track plans within one batch of events. Called after each event is positioned; returns
  * a plan-consumed event when the event is an accepted turn of a plan-started run. */
@@ -74,7 +66,7 @@ export const makeSourcePlanConsumer = (deps: {
         AND (n.provider_turn_id IS NULL OR n.provider_turn_id = ${turn.id})
       LIMIT 1`;
       if (rows[0] === undefined) return undefined;
-      const run = yield* decodeSourcePlanRun(rows[0].payload_json);
+      const run = yield* decodeRunRow(rows[0].payload_json);
       if (
         (event.runId !== undefined && event.runId !== run.id) ||
         (event.nodeId !== undefined && event.nodeId !== run.rootNodeId) ||

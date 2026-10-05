@@ -1,7 +1,6 @@
 import {
   EventId,
   NodeId,
-  OrchestrationV2TurnItemJson,
   PlanId,
   RuntimeRequestId,
   UserInputAttachmentAnswerPayload,
@@ -17,6 +16,7 @@ import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
 import type { EventSinkV2Shape } from "../EventSink.ts";
 import { readInheritedTurnIds } from "./LegacyConversationOriginReader.ts";
+import { decodeTurnItemRow } from "../scient-fork/projectionRowJson.ts";
 
 interface HistoryRow {
   readonly item_id: string;
@@ -74,9 +74,6 @@ const decodeApproval = Schema.decodeUnknownEffect(Schema.fromJsonString(Approval
 const decodePlan = Schema.decodeUnknownEffect(Schema.fromJsonString(Plan));
 const decodeSystem = Schema.decodeUnknownEffect(Schema.fromJsonString(SystemMessage));
 const decodeReasoning = Schema.decodeUnknownEffect(Schema.fromJsonString(Reasoning));
-const decodeTurnItem = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(OrchestrationV2TurnItemJson),
-);
 const toolIdentity = Schema.decodeUnknownOption(Schema.Struct({ toolName: Schema.String }));
 
 /** Reserve one chronological prefix for all legacy facts before any new run is admitted. */
@@ -217,7 +214,7 @@ export const importLegacyHistory = Effect.fn("LegacyScientHistory.import")(funct
     ),
   );
   for (const positioned of positionedItems) {
-    const item = yield* decodeTurnItem(positioned.payload_json);
+    const item = yield* decodeTurnItemRow(positioned.payload_json);
     const historyTurnId = item.historyTurnId ?? historicalTurns.get(item.id);
     if (item.ordinal === positioned.ordinal && historyTurnId === item.historyTurnId) continue;
     events.push({
@@ -344,7 +341,7 @@ export const importLegacyHistory = Effect.fn("LegacyScientHistory.import")(funct
             }>`SELECT payload_json FROM orchestration_v2_projection_turn_items
               WHERE thread_id = ${threadId} AND turn_item_id = ${row.item_id}`
           : [];
-        const previous = prior[0] ? yield* decodeTurnItem(prior[0].payload_json) : undefined;
+        const previous = prior[0] ? yield* decodeTurnItemRow(prior[0].payload_json) : undefined;
         const markdown = previous?.type === "proposed_plan" ? previous.markdown : record.markdown;
         item = {
           ...base,

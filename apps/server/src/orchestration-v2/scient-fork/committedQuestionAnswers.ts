@@ -1,14 +1,10 @@
 /** Native callback settlement reports the original question, without the
  * answer just committed by the application. Only lifecycle ingestion
  * opts into this guard; explicit canonical edits do not. */
-import { OrchestrationV2TurnItemJson, type OrchestrationV2DomainEvent } from "@t3tools/contracts";
+import type { OrchestrationV2DomainEvent } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
-
-const decodePositionedItem = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(OrchestrationV2TurnItemJson),
-);
+import { decodeTurnItemRow } from "./projectionRowJson.ts";
 
 /** Restore a committed answer onto a completed question that arrives without it. */
 export const retainCommittedQuestionAnswers = (
@@ -34,7 +30,7 @@ export const retainCommittedQuestionAnswers = (
             SELECT payload_json FROM orchestration_v2_projection_turn_items
             WHERE thread_id = ${event.threadId} AND turn_item_id = ${incoming.id}`;
         if (row === undefined) return event;
-        const current = yield* decodePositionedItem(row.payload_json);
+        const current = yield* decodeTurnItemRow(row.payload_json);
         if (
           current.type !== "user_input_request" ||
           current.status !== "completed" ||
