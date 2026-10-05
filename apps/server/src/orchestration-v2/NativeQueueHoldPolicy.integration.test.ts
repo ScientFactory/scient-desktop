@@ -2,6 +2,9 @@ import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
+  ComposerContextId,
+  EnvironmentId,
+  RunId,
   ChatAttachmentId,
   EventId,
   NodeId,
@@ -25,7 +28,7 @@ import * as DateTime from "effect/DateTime";
 import * as Clock from "effect/Clock";
 import { EventSinkV2 } from "./EventSink.ts";
 import { EffectOutboxV2 } from "./EffectOutbox.ts";
-import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
+import { OrchestrationEffectWorkerV2, runDaemonWithOptions } from "./EffectWorker.ts";
 import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
 import type * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -51,6 +54,7 @@ import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import {
   ProviderAdapterOpenSessionError,
   type ProviderAdapterV2TurnInput,
+  type ProviderAdapterV2SteerInput,
   type ProviderAdapterV2Event,
 } from "./ProviderAdapter.ts";
 import { makeLayer } from "./ProviderAdapterRegistry.ts";
@@ -65,6 +69,40 @@ import {
   ThreadCommandExecutor,
   layer as threadCommandExecutorLayer,
 } from "./ThreadCommandExecutor.ts";
+
+import * as NetAddress from "effect/unstable/net/NetAddress";
+import { HttpServer } from "effect/unstable/http";
+import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
+import { readMcpProviderSession } from "../mcp/McpProviderSession.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ScientSkillSession from "../scient/skills/ScientSkillSession.ts";
+import * as ScientSkillRegistry from "../scient/skills/ScientSkillRegistry.ts";
+import * as ScientSkillPolicy from "../scient/skills/ScientSkillPolicy.ts";
+import { BUILT_IN_SKILL_RELEASES } from "../scient/skills/BuiltInSkillReleases.ts";
+import { toSkillReleaseRef } from "@scientfactory/scient-skills";
+
+const promotionMcpRegistryLayer = McpSessionRegistry.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.succeed(
+        HttpServer.HttpServer,
+        HttpServer.HttpServer.of({
+          address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 43123),
+          serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
+        }),
+      ),
+      Layer.succeed(
+        ServerEnvironment.ServerEnvironment,
+        ServerEnvironment.ServerEnvironment.of({
+          getEnvironmentId: Effect.succeed(EnvironmentId.make("queued-promotion-fixture")),
+          getDescriptor: Effect.die("No environment descriptor in this fixture"),
+        }),
+      ),
+      NodeServices.layer,
+    ),
+  ),
+);
 
 const instanceId = ProviderInstanceId.make("omp");
 const modelSelection = { instanceId, model: "queue-policy-model" };
@@ -82,6 +120,8 @@ const withNativeQueue = <A, E, R>(
     readonly threadId: ThreadId;
     readonly orchestrator: OrchestratorV2["Service"];
     readonly offers: ReadonlyArray<string>;
+    readonly steers: ReadonlyArray<ProviderAdapterV2SteerInput>;
+    readonly takeSteer: Effect.Effect<ProviderAdapterV2SteerInput, Cause.TimeoutError>;
     readonly injectEvent: (event: ProviderAdapterV2Event) => Effect.Effect<void>;
     readonly preparationReady: Effect.Effect<void>;
     readonly releasePreparation: Effect.Effect<void>;
@@ -137,6 +177,8 @@ const withNativeQueue = <A, E, R>(
     readonly injectEvents?: boolean;
     readonly holdInterrupt?: boolean;
     readonly controlStartupFailures?: boolean;
+    readonly nativeSteering?: boolean;
+    readonly mcpSessionRegistryLayer?: Layer.Layer<McpSessionRegistry.McpSessionRegistry>;
   } = {},
 ) =>
   Effect.scoped(
@@ -146,6 +188,8 @@ const withNativeQueue = <A, E, R>(
       const allocator = yield* IdAllocatorV2;
       const scope = yield* Scope.Scope;
       const offered = yield* Queue.unbounded<NativeOffer>();
+      const steering = yield* Queue.unbounded<ProviderAdapterV2SteerInput>();
+      const steers: ProviderAdapterV2SteerInput[] = [];
       const injected = yield* Queue.unbounded<ProviderAdapterV2Event>();
       const firstSendReleased = yield* Deferred.make<void>();
       const interruptEntered = yield* Deferred.make<void>();
@@ -164,7 +208,17 @@ const withNativeQueue = <A, E, R>(
       const adapterOptions = {
         instanceId,
         driver: ProviderDriverKind.make("omp"),
-        capabilities: AcpProviderCapabilitiesV2,
+        capabilities: options.nativeSteering
+          ? {
+              ...AcpProviderCapabilitiesV2,
+              sessions: {
+                ...AcpProviderCapabilitiesV2.sessions,
+                supportsRuntimeModeSwitchInSession: true,
+              },
+              turns: { ...AcpProviderCapabilitiesV2.turns, supportsActiveSteering: true },
+            }
+          : AcpProviderCapabilitiesV2,
+        mcpSessionInjection: options.mcpSessionRegistryLayer !== undefined,
         idAllocator: allocator,
         defaultCwd: cwd,
         continuations: { offer: () => Effect.die("No background continuation in queue fixture") },
@@ -249,6 +303,14 @@ const withNativeQueue = <A, E, R>(
                 yield* publish({ type: "accepted", nativeTurnId });
                 yield* Deferred.succeed(nativeAccepted, undefined);
               }),
+            ...(options.nativeSteering
+              ? {
+                  steer: (input: ProviderAdapterV2SteerInput) =>
+                    Effect.sync(() => {
+                      steers.push(input);
+                    }).pipe(Effect.andThen(Queue.offer(steering, input)), Effect.asVoid),
+                }
+              : {}),
             resume: () => Effect.void,
             respond: () => Effect.die("No native question in queue fixture"),
             interrupt: Effect.sync(() => {
@@ -342,7 +404,10 @@ const withNativeQueue = <A, E, R>(
             : []),
         ]),
         {
-          configureMcp: false,
+          configureMcp: options.mcpSessionRegistryLayer !== undefined,
+          ...(options.mcpSessionRegistryLayer
+            ? { mcpSessionRegistryLayer: options.mcpSessionRegistryLayer }
+            : {}),
           ...(options.failCheckpointDiff || options.holdCheckpointCapture
             ? {
                 vcsProcessLayer: Layer.effect(
@@ -391,6 +456,8 @@ const withNativeQueue = <A, E, R>(
             ? {}
             : { runEffectWorker: options.runEffectWorker }),
         },
+      ).pipe(
+        Layer.provideMerge(options.mcpSessionRegistryLayer ?? McpSessionRegistryTestkit.layer),
       );
       return yield* Effect.gen(function* () {
         const orchestrator = yield* OrchestratorV2;
@@ -439,6 +506,8 @@ const withNativeQueue = <A, E, R>(
           threadId,
           orchestrator,
           offers,
+          steers,
+          takeSteer: Queue.take(steering).pipe(Effect.timeout("15 seconds")),
           injectEvent: (event) => Queue.offer(injected, event).pipe(Effect.asVoid),
           preparationReady: Deferred.await(preparationReady),
           releasePreparation: Deferred.succeed(preparationReleased, undefined).pipe(Effect.asVoid),
@@ -2689,4 +2758,298 @@ it.live(
         }),
       { controlStartupFailures: true },
     ),
+);
+
+it.live(
+  "promotes the original queued payload once through command commit and native Steer while retaining the tail",
+  () =>
+    Effect.gen(function* () {
+      const release = BUILT_IN_SKILL_RELEASES.find((release) =>
+        release.supportedScopes.includes("user"),
+      );
+      assert.ok(release);
+      const planner = yield* ScientSkillSession.ScientSkillSessionPlanner.pipe(
+        Effect.provide(
+          ScientSkillSession.layer.pipe(
+            Layer.provide(
+              Layer.merge(
+                ScientSkillRegistry.layerFromCatalog({ releases: [release], diagnostics: [] }),
+                ScientSkillPolicy.layerFromSnapshot({
+                  userSkills: [
+                    {
+                      release: toSkillReleaseRef(release),
+                      active: true,
+                      invocationPolicy: "explicit",
+                    },
+                  ],
+                  projectSkills: [],
+                  trustedProjects: [],
+                }),
+              ),
+            ),
+          ),
+        ),
+      );
+      yield* withNativeQueue(
+        "queued-promotion-positive",
+        ({ orchestrator, threadId, takeOffer, takeSteer, offers, steers, waitFor }) =>
+          Effect.gen(function* () {
+            const worker = yield* OrchestrationEffectWorkerV2;
+            const outbox = yield* EffectOutboxV2;
+            const fs = yield* FileSystem.FileSystem;
+            const config = yield* ServerConfig;
+            yield* send(orchestrator, threadId, "foreground");
+            yield* worker.drain(12);
+            const foreground = yield* takeOffer;
+            const active = yield* waitFor((p) =>
+              p.providerTurns.some(
+                (turn) =>
+                  turn.runAttemptId === foreground.input.attemptId &&
+                  turn.nativeAcceptance === "accepted",
+              ),
+            );
+            const nativeTurn = active.providerTurns.find(
+              (turn) => turn.runAttemptId === foreground.input.attemptId,
+            )!;
+            const messageId = MessageId.make(`${threadId}:original-queued-message`);
+            const attachment = {
+              type: "file" as const,
+              id: ChatAttachmentId.make(createAttachmentId(threadId)!),
+              name: "queued-evidence.txt",
+              mimeType: "text/plain",
+              sizeBytes: 21,
+            };
+            const path = resolveAttachmentPath({
+              attachmentsDir: config.attachmentsDir,
+              attachment,
+            });
+            assert.ok(path);
+            yield* fs.makeDirectory(config.attachmentsDir, { recursive: true });
+            yield* fs.writeFileString(path, "owned queued evidence");
+            const context = {
+              version: 1 as const,
+              records: [
+                {
+                  version: 1 as const,
+                  kind: "terminal" as const,
+                  contextId: ComposerContextId.make("promotion-terminal"),
+                  label: "Captured terminal",
+                  terminalId: "fixture-terminal",
+                  terminalLabel: "Promotion evidence",
+                  lineStart: 0,
+                  lineEnd: 1,
+                  text: "Unique captured promotion context",
+                },
+              ],
+            };
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`${threadId}:queue-selected`),
+              threadId,
+              messageId,
+              text: "Selected [Captured terminal](t3-context://v1/terminal/promotion-terminal)",
+              attachments: [attachment],
+              context,
+              selectedScientSkillNames: [release.name],
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: "user",
+              creationSource: "mobile",
+            });
+            yield* send(orchestrator, threadId, "untouched tail", true);
+            const queued = yield* orchestrator.getThreadProjection(threadId);
+            const selected = queued.runs.find((run) => run.userMessageId === messageId)!;
+            const tail = queued.runs.find(
+              (run) => run.status === "queued" && run.id !== selected.id,
+            )!;
+            const original = queued.messages.find((message) => message.id === messageId)!;
+            assert.equal(selected.status, "queued");
+            assert.equal(selected.runtimeMode, "full-access");
+            assert.equal(selected.interactionMode, "default");
+            assert.deepEqual(original.context, context);
+            assert.deepEqual(original.attachments, [attachment]);
+            // Future composer defaults must not replace the queued request's captured modes.
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              threadId,
+              commandId: CommandId.make(`${threadId}:future-runtime`),
+              runtimeMode: "approval-required",
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.interaction-mode.set",
+              threadId,
+              commandId: CommandId.make(`${threadId}:future-interaction`),
+              interactionMode: "plan",
+            });
+            const before = yield* orchestrator.getThreadProjection(threadId);
+            const refusedId = CommandId.make(`${threadId}:foreign-promotion`);
+            assert.equal(
+              (yield* Effect.result(
+                orchestrator.dispatch({
+                  type: "queued-message.promote-to-steer",
+                  commandId: refusedId,
+                  threadId,
+                  queuedRunId: selected.id,
+                  targetRunId: RunId.make("foreign-target-run"),
+                }),
+              ))._tag,
+              "Failure",
+            );
+            assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), before);
+            assert.deepEqual(yield* outbox.listByCommandId(refusedId), []);
+            assert.lengthOf(steers, 0);
+            const command = {
+              type: "queued-message.promote-to-steer" as const,
+              commandId: CommandId.make(`${threadId}:accepted-promotion`),
+              threadId,
+              queuedRunId: selected.id,
+              targetRunId: foreground.input.runId,
+            };
+            const receipt = yield* orchestrator.dispatch(command);
+            const committed = yield* orchestrator.getThreadProjection(threadId);
+            const moved = committed.messages.find((message) => message.id === messageId)!;
+            assert.equal(moved.runId, foreground.input.runId);
+            assert.equal(moved.nodeId, foreground.input.rootNodeId);
+            for (const key of [
+              "id",
+              "text",
+              "attachments",
+              "context",
+              "selectedScientSkillNames",
+              "createdBy",
+              "creationSource",
+            ] as const) {
+              assert.deepEqual(moved[key], original[key]);
+            }
+            assert.equal(committed.runs.find((run) => run.id === selected.id)?.status, "cancelled");
+            assert.isNull(committed.runs.find((run) => run.id === selected.id)?.queuePosition);
+            assert.equal(
+              committed.nodes.find((node) => node.id === selected.rootNodeId)?.status,
+              "cancelled",
+            );
+            assert.equal(
+              committed.attempts.find((attempt) => attempt.id === selected.activeAttemptId)?.status,
+              "cancelled",
+            );
+            assert.deepEqual(
+              committed.runs.find((run) => run.id === tail.id),
+              tail,
+            );
+            const item = committed.turnItems.find(
+              (item) => item.type === "user_message" && item.messageId === messageId,
+            );
+            assert.ok(item?.type === "user_message");
+            assert.equal(item.inputIntent, "promoted_queued_to_steer");
+            assert.equal(item.runId, foreground.input.runId);
+            assert.equal(item.providerTurnId, nativeTurn.id);
+            const effects = yield* outbox.listByCommandId(command.commandId);
+            assert.lengthOf(effects, 1);
+            assert.equal(effects[0]?.request.type, "provider-turn.steer");
+            assert.equal(effects[0]?.status, "pending");
+            assert.lengthOf(steers, 0);
+            assert.lengthOf(offers, 1);
+            assert.equal((yield* orchestrator.dispatch(command)).sequence, receipt.sequence);
+            assert.deepEqual(yield* outbox.listByCommandId(command.commandId), effects);
+            yield* worker.drain(12);
+            const delivered = yield* takeSteer;
+            assert.equal(delivered.providerTurnId, nativeTurn.id);
+            assert.equal(delivered.runId, foreground.input.runId);
+            assert.equal(delivered.message.messageId, messageId);
+            assert.equal(delivered.message.creationSource, "mobile");
+            const credential = readMcpProviderSession(threadId);
+            assert.ok(credential);
+            const scope = yield* (yield* McpSessionRegistry.McpSessionRegistry).resolve(
+              credential.authorizationHeader.replace(/^Bearer\s+/, ""),
+            );
+            assert.ok(scope);
+            assert.deepEqual(
+              scope.skillScope?.skills.map((skill) => skill.name),
+              [release.name],
+            );
+            assert.deepEqual(delivered.message.attachments, original.attachments);
+            assert.include(delivered.message.text, "Unique captured promotion context");
+            assert.include(delivered.message.text, `\`${release.name}\` (selected by the user)`);
+            assert.equal(yield* fs.readFileString(path), "owned queued evidence");
+            assert.equal(
+              (yield* outbox.listByCommandId(command.commandId))[0]?.status,
+              "succeeded",
+            );
+            assert.lengthOf(steers, 1);
+            assert.lengthOf(offers, 1);
+            const after = yield* orchestrator.getThreadProjection(threadId);
+            assert.lengthOf(after.providerTurns, 1);
+            assert.lengthOf(
+              after.attempts.filter((attempt) => attempt.runId === foreground.input.runId),
+              1,
+            );
+            assert.equal((yield* orchestrator.dispatch(command)).sequence, receipt.sequence);
+            yield* worker.drain(12);
+            assert.lengthOf(steers, 1);
+            assert.lengthOf(offers, 1);
+            yield* runDaemonWithOptions({ concurrency: 1 }).pipe(Effect.forkScoped);
+            yield* foreground.settle("completed");
+            const next = yield* takeOffer;
+            assert.equal(next.input.message.messageId, tail.userMessageId);
+            assert.include(next.input.message.text, "untouched tail");
+            yield* next.settle("completed");
+            const settled = yield* waitFor(
+              (p) => p.runs.find((run) => run.id === tail.id)?.status === "completed",
+            );
+            assert.equal(settled.runs.find((run) => run.id === selected.id)?.status, "cancelled");
+            assert.lengthOf(offers, 2);
+            assert.lengthOf(steers, 1);
+            assert.equal(yield* fs.readFileString(path), "owned queued evidence");
+          }),
+        {
+          runEffectWorker: false,
+          nativeSteering: true,
+          mcpSessionRegistryLayer: promotionMcpRegistryLayer,
+        },
+      ).pipe(Effect.provideService(ScientSkillSession.ScientSkillSessionPlanner, planner));
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("a promotion that loses to native queue extraction leaves the started request intact", () =>
+  withNativeQueue(
+    "queued-promotion-extraction-race",
+    ({ orchestrator, threadId, takeOffer, waitFor, offers, steers }) =>
+      Effect.gen(function* () {
+        const outbox = yield* EffectOutboxV2;
+        yield* send(orchestrator, threadId, "foreground");
+        const foreground = yield* takeOffer;
+        yield* send(orchestrator, threadId, "extracted queued request", true);
+        const queued = yield* orchestrator.getThreadProjection(threadId);
+        const selected = queued.runs.find((run) => run.status === "queued")!;
+        yield* foreground.settle("completed");
+        const started = yield* takeOffer;
+        const before = yield* waitFor((p) =>
+          p.providerTurns.some(
+            (turn) =>
+              turn.runAttemptId === started.input.attemptId && turn.nativeAcceptance === "accepted",
+          ),
+        );
+        assert.equal(started.input.runId, selected.id);
+        const commandId = CommandId.make(`${threadId}:losing-promotion`);
+        assert.equal(
+          (yield* Effect.result(
+            orchestrator.dispatch({
+              type: "queued-message.promote-to-steer",
+              commandId,
+              threadId,
+              queuedRunId: selected.id,
+              targetRunId: foreground.input.runId,
+            }),
+          ))._tag,
+          "Failure",
+        );
+        assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), before);
+        assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
+        assert.lengthOf(steers, 0);
+        assert.lengthOf(offers, 2);
+        yield* started.settle("completed");
+        yield* waitFor((p) => p.runs.find((run) => run.id === selected.id)?.status === "completed");
+      }),
+    { nativeSteering: true },
+  ),
 );
