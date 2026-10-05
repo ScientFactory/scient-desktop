@@ -20,6 +20,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -28,6 +29,7 @@ import { ServerConfig } from "../../config.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { scriptedOmpRpc } from "../../provider/testUtils/scriptedOmpRpc.ts";
 import { makeOmpAdapterV2 } from "../Adapters/OmpAdapterV2.ts";
+import { validateProviderCurrentInput } from "../AttachmentPrompt.ts";
 import { NativeSessionOperationError } from "../Adapters/NativeSessionAdapterV2.ts";
 import { EventSinkV2 } from "../EventSink.ts";
 import { EventStoreV2 } from "../EventStore.ts";
@@ -129,7 +131,17 @@ for (const scenario of ["composed-frame-overflow", "configuration-command"] as c
             attachments.push(attachment);
           }
         }
-        const text = scenario === "composed-frame-overflow" ? "u".repeat(120_000) : "/model";
+        const text = scenario === "composed-frame-overflow" ? "u".repeat(10_000) : "/model";
+        assert.isTrue(
+          Result.isSuccess(
+            validateProviderCurrentInput({
+              text,
+              attachments,
+              attachmentsDir: config.attachmentsDir,
+            }),
+          ),
+          "The fixture must pass complete-current-input validation before native preflight",
+        );
         yield* Effect.gen(function* () {
           const orchestrator = yield* OrchestratorV2;
           const planId = PlanId.make(`${name}:plan`);
