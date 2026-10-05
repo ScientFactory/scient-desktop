@@ -1,6 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
@@ -11,6 +14,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { checkPiProviderStatus, MINIMUM_PI_VERSION } from "./PiProvider.ts";
 import { decodePiModelSlug, encodePiModelSlug } from "../pi/PiModel.ts";
+import { makePiCustomModelsClientFactory } from "../pi/PiCustomModels.ts";
 
 /**
  * Deliberately outside the valid pid range: PiRpc's group kill must never land
@@ -71,6 +75,7 @@ interface PiSpawn {
  */
 function makePiProbeSpawner(input: {
   readonly version: string;
+  readonly rawVersion?: boolean;
   readonly answer?: (request: Record<string, unknown>) => unknown;
   /** When set, every spawn fails with this platform error (a missing binary). */
   readonly spawnFailure?: PlatformError.PlatformError;
@@ -85,7 +90,7 @@ function makePiProbeSpawner(input: {
       const args = standard ? command.args : [];
       input.onSpawn?.({ args, env: (standard ? command.options.env : undefined) ?? {} });
       if (args.includes("--version")) {
-        return processHandle({ stdout: `pi ${input.version}\n` });
+        return processHandle({ stdout: `${input.rawVersion ? "" : "pi "}${input.version}\n` });
       }
 
       const stdout = yield* Queue.unbounded<Uint8Array>();
@@ -106,7 +111,7 @@ function makePiProbeSpawner(input: {
               Queue.offerUnsafe(
                 stdout,
                 encoder.encode(
-                  `${encodeJsonLine({ type: "response", id: request["id"], success: true, data })}\n`,
+                  `${encodeJsonLine({ type: "response", id: request["id"], command: request["type"], success: true, data })}\n`,
                 ),
               );
             }
@@ -331,6 +336,93 @@ describe("PiProvider", () => {
         },
       ]);
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "strips configured user extensions through discovery while retaining the owned model bootstrap",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-pi-discovery-caller-" });
+        const makeClient = yield* makePiCustomModelsClientFactory(
+          {
+            getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+            resolveCustomModels: () => Effect.succeed([]),
+            subscribeChanges: Effect.succeed(Stream.never),
+          },
+          ProviderInstanceId.make("pi-discovery-caller"),
+          root,
+        );
+        for (const typed of [false, true]) {
+          const spawns: Array<PiSpawn> = [];
+          const snapshot = yield* checkPiProviderStatus(
+            {
+              ...settings,
+              launchArgs:
+                '-e "/user/short extension.ts" --extension /user/long.ts --extension=/user/equals.ts -e=/user/short-equals.ts --provider anthropic --model "model with space" --thinking high',
+            },
+            { PI_TOKEN: "synthetic-discovery-caller" },
+            root,
+            typed ? makeClient : undefined,
+          ).pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              makePiProbeSpawner({
+                version: "0.84.4",
+                rawVersion: true,
+                onSpawn: (spawn) => spawns.push(spawn),
+                answer: (request) => {
+                  switch (request["type"]) {
+                    case "prompt":
+                      assert.equal(request["message"], "/scient-models-refresh");
+                      return {};
+                    case "get_state":
+                      return { thinkingLevel: "high" };
+                    case "get_available_models":
+                      return {
+                        models: [
+                          {
+                            provider: "anthropic",
+                            id: "model with space",
+                            name: "Configured model",
+                          },
+                        ],
+                      };
+                    case "get_commands":
+                      return { commands: [{ name: "scient-models-refresh", source: "extension" }] };
+                    default:
+                      return undefined;
+                  }
+                },
+              }),
+            ),
+          );
+          const rpcSpawns = spawns.filter((spawn) => spawn.args.includes("--mode"));
+          assert.equal(rpcSpawns.length, 1);
+          assert.deepEqual(rpcSpawns[0]?.args, [
+            "--mode",
+            "rpc",
+            "--no-session",
+            "--provider",
+            "anthropic",
+            "--model",
+            "model with space",
+            "--thinking",
+            "high",
+            "--no-extensions",
+            ...(typed
+              ? ["--extension", path.join(root, "pi", "extensions", "scient-custom-models.mjs")]
+              : []),
+          ]);
+          assert.equal(rpcSpawns[0]?.env.PI_TOKEN, "synthetic-discovery-caller");
+          assert.equal(snapshot.status, "ready");
+          assert.equal(snapshot.auth.status, "authenticated");
+          assert.isTrue(
+            snapshot.models.some((model) => model.slug === "anthropic/model%20with%20space"),
+          );
+        }
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("does not spawn Pi at all while disabled", () =>
