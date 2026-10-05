@@ -32,6 +32,8 @@ import * as Stream from "effect/Stream";
 import { customModelProviderId, type ResolvedModelConnection } from "../../customModels.ts";
 import { clearMcpProviderSession, setMcpProviderSession } from "../../mcp/McpProviderSession.ts";
 import { makeOmpAdapter } from "../Layers/OmpAdapter.ts";
+import { nativeOmpSession } from "../testUtils/nativeOmpSession.ts";
+import type { ProviderAdapterV2Event } from "../../orchestration-v2/ProviderAdapter.ts";
 import { SCIENT_CORE_AWARENESS } from "../ScientAwareness.ts";
 import { makeOmpCustomModelsClientFactory } from "./OmpCustomModels.ts";
 import { writeOmpExtensionFiles } from "./OmpExtensionBootstrap.ts";
@@ -387,10 +389,28 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
           );
           let client: OmpRpcProcess | undefined;
           let extensionPath: string | undefined;
-          const adapter = yield* makeOmpAdapter({
+          const threadId = ThreadId.make("omp-scient-live");
+          setMcpProviderSession({
+            environmentId: EnvironmentId.make("environment-omp-live"),
+            threadId,
+            providerSessionId: "provider-omp-live",
+            providerInstanceId: instanceId,
+            endpoint: `http://127.0.0.1:${mcpPort}/mcp`,
+            authorizationHeader: TOKEN,
+            capabilities: new Set(["skills:read"]),
+          });
+          yield* Effect.addFinalizer(() => Effect.sync(() => clearMcpProviderSession(threadId)));
+
+          const model = encodeOmpModelSlug(customModelProviderId("stub"), "stub-model");
+          if (!model) return yield* Effect.die(new Error("The stub model slug did not encode."));
+          const adapter = yield* nativeOmpSession({
+            root,
+            cwd: NodePath.join(root, "cwd"),
+            threadId,
+            modelSelection: createModelSelection(instanceId, model),
             target: ompQualifyTarget,
             binaryPath: binary!,
-            providerInstanceId: instanceId,
+            instanceId,
             stateDir: NodePath.join(root, "state"),
             attachmentsDir: NodePath.join(root, "attachments"),
             environment: yield* isolatedEnvironment(root),
@@ -404,28 +424,11 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
                 ),
               ),
           });
-          const events = yield* Queue.unbounded<ProviderRuntimeEvent>();
-          yield* adapter.streamEvents.pipe(
+          const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+          yield* adapter.events.pipe(
             Stream.runForEach((event) => Queue.offer(events, event)),
             Effect.forkScoped,
           );
-          const threadId = ThreadId.make("omp-scient-live");
-          setMcpProviderSession({
-            environmentId: EnvironmentId.make("environment-omp-live"),
-            threadId,
-            providerSessionId: "provider-omp-live",
-            providerInstanceId: instanceId,
-            endpoint: `http://127.0.0.1:${mcpPort}/mcp`,
-            authorizationHeader: TOKEN,
-            capabilities: new Set(["skills:read"]),
-          });
-          yield* Effect.addFinalizer(() => Effect.sync(() => clearMcpProviderSession(threadId)));
-
-          yield* adapter.startSession({
-            threadId,
-            cwd: NodePath.join(root, "cwd"),
-            runtimeMode: "full-access",
-          });
 
           // Both explicit extensions loaded into the one process.
           const models = yield* client!.getModels();
@@ -443,22 +446,21 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
             "tools/list",
           ]);
 
-          const completed = yield* Deferred.make<ProviderRuntimeEvent>();
+          const completed = yield* Deferred.make<ProviderAdapterV2Event>();
           yield* Stream.fromQueue(events).pipe(
             Stream.runForEach((event) =>
-              event.type === "turn.completed" ? Deferred.succeed(completed, event) : Effect.void,
+              event.type === "turn.terminal" ? Deferred.succeed(completed, event) : Effect.void,
             ),
             Effect.forkScoped,
           );
-          const model = encodeOmpModelSlug(customModelProviderId("stub"), "stub-model");
-          if (!model) return yield* Effect.die(new Error("The stub model slug did not encode."));
-          yield* adapter.sendTurn({
-            threadId,
-            input: "Call the Scient echo tool with the text live.",
-            modelSelection: createModelSelection(instanceId, model),
-          });
+          yield* adapter.start(
+            {
+              text: "Call the Scient echo tool with the text live.",
+            },
+            createModelSelection(instanceId, model),
+          );
           const terminal = yield* Deferred.await(completed).pipe(Effect.timeout("90 seconds"));
-          expect(terminal.payload).toMatchObject({ state: "completed" });
+          expect(terminal).toMatchObject({ status: "completed" });
 
           // Awareness reached the model as an appended system prompt element.
           const first = stub.requests[0];
@@ -489,7 +491,7 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
             "## Scient skills",
           );
 
-          yield* adapter.stopSession(threadId);
+          yield* adapter.close;
           expect(extensionPath && NodeFS.existsSync(extensionPath)).toBe(false);
         }),
       ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer))),
@@ -526,27 +528,6 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
               }),
           );
           let client: OmpRpcProcess | undefined;
-          const adapter = yield* makeOmpAdapter({
-            target: ompQualifyTarget,
-            binaryPath: binary!,
-            providerInstanceId: instanceId,
-            stateDir: NodePath.join(root, "state"),
-            attachmentsDir: NodePath.join(root, "attachments"),
-            environment: yield* isolatedEnvironment(root),
-            makeProcess: (options) =>
-              customModels(options).pipe(
-                Effect.tap((started) =>
-                  Effect.sync(() => {
-                    client = started;
-                  }),
-                ),
-              ),
-          });
-          const events = yield* Queue.unbounded<ProviderRuntimeEvent>();
-          yield* adapter.streamEvents.pipe(
-            Stream.runForEach((event) => Queue.offer(events, event)),
-            Effect.forkScoped,
-          );
           const threadId = ThreadId.make("omp-scient-live-shell");
           setMcpProviderSession({
             environmentId: EnvironmentId.make("environment-omp-live"),
@@ -559,11 +540,34 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
           });
           yield* Effect.addFinalizer(() => Effect.sync(() => clearMcpProviderSession(threadId)));
 
-          yield* adapter.startSession({
-            threadId,
+          const model = encodeOmpModelSlug(customModelProviderId("stub"), "stub-model");
+          if (!model) return yield* Effect.die(new Error("The stub model slug did not encode."));
+          const adapter = yield* nativeOmpSession({
+            root,
             cwd: NodePath.join(root, "cwd"),
-            runtimeMode: "full-access",
+            threadId,
+            modelSelection: createModelSelection(instanceId, model),
+            target: ompQualifyTarget,
+            binaryPath: binary!,
+            instanceId,
+            stateDir: NodePath.join(root, "state"),
+            attachmentsDir: NodePath.join(root, "attachments"),
+            environment: yield* isolatedEnvironment(root),
+            makeProcess: (options) =>
+              customModels(options).pipe(
+                Effect.tap((started) =>
+                  Effect.sync(() => {
+                    client = started;
+                  }),
+                ),
+              ),
           });
+          const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+          yield* adapter.events.pipe(
+            Stream.runForEach((event) => Queue.offer(events, event)),
+            Effect.forkScoped,
+          );
+
           const launch = launches[0];
           expect(launches).toHaveLength(1);
           // The session's MCP bearer, the models token and the model API key.
@@ -577,22 +581,21 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
             expect.objectContaining({ provider: customModelProviderId("stub"), id: "stub-model" }),
           );
 
-          const completed = yield* Deferred.make<ProviderRuntimeEvent>();
+          const completed = yield* Deferred.make<ProviderAdapterV2Event>();
           yield* Stream.fromQueue(events).pipe(
             Stream.runForEach((event) =>
-              event.type === "turn.completed" ? Deferred.succeed(completed, event) : Effect.void,
+              event.type === "turn.terminal" ? Deferred.succeed(completed, event) : Effect.void,
             ),
             Effect.forkScoped,
           );
-          const model = encodeOmpModelSlug(customModelProviderId("stub"), "stub-model");
-          if (!model) return yield* Effect.die(new Error("The stub model slug did not encode."));
-          yield* adapter.sendTurn({
-            threadId,
-            input: "Print the environment, then call the Scient echo tool.",
-            modelSelection: createModelSelection(instanceId, model),
-          });
+          yield* adapter.start(
+            {
+              text: "Print the environment, then call the Scient echo tool.",
+            },
+            createModelSelection(instanceId, model),
+          );
           const terminal = yield* Deferred.await(completed).pipe(Effect.timeout("90 seconds"));
-          expect(terminal.payload).toMatchObject({ state: "completed" });
+          expect(terminal).toMatchObject({ status: "completed" });
 
           // The custom model's key reached the stub model, so it still works.
           expect(stub.requests.length).toBeGreaterThanOrEqual(3);
@@ -622,7 +625,7 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
             params: { name: SCIENT_TOOL, arguments: { text: "live" } },
           });
           expect(mcp.rejected()).toBe(0);
-          yield* adapter.stopSession(threadId);
+          yield* adapter.close;
         }),
       ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer))),
     180_000,
@@ -859,10 +862,17 @@ describe.runIf(binary)("native OMP ordinary tool activity", () => {
               instanceId,
             );
             let client: OmpRpcProcess | undefined;
-            const adapter = yield* makeOmpAdapter({
+            const threadId = ThreadId.make("omp-tools-live");
+            const model = encodeOmpModelSlug(customModelProviderId("stub"), "stub-model");
+            if (!model) return yield* Effect.die(new Error("The fixture model did not encode."));
+            const adapter = yield* nativeOmpSession({
+              root,
+              cwd: NodePath.join(root, "cwd"),
+              threadId,
+              modelSelection: createModelSelection(instanceId, model),
               target: ompQualifyTarget,
               binaryPath: binary!,
-              providerInstanceId: instanceId,
+              instanceId,
               stateDir: NodePath.join(root, "state"),
               attachmentsDir: NodePath.join(root, "attachments"),
               environment: yield* isolatedEnvironment(root),
@@ -871,9 +881,9 @@ describe.runIf(binary)("native OMP ordinary tool activity", () => {
                   Effect.tap((started) => Effect.sync(() => (client = started))),
                 ),
             });
-            const events: Array<ProviderRuntimeEvent> = [];
-            const wake = yield* Queue.unbounded<ProviderRuntimeEvent>();
-            yield* adapter.streamEvents.pipe(
+            const events: Array<ProviderAdapterV2Event> = [];
+            const wake = yield* Queue.unbounded<ProviderAdapterV2Event>();
+            yield* adapter.events.pipe(
               Stream.runForEach((event) =>
                 Effect.sync(() => events.push(event)).pipe(
                   Effect.andThen(Queue.offer(wake, event)),
@@ -882,7 +892,7 @@ describe.runIf(binary)("native OMP ordinary tool activity", () => {
               Effect.forkScoped,
             );
             const until = Effect.fnUntraced(function* (
-              predicate: (event: ProviderRuntimeEvent) => boolean,
+              predicate: (event: ProviderAdapterV2Event) => boolean,
             ) {
               for (;;) {
                 const found = events.find(predicate);
@@ -890,75 +900,68 @@ describe.runIf(binary)("native OMP ordinary tool activity", () => {
                 yield* Queue.take(wake).pipe(Effect.timeout("30 seconds"));
               }
             });
-            const threadId = ThreadId.make("omp-tools-live");
-            yield* adapter.startSession({
-              threadId,
-              cwd: NodePath.join(root, "cwd"),
-              runtimeMode: "full-access",
-            });
-            const model = encodeOmpModelSlug(customModelProviderId("stub"), "stub-model");
-            if (!model) return yield* Effect.die(new Error("The fixture model did not encode."));
-            yield* adapter.sendTurn({
-              threadId,
-              input: "Run the fixture tools.",
-              modelSelection: createModelSelection(instanceId, model),
-            });
+            yield* adapter.start(
+              { text: "Run the fixture tools." },
+              createModelSelection(instanceId, model),
+            );
             if (mode !== "completion") {
               yield* until(
                 (event) =>
-                  event.type === "item.updated" &&
-                  JSON.stringify(event.payload).includes("OMP_TOOL_PARTIAL"),
+                  event.type === "turn_item.updated" &&
+                  event.turnItem.type === "dynamic_tool" &&
+                  typeof event.turnItem.output === "string" &&
+                  event.turnItem.output.includes("OMP_TOOL_PARTIAL"),
               );
-              if (mode === "stop") yield* adapter.stopSession(threadId);
+              if (mode === "stop") yield* adapter.interrupt;
               else {
                 if (!client) return yield* Effect.die(new Error("Native process did not start."));
                 yield* client.shutdown;
               }
-              yield* until((event) => event.type === "session.exited");
+              expect(yield* until((event) => event.type === "turn.terminal")).toMatchObject({
+                status: mode === "stop" ? "interrupted" : "failed",
+              });
             } else {
-              const terminal = yield* until((event) => event.type === "turn.completed");
-              expect(terminal.payload).toMatchObject({ state: "completed" });
+              const terminal = yield* until((event) => event.type === "turn.terminal");
+              expect(terminal).toMatchObject({ status: "completed" });
             }
             const starts = events.flatMap((event) =>
-              event.type === "item.started" && event.payload.itemType === "dynamic_tool_call"
-                ? [event]
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "dynamic_tool" &&
+              event.turnItem.status === "running"
+                ? [event.turnItem]
                 : [],
             );
-            const bash = starts.find((event) => event.payload.title === "bash");
+            const bash = starts.find((item) => item.toolName === "bash");
             expect(bash, "native bash did not start").toBeDefined();
             if (!bash) return yield* Effect.die(new Error("Native bash did not start."));
-            expect(bash.payload.data).toMatchObject({ toolName: "bash", input: { command } });
+            expect(bash.input).toEqual({ command });
             const completed = events.flatMap((event) =>
-              event.type === "item.completed" && event.payload.itemType === "dynamic_tool_call"
-                ? [event]
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "dynamic_tool" &&
+              event.turnItem.status !== "running"
+                ? [event.turnItem]
                 : [],
             );
-            const bashEnds = completed.filter((event) => event.itemId === bash.itemId);
+            const bashEnds = completed.filter((item) => item.id === bash.id);
             expect(bashEnds).toHaveLength(1);
-            expect(bashEnds[0]?.payload.title).toBe("bash");
-            expect(bashEnds[0]?.payload.status).toBe(
-              mode === "stop" ? "stopped" : mode === "process-loss" ? "failed" : "completed",
+            expect(bashEnds[0]?.toolName).toBe("bash");
+            expect(bashEnds[0]?.status).toBe(
+              mode === "stop" ? "interrupted" : mode === "process-loss" ? "failed" : "completed",
             );
-            expect(bashEnds[0]?.payload.data).toMatchObject({
-              input: { command },
-              rawOutput: {
-                content: expect.stringContaining(
-                  mode !== "completion" ? "OMP_TOOL_PARTIAL" : "OMP_TOOL_RESULT",
-                ),
-              },
-            });
+            expect(bashEnds[0]?.input).toEqual({ command });
+            expect(bashEnds[0]?.output).toContain(
+              mode !== "completion" ? "OMP_TOOL_PARTIAL" : "OMP_TOOL_RESULT",
+            );
             if (mode === "completion") {
-              const read = starts.find((event) => event.payload.title === "read");
+              const read = starts.find((item) => item.toolName === "read");
               expect(read, "native read did not start").toBeDefined();
-              expect(read?.payload.data).toMatchObject({ input: { path: filePath } });
-              const readEnds = completed.filter((event) => event.itemId === read?.itemId);
+              expect(read?.input).toEqual({ path: filePath });
+              const readEnds = completed.filter((item) => item.id === read?.id);
               expect(readEnds).toHaveLength(1);
-              expect(readEnds[0]?.payload.detail).toContain(filePath);
-              expect(readEnds[0]?.payload.data).toMatchObject({
-                rawOutput: { content: expect.stringContaining("OMP_FILE_RESULT") },
-              });
-              yield* adapter.stopSession(threadId);
+              expect(readEnds[0]?.output).toContain("OMP_FILE_RESULT");
+              expect(readEnds[0]?.input).toEqual({ path: filePath });
             }
+            yield* adapter.close;
           }),
         ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer))),
       120_000,

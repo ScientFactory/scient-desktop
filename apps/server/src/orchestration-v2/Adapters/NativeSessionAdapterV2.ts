@@ -2,6 +2,7 @@ import {
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderCapabilities,
+  type OrchestrationV2ProviderFailureClass,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
@@ -42,7 +43,11 @@ export type NativeSessionUpdate =
       readonly delta: string;
       readonly reasoning?: boolean;
     }
-  | { readonly type: "text-completed"; readonly id: string }
+  | {
+      readonly type: "text-completed";
+      readonly id: string;
+      readonly status?: "completed" | "failed";
+    }
   | {
       readonly type: "tool";
       readonly id: string;
@@ -74,17 +79,23 @@ export type NativeSessionUpdate =
   | { readonly type: "native-thread"; readonly id: string; readonly resumeCursor?: unknown }
   | { readonly type: "model"; readonly model: string }
   | { readonly type: "background"; readonly pending: boolean }
+  | { readonly type: "continuation-started" }
   | {
       readonly type: "terminal";
       readonly status: "completed" | "failed" | "cancelled";
       readonly detail?: string;
       readonly broken?: boolean;
       readonly stopReason?: string;
+      readonly failureClass?: OrchestrationV2ProviderFailureClass;
     };
 
 export class NativeSessionOperationError extends Schema.TaggedError<NativeSessionOperationError>()(
   "NativeSessionOperationError",
-  { detail: Schema.String, cause: Schema.optional(Schema.Defect()) },
+  {
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+    breaksSession: Schema.optional(Schema.Boolean),
+  },
 ) {
   override get message(): string {
     return this.detail;
@@ -103,6 +114,9 @@ export const nativeSessionFailure = (cause: unknown): NativeSessionOperationErro
       });
 
 export interface NativeSession {
+  /** Join an observed process-loss receipt before owner release can cancel the active turn. */
+  readonly beforeOwnerClose?: Effect.Effect<void>;
+  readonly getModelContextWindow?: ProviderAdapter.ProviderAdapterV2SessionRuntime["getModelContextWindow"];
   readonly nativeId: string;
   /** A local session identity is not authority to resume a provider conversation. */
   readonly nativeThreadKnown?: boolean;
@@ -138,6 +152,7 @@ export interface NativeSessionAdapterV2Options {
   readonly continuations: {
     readonly offer: (request: ProviderContinuationRequest) => Effect.Effect<void>;
   };
+  readonly settleIdleSubagents?: boolean;
   readonly open: (
     input: ProviderAdapter.ProviderAdapterV2OpenSessionInput,
     onUpdate: (update: NativeSessionUpdate) => Effect.Effect<void>,
@@ -262,16 +277,26 @@ export function makeNativeSessionAdapterV2(
         const publishBackgroundRoster = (now: DateTime.Utc) =>
           Effect.gen(function* () {
             if (!thread) return;
+            const children = [...subagents.values()].filter((task) => task.status === "running");
             thread = {
               ...thread,
-              pendingBackgroundTasks: [...subagents.values()]
-                .filter((task) => task.status === "running")
-                .map((task) => ({
+              pendingBackgroundTasks: [
+                ...children.map((task) => ({
                   kind: "subagent" as const,
                   taskId: task.id,
                   ...(task.title ? { description: task.title } : {}),
                   ...(task.childThreadId ? { childThreadId: task.childThreadId } : {}),
                 })),
+                ...(backgroundPending && children.length === 0
+                  ? [
+                      {
+                        kind: "monitor" as const,
+                        taskId: `${thread.id}:native-monitor`,
+                        description: "Monitoring provider background work",
+                      },
+                    ]
+                  : []),
+              ],
               updatedAt: now,
             };
             yield* emit({ type: "provider_thread.updated", driver, providerThread: thread });
@@ -279,11 +304,14 @@ export function makeNativeSessionAdapterV2(
         const stopBackgroundTasks = (
           status: "failed" | "cancelled" | "interrupted",
           now: DateTime.Utc,
+          clearWake = true,
         ) =>
           Effect.gen(function* () {
             backgroundPending = false;
-            wake.length = 0;
-            wakeOffered = false;
+            if (clearWake) {
+              wake.length = 0;
+              wakeOffered = false;
+            }
             for (const [key, task] of subagents) {
               if (task.status !== "running") continue;
               const settled = { ...task, status, completedAt: now, updatedAt: now };
@@ -422,7 +450,7 @@ export function makeNativeSessionAdapterV2(
                     failureItemOrdinal: running.nextOrdinal++,
                     failure: makeProviderFailure({
                       message: update.detail ?? "The native provider turn failed.",
-                      class: "provider_error",
+                      class: update.failureClass ?? "provider_error",
                     }),
                   }
                 : { ...terminal, type: "turn.terminal", status, failure: null },
@@ -488,7 +516,10 @@ export function makeNativeSessionAdapterV2(
                 return;
               }
               if (update.type === "background") {
-                backgroundPending = update.pending;
+                if (update.pending) {
+                  backgroundPending = true;
+                  yield* publishBackgroundRoster(yield* DateTime.now);
+                } else yield* stopBackgroundTasks("cancelled", yield* DateTime.now, false);
                 return;
               }
               if (update.type === "question-resolved") {
@@ -499,7 +530,20 @@ export function makeNativeSessionAdapterV2(
                 }
                 return;
               }
-              const running = active;
+              let running = active;
+              if (options.settleIdleSubagents && !running && update.type === "subagent" && thread) {
+                const key = `${thread.id}:subagent:${update.id}`;
+                const owner = subagentOwners.get(key);
+                const item = items.get(key);
+                const turn = item?.providerTurnId ? turns.get(item.providerTurnId) : undefined;
+                if (owner && item && turn)
+                  running = {
+                    input: owner,
+                    turn,
+                    interrupted: false,
+                    nextOrdinal: item.ordinal + 1,
+                  };
+              }
               if (!running) {
                 if (update.type === "terminal" && update.broken) {
                   yield* stopBackgroundTasks("failed", yield* DateTime.now);
@@ -535,6 +579,7 @@ export function makeNativeSessionAdapterV2(
                 }
                 return;
               }
+              if (update.type === "continuation-started") return;
               if (
                 running.turn.nativeAcceptance === "pending" &&
                 (update.type === "text" ||
@@ -593,7 +638,11 @@ export function makeNativeSessionAdapterV2(
                 const common = {
                   ...base,
                   title: null,
-                  status: streaming ? ("running" as const) : ("completed" as const),
+                  status: streaming
+                    ? ("running" as const)
+                    : update.type === "text-completed"
+                      ? (update.status ?? "completed")
+                      : ("completed" as const),
                   completedAt: streaming ? null : now,
                   text,
                   streaming,
@@ -628,7 +677,10 @@ export function makeNativeSessionAdapterV2(
                   type: "dynamic_tool",
                   title: update.name,
                   toolName: update.name,
-                  status: update.status,
+                  status:
+                    running.interrupted && update.status === "failed"
+                      ? "interrupted"
+                      : update.status,
                   input: update.input ?? (previous?.type === "dynamic_tool" ? previous.input : {}),
                   ...(update.output === undefined ? {} : { output: update.output }),
                   completedAt: update.status === "running" ? null : now,
@@ -845,15 +897,19 @@ export function makeNativeSessionAdapterV2(
           );
         const native = yield* options.open(input, onUpdate);
         yield* Effect.addFinalizer(() =>
-          eventPermit.withPermit(
-            Effect.gen(function* () {
-              yield* finish({ type: "terminal", status: "cancelled" });
-              yield* stopBackgroundTasks("cancelled", yield* DateTime.now);
-              for (const pending of requests.values())
-                yield* settleRequest(pending, "cancelled", yield* DateTime.now);
-              yield* updateSession("stopped");
-              yield* Queue.end(events);
-            }),
+          (native.beforeOwnerClose ?? Effect.void).pipe(
+            Effect.andThen(
+              eventPermit.withPermit(
+                Effect.gen(function* () {
+                  yield* stopBackgroundTasks("cancelled", yield* DateTime.now);
+                  yield* finish({ type: "terminal", status: "cancelled" });
+                  for (const pending of requests.values())
+                    yield* settleRequest(pending, "cancelled", yield* DateTime.now);
+                  yield* updateSession("stopped");
+                  yield* Queue.end(events);
+                }),
+              ),
+            ),
           ),
         );
         const validateThreadOwner = (
@@ -919,6 +975,9 @@ export function makeNativeSessionAdapterV2(
           get providerSession() {
             return providerSession;
           },
+          ...(native.getModelContextWindow === undefined
+            ? {}
+            : { getModelContextWindow: native.getModelContextWindow }),
           events: Stream.fromQueue(events),
           hasPendingBackgroundWork: Effect.sync(
             () =>
@@ -928,6 +987,12 @@ export function makeNativeSessionAdapterV2(
                 (item) => item.type === "subagent" && item.status === "running",
               ),
           ),
+          hasPendingBackgroundWorkForThread: (providerThread) =>
+            Effect.sync(
+              () =>
+                providerThread.id === thread?.id &&
+                (providerThread.pendingBackgroundTasks?.length ?? 0) > 0,
+            ),
           ensureThread: (request) =>
             Effect.gen(function* () {
               if (!validateThreadOwner(request.threadId, request.existingProviderThread))
@@ -993,6 +1058,14 @@ export function makeNativeSessionAdapterV2(
                   "The native session does not own this provider thread.",
                 );
               const startedAt = yield* DateTime.now;
+              thread = {
+                ...thread,
+                status: "active",
+                firstRunOrdinal: thread.firstRunOrdinal ?? request.runOrdinal,
+                lastRunOrdinal: request.runOrdinal,
+                updatedAt: startedAt,
+              };
+              yield* emit({ type: "provider_thread.updated", driver, providerThread: thread });
               const nativeTurnId = `${thread.id}:${request.attemptId}`;
               const turn: OrchestrationV2ProviderTurn = {
                 id: idAllocator.derive.providerTurn({ driver, nativeTurnId }),
@@ -1002,7 +1075,11 @@ export function makeNativeSessionAdapterV2(
                 nativeTurnRef: { ...ref(nativeTurnId), strength: "weak" },
                 ordinal: request.providerTurnOrdinal,
                 status: "running",
-                nativeAcceptance: "pending",
+                nativeAcceptance:
+                  request.message.createdBy === "agent" &&
+                  request.message.creationSource === "provider"
+                    ? "unknown"
+                    : "pending",
                 startedAt,
                 completedAt: null,
               };
@@ -1039,7 +1116,7 @@ export function makeNativeSessionAdapterV2(
                           type: "terminal",
                           status: "failed",
                           detail: cause.message,
-                          broken: true,
+                          broken: cause.breaksSession !== false,
                         }),
                       )
                       .pipe(
@@ -1104,8 +1181,36 @@ export function makeNativeSessionAdapterV2(
                 ),
           interruptTurn: (request) =>
             Effect.gen(function* () {
+              if (!active) {
+                const ownedTurn = turns.get(request.providerTurnId);
+                if (
+                  !thread ||
+                  thread.id !== request.providerThread.id ||
+                  !validateThreadOwner(input.threadId, request.providerThread) ||
+                  ownedTurn?.providerThreadId !== thread.id ||
+                  (!backgroundPending &&
+                    wake.length === 0 &&
+                    ![...subagents.values()].some((task) => task.status === "running"))
+                )
+                  return;
+                yield* native.interrupt;
+                yield* eventPermit.withPermit(
+                  Effect.gen(function* () {
+                    yield* stopBackgroundTasks("interrupted", yield* DateTime.now);
+                    if (native.interruptBreaksSession === true) {
+                      thread = { ...thread!, status: "closed", updatedAt: yield* DateTime.now };
+                      yield* emit({
+                        type: "provider_thread.updated",
+                        driver,
+                        providerThread: thread,
+                      });
+                      yield* updateSession("stopped");
+                    }
+                  }),
+                );
+                return;
+              }
               if (
-                !active ||
                 active.turn.id !== request.providerTurnId ||
                 active.turn.providerThreadId !== request.providerThread.id
               )

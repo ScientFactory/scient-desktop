@@ -853,6 +853,7 @@ describe("Oh My Pi autonomous continuation ownership", () => {
       const woken = yield* h.settleFrames;
       expect(woken).toContainEqual({
         type: "background-result",
+        id: expect.stringMatching(/^background-result:[a-f0-9]{64}$/),
         detail: "Background job finished: BUILD OK",
       });
       // The wake-up opens no continuation and does not settle the message.

@@ -1541,6 +1541,19 @@ export interface CodexAdapterV2Options {
 export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): ProviderAdapterV2Shape {
   const { clientFactory, fileSystem, path, idAllocator, serverConfig } = adapterOptions;
   const continuationRequests = adapterOptions.continuationRequests;
+  const encodeRuntime = Schema.encodeUnknownSync(
+    Schema.fromJsonString(
+      Schema.Struct({
+        settings: CodexSettings,
+        environment: Schema.Record(Schema.String, Schema.UndefinedOr(Schema.String)),
+      }),
+    ),
+  );
+  const modelWindows: Array<{
+    readonly configuration: string;
+    readonly selection: ModelSelection;
+    window: number;
+  }> = [];
 
   return ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
@@ -1564,13 +1577,23 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                     }),
                 ),
               );
+        const settings = resolvedRuntime?.config ?? adapterOptions.settings;
+        const environment = resolvedRuntime?.environment ?? adapterOptions.environment;
+        // Reports can serve sibling native sessions only under this exact runtime.
+        // This key is private memory; the engine owns durable settings/cache identity.
+        const configuration = encodeRuntime({
+          settings,
+          environment: Object.fromEntries(
+            Object.entries(environment).sort(([a], [b]) => a.localeCompare(b)),
+          ),
+        });
         const client = yield* clientFactory.open({
           instanceId: adapterOptions.instanceId,
           threadId: input.threadId,
           providerSessionId: input.providerSessionId,
           runtimePolicy: input.runtimePolicy,
-          settings: resolvedRuntime?.config ?? adapterOptions.settings,
-          environment: resolvedRuntime?.environment ?? adapterOptions.environment,
+          settings,
+          environment,
         });
         const additionalContextByThread = yield* Ref.make(
           new Map<
@@ -3863,8 +3886,32 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               payload.tokenUsage,
             );
             const context = yield* awaitActiveTurn(payload.turnId);
-            if (context === undefined) {
+            if (
+              context === undefined ||
+              context.providerThread.nativeThreadRef?.nativeId !== payload.threadId
+            ) {
               return;
+            }
+            const window = payload.tokenUsage.modelContextWindow;
+            if (
+              context.subagent === null &&
+              context.input.modelSelection.instanceId === adapterOptions.instanceId &&
+              typeof window === "number" &&
+              Number.isFinite(window) &&
+              window > 0
+            ) {
+              const known = modelWindows.find(
+                (report) =>
+                  report.configuration === configuration &&
+                  modelSelectionsEqual(report.selection, context.input.modelSelection),
+              );
+              if (known) known.window = window;
+              else
+                modelWindows.push({
+                  configuration,
+                  selection: context.input.modelSelection,
+                  window,
+                });
             }
             const now = yield* DateTime.now;
             // Live context usage rides on the provider turn (#8144): the turn
@@ -5508,6 +5555,14 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           providerSessionId: input.providerSessionId,
           providerSession: session,
           events: Stream.fromEffectRepeat(Queue.take(events)),
+          getModelContextWindow: (selection) =>
+            selection.instanceId === adapterOptions.instanceId
+              ? modelWindows.find(
+                  (report) =>
+                    report.configuration === configuration &&
+                    modelSelectionsEqual(report.selection, selection),
+                )?.window
+              : undefined,
           canReuseContextUsage: canReuseCodexContextUsage,
           // Known gap: a subagent that Codex resumes later reads as completed
           // (not pending) between turns, so idle release can win the race

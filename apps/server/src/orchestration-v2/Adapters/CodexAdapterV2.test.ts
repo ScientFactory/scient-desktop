@@ -58,6 +58,8 @@ import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts"
 import * as Logger from "effect/Logger";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
+import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/T3OrchestrationInstructions.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
 import * as IdAllocator from "../IdAllocator.ts";
@@ -1680,15 +1682,23 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     readChildMetadata?: (threadId: string) => Effect.Effect<unknown>,
     configureMcp?: boolean,
     settings?: CodexSettings,
+    options: {
+      readonly additionalSessions?: ReadonlyArray<CodexReplay.CodexAppServerReplayTranscript>;
+      readonly resolveRuntime?: CodexAdapterV2.CodexAdapterV2Options["resolveRuntime"];
+    } = {},
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const serverConfig = yield* makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie);
       const continuationRequests: Array<ProviderContinuationRequest> = [];
+      const transcripts = [transcript, ...(options.additionalSessions ?? [])];
+      let sessionOrdinal = 0;
       const clientFactory: CodexAdapterV2.CodexAppServerClientFactoryShape = {
-        open: (openInput) =>
-          Layer.build(CodexReplay.layerReplay(transcript)).pipe(
+        open: (openInput) => {
+          const sessionTranscript = transcripts[sessionOrdinal++];
+          if (!sessionTranscript) return Effect.die("Unexpected native Codex session open");
+          return Layer.build(CodexReplay.layerReplay(sessionTranscript)).pipe(
             Effect.mapError(
               (cause) =>
                 new ProviderAdapterOpenSessionError({
@@ -1700,7 +1710,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             Effect.flatMap((context) =>
               Effect.service(CodexClient.CodexAppServerClient).pipe(
                 Effect.map((client) =>
-                  withCodexReplayChildMetadata(client, transcript, readChildMetadata),
+                  withCodexReplayChildMetadata(client, sessionTranscript, readChildMetadata),
                 ),
                 Effect.map(
                   (client) =>
@@ -1715,7 +1725,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 Effect.provide(context),
               ),
             ),
-          ),
+          );
+        },
       };
       const adapter = CodexAdapterV2.makeCodexAdapterV2({
         instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
@@ -1726,6 +1737,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         path: yield* Path.Path,
         idAllocator,
         serverConfig,
+        ...(options.resolveRuntime ? { resolveRuntime: options.resolveRuntime } : {}),
         continuationRequests: {
           offer: (request) =>
             Effect.sync(() => {
@@ -1778,6 +1790,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             event.type === "subagent.updated",
         );
       return {
+        adapter,
         runtime,
         providerThread,
         threadId,
@@ -2424,6 +2437,188 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         event.type === "message.updated" && event.message.role === "assistant",
     );
 
+  it.effect(
+    "learns captured native capacity for sibling sessions and isolates runtime profiles",
+    () =>
+      Effect.gen(function* () {
+        const nativeThreadId = "capacity-producer-thread";
+        const nativeTurnId = "capacity-producer-turn";
+        const prompt = "Measure native context.";
+        const usage = {
+          inputTokens: 120,
+          cachedInputTokens: 0,
+          outputTokens: 6,
+          reasoningOutputTokens: 0,
+          totalTokens: 126,
+        };
+        const notification = (
+          window: number | null | undefined,
+          threadId = nativeThreadId,
+        ): CodexReplay.CodexAppServerReplayEntry => ({
+          type: "emit_inbound",
+          frame: {
+            method: "thread/tokenUsage/updated",
+            params: {
+              threadId,
+              turnId: nativeTurnId,
+              tokenUsage: {
+                total: {
+                  ...usage,
+                  inputTokens: 11_833,
+                  cachedInputTokens: 3456,
+                  totalTokens: 11_839,
+                },
+                last: usage,
+                ...(window === undefined ? {} : { modelContextWindow: window }),
+              },
+            },
+          },
+        });
+        const transcript = makeCodexReplayTranscript({
+          scenario: "native-capacity-producer",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }),
+            notification(777, "foreign-native-thread"),
+            notification(0),
+            notification(-1),
+            notification(null),
+            notification(258_400),
+            notification(undefined),
+            notification(0),
+            notification(777, "foreign-native-thread"),
+            {
+              type: "emit_inbound",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const siblings = ["same-profile", "changed-profile", "restored-profile"].map((scenario) =>
+          makeCodexReplayTranscript({
+            scenario,
+            entries: codexReplayPreamble({
+              nativeThreadId: `native-${scenario}`,
+              nativeTurnId: "unused",
+              prompt: "unused",
+            }).slice(0, 5),
+          }),
+        );
+        let homePath = "/synthetic/capacity-profile-a";
+        const adapter = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const h = yield* makeCodexReplayHarness(
+              transcript,
+              undefined,
+              undefined,
+              undefined,
+              false,
+              undefined,
+              {
+                additionalSessions: siblings,
+                resolveRuntime: Effect.sync(() => ({
+                  config: { ...DEFAULT_CODEX_SETTINGS, homePath },
+                  environment: { HOME: homePath },
+                  revision: "synthetic-capacity-runtime",
+                })),
+              },
+            );
+            assert.isUndefined(h.runtime.getModelContextWindow?.(CODEX_TEST_MODEL_SELECTION));
+            yield* h.runtime.startTurn(
+              makeCodexTestTurnInput({
+                threadId: h.threadId,
+                providerThread: h.providerThread,
+                now: yield* DateTime.now,
+                attemptId: RunAttemptId.make("capacity-producer-attempt"),
+                text: prompt,
+              }),
+            );
+            yield* h.firstTerminal;
+            assert.equal(h.runtime.getModelContextWindow?.(CODEX_TEST_MODEL_SELECTION), 258_400);
+            const reports = h.events.flatMap((event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.tokenUsage !== undefined
+                ? [event.providerTurn.tokenUsage]
+                : [],
+            );
+            assert.deepEqual(
+              reports.map((report) => report.maxTokens),
+              [0, -1, null, 258_400, null, 0],
+            );
+            assert.lengthOf(h.terminalEvents(), 1);
+            assert.equal(h.terminalEvents()[0]?.status, "completed");
+            const report = h.events.find(
+              (event) =>
+                event.type === "provider_turn.updated" &&
+                event.providerTurn.tokenUsage?.maxTokens === 258_400,
+            );
+            assert.equal(report?.type, "provider_turn.updated");
+            if (report?.type === "provider_turn.updated") {
+              assert.equal(report.providerTurn.providerThreadId, h.providerThread.id);
+              assert.equal(
+                report.providerTurn.runAttemptId,
+                RunAttemptId.make("capacity-producer-attempt"),
+              );
+              assert.equal(report.providerTurn.tokenUsage?.usedTokens, 126);
+              assert.equal(report.providerTurn.tokenUsage?.inputTokens, 120);
+            }
+            assert.isUndefined(
+              h.runtime.getModelContextWindow?.({
+                ...CODEX_TEST_MODEL_SELECTION,
+                model: "small-model",
+              }),
+            );
+            assert.isUndefined(
+              h.runtime.getModelContextWindow?.({
+                ...CODEX_TEST_MODEL_SELECTION,
+                instanceId: ProviderInstanceId.make("other-codex"),
+              }),
+            );
+            assert.isUndefined(
+              h.runtime.getModelContextWindow?.({
+                ...CODEX_TEST_MODEL_SELECTION,
+                options: [{ id: "reasoningEffort", value: "high" }],
+              }),
+            );
+            return h.adapter;
+          }),
+        );
+        for (const [index, profile] of [
+          "/synthetic/capacity-profile-a",
+          "/synthetic/capacity-profile-b",
+          "/synthetic/capacity-profile-a",
+        ].entries()) {
+          homePath = profile;
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const threadId = ThreadId.make(`capacity-sibling-${index}`);
+              const runtime = yield* adapter.openSession({
+                threadId,
+                providerSessionId: ProviderSessionId.make(`capacity-sibling-session-${index}`),
+                configureMcp: false,
+                modelSelection: CODEX_TEST_MODEL_SELECTION,
+                runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+              });
+              const thread = yield* runtime.ensureThread({
+                threadId,
+                modelSelection: CODEX_TEST_MODEL_SELECTION,
+                runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+              });
+              assert.equal(thread.appThreadId, threadId);
+              assert.equal(thread.nativeThreadRef?.nativeId, `native-${siblings[index]!.scenario}`);
+              assert.equal(
+                runtime.getModelContextWindow?.(CODEX_TEST_MODEL_SELECTION),
+                index === 1 ? undefined : 258_400,
+              );
+            }),
+          );
+        }
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
   it.effect("keeps an asynchronous Codex question actionable after the turn completes", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -2753,6 +2948,23 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             scenario: `images-${outcome}`,
             entries: [
               ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Draw an image" }),
+              {
+                type: "emit_inbound",
+                label: "ordinary image view is not generated output",
+                frame: {
+                  method: "item/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    item: {
+                      id: "ordinary-image-view",
+                      type: "imageView",
+                      path: sourcePath,
+                      result: "ordinary-view-metadata",
+                    },
+                  },
+                },
+              },
               imageEvent,
               { ...imageEvent, label: "duplicate native image receipt" },
               ...(outcome !== "saved"
@@ -2849,6 +3061,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               event.message.text !== "The image is ready.",
           );
           assert.lengthOf(imageMessages, outcome === "saved" ? 3 : 2);
+          assert.isFalse(
+            harness.events.some(
+              (event) =>
+                event.type === "message.updated" &&
+                event.message.attachments.some((attachment) =>
+                  attachment.id.includes("ordinary-image-view"),
+                ),
+            ),
+          );
           const first = imageMessages[0];
           const replay = imageMessages[1];
           if (first?.type !== "message.updated" || replay?.type !== "message.updated")
@@ -2999,19 +3220,50 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     });
   }
 
-  it.effect.each([false, true])(
-    "preserves runtime guidance and restores it after compaction with MCP=%s",
-    (hasMcp) =>
+  for (const scenario of [
+    {
+      name: "preserves runtime guidance and restores it after compaction with MCP=false",
+      hasMcp: false,
+      mode: "default",
+      grants: false,
+    },
+    {
+      name: "preserves runtime guidance and restores it after compaction with MCP=true",
+      hasMcp: true,
+      mode: "default",
+      grants: true,
+    },
+    {
+      name: "keeps native plan instructions separate from granted Scient awareness",
+      hasMcp: true,
+      mode: "plan",
+      grants: true,
+    },
+    {
+      name: "delivers native Scient identity with no capability grants in default mode",
+      hasMcp: true,
+      mode: "default",
+      grants: false,
+    },
+    {
+      name: "delivers native Scient identity with no capability grants in plan mode",
+      hasMcp: true,
+      mode: "plan",
+      grants: false,
+    },
+  ] as const) {
+    it.effect(scenario.name, () =>
       Effect.scoped(
         Effect.gen(function* () {
           const nativeThreadId = "context-thread";
           const nativeTurnId = "context-turn";
-          const capabilities = new Set([
-            "preview",
-            "documents:build",
-            "compute:inventory",
-            "skills:read",
-          ] as const);
+          const { hasMcp } = scenario;
+          const runtimePolicy = { ...CODEX_TEST_RUNTIME_POLICY, interactionMode: scenario.mode };
+          const capabilities = new Set<McpCapability>(
+            scenario.grants
+              ? ["preview", "documents:build", "compute:inventory", "skills:read"]
+              : [],
+          );
           const modelSelection: ModelSelection = {
             ...CODEX_TEST_MODEL_SELECTION,
             options: [{ id: "reasoningEffort", value: "high" }],
@@ -3019,7 +3271,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
             nativeThreadId,
             codexInput: [{ type: "text", text: "work" }],
-            runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+            runtimePolicy,
             modelSelection,
             hasT3Mcp: hasMcp,
             mcpCapabilities: capabilities,
@@ -3037,7 +3289,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               params.additionalContext?.scient_awareness?.value ?? "",
               "scient_skill_load",
             );
-          } else {
+          } else if (scenario.grants) {
             assert.include(
               params.additionalContext?.t3_code_orchestration?.value ?? "",
               "delegate_task",
@@ -3058,6 +3310,54 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               params.additionalContext?.scient_awareness?.value ?? "",
               "device_list",
             );
+          }
+          const awareness = params.additionalContext?.scient_awareness?.value ?? "";
+          assert.include(awareness, "## Scient");
+          assert.include(awareness, "workspace-relative Markdown images");
+          assert.include(awareness, "diagram declaration before its contents");
+          assert.include(awareness, "Create workspace files for standalone deliverables");
+          assert.include(awareness, "clickable project-relative Markdown links");
+          if (scenario.grants) {
+            assert.include(awareness, "Scient browser");
+            assert.include(awareness, "preview_open");
+            assert.include(awareness, "another browser system only when");
+          } else {
+            for (const absent of [
+              "Scient browser",
+              "preview_status",
+              "preview_open",
+              "device_open",
+              "scient_skill_load",
+              "scient_pdf_build",
+              "scient_compute_inventory",
+            ])
+              assert.notInclude(awareness, absent);
+          }
+          if (hasMcp) {
+            assert.equal(
+              (params.additionalContext?.t3_code_orchestration?.value ?? "") +
+                (params.additionalContext?.t3_code_workspace?.value ?? ""),
+              T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+            );
+            assert.equal(params.additionalContext?.t3_code_orchestration?.kind, "application");
+            assert.deepEqual(Object.keys(params.additionalContext ?? {}), [
+              "t3_code_orchestration",
+              "t3_code_workspace",
+              "t3_code_runtime",
+              "scient_awareness",
+            ]);
+            assert.include(
+              params.additionalContext?.t3_code_workspace?.value ?? "",
+              "Choose the workspace",
+            );
+            const modeInstructions =
+              params.collaborationMode?.settings.developer_instructions ?? "";
+            assert.match(modeInstructions, /^<collaboration_mode>[\s\S]*<\/collaboration_mode>$/);
+            assert.notMatch(
+              modeInstructions,
+              /runtime_info|pull_request_linking|preview_|device_|## Scient/,
+            );
+            assert.equal(params.collaborationMode?.mode, scenario.mode);
           }
           const entries = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" });
           const transcript = makeCodexReplayTranscript({
@@ -3135,12 +3435,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               text: "work",
             }),
             modelSelection,
+            runtimePolicy,
           });
           yield* harness.firstTerminal;
           assert.equal(harness.terminalEvents()[0]?.status, "completed");
         }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
       ),
-  );
+    );
+  }
 
   it.effect.each([
     { compact: false, completed: false },

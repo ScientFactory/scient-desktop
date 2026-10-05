@@ -53,9 +53,7 @@ import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogg
 
 const PROVIDER = ProviderDriverKind.make("antigravity");
 const ANTIGRAVITY_RESUME_VERSION = 2 as const;
-export const ANTIGRAVITY_WORKSPACE_TOOL_INSTRUCTIONS = `
-For project files, use \`run_command\` or another workspace-capable command or editing tool. Do not use Antigravity's \`write_to_file\` tool for project files because it writes only to Antigravity's private artifact directory.
-`;
+
 const AgyResumeCursor = Schema.Struct({
   schemaVersion: Schema.Literal(ANTIGRAVITY_RESUME_VERSION),
   conversationId: Schema.String,

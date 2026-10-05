@@ -4,15 +4,13 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Stream from "effect/Stream";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { OmpSettings, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 
-import { makeOmpAdapter } from "../Layers/OmpAdapter.ts";
+import { nativeOmpSession, watchNativeOmpTextTurn } from "../testUtils/nativeOmpSession.ts";
 import { checkOmpProviderStatus } from "../Layers/OmpProvider.ts";
 import * as OmpExecutableGate from "./OmpExecutableGate.ts";
 import {
@@ -35,12 +33,23 @@ const gatedProcess = Effect.map(
 
 const binary = ompQualifyBinary ?? "";
 
+/** Local model access only, without inheriting account credentials or user profiles. */
+const isolatedInstance = (root: string) =>
+  ompLiveInstance(root, {
+    baseEnv: {
+      PATH: process.env.PATH ?? "",
+      HTTPS_PROXY: "http://127.0.0.1:9",
+      HTTP_PROXY: "http://127.0.0.1:9",
+      NO_PROXY: "127.0.0.1,localhost",
+    },
+  });
+
 describe.runIf(ompQualifyBinary)("real OMP qualification", () => {
   it.effect("discovers a pinned executable when explicitly requested", () =>
     Effect.gen(function* () {
       const root = NodePath.join(NodeOS.tmpdir(), `scient-omp-real-${process.pid}`);
       NodeFS.rmSync(root, { recursive: true, force: true });
-      const { environment, homePath } = ompLiveInstance(root);
+      const { environment, homePath } = isolatedInstance(root);
       const settings = OmpSettings.make({
         enabled: true,
         binaryPath: binary,
@@ -58,35 +67,43 @@ describe.runIf(ompQualifyBinary)("real OMP qualification", () => {
       expect(result.status).toBe("ready");
       expect(result.models.length).toBeGreaterThan(0);
       NodeFS.rmSync(root, { recursive: true, force: true });
-    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer))),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer)),
+    ),
   );
 
   it.effect("starts and stops a real isolated OMP session", () =>
     Effect.gen(function* () {
       const root = NodePath.join(NodeOS.tmpdir(), `scient-omp-adapter-real-${process.pid}`);
       NodeFS.rmSync(root, { recursive: true, force: true });
-      const { environment, homePath } = ompLiveInstance(root);
-      const adapter = yield* makeOmpAdapter({
+      const { environment, homePath } = isolatedInstance(root);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
+      );
+      const instanceId = ProviderInstanceId.make("omp-real-smoke");
+      const session = yield* nativeOmpSession({
+        root,
         target: ompQualifyTarget,
         binaryPath: binary,
-        providerInstanceId: ProviderInstanceId.make("omp-real-smoke"),
+        instanceId,
+        threadId: ThreadId.make("real-omp-thread"),
+        modelSelection: createModelSelection(instanceId, ompQualifyModel),
         stateDir: NodePath.join(root, "state"),
         attachmentsDir: NodePath.join(root, "attachments"),
         environment,
         homePath,
         makeProcess: yield* gatedProcess,
       });
-      const threadId = ThreadId.make("real-omp-thread");
-      const session = yield* adapter.startSession({
-        threadId,
-        cwd: root,
-        runtimeMode: "full-access",
-      });
-      expect(session.status).toBe("ready");
-      yield* adapter.stopAll();
-      expect(yield* adapter.hasSession(threadId)).toBe(false);
+      expect(session.runtime.providerSession.status).toBe("ready");
+      expect(session.providerThread.appThreadId).toBe(ThreadId.make("real-omp-thread"));
+      yield* session.close;
+      expect(session.runtime.providerSession.status).toBe("stopped");
       NodeFS.rmSync(root, { recursive: true, force: true });
-    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer))),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer)),
+    ),
   );
 
   it.effect.skipIf(!ompQualifyFullTurn)(
@@ -95,66 +112,46 @@ describe.runIf(ompQualifyBinary)("real OMP qualification", () => {
       Effect.gen(function* () {
         const root = NodePath.join(NodeOS.tmpdir(), `scient-omp-turn-real-${process.pid}`);
         NodeFS.rmSync(root, { recursive: true, force: true });
-        const { environment, homePath } = ompLiveInstance(root);
+        const { environment, homePath } = isolatedInstance(root);
         const instanceId = ProviderInstanceId.make("omp-real-turn-smoke");
-        const adapter = yield* makeOmpAdapter({
-          target: ompQualifyTarget,
-          binaryPath: binary,
-          providerInstanceId: instanceId,
-          stateDir: NodePath.join(root, "state"),
-          attachmentsDir: NodePath.join(root, "attachments"),
-          environment,
-          homePath,
-          makeProcess: yield* gatedProcess,
-        });
-        const threadId = ThreadId.make("real-omp-turn-thread");
-        yield* adapter.startSession({ threadId, cwd: root, runtimeMode: "full-access" });
-        const terminal = yield* Deferred.make<unknown>();
-        yield* adapter.streamEvents.pipe(
-          Stream.runForEach((event) =>
-            Effect.gen(function* () {
-              if (event.type === "turn.completed" || event.type === "turn.aborted") {
-                yield* Deferred.succeed(terminal, event);
-              }
-            }),
-          ),
-          Effect.forkScoped,
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
         );
-        yield* adapter.sendTurn({
-          threadId,
-          input: "Reply with exactly QUALIFIED_OMP.",
-          modelSelection: createModelSelection(instanceId, ompQualifyModel),
-        });
-        expect(yield* Deferred.await(terminal)).toMatchObject({
-          type: "turn.completed",
-          payload: { state: "completed" },
-        });
-        const resumeCursor = (yield* adapter.listSessions()).find(
-          (session) => session.threadId === threadId,
-        )?.resumeCursor;
-        expect(resumeCursor).toBeDefined();
-        yield* adapter.stopAll();
-        expect(yield* adapter.hasSession(threadId)).toBe(false);
-        const resumedAdapter = yield* makeOmpAdapter({
+        const options = {
+          root,
           target: ompQualifyTarget,
           binaryPath: binary,
-          providerInstanceId: instanceId,
+          instanceId,
+          threadId: ThreadId.make("real-omp-turn-thread"),
+          modelSelection: createModelSelection(instanceId, ompQualifyModel),
           stateDir: NodePath.join(root, "state"),
           attachmentsDir: NodePath.join(root, "attachments"),
           environment,
           homePath,
           makeProcess: yield* gatedProcess,
-        });
-        const resumed = yield* resumedAdapter.startSession({
-          threadId,
-          cwd: root,
-          runtimeMode: "full-access",
-          resumeCursor,
-        });
-        expect(resumed.status).toBe("ready");
-        yield* resumedAdapter.stopAll();
+        };
+        const session = yield* nativeOmpSession(options);
+        const terminal = yield* watchNativeOmpTextTurn(session.events);
+        yield* session.start({ text: "Reply with exactly QUALIFIED_OMP." });
+        expect((yield* terminal.pipe(Effect.timeout("120 seconds"))).trim()).toBe("QUALIFIED_OMP");
+        const prior = session.latestProviderThread();
+        expect(prior.nativeMetadata?.resumeCursor).toBeDefined();
+        expect(prior.nativeThreadRef?.nativeId).toBeTruthy();
+        yield* session.close;
+        expect(session.runtime.providerSession.status).toBe("stopped");
+        const resumed = yield* nativeOmpSession({ ...options, resumeProviderThread: prior });
+        expect(resumed.runtime.providerSession.status).toBe("ready");
+        expect(resumed.providerThread.id).toBe(prior.id);
+        expect(resumed.providerThread.nativeThreadRef?.nativeId).toBe(
+          prior.nativeThreadRef?.nativeId,
+        );
+        yield* resumed.close;
+        expect(resumed.runtime.providerSession.status).toBe("stopped");
         NodeFS.rmSync(root, { recursive: true, force: true });
-      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer))),
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer)),
+      ),
     300_000,
   );
 });

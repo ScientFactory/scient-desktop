@@ -186,6 +186,7 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
         crypto: yield* Crypto.Crypto,
         serverConfig,
         makeProcess: makeRpcClient,
+        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         idAllocator: yield* IdAllocatorV2,
         continuations: yield* ProviderContinuationRequests,
       });
