@@ -47,6 +47,7 @@ import {
 } from "./Adapters/NativeSessionAdapterV2.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
 import { OrchestratorV2, type OrchestratorV2Error } from "./Orchestrator.ts";
+import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import {
   ProviderAdapterOpenSessionError,
   type ProviderAdapterV2TurnInput,
@@ -85,6 +86,7 @@ const withNativeQueue = <A, E, R>(
     readonly preparationReady: Effect.Effect<void>;
     readonly releasePreparation: Effect.Effect<void>;
     readonly preparationAttempts: () => number;
+    readonly failNextStarts: (count: number) => void;
     readonly nativeInterruptions: () => number;
     readonly interruptEntered: Effect.Effect<void>;
     readonly releaseInterrupt: Effect.Effect<void>;
@@ -134,11 +136,13 @@ const withNativeQueue = <A, E, R>(
     readonly holdCheckpointCapture?: boolean;
     readonly injectEvents?: boolean;
     readonly holdInterrupt?: boolean;
+    readonly controlStartupFailures?: boolean;
   } = {},
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
       const cwd = options.cwd ?? (yield* checkpointWorkspace(name));
+      let startupRefusals = 0;
       const allocator = yield* IdAllocatorV2;
       const scope = yield* Scope.Scope;
       const offered = yield* Queue.unbounded<NativeOffer>();
@@ -274,11 +278,22 @@ const withNativeQueue = <A, E, R>(
         makeLayer([
           heldSendOrdinal !== undefined ||
           options.synchronousFailSend !== undefined ||
+          options.controlStartupFailures ||
           options.injectEvents
             ? {
                 ...adapter,
                 openSession: (input) =>
-                  adapter.openSession(input).pipe(
+                  Effect.suspend(() =>
+                    startupRefusals-- > 0
+                      ? Effect.fail(
+                          new ProviderAdapterOpenSessionError({
+                            driver: adapter.driver,
+                            providerSessionId: input.providerSessionId,
+                            cause: "Current request startup diagnostic",
+                          }),
+                        )
+                      : adapter.openSession(input),
+                  ).pipe(
                     Effect.map((runtime) => ({
                       ...runtime,
                       // Delay delivery of the actual first lifecycle frame, preserving its
@@ -428,6 +443,9 @@ const withNativeQueue = <A, E, R>(
           preparationReady: Deferred.await(preparationReady),
           releasePreparation: Deferred.succeed(preparationReleased, undefined).pipe(Effect.asVoid),
           preparationAttempts: () => preparationAttempts,
+          failNextStarts: (count) => {
+            startupRefusals = count;
+          },
           takeOffer,
           captureEntered: Deferred.await(captureEntered),
           releaseCapture: Deferred.succeed(captureReleased, undefined).pipe(Effect.asVoid),
@@ -2593,4 +2611,82 @@ it.live(
       }),
     );
   },
+);
+
+it.live(
+  "settles a failed native startup by its own diagnostic despite an older failure and permits retry",
+  () =>
+    withNativeQueue(
+      "inherited-startup-diagnostic",
+      ({ orchestrator, threadId, takeOffer, waitFor, offers, failNextStarts }) =>
+        Effect.gen(function* () {
+          yield* send(orchestrator, threadId, "older failure");
+          const old = yield* takeOffer;
+          yield* old.settle("failed");
+          const seeded = yield* waitFor(
+            (p) => p.runs.find((run) => run.id === old.input.runId)?.status === "failed",
+          );
+          const oldErrors = seeded.turnItems.filter(
+            (item) => item.runId === old.input.runId && item.type === "error",
+          );
+          assert.isAbove(oldErrors.length, 0);
+          yield* (yield* ProviderSessionManagerV2).close(
+            old.input.providerThread.providerSessionId!,
+          );
+          failNextStarts(5);
+          yield* send(orchestrator, threadId, "fail current startup");
+          const admitted = yield* orchestrator.getThreadProjection(threadId);
+          const current = admitted.runs.at(-1)!;
+          assert.notEqual(current.id, old.input.runId);
+          const observeFailure = waitFor(
+            (p) =>
+              p.runs.find((run) => run.id === current.id)?.status === "failed" &&
+              p.turnItems.some(
+                (item) =>
+                  item.runId === current.id &&
+                  item.type === "error" &&
+                  item.title === "Provider session failed to open",
+              ),
+          );
+          const failed = yield* observeFailure;
+          const diagnostic = failed.turnItems.find(
+            (item) => item.runId === current.id && item.type === "error",
+          );
+          assert.ok(diagnostic?.type === "error");
+          assert.match(diagnostic.failure.message, /open/i);
+          assert.isFalse(
+            oldErrors.some(
+              (item) =>
+                item.type === "error" && item.failure.message === diagnostic.failure.message,
+            ),
+          );
+          assert.deepEqual(
+            failed.turnItems.filter(
+              (item) => item.runId === old.input.runId && item.type === "error",
+            ),
+            oldErrors,
+          );
+          assert.isFalse(
+            failed.providerTurns.some((turn) => turn.runAttemptId === current.activeAttemptId),
+          );
+          assert.deepEqual(offers, ["older failure"]);
+          yield* send(orchestrator, threadId, "clean retry");
+          const retry = yield* takeOffer;
+          assert.notEqual(retry.input.runId, current.id);
+          yield* retry.settle("completed");
+          const recovered = yield* waitFor(
+            (p) => p.runs.find((run) => run.id === retry.input.runId)?.status === "completed",
+          );
+          assert.isFalse(
+            recovered.turnItems.some(
+              (item) => item.runId === retry.input.runId && item.type === "error",
+            ),
+          );
+          assert.equal(recovered.runs.find((run) => run.id === current.id)?.status, "failed");
+          assert.lengthOf(offers, 2);
+          assert.equal(offers[0], "older failure");
+          assert.isTrue(offers[1]!.endsWith("User message:\nclean retry"));
+        }),
+      { controlStartupFailures: true },
+    ),
 );
