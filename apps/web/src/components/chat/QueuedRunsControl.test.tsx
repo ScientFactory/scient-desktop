@@ -324,3 +324,98 @@ it("renders actual held native workflow reorder and head-only Send before any pr
   expect(html).toContain("Resume queue");
   expect(html).not.toContain(">Steer<");
 });
+
+it.each([false, true])(
+  "retains one Cancel after actual extraction removes the native row (tail = %s)",
+  async (hasTail) => {
+    const { deriveThreadQueueWorkflowState } = await vi.importActual<
+      typeof import("@t3tools/client-runtime/state/thread-workflows")
+    >("@t3tools/client-runtime/state/thread-workflows");
+    const base = makeThreadProjectionFixture();
+    const ordinals = hasTail ? [1, 2] : [1];
+    const queued = {
+      ...base,
+      runs: ordinals.map((ordinal) => ({
+        id: RunId.make(`extract-${ordinal}`),
+        threadId: base.thread.id,
+        ordinal,
+        providerInstanceId: base.thread.providerInstanceId,
+        modelSelection: base.thread.modelSelection,
+        providerThreadId: null,
+        userMessageId: MessageId.make(`extract-message-${ordinal}`),
+        rootNodeId: null,
+        activeAttemptId: null,
+        status: "queued" as const,
+        queueHeld: true,
+        queuePosition: ordinal,
+        requestedAt: base.updatedAt,
+        startedAt: null,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+      })),
+      messages: ordinals.map((ordinal) => ({
+        id: MessageId.make(`extract-message-${ordinal}`),
+        threadId: base.thread.id,
+        runId: RunId.make(`extract-${ordinal}`),
+        nodeId: null,
+        role: "user" as const,
+        text: `Retained payload ${ordinal}`,
+        attachments: [],
+        streaming: false,
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        createdAt: base.updatedAt,
+        updatedAt: base.updatedAt,
+      })),
+    };
+    const editingRunId = RunId.make("extract-1");
+    const renderControl = () =>
+      renderToStaticMarkup(
+        <QueuedRunsControl
+          environmentId={EnvironmentId.make("extraction")}
+          threadId={base.thread.id}
+          optimisticMessages={[]}
+          editingRunId={editingRunId}
+          onEditQueuedRun={() => undefined}
+          onCancelEdit={() => undefined}
+        />,
+      );
+    state.projection = { projection: queued };
+    state.workflow = deriveThreadQueueWorkflowState(queued);
+    const before = renderControl();
+    expect(before.match(/aria-label="Cancel editing queued message"/g)).toHaveLength(1);
+    expect(before).toContain("thread-queue-row-extract-1");
+    const extracted = {
+      ...queued,
+      runs: queued.runs.map((run) =>
+        run.id === editingRunId
+          ? {
+              ...run,
+              status: "cancelled" as const,
+              queueHeld: false,
+              queuePosition: null,
+              completedAt: base.updatedAt,
+            }
+          : run,
+      ),
+    };
+    const retainedMessages = JSON.stringify(extracted.messages);
+    state.projection = { projection: extracted };
+    const actualWorkflow = deriveThreadQueueWorkflowState(extracted);
+    state.workflow = actualWorkflow;
+    expect(actualWorkflow.queuedRuns.map(({ run }) => run.id)).toEqual(
+      hasTail ? [RunId.make("extract-2")] : [],
+    );
+    const after = renderControl();
+    expect(after.match(/aria-label="Cancel editing queued message"/g)).toHaveLength(1);
+    expect(after).not.toContain("thread-queue-row-extract-1");
+    expect(after).not.toContain("Retained payload 1");
+    expect(after.match(/data-testid="thread-queue-row-/g) ?? []).toHaveLength(hasTail ? 1 : 0);
+    expect(after.match(/>Send<\/button>/g) ?? []).toHaveLength(hasTail ? 1 : 0);
+    expect(after.match(/>Resume queue<\/button>/g) ?? []).toHaveLength(hasTail ? 1 : 0);
+    expect(JSON.stringify(extracted.messages)).toBe(retainedMessages);
+    expect(extracted.runs[0]?.status).toBe("cancelled");
+    expect(extracted.runs[0]?.queuePosition).toBeNull();
+  },
+);

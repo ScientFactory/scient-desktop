@@ -243,7 +243,18 @@ export function ThreadQueueStrip<I extends QueueStripItem = ScientThreadQueueIte
   );
 
   const pendingMessages = props.pendingMessages ?? [];
-  if (props.items.length === 0 && pendingMessages.length === 0 && props.error === null) return null;
+  // Native extraction removes the queued run while its recovered draft remains editable.
+  const detachedEdit =
+    props.editingItemId != null &&
+    props.onCancelEdit !== undefined &&
+    !props.items.some((item) => item.queueItemId === props.editingItemId);
+  if (
+    props.items.length === 0 &&
+    pendingMessages.length === 0 &&
+    props.error === null &&
+    !detachedEdit
+  )
+    return null;
 
   return (
     <section
@@ -251,6 +262,20 @@ export function ThreadQueueStrip<I extends QueueStripItem = ScientThreadQueueIte
       aria-label="Queued messages"
       data-testid="thread-queue-strip"
     >
+      {detachedEdit ? (
+        <div className="flex items-center gap-2 border-b border-border/60 px-2.5 py-1.5 text-xs text-muted-foreground">
+          <span className="flex-1">Editing queued message</span>
+          <Button
+            type="button"
+            size="micro"
+            variant="ghost-muted"
+            onClick={props.onCancelEdit}
+            aria-label="Cancel editing queued message"
+          >
+            Cancel
+          </Button>
+        </div>
+      ) : null}
       {props.held && props.items.length > 0 ? (
         <div className="flex items-center gap-2 border-b border-border/60 px-2.5 py-1.5 text-xs text-muted-foreground">
           <span className="flex-1">Queue held</span>

@@ -16,7 +16,6 @@
   "src/provider/Drivers/AntigravityDriver.test.ts": 2,
   "src/provider/Layers/CodexCollabRuntime.integration.test.ts": 3.4,
   "src/provider/Layers/CursorProvider.test.ts": 1.4,
-  "src/provider/Layers/GrokAdapter.test.ts": 9,
   "src/provider/Layers/GrokProvider.test.ts": 0.7,
   "src/provider/Layers/ProviderService.test.ts": 0.5,
   "src/provider/acp/AcpJsonRpcConnection.test.ts": 6.2,
