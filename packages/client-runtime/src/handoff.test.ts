@@ -164,3 +164,61 @@ describe("fork initialization presentation", () => {
     }
   });
 });
+
+describe("frozen fork initialization provenance", () => {
+  const proof = {
+    transferId: transfer.id,
+    contextHandoffId: "fork-init-context",
+    threadId: "child",
+    runId: "first-child-run",
+  };
+  const frozen = (forkInitialization: unknown = proof) =>
+    decodeItem({
+      ...initialization,
+      threadId: "grand",
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      inheritedFrom: {
+        threadId: "child",
+        itemId: initialization.id,
+        runId: "first-child-run",
+        status: "completed",
+      },
+      forkInitialization,
+    });
+  it("hides the proven initialization after repeated copies without ancestor transfers", () => {
+    for (const threadId of ["grand", "great"]) {
+      const item = decodeItem({ ...frozen(), threadId });
+      expect(isForkInitializationHandoff({ ...localRow, item, visibility: "inherited" }, [])).toBe(
+        true,
+      );
+      expect(item.runId).toBeNull();
+      expect(item.nodeId).toBeNull();
+      expect(item.nativeItemRef).toBeNull();
+    }
+  });
+  it("keeps foreign handoff, thread and run proof visible", () => {
+    for (const altered of [
+      { ...proof, contextHandoffId: "foreign-context" },
+      { ...proof, threadId: "foreign-thread" },
+      { ...proof, runId: "foreign-run" },
+    ])
+      expect(isForkInitializationHandoff({ ...localRow, item: frozen(altered) }, [transfer])).toBe(
+        false,
+      );
+  });
+  it("keeps synthetic rows visible even when they carry copied proof", () => {
+    expect(
+      isForkInitializationHandoff({ ...localRow, item: frozen(), visibility: "synthetic" }, [
+        transfer,
+      ]),
+    ).toBe(false);
+  });
+  it("does not guess the cause of already-copied history", () => {
+    const item = decodeItem({ ...frozen(), forkInitialization: undefined });
+    expect(isForkInitializationHandoff({ ...localRow, item }, [transfer])).toBe(false);
+  });
+});

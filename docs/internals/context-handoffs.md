@@ -7,6 +7,14 @@ picker remains unlocked when the environment supports provider switching through
 preserving the composer draft. An empty conversation, including one with only held queued future
 messages, has no footer. Provider switches still show the **Context handoff** timeline row.
 
+Fork initialization is represented by the fork boundary, so its separate context-handoff row is
+hidden. Its inert causal proof names the original fork transfer, handoff, thread and run; copying
+frozen history preserves that proof through later forks without restoring execution ownership.
+A later provider switch, recovery or merge-back keeps its own row. Older local initialization rows
+can be qualified from their exact transfer when first copied. Already-copied rows that lost that
+cause remain visible; clients neither guess from the title nor query a live ancestor. Older clients
+ignore the optional proof and can still show the additional historical row.
+
 Portable provider delivery keeps eligible history items whole. It prioritizes the latest request and
 answer, then the original request, and fills the remaining budget from newest to oldest. Selected
 items are delivered in their original order. Oversized items are omitted rather than shortened.

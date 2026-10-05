@@ -17,6 +17,7 @@ import {
   type ThreadForkAttachmentCopy,
 } from "@t3tools/contracts";
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
+import { resolveForkInitialization } from "@t3tools/shared/orchestrationV2ForkInitialization";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -327,6 +328,14 @@ export const planConversationFork = Effect.fn("ScientConversationFork.plan")(fun
       base.nodeId = nodeId;
     }
     switch (original.type) {
+      case "handoff": {
+        const forkInitialization = resolveForkInitialization(original, projection.contextTransfers);
+        return {
+          ...original,
+          ...base,
+          ...(forkInitialization === undefined ? {} : { forkInitialization }),
+        };
+      }
       case "dynamic_tool": {
         const system = systemMessages.get(original.id);
         return system === undefined

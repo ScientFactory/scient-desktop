@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./orchestrationV2ForkInitialization": {
+      "types": "./src/orchestrationV2ForkInitialization.ts",
+      "import": "./src/orchestrationV2ForkInitialization.ts"
+    },
     "./orchestrationV2ThreadShell": {
       "types": "./src/orchestrationV2ThreadShell.ts",
       "import": "./src/orchestrationV2ThreadShell.ts"
