@@ -126,6 +126,9 @@ export function conversationImportEvents(command: PortableConversationImportPlan
               creationSource: "server" as const,
               role: message.role,
               text: message.text,
+              ...(message.role === "assistant" && message.citationPresentation !== undefined
+                ? { citationPresentation: message.citationPresentation }
+                : {}),
               attachments: message.attachments ?? [],
               streaming: false,
               createdAt: time,
@@ -159,6 +162,9 @@ export function conversationImportEvents(command: PortableConversationImportPlan
                     updatedAt,
                     completedAt: updatedAt,
                     type: "assistant_message",
+                    ...(message.citationPresentation === undefined
+                      ? {}
+                      : { citationPresentation: message.citationPresentation }),
                     messageId: message.messageId,
                     text: message.text,
                     attachments: message.attachments ?? [],

@@ -1,3 +1,4 @@
+import { ProviderCitationPresentation } from "./providerCitationPresentation.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { ScientConversationFork } from "./scientConversationFork.ts";
 import * as Effect from "effect/Effect";
@@ -1174,6 +1175,9 @@ export const OrchestrationV2Notification = Schema.Struct({
 export type OrchestrationV2Notification = typeof OrchestrationV2Notification.Type;
 
 export const OrchestrationV2ConversationMessage = Schema.Struct({
+  // SCIENT-FORK:START — inert citation provenance survives history copies and wire decoding.
+  citationPresentation: Schema.optional(ProviderCitationPresentation),
+  // SCIENT-FORK:END
   /** Opaque editing snapshot; never interpreted as provider authority. */
   composerSnapshot: Schema.optional(Schema.String),
   notification: Schema.optional(OrchestrationV2Notification),
@@ -1543,6 +1547,9 @@ export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("assistant_message"),
+    // SCIENT-FORK:START — carry syntax provenance without retaining native ownership.
+    citationPresentation: Schema.optional(ProviderCitationPresentation),
+    // SCIENT-FORK:END
     messageId: MessageId,
     text: Schema.String,
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
@@ -2299,6 +2306,9 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("assistant_message"),
+    // SCIENT-FORK:START — carry syntax provenance without retaining native ownership.
+    citationPresentation: Schema.optional(ProviderCitationPresentation),
+    // SCIENT-FORK:END
     messageId: MessageId,
     text: Schema.String,
     attachments: Schema.optional(Schema.Array(ChatAttachment)),

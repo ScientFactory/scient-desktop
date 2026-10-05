@@ -11,6 +11,7 @@ import {
 } from "./ProviderTextDeltaCoalescer.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  ProviderCitationPresentation,
   CommandId,
   CheckpointId,
   CodexSettings,
@@ -87,6 +88,7 @@ import {
   withCodexReplayChildMetadata,
 } from "./CodexAdapterV2.testkit.ts";
 
+const decodeCitationPresentation = Schema.decodeUnknownEffect(ProviderCitationPresentation);
 const isNativeStartReceiptError = Schema.is(ProviderAdapterTurnStartError);
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
@@ -2908,6 +2910,114 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         }).pipe(Effect.provide(imagePersistenceLayer)),
       ),
   );
+
+  for (const catalog of ["oversized", "expanded-url"] as const) {
+    it.effect(
+      `preserves a native unresolved answer with a ${catalog} catalog as bounded inert metadata`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const nativeThreadId = "bounded-citation-thread";
+            const nativeTurnId = "bounded-citation-turn";
+            const text = "Raw \uE200cite\uE202s127\uE202missing\uE201";
+            const results =
+              catalog === "oversized"
+                ? Array.from({ length: 140 }, (_, i) => ({
+                    ref_id: `s${i}`,
+                    url: `https://example.test/${i}`,
+                  }))
+                : [
+                    {
+                      ref_id: "s127",
+                      url: `https://example.test/${"א".repeat(7000)}`,
+                      title: "Unicode",
+                    },
+                  ];
+            const transcript = makeCodexReplayTranscript({
+              scenario: `bounded-${catalog}`,
+              entries: [
+                ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Find evidence" }),
+                {
+                  type: "emit_inbound",
+                  frame: {
+                    method: "item/completed",
+                    params: {
+                      threadId: nativeThreadId,
+                      turnId: nativeTurnId,
+                      item: {
+                        type: "webSearch",
+                        id: "search",
+                        query: "evidence",
+                        action: { type: "search", query: "evidence" },
+                        results,
+                      },
+                    },
+                  },
+                },
+                {
+                  type: "emit_inbound",
+                  frame: {
+                    method: "item/completed",
+                    params: {
+                      threadId: nativeThreadId,
+                      turnId: nativeTurnId,
+                      item: { type: "agentMessage", id: "answer", text, phase: "final_answer" },
+                    },
+                  },
+                },
+                {
+                  type: "emit_inbound",
+                  frame: {
+                    method: "turn/completed",
+                    params: {
+                      threadId: nativeThreadId,
+                      turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                    },
+                  },
+                },
+              ],
+            });
+            const harness = yield* makeCodexReplayHarness(transcript);
+            const now = yield* DateTime.now;
+            yield* harness.runtime.startTurn(
+              makeCodexTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: harness.providerThread,
+                now,
+                attemptId: RunAttemptId.make(`bounded-${catalog}`),
+                text: "Find evidence",
+              }),
+            );
+            yield* harness.firstTerminal;
+            const event = harness.events.find(
+              (entry) =>
+                entry.type === "message.updated" &&
+                entry.message.role === "assistant" &&
+                !entry.message.streaming,
+            );
+            assert.ok(event?.type === "message.updated");
+            assert.equal(event.message.text, text);
+            assert.ok(event.message.citationPresentation);
+            const metadata = yield* decodeCitationPresentation(event.message.citationPresentation);
+            assert.deepEqual(
+              metadata.sources,
+              catalog === "oversized" ? [{ id: "s127", url: "https://example.test/127" }] : [],
+            );
+            const item = harness.events.find(
+              (entry) =>
+                entry.type === "turn_item.updated" &&
+                entry.turnItem.type === "assistant_message" &&
+                !entry.turnItem.streaming,
+            );
+            assert.ok(
+              item?.type === "turn_item.updated" && item.turnItem.type === "assistant_message",
+            );
+            assert.equal(item.turnItem.text, text);
+            assert.deepEqual(item.turnItem.citationPresentation, metadata);
+          }).pipe(Effect.provide(imagePersistenceLayer)),
+        ),
+    );
+  }
 
   for (const outcome of ["saved", "default-path", "missing", "foreign", "failed"] as const) {
     it.effect(`projects native Codex generated images with ${outcome} materialization`, () => {
