@@ -253,7 +253,6 @@ describe.runIf(scientAgentBinary)("real Scient Agent", () => {
       expect(NodeFS.existsSync(NodePath.join(stateDir, "omp"))).toBe(false);
       // Starting a conversation writes nothing into the project.
       expect(NodeFS.readdirSync(workspace)).toEqual([]);
-      NodeFS.rmSync(root, { recursive: true, force: true });
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
@@ -302,7 +301,6 @@ describe.runIf(scientAgentBinary)("real Scient Agent", () => {
       expect(NodeFS.existsSync(elsewhere)).toBe(false);
       expect(homeEntries(home)).toEqual([".env"]);
       expect(NodeFS.readdirSync(workspace)).toEqual([".env"]);
-      NodeFS.rmSync(root, { recursive: true, force: true });
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
@@ -418,7 +416,6 @@ describe.runIf(scientAgentBinary)("real Scient Agent", () => {
             expect(ompFilesAfter.has(file), `Oh My Pi lost ${file}`).toBe(true);
           }
           yield* omp.close;
-          NodeFS.rmSync(root, { recursive: true, force: true });
         }).pipe(Effect.scoped, Effect.provide(layer)),
       120_000,
     );
@@ -504,7 +501,6 @@ describe.runIf(scientAgentBinary)("real Scient Agent", () => {
             expect(session.runtime.providerSession.status).toBe("stopped");
           expect(running()).toEqual([]);
           expect(homeEntries(home)).toEqual([]);
-          NodeFS.rmSync(root, { recursive: true, force: true });
         }).pipe(Effect.scoped, Effect.provide(layer)),
       180_000,
     );
