@@ -34,7 +34,7 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/Services/ProviderAuthService.ts";
 // SCIENT-FORK:START — explicit Scient skill selection for this turn.
-import { prepareScientV2SkillTurn } from "../scient/skills/ScientV2SkillTurn.ts";
+import { prepareScientV2SkillScope } from "../scient/skills/ScientV2SkillTurn.ts";
 import { ScientSkillSessionPlanner } from "../scient/skills/ScientSkillSession.ts";
 // SCIENT-FORK:END
 import * as EventSink from "./EventSink.ts";
@@ -1251,7 +1251,7 @@ export const layer: Layer.Layer<
       // skill block. `message.dispatch` persisted the composer's explicit
       // selection on this run's user message; apply it to the exact text the
       // provider is about to receive, and narrow the turn's skill scope.
-      const userText = yield* prepareScientV2SkillTurn({
+      const preparedSkills = yield* prepareScientV2SkillScope({
         threadId: projection.thread.id,
         driver: session.driver,
         mcpSessionInjection: session.mcpSessionInjection === true,
@@ -1262,6 +1262,7 @@ export const layer: Layer.Layer<
         }),
         selectedScientSkillNames: message.selectedScientSkillNames ?? [],
       }).pipe(Effect.provideService(ScientSkillSessionPlanner, skillPlanner));
+      const userText = preparedSkills.text;
       // SCIENT-FORK:END
       // Delivered once: this run's provider turn marks the work as told. A
       // restart continuation is prompted by its own text or resumes natively.
@@ -1432,72 +1433,88 @@ export const layer: Layer.Layer<
                     createdAt: yield* DateTime.now,
                   }),
                 ];
-          const delivery = yield* deliverContextHandoffs({
-            handoffs: [...effectiveHandoffs, ...retryHandoff],
-            deferInline: compact,
-            providerThread: runningProviderThread,
-            budget: Effect.gen(function* () {
-              const policy = yield* usesScientBudget ? handoffPolicy : genericContextHandoffPolicy;
-              return handoffBudget({
-                ...policy,
-                modelContextWindow,
-                // The restart note and user text spend the same serialized allowance.
-                userText: restartNote === "" ? userText : `${restartNote}\n\n${userText}`,
-                attachments: message.attachments,
-                providerThread: budgetProviderThread,
-                nativeContextEstimate:
-                  budgetProviderThread.contextUsage?.usedTokens === undefined
-                    ? yield* nativeContextEstimate(policy.bytesPerToken)
-                    : 0,
-              });
-            }),
-            alreadyDeliveredItemIds: deliveredItemIds,
-            sharedForkWorkspace: projection.thread.conversationFork?.workspaceMode === "local",
-            sourceOmissions:
-              (projection.thread.conversationImport ?? projection.thread.forkLineage?.sourceImport)
-                ?.omissions ?? [],
-            ...((projection.thread.conversationImport ??
-              projection.thread.forkLineage?.sourceImport) == null
-              ? {}
-              : {
-                  importedMaterial:
-                    (
-                      projection.thread.conversationImport ??
-                      projection.thread.forkLineage?.sourceImport
-                    )?.sourceFormat === "scient-markdown-document"
-                      ? ("document" as const)
-                      : ("conversation" as const),
-                }),
-            ...(session.injectHistory === undefined
-              ? {}
-              : {
-                  inject: (history: ProviderAdapterV2HistoricalContext) =>
-                    session.injectHistory!({
-                      providerThread: runningProviderThread,
-                      ...history,
-                    }),
-                }),
-            persist: (handoff) =>
-              Effect.gen(function* () {
-                const updatedAt = yield* DateTime.now;
-                yield* eventSink.write({
-                  events: [
-                    {
-                      id: yield* idAllocator.allocate.event({
-                        threadId: projection.thread.id,
-                      }),
-                      type: "context-handoff.updated",
-                      threadId: projection.thread.id,
-                      runId: run.id,
-                      providerInstanceId: run.providerInstanceId,
-                      occurredAt: updatedAt,
-                      payload: { ...handoff, updatedAt },
-                    },
-                  ],
+          const prepareDelivery = (preparedUserText: string) =>
+            deliverContextHandoffs({
+              handoffs: [...effectiveHandoffs, ...retryHandoff],
+              deferInline: compact,
+              providerThread: runningProviderThread,
+              budget: Effect.gen(function* () {
+                const policy = yield* usesScientBudget
+                  ? handoffPolicy
+                  : genericContextHandoffPolicy;
+                return handoffBudget({
+                  ...policy,
+                  modelContextWindow,
+                  // The restart note and user text spend the same serialized allowance.
+                  userText:
+                    restartNote === "" ? preparedUserText : `${restartNote}\n\n${preparedUserText}`,
+                  attachments: message.attachments,
+                  providerThread: budgetProviderThread,
+                  nativeContextEstimate:
+                    budgetProviderThread.contextUsage?.usedTokens === undefined
+                      ? yield* nativeContextEstimate(policy.bytesPerToken)
+                      : 0,
                 });
               }),
-          });
+              alreadyDeliveredItemIds: deliveredItemIds,
+              sharedForkWorkspace: projection.thread.conversationFork?.workspaceMode === "local",
+              sourceOmissions:
+                (
+                  projection.thread.conversationImport ??
+                  projection.thread.forkLineage?.sourceImport
+                )?.omissions ?? [],
+              ...((projection.thread.conversationImport ??
+                projection.thread.forkLineage?.sourceImport) == null
+                ? {}
+                : {
+                    importedMaterial:
+                      (
+                        projection.thread.conversationImport ??
+                        projection.thread.forkLineage?.sourceImport
+                      )?.sourceFormat === "scient-markdown-document"
+                        ? ("document" as const)
+                        : ("conversation" as const),
+                  }),
+              ...(session.injectHistory === undefined
+                ? {}
+                : {
+                    inject: (history: ProviderAdapterV2HistoricalContext) =>
+                      session.injectHistory!({
+                        providerThread: runningProviderThread,
+                        ...history,
+                      }),
+                  }),
+              persist: (handoff) =>
+                Effect.gen(function* () {
+                  const updatedAt = yield* DateTime.now;
+                  yield* eventSink.write({
+                    events: [
+                      {
+                        id: yield* idAllocator.allocate.event({
+                          threadId: projection.thread.id,
+                        }),
+                        type: "context-handoff.updated",
+                        threadId: projection.thread.id,
+                        runId: run.id,
+                        providerInstanceId: run.providerInstanceId,
+                        occurredAt: updatedAt,
+                        payload: { ...handoff, updatedAt },
+                      },
+                    ],
+                  });
+                }),
+            });
+          let preparedUserText = userText;
+          const delivery = yield* prepareDelivery(preparedUserText).pipe(
+            Effect.catchTag("ContextHandoffBudgetError", (cause) => {
+              const fallback = preparedSkills.textWithoutCatalogMarker;
+              if (fallback === undefined) return Effect.fail(cause);
+              preparedUserText = fallback;
+              return prepareDelivery(fallback);
+            }),
+          );
           if (!(yield* isCurrentAttemptInStatus("running"))) return;
+          yield* preparedSkills.publish;
           const start = compact ? session.compactThread! : session.startTurn;
           const context = [delivery.context, restartNote]
             .filter((part) => part !== "")
@@ -1508,7 +1525,10 @@ export const layer: Layer.Layer<
             ...(noteContinuation ? promptedInput : turnInput),
             message: {
               ...turnInput.message,
-              text: context === "" ? userText : `${context}\n\nUser message:\n${userText}`,
+              text:
+                context === ""
+                  ? preparedUserText
+                  : `${context}\n\nUser message:\n${preparedUserText}`,
             },
           });
           // The provider already accepted the turn. A stale pending marker
@@ -1534,14 +1554,11 @@ export const layer: Layer.Layer<
                 }),
           ),
         );
+      // Native-initiated work has already begun under its captured policy;
+      // preserve its adoption path rather than issuing another ordinary prompt.
+      if (providerWork !== undefined) yield* preparedSkills.publish;
       const deliverySession =
-        providerWork !== undefined ||
-        (effectiveHandoffs.length === 0 &&
-          uncoveredMissedItems.length === 0 &&
-          restartNote === "" &&
-          !noteContinuation)
-          ? session
-          : makeDeliverySession(session, startWithHandoffs);
+        providerWork !== undefined ? session : makeDeliverySession(session, startWithHandoffs);
       yield* runExecution.startRootRun({
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
         appThread: projection.thread,
