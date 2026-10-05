@@ -17,7 +17,6 @@ import {
   EnvironmentId,
   ProviderInstanceId,
   ThreadId,
-  type ProviderRuntimeEvent,
   type ServerSettings,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -31,7 +30,11 @@ import * as Stream from "effect/Stream";
 
 import { customModelProviderId, type ResolvedModelConnection } from "../../customModels.ts";
 import { clearMcpProviderSession, setMcpProviderSession } from "../../mcp/McpProviderSession.ts";
-import { makeOmpAdapter } from "../Layers/OmpAdapter.ts";
+import { nativeOmpOrchestration } from "../testUtils/nativeOmpOrchestration.ts";
+import { McpSessionRegistry } from "../../mcp/McpSessionRegistry.ts";
+import * as ServerConfig from "../../config.ts";
+import { layer as allocatorLayer } from "../../orchestration-v2/IdAllocator.ts";
+import { ProviderSessionManagerV2 } from "../../orchestration-v2/ProviderSessionManager.ts";
 import { nativeOmpSession } from "../testUtils/nativeOmpSession.ts";
 import type { ProviderAdapterV2Event } from "../../orchestration-v2/ProviderAdapter.ts";
 import { SCIENT_CORE_AWARENESS } from "../ScientAwareness.ts";
@@ -701,57 +704,82 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
             `http://127.0.0.1:${stubPort}/v1`,
             instanceId,
           );
-          const adapter = yield* makeOmpAdapter({
-            target: ompQualifyTarget,
-            binaryPath: binary!,
-            providerInstanceId: instanceId,
-            stateDir: NodePath.join(root, "state"),
-            attachmentsDir: NodePath.join(root, "attachments"),
-            environment: yield* isolatedEnvironment(root),
-            makeProcess: customModels,
-          });
-          const events = yield* Queue.unbounded<ProviderRuntimeEvent>();
-          yield* adapter.streamEvents.pipe(
-            Stream.runForEach((event) => Queue.offer(events, event)),
-            Effect.forkScoped,
-          );
-          const threadId = ThreadId.make("omp-scient-live-subagent");
-          setMcpProviderSession({
-            environmentId: EnvironmentId.make("environment-omp-live"),
-            threadId,
-            providerSessionId: "provider-omp-live-subagent",
-            providerInstanceId: instanceId,
-            endpoint: `http://127.0.0.1:${mcpPort}/mcp`,
-            authorizationHeader: TOKEN,
-            capabilities: new Set(["skills:read"]),
-          });
-          yield* Effect.addFinalizer(() => Effect.sync(() => clearMcpProviderSession(threadId)));
-          yield* adapter.startSession({
-            threadId,
-            cwd: NodePath.join(root, "cwd"),
-            runtimeMode: "full-access",
-          });
-          const completed = yield* Deferred.make<ProviderRuntimeEvent>();
-          yield* Stream.fromQueue(events).pipe(
-            Stream.runForEach((event) =>
-              // Newer OMP versions may finish the parent turn before the
-              // child starts. Wait for the continuation after its tool call.
-              event.type === "turn.completed" &&
-              mcp.calls.some((call) => call.method === "tools/call")
-                ? Deferred.succeed(completed, event)
-                : Effect.void,
-            ),
-            Effect.forkScoped,
-          );
           const model = encodeOmpModelSlug(customModelProviderId("stub"), "stub-model");
           if (!model) return yield* Effect.die(new Error("The stub model slug did not encode."));
-          yield* adapter.sendTurn({
-            threadId,
-            input: "Delegate to a subagent.",
-            modelSelection: createModelSelection(instanceId, model),
+          let launches = 0;
+          let shutdowns = 0;
+          let confirmed = false;
+          const mcpRegistry = Layer.succeed(McpSessionRegistry, {
+            issue: ({ threadId, providerInstanceId }) =>
+              Effect.succeed({
+                config: {
+                  environmentId: EnvironmentId.make("environment-omp-live"),
+                  threadId,
+                  providerSessionId: "provider-omp-live-subagent",
+                  providerInstanceId,
+                  endpoint: `http://127.0.0.1:${mcpPort}/mcp`,
+                  authorizationHeader: TOKEN,
+                  capabilities: new Set(["skills:read"] as const),
+                },
+              }),
+            resolve: () => Effect.succeed(undefined),
+            touch: () => Effect.void,
+            replaceSkillScope: () => Effect.void,
+            revokeProviderSession: () => Effect.void,
+            revokeThread: () => Effect.void,
+            revokeAll: Effect.void,
           });
-          const terminal = yield* Deferred.await(completed).pipe(Effect.timeout("120 seconds"));
-          expect(terminal.payload).toMatchObject({ state: "completed" });
+          const f = yield* nativeOmpOrchestration({
+            cwd: NodePath.join(root, "cwd"),
+            stateDir: NodePath.join(root, "state"),
+            attachmentsDir: NodePath.join(root, "attachments"),
+            instanceId,
+            modelSelection: createModelSelection(instanceId, model),
+            target: ompQualifyTarget,
+            binaryPath: binary!,
+            environment: yield* isolatedEnvironment(root),
+            configureMcp: true,
+            mcpSessionRegistryLayer: mcpRegistry,
+            receiptTimeoutMs: 90_000,
+            makeProcess: (options) => {
+              launches++;
+              return customModels(options).pipe(
+                Effect.map((client) => ({
+                  ...client,
+                  shutdown: client.shutdown.pipe(
+                    Effect.tap((exit) =>
+                      Effect.sync(() => {
+                        shutdowns++;
+                        confirmed = exit.exited === true || exit.code !== null;
+                      }),
+                    ),
+                  ),
+                })),
+              );
+            },
+          });
+          yield* f.run(({ send, waitFor }) =>
+            Effect.gen(function* () {
+              yield* send("Delegate to a subagent.");
+              const terminal = yield* waitFor(
+                (p) =>
+                  mcp.calls.some((call) => call.method === "tools/call") &&
+                  p.subagents.some((row) => row.status === "completed") &&
+                  p.providerThreads.every((row) => row.pendingBackgroundTasks?.length === 0) &&
+                  p.runs.length > 0 &&
+                  p.runs.every((row) => row.status === "completed"),
+              );
+              expect(
+                terminal.messages.some(
+                  (row) => row.role === "assistant" && row.text.includes("SCIENT_LIVE_OK"),
+                ),
+              ).toBe(true);
+              expect(launches).toBe(1);
+              yield* (yield* ProviderSessionManagerV2).shutdown;
+            }),
+          );
+          expect(shutdowns).toBe(1);
+          expect(confirmed).toBe(true);
 
           // The subagent ran on the custom model and saw the Scient tool...
           const subagent = requests.filter((request) => request.subagent);
@@ -773,9 +801,19 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
           expect(mcp.calls.filter((call) => call.method === "initialize")).toHaveLength(1);
           expect(mcp.calls.filter((call) => call.method === "tools/list")).toHaveLength(1);
           expect(mcp.rejected()).toBe(0);
-          yield* adapter.stopSession(threadId);
         }),
-      ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, OmpExecutableGate.layer))),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            OmpExecutableGate.layer,
+            allocatorLayer,
+            ServerConfig.layerTest(process.cwd(), { prefix: "scient-installed-subagent-" }).pipe(
+              Layer.provide(NodeServices.layer),
+            ),
+          ),
+        ),
+      ),
     180_000,
   );
 

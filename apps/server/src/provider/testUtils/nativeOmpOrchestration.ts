@@ -42,6 +42,10 @@ export const nativeOmpOrchestration = Effect.fnUntraced(function* (
     readonly binaryPath?: string;
     readonly makeProcess?: Parameters<typeof makeOmpAdapterV2>[0]["makeProcess"];
     readonly receiptTimeoutMs?: number;
+    readonly configureMcp?: boolean;
+    readonly mcpSessionRegistryLayer?: NonNullable<
+      Parameters<typeof makeOrchestratorV2ReplayLayerWithRegistry>[2]
+    >["mcpSessionRegistryLayer"];
     readonly decorateEventSink?: NonNullable<
       Parameters<typeof makeOrchestratorV2ReplayLayerWithRegistry>[2]
     >["decorateEventSink"];
@@ -90,7 +94,10 @@ export const nativeOmpOrchestration = Effect.fnUntraced(function* (
     { name: "omp-native-background", runtimePolicyOverride: { cwd } },
     registry,
     {
-      configureMcp: false,
+      configureMcp: input.configureMcp ?? false,
+      ...(input.mcpSessionRegistryLayer
+        ? { mcpSessionRegistryLayer: input.mcpSessionRegistryLayer }
+        : {}),
       ...(input.decorateEventSink ? { decorateEventSink: input.decorateEventSink } : {}),
       runEffectWorker: true,
       runContinuationWorker: true,
