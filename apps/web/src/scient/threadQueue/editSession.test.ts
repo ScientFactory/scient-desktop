@@ -1,3 +1,8 @@
+import {
+  bindExtractedSubmission,
+  consumeExtractedSubmission,
+  extractedDraftFingerprint,
+} from "./submission";
 import "fake-indexeddb/auto";
 import {
   CommandId,
@@ -24,6 +29,8 @@ import {
   stashRecoveredDraft,
   restoreQueueEditStash,
   useQueueEditSessions,
+  resolveExtractedDraftIntent,
+  retireConsumedDraftIntent,
 } from "./editSession";
 import { controlThreadQueue, extractNativeQueuedRun, readQueuedAttachmentFile } from "./client";
 import { nativeQueueExtractionError } from "./nativeQueueExtractionError";
@@ -879,4 +886,105 @@ it("releases a definitively refused native edit journal while keeping ordinary f
   expect(useQueueEditSessions.getState().sessions[composerTargetKey(target)]?.transferred).toBe(
     true,
   );
+});
+
+it("preserves semantic intent across a stashed cross-target copy while recovery IDs change", async () => {
+  await beginQueueEdit(target, {
+    ...item,
+    sourceProposedPlan: { threadId: target.threadId, planId: PlanId.make("captured-plan") },
+  });
+  const first = useQueueEditSessions.getState().sessions[composerTargetKey(target)]!;
+  const marker = useComposerDraftStore.getState().getComposerDraft(target)!.extractedIntent!;
+  expect("intentId" in marker && marker.intentId).toBe(first.intentId);
+  await stashRecoveredDraft(first);
+  const entry = usePromptStashStore
+    .getState()
+    .entries.find((candidate) => candidate.queueEditSide === "edited")!;
+  await restoreQueueEditStash(entry, other, other.environmentId);
+  const restored = useComposerDraftStore.getState().getComposerDraft(other)!;
+  expect(restored.extractedIntent).toMatchObject({ intentId: first.intentId });
+  expect("journalKey" in restored.extractedIntent! && restored.extractedIntent.journalKey).not.toBe(
+    first.journalKey,
+  );
+  const intent = await resolveExtractedDraftIntent(restored);
+  expect(intent?.sourceProposedPlan).toEqual({
+    threadId: target.threadId,
+    planId: "captured-plan",
+  });
+});
+
+it("retains consumed provenance on a remapped copy, while detaching the original owner's later draft", async () => {
+  await beginQueueEdit(target, item);
+  const original = useQueueEditSessions.getState().sessions[composerTargetKey(target)]!;
+  const submitted = useComposerDraftStore.getState().getComposerDraft(target)!;
+  const intent = (await resolveExtractedDraftIntent(submitted))!;
+  const packet = {
+    environmentId: target.environmentId,
+    input: {
+      commandId: CommandId.make(`extracted-intent:${intent.intentId}`),
+      threadId: target.threadId,
+      createdAt: "2026-10-05T00:00:00.000Z",
+      runtimeMode: "full-access" as const,
+      interactionMode: "default" as const,
+      message: {
+        messageId: MessageId.make("consumed-original"),
+        role: "user" as const,
+        text: submitted.prompt,
+        attachments: [],
+      },
+    },
+  };
+  const bound = await bindExtractedSubmission(
+    intent,
+    packet,
+    await extractedDraftFingerprint(submitted),
+    original.journalKey,
+  );
+  // A recovery copy before acknowledgement shares semantic intent but owns a
+  // different journal/install key. A consumed copy cannot become ordinary.
+  await stashRecoveredDraft(original);
+  const entry = usePromptStashStore
+    .getState()
+    .entries.find((candidate) => candidate.queueEditSide === "edited")!;
+  await restoreQueueEditStash(entry, other, other.environmentId);
+  await consumeExtractedSubmission(bound);
+  await retireConsumedDraftIntent(other, intent.intentId, original.journalKey);
+  expect(useComposerDraftStore.getState().getComposerDraft(other)?.extractedIntent).toMatchObject({
+    intentId: intent.intentId,
+  });
+  await expect(
+    resolveExtractedDraftIntent(useComposerDraftStore.getState().getComposerDraft(other)),
+  ).rejects.toThrow("already submitted");
+
+  await finishQueueEdit(useQueueEditSessions.getState().sessions[composerTargetKey(other)]!);
+  await beginQueueEdit(target, { ...item, queueItemId: "second-intent" });
+  const next = useQueueEditSessions.getState().sessions[composerTargetKey(target)]!;
+  const snapshot = useComposerDraftStore.getState().getComposerDraft(target)!;
+  const nextIntent = (await resolveExtractedDraftIntent(snapshot))!;
+  const nextBound = await bindExtractedSubmission(
+    nextIntent,
+    {
+      ...packet,
+      input: {
+        ...packet.input,
+        commandId: CommandId.make(`extracted-intent:${nextIntent.intentId}`),
+        message: { ...packet.input.message, messageId: MessageId.make("later-original") },
+      },
+    },
+    await extractedDraftFingerprint(snapshot),
+    next.journalKey,
+  );
+  useComposerDraftStore.getState().setPrompt(target, "independently authored later draft");
+  await consumeExtractedSubmission(nextBound);
+  await finishQueueEdit(next, snapshot);
+  await retireConsumedDraftIntent(target, nextIntent.intentId, next.journalKey);
+  expect(useComposerDraftStore.getState().getComposerDraft(target)?.prompt).toBe(
+    "independently authored later draft",
+  );
+  expect(
+    useComposerDraftStore.getState().getComposerDraft(target)?.extractedIntent,
+  ).toBeUndefined();
+  expect(
+    useQueueEditSessions.getState().sessions[composerTargetKey(target)]?.extractedItem,
+  ).toBeUndefined();
 });

@@ -84,6 +84,9 @@ import { shellStreamItemFromThreadShell } from "./ShellStream.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import * as ResourceCleanupService from "./ResourceCleanupService.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 
 const dispatchRpc = WsRpcGroup.requests.get(ORCHESTRATION_V2_WS_METHODS.dispatchCommand);
 if (!dispatchRpc) throw new Error("Missing registered dispatch RPC");
@@ -254,6 +257,17 @@ const TestLayer = Layer.mergeAll(
   Layer.provide(GitWorkflowTestLayer),
   Layer.provide(ProjectServiceTestLayer),
   Layer.provideMerge(PlatformTestLayer),
+);
+
+// SCIENT-FORK: exercise live attachment unlink in an isolated, idle lifecycle fixture.
+const AttachmentDeletionTestLayer = TestLayer.pipe(
+  Layer.provide(
+    ResourceCleanupService.live.pipe(
+      Layer.provide(Layer.mock(TerminalManager.TerminalManager)({ close: () => Effect.void })),
+      Layer.provide(ServerConfigLayer),
+      Layer.provide(PlatformTestLayer),
+    ),
+  ),
 );
 
 const LegacyImportTestLayer = OrchestrationV2LayerLive.pipe(
@@ -1964,6 +1978,147 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.isNotNull(projection.thread.archivedAt);
       assert.isNotNull(projection.thread.deletedAt);
     }),
+  );
+
+  // SCIENT-FORK: preserve the old thread.delete receipt boundary on the native cleanup path.
+  it.effect("cleans real attachments only after the native delete receipt commits", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const sql = yield* SqlClient.SqlClient;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const config = yield* ServerConfig.ServerConfig;
+      const threadId = ThreadId.make("native-delete-receipt-thread");
+      const projectId = ProjectId.make("native-delete-receipt-project");
+      const now = yield* DateTime.now;
+      yield* seedProject({
+        projectId,
+        title: "Native delete receipt project",
+        workspaceRoot: process.cwd(),
+        defaultModelSelection: modelSelection,
+        createdAt: DateTime.formatIso(now),
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("native-delete-receipt-create"),
+        threadId,
+        projectId,
+        title: "Idle attachment owner",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const attachmentId = createAttachmentId(threadId, "png");
+      assert.ok(attachmentId);
+      const bytes = new Uint8Array([0, 1, 17, 128, 255, 10]);
+      const attachment = {
+        type: "image" as const,
+        id: ChatAttachmentId.make(attachmentId),
+        name: "owned.png",
+        mimeType: "image/png",
+        sizeBytes: bytes.length,
+      };
+      const attachmentPath = resolveAttachmentPath({
+        attachmentsDir: config.attachmentsDir,
+        attachment,
+      });
+      assert.ok(attachmentPath);
+      yield* fileSystem.writeFile(attachmentPath, bytes);
+      // Seed a real native message through EventSink without starting a provider or run.
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("native-delete-receipt-message"),
+            type: "message.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: MessageId.make("native-delete-receipt-message"),
+              threadId,
+              runId: null,
+              nodeId: null,
+              role: "user",
+              text: "Owned attachment",
+              attachments: [attachment],
+              streaming: false,
+              createdAt: now,
+              updatedAt: now,
+              createdBy: "user",
+              creationSource: "web",
+            },
+          },
+        ],
+      });
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      assert.isNull(before.thread.deletedAt);
+      assert.deepEqual(before.messages[0]?.attachments, [attachment]);
+      assert.deepEqual(yield* projectionStore.getThreadAttachmentIds(threadId), [attachmentId]);
+      assert.deepEqual(before.runs, []);
+      assert.deepEqual(before.providerSessions, []);
+      assert.deepEqual(yield* fileSystem.readFile(attachmentPath), bytes);
+      const sequence = yield* orchestrator.getThreadEventSequence(threadId);
+      const command = {
+        type: "thread.delete",
+        commandId: CommandId.make("native-delete-receipt-delete"),
+        threadId,
+      } as const;
+      const readReceipt = sql<{ readonly status: string; readonly resultSequence: number }>`
+        SELECT status, result_sequence AS "resultSequence" FROM orchestration_command_receipts
+        WHERE command_id = ${command.commandId}
+      `;
+      yield* sql`CREATE TRIGGER fail_native_delete_receipt
+        BEFORE INSERT ON orchestration_command_receipts
+        WHEN NEW.command_id = 'native-delete-receipt-delete' AND NEW.status = 'accepted'
+        BEGIN SELECT RAISE(ABORT, 'forced native delete receipt failure'); END`;
+      const failure = yield* orchestrator.dispatch(command).pipe(Effect.flip);
+      assert.instanceOf(failure, Orchestrator.OrchestratorDispatchError);
+      assert.instanceOf(failure.cause, EventSink.EventSinkWriteError);
+      assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), before);
+      assert.equal(yield* orchestrator.getThreadEventSequence(threadId), sequence);
+      assert.deepEqual(yield* sink.readByCommandId(command).pipe(Stream.runCollect), []);
+      assert.deepEqual(yield* readReceipt, []);
+      assert.deepEqual(yield* outbox.listByCommandId(command.commandId), []);
+      yield* worker.drain();
+      assert.deepEqual(yield* fileSystem.readFile(attachmentPath), bytes);
+      yield* sql`DROP TRIGGER fail_native_delete_receipt`;
+
+      const accepted = yield* orchestrator.dispatch(command);
+      assert.deepEqual(yield* readReceipt, [
+        { status: "accepted", resultSequence: accepted.sequence },
+      ]);
+      assert.isAbove(accepted.sequence, sequence);
+      assert.deepEqual(
+        accepted.storedEvents.map((stored) => stored.event.type),
+        ["thread.deleted"],
+      );
+      assert.isNotNull((yield* orchestrator.getThreadProjection(threadId)).thread.deletedAt);
+      const pending = yield* outbox.listByCommandId(command.commandId);
+      assert.deepEqual(
+        pending.map((effect) => effect.request),
+        [
+          { type: "attachment.cleanup", attachmentIds: [attachmentId] },
+          { type: "terminal.cleanup" },
+        ],
+      );
+      assert.isTrue(pending.every((effect) => effect.status === "pending"));
+      assert.deepEqual(yield* fileSystem.readFile(attachmentPath), bytes);
+      yield* worker.drain();
+      assert.isFalse(yield* fileSystem.exists(attachmentPath));
+      const completed = yield* outbox.listByCommandId(command.commandId);
+      assert.lengthOf(completed, 2);
+      assert.isTrue(completed.every((effect) => effect.status === "succeeded"));
+      assert.deepEqual(yield* readReceipt, [
+        { status: "accepted", resultSequence: accepted.sequence },
+      ]);
+      assert.equal(yield* orchestrator.getThreadEventSequence(threadId), accepted.sequence);
+    }).pipe(Effect.provide(Layer.fresh(AttachmentDeletionTestLayer))),
   );
 
   it.effect("persists linked pull requests through projection rebuilds and unlinking", () =>

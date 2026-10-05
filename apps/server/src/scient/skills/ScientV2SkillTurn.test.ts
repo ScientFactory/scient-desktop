@@ -23,6 +23,7 @@ import { HttpServer } from "effect/unstable/http";
 import * as NetAddress from "effect/unstable/net/NetAddress";
 
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import type { McpInvocationScope } from "../../mcp/McpInvocationContext.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
@@ -88,8 +89,13 @@ const listFor = (scope: McpInvocationScope) =>
     Effect.provideService(AgentInvocationContext, scientInvocationForMcp(scope)),
   );
 
-for (const driverName of ["codex", "cursor", "antigravity"] as const) {
-  it.live(`replaces ${driverName} skills from nonempty to empty on ordinary V2 native offers`, () =>
+// SCIENT-FORK: share the real native initial-open/ordinary-offer harness across skill policies.
+for (const driverName of ["codex", "cursor", "antigravity", "future-provider"] as const) {
+  const testName =
+    driverName === "future-provider"
+      ? "withholds initial skill authority for an injectable unknown driver on ordinary V2 native offers"
+      : `replaces ${driverName} skills from nonempty to empty on ordinary V2 native offers`;
+  it.live(testName, () =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace(`empty-skills-${driverName}`);
@@ -106,14 +112,34 @@ for (const driverName of ["codex", "cursor", "antigravity"] as const) {
           yield* Layer.build(registryLayer),
           McpSessionRegistry.McpSessionRegistry,
         );
+        const issued = yield* Queue.unbounded<{
+          request: McpSessionRegistry.McpCredentialRequest;
+          config: McpProviderSession.McpProviderSessionConfig;
+        }>();
+        const observedRegistry = {
+          ...registry,
+          issue: (request: McpSessionRegistry.McpCredentialRequest) =>
+            registry
+              .issue(request)
+              .pipe(
+                Effect.tap((credential) =>
+                  Queue.offer(issued, { request, config: credential.config }),
+                ),
+              ),
+        };
         const offered = yield* Queue.unbounded<{
           text: string;
           token: string;
           scope: McpInvocationScope;
         }>();
-        const opened = yield* Queue.unbounded<McpInvocationScope>();
+        const opened = yield* Queue.unbounded<{
+          scope: McpInvocationScope;
+          config: McpProviderSession.McpProviderSessionConfig;
+        }>();
         const threadId = ThreadId.make(`empty-skills-${driverName}`);
-        const instanceId = ProviderInstanceId.make(driverName);
+        const instanceId = ProviderInstanceId.make(
+          driverName === "future-provider" ? "future-provider_skills" : driverName,
+        );
         const modelSelection = { instanceId, model: "empty-scope-fixture" };
         let opens = 0;
         const adapter = makeNativeSessionAdapterV2({
@@ -128,12 +154,14 @@ for (const driverName of ["codex", "cursor", "antigravity"] as const) {
             Effect.gen(function* () {
               opens += 1;
               assert.isTrue(input.configureMcp);
+              assert.equal(input.threadId, threadId);
+              assert.equal(input.modelSelection.instanceId, instanceId);
               const config = McpProviderSession.readMcpProviderSession(input.threadId);
               assert.isDefined(config);
               const token = config!.authorizationHeader.replace(/^Bearer\s+/, "");
               const initial = yield* registry.resolve(token);
               assert.isDefined(initial);
-              yield* Queue.offer(opened, initial!);
+              yield* Queue.offer(opened, { scope: initial!, config: config! });
               return {
                 nativeId: `empty-skills-native:${input.providerSessionId}`,
                 nativeThreadKnown: true,
@@ -157,15 +185,23 @@ for (const driverName of ["codex", "cursor", "antigravity"] as const) {
               };
             }),
         });
+        const serverSettingsLayer = ServerSettings.layerTest({
+          enableAgentBrowserAccess: false,
+          enableAgentDeviceAccess: false,
+        }).pipe(Layer.orDie);
         const runtime = makeOrchestratorV2ReplayLayerWithRegistry(
           { name: `empty-skills-${driverName}`, runtimePolicyOverride: { cwd } },
           makeLayer([adapter]),
           {
             configureMcp: true,
-            mcpSessionRegistryLayer: Layer.succeed(McpSessionRegistry.McpSessionRegistry, registry),
+            mcpSessionRegistryLayer: Layer.succeed(
+              McpSessionRegistry.McpSessionRegistry,
+              observedRegistry,
+            ),
+            serverSettingsLayer,
             runEffectWorker: false,
           },
-        ).pipe(Layer.provide(emptyPlanner));
+        ).pipe(Layer.provide(emptyPlanner), Layer.provide(serverSettingsLayer));
         yield* Effect.gen(function* () {
           const orchestrator = yield* OrchestratorV2;
           yield* runDaemonWithOptions({ concurrency: 1 }).pipe(Effect.forkScoped);
@@ -204,20 +240,77 @@ for (const driverName of ["codex", "cursor", "antigravity"] as const) {
               commandId: CommandId.make(`dispatch-${driverName}-${label}`),
               threadId,
               messageId: MessageId.make(`message-${driverName}-${label}`),
-              text: `User request ${label}`,
+              text:
+                driverName === "future-provider"
+                  ? "Inspect this project."
+                  : `User request ${label}`,
               attachments: [],
               dispatchMode: { type: "start_immediately" as const },
               createdBy: "user" as const,
               creationSource: "web" as const,
             });
           yield* dispatch("first");
-          const initial = yield* Queue.take(opened).pipe(Effect.timeout("10 seconds"));
+          const openedSession = yield* Queue.take(opened).pipe(Effect.timeout("10 seconds"));
+          const initial = openedSession.scope;
+          const issuance = yield* Queue.take(issued).pipe(Effect.timeout("10 seconds"));
+          // V2 deliberately retains orchestration/worktree alongside the original tool policy.
+          const genericCapabilities = [
+            "orchestration",
+            "worktree",
+            "pull-requests",
+            "documents:build",
+            "compute:inventory",
+            "sources:read",
+            "sources:write",
+            "threads:read",
+          ] as const;
+          const expectedCapabilities = new Set([
+            ...genericCapabilities,
+            ...(driverName === "future-provider" ? [] : (["skills:read"] as const)),
+          ]);
+          assert.deepEqual(issuance.request.capabilities, expectedCapabilities);
+          assert.deepEqual(issuance.config.capabilities, expectedCapabilities);
+          assert.deepEqual(openedSession.config.capabilities, expectedCapabilities);
+          assert.deepEqual(initial.capabilities, expectedCapabilities);
+          assert.isFalse(issuance.request.browserToolsAvailable);
+          assert.isUndefined(issuance.config.agentDeviceEnvironment);
+          assert.isUndefined(openedSession.config.agentDeviceEnvironment);
+          for (const binding of [
+            issuance.request,
+            issuance.config,
+            openedSession.config,
+            initial,
+          ]) {
+            assert.equal(binding.threadId, threadId);
+            assert.equal(binding.providerInstanceId, instanceId);
+          }
+          assert.equal(initial.providerSessionId, issuance.config.providerSessionId);
+          assert.equal(openedSession.config.providerSessionId, issuance.config.providerSessionId);
+          if (driverName === "future-provider") {
+            assert.isUndefined(issuance.request.skillScope);
+            assert.isUndefined(initial.skillScope);
+            const first = yield* Queue.take(offered).pipe(Effect.timeout("10 seconds"));
+            assert.equal(first.text, "Inspect this project.");
+            assert.notInclude(first.text, "Scient skill");
+            assert.deepEqual(first.scope, initial);
+            yield* waitFor(
+              (projection) =>
+                projection.providerTurns.length === 1 &&
+                projection.providerTurns[0]!.status === "completed" &&
+                projection.runs.length === 1 &&
+                projection.runs[0]!.status === "completed",
+            );
+            assert.equal(opens, 1);
+            assert.equal(yield* Queue.size(issued), 0);
+            return;
+          }
           assert.isTrue(initial.capabilities.has("skills:read"));
           assert.deepEqual(initial.skillScope, {
             catalog: { status: "pending" },
             releases: new Map(),
             skills: [],
           });
+          assert.deepEqual(issuance.request.skillScope, initial.skillScope);
           const first = yield* Queue.take(offered).pipe(Effect.timeout("10 seconds"));
           assert.include(first.text, "User request first");
           assert.include(first.text, "[Scient skill scope for this turn: complete; 1 skill;");

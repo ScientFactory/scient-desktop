@@ -248,7 +248,6 @@ import {
   type ProviderAdapterV2SessionRuntime,
 } from "./orchestration-v2/ProviderAdapter.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
-import * as ProviderService from "./provider/Services/ProviderService.ts";
 import {
   ProviderAuthService,
   type ProviderAuthController,
@@ -260,8 +259,6 @@ import {
 } from "./provider/AntigravityInstallation.ts";
 import { CodexInstallation } from "./provider/CodexInstallation.ts";
 import type { ProviderInstance } from "./provider/ProviderDriver.ts";
-import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
-import { ProviderAdapterRequestError } from "./provider/Errors.ts";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,
   ProviderVersionCache,
@@ -591,7 +588,6 @@ const buildAppUnderTest = (options?: {
     providerRegistry?: Partial<ProviderRegistry.ProviderRegistry["Service"]>;
     modelManifest?: Partial<ModelManifest.ModelManifest["Service"]>;
     usageLimitSources?: Partial<UsageLimitSources.UsageLimitSources["Service"]>;
-    providerService?: Partial<ProviderService.ProviderService["Service"]>;
     providerAuth?: Partial<ProviderAuthService["Service"]>;
     providerInstanceRegistry?: Partial<ProviderInstanceRegistry["Service"]>;
     antigravityInstallation?: Partial<AntigravityInstallation["Service"]>;
@@ -609,9 +605,6 @@ const buildAppUnderTest = (options?: {
     vcsStatusBroadcaster?: Partial<VcsStatusBroadcaster.VcsStatusBroadcaster["Service"]>;
     projectSetupScriptRunner?: Partial<
       ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]
-    >;
-    providerSessionDirectory?: Partial<
-      ProviderSessionDirectory.ProviderSessionDirectory["Service"]
     >;
     terminalManager?: Partial<TerminalManager.TerminalManager["Service"]>;
     threadDeletionReactor?: Partial<ThreadDeletionReactor["Service"]>;
@@ -1005,10 +998,6 @@ const buildAppUnderTest = (options?: {
               streamChanges: Stream.empty,
               ...options?.layers?.providerRegistry,
             }),
-            Layer.mock(ProviderService.ProviderService)({
-              uploadFeedback: () => Effect.die("Provider feedback is not stubbed in this test"),
-              ...options?.layers?.providerService,
-            }),
             Layer.mock(ProviderAuthService)({
               ...options?.layers?.providerAuth,
             }),
@@ -1024,13 +1013,6 @@ const buildAppUnderTest = (options?: {
             Layer.mock(AntigravityInstallation)({
               managedDirectory: "unused-test-antigravity-runtime",
               ...options?.layers?.antigravityInstallation,
-            }),
-            Layer.mock(ProviderSessionDirectory.ProviderSessionDirectory)({
-              upsert: () => Effect.void,
-              getBinding: () => Effect.succeedNone,
-              listThreadIds: () => Effect.succeed([]),
-              listBindings: () => Effect.succeed([]),
-              ...options?.layers?.providerSessionDirectory,
             }),
             Layer.mock(DeviceService.DeviceService)({
               state: Effect.succeed(EMPTY_DEVICE_STATE),
@@ -7160,26 +7142,100 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
   it.effect("keeps feedback errors structured across websocket rpc", () =>
     Effect.gen(function* () {
-      const threadId = ThreadId.make("thread-feedback-failure");
-      yield* buildAppUnderTest({
+      const input = {
+        threadId: ThreadId.make("thread-feedback-failure"),
+        reason: "The agent failed to upload feedback.",
+      };
+      const threadId = input.threadId;
+      const uploadFeedback = vi.fn<NonNullable<ProviderAdapterV2SessionRuntime["uploadFeedback"]>>(
+        () =>
+          Effect.fail(
+            new ProviderAdapterProtocolError({
+              driver: ProviderDriverKind.make("codex"),
+              detail: "private provider detail",
+            }),
+          ),
+      );
+      let instance: ProviderInstance | undefined;
+      const app = yield* buildAppUnderTest({
         layers: {
-          providerService: {
-            uploadFeedback: () =>
-              Effect.fail(
-                new ProviderAdapterRequestError({
-                  provider: "codex",
-                  method: "feedback/upload",
-                  detail: "private provider detail",
-                }),
+          providerInstanceRegistry: {
+            getInstance: (instanceId) =>
+              Effect.succeed(
+                instanceId === defaultModelSelection.instanceId ? instance : undefined,
               ),
+            listInstances: Effect.sync(() => (instance === undefined ? [] : [instance])),
           },
         },
+      });
+      const nativeAdapter = makeNativeSessionAdapterV2({
+        instanceId: defaultModelSelection.instanceId,
+        driver: ProviderDriverKind.make("codex"),
+        idAllocator: app.v2.idAllocator,
+        defaultCwd: app.cwd,
+        capabilities: CodexProviderCapabilitiesV2,
+        continuations: { offer: () => Effect.void },
+        open: () =>
+          Effect.succeed({
+            nativeId: "controlled-feedback-failure-thread",
+            nativeThreadKnown: true,
+            send: () => Effect.die("Feedback routing must not start a turn"),
+            interrupt: Effect.void,
+            respond: () => Effect.die("Feedback routing must not answer a request"),
+            resume: () => Effect.void,
+          }),
+      });
+      instance = {
+        instanceId: nativeAdmissionInstance.instanceId,
+        driverKind: nativeAdmissionInstance.driverKind,
+        enabled: true,
+        displayName: nativeAdmissionInstance.displayName,
+        continuationIdentity: nativeAdmissionInstance.continuationIdentity,
+        snapshot: nativeAdmissionInstance.snapshot,
+        orchestrationAdapter: {
+          ...nativeAdapter,
+          openSession: (input) =>
+            nativeAdapter
+              .openSession(input)
+              .pipe(Effect.map((runtime) => ({ ...runtime, uploadFeedback }))),
+        },
+        get textGeneration(): never {
+          throw new Error("Feedback must not generate text");
+        },
+      };
+      yield* seedV2StreamThread(app, input.threadId);
+      const runtimePolicy = {
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        cwd: app.cwd,
+      };
+      const runtime = yield* app.v2.providerSessions.open({
+        threadId: input.threadId,
+        providerSessionId: ProviderSessionId.make("feedback-failure-session"),
+        modelSelection: defaultModelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId: input.threadId,
+        modelSelection: defaultModelSelection,
+        runtimePolicy,
+      });
+      yield* app.v2.eventSink.write({
+        events: [
+          {
+            id: EventId.make("feedback-failure-provider-thread"),
+            type: "provider-thread.updated",
+            threadId: input.threadId,
+            occurredAt: yield* DateTime.now,
+            payload: providerThread,
+          },
+        ],
       });
 
       const wsUrl = yield* getWsServerUrl("/ws");
       const error = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.providerUploadFeedback]({ threadId }).pipe(Effect.flip),
+          client[WS_METHODS.providerUploadFeedback](input).pipe(Effect.flip),
         ),
       );
 
@@ -7189,6 +7245,22 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.strictEqual(error.message, `Failed to upload feedback for thread ${threadId}.`);
         assert.isDefined(error.cause);
       }
+      const projection = yield* app.v2.threads.getThreadRecords(input.threadId, [
+        "providerThreads",
+      ]);
+      const persistedProviderThread = projection.providerThreads.find(
+        (row) => row.id === providerThread.id,
+      );
+      if (persistedProviderThread === undefined)
+        return yield* Effect.die("Expected the feedback provider thread to be persisted");
+      assert.deepStrictEqual(uploadFeedback.mock.calls, [
+        [
+          {
+            providerThread: persistedProviderThread,
+            reason: input.reason,
+          },
+        ],
+      ]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
