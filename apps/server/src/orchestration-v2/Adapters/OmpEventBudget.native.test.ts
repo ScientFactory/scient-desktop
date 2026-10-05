@@ -19,6 +19,8 @@ import { ompTarget } from "../../provider/omp/OmpTarget.ts";
 import { layer as allocatorLayer } from "../IdAllocator.ts";
 import type { ProviderAdapterV2Event } from "../ProviderAdapter.ts";
 
+const encodeEventJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+
 const fixture = Effect.fnUntraced(function* (limit = 64 * 1024, itemLimit = 8192) {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-omp-event-budget-"));
   yield* Effect.addFinalizer(() =>
@@ -31,6 +33,19 @@ const fixture = Effect.fnUntraced(function* (limit = 64 * 1024, itemLimit = 8192
   }[] = [];
   let adapter: Effect.Success<ReturnType<typeof nativeOmpSession>>["adapter"] | undefined;
   let ordinal = 0;
+  const barriers = new Map<string, Deferred.Deferred<void>>();
+  const isBarrier = Schema.is(
+    Schema.Struct({
+      event: Schema.Struct({
+        kind: Schema.Literal("notification"),
+        threadId: Schema.String,
+        payload: Schema.Struct({
+          _tag: Schema.Literal("Event"),
+          event: Schema.Struct({ type: Schema.Literal("model_changed") }),
+        }),
+      }),
+    }),
+  );
   const open = Effect.fnUntraced(function* (
     nativeEventLogger?: Parameters<typeof nativeOmpSession>[0]["nativeEventLogger"],
   ) {
@@ -38,15 +53,30 @@ const fixture = Effect.fnUntraced(function* (limit = 64 * 1024, itemLimit = 8192
     const exited = yield* Deferred.make<void>();
     waiting.push({ peer, exited });
     const requests: unknown[] = [];
+    const threadId = ThreadId.make(`budget-thread-${++ordinal}`);
     const session = yield* nativeOmpSession({
       root,
       stateDir: NodePath.join(root, "state"),
       attachmentsDir: NodePath.join(root, "attachments"),
       target: ompTarget,
       instanceId,
-      threadId: ThreadId.make(`budget-thread-${++ordinal}`),
+      threadId,
       binaryPath: "synthetic-omp",
-      ...(nativeEventLogger ? { nativeEventLogger } : {}),
+      nativeEventLogger: {
+        filePath: "synthetic-native-budget-barrier",
+        write: (event, owner) =>
+          (nativeEventLogger?.write(event, owner) ?? Effect.void).pipe(
+            Effect.andThen(
+              Effect.suspend(() => {
+                const barrier = isBarrier(event) ? barriers.get(event.event.threadId) : undefined;
+                return barrier
+                  ? Deferred.succeed(barrier, undefined).pipe(Effect.asVoid)
+                  : Effect.void;
+              }),
+            ),
+          ),
+        close: () => Effect.void,
+      },
       environment: { HOME: root },
       modelSelection: { instanceId, model: "test/selected" },
       ...(adapter ? { adapter } : {}),
@@ -76,6 +106,13 @@ const fixture = Effect.fnUntraced(function* (limit = 64 * 1024, itemLimit = 8192
       ...session,
       peer,
       requests,
+      drain: Effect.gen(function* () {
+        const barrier = yield* Deferred.make<void>();
+        barriers.set(threadId, barrier);
+        yield* peer.emit([{ type: "model_changed" }]);
+        yield* Deferred.await(barrier).pipe(Effect.timeout("3 seconds"));
+        barriers.delete(threadId);
+      }),
       exited: Deferred.await(exited).pipe(Effect.timeout("3 seconds")),
     };
   });
@@ -83,7 +120,11 @@ const fixture = Effect.fnUntraced(function* (limit = 64 * 1024, itemLimit = 8192
     NodeFS.readdirSync(root, { recursive: true }).filter((file) =>
       String(file).endsWith(".session.lock"),
     );
-  return { open, locks };
+  const backlogs = () =>
+    NodeFS.readdirSync(root, { recursive: true })
+      .filter((entry) => String(entry).endsWith("events.bin"))
+      .map((entry) => NodePath.join(root, String(entry)));
+  return { open, locks, backlogs };
 });
 
 const observe = Effect.fnUntraced(function* (
@@ -273,27 +314,57 @@ describe("native OMP event ingress budgets", () => {
           f.open().pipe(Effect.tap(start)),
         );
         const largest = sessions[0]!;
-        yield* largest.peer.emit([delta("L".repeat(40_000))]);
-        yield* settle;
-        expect(largest.runtime.providerSession.status).toBe("running");
-        let shed = false;
-        for (const session of sessions.slice(1)) {
-          yield* session.peer.emit([delta("q".repeat(30_000))]);
-          yield* settle;
-          if (largest.runtime.providerSession.status === "error") {
-            shed = true;
-            break;
+        for (const [position, session] of sessions.entries()) {
+          for (let index = 0; index < (position === 0 ? 3 : 2); index++) {
+            yield* session.peer.emit([
+              {
+                type: "tool_execution_update",
+                toolCallId: `tool-${index}`,
+                toolName: "read",
+                partialResult: { output: "z".repeat(15_000) },
+              },
+            ]);
           }
-          expect(
-            sessions.every((owner) => owner.runtime.providerSession.status === "running"),
-          ).toBe(true);
+          if (session.runtime.providerSession.status === "running") yield* session.drain;
         }
-        expect(shed).toBe(true);
+        // The native tool preview is capped at 1024 characters, unlike V1. Keep the
+        // complete original 3/2 tool matrix, then drive meaningful answer data
+        // through every owner's real canonical queue at the existing 128KiB cap.
+        for (const [position, session] of sessions.entries()) {
+          yield* session.peer.emit([
+            delta((position === 0 ? "L" : "q").repeat(position === 0 ? 40_000 : 20_000)),
+          ]);
+          if (session.runtime.providerSession.status === "running") yield* session.drain;
+        }
+        yield* largest.exited;
+        expect(largest.peer.state.shutdowns).toBe(1);
+        for (const session of sessions.slice(1)) {
+          expect(session.runtime.providerSession.status).toBe("running");
+          expect(session.peer.state.shutdowns).toBe(0);
+          yield* session.peer.emit([
+            {
+              type: "tool_execution_update",
+              toolCallId: "tool-0",
+              toolName: "read",
+              partialResult: { output: "Healthy update" },
+            },
+          ]);
+          if (session.runtime.providerSession.status === "running") yield* session.drain;
+        }
         expect(
           sessions
             .slice(1)
             .every((session) => session.runtime.providerSession.status === "running"),
         ).toBe(true);
+        const spilled = f.backlogs().filter((file) => NodeFS.statSync(file).size > 0);
+        expect(spilled).toHaveLength(1);
+        expect(NodeFS.statSync(spilled[0]!).mode & 0o777).toBe(0o600);
+        expect(NodeFS.statSync(NodePath.dirname(spilled[0]!)).mode & 0o777).toBe(0o700);
+        expect(NodeFS.readFileSync(spilled[0]!, "utf8")).toContain("L".repeat(40_000));
+        // All survivor traffic above happened before releasing or reading A.
+        // Explicit scope release must retain queued receipts after the file closes.
+        yield* largest.close;
+        expect(NodeFS.existsSync(spilled[0]!)).toBe(false);
         const observers = yield* Effect.forEach(sessions, observe);
         expect(yield* observers[0]!.take((event) => event.type === "turn.terminal")).toMatchObject({
           status: "failed",
@@ -307,18 +378,162 @@ describe("native OMP event ingress budgets", () => {
         );
         expect(
           observers[0]!.events.findLast((event) => event.type === "message.updated"),
-        ).toMatchObject({
-          message: { text: "L".repeat(40_000), streaming: false },
-        });
+        ).toMatchObject({ message: { text: "L".repeat(40_000), streaming: false } });
+        const retained = observers[0]!.events.filter(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool",
+        );
+        expect(
+          new Set(
+            retained.map((event) =>
+              event.type === "turn_item.updated" ? event.turnItem.id : null,
+            ),
+          ).size,
+        ).toBe(3);
+        expect(
+          retained.every(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "dynamic_tool" &&
+              event.turnItem.output === `${"z".repeat(1024)}…`,
+          ),
+        ).toBe(true);
         expect(largest.peer.state.shutdowns).toBe(1);
         expect(f.locks()).toHaveLength(7);
         for (let index = 1; index < sessions.length; index++) {
+          yield* sessions[index]!.peer.emit([delta("Healthy answer")]);
           yield* finish(sessions[index]!);
           expect(
             yield* observers[index]!.take((event) => event.type === "turn.terminal"),
           ).toMatchObject({ status: "completed" });
           expect(sessions[index]!.peer.state.shutdowns).toBe(0);
+          expect(
+            observers[index]!.events.findLast((event) => event.type === "message.updated"),
+          ).toMatchObject({
+            message: { text: "q".repeat(20_000) + "Healthy answer", streaming: false },
+          });
+          yield* sessions[index]!.close;
         }
+        expect(f.locks()).toHaveLength(0);
+      }),
+    ),
+  );
+
+  it.live(
+    "global item pressure reclaims the item-heavy owner instead of byte-heavy survivors",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const f = yield* fixture(1024 * 1024, 70);
+          const sessions = yield* Effect.forEach(Array.from({ length: 8 }), () =>
+            f.open().pipe(Effect.tap(start)),
+          );
+          const tool = (owner: number, index: number, output: string) => ({
+            type: "tool_execution_update",
+            toolCallId: owner === 0 ? `tiny-${index}` : `${"byte-heavy-".repeat(64)}${index}`,
+            toolName: "read",
+            partialResult: { output },
+          });
+          for (const [owner, session] of sessions.entries()) {
+            for (let index = 0; index < (owner === 0 ? 21 : 11); index++)
+              yield* session.peer.emit([
+                tool(owner, index, owner === 0 ? "tiny" : "q".repeat(4096)),
+              ]);
+            yield* session.drain;
+          }
+          for (const [index, session] of sessions.slice(1).entries()) {
+            yield* session.peer.emit([tool(index + 1, 0, "updated"), delta("Healthy items")]);
+            yield* session.drain;
+          }
+          const largest = sessions[0]!;
+          yield* largest.exited;
+          for (const [index, session] of sessions.slice(1).entries()) {
+            expect(session.peer.state.shutdowns).toBe(0);
+            expect(session.runtime.providerSession.status).toBe("running");
+            yield* session.peer.emit([tool(index + 1, 1, "still healthy")]);
+            yield* session.drain;
+          }
+          expect(
+            sessions
+              .slice(1)
+              .every((session) => session.runtime.providerSession.status === "running"),
+          ).toBe(true);
+          expect(f.backlogs().filter((file) => NodeFS.statSync(file).size > 0)).toHaveLength(1);
+          const observers = yield* Effect.forEach(sessions, observe);
+          expect(
+            yield* observers[0]!.take((event) => event.type === "turn.terminal"),
+          ).toMatchObject({ status: "failed", threadDisposition: "broken" });
+          const runningBytes = (events: readonly ProviderAdapterV2Event[]) =>
+            events
+              .filter(
+                (event) =>
+                  event.type === "turn_item.updated" &&
+                  event.turnItem.type === "dynamic_tool" &&
+                  event.turnItem.status === "running",
+              )
+              .reduce((sum, event) => sum + Buffer.byteLength(encodeEventJson(event)), 0);
+          for (let index = 1; index < sessions.length; index++) {
+            yield* finish(sessions[index]!);
+            expect(
+              yield* observers[index]!.take((event) => event.type === "turn.terminal"),
+            ).toMatchObject({ status: "completed" });
+            expect(runningBytes(observers[index]!.events)).toBeGreaterThan(
+              runningBytes(observers[0]!.events),
+            );
+            expect(sessions[index]!.peer.state.shutdowns).toBe(0);
+            yield* sessions[index]!.close;
+          }
+          expect(
+            observers[0]!.events.filter((event) => event.type === "turn.terminal"),
+          ).toHaveLength(1);
+          yield* largest.close;
+          yield* observers[0]!.ended;
+          expect(largest.peer.state.shutdowns).toBe(1);
+          expect(f.locks()).toHaveLength(0);
+          expect(f.backlogs()).toEqual([]);
+        }),
+      ),
+  );
+
+  it.live("contains repeated native item overflows without cancelling a reading quiet owner", () =>
+    run(
+      Effect.gen(function* () {
+        const f = yield* fixture(1024 * 1024, 24);
+        const quiet = yield* f.open();
+        const q = yield* observe(quiet);
+        yield* start(quiet);
+        for (let generation = 0; generation < 2; generation++) {
+          const noisy = yield* f.open();
+          yield* start(noisy);
+          // These tiny frames cannot exhaust the 1MiB byte allowance.
+          yield* noisy.peer.emit(
+            Array.from({ length: 24 }, (_, index) => ({
+              type: "tool_execution_update",
+              toolCallId: `tiny-${index}`,
+              toolName: "read",
+              partialResult: { output: "tiny" },
+            })),
+          );
+          yield* noisy.exited;
+          expect(noisy.peer.state.shutdowns).toBe(1);
+          expect(quiet.runtime.providerSession.status).toBe("running");
+          yield* noisy.close;
+          const seen = yield* observe(noisy);
+          expect(yield* seen.take((event) => event.type === "turn.terminal")).toMatchObject({
+            status: "failed",
+            threadDisposition: "broken",
+          });
+          yield* seen.ended;
+          expect(seen.events.filter((event) => event.type === "turn.terminal")).toHaveLength(1);
+          expect(f.locks()).toHaveLength(1);
+        }
+        yield* quiet.peer.emit([delta("Quiet item recovery")]);
+        yield* finish(quiet);
+        expect(yield* q.take((event) => event.type === "turn.terminal")).toMatchObject({
+          status: "completed",
+        });
+        yield* quiet.close;
+        expect(f.locks()).toHaveLength(0);
+        expect(f.backlogs()).toEqual([]);
       }),
     ),
   );

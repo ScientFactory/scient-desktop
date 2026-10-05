@@ -147,6 +147,11 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
       maxItems: Math.max(1, options.eventQueueItemLimit ?? 8192),
       globalFactor: 4,
     },
+    eventQueueStorage: {
+      fileSystem: options.fileSystem,
+      path: options.path,
+      directory: options.serverConfig.stateDir,
+    },
     mcpSessionInjection: true,
     defaultCwd: options.serverConfig.cwd,
     driver: target.driverKind,

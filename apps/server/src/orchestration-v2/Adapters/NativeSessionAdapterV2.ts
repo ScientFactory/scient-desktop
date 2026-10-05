@@ -15,7 +15,6 @@ import {
 import { mergeSubagentPresentation } from "./SubagentPresentation.ts";
 import { MODEL_TOKEN_LIMIT_MESSAGE } from "@t3tools/shared/model";
 import * as Schema from "effect/Schema";
-import * as Cause from "effect/Cause";
 import * as Semaphore from "effect/Semaphore";
 import {
   makeSubagentChildThread,
@@ -27,9 +26,10 @@ import * as Deferred from "effect/Deferred";
 import {
   makeNativeEventQueueBudget,
   type NativeEventQueueLimits,
+  type NativeEventQueueCharge,
 } from "./NativeEventQueueBudget.ts";
 import * as Exit from "effect/Exit";
-import * as Queue from "effect/Queue";
+import { makeNativeEventQueue, type NativeEventQueueStorage } from "./NativeEventQueue.ts";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ProviderAdapter from "../ProviderAdapter.ts";
@@ -161,6 +161,7 @@ export interface NativeSessionAdapterV2Options {
   };
   readonly settleIdleSubagents?: boolean;
   readonly eventQueueLimits?: NativeEventQueueLimits;
+  readonly eventQueueStorage?: NativeEventQueueStorage;
   readonly open: (
     input: ProviderAdapter.ProviderAdapterV2OpenSessionInput,
     onUpdate: (update: NativeSessionUpdate) => Effect.Effect<void>,
@@ -193,14 +194,7 @@ export function makeNativeSessionAdapterV2(
           return yield* protocolError("The model selection belongs to another provider instance.");
         const ownerScope = yield* Effect.scope;
         const nativeReady = yield* Deferred.make<NativeSession>();
-        const events = yield* Queue.unbounded<
-          {
-            readonly frames: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>;
-            readonly bytes: number;
-            readonly items: number;
-          },
-          Cause.Done
-        >();
+        const events = yield* makeNativeEventQueue(options.eventQueueStorage);
         const eventPermit = yield* Semaphore.make(1);
         const createdAt = yield* DateTime.now;
         let providerSession: OrchestrationV2ProviderSession = {
@@ -226,7 +220,10 @@ export function makeNativeSessionAdapterV2(
           | undefined;
         let backgroundPending = false;
         let wakeOffered = false;
-        const wake: { readonly update: NativeSessionUpdate; readonly bytes: number }[] = [];
+        const wake: {
+          readonly update: NativeSessionUpdate;
+          readonly charge: NativeEventQueueCharge;
+        }[] = [];
         const items = new Map<string, OrchestrationV2TurnItem>();
         const subagentOwners = new Map<string, ProviderAdapter.ProviderAdapterV2TurnInput>();
         const subagents = new Map<string, OrchestrationV2Subagent>();
@@ -264,28 +261,22 @@ export function makeNativeSessionAdapterV2(
             yield* native.interrupt.pipe(Effect.ignore);
             // The owner retains its terminal receipts until release; peer exit
             // is not an unexpected end of the adapter's event stream.
-          }),
+          }).pipe(Effect.forkIn(ownerScope), Effect.asVoid),
+          Effect.sync(() => {
+            for (const buffered of wake) buffered.charge.release();
+            wake.length = 0;
+            wakeOffered = false;
+          }).pipe(Effect.andThen(events.spill)),
         );
         yield* Effect.addFinalizer(() => Effect.sync(() => budget.release()));
-        const contain = (effect: Effect.Effect<void> | undefined) =>
-          effect ? effect.pipe(Effect.forkIn(ownerScope), Effect.asVoid) : Effect.void;
         const emitBatch = (
           frames: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
           control: boolean,
         ) =>
-          Effect.suspend(() => {
-            if (frames.length === 0) return Effect.void;
-            const admission = budget.admit(frames, control, frames.length);
-            return contain(admission.containment).pipe(
-              Effect.andThen(
-                admission.admitted
-                  ? Queue.offer(events, {
-                      frames,
-                      bytes: admission.bytes,
-                      items: admission.items,
-                    }).pipe(Effect.asVoid)
-                  : Effect.void,
-              ),
+          Effect.gen(function* () {
+            if (frames.length === 0) return;
+            yield* budget.admit(frames, control, frames.length, (charge) =>
+              events.offer(frames, charge),
             );
           });
         const emit = (event: ProviderAdapter.ProviderAdapterV2Event) => emitBatch([event], true);
@@ -373,7 +364,7 @@ export function makeNativeSessionAdapterV2(
           Effect.gen(function* () {
             backgroundPending = false;
             if (clearWake) {
-              for (const buffered of wake) budget.delivered(buffered.bytes);
+              for (const buffered of wake) buffered.charge.release();
               wake.length = 0;
               wakeOffered = false;
             }
@@ -571,10 +562,7 @@ export function makeNativeSessionAdapterV2(
                 (update.type === "continuation-started" && active !== undefined) ||
                 (update.type === "background" && (!update.pending || active !== undefined)) ||
                 (update.type === "terminal" && (active !== undefined || update.broken === true));
-              const inspected = control
-                ? { admitted: true, containment: undefined }
-                : budget.inspect(update);
-              yield* contain(inspected.containment);
+              const inspected = control ? { admitted: true } : yield* budget.inspect(update);
               if (!inspected.admitted) return;
               const frames: ProviderAdapter.ProviderAdapterV2Event[] = [];
               const emit = (event: ProviderAdapter.ProviderAdapterV2Event) =>
@@ -703,10 +691,12 @@ export function makeNativeSessionAdapterV2(
                   }
                   if (!thread) return;
                   if (update.type === "terminal" && wake.length === 0) return;
-                  const admission = budget.admit(update, false);
-                  yield* contain(admission.containment);
-                  if (!admission.admitted) return;
-                  wake.push({ update, bytes: admission.bytes });
+                  const admission = yield* budget.admit(update, false, 1, (charge) =>
+                    Effect.sync(() => {
+                      wake.push({ update, charge });
+                    }),
+                  );
+                  if (!admission.admitted || budget.closed) return;
                   if (!wakeOffered && update.type !== "terminal") {
                     wakeOffered = true;
                     yield* options.continuations.offer({
@@ -1063,7 +1053,7 @@ export function makeNativeSessionAdapterV2(
                   for (const pending of requests.values())
                     yield* settleRequest(pending, "cancelled", yield* DateTime.now);
                   yield* updateSession("stopped");
-                  yield* Queue.end(events);
+                  yield* events.end;
                 }),
               ),
             ),
@@ -1135,12 +1125,15 @@ export function makeNativeSessionAdapterV2(
           ...(native.getModelContextWindow === undefined
             ? {}
             : { getModelContextWindow: native.getModelContextWindow }),
-          events: Stream.fromQueue(events).pipe(
-            Stream.map((batch) => {
-              budget.delivered(batch.bytes, batch.items);
-              return batch.frames;
-            }),
-            Stream.flatMap((frames) => Stream.fromIterable(frames)),
+          events: events.events.pipe(
+            Stream.mapError(
+              (cause) =>
+                new ProviderAdapter.ProviderAdapterEventStreamError({
+                  driver,
+                  providerSessionId: input.providerSessionId,
+                  cause,
+                }),
+            ),
           ),
           hasPendingBackgroundWork: Effect.sync(
             () =>
@@ -1271,7 +1264,7 @@ export function makeNativeSessionAdapterV2(
                 wakeOffered = false;
                 const buffered = wake.splice(0);
                 for (const event of buffered) {
-                  budget.delivered(event.bytes);
+                  event.charge.release();
                   yield* onUpdate(event.update);
                 }
                 if (active && !backgroundPending)
