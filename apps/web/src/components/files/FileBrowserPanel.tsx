@@ -11,27 +11,12 @@ import type {
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import {
-  ChevronsDownUpIcon,
-  ChevronsUpDownIcon,
-  FolderXIcon,
-  MoreHorizontal,
-  SearchIcon,
-} from "lucide-react";
+import { ChevronsDownUpIcon, ChevronsUpDownIcon, SearchIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "~/lib/utils";
 
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
-import {
-  Menu,
-  MenuGroup,
-  MenuGroupLabel,
-  MenuPopup,
-  MenuRadioGroup,
-  MenuRadioItem,
-  MenuTrigger,
-} from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -48,13 +33,20 @@ import {
   LazyWorkspaceTreeController,
   type LazyWorkspaceTreeSnapshot,
 } from "~/scient/files/LazyWorkspaceTreeController";
+// SCIENT-FORK:START
+import {
+  FILE_SEARCH_LIMIT,
+  ScientFileTreeSurface,
+  useScientDirectoryView,
+  WorkspaceFilesMenu,
+} from "~/scient/files/ScientFileBrowserChrome";
+// SCIENT-FORK:END
 import { projectEnvironment } from "~/state/projects";
 import { useProjectPathSearch } from "~/state/queries";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
-import { FileSurfaceFailure } from "./fileSurfaceChrome";
 import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
 import {
   refreshProjectEntriesQuery,
@@ -89,13 +81,6 @@ const INITIAL_TREE_SNAPSHOT: LazyWorkspaceTreeSnapshot = {
   rootError: null,
 };
 
-const FILE_SEARCH_LIMIT = 200;
-const DIRECTORY_VIEW_BY_WORKSPACE = new Map<string, ProjectDirectoryView>();
-const FILE_VISIBILITY_OPTIONS = [
-  { value: "ordinary", label: "Project files" },
-  { value: "with-internals", label: "All workspace internals" },
-] as const satisfies ReadonlyArray<{ value: ProjectDirectoryView; label: string }>;
-
 function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }) {
   return (
     <Tooltip>
@@ -114,45 +99,6 @@ function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }
       </TooltipTrigger>
       <TooltipPopup>{props.isPending ? "Refreshing…" : "Refresh files"}</TooltipPopup>
     </Tooltip>
-  );
-}
-
-function WorkspaceFilesMenu(props: {
-  view: ProjectDirectoryView;
-  onViewChange: (view: ProjectDirectoryView) => void;
-}) {
-  return (
-    <Menu>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <MenuTrigger
-              render={
-                <Button type="button" variant="ghost" size="icon-xs" aria-label="Files menu" />
-              }
-            />
-          }
-        >
-          <MoreHorizontal />
-        </TooltipTrigger>
-        <TooltipPopup>Files menu</TooltipPopup>
-      </Tooltip>
-      <MenuPopup align="end" sideOffset={6} className="min-w-56">
-        <MenuGroup>
-          <MenuGroupLabel>File visibility</MenuGroupLabel>
-          <MenuRadioGroup
-            value={props.view}
-            onValueChange={(value) => props.onViewChange(value as ProjectDirectoryView)}
-          >
-            {FILE_VISIBILITY_OPTIONS.map((option) => (
-              <MenuRadioItem key={option.value} value={option.value}>
-                {option.label}
-              </MenuRadioItem>
-            ))}
-          </MenuRadioGroup>
-        </MenuGroup>
-      </MenuPopup>
-    </Menu>
   );
 }
 
@@ -248,10 +194,9 @@ export default function FileBrowserPanel({
   });
   const [treeSnapshot, setTreeSnapshot] =
     useState<LazyWorkspaceTreeSnapshot>(INITIAL_TREE_SNAPSHOT);
-  const workspaceSessionKey = JSON.stringify([environmentId, cwd]);
-  const [directoryView, setDirectoryView] = useState<ProjectDirectoryView>(
-    () => DIRECTORY_VIEW_BY_WORKSPACE.get(workspaceSessionKey) ?? "ordinary",
-  );
+  // SCIENT-FORK:START — file visibility view, remembered per workspace
+  const { directoryView, changeDirectoryView } = useScientDirectoryView(environmentId, cwd);
+  // SCIENT-FORK:END
   const directoryViewRef = useRef(directoryView);
   directoryViewRef.current = directoryView;
   const [searchValue, setSearchValue] = useState("");
@@ -647,11 +592,6 @@ export default function FileBrowserPanel({
     (!hasCurrentSearch || pathSearch.isPending || searchResultKey !== primedSearchKey);
   const currentSearchError = hasCurrentSearch ? pathSearch.error : null;
   const hideTreeForSearch = isSearching && treeSearch.matchingPaths.length === 0;
-  const searchEmptyMessage = isSearchPending
-    ? "Searching…"
-    : currentSearchError
-      ? "Couldn’t search unopened folders."
-      : `No files or folders match “${normalizedSearchValue}”.`;
 
   return (
     <div
@@ -713,87 +653,34 @@ export default function FileBrowserPanel({
               </TooltipPopup>
             </Tooltip>
           ) : null}
-          <WorkspaceFilesMenu
-            view={directoryView}
-            onViewChange={(nextView) => {
-              if (nextView === "ordinary") {
-                DIRECTORY_VIEW_BY_WORKSPACE.delete(workspaceSessionKey);
-              } else {
-                DIRECTORY_VIEW_BY_WORKSPACE.set(workspaceSessionKey, nextView);
-              }
-              setDirectoryView(nextView);
-            }}
-          />
+          <WorkspaceFilesMenu view={directoryView} onViewChange={changeDirectoryView} />
         </div>
       </div>
-      <div className="sr-only" aria-live="polite">
-        {isSearching
-          ? isSearchPending
-            ? "Searching workspace files."
-            : currentSearchError
-              ? "Some workspace files could not be searched."
-              : `${treeSearch.matchingPaths.length} matching workspace paths.`
-          : treeSnapshot.isPending
-            ? "Loading workspace files."
-            : treeSnapshot.failures.length > 0
-              ? "Some workspace files could not be loaded."
-              : "Workspace files loaded."}
-      </div>
-      {treeSnapshot.rootError && treeSnapshot.entries.size === 0 ? (
-        <FileSurfaceFailure
-          icon={FolderXIcon}
-          title="Couldn't load project files"
-          description="Scient couldn't list the files in this project."
-          details={treeSnapshot.rootError}
-          retrying={treeSnapshot.isPending}
-          onRetry={() => void treeControllerRef.current?.retry("")}
+      {/* SCIENT-FORK:START — lazy tree load and search status around the tree */}
+      <ScientFileTreeSurface
+        treeSnapshot={treeSnapshot}
+        onRetryDirectory={(relativeDirectory) =>
+          void treeControllerRef.current?.retry(relativeDirectory)
+        }
+        isSearching={isSearching}
+        isSearchPending={isSearchPending}
+        currentSearchError={currentSearchError}
+        hasCurrentSearch={hasCurrentSearch}
+        searchTruncated={pathSearch.truncated}
+        matchingPathCount={treeSearch.matchingPaths.length}
+        hideTreeForSearch={hideTreeForSearch}
+        normalizedSearchValue={normalizedSearchValue}
+      >
+        {/* SCIENT-FORK:END */}
+        <FileTree
+          model={model}
+          aria-label={`${projectName} files`}
+          className={cn("min-h-0 flex-1 overflow-hidden", hideTreeForSearch && "invisible")}
+          style={pierreTreeStyle(resolvedTheme)}
         />
-      ) : (
-        <div
-          className="flex min-h-0 flex-1 flex-col"
-          aria-busy={treeSnapshot.isPending || isSearchPending}
-        >
-          {treeSnapshot.failures[0] ? (
-            <button
-              type="button"
-              className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-left scient-reading-micro leading-4 text-warning-foreground transition-colors hover:bg-warning/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-              onClick={() =>
-                void treeControllerRef.current?.retry(
-                  treeSnapshot.failures[0]?.relativeDirectory ?? "",
-                )
-              }
-            >
-              Couldn’t load {treeSnapshot.failures[0].relativeDirectory || "the workspace"}. Retry
-            </button>
-          ) : treeSnapshot.entries.size === 0 && treeSnapshot.isPending ? (
-            <div className="px-3 py-2 text-xs text-muted-foreground">Loading files…</div>
-          ) : null}
-          <div className="relative flex min-h-0 flex-1">
-            <FileTree
-              model={model}
-              aria-label={`${projectName} files`}
-              className={cn("min-h-0 flex-1 overflow-hidden", hideTreeForSearch && "invisible")}
-              style={pierreTreeStyle(resolvedTheme)}
-            />
-            {hideTreeForSearch ? (
-              <div className="absolute inset-x-0 top-0 px-3 py-2 text-xs text-muted-foreground">
-                {searchEmptyMessage}
-              </div>
-            ) : null}
-          </div>
-          {isSearching ? (
-            <div className="shrink-0 border-t border-border/50 px-3 py-1.5 scient-reading-micro leading-4 text-muted-foreground">
-              {isSearchPending
-                ? "Searching unopened folders…"
-                : currentSearchError
-                  ? "Couldn’t search unopened folders. Loaded folders are still filtered."
-                  : hasCurrentSearch && pathSearch.truncated
-                    ? `First ${FILE_SEARCH_LIMIT} indexed matches loaded; ignored paths may not appear.`
-                    : "Unopened folders use indexed search; ignored paths may not appear."}
-            </div>
-          ) : null}
-        </div>
-      )}
+        {/* SCIENT-FORK:START */}
+      </ScientFileTreeSurface>
+      {/* SCIENT-FORK:END */}
     </div>
   );
 }
