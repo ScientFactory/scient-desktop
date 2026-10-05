@@ -11,6 +11,7 @@ import {
   pendingStartOwnerIsCurrent,
   type PendingStartOwner,
 } from "./scient-fork/PendingStartOwner.ts";
+import { retainCommittedQuestionAnswers } from "./scient-fork/committedQuestionAnswers.ts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import {
   CommandId,
@@ -19,7 +20,6 @@ import {
   OrchestrationV2RunJson,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
-  OrchestrationV2TurnItemJson,
   ProviderThreadId,
   RunAttemptId,
   RunId,
@@ -318,54 +318,11 @@ const baseLayer: Layer.Layer<
               return true;
           }
         });
-        // Native callback settlement reports the original question, without the
-        // answer just committed by the application. Only lifecycle ingestion
-        // opts into this guard; explicit canonical edits do not.
-        return yield* Effect.forEach(
-          cancellationGuarded,
-          (event) =>
-            Effect.gen(function* () {
-              if (
-                event.type !== "turn-item.updated" ||
-                event.payload.type !== "user_input_request" ||
-                event.payload.status !== "completed" ||
-                event.payload.questionAnswer !== undefined ||
-                event.payload.nativeItemRef === null
-              )
-                return event;
-              const incoming = event.payload;
-              const incomingRef = incoming.nativeItemRef;
-              if (incomingRef === null) return event;
-              const [row] = yield* sql<{ payload_json: string }>`
-            SELECT payload_json FROM orchestration_v2_projection_turn_items
-            WHERE thread_id = ${event.threadId} AND turn_item_id = ${incoming.id}`;
-              if (row === undefined) return event;
-              const current = yield* decodePositionedItem(row.payload_json);
-              if (
-                current.type !== "user_input_request" ||
-                current.status !== "completed" ||
-                current.questionAnswer === undefined ||
-                current.responseMode === "message" ||
-                current.requestId !== incoming.requestId ||
-                current.threadId !== incoming.threadId ||
-                current.runId !== incoming.runId ||
-                current.nodeId !== incoming.nodeId ||
-                current.providerThreadId !== incoming.providerThreadId ||
-                current.providerTurnId !== incoming.providerTurnId ||
-                current.nativeItemRef?.driver !== incomingRef.driver ||
-                current.nativeItemRef?.nativeId !== incomingRef.nativeId ||
-                current.nativeItemRef?.strength !== incomingRef.strength
-              )
-                return event;
-              return { ...event, payload: { ...incoming, questionAnswer: current.questionAnswer } };
-            }),
-          { concurrency: 1 },
-        );
+        // SCIENT-FORK:START — keep an answer the app already committed.
+        return yield* retainCommittedQuestionAnswers(sql, cancellationGuarded);
+        // SCIENT-FORK:END
       });
 
-    const decodePositionedItem = Schema.decodeUnknownEffect(
-      Schema.fromJsonString(OrchestrationV2TurnItemJson),
-    );
     const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
       const runOrdinals = new Map(
         events.flatMap((event) =>
