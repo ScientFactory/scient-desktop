@@ -7,10 +7,9 @@
  * (`mintConversationImportIds`), recorded in the attempt journal, and reused
  * on retry, so a resumed attempt dispatches exactly the same history.
  *
- * Order: records keep their source timestamps, and history is read back by
- * timestamp, then id. So the ids of messages, reasoning, activities, plans,
- * and turns sort in source order: one random prefix per attempt, then a
- * zero-padded number in history order (`orderedIds`).
+ * SCIC attempts preserve the numbered conversation sequence, retaining source
+ * timestamps. Side facts stay within their historical turn. The attempt journal
+ * records this ordering version; older journals retain timestamp/id ordering.
  *
  * Turns: every message, reasoning item, plan, answer, and work-log entry of a
  * source turn lands in one new local turn. User messages are stored with no
@@ -23,6 +22,7 @@
 import {
   ApprovalRequestId,
   CONVERSATION_IMPORT_MAX_NOTICES,
+  SCIC_FORMAT,
   CommandId,
   DocumentWarningCode,
   EventId,
@@ -92,6 +92,15 @@ export const PortableConversationImportPlan = Schema.Struct({
   ),
   proposedPlans: Schema.Array(OrchestrationProposedPlan),
   activities: Schema.Array(OrchestrationThreadActivity),
+  /** Complete local record order, absent on pre-sequence attempt journals. */
+  historyOrder: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        type: Schema.Literals(["message", "activity", "plan"]),
+        id: Schema.String,
+      }),
+    ),
+  ),
   inheritedTurnIds: Schema.Array(TurnId),
   turns: Schema.Array(PortableConversationImportTurn),
   origin: OrchestrationConversationImport,
@@ -103,6 +112,8 @@ export type PortableConversationImportPlan = typeof PortableConversationImportPl
 export const ConversationImportIds = Schema.Struct({
   threadId: ThreadId,
   commandId: CommandId,
+  /** Persisted before publication, so retry never changes an old attempt's order. */
+  historyOrderVersion: Schema.optional(Schema.Literal(1)),
   /** Transcript messages and reasoning, by external message id. */
   messages: Schema.Record(Schema.String, MessageId),
   /** By turn key (see `turnKey`). */
@@ -134,7 +145,7 @@ interface TurnAssignment {
   readonly keys: ReadonlyArray<string>;
 }
 
-function assignTurns(input: ValidatedConversationImport): TurnAssignment {
+function assignTurns(input: ValidatedConversationImport, logical = false): TurnAssignment {
   const { snapshot } = input;
   const keys: string[] = [];
   const seen = new Set<string>();
@@ -157,6 +168,9 @@ function assignTurns(input: ValidatedConversationImport): TurnAssignment {
       upcoming = { turnId: message.turnId, createdAt: message.createdAt };
     nextNamed[index] = upcoming;
   }
+  const namedMessageTurns = new Set(
+    snapshot.messages.flatMap((message) => (message.turnId === null ? [] : [message.turnId])),
+  );
   // Other records that name a turn, by time: a turn with no reply still has
   // its reasoning, work log, plans, or answers.
   const marks = [
@@ -168,6 +182,9 @@ function assignTurns(input: ValidatedConversationImport): TurnAssignment {
     .flatMap((record) =>
       record.turnId === null ? [] : [{ turnId: record.turnId, createdAt: record.createdAt }],
     )
+    // Sequence-aware imports use message anchors for answered turns. Only a
+    // side-only, unanswered turn needs its original timestamp association.
+    .filter((mark) => !logical || !namedMessageTurns.has(mark.turnId))
     .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
   const firstMarkFrom = (createdAt: string) => {
     let low = 0;
@@ -240,9 +257,64 @@ function inHistoryOrder<T extends { readonly createdAt: string }>(
   return records.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
+/**
+ * Source message order is authoritative. Side facts lack sequence numbers, so
+ * their timestamps choose a slot within their own historical message span.
+ * Turnless facts use the first later message, without moving any message.
+ */
+function logicalHistoryOrder(
+  anchors: ReadonlyArray<{
+    readonly id: string;
+    readonly turnId: string | null;
+    readonly createdAt: string;
+    readonly role: string;
+  }>,
+  sideFacts: ReadonlyArray<{
+    readonly id: string;
+    readonly turnId: string | null;
+    readonly createdAt: string;
+  }>,
+): ReadonlyArray<string> {
+  const spans = new Map<string, { start: number; end: number }>();
+  for (const [index, anchor] of anchors.entries()) {
+    if (anchor.turnId === null) continue;
+    const span = spans.get(anchor.turnId);
+    spans.set(anchor.turnId, { start: span?.start ?? index, end: index });
+  }
+  const slots = new Map<number, string[]>();
+  for (const fact of sideFacts.toSorted(
+    (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+  )) {
+    const span = fact.turnId === null ? undefined : spans.get(fact.turnId);
+    const start = span?.start ?? 0;
+    const end = span?.end ?? anchors.length - 1;
+    let slot = end + 1;
+    for (let index = start; index <= end; index += 1) {
+      if (anchors[index]!.createdAt > fact.createdAt) {
+        slot = index;
+        break;
+      }
+    }
+    // Historical work belongs after its initiating request, even if a source
+    // clock recorded it earlier. Original timestamps remain untouched.
+    if (span !== undefined && anchors[start]?.role === "user") slot = Math.max(start + 1, slot);
+    const atSlot = slots.get(slot) ?? [];
+    atSlot.push(fact.id);
+    slots.set(slot, atSlot);
+  }
+  const result: string[] = [];
+  for (let index = 0; index <= anchors.length; index += 1) {
+    result.push(...(slots.get(index) ?? []));
+    const anchor = anchors[index];
+    if (anchor !== undefined) result.push(anchor.id);
+  }
+  return result;
+}
+
 /** Transcript messages and reasoning, in the order the import command writes them. */
-function transcriptOrder({ snapshot }: ValidatedConversationImport) {
-  return inHistoryOrder([
+function transcriptOrder(input: ValidatedConversationImport, logical = false) {
+  const { snapshot } = input;
+  const records = [
     ...snapshot.messages.map((message) => ({
       kind: "message" as const,
       id: message.id,
@@ -255,7 +327,26 @@ function transcriptOrder({ snapshot }: ValidatedConversationImport) {
       reasoning,
       createdAt: reasoning.createdAt,
     })),
-  ]);
+  ];
+  if (!logical) return inHistoryOrder(records);
+  const assignment = assignTurns(input, true);
+  const order = logicalHistoryOrder(
+    snapshot.messages.map((message) => ({
+      ...message,
+      turnId: assignment.byMessageId.get(message.id) ?? null,
+    })),
+    snapshot.reasoning.map((reasoning) => ({
+      ...reasoning,
+      turnId: assignment.byMessageId.get(reasoning.id) ?? null,
+    })),
+  );
+  const byId = new Map<string, (typeof records)[number]>(
+    records.map((record) => [record.id, record]),
+  );
+  return order.flatMap((id) => {
+    const record = byId.get(id);
+    return record === undefined ? [] : [record];
+  });
 }
 
 /** Answers and work-log entries, in the order the import command writes them as activities. */
@@ -321,8 +412,8 @@ export const mintConversationImportIds = Effect.fn("mintConversationImportIds")(
   const threadId = ThreadId.make(yield* uuid);
   const threadSegment = toSafeThreadAttachmentSegment(threadId);
   if (threadSegment === null) return yield* Effect.die(new Error("Unsafe thread id."));
-  const assignment = assignTurns(input);
-  const transcript = transcriptOrder(input);
+  const assignment = assignTurns(input, input.package.format === SCIC_FORMAT);
+  const transcript = transcriptOrder(input, input.package.format === SCIC_FORMAT);
   const activities = activityOrder(input);
   const answers = inHistoryOrder(snapshot.questionAnswers);
   const plans = inHistoryOrder(snapshot.proposedPlans);
@@ -347,8 +438,8 @@ export const mintConversationImportIds = Effect.fn("mintConversationImportIds")(
       requestId: ApprovalRequestId.make(nextId()),
     };
   }
-  // Every message, a folded answer's too, sorts in source order; the answer
-  // names its message (`foldedAnswerMessages`).
+  // Every transcript record has a stable local id; a folded answer names its
+  // message (`foldedAnswerMessages`). Visible order comes from the plan.
   const messages: Record<string, MessageId> = Object.create(null);
   for (const record of transcript) messages[record.id] = MessageId.make(nextId());
   const turns: Record<string, TurnId> = Object.create(null);
@@ -368,6 +459,7 @@ export const mintConversationImportIds = Effect.fn("mintConversationImportIds")(
     proposedPlans,
     workLog,
     questionAnswers,
+    ...(input.package.format === SCIC_FORMAT ? { historyOrderVersion: 1 as const } : {}),
   } satisfies ConversationImportIds;
 });
 
@@ -377,7 +469,7 @@ export function idsCoverImport(
   input: ValidatedConversationImport,
 ): boolean {
   const { snapshot } = input;
-  const assignment = assignTurns(input);
+  const assignment = assignTurns(input, ids.historyOrderVersion === 1);
   return (
     [...snapshot.messages, ...snapshot.reasoning].every((record) =>
       Object.hasOwn(ids.messages, record.id),
@@ -855,7 +947,7 @@ export function buildConversationImportCommand(input: {
   const { snapshot } = validated;
   const totalShiftMs = timesShiftedMs + earlierShiftMs(snapshot);
   const notices = importNotices(validated);
-  const assignment = assignTurns(validated);
+  const assignment = assignTurns(validated, ids.historyOrderVersion === 1);
   const localTurn = (key: string | null | undefined): TurnId | null =>
     key === null || key === undefined ? null : (ids.turns[key] ?? null);
   const sourceTurn = (turnId: string | null) =>
@@ -874,32 +966,33 @@ export function buildConversationImportCommand(input: {
       return published === undefined ? [] : [published];
     });
 
-  const messages: PortableConversationImportPlan["messages"] = transcriptOrder(validated).map(
-    (record) => {
-      if (record.kind === "reasoning") {
-        const { reasoning } = record;
-        return {
-          messageId: ids.messages[reasoning.id]!,
-          role: "reasoning",
-          text: reasoning.text,
-          turnId: localTurn(assignment.byMessageId.get(reasoning.id)),
-          createdAt: reasoning.createdAt,
-          updatedAt: reasoning.updatedAt,
-        };
-      }
-      const { message } = record;
-      const attachments = chatAttachments(message.attachments);
+  const messages: PortableConversationImportPlan["messages"] = transcriptOrder(
+    validated,
+    ids.historyOrderVersion === 1,
+  ).map((record) => {
+    if (record.kind === "reasoning") {
+      const { reasoning } = record;
       return {
-        messageId: ids.messages[message.id]!,
-        role: message.role,
-        text: importedMessageMarkdown(message),
-        ...(attachments.length > 0 ? { attachments } : {}),
-        turnId: localTurn(assignment.byMessageId.get(message.id)),
-        createdAt: message.createdAt,
-        updatedAt: message.updatedAt,
+        messageId: ids.messages[reasoning.id]!,
+        role: "reasoning",
+        text: reasoning.text,
+        turnId: localTurn(assignment.byMessageId.get(reasoning.id)),
+        createdAt: reasoning.createdAt,
+        updatedAt: reasoning.updatedAt,
       };
-    },
-  );
+    }
+    const { message } = record;
+    const attachments = chatAttachments(message.attachments);
+    return {
+      messageId: ids.messages[message.id]!,
+      role: message.role,
+      text: importedMessageMarkdown(message),
+      ...(attachments.length > 0 ? { attachments } : {}),
+      turnId: localTurn(assignment.byMessageId.get(message.id)),
+      createdAt: message.createdAt,
+      updatedAt: message.updatedAt,
+    };
+  });
 
   let skippedRecords = 0;
   const proposedPlans: OrchestrationProposedPlan[] = [];
@@ -964,6 +1057,47 @@ export function buildConversationImportCommand(input: {
         ),
   );
 
+  const historyOrder =
+    ids.historyOrderVersion === 1
+      ? (() => {
+          const refs = [
+            ...messages.map((message) => ({ type: "message" as const, id: message.messageId })),
+            ...activities.map((activity) => ({ type: "activity" as const, id: activity.id })),
+            ...proposedPlans.map((plan) => ({ type: "plan" as const, id: plan.id })),
+          ];
+          const byId = new Map(refs.map((ref) => [ref.id, ref]));
+          const anchors = snapshot.messages.map((message) => ({
+            id: ids.messages[message.id]!,
+            role: message.role,
+            turnId: localTurn(assignment.byMessageId.get(message.id)),
+            createdAt: message.createdAt,
+          }));
+          const ordered = logicalHistoryOrder(anchors, [
+            ...messages
+              .filter((message) => message.role === "reasoning")
+              .map((message) => ({
+                id: message.messageId,
+                turnId: message.turnId,
+                createdAt: message.createdAt,
+              })),
+            ...activities.map((activity) => ({
+              id: activity.id,
+              turnId: activity.turnId,
+              createdAt: activity.createdAt,
+            })),
+            ...proposedPlans.map((plan) => ({
+              id: plan.id,
+              turnId: plan.turnId,
+              createdAt: plan.createdAt,
+            })),
+          ]);
+          return ordered.flatMap((id) => {
+            const ref = byId.get(id);
+            return ref === undefined ? [] : [ref];
+          });
+        })()
+      : undefined;
+
   // Turns with a response become completed turn rows, named by their request.
   const turnRecords = new Map<
     TurnId,
@@ -1019,6 +1153,7 @@ export function buildConversationImportCommand(input: {
     messages,
     proposedPlans,
     activities,
+    ...(historyOrder === undefined ? {} : { historyOrder }),
     inheritedTurnIds: assignment.keys.flatMap((key) => {
       const turnId = ids.turns[key];
       return turnId === undefined ? [] : [turnId];

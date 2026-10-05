@@ -1000,7 +1000,20 @@ describe("native import continuation and forks", () => {
           const continuationId = MessageId.make("tied-continuation-user");
           yield* continueImport(result.threadId, continuationId, "Go on");
           const contextPreamble = (yield* ImportPeer).prompts[0]!;
-          inOrder(contextPreamble, [...messageTexts, ...stepTitles]);
+          // New SCIC journals keep each source turn's facts together, while
+          // retaining source order independently within messages and steps.
+          const groupedTexts = source.messages.flatMap((message) => [
+            message.text,
+            ...(message.turnId === null
+              ? []
+              : input.snapshot.workLog.flatMap((entry, step) =>
+                  entry.turnId === message.turnId ? [stepTitles[step]!] : [],
+                )),
+          ]);
+          assert.lengthOf(groupedTexts, 16);
+          inOrder(contextPreamble, groupedTexts);
+          inOrder(contextPreamble, messageTexts);
+          inOrder(contextPreamble, stepTitles);
           inOrder(contextPreamble, ["Plan 1", "Plan 2", "Plan 3", "Plan 4"]);
 
           const snapshot = buildConversationSnapshot({
