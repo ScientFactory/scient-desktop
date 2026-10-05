@@ -61,7 +61,14 @@ const Prompt = Schema.Struct({
 });
 const decodePrompt = Schema.decodeUnknownSync(Prompt);
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
-const decodePermissions = Schema.decodeUnknownSync(Schema.Struct({ permission: Schema.Unknown }));
+const Permissions = Schema.Array(
+  Schema.Struct({
+    permission: Schema.String,
+    pattern: Schema.String,
+    action: Schema.Literals(["allow", "deny", "ask"]),
+  }),
+);
+const decodePermissions = Schema.decodeUnknownSync(Schema.Struct({ permission: Permissions }));
 const decodeSettings = Schema.decodeEffect(OpenCodeSettings);
 const decodeRegisteredMcp = Schema.decodeUnknownEffect(
   Schema.Struct({
@@ -182,7 +189,8 @@ it.live(
         };
         const paths: string[] = [];
         const prompts: Array<typeof Prompt.Type> = [];
-        let permissions = openCodePermissionRules(policy);
+        let permissions: typeof Permissions.Type = [];
+        const createPermissions: Array<typeof Permissions.Type> = [];
         let installedMcp: unknown;
         let scopeAtWire: McpInvocationScope | undefined;
         let connectCount = 0;
@@ -219,9 +227,12 @@ it.live(
             if (route === "POST /mcp") {
               installedMcp = body;
               result = {};
-            } else if (route === "POST /session") result = session();
-            else if (route === `PATCH /session/${nativeId}`) {
-              permissions = decodePermissions(body).permission as typeof permissions;
+            } else if (route === "POST /session") {
+              permissions = decodePermissions(body).permission;
+              createPermissions.push(permissions);
+              result = session();
+            } else if (route === `PATCH /session/${nativeId}`) {
+              permissions = decodePermissions(body).permission;
               result = session();
             } else if (route === `GET /session/${nativeId}`) result = session();
             else if (route === "GET /session/status") result = { [nativeId]: { type: "idle" } };
@@ -403,6 +414,7 @@ it.live(
           assert.include(prompt.parts[0]!.text, currentText);
           assert.equal(prompt.parts[0]!.text.split(currentText).length - 1, 1);
           assert.include(prompt.parts[0]!.text, "Scient selected skills");
+          assert.deepEqual(createPermissions, [openCodePermissionRules(policy)]);
           assert.deepEqual(permissions, openCodePermissionRules(policy));
           assert.ok(installedMcp);
           assert.ok(scopeAtWire?.skillScope);
