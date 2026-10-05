@@ -731,6 +731,10 @@ interface AcpMcpContext {
   readonly authorization?: string;
 }
 
+// SCIENT-FORK:START — Preserve Scient's advertised MCP namespace across ACP transports.
+const SCIENT_ACP_MCP_NAME = "scient";
+// SCIENT-FORK:END
+
 function acpMcpContext(
   threadId: ThreadId | null,
   self: SelfInvocation,
@@ -750,7 +754,7 @@ function acpMcpContext(
   return {
     servers: [
       {
-        name: "t3-code",
+        name: SCIENT_ACP_MCP_NAME,
         command: self.command,
         args: [...selfInvocationArgs(self, ["acp-mcp-bridge"])],
         env: [
@@ -760,7 +764,7 @@ function acpMcpContext(
         ],
       },
     ],
-    acpServers: [{ type: "acp", name: "t3-code", serverId: "t3-code" }],
+    acpServers: [{ type: "acp", name: SCIENT_ACP_MCP_NAME, serverId: "t3-code" }],
     scientAwareness: buildScientAwareness(session.capabilities),
     endpoint: session.endpoint,
     authorization: session.authorizationHeader,
