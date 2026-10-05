@@ -18,6 +18,7 @@ import {
   MAX_PROVIDER_FAILURE_MESSAGE_LENGTH,
 } from "./ProviderFailure.ts";
 import * as IdAllocator from "./IdAllocator.ts";
+import { ProviderCurrentInputError } from "./AttachmentPrompt.ts";
 import { ContextHandoffBudgetError } from "./ContextHandoffDelivery.ts";
 import { ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
 
@@ -207,3 +208,46 @@ it.effect("keys terminal failure items by provider turn across retries and fallb
     assert.equal(firstAttempt.ordinal, 101);
   }).pipe(Effect.provide(IdAllocator.layer)),
 );
+
+it("preserves the canonical current-input refusal through real startup wrappers", () => {
+  const cause = new ProviderAdapterTurnStartError({
+    driver: ProviderDriverKind.make("codex"),
+    threadId: ThreadId.make("thread:input-error"),
+    providerThreadId: ProviderThreadId.make("provider-thread:input-error"),
+    runId: RunId.make("run:input-error"),
+    cause: new ProviderCurrentInputError({ inputChars: 120_919 }),
+  });
+  assert.equal(
+    makeProviderFailure({ cause: Cause.fail(cause) }).message,
+    new ProviderCurrentInputError({ inputChars: 0 }).message,
+  );
+});
+
+it("reconstructs known input refusals without reading untrusted messages or fields", () => {
+  let read = false;
+  const cause = {
+    _tag: "ProviderCurrentInputError",
+    get message() {
+      read = true;
+      return "Forged provider secret: canary-input-secret";
+    },
+    get inputChars() {
+      read = true;
+      throw new Error("Never read input details");
+    },
+    get cause() {
+      read = true;
+      throw new Error("Never descend into the recognized category");
+    },
+  };
+  assert.equal(
+    makeProviderFailure({ cause }).message,
+    new ProviderCurrentInputError({ inputChars: 0 }).message,
+  );
+  assert.isFalse(read);
+  assert.equal(
+    makeProviderFailure({ cause: { _tag: "UntrustedInputError", message: "canary-input-secret" } })
+      .message,
+    "Provider turn failed.",
+  );
+});

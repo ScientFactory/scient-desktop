@@ -10,6 +10,9 @@ import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   CommandId,
+  NodeId,
+  CheckpointScopeId,
+  ProviderSessionId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
@@ -29,6 +32,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { frozenForkPortableReason } from "./scient-fork/ConversationForkNativeSource.ts";
+
+import { ServerConfig } from "../config.ts";
+import { validateProviderCurrentInput } from "./AttachmentPrompt.ts";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -99,6 +105,7 @@ export const layer: Layer.Layer<
   ProviderTurnStartServiceV2,
   never,
   | ServerSettingsService
+  | ServerConfig
   | EventSink.EventSinkV2
   | ContextHandoffService.ContextHandoffServiceV2
   | IdAllocator.IdAllocatorV2
@@ -129,6 +136,7 @@ export const layer: Layer.Layer<
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const serverSettings = yield* ServerSettingsService;
+    const serverConfig = yield* ServerConfig;
 
     // These callbacks outlive startup while a run drains background work. Build
     // them outside start's scope so they cannot retain its full thread history.
@@ -217,6 +225,81 @@ export const layer: Layer.Layer<
             .pipe(Effect.catchCause(() => Effect.succeed(false))),
       };
     };
+
+    // A long-lived run must retain only its captured owner, never startup history.
+    const makePendingStartCancellation =
+      (input: {
+        readonly threadId: ThreadId;
+        readonly runId: RunId;
+        readonly activeAttemptId: RunAttemptId;
+        readonly rootNodeId: NodeId;
+        readonly checkpointScopeId: CheckpointScopeId;
+        readonly runOrdinal: number;
+        readonly providerSessionId: ProviderSessionId;
+        readonly providerThread: OrchestrationV2ProviderThread;
+        readonly session: ProviderAdapterV2SessionRuntime;
+        readonly hasUnpairedRunInterruptRequest: () => Effect.Effect<boolean>;
+      }) =>
+      () =>
+        Effect.gen(function* () {
+          if (!(yield* input.hasUnpairedRunInterruptRequest())) return undefined;
+          const current = yield* projectionStore.getThreadRecords(input.threadId, [
+            "runs",
+            "attempts",
+            "nodes",
+            "providerThreads",
+            "providerTurns",
+          ]);
+          const previous = current.providerTurns.findLast(
+            (turn) => turn.providerThreadId === input.providerThread.id,
+          );
+          const previousAttempt = current.attempts.find(
+            (candidate) => candidate.id === previous?.runAttemptId,
+          );
+          const previousRun = current.runs.find(
+            (candidate) => candidate.id === previousAttempt?.runId,
+          );
+          const owner: EventSink.PendingStartOwner = {
+            threadId: input.threadId,
+            runId: input.runId,
+            activeAttemptId: input.activeAttemptId,
+            rootNodeId: input.rootNodeId,
+            checkpointScopeId: input.checkpointScopeId,
+            runOrdinal: input.runOrdinal,
+            providerThread: input.providerThread,
+            interruptRequestId: idAllocator.derive.runSignalTurnItem({
+              runId: input.runId,
+              signal: "interrupt-request",
+            }),
+            interruptResultId: idAllocator.derive.runSignalTurnItem({
+              runId: input.runId,
+              signal: "interrupt-result",
+            }),
+            ...(previous === undefined || previousAttempt === undefined || previousRun === undefined
+              ? {}
+              : {
+                  retainedTurn: {
+                    id: previous.id,
+                    attemptId: previousAttempt.id,
+                    runId: previousRun.id,
+                    runOrdinal: previousRun.ordinal,
+                  },
+                }),
+          };
+          if (!EventSink.matchesPendingStartOwner(current, owner)) return undefined;
+          const live = yield* providerSessions.get(input.providerSessionId);
+          if (Option.isNone(live) || live.value !== input.session) return undefined;
+          if (owner.retainedTurn !== undefined) {
+            // The new turn was never offered. Stop retained work through its real
+            // previous native turn, preserving shared-session and receipt identity.
+            yield* input.session.interruptTurn({
+              providerThread: input.providerThread,
+              providerTurnId: owner.retainedTurn.id,
+              requestRuntimeRestart: true,
+            });
+          }
+          return owner;
+        });
 
     const makeDeliverySession = (
       session: ProviderAdapterV2SessionRuntime,
@@ -612,7 +695,7 @@ export const layer: Layer.Layer<
         runOrdinal: run.ordinal,
         inheritedBackgroundTurnItems,
       });
-      const { isCurrentAttemptInStatus } = runControls;
+      const { isCurrentAttemptInStatus, shouldStartProviderTurn } = runControls;
 
       const resolvedRuntimePolicy =
         providerWork?.runtimePolicy ??
@@ -1408,6 +1491,25 @@ export const layer: Layer.Layer<
         compact = false,
       ) =>
         Effect.gen(function* () {
+          const validateCurrent = (text: string) =>
+            Effect.fromResult(
+              validateProviderCurrentInput({
+                text,
+                attachments: message.attachments,
+                attachmentsDir: serverConfig.attachmentsDir,
+              }),
+            );
+          let preparedUserText = userText;
+          let currentInput = compact
+            ? userText
+            : yield* validateCurrent(preparedUserText).pipe(
+                Effect.catchTag("ProviderCurrentInputError", (cause) => {
+                  const fallback = preparedSkills.textWithoutCatalogMarker;
+                  if (fallback === undefined) return Effect.fail(cause);
+                  preparedUserText = fallback;
+                  return validateCurrent(fallback);
+                }),
+              );
           // A failed turn/start can leave the requested turn absent from
           // native history even when its preceding handoff was injected.
           const retryHandoff =
@@ -1433,7 +1535,7 @@ export const layer: Layer.Layer<
                     createdAt: yield* DateTime.now,
                   }),
                 ];
-          const prepareDelivery = (preparedUserText: string) =>
+          const prepareDelivery = () =>
             deliverContextHandoffs({
               handoffs: [...effectiveHandoffs, ...retryHandoff],
               deferInline: compact,
@@ -1446,8 +1548,7 @@ export const layer: Layer.Layer<
                   ...policy,
                   modelContextWindow,
                   // The restart note and user text spend the same serialized allowance.
-                  userText:
-                    restartNote === "" ? preparedUserText : `${restartNote}\n\n${preparedUserText}`,
+                  userText: restartNote === "" ? currentInput : `${restartNote}\n\n${currentInput}`,
                   attachments: message.attachments,
                   providerThread: budgetProviderThread,
                   nativeContextEstimate:
@@ -1504,16 +1605,25 @@ export const layer: Layer.Layer<
                   });
                 }),
             });
-          let preparedUserText = userText;
-          const delivery = yield* prepareDelivery(preparedUserText).pipe(
-            Effect.catchTag("ContextHandoffBudgetError", (cause) => {
-              const fallback = preparedSkills.textWithoutCatalogMarker;
-              if (fallback === undefined) return Effect.fail(cause);
-              preparedUserText = fallback;
-              return prepareDelivery(fallback);
-            }),
+          const delivery = yield* prepareDelivery().pipe(
+            Effect.catchTag("ContextHandoffBudgetError", (cause) =>
+              Effect.gen(function* () {
+                const fallback = preparedSkills.textWithoutCatalogMarker;
+                if (fallback === undefined) return yield* cause;
+                currentInput = compact ? fallback : yield* validateCurrent(fallback);
+                preparedUserText = fallback;
+                return yield* prepareDelivery();
+              }),
+            ),
           );
-          if (!(yield* isCurrentAttemptInStatus("running"))) return;
+          if (!(yield* shouldStartProviderTurn()))
+            return yield* new ProviderAdapterTurnStartError({
+              driver: session.driver,
+              threadId: projection.thread.id,
+              providerThreadId: providerThread.id,
+              runId: run.id,
+              cause: "The current native offer was declined after input preparation.",
+            });
           yield* preparedSkills.publish;
           const start = compact ? session.compactThread! : session.startTurn;
           const context = [delivery.context, restartNote]
@@ -1599,68 +1709,18 @@ export const layer: Layer.Layer<
               .map((turn) => turn.ordinal),
           ) + 1,
         shouldStartProviderTurn: runControls.shouldStartProviderTurn,
-        cancelBeforeProviderTurn: () =>
-          Effect.gen(function* () {
-            if (!(yield* runControls.hasUnpairedRunInterruptRequest())) return undefined;
-            const current = yield* projectionStore.getThreadRecords(input.threadId, [
-              "runs",
-              "attempts",
-              "nodes",
-              "providerThreads",
-              "providerTurns",
-            ]);
-            const previous = current.providerTurns.findLast(
-              (turn) => turn.providerThreadId === providerThread.id,
-            );
-            const previousAttempt = current.attempts.find(
-              (candidate) => candidate.id === previous?.runAttemptId,
-            );
-            const previousRun = current.runs.find(
-              (candidate) => candidate.id === previousAttempt?.runId,
-            );
-            const owner: EventSink.PendingStartOwner = {
-              threadId: input.threadId,
-              runId: run.id,
-              activeAttemptId: attempt.id,
-              rootNodeId: rootNode.id,
-              checkpointScopeId: checkpointScope.id,
-              runOrdinal: run.ordinal,
-              providerThread: runningProviderThread,
-              interruptRequestId: idAllocator.derive.runSignalTurnItem({
-                runId: run.id,
-                signal: "interrupt-request",
-              }),
-              interruptResultId: idAllocator.derive.runSignalTurnItem({
-                runId: run.id,
-                signal: "interrupt-result",
-              }),
-              ...(previous === undefined ||
-              previousAttempt === undefined ||
-              previousRun === undefined
-                ? {}
-                : {
-                    retainedTurn: {
-                      id: previous.id,
-                      attemptId: previousAttempt.id,
-                      runId: previousRun.id,
-                      runOrdinal: previousRun.ordinal,
-                    },
-                  }),
-            };
-            if (!EventSink.matchesPendingStartOwner(current, owner)) return undefined;
-            const live = yield* providerSessions.get(providerSessionId);
-            if (Option.isNone(live) || live.value !== session) return undefined;
-            if (owner.retainedTurn !== undefined) {
-              // The new turn was never offered. Stop retained work through its real
-              // previous native turn, preserving shared-session and receipt identity.
-              yield* session.interruptTurn({
-                providerThread: runningProviderThread,
-                providerTurnId: owner.retainedTurn.id,
-                requestRuntimeRestart: true,
-              });
-            }
-            return owner;
-          }),
+        cancelBeforeProviderTurn: makePendingStartCancellation({
+          threadId: input.threadId,
+          runId: run.id,
+          activeAttemptId: attempt.id,
+          rootNodeId: rootNode.id,
+          checkpointScopeId: checkpointScope.id,
+          runOrdinal: run.ordinal,
+          providerSessionId,
+          providerThread: runningProviderThread,
+          session,
+          hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
+        }),
         shouldFinalizeRun: runControls.shouldFinalizeRun,
         hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
         message: {

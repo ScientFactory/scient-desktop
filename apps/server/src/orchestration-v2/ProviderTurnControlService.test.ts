@@ -1,3 +1,5 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ServerConfig from "../config.ts";
 import { assert, it } from "@effect/vitest";
 import {
   type ModelSelection,
@@ -285,7 +287,15 @@ it.effect(
         }),
       );
       const controlLayer = ProviderTurnControlService.layer.pipe(
-        Layer.provide(Layer.merge(projectionLayer, sessionManagerLayer)),
+        Layer.provide(
+          Layer.mergeAll(
+            projectionLayer,
+            sessionManagerLayer,
+            ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
+              Layer.provide(NodeServices.layer),
+            ),
+          ),
+        ),
       );
 
       const [ordinaryInterrupt, unrelatedRestart] = yield* Effect.gen(function* () {
@@ -402,6 +412,9 @@ it.effect(
         forkThread: () => Effect.die("unused fork"),
       };
       const dependencies = Layer.mergeAll(
+        ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
+          Layer.provide(NodeServices.layer),
+        ),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getProviderControlContext: () =>
             Ref.get(selection).pipe(
@@ -743,6 +756,9 @@ it.effect.each([
             providerTurns: [{ ...receipt, status: "completed" as const, completedAt: now }],
           }));
         const dependencies = Layer.mergeAll(
+          ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
+            Layer.provide(NodeServices.layer),
+          ),
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getThreadRecords: () => Ref.get(projection),
             getProviderControlContext: (_threadId, target) =>

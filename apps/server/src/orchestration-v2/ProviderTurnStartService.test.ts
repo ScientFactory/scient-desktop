@@ -1,3 +1,5 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ServerConfig from "../config.ts";
 import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
@@ -103,6 +105,9 @@ it("keeps inherited background routing failure retryable without committing runn
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
+          Layer.provide(NodeServices.layer),
+        ),
         ServerSettings.layerTest(),
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
@@ -465,6 +470,9 @@ function makeLocalCommandHarness(input: {
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
+          Layer.provide(NodeServices.layer),
+        ),
         ServerSettings.layerTest(),
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({
           prepareProviderHandoff: () => Effect.die("history read must fail first"),
@@ -857,6 +865,9 @@ effectIt.effect("a stale outbox start cannot execute the newer retry attempt", (
           Layer.mock(ThreadTitleRegeneration.ThreadTitleRegenerationService)({}),
           Layer.mock(ThreadManagement.ThreadManagementService)({}),
           Layer.mock(ConversationForkService)({}),
+          ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
+            Layer.provide(NodeServices.layer),
+          ),
           ServerSettings.layerTest(),
         ),
       ),

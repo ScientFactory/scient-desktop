@@ -14,8 +14,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import { prepareScientV2SkillTurn } from "../scient/skills/ScientV2SkillTurn.ts";
+import { prepareScientV2SkillScope } from "../scient/skills/ScientV2SkillTurn.ts";
 import { ScientSkillSessionPlanner } from "../scient/skills/ScientSkillSession.ts";
+import { ServerConfig } from "../config.ts";
+import { validateProviderCurrentInput } from "./AttachmentPrompt.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 
@@ -95,13 +97,14 @@ export class ProviderTurnControlServiceV2 extends Context.Service<
 export const layer: Layer.Layer<
   ProviderTurnControlServiceV2,
   never,
-  ProjectionStore.ProjectionStoreV2 | ProviderSessionManager.ProviderSessionManagerV2
+  ServerConfig | ProjectionStore.ProjectionStoreV2 | ProviderSessionManager.ProviderSessionManagerV2
 > = Layer.effect(
   ProviderTurnControlServiceV2,
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const skillPlanner = yield* ScientSkillSessionPlanner;
     const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const serverConfig = yield* ServerConfig;
 
     const load = (input: {
       readonly threadId: ThreadId;
@@ -408,7 +411,7 @@ export const layer: Layer.Layer<
               cause: "The persisted steering message or target run is missing.",
             });
           }
-          const text = yield* prepareScientV2SkillTurn({
+          const prepared = yield* prepareScientV2SkillScope({
             threadId: input.threadId,
             driver: loaded.session.value.driver,
             mcpSessionInjection: loaded.session.value.mcpSessionInjection === true,
@@ -419,7 +422,55 @@ export const layer: Layer.Layer<
             }),
             selectedScientSkillNames: message.selectedScientSkillNames ?? [],
           }).pipe(Effect.provideService(ScientSkillSessionPlanner, skillPlanner));
-          yield* loaded.session.value
+          const validateCurrent = (text: string) =>
+            Effect.fromResult(
+              validateProviderCurrentInput({
+                text,
+                attachments: message.attachments,
+                attachmentsDir: serverConfig.attachmentsDir,
+              }),
+            );
+          let text = prepared.text;
+          yield* validateCurrent(text).pipe(
+            Effect.catchTag("ProviderCurrentInputError", (cause) => {
+              const fallback = prepared.textWithoutCatalogMarker;
+              if (fallback === undefined) return Effect.fail(cause);
+              text = fallback;
+              return validateCurrent(fallback);
+            }),
+          );
+          const current = yield* load({ ...input, operation: "steer" });
+          if (
+            Option.isNone(current.session) ||
+            current.session.value !== loaded.session.value ||
+            current.context.run?.id !== run.id ||
+            current.context.run.activeAttemptId !== run.activeAttemptId ||
+            current.providerTurn.runAttemptId !== loaded.providerTurn.runAttemptId ||
+            current.context.attempt?.id !== loaded.context.attempt?.id
+          )
+            return yield* new ProviderTurnControlError({
+              threadId: input.threadId,
+              operation: "steer",
+              providerTurnId: input.providerTurnId,
+              cause: "The recorded steering execution changed during input preparation.",
+            });
+          if (ownership !== undefined) {
+            const projection = yield* projections.getThreadRecords(input.threadId, ["runs"], {
+              runIds: [ownership.parentRunId],
+            });
+            const cohort = projection.runs.find(
+              (candidate) => candidate.id === ownership.parentRunId,
+            )?.delegatedCompletion;
+            if (
+              cohort?.disposition !== "open" ||
+              cohort.delivery?.messageId !== input.messageId ||
+              cohort.delivery.generation !== ownership.generation ||
+              cohort.delivery.taskIds.length === 0
+            )
+              return;
+          }
+          yield* prepared.publish;
+          yield* current.session.value
             .steerTurn({
               threadId: input.threadId,
               runId: run.id,

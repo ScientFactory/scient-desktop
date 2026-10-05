@@ -7,6 +7,8 @@ import {
   type SnapShotAccessibilityNode,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import * as Result from "effect/Result";
+import { expandComposerCitationsForProvider } from "@t3tools/shared/composerCitations";
 
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 
@@ -166,8 +168,7 @@ export function providerMessageTextWithAttachmentPaths(input: {
   let text = input.text;
   const appendContext = (context: string | undefined) => {
     if (context === undefined) return;
-    const candidate = text ? `${text}\n\n${context}` : context;
-    if (candidate.length <= PROVIDER_SEND_TURN_MAX_INPUT_CHARS) text = candidate;
+    text = text ? `${text}\n\n${context}` : context;
   };
 
   for (const attachment of input.attachments) {
@@ -219,4 +220,26 @@ export function providerMessageTextWithAttachmentPaths(input: {
   }
 
   return text;
+}
+
+export class ProviderCurrentInputError extends Schema.TaggedError<ProviderCurrentInputError>()(
+  "ProviderCurrentInputError",
+  { inputChars: Schema.Number },
+) {
+  override get message(): string {
+    return `The complete current request, including attached file paths and captured data, exceeds the ${PROVIDER_SEND_TURN_MAX_INPUT_CHARS}-character provider input limit. Shorten the request or remove an attachment and retry.`;
+  }
+}
+
+/** Validate current material only; inherited history has its separate receiving budget. */
+export function validateProviderCurrentInput(
+  input: Parameters<typeof providerMessageTextWithAttachmentPaths>[0],
+): Result.Result<string, ProviderCurrentInputError> {
+  const text = providerMessageTextWithAttachmentPaths({
+    ...input,
+    text: expandComposerCitationsForProvider(input.text),
+  });
+  return text.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS
+    ? Result.fail(new ProviderCurrentInputError({ inputChars: text.length }))
+    : Result.succeed(text);
 }
