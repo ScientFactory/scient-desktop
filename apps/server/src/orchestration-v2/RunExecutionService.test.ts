@@ -40,6 +40,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Scheduler from "effect/Scheduler";
 import * as Stream from "effect/Stream";
 
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -3620,6 +3621,84 @@ it.effect("refreshes pull requests only once when startup failure closes its eve
   }),
 );
 
+for (const streamPulled of [false, true]) {
+  it.effect(
+    `closes an immediate failed-start subscription exactly once ${streamPulled ? "after" : "before"} ingestion starts`,
+    () =>
+      Effect.gen(function* () {
+        const ingestionStarted = yield* Deferred.make<void>();
+        const phases: string[] = [];
+        const result = yield* captureRootRunTermination({
+          key: `subscription-startup-close:${streamPulled}`,
+          shouldFinalizeRun: () => Effect.succeed(true),
+          awaitSubscriptionClose: false,
+          observeLifecycle: (phase) => phases.push(phase),
+          events: () =>
+            Stream.unwrap(
+              Effect.sync(() => {
+                phases.push("stream-pull");
+                return Stream.never;
+              }).pipe(Effect.tap(() => Deferred.succeed(ingestionStarted, undefined))),
+            ),
+          startTurn: (turn) =>
+            Effect.gen(function* () {
+              phases.push("start");
+              if (streamPulled) yield* Deferred.await(ingestionStarted);
+              return yield* Effect.fail(
+                new ProviderAdapterTurnStartError({
+                  driver: turn.providerThread.driver,
+                  threadId: turn.threadId,
+                  providerThreadId: turn.providerThread.id,
+                  runId: turn.runId,
+                  cause: "immediate typed startup rejection",
+                }),
+              );
+            }),
+        }).pipe(
+          // Keep the pre-pull leg synchronous through its real child interruption.
+          // This reference is local to the test, never the shared scheduler.
+          Effect.provideService(Scheduler.PreventSchedulerYield, true),
+        );
+        assert.lengthOf(result.guards, 1);
+        assert.equal(result.guards[0]!.activeAttemptId, result.ids.attemptId);
+        assert.equal(result.guards[0]!.expectedStatus, "running");
+        assert.deepEqual(result.observed, ["run:failed", "pull-requests-refreshed"]);
+        assert.lengthOf(
+          result.written.filter((item) => item.type === "error"),
+          1,
+        );
+        assert.deepEqual(phases, [
+          "subscribed",
+          "start",
+          ...(streamPulled ? ["stream-pull"] : []),
+          "closed",
+          "run:failed",
+          "refresh",
+        ]);
+      }),
+  );
+}
+
+it.effect("closes a normally terminating ingestion subscription exactly once", () =>
+  Effect.gen(function* () {
+    const phases: string[] = [];
+    yield* captureRootRunTermination({
+      key: "subscription-normal-close",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      observeLifecycle: (phase) => phases.push(phase),
+      events: (ids) => Stream.make(rootTerminalEvent(ids, "completed")),
+      startTurn: () =>
+        Effect.sync(() => {
+          phases.push("start");
+        }),
+    });
+    assert.equal(phases.filter((phase) => phase === "subscribed").length, 1);
+    assert.equal(phases.filter((phase) => phase === "start").length, 1);
+    assert.equal(phases.filter((phase) => phase === "closed").length, 1);
+    assert.equal(phases.filter((phase) => phase === "refresh").length, 1);
+  }),
+);
+
 for (const declineFinalWrite of [false, true]) {
   it.effect(
     `rechecks Droid holds outside the real permit and does not retry a ${declineFinalWrite ? "declined" : "committed"} final write`,
@@ -4032,6 +4111,8 @@ function captureRootRunTermination(input: {
   ) => ProviderEventIngestor.ProviderEventIngestorV2Shape["ingestNormalized"];
   readonly declineFinalWrite?: boolean;
   readonly attemptProviderTurnAbsent?: boolean;
+  readonly awaitSubscriptionClose?: boolean;
+  readonly observeLifecycle?: (phase: string) => void;
 }) {
   return Effect.gen(function* () {
     const ids = backgroundScenarioIds(input.key);
@@ -4060,6 +4141,7 @@ function captureRootRunTermination(input: {
         if (event.type === "turn-item.updated") yield* captureTurnItem(event.payload);
         if (event.type === "run.updated") {
           yield* Ref.update(observed, (current) => [...current, `run:${event.payload.status}`]);
+          input.observeLifecycle?.(`run:${event.payload.status}`);
         }
       }
       return [];
@@ -4097,6 +4179,11 @@ function captureRootRunTermination(input: {
             refresh: () => Effect.void,
             refreshAfterTurn: () =>
               Ref.update(observed, (current) => [...current, "pull-requests-refreshed"]).pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    input.observeLifecycle?.("refresh");
+                  }),
+                ),
                 Effect.andThen(input.refreshAfterTurn ?? Effect.void),
               ),
           }),
@@ -4118,34 +4205,39 @@ function captureRootRunTermination(input: {
                 droidSteerTerminalHeld: input.droidTerminalHeld(ids, yield* ThreadCommandExecutor),
               }),
           events: Stream.empty,
-          subscribeEvents: Effect.succeed({
-            events:
-              input.events?.(ids) ??
-              Stream.fromIterable([
-                ...(input.seedOpenSubagent
-                  ? [
-                      { type: "subagent.updated", driver, subagent: runningSubagent } as const,
-                      {
-                        type: "node.updated",
-                        driver,
-                        node: makeRunOwnedSubagentNodeFixture({ ids, status: "running" }),
-                      } as const,
-                      {
-                        type: "turn_item.updated",
-                        driver,
-                        turnItem: makeRunOwnedSubagentTurnItemFixture({
-                          ids,
-                          providerInstanceId,
-                          childThreadId: ids.childThreadId,
+          subscribeEvents: Effect.sync(() => {
+            input.observeLifecycle?.("subscribed");
+            return {
+              events:
+                input.events?.(ids) ??
+                Stream.fromIterable([
+                  ...(input.seedOpenSubagent
+                    ? [
+                        { type: "subagent.updated", driver, subagent: runningSubagent } as const,
+                        {
+                          type: "node.updated",
                           driver,
-                          status: "running",
-                        }),
-                      } as const,
-                    ]
-                  : []),
-                rootTerminalEvent(ids, "interrupted"),
-              ] satisfies ReadonlyArray<ProviderAdapterV2Event>),
-            close: Deferred.succeed(ingestionDone, undefined),
+                          node: makeRunOwnedSubagentNodeFixture({ ids, status: "running" }),
+                        } as const,
+                        {
+                          type: "turn_item.updated",
+                          driver,
+                          turnItem: makeRunOwnedSubagentTurnItemFixture({
+                            ids,
+                            providerInstanceId,
+                            childThreadId: ids.childThreadId,
+                            driver,
+                            status: "running",
+                          }),
+                        } as const,
+                      ]
+                    : []),
+                  rootTerminalEvent(ids, "interrupted"),
+                ] satisfies ReadonlyArray<ProviderAdapterV2Event>),
+              close: Effect.sync(() => {
+                input.observeLifecycle?.("closed");
+              }).pipe(Effect.andThen(Deferred.succeed(ingestionDone, undefined))),
+            };
           }),
           startTurn: input.startTurn ?? (() => Effect.void),
         } as unknown as ProviderAdapterV2SessionRuntime,
@@ -4200,7 +4292,7 @@ function captureRootRunTermination(input: {
       });
     }).pipe(Effect.provide(testLayer.pipe(Layer.provideMerge(threadCommandExecutorLayer))));
 
-    yield* Deferred.await(ingestionDone);
+    if (input.awaitSubscriptionClose !== false) yield* Deferred.await(ingestionDone);
     return {
       written: yield* Ref.get(writtenItems),
       observed: yield* Ref.get(observed),

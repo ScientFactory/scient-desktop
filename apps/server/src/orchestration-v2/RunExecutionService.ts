@@ -1204,10 +1204,11 @@ export const layer: Layer.Layer<
             input.session.subscribeEvents === undefined
               ? { events: input.session.events, close: Effect.void }
               : yield* input.session.subscribeEvents;
+          const closeEventSubscription = yield* Effect.cached(eventSubscription.close);
           const inheritedBackgroundTurnItems = yield* (
             input.loadInheritedBackgroundTurnItems?.() ?? Effect.succeed([])
           ).pipe(
-            Effect.onError(() => eventSubscription.close),
+            Effect.onError(() => closeEventSubscription),
             Effect.mapError(
               (cause) =>
                 new RunExecutionStartError({
@@ -1782,8 +1783,13 @@ export const layer: Layer.Layer<
                 ),
               );
             }),
-            Effect.ensuring(eventSubscription.close),
+            Effect.ensuring(closeEventSubscription),
             Effect.forkDetach,
+          );
+          // An unstarted child can be interrupted before installing its finalizer.
+          // Share one close with the child so either path retires the subscription.
+          const interruptProviderEvents = Fiber.interrupt(providerEventFiber).pipe(
+            Effect.ensuring(closeEventSubscription),
           );
 
           if (
@@ -1799,10 +1805,10 @@ export const layer: Layer.Layer<
                 (yield* Ref.get(cancelledStartOwner))?.retainedTurn === undefined ||
                 (input.providerThread.pendingBackgroundTasks?.length ?? 0) === 0
               ) {
-                yield* Fiber.interrupt(providerEventFiber);
+                yield* interruptProviderEvents;
               }
             } else {
-              yield* Fiber.interrupt(providerEventFiber);
+              yield* interruptProviderEvents;
             }
             return;
           }
@@ -1851,7 +1857,7 @@ export const layer: Layer.Layer<
             Effect.catchCause((cause) =>
               Effect.gen(function* () {
                 if (Cause.hasInterruptsOnly(cause)) {
-                  yield* Fiber.interrupt(providerEventFiber);
+                  yield* interruptProviderEvents;
                   return yield* Effect.failCause(
                     Cause.fromReasons<never>(cause.reasons.filter(Cause.isInterruptReason)),
                   );
@@ -1882,7 +1888,7 @@ export const layer: Layer.Layer<
                     (yield* Ref.get(cancelledStartOwner))?.retainedTurn === undefined ||
                     (input.providerThread.pendingBackgroundTasks?.length ?? 0) === 0
                   ) {
-                    yield* Fiber.interrupt(providerEventFiber);
+                    yield* interruptProviderEvents;
                   }
                   return;
                 }
@@ -1890,7 +1896,7 @@ export const layer: Layer.Layer<
                   runId: input.run.id,
                   cause,
                 }).pipe(
-                  Effect.andThen(Fiber.interrupt(providerEventFiber)),
+                  Effect.andThen(interruptProviderEvents),
                   Effect.andThen(Ref.get(latestProviderThread)),
                   Effect.flatMap((providerThread) =>
                     Ref.get(latestTurnItemOrdinal).pipe(
