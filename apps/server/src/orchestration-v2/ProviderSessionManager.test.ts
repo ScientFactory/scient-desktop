@@ -543,7 +543,8 @@ function makeBrowserAccessProject(projectId: ProjectId): Project {
 
 function runBrowserAccessScenario(input: {
   readonly enableAgentBrowserAccess: boolean;
-  readonly projectOverride: boolean;
+  readonly enableAgentDeviceAccess?: boolean;
+  readonly projectOverride?: boolean;
   readonly deviceOverride?: boolean;
   readonly createThread?: boolean;
   readonly projectExists?: boolean;
@@ -581,6 +582,14 @@ function runBrowserAccessScenario(input: {
       yield* manager
         .open({ threadId, providerSessionId, modelSelection, runtimePolicy })
         .pipe(Effect.ignore);
+      const captured = (yield* Ref.get(mcpConfigs))[0];
+      assert.isDefined(captured);
+      const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const scope = yield* registry.resolve(
+        captured!.authorizationHeader.replace(/^Bearer\s+/, ""),
+      );
+      assert.isDefined(scope);
+      assert.deepEqual(scope!.capabilities, captured!.capabilities);
     }).pipe(
       Effect.provide(
         makeTestLayer({
@@ -590,9 +599,14 @@ function runBrowserAccessScenario(input: {
           projectServiceLayer,
           serverSettingsLayer: ServerSettings.layerTest({
             enableAgentBrowserAccess: input.enableAgentBrowserAccess,
+            ...(input.enableAgentDeviceAccess === undefined
+              ? {}
+              : { enableAgentDeviceAccess: input.enableAgentDeviceAccess }),
             projectSettingsOverrides: {
               [projectId]: {
-                enableAgentBrowserAccess: input.projectOverride,
+                ...(input.projectOverride === undefined
+                  ? {}
+                  : { enableAgentBrowserAccess: input.projectOverride }),
                 ...(input.deviceOverride === undefined
                   ? {}
                   : { enableAgentDeviceAccess: input.deviceOverride }),
@@ -1356,6 +1370,22 @@ it.effect("ProviderSessionManagerV2 fails browser access closed for a missing th
     assert.isDefined(captured);
     assert.equal(captured?.capabilities.has("preview"), false);
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 withholds only the overridden capability for a missing project",
+  () =>
+    Effect.gen(function* () {
+      const captured = yield* runBrowserAccessScenario({
+        enableAgentBrowserAccess: true,
+        enableAgentDeviceAccess: true,
+        deviceOverride: false,
+        projectExists: false,
+      });
+      assert.isDefined(captured);
+      assert.isTrue(captured!.capabilities.has("preview"));
+      assert.isFalse(captured!.capabilities.has("device"));
+    }),
 );
 
 it.effect("ProviderSessionManagerV2 revokes MCP credentials when release persistence fails", () =>

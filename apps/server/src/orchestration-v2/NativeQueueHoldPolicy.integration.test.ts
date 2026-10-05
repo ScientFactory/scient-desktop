@@ -2,6 +2,9 @@ import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
+  ComposerContextId,
+  EnvironmentId,
+  RunId,
   ChatAttachmentId,
   EventId,
   NodeId,
@@ -25,7 +28,7 @@ import * as DateTime from "effect/DateTime";
 import * as Clock from "effect/Clock";
 import { EventSinkV2 } from "./EventSink.ts";
 import { EffectOutboxV2 } from "./EffectOutbox.ts";
-import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
+import { OrchestrationEffectWorkerV2, runDaemonWithOptions } from "./EffectWorker.ts";
 import { makeSqlitePersistenceLive } from "../persistence/Layers/Sqlite.ts";
 import type * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -47,9 +50,11 @@ import {
 } from "./Adapters/NativeSessionAdapterV2.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
 import { OrchestratorV2, type OrchestratorV2Error } from "./Orchestrator.ts";
+import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import {
   ProviderAdapterOpenSessionError,
   type ProviderAdapterV2TurnInput,
+  type ProviderAdapterV2SteerInput,
   type ProviderAdapterV2Event,
 } from "./ProviderAdapter.ts";
 import { makeLayer } from "./ProviderAdapterRegistry.ts";
@@ -60,10 +65,52 @@ import {
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
 import { sourcePlanFingerprint } from "./SourcePlan.ts";
 import { checkpointRefForScopeOrdinal } from "./CheckpointService.ts";
+import { CheckpointServiceV2 } from "./CheckpointService.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
+import * as EventStore from "./EventStore.ts";
+import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
+import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as ProjectStore from "./ProjectStore.ts";
+import * as ProviderInstances from "../provider/Services/ProviderInstanceRegistry.ts";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import {
   ThreadCommandExecutor,
   layer as threadCommandExecutorLayer,
 } from "./ThreadCommandExecutor.ts";
+
+import * as NetAddress from "effect/unstable/net/NetAddress";
+import { HttpServer } from "effect/unstable/http";
+import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
+import { readMcpProviderSession } from "../mcp/McpProviderSession.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ScientSkillSession from "../scient/skills/ScientSkillSession.ts";
+import * as ScientSkillRegistry from "../scient/skills/ScientSkillRegistry.ts";
+import * as ScientSkillPolicy from "../scient/skills/ScientSkillPolicy.ts";
+import { BUILT_IN_SKILL_RELEASES } from "../scient/skills/BuiltInSkillReleases.ts";
+import { toSkillReleaseRef } from "@scientfactory/scient-skills";
+
+const promotionMcpRegistryLayer = McpSessionRegistry.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.succeed(
+        HttpServer.HttpServer,
+        HttpServer.HttpServer.of({
+          address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 43123),
+          serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
+        }),
+      ),
+      Layer.succeed(
+        ServerEnvironment.ServerEnvironment,
+        ServerEnvironment.ServerEnvironment.of({
+          getEnvironmentId: Effect.succeed(EnvironmentId.make("queued-promotion-fixture")),
+          getDescriptor: Effect.die("No environment descriptor in this fixture"),
+        }),
+      ),
+      NodeServices.layer,
+    ),
+  ),
+);
 
 const instanceId = ProviderInstanceId.make("omp");
 const modelSelection = { instanceId, model: "queue-policy-model" };
@@ -81,10 +128,13 @@ const withNativeQueue = <A, E, R>(
     readonly threadId: ThreadId;
     readonly orchestrator: OrchestratorV2["Service"];
     readonly offers: ReadonlyArray<string>;
+    readonly steers: ReadonlyArray<ProviderAdapterV2SteerInput>;
+    readonly takeSteer: Effect.Effect<ProviderAdapterV2SteerInput, Cause.TimeoutError>;
     readonly injectEvent: (event: ProviderAdapterV2Event) => Effect.Effect<void>;
     readonly preparationReady: Effect.Effect<void>;
     readonly releasePreparation: Effect.Effect<void>;
     readonly preparationAttempts: () => number;
+    readonly failNextStarts: (count: number) => void;
     readonly nativeInterruptions: () => number;
     readonly interruptEntered: Effect.Effect<void>;
     readonly releaseInterrupt: Effect.Effect<void>;
@@ -120,6 +170,7 @@ const withNativeQueue = <A, E, R>(
       Parameters<typeof makeOrchestratorV2ReplayLayerWithRegistry>[2]
     >["serverConfigLayer"];
     readonly runEffectWorker?: boolean;
+    readonly runtimePolicyLayer?: Layer.Layer<RuntimePolicy.RuntimePolicyV2>;
     readonly holdFirstSend?: boolean;
     readonly holdSendOrdinal?: number;
     readonly refuseSend?: number;
@@ -134,14 +185,20 @@ const withNativeQueue = <A, E, R>(
     readonly holdCheckpointCapture?: boolean;
     readonly injectEvents?: boolean;
     readonly holdInterrupt?: boolean;
+    readonly controlStartupFailures?: boolean;
+    readonly nativeSteering?: boolean;
+    readonly mcpSessionRegistryLayer?: Layer.Layer<McpSessionRegistry.McpSessionRegistry>;
   } = {},
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
       const cwd = options.cwd ?? (yield* checkpointWorkspace(name));
+      let startupRefusals = 0;
       const allocator = yield* IdAllocatorV2;
       const scope = yield* Scope.Scope;
       const offered = yield* Queue.unbounded<NativeOffer>();
+      const steering = yield* Queue.unbounded<ProviderAdapterV2SteerInput>();
+      const steers: ProviderAdapterV2SteerInput[] = [];
       const injected = yield* Queue.unbounded<ProviderAdapterV2Event>();
       const firstSendReleased = yield* Deferred.make<void>();
       const interruptEntered = yield* Deferred.make<void>();
@@ -160,7 +217,17 @@ const withNativeQueue = <A, E, R>(
       const adapterOptions = {
         instanceId,
         driver: ProviderDriverKind.make("omp"),
-        capabilities: AcpProviderCapabilitiesV2,
+        capabilities: options.nativeSteering
+          ? {
+              ...AcpProviderCapabilitiesV2,
+              sessions: {
+                ...AcpProviderCapabilitiesV2.sessions,
+                supportsRuntimeModeSwitchInSession: true,
+              },
+              turns: { ...AcpProviderCapabilitiesV2.turns, supportsActiveSteering: true },
+            }
+          : AcpProviderCapabilitiesV2,
+        mcpSessionInjection: options.mcpSessionRegistryLayer !== undefined,
         idAllocator: allocator,
         defaultCwd: cwd,
         continuations: { offer: () => Effect.die("No background continuation in queue fixture") },
@@ -245,6 +312,14 @@ const withNativeQueue = <A, E, R>(
                 yield* publish({ type: "accepted", nativeTurnId });
                 yield* Deferred.succeed(nativeAccepted, undefined);
               }),
+            ...(options.nativeSteering
+              ? {
+                  steer: (input: ProviderAdapterV2SteerInput) =>
+                    Effect.sync(() => {
+                      steers.push(input);
+                    }).pipe(Effect.andThen(Queue.offer(steering, input)), Effect.asVoid),
+                }
+              : {}),
             resume: () => Effect.void,
             respond: () => Effect.die("No native question in queue fixture"),
             interrupt: Effect.sync(() => {
@@ -274,11 +349,22 @@ const withNativeQueue = <A, E, R>(
         makeLayer([
           heldSendOrdinal !== undefined ||
           options.synchronousFailSend !== undefined ||
+          options.controlStartupFailures ||
           options.injectEvents
             ? {
                 ...adapter,
                 openSession: (input) =>
-                  adapter.openSession(input).pipe(
+                  Effect.suspend(() =>
+                    startupRefusals-- > 0
+                      ? Effect.fail(
+                          new ProviderAdapterOpenSessionError({
+                            driver: adapter.driver,
+                            providerSessionId: input.providerSessionId,
+                            cause: "Current request startup diagnostic",
+                          }),
+                        )
+                      : adapter.openSession(input),
+                  ).pipe(
                     Effect.map((runtime) => ({
                       ...runtime,
                       // Delay delivery of the actual first lifecycle frame, preserving its
@@ -327,7 +413,10 @@ const withNativeQueue = <A, E, R>(
             : []),
         ]),
         {
-          configureMcp: false,
+          configureMcp: options.mcpSessionRegistryLayer !== undefined,
+          ...(options.mcpSessionRegistryLayer
+            ? { mcpSessionRegistryLayer: options.mcpSessionRegistryLayer }
+            : {}),
           ...(options.failCheckpointDiff || options.holdCheckpointCapture
             ? {
                 vcsProcessLayer: Layer.effect(
@@ -375,7 +464,12 @@ const withNativeQueue = <A, E, R>(
           ...(options.runEffectWorker === undefined
             ? {}
             : { runEffectWorker: options.runEffectWorker }),
+          ...(options.runtimePolicyLayer === undefined
+            ? {}
+            : { runtimePolicyLayer: options.runtimePolicyLayer }),
         },
+      ).pipe(
+        Layer.provideMerge(options.mcpSessionRegistryLayer ?? McpSessionRegistryTestkit.layer),
       );
       return yield* Effect.gen(function* () {
         const orchestrator = yield* OrchestratorV2;
@@ -424,10 +518,15 @@ const withNativeQueue = <A, E, R>(
           threadId,
           orchestrator,
           offers,
+          steers,
+          takeSteer: Queue.take(steering).pipe(Effect.timeout("15 seconds")),
           injectEvent: (event) => Queue.offer(injected, event).pipe(Effect.asVoid),
           preparationReady: Deferred.await(preparationReady),
           releasePreparation: Deferred.succeed(preparationReleased, undefined).pipe(Effect.asVoid),
           preparationAttempts: () => preparationAttempts,
+          failNextStarts: (count) => {
+            startupRefusals = count;
+          },
           takeOffer,
           captureEntered: Deferred.await(captureEntered),
           releaseCapture: Deferred.succeed(captureReleased, undefined).pipe(Effect.asVoid),
@@ -2593,4 +2692,813 @@ it.live(
       }),
     );
   },
+);
+
+it.live(
+  "settles a failed native startup by its own diagnostic despite an older failure and permits retry",
+  () =>
+    withNativeQueue(
+      "inherited-startup-diagnostic",
+      ({ orchestrator, threadId, takeOffer, waitFor, offers, failNextStarts }) =>
+        Effect.gen(function* () {
+          yield* send(orchestrator, threadId, "older failure");
+          const old = yield* takeOffer;
+          yield* old.settle("failed");
+          const seeded = yield* waitFor(
+            (p) => p.runs.find((run) => run.id === old.input.runId)?.status === "failed",
+          );
+          const oldErrors = seeded.turnItems.filter(
+            (item) => item.runId === old.input.runId && item.type === "error",
+          );
+          assert.isAbove(oldErrors.length, 0);
+          yield* (yield* ProviderSessionManagerV2).close(
+            old.input.providerThread.providerSessionId!,
+          );
+          failNextStarts(5);
+          yield* send(orchestrator, threadId, "fail current startup");
+          const admitted = yield* orchestrator.getThreadProjection(threadId);
+          const current = admitted.runs.at(-1)!;
+          assert.notEqual(current.id, old.input.runId);
+          const observeFailure = waitFor(
+            (p) =>
+              p.runs.find((run) => run.id === current.id)?.status === "failed" &&
+              p.turnItems.some(
+                (item) =>
+                  item.runId === current.id &&
+                  item.type === "error" &&
+                  item.title === "Provider session failed to open",
+              ),
+          );
+          const failed = yield* observeFailure;
+          const diagnostic = failed.turnItems.find(
+            (item) => item.runId === current.id && item.type === "error",
+          );
+          assert.ok(diagnostic?.type === "error");
+          assert.match(diagnostic.failure.message, /open/i);
+          assert.isFalse(
+            oldErrors.some(
+              (item) =>
+                item.type === "error" && item.failure.message === diagnostic.failure.message,
+            ),
+          );
+          assert.deepEqual(
+            failed.turnItems.filter(
+              (item) => item.runId === old.input.runId && item.type === "error",
+            ),
+            oldErrors,
+          );
+          assert.isFalse(
+            failed.providerTurns.some((turn) => turn.runAttemptId === current.activeAttemptId),
+          );
+          assert.deepEqual(offers, ["older failure"]);
+          yield* send(orchestrator, threadId, "clean retry");
+          const retry = yield* takeOffer;
+          assert.notEqual(retry.input.runId, current.id);
+          yield* retry.settle("completed");
+          const recovered = yield* waitFor(
+            (p) => p.runs.find((run) => run.id === retry.input.runId)?.status === "completed",
+          );
+          assert.isFalse(
+            recovered.turnItems.some(
+              (item) => item.runId === retry.input.runId && item.type === "error",
+            ),
+          );
+          assert.equal(recovered.runs.find((run) => run.id === current.id)?.status, "failed");
+          assert.lengthOf(offers, 2);
+          assert.equal(offers[0], "older failure");
+          assert.isTrue(offers[1]!.endsWith("User message:\nclean retry"));
+        }),
+      { controlStartupFailures: true },
+    ),
+);
+
+it.live(
+  "promotes the original queued payload once through command commit and native Steer while retaining the tail",
+  () =>
+    Effect.gen(function* () {
+      const release = BUILT_IN_SKILL_RELEASES.find((release) =>
+        release.supportedScopes.includes("user"),
+      );
+      assert.ok(release);
+      const planner = yield* ScientSkillSession.ScientSkillSessionPlanner.pipe(
+        Effect.provide(
+          ScientSkillSession.layer.pipe(
+            Layer.provide(
+              Layer.merge(
+                ScientSkillRegistry.layerFromCatalog({ releases: [release], diagnostics: [] }),
+                ScientSkillPolicy.layerFromSnapshot({
+                  userSkills: [
+                    {
+                      release: toSkillReleaseRef(release),
+                      active: true,
+                      invocationPolicy: "explicit",
+                    },
+                  ],
+                  projectSkills: [],
+                  trustedProjects: [],
+                }),
+              ),
+            ),
+          ),
+        ),
+      );
+      yield* withNativeQueue(
+        "queued-promotion-positive",
+        ({ orchestrator, threadId, takeOffer, takeSteer, offers, steers, waitFor }) =>
+          Effect.gen(function* () {
+            const worker = yield* OrchestrationEffectWorkerV2;
+            const outbox = yield* EffectOutboxV2;
+            const fs = yield* FileSystem.FileSystem;
+            const config = yield* ServerConfig;
+            yield* send(orchestrator, threadId, "foreground");
+            yield* worker.drain(12);
+            const foreground = yield* takeOffer;
+            const active = yield* waitFor((p) =>
+              p.providerTurns.some(
+                (turn) =>
+                  turn.runAttemptId === foreground.input.attemptId &&
+                  turn.nativeAcceptance === "accepted",
+              ),
+            );
+            const nativeTurn = active.providerTurns.find(
+              (turn) => turn.runAttemptId === foreground.input.attemptId,
+            )!;
+            const messageId = MessageId.make(`${threadId}:original-queued-message`);
+            const attachment = {
+              type: "file" as const,
+              id: ChatAttachmentId.make(createAttachmentId(threadId)!),
+              name: "queued-evidence.txt",
+              mimeType: "text/plain",
+              sizeBytes: 21,
+            };
+            const path = resolveAttachmentPath({
+              attachmentsDir: config.attachmentsDir,
+              attachment,
+            });
+            assert.ok(path);
+            yield* fs.makeDirectory(config.attachmentsDir, { recursive: true });
+            yield* fs.writeFileString(path, "owned queued evidence");
+            const context = {
+              version: 1 as const,
+              records: [
+                {
+                  version: 1 as const,
+                  kind: "terminal" as const,
+                  contextId: ComposerContextId.make("promotion-terminal"),
+                  label: "Captured terminal",
+                  terminalId: "fixture-terminal",
+                  terminalLabel: "Promotion evidence",
+                  lineStart: 0,
+                  lineEnd: 1,
+                  text: "Unique captured promotion context",
+                },
+              ],
+            };
+            const queuedInstruction =
+              "Compare the queued zirconium evidence before recommending a revision.";
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`${threadId}:queue-selected`),
+              threadId,
+              messageId,
+              text: `${queuedInstruction} [Captured terminal](t3-context://v1/terminal/promotion-terminal)`,
+              attachments: [attachment],
+              context,
+              selectedScientSkillNames: [release.name],
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: "user",
+              creationSource: "mobile",
+            });
+            yield* send(orchestrator, threadId, "untouched tail", true);
+            const queued = yield* orchestrator.getThreadProjection(threadId);
+            const selected = queued.runs.find((run) => run.userMessageId === messageId)!;
+            const tail = queued.runs.find(
+              (run) => run.status === "queued" && run.id !== selected.id,
+            )!;
+            const original = queued.messages.find((message) => message.id === messageId)!;
+            assert.equal(selected.status, "queued");
+            assert.equal(selected.runtimeMode, "full-access");
+            assert.equal(selected.interactionMode, "default");
+            assert.deepEqual(original.context, context);
+            assert.deepEqual(original.attachments, [attachment]);
+            // Future composer defaults must not replace the queued request's captured modes.
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              threadId,
+              commandId: CommandId.make(`${threadId}:future-runtime`),
+              runtimeMode: "approval-required",
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.interaction-mode.set",
+              threadId,
+              commandId: CommandId.make(`${threadId}:future-interaction`),
+              interactionMode: "plan",
+            });
+            const before = yield* orchestrator.getThreadProjection(threadId);
+            const refusedId = CommandId.make(`${threadId}:missing-target-promotion`);
+            assert.equal(
+              (yield* Effect.result(
+                orchestrator.dispatch({
+                  type: "queued-message.promote-to-steer",
+                  commandId: refusedId,
+                  threadId,
+                  queuedRunId: selected.id,
+                  targetRunId: RunId.make("missing-target-run"),
+                }),
+              ))._tag,
+              "Failure",
+            );
+            assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), before);
+            assert.deepEqual(yield* outbox.listByCommandId(refusedId), []);
+            assert.lengthOf(steers, 0);
+            const command = {
+              type: "queued-message.promote-to-steer" as const,
+              commandId: CommandId.make(`${threadId}:accepted-promotion`),
+              threadId,
+              queuedRunId: selected.id,
+              targetRunId: foreground.input.runId,
+            };
+            const receipt = yield* orchestrator.dispatch(command);
+            const committed = yield* orchestrator.getThreadProjection(threadId);
+            const moved = committed.messages.find((message) => message.id === messageId)!;
+            assert.equal(moved.runId, foreground.input.runId);
+            assert.equal(moved.nodeId, foreground.input.rootNodeId);
+            for (const key of [
+              "id",
+              "text",
+              "attachments",
+              "context",
+              "selectedScientSkillNames",
+              "createdBy",
+              "creationSource",
+            ] as const) {
+              assert.deepEqual(moved[key], original[key]);
+            }
+            assert.equal(committed.runs.find((run) => run.id === selected.id)?.status, "cancelled");
+            assert.isNull(committed.runs.find((run) => run.id === selected.id)?.queuePosition);
+            assert.equal(
+              committed.nodes.find((node) => node.id === selected.rootNodeId)?.status,
+              "cancelled",
+            );
+            assert.equal(
+              committed.attempts.find((attempt) => attempt.id === selected.activeAttemptId)?.status,
+              "cancelled",
+            );
+            assert.deepEqual(
+              committed.runs.find((run) => run.id === tail.id),
+              tail,
+            );
+            const item = committed.turnItems.find(
+              (item) => item.type === "user_message" && item.messageId === messageId,
+            );
+            assert.ok(item?.type === "user_message");
+            assert.equal(item.inputIntent, "promoted_queued_to_steer");
+            assert.equal(item.runId, foreground.input.runId);
+            assert.equal(item.providerTurnId, nativeTurn.id);
+            const effects = yield* outbox.listByCommandId(command.commandId);
+            assert.lengthOf(effects, 1);
+            assert.equal(effects[0]?.request.type, "provider-turn.steer");
+            assert.equal(effects[0]?.status, "pending");
+            assert.lengthOf(steers, 0);
+            assert.lengthOf(offers, 1);
+            assert.equal((yield* orchestrator.dispatch(command)).sequence, receipt.sequence);
+            assert.deepEqual(yield* outbox.listByCommandId(command.commandId), effects);
+            yield* worker.drain(12);
+            const delivered = yield* takeSteer;
+            assert.equal(delivered.providerTurnId, nativeTurn.id);
+            assert.equal(delivered.runId, foreground.input.runId);
+            assert.equal(delivered.message.messageId, messageId);
+            assert.equal(delivered.message.creationSource, "mobile");
+            const credential = readMcpProviderSession(threadId);
+            assert.ok(credential);
+            const scope = yield* (yield* McpSessionRegistry.McpSessionRegistry).resolve(
+              credential.authorizationHeader.replace(/^Bearer\s+/, ""),
+            );
+            assert.ok(scope);
+            assert.deepEqual(
+              scope.skillScope?.skills.map((skill) => skill.name),
+              [release.name],
+            );
+            assert.deepEqual(delivered.message.attachments, original.attachments);
+            assert.include(delivered.message.text, queuedInstruction);
+            assert.include(delivered.message.text, "Unique captured promotion context");
+            assert.include(delivered.message.text, `\`${release.name}\` (selected by the user)`);
+            assert.equal(yield* fs.readFileString(path), "owned queued evidence");
+            assert.equal(
+              (yield* outbox.listByCommandId(command.commandId))[0]?.status,
+              "succeeded",
+            );
+            assert.lengthOf(steers, 1);
+            assert.lengthOf(offers, 1);
+            const after = yield* orchestrator.getThreadProjection(threadId);
+            assert.lengthOf(after.providerTurns, 1);
+            assert.lengthOf(
+              after.attempts.filter((attempt) => attempt.runId === foreground.input.runId),
+              1,
+            );
+            assert.equal((yield* orchestrator.dispatch(command)).sequence, receipt.sequence);
+            yield* worker.drain(12);
+            assert.lengthOf(steers, 1);
+            assert.lengthOf(offers, 1);
+            yield* runDaemonWithOptions({ concurrency: 1 }).pipe(Effect.forkScoped);
+            yield* foreground.settle("completed");
+            const next = yield* takeOffer;
+            assert.equal(next.input.message.messageId, tail.userMessageId);
+            assert.include(next.input.message.text, "untouched tail");
+            yield* next.settle("completed");
+            const settled = yield* waitFor(
+              (p) => p.runs.find((run) => run.id === tail.id)?.status === "completed",
+            );
+            assert.equal(settled.runs.find((run) => run.id === selected.id)?.status, "cancelled");
+            assert.lengthOf(offers, 2);
+            assert.lengthOf(steers, 1);
+            assert.equal(yield* fs.readFileString(path), "owned queued evidence");
+          }),
+        {
+          runEffectWorker: false,
+          nativeSteering: true,
+          mcpSessionRegistryLayer: promotionMcpRegistryLayer,
+        },
+      ).pipe(Effect.provideService(ScientSkillSession.ScientSkillSessionPlanner, planner));
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.live("a promotion that loses to native queue extraction leaves the started request intact", () =>
+  withNativeQueue(
+    "queued-promotion-extraction-race",
+    ({ orchestrator, threadId, takeOffer, waitFor, offers, steers }) =>
+      Effect.gen(function* () {
+        const outbox = yield* EffectOutboxV2;
+        yield* send(orchestrator, threadId, "foreground");
+        const foreground = yield* takeOffer;
+        yield* send(orchestrator, threadId, "extracted queued request", true);
+        const queued = yield* orchestrator.getThreadProjection(threadId);
+        const selected = queued.runs.find((run) => run.status === "queued")!;
+        yield* foreground.settle("completed");
+        const started = yield* takeOffer;
+        const before = yield* waitFor((p) =>
+          p.providerTurns.some(
+            (turn) =>
+              turn.runAttemptId === started.input.attemptId && turn.nativeAcceptance === "accepted",
+          ),
+        );
+        assert.equal(started.input.runId, selected.id);
+        const commandId = CommandId.make(`${threadId}:losing-promotion`);
+        assert.equal(
+          (yield* Effect.result(
+            orchestrator.dispatch({
+              type: "queued-message.promote-to-steer",
+              commandId,
+              threadId,
+              queuedRunId: selected.id,
+              targetRunId: foreground.input.runId,
+            }),
+          ))._tag,
+          "Failure",
+        );
+        assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), before);
+        assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
+        assert.lengthOf(steers, 0);
+        assert.lengthOf(offers, 2);
+        yield* started.settle("completed");
+        yield* waitFor((p) => p.runs.find((run) => run.id === selected.id)?.status === "completed");
+      }),
+    { nativeSteering: true },
+  ),
+);
+
+it.live(
+  "keeps an active root checkpoint in A across future B admission and reuses A after reopen",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const name = "workspace-bound-root-overlap";
+        const workspaceA = yield* checkpointWorkspace(`${name}-A`, {
+          "evidence.txt": "Initial A\n",
+        });
+        const workspaceB = yield* checkpointWorkspace(`${name}-B`, {
+          "evidence.txt": "Initial B\n",
+        });
+        const fs = yield* FileSystem.FileSystem;
+        const profile = yield* Effect.acquireRelease(
+          fs.makeTempDirectory({ prefix: name }),
+          (path) => fs.remove(path, { recursive: true }).pipe(Effect.orDie),
+        );
+        const databaseLayer = makeSqlitePersistenceLive(`${profile}/state.sqlite`).pipe(
+          Layer.provide(NodeServices.layer),
+        );
+        const policyLayer = RuntimePolicy.layerFromProjectStore.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              ProjectStore.layer.pipe(Layer.provide(databaseLayer)),
+              Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
+                getInstance: () => Effect.succeed(undefined),
+              }),
+            ),
+          ),
+          Layer.orDie,
+        );
+        const serverConfigLayer = Layer.succeed(ServerConfig, yield* makeReplayServerConfig(name));
+        const options = {
+          cwd: workspaceA,
+          databaseLayer,
+          serverConfigLayer,
+          runtimePolicyLayer: policyLayer,
+          holdCheckpointCapture: true,
+          runEffectWorker: false,
+        };
+        const threadId = ThreadId.make(`thread:${name}`);
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const git = (cwd: string, args: ReadonlyArray<string>) =>
+          spawner.string(ChildProcess.make("git", args, { cwd }));
+        const snapshotB = Effect.gen(function* () {
+          return {
+            refs: yield* git(workspaceB, ["for-each-ref"]),
+            objects: yield* git(workspaceB, ["count-objects", "-v"]),
+            index: Array.from(yield* fs.readFile(`${workspaceB}/.git/index`)),
+            files: yield* git(workspaceB, ["ls-files", "--others", "--exclude-standard"]),
+            text: yield* fs.readFileString(`${workspaceB}/evidence.txt`),
+          };
+        });
+        const untouchedB = yield* snapshotB;
+        const finished = yield* withNativeQueue(
+          name,
+          ({
+            orchestrator,
+            takeOffer,
+            offers,
+            waitFor,
+            beforeOffer,
+            captureEntered,
+            releaseCapture,
+          }) =>
+            Effect.gen(function* () {
+              const sink = yield* EventSinkV2;
+              const worker = yield* OrchestrationEffectWorkerV2;
+              const store = yield* CheckpointStore;
+              const checkpoints = yield* CheckpointServiceV2;
+              const projectId = ProjectId.make(`project:${name}`);
+              const now = yield* DateTime.now;
+              yield* sink.commitProjectCommand({
+                commandId: CommandId.make(`${name}:project-create`),
+                projectId,
+                commandType: "project.created",
+                acceptedAt: now,
+                event: {
+                  eventId: EventId.make(`${name}:project-create`),
+                  aggregateKind: "project",
+                  aggregateId: projectId,
+                  occurredAt: DateTime.formatIso(now),
+                  commandId: null,
+                  causationEventId: null,
+                  correlationId: null,
+                  metadata: {},
+                  type: "project.created",
+                  payload: {
+                    projectId,
+                    title: name,
+                    workspaceRoot: workspaceA,
+                    defaultModelSelection: modelSelection,
+                    scripts: [],
+                    createdAt: DateTime.formatIso(now),
+                    updatedAt: DateTime.formatIso(now),
+                  },
+                },
+              });
+              let relocation = 0;
+              const relocate = (workspaceRoot: string) =>
+                sink.commitProjectCommand({
+                  commandId: CommandId.make(`${name}:relocate:${++relocation}`),
+                  projectId,
+                  commandType: "project.meta-updated",
+                  acceptedAt: now,
+                  event: {
+                    eventId: EventId.make(`${name}:relocate:${relocation}`),
+                    aggregateKind: "project",
+                    aggregateId: projectId,
+                    occurredAt: DateTime.formatIso(now),
+                    commandId: null,
+                    causationEventId: null,
+                    correlationId: null,
+                    metadata: {},
+                    type: "project.meta-updated",
+                    payload: { projectId, workspaceRoot, updatedAt: DateTime.formatIso(now) },
+                  },
+                });
+              yield* send(orchestrator, threadId, "write in A");
+              yield* worker.drain(12);
+              const first = yield* takeOffer;
+              assert.equal(first.input.runtimePolicy.cwd, workspaceA);
+              const active = yield* waitFor((p) => p.runs[0]?.status === "running");
+              const scopeA = active.checkpointScopes.find(
+                (scope) =>
+                  scope.id ===
+                  active.nodes.find((node) => node.id === first.input.rootNodeId)
+                    ?.checkpointScopeId,
+              )!;
+              assert.equal(scopeA.cwd, workspaceA);
+              const baselineA = checkpointRefForScopeOrdinal({
+                scopeId: scopeA.id,
+                ordinalWithinScope: 0,
+              });
+              assert.isTrue(
+                yield* store.hasCheckpointRef({ cwd: workspaceA, checkpointRef: baselineA }),
+              );
+              // A remains live and writes to its captured workspace while future admission uses B.
+              yield* first.answer("Exact native A answer");
+              yield* fs.writeFileString(`${workspaceA}/evidence.txt`, "Native A output\n");
+              yield* relocate(workspaceB);
+              yield* send(orchestrator, threadId, "write in B", true);
+              const admitted = yield* orchestrator.getThreadProjection(threadId);
+              const queuedB = admitted.runs.find((run) => run.status === "queued")!;
+              const scopeB = admitted.checkpointScopes.find(
+                (scope) =>
+                  scope.id ===
+                  admitted.nodes.find((node) => node.id === queuedB.rootNodeId)?.checkpointScopeId,
+              )!;
+              assert.notEqual(scopeA.id, scopeB.id);
+              assert.equal(scopeB.cwd, workspaceB);
+              assert.deepEqual(
+                admitted.checkpointScopes.find((scope) => scope.id === scopeA.id),
+                scopeA,
+              );
+              assert.equal(
+                admitted.nodes.find((node) => node.id === first.input.rootNodeId)
+                  ?.checkpointScopeId,
+                scopeA.id,
+              );
+              assert.equal(admitted.runs[0]?.status, "running");
+              assert.deepEqual(yield* snapshotB, untouchedB);
+              assert.lengthOf(offers, 1);
+              yield* first.settle("completed");
+              yield* waitFor((p) => p.runs[0]?.status === "waiting");
+              const draining = yield* worker.drain(12).pipe(Effect.forkScoped);
+              yield* captureEntered.pipe(Effect.timeout("15 seconds"));
+              const parked = yield* orchestrator.getThreadProjection(threadId);
+              assert.equal(
+                parked.messages.find(
+                  (message) => message.runId === first.input.runId && message.role === "assistant",
+                )?.text,
+                "Exact native A answer",
+              );
+              assert.isNull(parked.runs[0]!.checkpointId);
+              assert.lengthOf(offers, 1);
+              assert.deepEqual(yield* snapshotB, untouchedB);
+              beforeOffer((input) =>
+                Effect.gen(function* () {
+                  if (input.runId !== queuedB.id) return;
+                  const boundary = yield* orchestrator.getThreadProjection(threadId);
+                  const prior = boundary.runs.find((run) => run.id === first.input.runId)!;
+                  const checkpoint = boundary.checkpoints.find(
+                    (row) => row.id === prior.checkpointId,
+                  )!;
+                  assert.equal(prior.status, "completed");
+                  assert.equal(checkpoint.status, "ready");
+                  assert.equal(checkpoint.scopeId, scopeA.id);
+                  assert.equal(
+                    boundary.messages.find(
+                      (message) => message.runId === prior.id && message.role === "assistant",
+                    )?.text,
+                    "Exact native A answer",
+                  );
+                  assert.equal(
+                    yield* git(workspaceA, ["show", `${checkpoint.ref}:evidence.txt`]),
+                    "Native A output\n",
+                  );
+                  assert.isFalse(
+                    yield* store.hasCheckpointRef({
+                      cwd: workspaceB,
+                      checkpointRef: checkpoint.ref,
+                    }),
+                  );
+                }).pipe(Effect.orDie),
+              );
+              yield* releaseCapture;
+              yield* Fiber.join(draining);
+              const second = yield* takeOffer;
+              assert.equal(second.input.runId, queuedB.id);
+              assert.equal(second.input.runtimePolicy.cwd, workspaceB);
+              assert.lengthOf(offers, 2);
+              const startedB = yield* orchestrator.getThreadProjection(threadId);
+              const checkpointA = startedB.checkpoints.find(
+                (row) => row.id === startedB.runs[0]!.checkpointId,
+              )!;
+              assert.include(
+                yield* store.diffCheckpoints({
+                  cwd: workspaceA,
+                  fromCheckpointRef: baselineA,
+                  toCheckpointRef: checkpointA.ref,
+                  fallbackFromToHead: false,
+                  ignoreWhitespace: false,
+                  format: "patch",
+                }),
+                "+Native A output",
+              );
+              const baselineB = checkpointRefForScopeOrdinal({
+                scopeId: scopeB.id,
+                ordinalWithinScope: 1,
+              });
+              assert.equal(
+                yield* git(workspaceB, ["show", `${baselineB}:evidence.txt`]),
+                "Initial B\n",
+              );
+              yield* fs.writeFileString(`${workspaceB}/evidence.txt`, "Native B output\n");
+              yield* second.answer("Exact native B answer");
+              yield* relocate(workspaceA);
+              yield* send(orchestrator, threadId, "return to A", true);
+              const returnQueued = yield* orchestrator.getThreadProjection(threadId);
+              const thirdRun = returnQueued.runs.find((run) => run.ordinal === 3)!;
+              assert.equal(
+                returnQueued.nodes.find((node) => node.id === thirdRun.rootNodeId)
+                  ?.checkpointScopeId,
+                scopeA.id,
+              );
+              const retainedRefsA = yield* git(workspaceA, ["for-each-ref"]);
+              yield* second.settle("completed");
+              yield* waitFor(
+                (p) => p.runs.find((run) => run.id === second.input.runId)?.status === "waiting",
+              );
+              yield* worker.drain(12);
+              const third = yield* takeOffer;
+              assert.equal(third.input.runId, thirdRun.id);
+              assert.equal(third.input.runtimePolicy.cwd, workspaceA);
+              const beforeThird = yield* orchestrator.getThreadProjection(threadId);
+              const checkpointB = beforeThird.checkpoints.find(
+                (row) =>
+                  row.id ===
+                  beforeThird.runs.find((run) => run.id === second.input.runId)!.checkpointId,
+              )!;
+              assert.equal(checkpointB.scopeId, scopeB.id);
+              assert.equal(
+                yield* git(workspaceB, ["show", `${checkpointB.ref}:evidence.txt`]),
+                "Native B output\n",
+              );
+              assert.include(yield* git(workspaceA, ["for-each-ref"]), retainedRefsA.trim());
+              yield* fs.writeFileString(`${workspaceA}/evidence.txt`, "Returned native A output\n");
+              yield* third.answer("Exact returned A answer");
+              yield* third.settle("completed");
+              yield* waitFor(
+                (p) => p.runs.find((run) => run.id === third.input.runId)?.status === "waiting",
+              );
+              yield* worker.drain(12);
+              const completed = yield* waitFor((p) =>
+                p.runs.every((run) => run.status === "completed"),
+              );
+              const checkpointReturnA = completed.checkpoints.find(
+                (row) =>
+                  row.id ===
+                  completed.runs.find((run) => run.id === third.input.runId)!.checkpointId,
+              )!;
+              const returnParent = completed.checkpoints.find(
+                (row) => row.id === checkpointReturnA.parentCheckpointId,
+              )!;
+              assert.equal(checkpointReturnA.scopeId, scopeA.id);
+              assert.equal(returnParent.scopeId, scopeA.id);
+              assert.notEqual(returnParent.id, checkpointB.id);
+              assert.equal(returnParent.status, "ready");
+              assert.deepEqual(
+                completed.runs.map((run) => run.ordinal),
+                [1, 2, 3],
+              );
+              assert.lengthOf(offers, 3);
+              // Future project authority is B, but restoring a captured A boundary must use A.
+              yield* relocate(workspaceB);
+              const capturedB = yield* snapshotB;
+              yield* checkpoints.restore({ scope: scopeA, checkpoint: checkpointA });
+              assert.equal(
+                yield* fs.readFileString(`${workspaceA}/evidence.txt`),
+                "Native A output\n",
+              );
+              assert.deepEqual(yield* snapshotB, capturedB);
+              const sequence = yield* orchestrator.getThreadEventSequence(threadId);
+              const beforeConflict = yield* orchestrator.getThreadProjection(threadId);
+              const refsA = yield* git(workspaceA, ["for-each-ref"]);
+              const rejected = yield* Effect.result(
+                sink.commitCommand({
+                  commandId: CommandId.make(`${name}:corrupt-root`),
+                  threadId,
+                  commandType: "checkpoint-scope.created",
+                  acceptedAt: now,
+                  effects: [],
+                  events: [
+                    {
+                      id: EventId.make(`${name}:corrupt-root`),
+                      type: "checkpoint-scope.created",
+                      threadId,
+                      occurredAt: now,
+                      payload: { ...scopeA, cwd: workspaceB },
+                    },
+                  ],
+                }),
+              );
+              assert.equal(rejected._tag, "Failure");
+              assert.equal(yield* orchestrator.getThreadEventSequence(threadId), sequence);
+              assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), beforeConflict);
+              assert.equal(yield* git(workspaceA, ["for-each-ref"]), refsA);
+              assert.deepEqual(yield* snapshotB, capturedB);
+              // Historical reader fixture: produce a real old-format ref without changing any
+              // run's new scope or inventing a run completion/baseline receipt.
+              const legacyId = yield* (yield* IdAllocatorV2).allocate.checkpointScope({
+                threadId,
+                name: "root",
+              });
+              const legacyScope = { ...scopeA, id: legacyId, runId: null };
+              const legacyCheckpoint = yield* checkpoints.capture({
+                scope: legacyScope,
+                runId: null,
+                nodeId: first.input.rootNodeId,
+                ordinalWithinScope: 0,
+                appRunOrdinal: null,
+                capturedAt: now,
+              });
+              assert.equal(legacyCheckpoint.status, "ready");
+              yield* sink.write({
+                events: [
+                  ...[legacyScope, { ...legacyScope, cwd: workspaceB }, legacyScope].map(
+                    (payload, index) => ({
+                      id: EventId.make(`${name}:legacy-scope:${index}`),
+                      type: "checkpoint-scope.created" as const,
+                      threadId,
+                      occurredAt: now,
+                      payload,
+                    }),
+                  ),
+                  {
+                    id: EventId.make(`${name}:legacy-checkpoint`),
+                    type: "checkpoint.captured",
+                    threadId,
+                    occurredAt: now,
+                    payload: legacyCheckpoint,
+                  },
+                ],
+              });
+              assert.deepEqual(yield* snapshotB, capturedB);
+              yield* (yield* ProviderSessionManagerV2).closeInstance(instanceId);
+              yield* waitFor((projection) =>
+                projection.providerSessions.every((session) => session.status === "stopped"),
+              );
+              return {
+                projection: yield* orchestrator.getThreadProjection(threadId),
+                checkpointA,
+                checkpointB,
+                checkpointReturnA,
+                scopeA,
+                scopeB,
+                legacyScope,
+                legacyCheckpoint,
+              };
+            }).pipe(Effect.ensuring(releaseCapture)),
+          options,
+        );
+        // All worker/manager/database scopes are closed before the file-backed store reopens.
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const projections = yield* ProjectionStore.ProjectionStoreV2;
+            assert.deepEqual(yield* projections.getThreadProjection(threadId), finished.projection);
+            const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+            assert.isTrue((yield* maintenance.rebuild).valid);
+            assert.deepEqual(yield* projections.getThreadProjection(threadId), finished.projection);
+            assert.equal(
+              yield* git(workspaceA, ["show", `${finished.checkpointA.ref}:evidence.txt`]),
+              "Native A output\n",
+            );
+            assert.equal(
+              yield* git(workspaceB, ["show", `${finished.checkpointB.ref}:evidence.txt`]),
+              "Native B output\n",
+            );
+            assert.equal(
+              yield* git(workspaceA, ["show", `${finished.checkpointReturnA.ref}:evidence.txt`]),
+              "Returned native A output\n",
+            );
+            assert.equal(
+              yield* git(workspaceA, ["show", `${finished.legacyCheckpoint.ref}:evidence.txt`]),
+              "Native A output\n",
+            );
+            const replayed = yield* projections.getThreadProjection(threadId);
+            assert.deepEqual(
+              replayed.checkpointScopes.find((scope) => scope.id === finished.legacyScope.id),
+              finished.legacyScope,
+            );
+            assert.deepEqual(
+              replayed.checkpoints.find(
+                (checkpoint) => checkpoint.id === finished.legacyCheckpoint.id,
+              ),
+              finished.legacyCheckpoint,
+            );
+          }).pipe(
+            Effect.provide(
+              ProjectionMaintenance.layer.pipe(
+                Layer.provideMerge(
+                  Layer.mergeAll(ProjectionStore.layer, EventStore.layer).pipe(
+                    Layer.provideMerge(databaseLayer),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
 );
