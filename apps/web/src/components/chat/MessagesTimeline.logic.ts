@@ -67,6 +67,9 @@ import {
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { computeElapsedMs } from "@scientfactory/conversation/work-log-grouping";
 export { shouldPreserveAssistantLineBreaks } from "@scientfactory/conversation/work-log-grouping";
+// SCIENT-FORK:START — historical turns group inert presentation.
+import { timelineEntryHistoryKey } from "../../scient/fork/historicalTimelineTurns";
+// SCIENT-FORK:END
 
 /** The later of two ISO timestamps, ignoring unparseable ones. */
 function maxIsoTimestamp(a: string | null, b: string | null): string | null {
@@ -77,26 +80,6 @@ function maxIsoTimestamp(a: string | null, b: string | null): string | null {
   if (!Number.isFinite(aMs)) return b;
   if (!Number.isFinite(bMs)) return a;
   return bMs > aMs ? b : a;
-}
-
-/** Historical turn IDs group inert presentation; they never replace native ownership. */
-function timelineEntryHistoryKey(entry: TimelineEntry): string | null {
-  const projected =
-    entry.kind === "message" || entry.kind === "event"
-      ? entry.projectedItem
-      : entry.kind === "work"
-        ? entry.entry.projectedItem
-        : undefined;
-  if (
-    !projected ||
-    projected.item.runId !== null ||
-    projected.item.historyTurnId === undefined ||
-    (entry.kind === "message" && entry.message.runId != null) ||
-    (entry.kind === "work" && entry.entry.runId != null)
-  ) {
-    return null;
-  }
-  return JSON.stringify([projected.item.threadId, projected.item.historyTurnId]);
 }
 
 export function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<TimelineEntry>) {
