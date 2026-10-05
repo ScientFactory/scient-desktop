@@ -604,6 +604,15 @@ export type RunExecutionServiceV2Error = typeof RunExecutionServiceV2Error.Type;
 /**
  * SERVICE DEFINITION
  */
+type RunTerminalOutcome =
+  | ProviderTerminalEvent
+  | {
+      readonly driver: ProviderDriverKind;
+      readonly status: "interrupted";
+      readonly failure: null;
+      readonly threadDisposition: ProviderTerminalEvent["threadDisposition"];
+    };
+
 export interface RunExecutionServiceV2StartRootRunInput {
   readonly commandId: CommandId;
   readonly appThread: OrchestrationV2AppThread;
@@ -624,6 +633,10 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly relatedThreadIds?: ReadonlyArray<ThreadId>;
   readonly relatedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
   readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, never>;
+  readonly cancelBeforeProviderTurn?: () => Effect.Effect<
+    EventSink.PendingStartOwner | undefined,
+    unknown
+  >;
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, never>;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly message: ProviderAdapterV2TurnMessage;
@@ -672,7 +685,9 @@ export const layer: Layer.Layer<
       readonly shouldFinalizeRun?: () => Effect.Effect<boolean, never>;
       readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
       readonly openRunOwnedSubagents?: OpenRunOwnedSubagentProjection;
-      readonly terminal: ProviderTerminalEvent;
+      readonly terminal: RunTerminalOutcome;
+      readonly preserveProviderThread?: boolean;
+      readonly pendingStartOwner?: EventSink.PendingStartOwner;
       readonly failedStartReceipt?: OrchestrationV2ProviderTurn;
       readonly failureItemPersisted: boolean;
       readonly refreshAfterTurn: Effect.Effect<void>;
@@ -724,7 +739,7 @@ export const layer: Layer.Layer<
               yield* input.refreshAfterTurn;
             }
           }
-          return;
+          return false;
         }
         const allocateEventId = () => idAllocator.allocate.event({ threadId: input.run.threadId });
         const open = input.openRunOwnedSubagents ?? emptyOpenRunOwnedSubagentProjection();
@@ -895,14 +910,18 @@ export const layer: Layer.Layer<
               occurredAt: completedAt,
               payload: finalizedRootNode,
             },
-            {
-              id: providerThreadEventId,
-              type: "provider-thread.updated",
-              threadId: input.run.threadId,
-              providerInstanceId: input.run.providerInstanceId,
-              occurredAt: completedAt,
-              payload: finalizedProviderThread,
-            },
+            ...(input.preserveProviderThread === true
+              ? []
+              : [
+                  {
+                    id: providerThreadEventId,
+                    type: "provider-thread.updated" as const,
+                    threadId: input.run.threadId,
+                    providerInstanceId: input.run.providerInstanceId,
+                    occurredAt: completedAt,
+                    payload: finalizedProviderThread,
+                  },
+                ]),
           ],
         } satisfies Parameters<typeof eventSink.writeWithEffects>[0];
         if (input.writeIfRunCurrent !== undefined) {
@@ -912,14 +931,20 @@ export const layer: Layer.Layer<
             activeAttemptId: input.writeIfRunCurrent.activeAttemptId,
             expectedStatus: input.writeIfRunCurrent.expectedStatus,
             events: finalization.events,
+            ...(input.pendingStartOwner === undefined
+              ? {}
+              : {
+                  pendingStartOwner: { ...input.pendingStartOwner, effects: finalization.effects },
+                }),
           });
           if (!result.committed) {
-            return;
+            return false;
           }
         } else {
           yield* eventSink.writeWithEffects(finalization);
         }
         yield* input.refreshAfterTurn;
+        return true;
       });
 
     return RunExecutionServiceV2.of({
@@ -935,6 +960,42 @@ export const layer: Layer.Layer<
                   cause,
                 }),
               ),
+            ),
+          );
+          const cancelledStartOwner = yield* Ref.make<EventSink.PendingStartOwner | undefined>(
+            undefined,
+          );
+          const cancelDeclinedStart = Effect.gen(function* () {
+            const stoppedThread = yield* input.cancelBeforeProviderTurn?.() ?? Effect.void;
+            if (stoppedThread === undefined) return false;
+            const committed = yield* writeFinalRunEvents({
+              run: input.run,
+              rootNode: input.rootNode,
+              checkpointScope: input.checkpointScope,
+              providerThread: input.providerThread,
+              preserveProviderThread: true,
+              pendingStartOwner: stoppedThread,
+              attempt: input.attempt,
+              terminal: {
+                driver: input.session.driver,
+                status: "interrupted",
+                failure: null,
+                threadDisposition: "reusable",
+              },
+              failureItemPersisted: false,
+              refreshAfterTurn,
+              writeIfRunCurrent: { activeAttemptId: input.attemptId, expectedStatus: "running" },
+            });
+            if (committed) yield* Ref.set(cancelledStartOwner, stoppedThread);
+            return committed;
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new RunExecutionStartError({
+                  commandId: input.commandId,
+                  runId: input.run.id,
+                  cause,
+                }),
             ),
           );
           const makeFailedTerminalEvent = (
@@ -981,10 +1042,12 @@ export const layer: Layer.Layer<
               );
             if (
               input.shouldStartProviderTurn !== undefined &&
-              !(yield* input.shouldStartProviderTurn())
-            ) {
+              !(yield* input.shouldStartProviderTurn()) &&
+              input.cancelBeforeProviderTurn === undefined
+            )
               return null;
-            }
+            // Owned pre-receipt Stop needs its subscription before interrupting
+            // retained work. The second gate still refuses every native offer.
             return responseStreamingMode;
           }).pipe(
             Effect.catchCause((cause) =>
@@ -1032,6 +1095,7 @@ export const layer: Layer.Layer<
             ),
           );
           if (responseStreamingMode === null) {
+            yield* cancelDeclinedStart;
             return;
           }
           const terminalEvent = yield* Ref.make<ProviderTerminalEvent | null>(null);
@@ -1576,7 +1640,20 @@ export const layer: Layer.Layer<
             input.shouldStartProviderTurn !== undefined &&
             !(yield* input.shouldStartProviderTurn())
           ) {
-            yield* Fiber.interrupt(providerEventFiber);
+            if (yield* cancelDeclinedStart) {
+              yield* Ref.set(rootTerminalSeen, true);
+              yield* Ref.set(rootRunFinalized, true);
+              // No native root was started. Without retained background work
+              // there is no terminal frame to end this private subscription.
+              if (
+                (yield* Ref.get(cancelledStartOwner))?.retainedTurn === undefined ||
+                (input.providerThread.pendingBackgroundTasks?.length ?? 0) === 0
+              ) {
+                yield* Fiber.interrupt(providerEventFiber);
+              }
+            } else {
+              yield* Fiber.interrupt(providerEventFiber);
+            }
             return;
           }
 
