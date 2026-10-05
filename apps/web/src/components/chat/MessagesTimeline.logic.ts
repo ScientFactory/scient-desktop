@@ -79,6 +79,26 @@ function maxIsoTimestamp(a: string | null, b: string | null): string | null {
   return bMs > aMs ? b : a;
 }
 
+/** Historical turn IDs group inert presentation; they never replace native ownership. */
+function timelineEntryHistoryKey(entry: TimelineEntry): string | null {
+  const projected =
+    entry.kind === "message" || entry.kind === "event"
+      ? entry.projectedItem
+      : entry.kind === "work"
+        ? entry.entry.projectedItem
+        : undefined;
+  if (
+    !projected ||
+    projected.item.runId !== null ||
+    projected.item.historyTurnId === undefined ||
+    (entry.kind === "message" && entry.message.runId != null) ||
+    (entry.kind === "work" && entry.entry.runId != null)
+  ) {
+    return null;
+  }
+  return JSON.stringify([projected.item.threadId, projected.item.historyTurnId]);
+}
+
 export function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<TimelineEntry>) {
   const lastAssistantMessageIdByResponseKey = new Map<string, string>();
   let runlessResponseIndex = 0;
@@ -96,7 +116,12 @@ export function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray
       continue;
     }
 
-    const responseKey = message.runId ? `run:${message.runId}` : `runless:${runlessResponseIndex}`;
+    const historyKey = timelineEntryHistoryKey(timelineEntry);
+    const responseKey = message.runId
+      ? `run:${message.runId}`
+      : historyKey !== null
+        ? `history:${historyKey}`
+        : `runless:${runlessResponseIndex}`;
     lastAssistantMessageIdByResponseKey.set(responseKey, message.id);
   }
 
@@ -988,6 +1013,23 @@ function deriveTurnFolds(input: {
   const groupsByRunId = new Map<RunId, TurnGroup>();
   const runlessFailedKeys = new Set<RunId>();
 
+  // Reuse the existing runless disclosure key, not an executable historical run.
+  // Match the prompt by provenance because queued users can precede all answers.
+  const historicalBoundaries = new Map<string, { key: RunId; createdAt: string }>();
+  for (const entry of input.timelineEntries) {
+    const historyKey = timelineEntryHistoryKey(entry);
+    if (
+      historyKey !== null &&
+      timelineEntryStartsResponse(entry) &&
+      !historicalBoundaries.has(historyKey)
+    ) {
+      historicalBoundaries.set(historyKey, {
+        key: RunId.make(`runless:${entry.id}`),
+        createdAt: entry.createdAt,
+      });
+    }
+  }
+
   // Fold state is keyed by run, so each prompt of a runless thread lends its
   // response a stable key of its own.
   let runlessKey: RunId | null = null;
@@ -1001,11 +1043,19 @@ function deriveTurnFolds(input: {
       runlessKey = input.latestRun === null ? RunId.make(`runless:${entry.id}`) : null;
       continue;
     }
-    const runId = timelineEntryFoldRunId(entry, runlessKey);
+    const historyKey = timelineEntryHistoryKey(entry);
+    const historicalBoundary =
+      historyKey === null ? undefined : historicalBoundaries.get(historyKey);
+    // Unknown historical prompts remain visible rather than borrowing another turn.
+    if (historyKey !== null && historicalBoundary === undefined) continue;
+    const runId = timelineEntryFoldRunId(entry, historicalBoundary?.key ?? runlessKey);
     if (!runId) {
       continue;
     }
-    if (runId === runlessKey && timelineEntryFailedItem(entry) !== null) {
+    if (
+      (historicalBoundary !== undefined || runId === runlessKey) &&
+      timelineEntryFailedItem(entry) !== null
+    ) {
       runlessFailedKeys.add(runId);
     }
     let group = groupsByRunId.get(runId);
@@ -1017,10 +1067,10 @@ function deriveTurnFolds(input: {
         // Each user boundary starts at most one turn; a second turn after the
         // same user message (e.g. a steer-superseded continuation) falls back
         // to its own first entry.
-        startBoundary: pendingBoundary?.createdAt ?? null,
-        anchorEntryId: pendingBoundary?.anchorEntryId ?? entry.id,
+        startBoundary: historicalBoundary?.createdAt ?? pendingBoundary?.createdAt ?? null,
+        anchorEntryId: historicalBoundary ? entry.id : (pendingBoundary?.anchorEntryId ?? entry.id),
       };
-      pendingBoundary = null;
+      if (historicalBoundary === undefined) pendingBoundary = null;
       groupsByRunId.set(runId, group);
     }
     group.entries.push(entry);
