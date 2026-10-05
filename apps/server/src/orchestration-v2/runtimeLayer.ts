@@ -293,6 +293,7 @@ const threadTitleRegenerationProvided = threadTitleRegenerationServiceLayer.pipe
 const conversationForkProvided = conversationForkServiceLayer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      providerSessionManagerProvided,
       projectionStoreLayer,
       eventSinkProvided,
       commandReceiptStoreProvided,

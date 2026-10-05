@@ -395,8 +395,9 @@ export const makeReplayDriver = Effect.fn("effect-codex-app-server/replay.makeRe
 
 export function layerReplayWithDriver(
   driver: CodexAppServerReplayDriver,
+  options: CodexClient.CodexAppServerClientOptions = {},
 ): Layer.Layer<CodexClient.CodexAppServerClient, CodexAppServerReplayError> {
-  return Layer.effect(CodexClient.CodexAppServerClient, makeReplayClientWithState(driver));
+  return Layer.effect(CodexClient.CodexAppServerClient, makeReplayClientWithState(driver, options));
 }
 
 const makeReplayClient = Effect.fn("effect-codex-app-server/replay.makeReplayClient")(function* (

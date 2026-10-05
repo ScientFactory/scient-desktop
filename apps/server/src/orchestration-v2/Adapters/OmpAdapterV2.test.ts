@@ -16,6 +16,7 @@ import {
   RunAttemptId,
   ThreadId,
   type OrchestrationV2AppThread,
+  type OrchestrationV2ProjectedTurnItem,
 } from "@t3tools/contracts";
 import { setMcpProviderSession, clearMcpProviderSession } from "../../mcp/McpProviderSession.ts";
 import { ompProcessEnvironment } from "../../provider/omp/OmpEnvironment.ts";
@@ -34,6 +35,7 @@ import * as Logger from "effect/Logger";
 import * as Scope from "effect/Scope";
 import * as Exit from "effect/Exit";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -1512,6 +1514,136 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
           );
           assert.deepEqual(h.peer.state.model, { provider: "vendor", id: "a" });
           assert.equal(h.peer.state.thinkingLevel, "high");
+        }),
+      ),
+  );
+
+  it.effect(
+    "preserves interleaved native OMP sparse tool updates through live timeline presentation",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* ordinaryToolsHarness();
+          const webUrl = new URL("../../../../web/src/session-logic.ts", import.meta.url).href;
+          const web: unknown = yield* Effect.promise(() => import(webUrl));
+          assert.ok(
+            Predicate.isObject(web) &&
+              typeof web.deriveTimelineEntriesFromVisibleTurnItems === "function",
+          );
+          const present = web.deriveTimelineEntriesFromVisibleTurnItems as (input: {
+            readonly visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
+            readonly optimisticMessages: readonly [];
+          }) => ReadonlyArray<{
+            readonly id: string;
+            readonly kind: string;
+            readonly entry?: {
+              readonly toolTitle?: string;
+              readonly toolLifecycleStatus?: string;
+              readonly toolData?: unknown;
+            };
+          }>;
+          const presentation = () =>
+            present({
+              visibleTurnItems: h.latestTools().map((item, position) => ({
+                position,
+                visibility: "local",
+                sourceThreadId: item.threadId,
+                sourceItemId: item.id,
+                item,
+              })),
+              optimisticMessages: [],
+            }).map((row) => ({
+              id: row.id,
+              kind: row.kind,
+              title: row.entry?.toolTitle,
+              status: row.entry?.toolLifecycleStatus,
+              data: row.entry?.toolData,
+            }));
+          yield* h.peer.emit([
+            nativeToolStart("shell", "bash", { command: "printf synthetic" }),
+            nativeToolStart("file", "read", { path: "note.txt" }),
+            { type: "tool_stream_update", toolCallId: "shell", update: { text: "first line" } },
+            { type: "tool_stream_update", toolCallId: "file", update: { text: "file text" } },
+          ]);
+          yield* h.takeUntil(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "dynamic_tool" &&
+              event.turnItem.output === "file text",
+          );
+          const shell = h.tool("shell");
+          const file = h.tool("file");
+          assert.ok(shell && file);
+          assert.notEqual(shell.id, file.id);
+          assert.notEqual(shell.nodeId, file.nodeId);
+          const turn = h.recorded.find((event) => event.type === "provider_turn.updated");
+          assert.ok(turn?.type === "provider_turn.updated");
+          assert.equal(turn.providerTurn.runAttemptId, h.input.attemptId);
+          assert.equal(turn.providerTurn.nodeId, h.input.rootNodeId);
+          assert.equal(turn.providerTurn.providerThreadId, h.input.providerThread.id);
+          for (const item of [shell, file]) {
+            assert.equal(item.threadId, h.input.threadId);
+            assert.equal(item.runId, h.input.runId);
+            assert.equal(item.providerThreadId, h.input.providerThread.id);
+            assert.equal(item.providerTurnId, turn.providerTurn.id);
+            assert.equal(item.nativeItemRef?.driver, "omp");
+          }
+          const providerThread = h.recorded.find(
+            (event) => event.type === "provider_thread.updated",
+          );
+          assert.ok(providerThread?.type === "provider_thread.updated");
+          assert.equal(providerThread.providerThread.id, h.input.providerThread.id);
+          assert.equal(
+            providerThread.providerThread.providerInstanceId,
+            h.input.modelSelection.instanceId,
+          );
+          assert.equal(h.runtime.instanceId, h.input.modelSelection.instanceId);
+          assert.deepEqual(presentation(), [
+            {
+              id: shell.id,
+              kind: "work",
+              title: "bash",
+              status: "inProgress",
+              data: { input: { command: "printf synthetic" }, output: "first line" },
+            },
+            {
+              id: file.id,
+              kind: "work",
+              title: "read",
+              status: "inProgress",
+              data: { input: { path: "note.txt" }, output: "file text" },
+            },
+          ]);
+          yield* h.peer.emit([
+            nativeToolEnd("shell", "bash", { content: [{ type: "text", text: "final line" }] }),
+            nativeToolEnd("file", "read", {}),
+          ]);
+          yield* h.untilTool("file", "completed");
+          assert.deepEqual(presentation(), [
+            {
+              id: shell.id,
+              kind: "work",
+              title: "bash",
+              status: "completed",
+              data: { input: { command: "printf synthetic" }, output: "final line" },
+            },
+            {
+              id: file.id,
+              kind: "work",
+              title: "read",
+              status: "completed",
+              data: { input: { path: "note.txt" }, output: "file text" },
+            },
+          ]);
+          assert.equal(h.latestTools().length, 2);
+          for (const event of h.recorded) {
+            if (event.type !== "turn_item.updated" || event.turnItem.type !== "dynamic_tool")
+              continue;
+            assert.equal(event.turnItem.runId, h.input.runId);
+            assert.equal(event.turnItem.providerTurnId, turn.providerTurn.id);
+            assert.equal(event.turnItem.providerThreadId, h.input.providerThread.id);
+          }
+          yield* h.stop();
         }),
       ),
   );

@@ -1,3 +1,12 @@
+import * as FileSystem from "effect/FileSystem";
+import { ServerConfig } from "../../config.ts";
+import { AttachmentFileArbitration, reserveAttachment } from "../AttachmentFileUse.ts";
+import { ProviderSessionManagerV2 } from "../ProviderSessionManager.ts";
+import {
+  ProviderTextSnapshotError,
+  type CapturedProviderText,
+  type ProviderTextSnapshotOwner,
+} from "../ProviderAdapter.ts";
 import {
   EventId,
   ContextTransferId,
@@ -76,6 +85,10 @@ const failure = (
 ) => new OrchestrationDispatchCommandError({ message, forkDisposition });
 
 const make = Effect.gen(function* () {
+  const snapshots = yield* Effect.serviceOption(ProviderSessionManagerV2);
+  const fileSystem = yield* Effect.serviceOption(FileSystem.FileSystem);
+  const serverConfig = yield* Effect.serviceOption(ServerConfig);
+  const attachmentArbitration = yield* AttachmentFileArbitration;
   const projections = yield* ProjectionStoreV2;
   const projects = yield* ProjectStoreV2;
   const receipts = yield* CommandReceiptStoreV2;
@@ -138,9 +151,11 @@ const make = Effect.gen(function* () {
   const inspect = Effect.fn("ConversationFork.inspect")(function* (
     input: GetForkOptionsInput,
     targetThreadId: ThreadId,
+    capturedProjection?: OrchestrationV2ThreadProjection,
   ) {
     yield* legacyImporter.ensureTranscript(input.originThreadId);
-    const projection = yield* projections.getThreadProjection(input.originThreadId);
+    const projection =
+      capturedProjection ?? (yield* projections.getThreadProjection(input.originThreadId));
     if (
       projection.thread.conversationFork != null &&
       projection.thread.conversationFork.status !== "ready"
@@ -246,7 +261,79 @@ const make = Effect.gen(function* () {
       );
     });
 
+  const prepareTextCapture = Effect.fnUntraced(function* (command: ThreadForkCommand) {
+    if (command.sourceRunningRunId === undefined && command.sourceRunningTurnId === undefined)
+      return null;
+    if (Option.isSome(yield* receipts.getByCommandId(command.commandId))) return null;
+    yield* legacyImporter.ensureTranscript(command.originThreadId);
+    const projection = yield* projections.getThreadProjection(command.originThreadId);
+    const source = yield* resolveSource(projection, command);
+    if (source.kind !== "running-turn") return null;
+    const run = projection.runs.find((row) => row.id === source.runId);
+    const thread = projection.providerThreads.find((row) => row.id === run?.providerThreadId);
+    if (thread?.driver !== "codex") return null;
+    if (Option.isNone(snapshots) || snapshots.value.captureRunningForkText === undefined)
+      return yield* failure(
+        "Native running text capture is unavailable. Retry after reconnecting.",
+      );
+    const attempt = projection.attempts.find((row) => row.id === run?.activeAttemptId);
+    // Native turn/started can be committed before the start RPC binds the attempt.
+    // The accepted turn's exact attempt/root/thread links remain canonical authority.
+    const turns = projection.providerTurns.filter(
+      (row) =>
+        row.runAttemptId === attempt?.id &&
+        row.nodeId === run?.rootNodeId &&
+        row.providerThreadId === thread.id &&
+        row.nativeAcceptance === "accepted" &&
+        ["running", "waiting"].includes(row.status) &&
+        (attempt?.providerTurnId == null || row.id === attempt.providerTurnId),
+    );
+    const turn = turns.length === 1 ? turns[0] : undefined;
+    if (
+      run === undefined ||
+      attempt === undefined ||
+      turn === undefined ||
+      run.rootNodeId === null ||
+      thread.providerSessionId === null ||
+      thread.nativeThreadRef?.nativeId == null ||
+      turn.nativeTurnRef?.nativeId == null
+    )
+      return yield* failure("The selected native running boundary is not ready. Retry the fork.");
+    const owner: ProviderTextSnapshotOwner = {
+      threadId: projection.thread.id,
+      runId: run.id,
+      activeAttemptId: attempt.id,
+      rootNodeId: run.rootNodeId,
+      runOrdinal: run.ordinal,
+      providerThreadId: thread.id,
+      nativeThreadId: thread.nativeThreadRef.nativeId,
+      providerTurnId: turn.id,
+      nativeTurnId: turn.nativeTurnRef.nativeId,
+      providerSessionId: thread.providerSessionId,
+      providerInstanceId: run.providerInstanceId,
+      driver: thread.driver,
+    };
+    return yield* snapshots.value.captureRunningForkText(owner).pipe(
+      Effect.mapError(
+        (cause) =>
+          new OrchestrationDispatchCommandError({
+            message: `Native running text capture refused (${cause.reason}). Retry the fork.`,
+            cause,
+            forkDisposition: "rejected",
+          }),
+      ),
+    );
+  });
+
   const dispatch = Effect.fn("ConversationFork.dispatch")(function* (command: ThreadForkCommand) {
+    const capture: CapturedProviderText | null = yield* Effect.acquireRelease(
+      prepareTextCapture(command),
+      (captured) =>
+        captured === null || Option.isNone(snapshots)
+          ? Effect.void
+          : (snapshots.value.releaseCapturedForkText?.(captured) ?? Effect.void),
+      { interruptible: true },
+    );
     const accept = Effect.gen(function* () {
       const receipt = yield* receipts.getByCommandId(command.commandId);
       if (Option.isSome(receipt)) {
@@ -266,7 +353,11 @@ const make = Effect.gen(function* () {
               yield* metadataEvent(
                 {
                   ...target,
-                  conversationFork: { ...target.conversationFork, status: "pending", error: null },
+                  conversationFork: {
+                    ...target.conversationFork,
+                    status: "pending",
+                    error: null,
+                  },
                 },
                 now,
               ),
@@ -289,7 +380,7 @@ const make = Effect.gen(function* () {
       );
       if (destinationExists)
         return yield* failure("The destination already exists. Choose a new fork identity.");
-      const inspected = yield* inspect(command, command.newThreadId);
+      const inspected = yield* inspect(command, command.newThreadId, capture?.projection);
       const { projection, plan, source, cwd, fromCheckpointRef, checkpointAvailable } = inspected;
       const markerSource =
         source.kind === "user-message"
@@ -317,6 +408,22 @@ const make = Effect.gen(function* () {
         return yield* failure(
           "This boundary has no saved workspace checkpoint. Fork locally instead.",
         );
+      if (capture !== null && plan.attachmentCopies.length > 0) {
+        if (Option.isNone(fileSystem) || Option.isNone(serverConfig))
+          return yield* failure("Native fork resources are unavailable.");
+        for (const { source } of plan.attachmentCopies) {
+          yield* Effect.acquireRelease(
+            reserveAttachment(source).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem.value),
+              Effect.provideService(ServerConfig, serverConfig.value),
+              Effect.mapError(() =>
+                failure("A captured attachment is unavailable. Retry the fork."),
+              ),
+            ),
+            (reservation) => reservation.release,
+          );
+        }
+      }
       yield* copier.checkSources({
         threadId: command.newThreadId,
         attachments: plan.attachmentCopies.map(({ source }) => source),
@@ -500,7 +607,8 @@ const make = Effect.gen(function* () {
           payload,
         })),
       ];
-      const committed = yield* sink.commitCommand({
+      const commit = sink.commitCommand({
+        ...(capture === null ? {} : { runningForkSource: { owner: capture.owner, capture } }),
         commandId: command.commandId,
         threadId: thread.id,
         commandType: "thread.conversation.fork",
@@ -515,6 +623,34 @@ const make = Effect.gen(function* () {
           },
         ],
       });
+      const guardedCommit =
+        capture === null
+          ? commit
+          : Effect.gen(function* () {
+              if (!(yield* baseline.workspaceExists(cwd)))
+                return yield* failure("The captured workspace is unavailable. Retry the fork.");
+              yield* copier.checkSources({
+                threadId: command.newThreadId,
+                attachments: plan.attachmentCopies.map(({ source }) => source),
+              });
+              return yield* commit;
+            }).pipe(attachmentArbitration.withPermit);
+      const committed = yield* (
+        capture === null
+          ? guardedCommit
+          : Option.isSome(snapshots) && snapshots.value.withCapturedForkText !== undefined
+            ? snapshots.value.withCapturedForkText(capture, guardedCommit)
+            : Effect.fail(new ProviderTextSnapshotError({ reason: "owner-lost" }))
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new OrchestrationDispatchCommandError({
+              message: "The running source changed before fork acceptance. Retry the fork.",
+              cause,
+              forkDisposition: "rejected",
+            }),
+        ),
+      );
       return committed.receipt.resultSequence;
     });
     // Consistent lock order prevents forks in opposite directions deadlocking.
@@ -522,6 +658,8 @@ const make = Effect.gen(function* () {
       .sort()
       .reduceRight((effect, id) => executor.withLock(id, effect), accept);
     const sequence = yield* titles.withLock("conversation-fork-titles", locked);
+    if (capture !== null && Option.isSome(snapshots))
+      yield* snapshots.value.releaseCapturedForkText?.(capture) ?? Effect.void;
     const forkAttachmentIdMap = yield* awaitReady(command.newThreadId).pipe(
       Effect.mapError((cause) =>
         isDispatchError(cause)
@@ -535,7 +673,7 @@ const make = Effect.gen(function* () {
       ),
     );
     return { sequence, forkAttachmentIdMap };
-  });
+  }, Effect.scoped);
 
   const provision = Effect.fn("ConversationFork.provision")(function* (
     threadId: ThreadId,

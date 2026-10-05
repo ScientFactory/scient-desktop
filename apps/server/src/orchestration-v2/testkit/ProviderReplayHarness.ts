@@ -611,6 +611,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   const conversationForkProvided = ConversationForks.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        providerSessionManagerProvided,
         storesLayer,
         eventSinkProvided,
         commandReceiptStoreProvided,

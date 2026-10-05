@@ -44,11 +44,12 @@ import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import type {
   ProviderAdapterV2Event,
+  ProviderAdapterV2EventSubscription,
   ProviderAdapterV2RuntimePolicy,
   ProviderAdapterV2SessionRuntime,
   ProviderAdapterV2TurnMessage,
 } from "./ProviderAdapter.ts";
-import { ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
+import { ProviderTextSnapshotError, ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import { upsertProviderTurn } from "./ProjectionStore.ts";
 import { makeProviderFailure, makeProviderFailureTurnItem } from "./ProviderFailure.ts";
@@ -1115,10 +1116,28 @@ export const layer: Layer.Layer<
             driver: input.session.driver,
             providerInstanceId: input.run.providerInstanceId,
           };
-          const eventSubscription =
-            input.session.subscribeEvents === undefined
+          const snapshotSubscription =
+            input.session.subscribeTextSnapshotEvents === undefined
+              ? null
+              : yield* input.session.subscribeTextSnapshotEvents;
+          const eventSubscription: ProviderAdapterV2EventSubscription =
+            snapshotSubscription ??
+            (input.session.subscribeEvents === undefined
               ? { events: input.session.events, close: Effect.void }
-              : yield* input.session.subscribeEvents;
+              : yield* input.session.subscribeEvents);
+          yield* (
+            snapshotSubscription?.textSnapshotConsumer?.bind({
+              threadId: input.run.threadId,
+              runId: input.run.id,
+              activeAttemptId: input.attempt.id,
+              rootNodeId: input.rootNode.id,
+              runOrdinal: input.run.ordinal,
+              providerThreadId: input.providerThread.id,
+              providerSessionId: input.providerSessionId,
+              providerInstanceId: input.run.providerInstanceId,
+              driver: input.session.driver,
+            }) ?? Effect.void
+          );
           const inheritedBackgroundTurnItems = yield* (
             input.loadInheritedBackgroundTurnItems?.() ?? Effect.succeed([])
           ).pipe(
@@ -1379,9 +1398,69 @@ export const layer: Layer.Layer<
             return true;
           });
           const filterAssistantEvent = makeAssistantStreamingFilter(responseStreamingMode);
-          const providerEventFiber = yield* eventSubscription.events.pipe(
+          const snapshotTextFloors = new Map<string, string>();
+          const providerEventFiber = yield* (
+            snapshotSubscription?.snapshotEvents ?? eventSubscription.events
+          ).pipe(
             Stream.mapEffect((event) =>
               Effect.gen(function* () {
+                if (event.type === "internal.text_snapshot") {
+                  const consumer = snapshotSubscription?.textSnapshotConsumer;
+                  if (consumer === undefined) return;
+                  yield* consumer.consume(
+                    event,
+                    Effect.gen(function* () {
+                      const owner = event.owner;
+                      const routing = yield* Ref.get(eventRouting);
+                      if (
+                        owner.threadId !== input.run.threadId ||
+                        owner.runId !== input.run.id ||
+                        owner.activeAttemptId !== input.attempt.id ||
+                        owner.rootNodeId !== input.rootNode.id ||
+                        owner.runOrdinal !== input.run.ordinal ||
+                        owner.providerThreadId !== input.providerThread.id ||
+                        owner.providerSessionId !== input.providerSessionId ||
+                        owner.providerInstanceId !== input.run.providerInstanceId ||
+                        owner.driver !== input.session.driver ||
+                        routing.rootTurnEnded ||
+                        routing.rootProviderTurnId !== owner.providerTurnId ||
+                        eventSink.captureRunningForkText === undefined
+                      )
+                        return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
+                      const normalized = yield* Effect.forEach(event.events, (frame) =>
+                        providerEventIngestor.normalize({
+                          providerSessionId: input.providerSessionId,
+                          providerInstanceId: input.run.providerInstanceId,
+                          threadId: input.run.threadId,
+                          runId: input.run.id,
+                          nodeId: input.rootNode.id,
+                          event: frame,
+                        }),
+                      );
+                      const capture = yield* eventSink.captureRunningForkText({
+                        owner,
+                        events: normalized.flat(),
+                      });
+                      for (const frame of event.events) {
+                        if (frame.type === "message.updated")
+                          snapshotTextFloors.set(
+                            `message.updated:${frame.message.id}`,
+                            frame.message.text,
+                          );
+                        if (
+                          frame.type === "turn_item.updated" &&
+                          frame.turnItem.type === "assistant_message"
+                        )
+                          snapshotTextFloors.set(
+                            `turn_item.updated:${frame.turnItem.id}`,
+                            frame.turnItem.text,
+                          );
+                      }
+                      return capture;
+                    }),
+                  );
+                  return;
+                }
                 const [accepted, revokedIds, revokedThreadIds] = yield* Ref.modify(
                   eventRouting,
                   (state) => {
@@ -1466,10 +1545,26 @@ export const layer: Layer.Layer<
                 // ownership transfers before tracking its earlier accepted rows.
                 if (!accepted) return;
                 let storedEventCount = 0;
-                const deliveredEvent = filterAssistantEvent(
+                let deliveredEvent = filterAssistantEvent(
                   event,
                   DateTime.toEpochMillis(yield* DateTime.now),
                 );
+                if (deliveredEvent) {
+                  const text =
+                    deliveredEvent.type === "message.updated"
+                      ? deliveredEvent.message
+                      : deliveredEvent.type === "turn_item.updated" &&
+                          deliveredEvent.turnItem.type === "assistant_message"
+                        ? deliveredEvent.turnItem
+                        : null;
+                  if (text !== null) {
+                    const key = `${deliveredEvent.type}:${text.id}`;
+                    const floor = snapshotTextFloors.get(key);
+                    if (!text.streaming) snapshotTextFloors.delete(key);
+                    else if (floor !== undefined && !text.text.startsWith(floor))
+                      deliveredEvent = null;
+                  }
+                }
                 if (deliveredEvent) {
                   // Root provider_thread.updated always uses an ownership gate:
                   // pre-terminal writeIfRunCurrent (attempt still running), or

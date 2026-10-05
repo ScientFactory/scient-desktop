@@ -590,6 +590,31 @@ it.effect(
           .items,
         [boundary],
       );
+      const rebuiltTarget = yield* store.getThreadProjection(command.newThreadId);
+      const originalLineage = target.thread.forkLineage;
+      assert.ok(originalLineage);
+      assert.equal(originalLineage.originThreadId, threadId);
+      assert.equal(originalLineage.baselineAssistantMessageId, inheritedAssistant.messageId);
+      assert.deepEqual(rebuiltTarget.thread.forkLineage, originalLineage);
+      const rebuiltBaseline = rebuiltTarget.visibleTurnItems.find(
+        (row) =>
+          row.item.type === "assistant_message" &&
+          row.item.messageId === originalLineage.baselineAssistantMessageId,
+      );
+      assert.ok(rebuiltBaseline?.item.type === "assistant_message");
+      assert.equal(rebuiltBaseline.visibility, "inherited");
+      assert.equal(rebuiltBaseline.item.messageId, inheritedAssistant.messageId);
+      assert.equal(
+        rebuiltTarget.messages.find(
+          (message) => message.id === originalLineage.baselineAssistantMessageId,
+        )?.role,
+        "assistant",
+      );
+      const rebuiltShell = (yield* store.getShellSnapshot({
+        location: "archive",
+      })).archivedThreads.find((thread) => thread.id === command.newThreadId);
+      assert.ok(rebuiltShell);
+      assert.deepEqual(rebuiltShell.forkLineage, originalLineage);
       assert.equal((yield* forks.dispatch(command)).sequence, receipt.sequence);
     }).pipe(Effect.provide(layer)),
 );

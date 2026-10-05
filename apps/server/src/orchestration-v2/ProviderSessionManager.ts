@@ -41,12 +41,17 @@ import * as IdAllocator from "./IdAllocator.ts";
 import { makeKeyedSerialExecutor } from "./KeyedSerialExecutor.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import {
+  ProviderTextSnapshotError,
+  type ProviderTextSnapshotOwner,
+  type ProviderTextSnapshotConsumerOwner,
+  type CapturedProviderText,
+  type ProviderAdapterV2InternalEvent,
   ProviderAdapterEventStreamError,
   ProviderAdapterProtocolError,
   ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2Error,
   type ProviderAdapterV2Event,
-  type ProviderAdapterV2EventSubscription,
+  type ProviderTextSnapshotSubscription,
   type ProviderAdapterV2SessionRuntime,
   type ProviderAdapterV2InitiatedWorkIdentity,
 } from "./ProviderAdapter.ts";
@@ -149,6 +154,15 @@ export const ProviderSessionManagerV2Error = Schema.Union([
 export type ProviderSessionManagerV2Error = typeof ProviderSessionManagerV2Error.Type;
 
 export interface ProviderSessionManagerV2Shape {
+  readonly captureRunningForkText?: (
+    owner: ProviderTextSnapshotOwner,
+  ) => Effect.Effect<CapturedProviderText, ProviderTextSnapshotError>;
+  readonly withCapturedForkText?: <A, E, R>(
+    capture: CapturedProviderText,
+    commit: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | ProviderTextSnapshotError, R>;
+  readonly releaseCapturedForkText?: (capture: CapturedProviderText) => Effect.Effect<void>;
+
   readonly shutdown: Effect.Effect<void>;
   readonly withProviderWorkAdmission: <A, E, R>(
     identity: ProviderAdapterV2InitiatedWorkIdentity,
@@ -263,7 +277,7 @@ interface ReleaseEntryInput {
 }
 
 type ProviderSessionEventSignal =
-  | { readonly type: "event"; readonly event: ProviderAdapterV2Event }
+  | { readonly type: "event"; readonly event: ProviderAdapterV2InternalEvent }
   | {
       readonly type: "failure";
       readonly cause: Cause.Cause<ProviderAdapterV2Error>;
@@ -417,6 +431,153 @@ export const layerWithOptions = (
       );
       const layerScope = yield* Effect.scope;
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
+      const textSnapshotPermit = yield* Semaphore.make(1);
+      const textSnapshotConsumers = new Map<
+        number,
+        {
+          readonly runtime: ProviderAdapterV2SessionRuntime;
+          readonly owner: ProviderTextSnapshotConsumerOwner;
+          readonly queue: Queue.Queue<ProviderSessionEventSignal, Cause.Done>;
+        }
+      >();
+      const textSnapshots = new Map<
+        symbol,
+        {
+          readonly entry: LiveSessionEntry;
+          readonly owner: ProviderTextSnapshotOwner;
+          readonly consumerId: number;
+          readonly done: Deferred.Deferred<CapturedProviderText, ProviderTextSnapshotError>;
+          retired: boolean;
+        }
+      >();
+      const matchesTextConsumer = (
+        consumer: ProviderTextSnapshotConsumerOwner,
+        owner: ProviderTextSnapshotConsumerOwner,
+      ) =>
+        consumer.threadId === owner.threadId &&
+        consumer.runId === owner.runId &&
+        consumer.activeAttemptId === owner.activeAttemptId &&
+        consumer.rootNodeId === owner.rootNodeId &&
+        consumer.runOrdinal === owner.runOrdinal &&
+        consumer.providerThreadId === owner.providerThreadId &&
+        consumer.providerSessionId === owner.providerSessionId &&
+        consumer.providerInstanceId === owner.providerInstanceId &&
+        consumer.driver === owner.driver;
+      const retireTextSnapshots = (runtime: ProviderAdapterV2SessionRuntime, threadId?: ThreadId) =>
+        Effect.forEach(
+          Array.from(textSnapshots.values()).filter(
+            (pending) =>
+              pending.entry.runtime === runtime &&
+              (threadId === undefined || pending.owner.threadId === threadId),
+          ),
+          (pending) => {
+            pending.retired = true;
+            return Deferred.fail(
+              pending.done,
+              new ProviderTextSnapshotError({ reason: "owner-lost" }),
+            );
+          },
+          { discard: true },
+        );
+      const withTextSnapshotCurrent = <A, E, R>(
+        token: symbol,
+        watermark: number | undefined,
+        commit: Effect.Effect<A, E, R>,
+      ) =>
+        textSnapshotPermit.withPermit(
+          Effect.gen(function* () {
+            const pending = textSnapshots.get(token);
+            if (pending === undefined || pending.retired)
+              return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
+            const current = (yield* Ref.get(sessions)).get(
+              sessionKey(pending.owner.providerSessionId),
+            );
+            if (
+              current?.runtime !== pending.entry.runtime ||
+              current.scope !== pending.entry.scope ||
+              !current.attachedThreadIds.has(pending.owner.threadId) ||
+              releasingRuntimes.has(current.runtime) ||
+              !textSnapshotConsumers.has(pending.consumerId) ||
+              current.runtime.textSnapshots === undefined
+            )
+              return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
+            return yield* current.runtime.textSnapshots.withCurrent(token, watermark, commit);
+          }),
+        );
+      // Retiring a waiter is not native generation retirement. It must not wait
+      // behind its in-flight SQL consumer; genuine committed facts are retained.
+      const releaseTextSnapshot = (token: symbol) =>
+        Effect.uninterruptible(
+          Effect.gen(function* () {
+            const pending = textSnapshots.get(token);
+            if (pending === undefined) return;
+            pending.retired = true;
+            textSnapshots.delete(token);
+            yield* Deferred.fail(
+              pending.done,
+              new ProviderTextSnapshotError({ reason: "consumer-ended" }),
+            );
+            yield* pending.entry.runtime.textSnapshots?.release(token) ?? Effect.void;
+          }),
+        );
+      const captureRunningForkText = Effect.fn("ProviderSessionManager.captureRunningForkText")(
+        function* (owner: ProviderTextSnapshotOwner) {
+          const token = Symbol("native-text-snapshot");
+          return yield* Effect.gen(function* () {
+            const entry = yield* textSnapshotPermit.withPermit(
+              Effect.gen(function* () {
+                const current = (yield* Ref.get(sessions)).get(sessionKey(owner.providerSessionId));
+                if (
+                  current === undefined ||
+                  releasingRuntimes.has(current.runtime) ||
+                  !current.attachedThreadIds.has(owner.threadId) ||
+                  current.runtime.instanceId !== owner.providerInstanceId ||
+                  current.runtime.driver !== owner.driver
+                )
+                  return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
+                if (current.runtime.textSnapshots === undefined)
+                  return yield* new ProviderTextSnapshotError({ reason: "unsupported" });
+                const consumer = Array.from(textSnapshotConsumers).find(
+                  ([, row]) =>
+                    row.runtime === current.runtime && matchesTextConsumer(row.owner, owner),
+                );
+                if (consumer === undefined)
+                  return yield* new ProviderTextSnapshotError({ reason: "consumer-ended" });
+                if (
+                  Array.from(textSnapshots.values()).some(
+                    (row) =>
+                      row.entry.runtime === current.runtime &&
+                      matchesTextConsumer(row.owner, owner),
+                  )
+                )
+                  return yield* new ProviderTextSnapshotError({ reason: "busy" });
+                const done = yield* Deferred.make<
+                  CapturedProviderText,
+                  ProviderTextSnapshotError
+                >();
+                textSnapshots.set(token, {
+                  entry: current,
+                  owner,
+                  consumerId: consumer[0],
+                  done,
+                  retired: false,
+                });
+                return current;
+              }),
+            );
+            yield* entry.runtime.textSnapshots!.request(owner, token);
+            return yield* Effect.raceFirst(
+              Deferred.await(textSnapshots.get(token)!.done),
+              entry.runtime.textSnapshots!.ended,
+            );
+          }).pipe(
+            Effect.onExit((exit) =>
+              Exit.isFailure(exit) ? releaseTextSnapshot(token) : Effect.void,
+            ),
+          );
+        },
+      );
+
       const releasingRuntimes = new WeakSet<ProviderAdapterV2SessionRuntime>();
       // The same exact owner survives logical removal, timeout and failed scope
       // close. It has no execution rights; retries join its original operation.
@@ -1038,7 +1199,7 @@ export const layerWithOptions = (
               state: "pending",
               operation,
             };
-            const reserve = Ref.modify(sessions, (current) => {
+            const reserveMutation = Ref.modify(sessions, (current) => {
               const existing = current.get(key);
               if (
                 existing?.runtime !== candidate.runtime ||
@@ -1059,6 +1220,16 @@ export const layerWithOptions = (
               releasingRuntimes.add(existing.runtime);
               return [true, current] as const;
             });
+            const reserve =
+              candidate.runtime.textSnapshots === undefined
+                ? reserveMutation
+                : textSnapshotPermit.withPermit(
+                    reserveMutation.pipe(
+                      Effect.tap((reserved) =>
+                        reserved ? retireTextSnapshots(candidate.runtime) : Effect.void,
+                      ),
+                    ),
+                  );
             const invalidation = yield* (
               candidate.runtime.invalidateInitiatedWork === undefined
                 ? reserve
@@ -1481,10 +1652,11 @@ export const layerWithOptions = (
         );
 
       const makeEventSubscription = (
+        runtime: ProviderAdapterV2SessionRuntime,
         subscribers: Ref.Ref<
           ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
         >,
-      ): Effect.Effect<ProviderAdapterV2EventSubscription> =>
+      ): Effect.Effect<ProviderTextSnapshotSubscription> =>
         Effect.gen(function* () {
           const queue = yield* Queue.unbounded<ProviderSessionEventSignal, Cause.Done>();
           const subscriberId = yield* Ref.getAndUpdate(nextSubscriberId, (value) => value + 1);
@@ -1493,7 +1665,7 @@ export const layerWithOptions = (
             updated.set(subscriberId, queue);
             return updated;
           });
-          const close = Ref.modify(subscribers, (current) => {
+          const removeSubscription = Ref.modify(subscribers, (current) => {
             if (!current.has(subscriberId)) {
               return [false, current] as const;
             }
@@ -1507,6 +1679,20 @@ export const layerWithOptions = (
                 : Effect.void,
             ),
           );
+          const close = Effect.uninterruptible(
+            Effect.gen(function* () {
+              textSnapshotConsumers.delete(subscriberId);
+              for (const pending of textSnapshots.values()) {
+                if (pending.consumerId !== subscriberId) continue;
+                pending.retired = true;
+                yield* Deferred.fail(
+                  pending.done,
+                  new ProviderTextSnapshotError({ reason: "consumer-ended" }),
+                );
+              }
+              yield* removeSubscription;
+            }),
+          );
           const events = Stream.fromQueue(queue).pipe(
             Stream.mapEffect((signal) =>
               signal.type === "event"
@@ -1515,7 +1701,66 @@ export const layerWithOptions = (
             ),
             Stream.ensuring(close),
           );
-          return { events, close } satisfies ProviderAdapterV2EventSubscription;
+          return {
+            events: events.pipe(
+              Stream.filter(
+                (event): event is ProviderAdapterV2Event => event.type !== "internal.text_snapshot",
+              ),
+            ),
+            snapshotEvents: events,
+            textSnapshotConsumer: {
+              bind: (owner) =>
+                textSnapshotPermit.withPermit(
+                  Effect.sync(() => {
+                    textSnapshotConsumers.set(subscriberId, { runtime, owner, queue });
+                  }),
+                ),
+              consume: (batch, write) =>
+                Effect.gen(function* () {
+                  const pending = textSnapshots.get(batch.token);
+                  if (pending === undefined) return;
+                  if (
+                    pending.consumerId !== subscriberId ||
+                    pending.owner !== batch.owner ||
+                    !matchesTextConsumer(
+                      textSnapshotConsumers.get(subscriberId)?.owner ?? batch.owner,
+                      pending.owner,
+                    )
+                  ) {
+                    yield* Deferred.fail(
+                      pending.done,
+                      new ProviderTextSnapshotError({ reason: "owner-lost" }),
+                    );
+                    return;
+                  }
+                  const result = yield* withTextSnapshotCurrent(
+                    batch.token,
+                    batch.watermark,
+                    write,
+                  ).pipe(Effect.exit);
+                  if (Exit.isFailure(result)) {
+                    const cause = Cause.squash(result.cause);
+                    yield* Deferred.fail(
+                      pending.done,
+                      Schema.is(ProviderTextSnapshotError)(cause)
+                        ? cause
+                        : new ProviderTextSnapshotError({
+                            reason: "capture-failed",
+                            cause: result.cause,
+                          }),
+                    );
+                  } else {
+                    yield* Deferred.succeed(pending.done, {
+                      ...result.value,
+                      token: batch.token,
+                      owner: batch.owner,
+                      watermark: batch.watermark,
+                    });
+                  }
+                }),
+            },
+            close,
+          } satisfies ProviderTextSnapshotSubscription;
         });
 
       const decorateRuntime = (
@@ -1527,13 +1772,17 @@ export const layerWithOptions = (
         sessionScope: Scope.Closeable,
       ): ProviderAdapterV2SessionRuntime => {
         const providerSessionId = runtime.providerSessionId;
-        const subscribeEvents = makeEventSubscription(eventSubscribers);
+        const subscribeEvents = makeEventSubscription(runtime, eventSubscribers);
         const subscriberRuntime = { ...runtime };
         delete subscriberRuntime.eventConsumer;
+        delete subscriberRuntime.textSnapshots;
         return {
           ...subscriberRuntime,
           mcpSessionInjection,
-          subscribeEvents,
+          subscribeTextSnapshotEvents: subscribeEvents,
+          subscribeEvents: subscribeEvents.pipe(
+            Effect.map(({ events, close }) => ({ events, close })),
+          ),
           events: Stream.unwrap(
             subscribeEvents.pipe(Effect.map((subscription) => subscription.events)),
           ),
@@ -1734,8 +1983,28 @@ export const layerWithOptions = (
 
       const startEventPump = (entry: LiveSessionEntry) => {
         let stoppedByProvider = false;
-        return entry.runtime.events.pipe(
+        return (entry.runtime.textSnapshots?.events ?? entry.runtime.events).pipe(
           Stream.runForEach((event) => {
+            if (event.type === "internal.text_snapshot")
+              return Effect.gen(function* () {
+                const pending = textSnapshots.get(event.token);
+                const consumer =
+                  pending === undefined ? undefined : textSnapshotConsumers.get(pending.consumerId);
+                if (pending === undefined) return;
+                if (
+                  pending.retired ||
+                  pending.entry.runtime !== entry.runtime ||
+                  pending.owner !== event.owner ||
+                  consumer?.runtime !== entry.runtime
+                ) {
+                  yield* Deferred.fail(
+                    pending.done,
+                    new ProviderTextSnapshotError({ reason: "owner-lost" }),
+                  );
+                  return;
+                }
+                yield* Queue.offer(consumer.queue, { type: "event", event });
+              });
             if (event.type === "authentication.invalidated") {
               // A single pump owns this observation, independently of run
               // subscribers. Never accept instance identity from the provider.
@@ -1809,6 +2078,7 @@ export const layerWithOptions = (
           Effect.exit,
           Effect.flatMap((exit) =>
             Effect.gen(function* () {
+              yield* retireTextSnapshots(entry.runtime);
               if (entry.eventConsumer) entry.eventConsumer.ended = true;
               const current = (yield* Ref.get(sessions)).get(
                 sessionKey(entry.runtime.providerSessionId),
@@ -1889,6 +2159,10 @@ export const layerWithOptions = (
       yield* Effect.addFinalizer(() => shutdown);
 
       return ProviderSessionManagerV2.of({
+        captureRunningForkText,
+        withCapturedForkText: (capture, commit) =>
+          withTextSnapshotCurrent(capture.token, undefined, commit),
+        releaseCapturedForkText: (capture) => releaseTextSnapshot(capture.token),
         shutdown,
         withProviderWorkAdmission: <A, E, R>(
           identity: ProviderAdapterV2InitiatedWorkIdentity,
@@ -2453,7 +2727,7 @@ export const layerWithOptions = (
                 );
               }
             }
-            const detached = yield* Ref.modify(sessions, (current) => {
+            const detachMutation = Ref.modify(sessions, (current) => {
               const entry = current.get(key);
               if (entry === undefined || !entry.attachedThreadIds.has(input.threadId)) {
                 return [Option.none<LiveSessionEntry>(), current] as const;
@@ -2487,6 +2761,13 @@ export const layerWithOptions = (
               updated.set(key, updatedEntry);
               return [Option.some(updatedEntry), updated] as const;
             });
+            const detached = yield* currentEntry?.runtime.textSnapshots === undefined
+              ? detachMutation
+              : textSnapshotPermit.withPermit(
+                  detachMutation.pipe(
+                    Effect.tap(() => retireTextSnapshots(currentEntry.runtime, input.threadId)),
+                  ),
+                );
             // Plain detaches deliberately do not revoke: a detached thread's
             // provider process may still be alive (shared multi-thread codex
             // session across a workspace handoff) and holds its MCP client's

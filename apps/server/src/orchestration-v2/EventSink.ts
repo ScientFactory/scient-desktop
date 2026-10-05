@@ -1,4 +1,9 @@
 import {
+  ProviderTextSnapshotError,
+  type ProviderTextSnapshotOwner,
+  type ProviderTextSnapshotProjection,
+} from "./ProviderAdapter.ts";
+import {
   recordNativeModelContextWindow,
   type NativeModelCapacityOwner,
 } from "./scient-fork/NativeModelContextWindow.ts";
@@ -200,6 +205,11 @@ export function matchesPendingStartOwner(
 }
 
 export interface EventSinkV2Shape {
+  readonly captureRunningForkText?: (input: {
+    readonly owner: ProviderTextSnapshotOwner;
+    readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+  }) => Effect.Effect<ProviderTextSnapshotProjection, EventSinkV2Error | ProviderTextSnapshotError>;
+
   readonly write: (input: {
     readonly guardPendingUserInputCancellations?: boolean;
     /** Internal history position/group repair; retain the payload current at commit. */
@@ -263,6 +273,10 @@ export interface EventSinkV2Shape {
     readonly threadId: ThreadId;
     readonly commandType: string;
     readonly acceptedAt: DateTime.Utc;
+    readonly runningForkSource?: {
+      readonly owner: ProviderTextSnapshotOwner;
+      readonly capture: ProviderTextSnapshotProjection;
+    };
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     readonly effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
     readonly cancelUnsettledEffects?: {
@@ -1101,6 +1115,115 @@ const baseLayer: Layer.Layer<
         return { receipt: existing.value, storedEvents };
       });
 
+    const readRunningForkOwner = Effect.fnUntraced(function* (owner: ProviderTextSnapshotOwner) {
+      const current = yield* projectionStore.getThreadProjection(owner.threadId);
+      const project = yield* projectStore.get(current.thread.projectId);
+      const run = current.runs.find((row) => row.id === owner.runId);
+      const attempt = current.attempts.find((row) => row.id === owner.activeAttemptId);
+      const root = current.nodes.find((row) => row.id === owner.rootNodeId);
+      const thread = current.providerThreads.find((row) => row.id === owner.providerThreadId);
+      const turn = current.providerTurns.find((row) => row.id === owner.providerTurnId);
+      const session = current.providerSessions.find((row) => row.id === owner.providerSessionId);
+      const stopRequested = current.turnItems.some(
+        (item) =>
+          item.runId === owner.runId &&
+          item.type === "run_interrupt_request" &&
+          !current.turnItems.some(
+            (result) => result.runId === owner.runId && result.type === "run_interrupt_result",
+          ),
+      );
+      if (
+        stopRequested ||
+        current.thread.archivedAt !== null ||
+        current.thread.deletedAt !== null ||
+        Option.isNone(project) ||
+        project.value.deletedAt !== null ||
+        run === undefined ||
+        !["running", "waiting"].includes(run.status) ||
+        run.activeAttemptId !== owner.activeAttemptId ||
+        run.rootNodeId !== owner.rootNodeId ||
+        run.ordinal !== owner.runOrdinal ||
+        run.providerInstanceId !== owner.providerInstanceId ||
+        run.providerThreadId !== owner.providerThreadId ||
+        attempt?.runId !== owner.runId ||
+        attempt.rootNodeId !== owner.rootNodeId ||
+        attempt.providerInstanceId !== owner.providerInstanceId ||
+        attempt.providerThreadId !== owner.providerThreadId ||
+        (attempt.providerTurnId !== null && attempt.providerTurnId !== owner.providerTurnId) ||
+        attempt.status !== "running" ||
+        root?.runId !== owner.runId ||
+        root.threadId !== owner.threadId ||
+        !["running", "waiting"].includes(root.status) ||
+        thread?.providerSessionId !== owner.providerSessionId ||
+        thread.providerInstanceId !== owner.providerInstanceId ||
+        thread.driver !== owner.driver ||
+        thread.lastRunOrdinal !== owner.runOrdinal ||
+        thread.nativeThreadRef?.driver !== owner.driver ||
+        thread.nativeThreadRef?.nativeId !== owner.nativeThreadId ||
+        thread.nativeThreadRef.strength !== "strong" ||
+        turn?.runAttemptId !== owner.activeAttemptId ||
+        turn.nodeId !== owner.rootNodeId ||
+        turn.providerThreadId !== owner.providerThreadId ||
+        turn.nativeTurnRef?.driver !== owner.driver ||
+        turn.nativeTurnRef?.nativeId !== owner.nativeTurnId ||
+        turn.nativeTurnRef.strength !== "strong" ||
+        turn.nativeAcceptance !== "accepted" ||
+        !["running", "waiting"].includes(turn.status) ||
+        session?.providerInstanceId !== owner.providerInstanceId ||
+        session.driver !== owner.driver ||
+        ["stopped", "error"].includes(session.status)
+      )
+        return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
+      return current;
+    });
+
+    const captureRunningForkText = Effect.fn("EventSink.captureRunningForkText")(function* (
+      input: Parameters<NonNullable<EventSinkV2Shape["captureRunningForkText"]>>[0],
+    ) {
+      const result = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* readRunningForkOwner(input.owner);
+            const normalized = yield* normalizeEvents(input.events);
+            const storedEvents = yield* eventStore.append({ events: normalized });
+            yield* applyStoredEvents(storedEvents);
+            const projection = yield* readRunningForkOwner(input.owner);
+            const sourceSequence = yield* eventStore.latestSequence({
+              threadId: input.owner.threadId,
+            });
+            const project = yield* projectStore.get(projection.thread.projectId);
+            if (Option.isNone(project))
+              return yield* new ProviderTextSnapshotError({ reason: "owner-lost" });
+            return {
+              projection,
+              sourceSequence,
+              storedEvents,
+              workspaceRoot: project.value.workspaceRoot,
+            };
+          }),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            Schema.is(ProviderTextSnapshotError)(cause)
+              ? cause
+              : new EventSinkWriteError({ eventCount: input.events.length, cause }),
+          ),
+        );
+      yield* eventStore
+        .publishCommitted(result.storedEvents)
+        .pipe(
+          Effect.mapError(
+            (cause) => new EventSinkWriteError({ eventCount: input.events.length, cause }),
+          ),
+        );
+      yield* publishLiveEvents(result.storedEvents);
+      return {
+        projection: result.projection,
+        sourceSequence: result.sourceSequence,
+        workspaceRoot: result.workspaceRoot,
+      };
+    });
+
     const commitCommandEffect = Effect.fn("orchestrationV2.EventSink.commitCommand")(function* (
       input: Parameters<EventSinkV2Shape["commitCommand"]>[0],
     ) {
@@ -1118,6 +1241,55 @@ const baseLayer: Layer.Layer<
           if (!reserved) {
             const existing = yield* existingCommandResult(input.commandId);
             return { ...existing, committed: false as const, cancelledEffectIds: [] };
+          }
+
+          if (input.runningForkSource !== undefined) {
+            const { owner, capture } = input.runningForkSource;
+            const current = yield* readRunningForkOwner(owner).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new EventSinkWriteError({
+                    commandId: input.commandId,
+                    eventCount: input.events.length,
+                    cause,
+                  }),
+              ),
+            );
+            const before = capture.projection;
+            const project = yield* projectStore.get(before.thread.projectId);
+            const root = current.nodes.find((node) => node.id === owner.rootNodeId);
+            const priorRoot = before.nodes.find((node) => node.id === owner.rootNodeId);
+            // Text beyond the acknowledged cutoff is harmless. Changes in
+            // control or workspace authority cannot replace the captured source.
+            if (
+              current.runs.find((run) => run.id === owner.runId)?.status !==
+                before.runs.find((run) => run.id === owner.runId)?.status ||
+              current.providerTurns.find((turn) => turn.id === owner.providerTurnId)?.status !==
+                before.providerTurns.find((turn) => turn.id === owner.providerTurnId)?.status ||
+              root?.status !== priorRoot?.status ||
+              current.thread.projectId !== before.thread.projectId ||
+              current.thread.providerInstanceId !== before.thread.providerInstanceId ||
+              !modelSelectionsEqual(current.thread.modelSelection, before.thread.modelSelection) ||
+              current.thread.runtimeMode !== before.thread.runtimeMode ||
+              current.thread.interactionMode !== before.thread.interactionMode ||
+              current.thread.activeProviderThreadId !== before.thread.activeProviderThreadId ||
+              current.thread.branch !== before.thread.branch ||
+              current.thread.worktreePath !== before.thread.worktreePath ||
+              current.thread.workspaceAuthorityRevision !==
+                before.thread.workspaceAuthorityRevision ||
+              current.thread.rollbackRequestId !== before.thread.rollbackRequestId ||
+              current.thread.rollbackCompletedRequestId !==
+                before.thread.rollbackCompletedRequestId ||
+              current.thread.conversationFork?.status !== before.thread.conversationFork?.status ||
+              root?.checkpointScopeId !== priorRoot?.checkpointScopeId ||
+              Option.isNone(project) ||
+              project.value.workspaceRoot !== capture.workspaceRoot
+            )
+              return yield* new EventSinkWriteError({
+                commandId: input.commandId,
+                eventCount: input.events.length,
+                cause: new ProviderTextSnapshotError({ reason: "owner-lost" }),
+              });
           }
 
           // An import creates a message identity. Recheck under the same transaction
@@ -1360,6 +1532,7 @@ const baseLayer: Layer.Layer<
     };
 
     return EventSinkV2.of({
+      captureRunningForkText,
       write: (input) =>
         writeEffect({ ...input, effects: [] }).pipe(
           Effect.mapError(
