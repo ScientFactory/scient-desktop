@@ -3,12 +3,14 @@ import { ProviderDriverKind, type DroidSettings } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Clock from "effect/Clock";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import * as EffectAcpErrors from "effect-acp/errors";
 import {
   applyDroidModelAndEffort,
+  droidReplacedDefaultNotice,
   confirmDroidAutonomy,
   findSelectDroidConfigOption,
   makeDroidCredentialRedactor,
@@ -82,6 +84,15 @@ const isAcpProcessExitedError = Schema.is(EffectAcpErrors.AcpProcessExitedError)
 
 export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
   const runtimes = new WeakMap<object, DroidAcpRuntime>();
+  const reportedRetirements = new WeakSet<object>();
+  const effortNotices = new WeakMap<
+    object,
+    {
+      pending?: string | undefined;
+      notified?: string | undefined;
+      emit: (notice: { id: string; message: string }) => Effect.Effect<void>;
+    }
+  >();
   const redact = makeDroidCredentialRedactor({
     environment: options.environment,
     sensitiveValues: options.sensitiveEnvironmentValues,
@@ -119,7 +130,38 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
     createToolPresentation: makeDroidToolPresentation,
     allowOnceForSessionApproval: true,
     supportsImagePrompts: true,
+    modelSupportsImages: (runtime, selection) =>
+      runtimes.get(runtime)?.getImageSupport?.(selection.model),
+    modelContextWindow: (runtime, selection) =>
+      runtimes.get(runtime)?.getContextWindow?.(selection.model),
     supportsCompaction: true,
+    beforeRuntimeReuse: (runtime) =>
+      Effect.gen(function* () {
+        const droid = runtimes.get(runtime);
+        if (droid?.checkConfiguration)
+          yield* droid
+            .checkConfiguration()
+            .pipe(
+              Effect.catch((error) =>
+                droid.isConfigurationRetired?.() ? Effect.void : Effect.fail(error),
+              ),
+            );
+        if (droid?.isConfigurationRetired?.() && !reportedRetirements.has(droid)) {
+          reportedRetirements.add(droid);
+          return yield* new EffectAcpErrors.AcpRequestError({
+            code: -32602,
+            errorMessage:
+              "Custom models changed, so Droid restarted this conversation and your message was not sent. Send it again.",
+          });
+        }
+      }),
+    isRuntimeCurrent: (runtime) => {
+      const droid = runtimes.get(runtime);
+      return (
+        (droid?.isConfigurationCurrent?.() ?? true) && droid?.requestLimitBreach?.() === undefined
+      );
+    },
+    outputTruncationMessage: (runtime) => runtimes.get(runtime)?.requestLimitBreach?.()?.message,
     terminalizeRunOwnedItemsOnFailure: true,
     terminateRuntimeProcessGroupOnInterrupt: true,
     applyRuntimePolicy: (runtime, policy) =>
@@ -258,43 +300,79 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
                 deadline: (yield* Clock.currentTimeMillis) + idleMillis,
               };
               currentWatch = watch;
-              const result = yield* Effect.gen(function* () {
-                const outcome = yield* Effect.raceFirst(
-                  runtime.prompt(request, dispatch).pipe(
-                    Effect.map((response) => ({
-                      _tag: "Completed" as const,
-                      response,
-                    })),
-                  ),
-                  Effect.gen(function* () {
-                    while (true) {
-                      yield* Effect.sleep(tickMillis);
-                      if (currentWatch !== watch) return yield* Effect.never;
-                      const now = yield* Clock.currentTimeMillis;
-                      if (watch.decisions > 0) {
-                        watch.deadline = now + idleCap(watch, idleMillis);
-                        continue;
+              const result = yield* Effect.scoped(
+                Effect.gen(function* () {
+                  if (runtime.upstreamRetrying)
+                    yield* runtime.upstreamRetrying.pipe(
+                      Effect.flatMap(
+                        (status) =>
+                          input.onProviderNotice?.({
+                            id: "droid-upstream-retry",
+                            message: `The model endpoint answered HTTP ${status}${status === 429 ? " (rate limited)" : ""}. Droid is retrying it, which can take a few minutes.`,
+                          }) ?? Effect.void,
+                      ),
+                      Effect.forkScoped,
+                    );
+                  const outcome = yield* Effect.raceFirst(
+                    runtime
+                      .prompt(request, {
+                        ...dispatch,
+                        onSend: (dispatch?.onSend ?? Effect.void).pipe(
+                          Effect.andThen(
+                            Effect.suspend(() => {
+                              const notice = effortNotices.get(wrapped);
+                              const message = notice?.pending;
+                              if (
+                                notice === undefined ||
+                                message === undefined ||
+                                message === notice.notified
+                              )
+                                return Effect.void;
+                              notice.pending = undefined;
+                              notice.notified = message;
+                              return notice.emit({ id: "droid-effort", message });
+                            }),
+                          ),
+                        ),
+                      })
+                      .pipe(
+                        Effect.map((response) => ({
+                          _tag: "Completed" as const,
+                          response,
+                        })),
+                      ),
+                    Effect.gen(function* () {
+                      while (true) {
+                        yield* Effect.sleep(tickMillis);
+                        if (currentWatch !== watch) return yield* Effect.never;
+                        const now = yield* Clock.currentTimeMillis;
+                        if (watch.decisions > 0) {
+                          watch.deadline = now + idleCap(watch, idleMillis);
+                          continue;
+                        }
+                        if (now >= watch.deadline)
+                          return { _tag: "Idle" as const, message: idleMessage(watch, idleMillis) };
                       }
-                      if (now >= watch.deadline)
-                        return { _tag: "Idle" as const, message: idleMessage(watch, idleMillis) };
-                    }
-                  }),
-                );
-                if (outcome._tag === "Completed") return outcome.response;
-                // The race retires the exact prompt first. Flush cancellation, then
-                // terminate its owned native process group; sibling instances are untouched.
-                return yield* Effect.uninterruptible(
-                  Effect.gen(function* () {
-                    yield* runtime.cancelAndAwaitPrompt("2 seconds");
-                    if (runtime.terminateProcessGroup)
-                      yield* runtime.terminateProcessGroup.pipe(Effect.ignoreCause({ log: true }));
-                    return yield* new EffectAcpErrors.AcpRequestError({
-                      code: -32603,
-                      errorMessage: outcome.message,
-                    });
-                  }),
-                );
-              }).pipe(
+                    }),
+                  );
+                  if (outcome._tag === "Completed") return outcome.response;
+                  // The race retires the exact prompt first. Flush cancellation, then
+                  // terminate its owned native process group; sibling instances are untouched.
+                  return yield* Effect.uninterruptible(
+                    Effect.gen(function* () {
+                      yield* runtime.cancelAndAwaitPrompt("2 seconds");
+                      if (runtime.terminateProcessGroup)
+                        yield* runtime.terminateProcessGroup.pipe(
+                          Effect.ignoreCause({ log: true }),
+                        );
+                      return yield* new EffectAcpErrors.AcpRequestError({
+                        code: -32603,
+                        errorMessage: outcome.message,
+                      });
+                    }),
+                  );
+                }),
+              ).pipe(
                 Effect.ensuring(
                   Effect.sync(() => {
                     if (currentWatch === watch) {
@@ -308,8 +386,34 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
                   code: -32603,
                   errorMessage: "Droid ended the turn because its agent reported an error.",
                 });
+              if (runtime.isConfigurationRetired?.()) {
+                reportedRetirements.add(runtime);
+                yield* (
+                  input.onProviderNotice?.({
+                    id: "droid-configuration-retired",
+                    message:
+                      "Stopped because a custom model's key was replaced or a model was removed or changed in Custom models. Send a message to continue.",
+                  }) ?? Effect.void
+                );
+                return { stopReason: "cancelled" as const };
+              }
+              if (runtime.requestLimitBreach?.() !== undefined && runtime.terminateProcessGroup)
+                yield* runtime.terminateProcessGroup.pipe(Effect.ignoreCause({ log: true }));
               return result;
             }).pipe(
+              Effect.catchCause((cause) => {
+                if (runtime.isConfigurationRetired?.() && !isAcpRequestError(Cause.squash(cause))) {
+                  reportedRetirements.add(runtime);
+                  return (
+                    input.onProviderNotice?.({
+                      id: "droid-configuration-retired",
+                      message:
+                        "Stopped because a custom model's key was replaced or a model was removed or changed in Custom models. Send a message to continue.",
+                    }) ?? Effect.void
+                  ).pipe(Effect.as({ stopReason: "cancelled" as const }));
+                }
+                return Effect.failCause(cause);
+              }),
               Effect.mapError((error) => {
                 if (isAcpRequestError(error))
                   return new EffectAcpErrors.AcpRequestError({
@@ -346,9 +450,10 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
           },
         };
         runtimes.set(wrapped, runtime);
+        effortNotices.set(wrapped, { emit: input.onProviderNotice ?? (() => Effect.void) });
         return wrapped;
       }),
-    beforeTurnStart: (runtime, policy) =>
+    beforeTurnStart: (runtime, policy, turnInput) =>
       Effect.gen(function* () {
         const droid = runtimes.get(runtime);
         if (droid?.checkConfiguration) yield* droid.checkConfiguration();
@@ -362,16 +467,38 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
                   : "approval-required",
               ),
         );
-        if (droid?.beginTurn) yield* droid.beginTurn;
+        if (droid?.beginRunBudget) yield* droid.beginRunBudget(turnInput.threadId, turnInput.runId);
+        else if (droid?.beginTurn) yield* droid.beginTurn;
       }),
     applyModelSelection: ({ runtime, modelSelection }) =>
       Effect.gen(function* () {
         const droid = runtimes.get(runtime) ?? runtime;
-        yield* applyDroidModelAndEffort({
-          runtime: droid,
-          requestedModel: modelSelection.model === "default" ? undefined : modelSelection.model,
-          requestedEffort: getModelSelectionStringOptionValue(modelSelection, "reasoningEffort"),
-        });
+        const requestedModel =
+          modelSelection.model === "default" ? undefined : modelSelection.model;
+        const requestedEffort = getModelSelectionStringOptionValue(
+          modelSelection,
+          "reasoningEffort",
+        );
+        const currentModel = findSelectDroidConfigOption(yield* runtime.getConfigOptions, {
+          category: "model",
+          id: "model",
+        })?.currentValue;
+        if (
+          requestedEffort === undefined &&
+          (requestedModel === undefined || requestedModel === currentModel)
+        ) {
+          // An omitted choice on the same model preserves the conversation's
+          // native effort; only a new model gets its saved default.
+          yield* validateDroidReasoningState(droid);
+        } else {
+          const replaced = yield* applyDroidModelAndEffort({
+            runtime: droid,
+            requestedModel,
+            requestedEffort,
+          });
+          const notice = effortNotices.get(runtime);
+          if (notice) notice.pending = replaced && droidReplacedDefaultNotice(replaced);
+        }
         const model = findSelectDroidConfigOption(yield* runtime.getConfigOptions, {
           category: "model",
           id: "model",

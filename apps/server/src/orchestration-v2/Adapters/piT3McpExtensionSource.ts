@@ -95,25 +95,35 @@ function jsonSchemaToTypebox(schema: Record<string, unknown> | undefined) {
   return Type.Object({}, { additionalProperties: true });
 }
 
-function formatMcpContent(result: unknown): string {
-  if (result === null || result === undefined) return "";
-  if (typeof result !== "object") return String(result);
+function mcpContent(result: unknown): Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }> {
+  if (result === null || result === undefined) return [];
+  if (typeof result !== "object") return [{ type: "text", text: String(result) }];
   const record = result as {
-    readonly content?: ReadonlyArray<{ readonly type?: string; readonly text?: string }>;
+    readonly content?: ReadonlyArray<Record<string, unknown>>;
     readonly structuredContent?: unknown;
-    readonly isError?: boolean;
   };
-  const texts: string[] = [];
-  if (Array.isArray(record.content)) {
-    for (const part of record.content) {
-      if (part?.type === "text" && typeof part.text === "string") texts.push(part.text);
+  const content: ReturnType<typeof mcpContent> = [];
+  let resourceTextRemaining = 12_000;
+  for (const part of record.content ?? []) {
+    if (part.type === "text" && typeof part.text === "string") content.push({ type: "text", text: part.text });
+    else if (part.type === "image" && typeof part.data === "string" && typeof part.mimeType === "string")
+      content.push({ type: "image", data: part.data, mimeType: part.mimeType });
+    else if (resourceTextRemaining > 0 && (part.type === "resource_link" || part.type === "resource")) {
+      const resource = part.type === "resource" && typeof part.resource === "object" && part.resource !== null
+        ? part.resource as Record<string, unknown>
+        : part;
+      const text = ["Resource", part.name, resource.uri, part.description, resource.mimeType, resource.text]
+        .filter((value): value is string => typeof value === "string" && value.length > 0)
+        .map((value) => value.slice(0, resourceTextRemaining))
+        .join("\\n")
+        .slice(0, resourceTextRemaining);
+      content.push({ type: "text", text });
+      resourceTextRemaining -= text.length;
     }
   }
-  if (record.structuredContent !== undefined) {
-    texts.push(JSON.stringify(record.structuredContent));
-  }
-  if (texts.length > 0) return texts.join("\\n");
-  return JSON.stringify(result);
+  if (content.length === 0 && record.structuredContent !== undefined)
+    content.push({ type: "text", text: JSON.stringify(record.structuredContent) });
+  return content;
 }
 
 function isMcpToolError(result: unknown): boolean {
@@ -242,6 +252,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     if (mode === "auto-accept-edits" && FILE_CHANGE_TOOLS.has(event.toolName)) {
       return;
     }
+    if (!ctx.hasUI) return { block: true, reason: "Scient permission confirmation is unavailable." };
     const approved = await ctx.ui.confirm(
       \`Allow \${event.toolName}?\`,
       toolInputSummary(event.input),
@@ -269,6 +280,14 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   }
 
   const client = createMcpClient(endpoint, token);
+  const registeredToolNames = new Set<string>();
+  // Pi obtains the native error flag from this hook, not execute's return value.
+  pi.on("tool_result", (event) => {
+    if (!registeredToolNames.has(event.toolName)) return;
+    const details = event.details;
+    if (typeof details === "object" && details !== null &&
+        "result" in details && isMcpToolError(details.result)) return { isError: true };
+  });
   let started: Promise<void> | undefined;
 
   const ensureStarted = () => {
@@ -281,6 +300,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
         const name = tool.name;
         const registeredName = \`mcp__t3-code__\${name}\`;
         const description = tool.description ?? name;
+        registeredToolNames.add(registeredName);
         pi.registerTool({
           name: registeredName,
           label: name,
@@ -296,10 +316,9 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
               (params ?? {}) as Record<string, unknown>,
               signal,
             );
-            const text = formatMcpContent(result);
             return {
-              content: [{ type: "text", text }],
-              details: { server: "t3-code", tool: name },
+              content: mcpContent(result),
+              details: { server: "t3-code", tool: name, result },
               ...(isMcpToolError(result) ? { isError: true } : {}),
             };
           },

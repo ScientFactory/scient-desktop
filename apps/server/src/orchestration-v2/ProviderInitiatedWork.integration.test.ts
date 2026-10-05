@@ -67,6 +67,11 @@ const selection = { instanceId, model: "fixture-model" };
 const threadId = ThreadId.make("thread:provider-initiated");
 const projectId = ProjectId.make("project:provider-initiated");
 
+// Ordinary prompts include the complete empty Scient scope on the native wire.
+// Keep exact text and prompt-count assertions while native work adds no prompt.
+const expectedNativePrompt = (text: string) =>
+  `${text}\n\n[Scient skill scope for this turn is complete and empty (0 skills). No Scient-managed skills are available in this scope; no \`scient_skills_list\` call is needed. Provider-native skills are separate.]`;
+
 type WorkOverrides = Omit<Partial<ProviderContinuationRequest>, "initiated"> & {
   initiated?: Partial<NonNullable<ProviderContinuationRequest["initiated"]>>;
 };
@@ -524,7 +529,7 @@ it.live(
         assert.equal(background.input.message.notification?.source.kind, "provider_work");
         const source = background.input.message.notification!.source;
         assert.isTrue(source.kind === "provider_work" && source.workId === "extension-work-1");
-        assert.deepEqual(prompts, ["First user message"]);
+        assert.deepEqual(prompts, [expectedNativePrompt("First user message")]);
         assert.deepEqual(adopted, ["extension-work-1"]);
         yield* background.finish;
         const settled = yield* waitFor(
@@ -567,11 +572,14 @@ it.live(
           creationSource: "web",
         });
         const next = yield* takeOffer;
-        assert.equal(next.input.message.text, "Next user message");
+        assert.equal(next.input.message.text, expectedNativePrompt("Next user message"));
         yield* next.finish;
         yield* waitFor((p) => p.runs.length === 3 && p.runs.every((r) => r.status === "completed"));
         assert.deepEqual(adopted, ["extension-work-1"]);
-        assert.deepEqual(prompts, ["First user message", "Next user message"]);
+        assert.deepEqual(prompts, [
+          expectedNativePrompt("First user message"),
+          expectedNativePrompt("Next user message"),
+        ]);
         assert.equal(closes(), 0);
       }),
     ),
@@ -645,7 +653,9 @@ it.live.each([
       assert.deepEqual(adopted, []);
       assert.deepEqual(
         prompts,
-        scenario === "busy" ? ["First user message", "Busy user message"] : ["First user message"],
+        scenario === "busy"
+          ? [expectedNativePrompt("First user message"), expectedNativePrompt("Busy user message")]
+          : [expectedNativePrompt("First user message")],
       );
       assert.lengthOf(
         (yield* orchestrator.getThreadProjection(threadId)).runs,
@@ -775,7 +785,7 @@ it.live(
           );
           const executing = yield* orchestrator.getThreadProjection(threadId);
           assert.deepEqual(executing.thread.modelSelection, laterSelection);
-          assert.deepEqual(prompts, ["First user message"]);
+          assert.deepEqual(prompts, [expectedNativePrompt("First user message")]);
           assert.deepEqual(adopted, ["captured-generation"]);
           assert.equal(loads(), initialLoads);
           assert.equal(closes(), 0);
@@ -808,7 +818,7 @@ it.live(
           assert.equal(yield* git(workspaceB, ["count-objects", "-v"]), otherObjects);
           assert.deepEqual(yield* fs.readFile(`${workspaceB}/.git/index`), otherIndex);
           assert.equal(yield* git(workspaceB, ["status", "--porcelain"]), "");
-          assert.deepEqual(prompts, ["First user message"]);
+          assert.deepEqual(prompts, [expectedNativePrompt("First user message")]);
           assert.equal(loads(), initialLoads);
           assert.equal(closes(), 0);
         }),
@@ -831,7 +841,7 @@ it.live("refuses to reopen the captured native owner when it closes before buffe
         yield* (yield* OrchestrationEffectWorkerV2).drain(12);
         const failed = yield* waitFor((p) => p.runs[1]?.status === "failed");
         assert.deepEqual(adopted, []);
-        assert.deepEqual(prompts, ["First user message"]);
+        assert.deepEqual(prompts, [expectedNativePrompt("First user message")]);
         assert.equal(loads(), initialLoads);
         assert.equal(closes(), 1);
         assert.equal(failed.runs[1]!.providerThreadId, nativeOwner.id);
@@ -882,7 +892,7 @@ it.live("refuses unknown captured cwd without assigning the relocated project wo
         assert.lengthOf(after.runs, 1);
         assert.deepEqual(after.checkpointScopes, before.checkpointScopes);
         assert.deepEqual(adopted, []);
-        assert.deepEqual(prompts, ["First user message"]);
+        assert.deepEqual(prompts, [expectedNativePrompt("First user message")]);
         assert.equal(dropped(), 1);
         assert.lengthOf(refusals, 1);
         assert.include(refusals[0]!, "known absolute execution directory");
@@ -957,7 +967,7 @@ it.live.each(["fork", "merge_back"] as const)(
                 row.targetRunId === admitted.runs[1]!.id,
             ),
           );
-          assert.deepEqual(prompts, ["First user message"]);
+          assert.deepEqual(prompts, [expectedNativePrompt("First user message")]);
           assert.deepEqual(adopted, []);
           assert.equal(loads(), initialLoads);
         }),
@@ -1018,10 +1028,15 @@ it.live.each(["complete", "stopped-generation", "foreign-owner", "replaced-owner
           yield* captureEntered;
           const deferred = yield* Queue.unbounded<OrchestratorProviderWorkDeferredError>();
           const observed = yield* Queue.unbounded<void>();
+          const observedNoncurrent = yield* Deferred.make<void>();
           let current = true;
           const guard: NonNullable<ProviderContinuationRequest["dispatchIfCurrent"]> = (dispatch) =>
             Effect.suspend(() => {
-              if (!current) return Effect.succeedNone;
+              if (!current) {
+                return Deferred.succeed(observedNoncurrent, undefined).pipe(
+                  Effect.andThen(Effect.succeedNone),
+                );
+              }
               return dispatch.pipe(
                 Effect.tapError((cause) =>
                   Schema.is(OrchestratorProviderWorkDeferredError)(cause)
@@ -1047,7 +1062,10 @@ it.live.each(["complete", "stopped-generation", "foreign-owner", "replaced-owner
           );
           assert.deepEqual(adopted, []);
           assert.equal(dropped(), 0);
-          assert.deepEqual(prompts, ["First user message", "Held predecessor"]);
+          assert.deepEqual(prompts, [
+            expectedNativePrompt("First user message"),
+            expectedNativePrompt("Held predecessor"),
+          ]);
           const root = before.nodes.find((node) => node.id === before.runs[1]!.rootNodeId)!;
           const scope = before.checkpointScopes.find((row) => row.id === root.checkpointScopeId)!;
           assert.isFalse(
@@ -1117,7 +1135,10 @@ it.live.each(["complete", "stopped-generation", "foreign-owner", "replaced-owner
             const adoptedOffer = yield* takeOffer;
             assert.equal(adoptedOffer.input.message.notification?.source.kind, "provider_work");
             assert.deepEqual(adopted, [workId]);
-            assert.deepEqual(prompts, ["First user message", "Held predecessor"]);
+            assert.deepEqual(prompts, [
+              expectedNativePrompt("First user message"),
+              expectedNativePrompt("Held predecessor"),
+            ]);
             yield* adoptedOffer.finish;
             yield* waitFor((p) => p.runs[2]?.status === "waiting");
             yield* worker.drain(12);
@@ -1142,17 +1163,17 @@ it.live.each(["complete", "stopped-generation", "foreign-owner", "replaced-owner
           } else {
             if (scenario !== "stopped-generation") yield* waitFor(() => dropped() === 1);
             else {
-              while (Option.isSome(yield* Queue.poll(observed))) {
-                /* consume the first deferred attempt */
-              }
-              yield* Queue.take(observed).pipe(Effect.timeout("10 seconds"));
+              yield* Deferred.await(observedNoncurrent).pipe(Effect.timeout("10 seconds"));
               assert.isTrue(Option.isNone(yield* receipts.getByCommandId(refusal.commandId)));
               assert.equal(dropped(), 1);
             }
             const after = yield* orchestrator.getThreadProjection(threadId);
             assert.lengthOf(after.runs, 2);
             assert.deepEqual(adopted, []);
-            assert.deepEqual(prompts, ["First user message", "Held predecessor"]);
+            assert.deepEqual(prompts, [
+              expectedNativePrompt("First user message"),
+              expectedNativePrompt("Held predecessor"),
+            ]);
             if (scenario !== "stopped-generation") {
               const receipt = yield* receipts.getByCommandId(refusal.commandId);
               assert.isTrue(Option.isSome(receipt));

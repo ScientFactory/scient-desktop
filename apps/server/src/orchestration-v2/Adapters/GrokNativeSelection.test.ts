@@ -18,6 +18,7 @@ import {
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -61,6 +62,7 @@ const harness = Effect.fn("GrokNativeSelection.harness")(function* (
   preference: { readonly model: string; readonly options?: NonNullable<ModelSelection["options"]> },
   environment: Record<string, string> = {},
   capabilities?: ReadonlySet<McpCapability>,
+  testHooks?: Parameters<typeof makeGrokAdapterV2>[0]["testHooks"],
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -73,7 +75,12 @@ const harness = Effect.fn("GrokNativeSelection.harness")(function* (
     source: execScriptSource({
       argvLogPath,
       scriptPath: yield* path.fromFileUrl(
-        new URL("../../../scripts/grok-v1-mock-agent.ts", import.meta.url),
+        new URL(
+          environment.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1"
+            ? "../../../scripts/acp-mock-agent.ts"
+            : "../../../scripts/grok-v1-mock-agent.ts",
+          import.meta.url,
+        ),
       ),
     }),
   });
@@ -101,6 +108,7 @@ const harness = Effect.fn("GrokNativeSelection.harness")(function* (
   }
   const adapter = makeGrokAdapterV2({
     instanceId,
+    testHooks,
     settings: yield* decodeSettings({ binaryPath: binary }),
     environment: {
       T3_ACP_GROK_MOCK_GENERATION: generation,
@@ -146,16 +154,10 @@ const harness = Effect.fn("GrokNativeSelection.harness")(function* (
     lastVisitedAt: null,
     deletedAt: null,
   };
-  const send = Effect.gen(function* () {
-    const runtime = yield* open;
-    const providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
-    const completed = yield* runtime.events.pipe(
-      Stream.filter((event) => event.type === "turn.terminal"),
-      Stream.take(1),
-      Stream.runCollect,
-      Effect.forkScoped,
-    );
-    yield* runtime.startTurn({
+  type AwaitedRuntime = Effect.Success<typeof open>;
+  type ProviderThread = Parameters<AwaitedRuntime["readThreadSnapshot"]>[0]["providerThread"];
+  const startTurn = (runtime: AwaitedRuntime, providerThread: ProviderThread) =>
+    runtime.startTurn({
       threadId,
       providerThread,
       appThread,
@@ -174,6 +176,16 @@ const harness = Effect.fn("GrokNativeSelection.harness")(function* (
         creationSource: "web",
       },
     });
+  const send = Effect.gen(function* () {
+    const runtime = yield* open;
+    const providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+    const completed = yield* runtime.events.pipe(
+      Stream.filter((event) => event.type === "turn.terminal"),
+      Stream.take(1),
+      Stream.runCollect,
+      Effect.forkScoped,
+    );
+    yield* startTurn(runtime, providerThread);
     const terminal = (yield* Fiber.join(completed))[0];
     assert.equal(terminal?.type, "turn.terminal");
     if (terminal?.type === "turn.terminal") assert.equal(terminal.status, "completed");
@@ -185,12 +197,113 @@ const harness = Effect.fn("GrokNativeSelection.harness")(function* (
       .map((line) => decodeRequest(line));
   return {
     send,
+    open,
+    threadId,
+    modelSelection,
+    runtimePolicy,
+    startTurn,
     requests,
     arguments: () => NodeFS.readFileSync(argvLogPath, "utf8").trimEnd().split("\t"),
   };
 });
 
 it.layer(layer, { excludeTestServices: true })("native Grok model selection", (it) => {
+  it.effect(
+    "Stop after native prompt success retains the received transcript and emits one interrupted outcome",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const succeeded = yield* Deferred.make<void>();
+          const received = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const h = yield* harness(
+            "1",
+            { model: "default" },
+            { T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG: "1" },
+            undefined,
+            {
+              afterPromptRpcSucceeded: () =>
+                Deferred.await(received).pipe(
+                  Effect.andThen(Deferred.succeed(succeeded, undefined)),
+                  Effect.andThen(Deferred.await(release)),
+                ),
+            },
+          );
+          const runtime = yield* h.open;
+          const providerThread = yield* runtime.ensureThread({
+            threadId: h.threadId,
+            modelSelection: h.modelSelection,
+            runtimePolicy: h.runtimePolicy,
+          });
+          const events: import("../ProviderAdapter.ts").ProviderAdapterV2Event[] = [];
+          const terminal =
+            yield* Deferred.make<import("../ProviderAdapter.ts").ProviderAdapterV2Event>();
+          yield* runtime.events.pipe(
+            Stream.runForEach((event) =>
+              Effect.gen(function* () {
+                events.push(event);
+                if (
+                  event.type === "message.updated" &&
+                  event.message.role === "assistant" &&
+                  event.message.text === "hello from mock"
+                )
+                  yield* Deferred.succeed(received, undefined);
+                if (event.type === "turn.terminal") yield* Deferred.succeed(terminal, event);
+              }),
+            ),
+            Effect.forkScoped({ startImmediately: true }),
+          );
+          yield* h.startTurn(runtime, providerThread);
+          yield* Deferred.await(succeeded);
+          const before = yield* runtime.readThreadSnapshot({ providerThread });
+          assert.lengthOf(before.providerTurns, 1);
+          assert.lengthOf(before.messages, 1);
+          assert.equal(before.messages[0]?.text, "Hello");
+          const receivedMessage = events.findLast(
+            (event) => event.type === "message.updated" && event.message.role === "assistant",
+          );
+          if (receivedMessage?.type !== "message.updated")
+            return yield* Effect.die("Missing owned transcript");
+          assert.equal(receivedMessage.message.text, "hello from mock");
+          assert.isDefined(before.providerTurns[0]?.acceptedAt);
+          assert.equal(before.providerTurns[0]?.nativeAcceptance, "accepted");
+          assert.isFalse(events.some((event) => event.type === "turn.terminal"));
+          yield* runtime.interruptTurn({
+            providerThread,
+            providerTurnId: before.providerTurns[0]!.id,
+            requestRuntimeRestart: true,
+          });
+          const outcome = yield* Deferred.await(terminal);
+          assert.equal(
+            outcome.type === "turn.terminal" ? outcome.status : undefined,
+            "interrupted",
+          );
+          yield* Deferred.succeed(release, undefined);
+          const after = yield* runtime.readThreadSnapshot({ providerThread });
+          assert.lengthOf(after.providerTurns, 1);
+          assert.lengthOf(after.messages, 2);
+          assert.deepInclude(after.messages[0], {
+            id: before.messages[0]!.id,
+            role: "user",
+            text: "Hello",
+          });
+          assert.deepInclude(after.messages[1], {
+            id: receivedMessage.message.id,
+            role: "assistant",
+            text: receivedMessage.message.text,
+            streaming: false,
+          });
+          assert.lengthOf(
+            events.filter((event) => event.type === "turn.terminal"),
+            1,
+          );
+          assert.lengthOf(
+            h.requests().filter((request) => request.method === "session/prompt"),
+            1,
+          );
+        }),
+      ),
+  );
   for (const granted of [false, true]) {
     it.effect(
       `delivers exact Scient awareness through native Grok rules with grants ${granted}`,

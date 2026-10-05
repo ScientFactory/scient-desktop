@@ -6,11 +6,22 @@ import * as NodeURL from "node:url";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { DroidSettings, ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
+import {
+  DroidSettings,
+  MessageId,
+  NodeId,
+  ProjectId,
+  ProviderInstanceId,
+  ProviderSessionId,
+  RunAttemptId,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -173,6 +184,78 @@ const readSpawns = (directory: string) =>
       ),
     }));
 
+/** Exercises the native conversation spawn beside discovery and background generation. */
+const runNativeConversation = Effect.fnUntraced(function* (
+  instance: Effect.Success<ReturnType<typeof DroidDriver.create>>,
+  directory: string,
+  threadId: ThreadId,
+) {
+  const now = yield* DateTime.now;
+  const modelSelection = createModelSelection(instance.instanceId, "default");
+  const runtimePolicy = {
+    cwd: directory,
+    runtimeMode: "approval-required" as const,
+    interactionMode: "default" as const,
+  };
+  const runtime = yield* instance.orchestrationAdapter.openSession({
+    threadId,
+    providerSessionId: ProviderSessionId.make(`${threadId}:session`),
+    modelSelection,
+    runtimePolicy,
+  });
+  const providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+  const completion = yield* runtime.events.pipe(
+    Stream.filter((event) => event.type === "turn.terminal"),
+    Stream.take(1),
+    Stream.runCollect,
+    Effect.forkChild,
+  );
+  yield* runtime.startTurn({
+    threadId,
+    providerThread,
+    modelSelection,
+    runtimePolicy,
+    appThread: {
+      id: threadId,
+      projectId: ProjectId.make("droid-driver-project"),
+      title: "Environment fixture",
+      createdBy: "user",
+      creationSource: "web",
+      providerInstanceId: instance.instanceId,
+      modelSelection,
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    },
+    runId: RunId.make(`${threadId}:run`),
+    runOrdinal: 1,
+    providerTurnOrdinal: 1,
+    attemptId: RunAttemptId.make(`${threadId}:attempt`),
+    rootNodeId: NodeId.make(`${threadId}:root`),
+    message: {
+      messageId: MessageId.make(`${threadId}:message`),
+      text: "Hello",
+      attachments: [],
+      createdBy: "user",
+      creationSource: "web",
+    },
+  });
+  const terminal = yield* Fiber.join(completion);
+  expect(terminal).toHaveLength(1);
+  expect(terminal[0]).toMatchObject({ type: "turn.terminal", status: "completed" });
+}, Effect.scoped);
+
 it.effect("starts every Droid process with the agent environment contract", () =>
   Effect.gen(function* () {
     const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-droid-spawn-env-"));
@@ -209,20 +292,7 @@ it.effect("starts every Droid process with the agent environment contract", () =
       .pipe(Effect.exit);
     // A conversation session.
     const threadId = ThreadId.make("droid-spawn-env");
-    yield* Effect.scoped(
-      instance.orchestrationAdapter
-        .openSession({
-          threadId,
-          providerSessionId: ProviderSessionId.make(`${threadId}-native-session`),
-          modelSelection: createModelSelection(instanceId, "default"),
-          runtimePolicy: {
-            cwd: directory,
-            runtimeMode: "approval-required",
-            interactionMode: "default",
-          },
-        })
-        .pipe(Effect.asVoid),
-    );
+    yield* runNativeConversation(instance, directory, threadId);
     // Assisted sign-in, offered when no Factory API key is configured.
     expect(instance.connectionActions).toBeDefined();
     yield* Effect.scoped(
@@ -324,20 +394,7 @@ it.effect("gives no Droid process a custom-model key, on any spawn path", () =>
       })
       .pipe(Effect.exit);
     const threadId = ThreadId.make("droid-key-canary");
-    yield* Effect.scoped(
-      instance.orchestrationAdapter
-        .openSession({
-          threadId,
-          providerSessionId: ProviderSessionId.make(`${threadId}-native-session`),
-          modelSelection: createModelSelection(instanceId, "default"),
-          runtimePolicy: {
-            cwd: directory,
-            runtimeMode: "approval-required",
-            interactionMode: "default",
-          },
-        })
-        .pipe(Effect.asVoid),
-    );
+    yield* runNativeConversation(instance, directory, threadId);
     yield* Effect.scoped(
       instance
         .connectionActions!.start("droid_device_pairing")

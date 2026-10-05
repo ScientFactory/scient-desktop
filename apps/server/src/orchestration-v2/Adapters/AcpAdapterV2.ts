@@ -150,6 +150,10 @@ export interface AcpAdapterV2RuntimeInput {
     AcpSessionRuntime.AcpSessionRuntimeOptions["protocolLogging"]
   >;
   readonly onTermination: NonNullable<AcpSessionRuntime.AcpSessionRuntimeOptions["onTermination"]>;
+  readonly onProviderNotice?: (notice: {
+    readonly id: string;
+    readonly message: string;
+  }) => Effect.Effect<void>;
   readonly onOutgoingResponseFailure?: AcpSessionRuntime.AcpSessionRuntimeOptions["onOutgoingResponseFailure"];
   readonly onOutgoingResponse?: AcpSessionRuntime.AcpSessionRuntimeOptions["onOutgoingResponse"];
 }
@@ -227,6 +231,21 @@ export interface AcpAdapterV2ToolPresentation {
 export interface AcpAdapterV2Flavor {
   /** Interprets provider-specific prompt errors before they cross into orchestration. */
   readonly promptFailure?: (cause: unknown) => OrchestrationV2ProviderFailure;
+  readonly outputTruncationMessage?: (
+    runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+  ) => string | undefined;
+  readonly beforeRuntimeReuse?: (
+    runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+  ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+  readonly isRuntimeCurrent?: (runtime: AcpSessionRuntime.AcpSessionRuntime["Service"]) => boolean;
+  readonly modelSupportsImages?: (
+    runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+    selection: ModelSelection,
+  ) => boolean | undefined;
+  readonly modelContextWindow?: (
+    runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+    selection: ModelSelection,
+  ) => number | undefined;
   readonly driver: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly clientCapabilitiesMeta?: Record<string, boolean>;
@@ -253,10 +272,11 @@ export interface AcpAdapterV2Flavor {
     EffectAcpErrors.AcpError,
     Crypto.Crypto | Scope.Scope
   >;
-  /** Runs once for a new orchestration turn, never for an in-turn steer. */
+  /** Prepares a native attempt using its authoritative Scient run owner. */
   readonly beforeTurnStart?: (
     runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
     policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+    input: ProviderAdapter.ProviderAdapterV2TurnInput,
   ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   readonly applyRuntimePolicy?: (
     runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
@@ -542,6 +562,7 @@ export interface AcpAdapterV2Options {
      * by exactly that on this receipt.
      */
     readonly onDeferredFinalizeScheduled?: (debounce: Duration.Input) => Effect.Effect<void>;
+    readonly afterPromptRpcSucceeded?: () => Effect.Effect<void>;
     readonly afterPromptSettledWithBackgroundWork?: () => Effect.Effect<void>;
     readonly afterNativeResponseTransportClosed?: () => Effect.Effect<void>;
     readonly afterHardTeardownTransportDrained?: () => Effect.Effect<void>;
@@ -2112,6 +2133,38 @@ export function makeAcpAdapterV2(
                   updated,
                 ] as const;
               }).pipe(Effect.flatten),
+            onProviderNotice: (notice) =>
+              runRuntimeCallbackAtGeneration(
+                runtimeGeneration,
+                Effect.gen(function* () {
+                  const context = yield* Ref.get(activeTurn);
+                  if (context === null || context.finalized || context.interrupted) return;
+                  const now = yield* DateTime.now;
+                  const nativeItemId = `${context.providerTurnId}:provider-notice:${notice.id}`;
+                  yield* emitProviderEvent({
+                    type: "turn_item.updated",
+                    driver,
+                    turnItem: {
+                      id: idAllocator.derive.turnItemFromProviderItem({ driver, nativeItemId }),
+                      threadId: context.input.threadId,
+                      runId: context.input.runId,
+                      nodeId: context.input.rootNodeId,
+                      providerThreadId: context.input.providerThread.id,
+                      providerTurnId: context.providerTurnId,
+                      nativeItemRef: null,
+                      parentItemId: null,
+                      ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+                      startedAt: now,
+                      updatedAt: now,
+                      completedAt: now,
+                      type: "system_notice",
+                      status: "completed",
+                      title: null,
+                      message: notice.message,
+                    },
+                  });
+                }),
+              ).pipe(Effect.asVoid),
             onOutgoingResponse: (requestId) =>
               Ref.modify(nativeResponseAcknowledgements, (current) => {
                 const entry = current.get(requestId);
@@ -2973,7 +3026,10 @@ export function makeAcpAdapterV2(
             if (status === "pending" || status === "running") return true;
           }
           for (const subagent of context.subagents.values()) {
-            if (acpSubagentStatusBlocksTurnSettlement(subagent.task.status)) {
+            if (
+              flavor.subagentsIdleOnTurnCompletion !== true &&
+              acpSubagentStatusBlocksTurnSettlement(subagent.task.status)
+            ) {
               return true;
             }
           }
@@ -6764,6 +6820,15 @@ export function makeAcpAdapterV2(
           const imageAttachments = turnInput.message.attachments.filter(
             isProviderNativeImageAttachment,
           );
+          if (
+            imageAttachments.length > 0 &&
+            flavor.modelSupportsImages?.(runtime, turnInput.modelSelection) === false
+          ) {
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+              driver,
+              detail: "The selected model does not support image prompts.",
+            });
+          }
           if (imageAttachments.length > 0 && !supportsImagePrompts) {
             return yield* new ProviderAdapter.ProviderAdapterProtocolError({
               driver,
@@ -6817,7 +6882,7 @@ export function makeAcpAdapterV2(
           threadId: ThreadId | null,
         ) {
           const restartRequired = yield* Ref.get(runtimeRestartRequired);
-          if (!restartRequired) return false;
+          if (!restartRequired && flavor.isRuntimeCurrent?.(runtime) !== false) return false;
           yield* restartAcpRuntime(threadId);
           yield* Ref.set(runtimeRestartRequired, false);
           yield* Ref.set(activeSessionId, null);
@@ -6844,6 +6909,7 @@ export function makeAcpAdapterV2(
                 detail: `ACP provider turn ${existing.providerTurnId} is still active`,
               });
             }
+            if (flavor.beforeRuntimeReuse) yield* flavor.beforeRuntimeReuse(runtime);
             useProviderThreadIdentity(turnInput.providerThread);
             // Session activation can itself invoke client fs/terminal methods.
             // Install the incoming thread policy before load/resume so those
@@ -6936,7 +7002,7 @@ export function makeAcpAdapterV2(
               }),
             );
             if (!isContinuationTurn && flavor.beforeTurnStart)
-              yield* flavor.beforeTurnStart(runtime, turnInput.runtimePolicy);
+              yield* flavor.beforeTurnStart(runtime, turnInput.runtimePolicy, turnInput);
             const promptParts = isContinuationTurn
               ? null
               : yield* resolvePromptParts(turnInput, requestedSessionId);
@@ -7169,6 +7235,7 @@ export function makeAcpAdapterV2(
                 Effect.tap(() =>
                   Deferred.succeed(context.promptWireSettled, undefined).pipe(Effect.asVoid),
                 ),
+                Effect.tap(() => options.testHooks?.afterPromptRpcSucceeded?.() ?? Effect.void),
                 Effect.flatMap((result) =>
                   runRuntimeCallbackAtGeneration(
                     promptGeneration,
@@ -7207,7 +7274,9 @@ export function makeAcpAdapterV2(
                             title: null,
                             source: { kind: "output_truncated", stopReason: result.stopReason },
                             outcome: "completed",
-                            summary: MODEL_TOKEN_LIMIT_MESSAGE,
+                            summary:
+                              flavor.outputTruncationMessage?.(runtime) ??
+                              MODEL_TOKEN_LIMIT_MESSAGE,
                           },
                         });
                       }
@@ -7354,6 +7423,14 @@ export function makeAcpAdapterV2(
           instanceId: options.instanceId,
           driver,
           providerSessionId: input.providerSessionId,
+          ...(flavor.modelContextWindow === undefined
+            ? {}
+            : {
+                getModelContextWindow: (selection: ModelSelection) =>
+                  selection.instanceId === options.instanceId
+                    ? flavor.modelContextWindow?.(runtime, selection)
+                    : undefined,
+              }),
           get providerSession() {
             return { ...providerSession, model: appliedSessionModel };
           },
@@ -7856,11 +7933,11 @@ export function makeAcpAdapterV2(
                 Effect.gen(function* () {
                   yield* awaitRuntimeTeardown();
                   useProviderThreadIdentity(snapshotInput.providerThread);
-                  yield* restartRuntimeAfterTeardownIfRequired(
-                    snapshotInput.providerThread.appThreadId,
-                  );
                   const sessionId = yield* nativeThreadId(driver, snapshotInput.providerThread);
                   if ((yield* Ref.get(activeSessionId)) !== sessionId) {
+                    yield* restartRuntimeAfterTeardownIfRequired(
+                      snapshotInput.providerThread.appThreadId,
+                    );
                     if (!capabilities.threads.canReadThreadSnapshot) {
                       return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                         driver,
