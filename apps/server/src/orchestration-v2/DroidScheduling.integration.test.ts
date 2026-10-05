@@ -4,6 +4,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
   DroidSettings,
+  EventId,
+  type ServerProvider,
   MessageId,
   ProjectId,
   ProviderDriverKind,
@@ -36,6 +38,25 @@ import { makeLayer } from "./ProviderAdapterRegistry.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
 
+import { EventSinkV2 } from "./EventSink.ts";
+import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { layer as threadCommandExecutorLayer } from "./ThreadCommandExecutor.ts";
+import { ProjectCloneTracker } from "../project/ProjectCloneTracker.ts";
+import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
+import {
+  ConversationImporter,
+  conversationContentDigest,
+} from "../scient/conversationImport/ConversationImporter.ts";
+import { layer as conversationImporterLayer } from "../scient/conversationImport/ConversationImporterLive.ts";
+import { layer as conversationImportCommitLayer } from "../scient/conversationImport/ConversationImportCommit.ts";
+import {
+  importFixture,
+  principal,
+  testLease,
+} from "../scient/conversationImport/conversationImport.test-fixtures.ts";
+
+const importedQuestion = "Which city did we pick for the workshop?";
+const importedAnswer = "We picked Poseidonis for the workshop.";
 const decodeDroidSettings = Schema.decodeEffect(DroidSettings);
 const instanceId = ProviderInstanceId.make("droid-native-scheduling");
 const threadId = ThreadId.make("thread:droid-native-scheduling");
@@ -50,6 +71,7 @@ const outer = Layer.mergeAll(
 const withDroid = <A, E, R>(
   body: string,
   run: (h: {
+    threadId: ThreadId;
     orchestrator: OrchestratorV2["Service"];
     worker: OrchestrationEffectWorkerV2["Service"];
     send: (
@@ -67,7 +89,12 @@ const withDroid = <A, E, R>(
     log: Effect.Effect<ReadonlyArray<{ method?: string; params?: Record<string, unknown> }>>;
     injectEvent: (event: ProviderAdapterV2Event) => Effect.Effect<void>;
   }) => Effect.Effect<A, E, R>,
-  options: { manualWorker?: boolean; holdModel?: boolean; injectEvents?: boolean } = {},
+  options: {
+    manualWorker?: boolean;
+    holdModel?: boolean;
+    injectEvents?: boolean;
+    importHistory?: boolean;
+  } = {},
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -131,45 +158,139 @@ const withDroid = <A, E, R>(
             })),
           ),
       };
-      const layer = makeOrchestratorV2ReplayLayerWithRegistry(
+      const nativeLayer = makeOrchestratorV2ReplayLayerWithRegistry(
         { name: "droid-native-scheduling", runtimePolicyOverride: { cwd } },
         makeLayer([adapter]),
         {
           configureMcp: false,
+          databaseLayer: SqlitePersistenceMemory,
           runEffectWorker: !options.manualWorker,
           serverConfigLayer: Layer.succeed(Config.ServerConfig, config),
           responseStreamingMode: options.injectEvents ? "paragraph" : "turn",
         },
       );
+      const configured: ServerProvider = {
+        instanceId,
+        driver: ProviderDriverKind.make("droid"),
+        enabled: true,
+        installed: true,
+        version: null,
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-10-05T00:00:00.000Z",
+        models: [],
+        slashCommands: [],
+        skills: [],
+      };
+      const layer = conversationImporterLayer.pipe(
+        Layer.provideMerge(conversationImportCommitLayer),
+        Layer.provide(Layer.mock(ProviderRegistry, { getProviders: Effect.succeed([configured]) })),
+        Layer.provide(Layer.mock(ProjectCloneTracker, { get: () => Effect.succeed(null) })),
+        Layer.provideMerge(nativeLayer),
+        Layer.provideMerge(threadCommandExecutorLayer),
+        Layer.provideMerge(SqlitePersistenceMemory),
+      );
       return yield* Effect.gen(function* () {
         const orchestrator = yield* OrchestratorV2,
           worker = yield* OrchestrationEffectWorkerV2;
-        yield* orchestrator.dispatch({
-          type: "thread.create",
-          commandId: CommandId.make("droid-create"),
-          threadId,
-          projectId: ProjectId.make("droid-project"),
-          title: "Droid scheduling",
-          modelSelection: selection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: null,
-          createdBy: "user",
-          creationSource: "web",
-        });
+        let currentThreadId = threadId;
+        if (options.importHistory) {
+          const now = DateTime.formatIso(yield* DateTime.now);
+          const projectId = ProjectId.make("droid-project");
+          yield* (yield* EventSinkV2).commitProjectCommand({
+            commandId: CommandId.make("droid-import-project"),
+            projectId,
+            commandType: "project.create",
+            acceptedAt: yield* DateTime.now,
+            event: {
+              eventId: EventId.make("droid-import-project-event"),
+              type: "project.created",
+              aggregateKind: "project",
+              aggregateId: projectId,
+              occurredAt: now,
+              commandId: null,
+              causationEventId: null,
+              correlationId: null,
+              metadata: {},
+              payload: {
+                projectId,
+                title: "Droid imported history",
+                workspaceRoot: cwd,
+                defaultModelSelection: null,
+                scripts: [],
+                createdAt: now,
+                updatedAt: now,
+              },
+            },
+          });
+          const fixture = importFixture({ turns: 1 });
+          const changedSnapshot = {
+            ...fixture.input.snapshot,
+            proposedPlans: [],
+            messages: fixture.input.snapshot.messages.map((message) => ({
+              ...message,
+              text: message.role === "user" ? importedQuestion : importedAnswer,
+            })),
+          };
+          const digest = conversationContentDigest(changedSnapshot);
+          const { lease } = testLease({
+            fixture: {
+              ...fixture,
+              input: {
+                ...fixture.input,
+                snapshot: { ...changedSnapshot, contentDigest: digest },
+                package: { ...fixture.input.package, contentDigest: digest },
+              },
+            },
+            attemptDirectory: `${config.stateDir}/conversation-imports/native-droid-history`,
+          });
+          const imported = yield* (yield* ConversationImporter).importConversation(lease, {
+            destination: {
+              projectId,
+              modelSelection: selection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+            },
+            principal: principal(),
+          });
+          currentThreadId = imported.result.threadId;
+          const history = yield* orchestrator.getThreadProjection(currentThreadId);
+          assert.deepEqual(
+            history.messages.map((message) => message.text),
+            [importedQuestion, importedAnswer],
+          );
+          assert.lengthOf(history.runs, 0);
+          assert.lengthOf(history.providerTurns, 0);
+        } else
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("droid-create"),
+            threadId,
+            projectId: ProjectId.make("droid-project"),
+            title: "Droid scheduling",
+            modelSelection: selection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdBy: "user",
+            creationSource: "web",
+          });
         const waitFor = (predicate: (p: OrchestrationV2ThreadProjection) => boolean) =>
           Effect.scoped(
             Effect.gen(function* () {
-              const cursor = yield* orchestrator.getThreadEventSequence(threadId);
+              const cursor = yield* orchestrator.getThreadEventSequence(currentThreadId);
               const pull = yield* Stream.toPull(
-                orchestrator.streamStoredEventsFrom({ threadId, afterSequence: cursor }),
+                orchestrator.streamStoredEventsFrom({
+                  threadId: currentThreadId,
+                  afterSequence: cursor,
+                }),
               );
-              const initial = yield* orchestrator.getThreadProjection(threadId);
+              const initial = yield* orchestrator.getThreadProjection(currentThreadId);
               const found = yield* Stream.concat(
                 Stream.succeed(initial),
                 Stream.fromPull(Effect.succeed(pull)).pipe(
-                  Stream.mapEffect(() => orchestrator.getThreadProjection(threadId)),
+                  Stream.mapEffect(() => orchestrator.getThreadProjection(currentThreadId)),
                 ),
               ).pipe(
                 Stream.filter(predicate),
@@ -184,16 +305,17 @@ const withDroid = <A, E, R>(
             }),
           );
         return yield* run({
+          threadId: currentThreadId,
           orchestrator,
           worker,
           waitFor,
           send: (text, mode = "start_immediately", model = selection.model) =>
             Effect.gen(function* () {
-              const projection = yield* orchestrator.getThreadProjection(threadId);
+              const projection = yield* orchestrator.getThreadProjection(currentThreadId);
               return yield* orchestrator.dispatch({
                 type: "message.dispatch",
                 commandId: CommandId.make(`send:${text}`),
-                threadId,
+                threadId: currentThreadId,
                 messageId: MessageId.make(`message:${text}`),
                 text,
                 attachments: [],
@@ -213,13 +335,13 @@ const withDroid = <A, E, R>(
             }),
           stop: () =>
             Effect.gen(function* () {
-              const p = yield* orchestrator.getThreadProjection(threadId);
+              const p = yield* orchestrator.getThreadProjection(currentThreadId);
               yield* orchestrator.dispatch({
                 type: "run.interrupt",
                 commandId: CommandId.make(
                   `droid-stop:${p.runs.find((r) => ["starting", "running", "waiting"].includes(r.status))!.id}`,
                 ),
-                threadId,
+                threadId: currentThreadId,
                 runId: p.runs.find((r) => ["starting", "running", "waiting"].includes(r.status))!
                   .id,
               });
@@ -273,7 +395,18 @@ it.live("Stop before native Droid start offer cancels the pending attempt withou
     waiting,
     (h) =>
       Effect.gen(function* () {
+        const original = yield* h.orchestrator.getThreadProjection(h.threadId);
+        assert.equal(original.thread.historyOrigin, "conversation_import");
         yield* h.send("first");
+        const pendingImport = yield* h.orchestrator.getThreadProjection(h.threadId);
+        const transfer = pendingImport.contextHandoffs.find(
+          (handoff) => handoff.history !== undefined,
+        )!;
+        assert.ok(transfer);
+        assert.deepEqual(
+          transfer.history!.messages.map((message) => message.text),
+          [importedQuestion, importedAnswer],
+        );
         yield* h.stop();
         yield* h.worker.drain(12);
         const stopped = yield* h.waitFor((p) => p.runs[0]?.status === "interrupted");
@@ -282,6 +415,16 @@ it.live("Stop before native Droid start offer cancels the pending attempt withou
         assert.lengthOf(stopped.providerTurns, 0);
         assert.isFalse(stopped.turnItems.some((item) => item.type === "error"));
         assert.deepEqual(promptTexts(yield* h.log), []);
+        assert.deepEqual(
+          stopped.messages
+            .filter((message) => message.role === "assistant")
+            .map((message) => message.text),
+          [importedAnswer],
+        );
+        assert.isFalse(
+          stopped.contextHandoffs.some((handoff) => handoff.delivery?.status === "inline"),
+        );
+        assert.isTrue(stopped.contextHandoffs.some((handoff) => handoff.id === transfer.id));
         yield* h.send("again");
         yield* h.worker.drain(12);
         yield* h.waitFor(
@@ -297,10 +440,23 @@ it.live("Stop before native Droid start offer cancels the pending attempt withou
         assert.equal(recovered.runs[0]?.status, "interrupted");
         assert.lengthOf(promptTexts(yield* h.log), 1);
         assert.isTrue(promptTexts(yield* h.log)[0]?.endsWith("again"));
+        const offeredPrompt = (yield* h.log).find((row) => row.method === "session/prompt")!;
+        const rawPrompt = (offeredPrompt.params?.prompt as ReadonlyArray<{ text: string }>)[0]!
+          .text;
+        assert.equal(rawPrompt.split(importedQuestion).length - 1, 1);
+        assert.equal(rawPrompt.split(importedAnswer).length - 1, 1);
+        assert.equal(rawPrompt.match(/again/gu)?.length, 1);
+        assert.isTrue(
+          recovered.contextHandoffs.some(
+            (handoff) =>
+              handoff.delivery?.status === "inline" &&
+              handoff.targetRunId === recovered.runs[1]?.id,
+          ),
+        );
         // Capture another pending start on the reused owner, then physically
         // close that session before Stop can deliver any native turn.
         yield* h.send("session disappeared before acceptance");
-        const pending = yield* h.orchestrator.getThreadProjection(threadId);
+        const pending = yield* h.orchestrator.getThreadProjection(h.threadId);
         const third = pending.runs.at(-1)!;
         assert.equal(third.status, "starting");
         assert.isFalse(
@@ -324,7 +480,7 @@ it.live("Stop before native Droid start offer cancels the pending attempt withou
         );
         assert.lengthOf(promptTexts(yield* h.log), 1);
       }),
-    { manualWorker: true },
+    { manualWorker: true, importHistory: true },
   ),
 );
 
