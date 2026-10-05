@@ -15,6 +15,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Checkpoints from "./CheckpointService.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
+import * as CheckpointDiffQuery from "../checkpointing/CheckpointDiffQuery.ts";
+import * as ThreadManagement from "./ThreadManagementService.ts";
 import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
@@ -250,6 +252,63 @@ it.live(
           ignoreWhitespace: false,
         });
         assert.include(diff, "README.md");
+        const readThread = yield* projections.getThread(threadId);
+        assert.equal(readThread.projectId, projectId);
+        assert.isNull(readThread.worktreePath);
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make("inherited-read-checkpoint"),
+              type: "checkpoint.captured",
+              threadId,
+              runId: releasedRun.id,
+              occurredAt: now,
+              payload: changed,
+            },
+            {
+              id: EventId.make("inherited-read-completed-run"),
+              type: "run.updated",
+              threadId,
+              runId: releasedRun.id,
+              occurredAt: now,
+              payload: {
+                ...releasedRun,
+                status: "completed",
+                completedAt: now,
+                checkpointId: changed.id,
+              },
+            },
+          ],
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("inherited-read-later-request"),
+          threadId,
+          messageId: MessageId.make("inherited-read-later-request"),
+          text: "Later request without a checkpoint",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        assert.equal(
+          (yield* projections.getThreadProjection(threadId)).runs.at(-1)?.status,
+          "starting",
+        );
+        yield* fs.writeFileString(`${afterRoot}/README.md`, "Uncaptured later changes.\n");
+        const threads = yield* ThreadManagement.ThreadManagementService.pipe(
+          Effect.provide(ThreadManagement.layer),
+        );
+        const query = yield* CheckpointDiffQuery.make.pipe(
+          Effect.provideService(ThreadManagement.ThreadManagementService, threads),
+        );
+        const selected = yield* query.getFullThreadDiff({
+          threadId,
+          toTurnCount: releasedRun.ordinal,
+        });
+        assert.equal(selected.toTurnCount, releasedRun.ordinal);
+        assert.include(selected.diff, "Relocated execution modified this workspace.");
+        assert.notInclude(selected.diff, "Uncaptured later changes.");
         assert.isFalse(
           yield* checkpointStore.hasCheckpointRef({ cwd: beforeRoot, checkpointRef: baseline.ref }),
         );
