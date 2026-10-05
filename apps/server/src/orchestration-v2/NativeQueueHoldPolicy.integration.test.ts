@@ -2842,12 +2842,14 @@ it.live(
                 },
               ],
             };
+            const queuedInstruction =
+              "Compare the queued zirconium evidence before recommending a revision.";
             yield* orchestrator.dispatch({
               type: "message.dispatch",
               commandId: CommandId.make(`${threadId}:queue-selected`),
               threadId,
               messageId,
-              text: "Selected [Captured terminal](t3-context://v1/terminal/promotion-terminal)",
+              text: `${queuedInstruction} [Captured terminal](t3-context://v1/terminal/promotion-terminal)`,
               attachments: [attachment],
               context,
               selectedScientSkillNames: [release.name],
@@ -2883,7 +2885,7 @@ it.live(
               interactionMode: "plan",
             });
             const before = yield* orchestrator.getThreadProjection(threadId);
-            const refusedId = CommandId.make(`${threadId}:foreign-promotion`);
+            const refusedId = CommandId.make(`${threadId}:missing-target-promotion`);
             assert.equal(
               (yield* Effect.result(
                 orchestrator.dispatch({
@@ -2891,7 +2893,7 @@ it.live(
                   commandId: refusedId,
                   threadId,
                   queuedRunId: selected.id,
-                  targetRunId: RunId.make("foreign-target-run"),
+                  targetRunId: RunId.make("missing-target-run"),
                 }),
               ))._tag,
               "Failure",
@@ -2968,6 +2970,7 @@ it.live(
               [release.name],
             );
             assert.deepEqual(delivered.message.attachments, original.attachments);
+            assert.include(delivered.message.text, queuedInstruction);
             assert.include(delivered.message.text, "Unique captured promotion context");
             assert.include(delivered.message.text, `\`${release.name}\` (selected by the user)`);
             assert.equal(yield* fs.readFileString(path), "owned queued evidence");
