@@ -640,7 +640,7 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                 return update.detail
                   ? onUpdate({
                       type: "tool",
-                      id: "background-result",
+                      id: update.id,
                       name: "Background result",
                       status: "completed",
                       output: client.redaction.text(update.detail),

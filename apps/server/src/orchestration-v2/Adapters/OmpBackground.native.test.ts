@@ -1,32 +1,14 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import {
-  CommandId,
-  MessageId,
-  ProjectId,
-  ProviderInstanceId,
-  ThreadId,
-  type OrchestrationV2ThreadProjection,
-} from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import { CommandId, MessageId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { EventStoreV2 } from "../EventStore.ts";
+import { applyToProjection, emptyProjection } from "../ProjectionStore.ts";
 import * as ServerConfig from "../../config.ts";
-import { ompTarget } from "../../provider/omp/OmpTarget.ts";
-import { scriptedOmpRpc } from "../../provider/testUtils/scriptedOmpRpc.ts";
-import { IdAllocatorV2, layer as allocatorLayer } from "../IdAllocator.ts";
-import { EffectOutboxV2 } from "../EffectOutbox.ts";
-import { OrchestratorV2 } from "../Orchestrator.ts";
-import { makeLayerEffect } from "../ProviderAdapterRegistry.ts";
-import { ProviderContinuationRequests } from "../ProviderContinuationRequests.ts";
-import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
-import { checkpointWorkspace } from "../testkit/ReplayFixtureWorkspace.ts";
-import { makeOmpAdapterV2 } from "./OmpAdapterV2.ts";
+import { layer as allocatorLayer } from "../IdAllocator.ts";
+import { nativeOmpOrchestration as fixture } from "../../provider/testUtils/nativeOmpOrchestration.ts";
 
 const dependencies = Layer.mergeAll(
   NodeServices.layer,
@@ -35,158 +17,6 @@ const dependencies = Layer.mergeAll(
     Layer.provide(NodeServices.layer),
   ),
 );
-
-/** Real native RPC, continuation worker and durable projection share one provider session. */
-const fixture = Effect.fnUntraced(function* () {
-  const config = yield* ServerConfig.ServerConfig;
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const allocator = yield* IdAllocatorV2;
-  const cwd = yield* checkpointWorkspace("omp-background-native");
-  const instanceId = ProviderInstanceId.make("omp-native-background-instance");
-  const threadId = ThreadId.make("omp-native-background-thread");
-  const modelSelection = { instanceId, model: "test/selected" };
-  const peer = scriptedOmpRpc({ models: [], initial: { provider: "test", id: "selected" } });
-  const registry = makeLayerEffect(
-    Effect.gen(function* () {
-      return [
-        makeOmpAdapterV2({
-          target: ompTarget,
-          instanceId,
-          settings: { binaryPath: "synthetic-omp" },
-          environment: { HOME: config.stateDir },
-          fileSystem: fs,
-          path,
-          crypto,
-          spawner,
-          idAllocator: allocator,
-          serverConfig: config,
-          makeProcess: peer.makeProcess,
-          continuations: yield* ProviderContinuationRequests,
-        }),
-      ];
-    }),
-  );
-  const runtimeLayer = makeOrchestratorV2ReplayLayerWithRegistry(
-    { name: "omp-native-background", runtimePolicyOverride: { cwd } },
-    registry,
-    {
-      configureMcp: false,
-      runEffectWorker: true,
-      runContinuationWorker: true,
-      serverConfigLayer: Layer.succeed(ServerConfig.ServerConfig, config),
-    },
-  );
-  const initialize = Effect.gen(function* () {
-    const orchestrator = yield* OrchestratorV2;
-    const outbox = yield* EffectOutboxV2;
-    const completed = (commandId: CommandId) =>
-      Effect.gen(function* () {
-        const updates = yield* outbox.subscribeCompletions;
-        const done = yield* Stream.concat(Stream.succeed(undefined), updates).pipe(
-          Stream.mapEffect(() => outbox.listByCommandId(commandId)),
-          Stream.filter(
-            (rows) => rows.length > 0 && rows.every((row) => row.status === "succeeded"),
-          ),
-          Stream.runHead,
-        );
-        if (Option.isNone(done)) return yield* Effect.die("Native effect completion stream ended");
-      }).pipe(Effect.timeout("10 seconds"));
-    const waitFor = (predicate: (p: OrchestrationV2ThreadProjection) => boolean) =>
-      Effect.gen(function* () {
-        const sequence = yield* orchestrator.getThreadEventSequence(threadId);
-        const pull = yield* Stream.toPull(
-          orchestrator.streamStoredEventsFrom({ threadId, afterSequence: sequence }),
-        );
-        const found = yield* Stream.concat(
-          Stream.fromEffect(orchestrator.getThreadProjection(threadId)),
-          Stream.fromPull(Effect.succeed(pull)).pipe(
-            Stream.mapEffect(() => orchestrator.getThreadProjection(threadId)),
-          ),
-        ).pipe(Stream.filter(predicate), Stream.runHead);
-        if (Option.isNone(found))
-          return yield* Effect.die("Native background projection ended before receipt");
-        return found.value;
-      }).pipe(
-        Effect.timeout("10 seconds"),
-        Effect.tapError(() =>
-          orchestrator.getThreadProjection(threadId).pipe(
-            Effect.flatMap((p) =>
-              Effect.logWarning("Native background receipt timeout", {
-                runs: p.runs.map((r) => ({ id: r.id, status: r.status })),
-                sessions: p.providerSessions.map((row) => ({ id: row.id, status: row.status })),
-                threads: p.providerThreads.map((row) => ({
-                  id: row.id,
-                  status: row.status,
-                  pending: row.pendingBackgroundTasks,
-                })),
-                shutdowns: peer.state.shutdowns,
-              }),
-            ),
-          ),
-        ),
-      );
-    let ordinal = 0;
-    const send = (text: string) => {
-      ordinal++;
-      return orchestrator
-        .dispatch({
-          type: "message.dispatch",
-          commandId: CommandId.make(`background-send-${ordinal}`),
-          threadId,
-          messageId: MessageId.make(`background-message-${ordinal}`),
-          text,
-          attachments: [],
-          createdBy: "user",
-          creationSource: "web",
-          dispatchMode: { type: "start_immediately" },
-        })
-        .pipe(Effect.asVoid);
-    };
-    yield* orchestrator.dispatch({
-      type: "thread.create",
-      commandId: CommandId.make("background-create"),
-      threadId,
-      projectId: ProjectId.make("background-project"),
-      title: "Native background",
-      modelSelection,
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      branch: null,
-      worktreePath: null,
-      createdBy: "user",
-      creationSource: "web",
-    });
-    return { orchestrator, waitFor, send, completed };
-  });
-  const run = <A, E, R>(
-    body: (state: Effect.Success<typeof initialize>) => Effect.Effect<A, E, R>,
-  ) => initialize.pipe(Effect.flatMap(body), Effect.provide(runtimeLayer));
-  const emit = (frames: ReadonlyArray<Record<string, unknown>>) =>
-    Effect.sync(() => {
-      for (const frame of frames) {
-        if (frame.type === "agent_start") peer.state.streaming = true;
-        if (frame.type === "agent_end" || frame.type === "session_settled")
-          peer.state.streaming = false;
-        if (frame.type === "session_settled") peer.state.pendingAsyncWork = false;
-      }
-    }).pipe(Effect.andThen(peer.emit(frames)));
-  const finish = (sessionSettled: boolean) => {
-    peer.state.pendingAsyncWork = !sessionSettled;
-    return emit([
-      { type: "agent_end", messages: [], isTerminal: true },
-      {
-        type: "prompt_result",
-        id: peer.state.prompts.at(-1)?.frame.id,
-        status: "completed",
-        sessionSettled,
-      },
-    ]);
-  };
-  return { peer, emit, run, finish, threadId };
-});
 
 describe("native OMP persisted background work", () => {
   it.live("settles an idle native child under its original run without admitting a wake", () =>
@@ -420,6 +250,99 @@ describe("native OMP persisted background work", () => {
                 output: "Job finished",
               });
               expect(f.peer.state.prompts).toHaveLength(2);
+            }),
+          );
+        }),
+      ).pipe(Effect.provide(dependencies)),
+  );
+
+  it.live(
+    "retains distinct async results and replay identities in one SQL wake and another wake",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const f = yield* fixture();
+          yield* f.run(({ waitFor, send }) =>
+            Effect.gen(function* () {
+              const store = yield* EventStoreV2;
+              yield* send("Start background jobs");
+              yield* waitFor((p) => p.providerTurns.some((t) => t.nativeAcceptance === "accepted"));
+              yield* f.emit([{ type: "agent_start" }]);
+              yield* f.finish(false);
+              const parent = yield* waitFor((p) => p.runs[0]?.status === "completed");
+              // The distinguishing job receipts follow a shared prefix longer than diagnostic clipping.
+              const prefix = "Background evidence ".repeat(20);
+              const first = `${prefix}Job alpha: FIRST RESULT`;
+              const second = `${prefix}Job beta: SECOND RESULT`;
+              const result = (content: string) => ({
+                type: "message_end",
+                message: { role: "custom", customType: "async-result", content },
+              });
+              yield* f.emit([
+                { type: "agent_start" },
+                result(first),
+                result(second),
+                result(first),
+              ]);
+              const awake = yield* waitFor(
+                (p) => p.runs.length === 2 && p.runs[1]?.status === "running",
+              );
+              const wakeId = awake.runs[1]!.id;
+              yield* f.emit([{ type: "agent_end", messages: [], yielded: true }]);
+              const settled = yield* waitFor((p) => p.runs[1]?.status === "completed");
+              const markers = settled.turnItems.filter(
+                (item) => item.title === "Background result",
+              );
+              expect(markers).toHaveLength(2);
+              expect(new Set(markers.map((item) => item.id)).size).toBe(2);
+              expect(markers.map((item) => item.nativeItemRef)).not.toEqual([null, null]);
+              expect(markers).toEqual(
+                expect.arrayContaining([
+                  expect.objectContaining({ runId: wakeId, status: "completed", output: first }),
+                  expect.objectContaining({ runId: wakeId, status: "completed", output: second }),
+                ]),
+              );
+              expect(settled.runs[0]?.id).toBe(parent.runs[0]?.id);
+              expect(settled.messages.filter((message) => message.role === "assistant")).toEqual(
+                [],
+              );
+              yield* f.emit([
+                { type: "agent_start" },
+                result("Job gamma: THIRD RESULT"),
+                { type: "agent_end", messages: [], yielded: true },
+                { type: "session_settled" },
+              ]);
+              const later = yield* waitFor(
+                (p) =>
+                  p.runs.length === 3 &&
+                  p.runs[2]?.status === "completed" &&
+                  p.providerThreads.every((thread) => thread.pendingBackgroundTasks?.length === 0),
+              );
+              const all = later.turnItems.filter((item) => item.title === "Background result");
+              expect(all).toHaveLength(3);
+              expect(all.filter((item) => item.runId === wakeId)).toEqual(markers);
+              expect(all.find((item) => item.runId === later.runs[2]?.id)).toMatchObject({
+                status: "completed",
+                output: "Job gamma: THIRD RESULT",
+              });
+              expect(new Set(all.map((item) => item.id)).size).toBe(3);
+              expect(f.peer.state.prompts).toHaveLength(1);
+              expect(later.runs.every((run) => run.status === "completed")).toBe(true);
+              // Reconstruct from persisted domain events, independently of the live SQL projection.
+              const events = yield* store.read({ threadId: f.threadId }).pipe(
+                Stream.map((stored) => stored.event),
+                Stream.runCollect,
+              );
+              const created = events.find((event) => event.type === "thread.created");
+              if (!created || created.type !== "thread.created")
+                return yield* Effect.die("Missing persisted thread");
+              const replayed = events.reduce(
+                (projection, event) => applyToProjection(projection, event),
+                emptyProjection(created),
+              );
+              expect(
+                replayed?.turnItems.filter((item) => item.title === "Background result"),
+              ).toEqual(all);
             }),
           );
         }),
