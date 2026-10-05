@@ -47,6 +47,7 @@ import {
   type ProviderAdapterV2Event,
   type ProviderAdapterV2EventSubscription,
   type ProviderAdapterV2SessionRuntime,
+  type ProviderAdapterV2InitiatedWorkIdentity,
 } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
@@ -148,6 +149,12 @@ export type ProviderSessionManagerV2Error = typeof ProviderSessionManagerV2Error
 
 export interface ProviderSessionManagerV2Shape {
   readonly shutdown: Effect.Effect<void>;
+  readonly withProviderWorkAdmission: <A, E, R>(
+    identity: ProviderAdapterV2InitiatedWorkIdentity,
+    expectedRuntime: ProviderAdapterV2SessionRuntime,
+    commit: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<Option.Option<A>, E, R>;
+
   readonly open: (input: {
     readonly threadId: ThreadId;
     readonly providerSessionId: ProviderSessionId;
@@ -379,6 +386,7 @@ export const layerWithOptions = (
       );
       const layerScope = yield* Effect.scope;
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
+      const releasingRuntimes = new WeakSet<ProviderAdapterV2SessionRuntime>();
       // Pi session files admit only one native writer, including during startup.
       // The process scope releases its leases after native teardown completes.
       const piFileLeases = new Map<string, Scope.Closeable>();
@@ -858,23 +866,48 @@ export const layerWithOptions = (
         readonly cancelIdleFiber?: boolean;
         readonly onlyIfIdleGeneration?: number;
         readonly gracefulSubscribers?: boolean;
+        readonly expectedRuntime?: ProviderAdapterV2SessionRuntime;
       }) =>
         Effect.acquireUseRelease(
-          Ref.modify(sessions, (current) => {
+          Effect.gen(function* () {
             const key = sessionKey(input.providerSessionId);
-            const existing = current.get(key);
-            if (existing === undefined) {
-              return [Option.none<LiveSessionEntry>(), current] as const;
-            }
+            const candidate = (yield* Ref.get(sessions)).get(key);
             if (
-              input.onlyIfIdleGeneration !== undefined &&
-              (existing.busyCount > 0 || existing.idleGeneration !== input.onlyIfIdleGeneration)
-            ) {
-              return [Option.none<LiveSessionEntry>(), current] as const;
-            }
-            const updated = new Map(current);
-            updated.delete(key);
-            return [Option.some(existing), updated] as const;
+              candidate === undefined ||
+              (input.expectedRuntime !== undefined && candidate.runtime !== input.expectedRuntime)
+            )
+              return Option.none<LiveSessionEntry>();
+            // Reserve inside the native fence so an idle decision cannot invalidate
+            // an owner that became busy while that fence was waiting for SQL.
+            const reserve = Ref.modify(sessions, (current) => {
+              const existing = current.get(key);
+              if (
+                existing?.runtime !== candidate.runtime ||
+                existing.scope !== candidate.scope ||
+                releasingRuntimes.has(existing.runtime)
+              )
+                return [false, current] as const;
+              if (
+                input.onlyIfIdleGeneration !== undefined &&
+                (existing.busyCount > 0 || existing.idleGeneration !== input.onlyIfIdleGeneration)
+              )
+                return [false, current] as const;
+              releasingRuntimes.add(existing.runtime);
+              return [true, current] as const;
+            });
+            const reserved = yield* candidate.runtime.invalidateInitiatedWork === undefined
+              ? reserve
+              : candidate.runtime.invalidateInitiatedWork(reserve);
+            if (!reserved) return Option.none<LiveSessionEntry>();
+            return yield* Ref.modify(sessions, (current) => {
+              const key = sessionKey(input.providerSessionId);
+              const existing = current.get(key);
+              if (existing?.runtime !== candidate.runtime || existing.scope !== candidate.scope)
+                return [Option.none<LiveSessionEntry>(), current] as const;
+              const updated = new Map(current);
+              updated.delete(key);
+              return [Option.some(existing), updated] as const;
+            });
           }),
           (entry) =>
             Option.match(entry, {
@@ -984,6 +1017,7 @@ export const layerWithOptions = (
       const releaseIfStillIdle = (input: {
         readonly providerSessionId: ProviderSessionId;
         readonly generation: number;
+        readonly expectedRuntime: ProviderAdapterV2SessionRuntime;
       }): Effect.Effect<void> =>
         Effect.gen(function* () {
           const current = yield* Ref.get(sessions);
@@ -991,6 +1025,7 @@ export const layerWithOptions = (
           const entry = current.get(key);
           if (
             entry === undefined ||
+            entry.runtime !== input.expectedRuntime ||
             entry.busyCount > 0 ||
             entry.idleGeneration !== input.generation
           ) {
@@ -1045,13 +1080,14 @@ export const layerWithOptions = (
           }
           // hasPendingBackgroundWork yields to the adapter, so the idle
           // decision above can go stale; the generation guard revalidates
-          // busyCount and idleGeneration inside releaseEntry's atomic
-          // entry removal.
+          // busyCount and idleGeneration inside releaseEntry's reservation
+          // before native invalidation and compare-removal.
           yield* releaseEntry({
             providerSessionId: input.providerSessionId,
             reason: "idle_timeout",
             cancelIdleFiber: false,
             onlyIfIdleGeneration: input.generation,
+            expectedRuntime: input.expectedRuntime,
           }).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("orchestration-v2.driver-session.idle-release-failed", {
@@ -1089,13 +1125,19 @@ export const layerWithOptions = (
           yield* cancelIdleFiber(entry.idleFiber);
           const generation = entry.idleGeneration + 1;
           const idleFiber = yield* Effect.sleep(Duration.millis(idleTimeoutMs)).pipe(
-            Effect.andThen(releaseIfStillIdle({ providerSessionId, generation })),
+            Effect.andThen(
+              releaseIfStillIdle({ providerSessionId, generation, expectedRuntime: entry.runtime }),
+            ),
             Effect.forkIn(layerScope),
           );
           const lastActivityAtMs = yield* Clock.currentTimeMillis;
           yield* Ref.update(sessions, (latest) => {
             const latestEntry = latest.get(key);
-            if (latestEntry === undefined || latestEntry.busyCount > 0) {
+            if (
+              latestEntry === undefined ||
+              latestEntry.runtime !== entry.runtime ||
+              latestEntry.busyCount > 0
+            ) {
               return latest;
             }
             const updated = new Map(latest);
@@ -1684,6 +1726,7 @@ export const layerWithOptions = (
               if (stoppedByProvider && Exit.isSuccess(exit)) {
                 yield* releaseEntry({
                   providerSessionId: entry.runtime.providerSessionId,
+                  expectedRuntime: entry.runtime,
                   reason: "manual_shutdown",
                   gracefulSubscribers: true,
                 }).pipe(Effect.ignore);
@@ -1705,6 +1748,7 @@ export const layerWithOptions = (
               yield* Ref.set(entry.eventSubscribers, new Map());
               yield* releaseEntry({
                 providerSessionId: entry.runtime.providerSessionId,
+                expectedRuntime: entry.runtime,
                 reason: "runtime_error",
                 detail: Cause.pretty(cause),
               }).pipe(Effect.ignore);
@@ -1721,6 +1765,7 @@ export const layerWithOptions = (
           (entry) =>
             releaseEntry({
               providerSessionId: entry.runtime.providerSessionId,
+              expectedRuntime: entry.runtime,
               reason: "server_shutdown",
             }).pipe(
               Effect.catchCause((cause) =>
@@ -1737,6 +1782,41 @@ export const layerWithOptions = (
 
       return ProviderSessionManagerV2.of({
         shutdown,
+        withProviderWorkAdmission: <A, E, R>(
+          identity: ProviderAdapterV2InitiatedWorkIdentity,
+          expectedRuntime: ProviderAdapterV2SessionRuntime,
+          commit: Effect.Effect<A, E, R>,
+        ) =>
+          Effect.gen(function* () {
+            const key = sessionKey(identity.providerSessionId);
+            const entry = (yield* Ref.get(sessions)).get(key);
+            if (
+              entry === undefined ||
+              entry.exposedRuntime !== expectedRuntime ||
+              !entry.attachedThreadIds.has(identity.threadId) ||
+              entry.runtime.driver !== identity.driver ||
+              entry.runtime.instanceId !== identity.providerInstanceId ||
+              entry.runtime.withInitiatedWorkAdmission === undefined
+            )
+              return Option.none<A>();
+            return yield* entry.runtime
+              .withInitiatedWorkAdmission(
+                identity,
+                Effect.gen(function* () {
+                  const current = (yield* Ref.get(sessions)).get(key);
+                  if (
+                    current?.runtime !== entry.runtime ||
+                    current.scope !== entry.scope ||
+                    current.exposedRuntime !== expectedRuntime ||
+                    !current.attachedThreadIds.has(identity.threadId) ||
+                    releasingRuntimes.has(current.runtime)
+                  )
+                    return Option.none<A>();
+                  return Option.some(yield* commit);
+                }),
+              )
+              .pipe(Effect.map(Option.flatten));
+          }),
         resolveMcpInvocationPolicy: Effect.fn(
           "ProviderSessionManagerV2.resolveMcpInvocationPolicy",
         )(function* (
@@ -1832,6 +1912,12 @@ export const layerWithOptions = (
                   const key = sessionKey(input.providerSessionId);
                   const existing = (yield* Ref.get(sessions)).get(key);
                   if (existing !== undefined) {
+                    if (releasingRuntimes.has(existing.runtime))
+                      return yield* new ProviderSessionOpenError({
+                        instanceId: input.modelSelection.instanceId,
+                        providerSessionId: input.providerSessionId,
+                        cause: "The live provider session is logically closing.",
+                      });
                     if (existing.runtime.instanceId !== input.modelSelection.instanceId) {
                       return yield* new ProviderSessionOpenError({
                         instanceId: input.modelSelection.instanceId,
@@ -2056,6 +2142,7 @@ export const layerWithOptions = (
                     Effect.tapError(() =>
                       releaseEntry({
                         providerSessionId: input.providerSessionId,
+                        expectedRuntime: runtime,
                         reason: "runtime_error",
                         detail: "Failed to persist the provider-session attachment.",
                       }).pipe(Effect.ignore),
@@ -2077,6 +2164,7 @@ export const layerWithOptions = (
                         if (openedRuntime !== undefined && current?.runtime === openedRuntime) {
                           yield* releaseEntry({
                             providerSessionId: input.providerSessionId,
+                            expectedRuntime: openedRuntime,
                             reason: "manual_shutdown",
                           }).pipe(Effect.ignoreCause({ log: true }));
                         }
@@ -2122,6 +2210,7 @@ export const layerWithOptions = (
               (entry) =>
                 releaseEntry({
                   providerSessionId: entry.runtime.providerSessionId,
+                  expectedRuntime: entry.runtime,
                   reason: "manual_shutdown",
                   detail: `Provider instance ${instanceId} logged out.`,
                 }).pipe(Effect.exit),
@@ -2246,6 +2335,7 @@ export const layerWithOptions = (
             ) {
               yield* releaseEntry({
                 providerSessionId: input.providerSessionId,
+                expectedRuntime: detached.value.runtime,
                 reason: "manual_shutdown",
                 ...(input.detail === undefined ? {} : { detail: input.detail }),
               });

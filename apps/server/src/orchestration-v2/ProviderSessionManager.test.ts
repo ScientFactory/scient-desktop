@@ -288,6 +288,7 @@ function makeProviderAdapter(
     readonly beforeUnload?: Effect.Effect<void>;
     readonly startTurn?: ProviderAdapterV2SessionRuntime["startTurn"];
     readonly steerTurn?: ProviderAdapterV2SessionRuntime["steerTurn"];
+    readonly invalidateInitiatedWork?: ProviderAdapterV2SessionRuntime["invalidateInitiatedWork"];
   } = {},
 ): ProviderAdapterV2Shape {
   const driver = options.driver ?? CODEX_DRIVER;
@@ -358,6 +359,9 @@ function makeProviderAdapter(
           ...(options.hasPendingBackgroundWork === undefined
             ? {}
             : { hasPendingBackgroundWork: options.hasPendingBackgroundWork }),
+          ...(options.invalidateInitiatedWork === undefined
+            ? {}
+            : { invalidateInitiatedWork: options.invalidateInitiatedWork }),
           ensureThread: () => unimplemented("ensureThread unused in test"),
           resumeThread: (threadInput) =>
             Ref.update(state, (current) => ({
@@ -425,6 +429,7 @@ function makeTestLayer(input: {
   readonly beforeUnload?: Effect.Effect<void>;
   readonly startTurn?: ProviderAdapterV2SessionRuntime["startTurn"];
   readonly steerTurn?: ProviderAdapterV2SessionRuntime["steerTurn"];
+  readonly invalidateInitiatedWork?: ProviderAdapterV2SessionRuntime["invalidateInitiatedWork"];
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
 }) {
@@ -449,6 +454,9 @@ function makeTestLayer(input: {
     ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
     ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
     ...(input.steerTurn === undefined ? {} : { steerTurn: input.steerTurn }),
+    ...(input.invalidateInitiatedWork === undefined
+      ? {}
+      : { invalidateInitiatedWork: input.invalidateInitiatedWork }),
   });
   const injectionEnabled = input.mcpInjectionEnabled;
   const registryLayer =
@@ -2038,134 +2046,156 @@ it.effect("ProviderSessionManagerV2 releases pinned idle sessions once the pin c
   }),
 );
 
-it.effect(
-  "ProviderSessionManagerV2 does not idle-release a session that turns busy during the pending-work check",
-  () =>
-    Effect.gen(function* () {
-      const state = yield* Ref.make(emptyState);
-      const firstCheck = yield* Ref.make(true);
-      const checkEntered = yield* Deferred.make<void>();
-      const checkGate = yield* Deferred.make<void>();
-      const effect = Effect.gen(function* () {
-        const eventSink = yield* EventSink.EventSinkV2;
-        const idAllocator = yield* IdAllocator.IdAllocatorV2;
-        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
-        const now = yield* DateTime.now;
-        const projectId = yield* idAllocator.allocate.project({
-          fixtureName: "provider-session-manager-busy-during-check",
-        });
-        const threadId = yield* idAllocator.allocate.thread({
-          fixtureName: "provider-session-manager-busy-during-check",
-          projectId,
-        });
-        const providerSessionId = yield* idAllocator.allocate.providerSession({
-          providerInstanceId: modelSelection.instanceId,
-          threadId,
-        });
-        const providerThread = makeProviderThread({
-          idAllocator,
-          threadId,
-          providerSessionId,
-          now,
-        });
-        const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
-        const attemptId = idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 });
-        const rootNodeId = idAllocator.derive.rootNode({ runId });
-        const providerTurnId = idAllocator.derive.providerTurn({
-          driver: CODEX_DRIVER,
-          nativeTurnId: "native-turn-busy-during-check",
-        });
-
-        yield* eventSink.write({
-          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
-        });
-        const runtime = yield* manager.open({
-          threadId,
-          providerSessionId,
-          modelSelection,
-          runtimePolicy,
-        });
-        yield* runtime.events.pipe(Stream.runDrain, Effect.forkScoped);
-        const appThread = (yield* projectionStore.getThreadProjection(threadId)).thread;
-
-        yield* TestClock.adjust("1 second");
-        yield* Deferred.await(checkEntered);
-
-        // The release fiber is parked inside the pending-work check, so the
-        // idle decision it already made is stale once this turn marks the
-        // session busy.
-        const turnFiber = yield* runtime
-          .startTurn({
-            appThread,
+for (const phase of ["pending-work check", "generation invalidation fence"] as const)
+  it.effect(
+    `ProviderSessionManagerV2 does not idle-release a session that turns busy during the ${phase}`,
+    () =>
+      Effect.gen(function* () {
+        const state = yield* Ref.make(emptyState);
+        const logicalInvalidations = yield* Ref.make(0);
+        const firstCheck = yield* Ref.make(true);
+        const checkEntered = yield* Deferred.make<void>();
+        const checkGate = yield* Deferred.make<void>();
+        const effect = Effect.gen(function* () {
+          const eventSink = yield* EventSink.EventSinkV2;
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+          const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+          const now = yield* DateTime.now;
+          const projectId = yield* idAllocator.allocate.project({
+            fixtureName: "provider-session-manager-busy-during-check",
+          });
+          const threadId = yield* idAllocator.allocate.thread({
+            fixtureName: "provider-session-manager-busy-during-check",
+            projectId,
+          });
+          const providerSessionId = yield* idAllocator.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
             threadId,
-            runId,
-            runOrdinal: 1,
-            providerTurnOrdinal: 1,
-            attemptId,
-            rootNodeId,
-            providerThread,
-            message: {
-              createdBy: "user",
-              creationSource: "web",
-              messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
-              text: "hello",
-              attachments: [],
-            },
+          });
+          const providerThread = makeProviderThread({
+            idAllocator,
+            threadId,
+            providerSessionId,
+            now,
+          });
+          const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+          const attemptId = idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 });
+          const rootNodeId = idAllocator.derive.rootNode({ runId });
+          const providerTurnId = idAllocator.derive.providerTurn({
+            driver: CODEX_DRIVER,
+            nativeTurnId: "native-turn-busy-during-check",
+          });
+
+          yield* eventSink.write({
+            events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+          });
+          const runtime = yield* manager.open({
+            threadId,
+            providerSessionId,
             modelSelection,
             runtimePolicy,
-          })
-          .pipe(Effect.forkDetach);
-        for (let i = 0; i < 10; i += 1) {
+          });
+          yield* runtime.events.pipe(Stream.runDrain, Effect.forkScoped);
+          const appThread = (yield* projectionStore.getThreadProjection(threadId)).thread;
+
+          yield* TestClock.adjust("1 second");
+          yield* Deferred.await(checkEntered);
+
+          // The release fiber is parked inside the pending-work check, so the
+          // idle decision it already made is stale once this turn marks the
+          // session busy.
+          const turnFiber = yield* runtime
+            .startTurn({
+              appThread,
+              threadId,
+              runId,
+              runOrdinal: 1,
+              providerTurnOrdinal: 1,
+              attemptId,
+              rootNodeId,
+              providerThread,
+              message: {
+                createdBy: "user",
+                creationSource: "web",
+                messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+                text: "hello",
+                attachments: [],
+              },
+              modelSelection,
+              runtimePolicy,
+            })
+            .pipe(Effect.forkDetach);
+          for (let i = 0; i < 10; i += 1) {
+            yield* Effect.yieldNow;
+          }
+          yield* Deferred.succeed(checkGate, undefined);
+          yield* Fiber.join(turnFiber);
           yield* Effect.yieldNow;
-        }
-        yield* Deferred.succeed(checkGate, undefined);
-        yield* Fiber.join(turnFiber);
-        yield* Effect.yieldNow;
 
-        assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
-        assert.equal((yield* Ref.get(state)).closeCount, 0);
+          assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
+          assert.equal((yield* Ref.get(state)).closeCount, 0);
+          assert.equal(yield* Ref.get(logicalInvalidations), 0);
 
-        const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
-        assert.isDefined(queue);
-        yield* Queue.offer(queue!, {
-          type: "turn.terminal",
-          driver: CODEX_DRIVER,
-          providerThreadId: providerThread.id,
-          providerTurnId,
-          runOrdinal: 1,
-          status: "completed",
-          failure: null,
-          threadDisposition: "reusable",
+          const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+          assert.isDefined(queue);
+          yield* Queue.offer(queue!, {
+            type: "turn.terminal",
+            driver: CODEX_DRIVER,
+            providerThreadId: providerThread.id,
+            providerTurnId,
+            runOrdinal: 1,
+            status: "completed",
+            failure: null,
+            threadDisposition: "reusable",
+          });
+          yield* TestClock.adjust("1 second");
+          yield* Effect.yieldNow;
+          assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+          assert.equal((yield* Ref.get(state)).closeCount, 1);
+          if (phase === "generation invalidation fence")
+            assert.equal(yield* Ref.get(logicalInvalidations), 1);
         });
-        yield* TestClock.adjust("1 second");
-        yield* Effect.yieldNow;
-        assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
-        assert.equal((yield* Ref.get(state)).closeCount, 1);
-      });
 
-      yield* effect.pipe(
-        Effect.provide(
-          makeTestLayer({
-            state,
-            idleTimeoutMs: 1000,
-            // Uninterruptible so the markBusy-triggered interrupt cannot land
-            // inside the check, mirroring an adapter that masks interruption
-            // while inspecting its own state.
-            hasPendingBackgroundWork: Effect.uninterruptible(
-              Effect.gen(function* () {
-                if (yield* Ref.getAndSet(firstCheck, false)) {
-                  yield* Deferred.succeed(checkEntered, undefined);
-                  yield* Deferred.await(checkGate);
-                }
-                return false;
-              }),
-            ),
-          }),
-        ),
-      );
-    }),
-);
+        yield* effect.pipe(
+          Effect.provide(
+            makeTestLayer({
+              state,
+              idleTimeoutMs: 1000,
+              // Uninterruptible so the markBusy-triggered interrupt cannot land
+              // inside the check, mirroring an adapter that masks interruption
+              // while inspecting its own state.
+              ...(phase === "generation invalidation fence"
+                ? {
+                    invalidateInitiatedWork: (reserve = Effect.succeed(true)) =>
+                      Effect.gen(function* () {
+                        if (yield* Ref.getAndSet(firstCheck, false)) {
+                          yield* Deferred.succeed(checkEntered, undefined);
+                          yield* Deferred.await(checkGate);
+                        }
+                        if (!(yield* reserve)) return false;
+                        yield* Ref.update(logicalInvalidations, (count) => count + 1);
+                        return true;
+                      }),
+                  }
+                : {}),
+              hasPendingBackgroundWork:
+                phase === "generation invalidation fence"
+                  ? Effect.succeed(false)
+                  : Effect.uninterruptible(
+                      Effect.gen(function* () {
+                        if (yield* Ref.getAndSet(firstCheck, false)) {
+                          yield* Deferred.succeed(checkEntered, undefined);
+                          yield* Deferred.await(checkGate);
+                        }
+                        return false;
+                      }),
+                    ),
+            }),
+          ),
+        );
+      }),
+  );
 
 it.effect("ProviderSessionManagerV2 does not apply a stale idle pin to a replacement session", () =>
   Effect.gen(function* () {

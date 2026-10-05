@@ -36,6 +36,7 @@ import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
+import type * as Option from "effect/Option";
 import type * as Stream from "effect/Stream";
 
 import type {
@@ -487,7 +488,27 @@ export interface ProviderAdapterV2HistoricalContext {
   readonly context: string;
 }
 
+/** Internal native-generation authority; never serialized as a command capability. */
+export interface ProviderAdapterV2InitiatedWorkIdentity {
+  readonly threadId: ThreadId;
+  readonly providerThreadId: ProviderThreadId;
+  readonly providerSessionId: ProviderSessionId;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly driver: ProviderDriverKind;
+  readonly workId: string;
+  readonly modelSelection: ModelSelection;
+  readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
+}
+
 export interface ProviderAdapterV2SessionRuntime {
+  /** Called only under the Orchestrator thread lock, around final durable admission. */
+  readonly withInitiatedWorkAdmission?: <A, E, R>(
+    identity: ProviderAdapterV2InitiatedWorkIdentity,
+    commit: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<Option.Option<A>, E, R>;
+  /** Reserve the exact eligible manager owner under the fence; physical close follows outside it. */
+  readonly invalidateInitiatedWork?: (reserve?: Effect.Effect<boolean>) => Effect.Effect<boolean>;
+
   /** Manager-projected, instance-specific host MCP injection support. Absence is unsupported. */
   readonly mcpSessionInjection?: boolean;
   readonly instanceId: ProviderInstanceId;
