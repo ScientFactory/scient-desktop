@@ -5,6 +5,10 @@ import {
   StaticTextFileSurface,
   type FilePostRender,
 } from "~/scient/fileSurfaces/StaticTextFileSurface";
+import {
+  ScientMathSourceToolbar,
+  useScientFileEditorBindings,
+} from "~/scient/fileSurfaces/scientFileEditorBindings";
 // SCIENT-FORK:END
 import { useAtomValue } from "@effect/atom-react";
 import { Spinner } from "~/components/ui/spinner";
@@ -28,8 +32,6 @@ import {
   isWorkspaceVideoPreviewPath,
 } from "@t3tools/shared/filePreview";
 import { Editor } from "@pierre/diffs/editor";
-import { sourceMathController, sourceMathOwnsEvent } from "~/scient/math/input/sourceAdapter";
-import { MathInputTools } from "~/scient/math/input/MathInputTools";
 import { EditProvider, File, Virtualizer } from "@pierre/diffs/react";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 import {
@@ -53,7 +55,6 @@ import {
   Suspense,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -907,75 +908,21 @@ function EditableFileEditor({
     [addReviewComment, composerDraftTarget, onContentsChange, relativePath],
   );
 
-  useLayoutEffect(
-    () =>
-      externalPersistence?.registerExternalProjection((update) => {
-        if (!editor.getFile() || editor.isComposing) return "defer";
-        const prepared = editor.prepareExternalEdits(
-          update.previousSource,
-          update.patches.map((patch) => ({
-            start: patch.start,
-            end: patch.end,
-            text: patch.replacement,
-          })),
-        );
-        if (!prepared) return null;
-        return () => {
-          applyingExternal.current = true;
-          try {
-            prepared();
-            externalBindings.current.onExternalVersionApplied?.(update.editVersion);
-          } finally {
-            applyingExternal.current = false;
-          }
-        };
-      }),
-    [editor, externalPersistence],
-  );
-
-  const reportEditorSelection = useCallback(() => {
-    if (onEditorSelectionChange === undefined) return;
-    if (editorSelectionFrameRef.current !== null) {
-      cancelAnimationFrame(editorSelectionFrameRef.current);
-    }
-    editorSelectionFrameRef.current = requestAnimationFrame(() => {
-      editorSelectionFrameRef.current = null;
-      onEditorSelectionChange(editor.getState().selections?.at(-1) ?? null);
-    });
-  }, [editor, onEditorSelectionChange]);
-  const mathEditable = useRef(!editingBlocked);
-  mathEditable.current = !editingBlocked;
-  const mathInput = useMemo(() => {
-    const format = /\.tex$/iu.test(relativePath)
-      ? "latex"
-      : /\.(?:md|markdown)$/iu.test(relativePath)
-        ? "markdown"
-        : null;
-    return format ? sourceMathController(editor, format, () => mathEditable.current) : null;
-  }, [editor, relativePath]);
-  useEffect(() => {
-    const host = surfaceRef.current;
-    if (!host || !mathInput) return;
-    return mathInput.attach(host, sourceMathOwnsEvent);
-  }, [mathInput]);
-  reportEditorSelectionRef.current = reportEditorSelection;
-
-  useEffect(() => {
-    if (onEditorSelectionChange === undefined) return;
-    const handleSelectionChange = () => {
-      const surface = surfaceRef.current;
-      if (surface === null || !surface.contains(document.activeElement)) return;
-      reportEditorSelection();
-    };
-    document.addEventListener("selectionchange", handleSelectionChange);
-    return () => {
-      document.removeEventListener("selectionchange", handleSelectionChange);
-      if (editorSelectionFrameRef.current !== null) {
-        cancelAnimationFrame(editorSelectionFrameRef.current);
-        editorSelectionFrameRef.current = null;
-      }
-    };
-  }, [onEditorSelectionChange, reportEditorSelection]);
+  // SCIENT-FORK:START — session edit projection, selection reporting, math input
+  const { mathInput, onCompositionEnd, onKeyDownCapture } = useScientFileEditorBindings({
+    editor,
+    relativePath,
+    editingBlocked,
+    surfaceRef,
+    externalPersistence,
+    externalBindings,
+    applyingExternal,
+    editorSelectionFrameRef,
+    reportEditorSelectionRef,
+    onEditorSelectionChange,
+    onRunShortcut,
+  });
+  // SCIENT-FORK:END
 
   const removeAnnotationEntry = useCallback(
     (entryId: string) => {
@@ -1139,30 +1086,12 @@ function EditableFileEditor({
         <div
           ref={surfaceRef}
           className="relative flex min-h-0 flex-1"
-          onCompositionEnd={() =>
-            queueMicrotask(() =>
-              externalBindings.current.externalPersistence?.resumeExternalUpdates(),
-            )
-          }
-          onKeyDownCapture={(event) => {
-            if (
-              onRunShortcut === undefined ||
-              event.key !== "Enter" ||
-              (!event.metaKey && !event.ctrlKey) ||
-              event.altKey ||
-              event.shiftKey
-            ) {
-              return;
-            }
-            event.preventDefault();
-            onRunShortcut(editor.getState().selections?.at(-1) ?? null);
-          }}
+          onCompositionEnd={onCompositionEnd}
+          onKeyDownCapture={onKeyDownCapture}
         >
-          {mathInput && !editingBlocked ? (
-            <div className="scient-math-source-toolbar">
-              <MathInputTools controller={mathInput} />
-            </div>
-          ) : null}
+          {/* SCIENT-FORK:START — source math input */}
+          <ScientMathSourceToolbar mathInput={mathInput} editingBlocked={editingBlocked} />
+          {/* SCIENT-FORK:END */}
           <Virtualizer
             className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
             config={{
