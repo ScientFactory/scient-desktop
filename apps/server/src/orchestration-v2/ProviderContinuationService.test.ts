@@ -1,5 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import {
+  ProviderInstanceId,
+  ProviderSessionId,
   MessageId,
   ProviderDriverKind,
   ProviderThreadId,
@@ -22,6 +24,7 @@ import * as IdAllocator from "./IdAllocator.ts";
 import * as ProviderContinuationRequests from "./ProviderContinuationRequests.ts";
 import * as ProviderContinuationService from "./ProviderContinuationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import { OrchestratorProviderWorkDeferredError } from "./Orchestrator.ts";
 
 const threadId = ThreadId.make("thread-provider-continuation");
 const providerThreadId = ProviderThreadId.make("provider-thread-continuation");
@@ -818,3 +821,82 @@ describe("ProviderContinuationService", () => {
     });
   });
 });
+
+it.effect.each(["admit", "stop", "replace"] as const)(
+  "retains deferred initiated identity and re-enters its generation guard: %s",
+  (scenario) =>
+    Effect.gen(function* () {
+      const commands: Array<
+        Parameters<ThreadManagementService.ThreadManagementService["Service"]["dispatch"]>[0]
+      > = [];
+      const firstAttempt = yield* Deferred.make<void>();
+      const instanceId = ProviderInstanceId.make("initiated-clock-instance");
+      const initiated = {
+        providerInstanceId: instanceId,
+        providerSessionId: ProviderSessionId.make("initiated-clock-session"),
+        workId: "one-generation",
+        modelSelection: { instanceId, model: "clock-model" },
+        runtimePolicy: {
+          cwd: "/repo",
+          runtimeMode: "full-access" as const,
+          interactionMode: "default" as const,
+        },
+      };
+      const guard = yield* makeGuard();
+      const dispatchIfCurrent = yield* guard.capture;
+      let clears = 0;
+      const threads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getThreadRecords: () => Effect.succeed(projection),
+        dispatch: (command) =>
+          Effect.gen(function* () {
+            commands.push(command);
+            if (commands.length === 1) {
+              yield* Deferred.succeed(firstAttempt, undefined);
+              return yield* new OrchestratorProviderWorkDeferredError({
+                commandId: command.commandId,
+                threadId,
+                workId: initiated.workId,
+              });
+            }
+            return { sequence: 1, storedEvents: [] };
+          }),
+      });
+      const worker = ProviderContinuationService.workerLive.pipe(
+        Layer.provide(
+          Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, threads),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        yield* requests.offer({
+          ...request(dispatchIfCurrent),
+          initiated,
+          clearIfCurrent: () =>
+            Effect.sync(() => {
+              clears++;
+            }),
+        });
+        yield* Deferred.await(firstAttempt);
+        yield* Effect.yieldNow;
+        assert.lengthOf(commands, 1);
+        assert.equal(clears, 0);
+        if (scenario === "stop") yield* guard.invalidate;
+        if (scenario === "replace") yield* guard.capture;
+        yield* TestClock.adjust("99 millis");
+        assert.lengthOf(commands, 1);
+        yield* TestClock.adjust("1 millis");
+        yield* Effect.yieldNow;
+        assert.equal(clears, 0);
+        if (scenario === "admit") {
+          assert.lengthOf(commands, 2);
+          assert.deepEqual(commands[1], commands[0]);
+        } else assert.lengthOf(commands, 1);
+        yield* TestClock.adjust("5 seconds");
+        yield* Effect.yieldNow;
+        assert.lengthOf(commands, scenario === "admit" ? 2 : 1);
+      }).pipe(
+        Effect.provide(Layer.merge(ProviderContinuationRequests.layer, worker)),
+        Effect.scoped,
+      );
+    }),
+);

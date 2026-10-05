@@ -206,6 +206,16 @@ export class OrchestratorCommandPreviouslyRejectedError extends Schema.TaggedErr
   }
 }
 
+/** A still-owned native generation can retry once its predecessor has settled. */
+export class OrchestratorProviderWorkDeferredError extends Schema.TaggedError<OrchestratorProviderWorkDeferredError>()(
+  "OrchestratorProviderWorkDeferredError",
+  { commandId: CommandId, threadId: ThreadId, workId: Schema.String },
+) {
+  override get message(): string {
+    return "Provider-initiated work is waiting for its predecessor to complete.";
+  }
+}
+
 export class OrchestratorCommandIdConflictError extends Schema.TaggedError<OrchestratorCommandIdConflictError>()(
   "OrchestratorCommandIdConflictError",
   {
@@ -240,6 +250,7 @@ export const OrchestratorV2Error = Schema.Union([
   OrchestratorDomainEventStreamError,
   OrchestratorProviderAdapterError,
   OrchestratorCommandPreviouslyRejectedError,
+  OrchestratorProviderWorkDeferredError,
   OrchestratorCommandIdConflictError,
   OrchestratorSubagentThreadReadOnlyError,
 ]);
@@ -9884,15 +9895,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             (row) =>
               row.id === command.providerSessionId &&
               ["ready", "running", "waiting"].includes(row.status),
-          ) ||
-          projection.runs.some((run) =>
-            ["queued", "starting", "running", "waiting"].includes(run.status),
           )
         )
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
             cause: "Provider-initiated work no longer owns an idle native thread.",
+          });
+        if (
+          projection.runs.some((run) =>
+            ["queued", "starting", "running", "waiting"].includes(run.status),
+          )
+        )
+          return yield* new OrchestratorProviderWorkDeferredError({
+            commandId: command.commandId,
+            threadId: command.threadId,
+            workId: command.workId,
           });
         yield* dispatchMessage(
           {
@@ -10280,6 +10298,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           // A missing migration dependency can be repaired. Leave its source
           // waiting and retryable instead of recording a permanent rejection.
           if (command.type === "legacy-queue.import") return yield* cause;
+          // Busy predecessors are transient. A receipt here would permanently
+          // reject this generation's stable command identity on the next offer.
+          if (cause._tag === "OrchestratorProviderWorkDeferredError") return yield* cause;
           const rejectedAt = yield* DateTime.now;
           const receipt = yield* eventSink
             .commitRejectedCommand({
