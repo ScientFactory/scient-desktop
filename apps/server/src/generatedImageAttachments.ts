@@ -1,11 +1,15 @@
-import { reserveUnreconciledPublication } from "./orchestration-v2/AttachmentFileUse.ts";
+import { reserveGeneratedImagePublication } from "./orchestration-v2/AttachmentFileUse.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES, type ChatImageAttachment } from "@t3tools/contracts";
+import {
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  ThreadId,
+  type ChatImageAttachment,
+} from "@t3tools/contracts";
 
 import {
   resolveAttachmentPath,
@@ -256,7 +260,14 @@ export async function materializeGeneratedImageAttachment(input: {
   readonly attachmentsDir: string;
   readonly allowDurableFallbackWhenSourceUnavailable?: boolean;
 }): Promise<ChatImageAttachment> {
-  await reserveUnreconciledPublication(input.attachmentsDir, generatedImageAttachmentId(input));
+  const reservation = await reserveGeneratedImagePublication(
+    input.attachmentsDir,
+    generatedImageAttachmentId(input),
+  );
+  const published = async (attachment: ChatImageAttachment) => {
+    await reservation.published(attachment, ThreadId.make(input.threadId));
+    return attachment;
+  };
   const durable = await recoverDurable(input);
   const [sourceResult, roots] = await Promise.all([
     NodeFSP.realpath(input.sourcePath).then(
@@ -272,7 +283,7 @@ export async function materializeGeneratedImageAttachment(input: {
       input.allowDurableFallbackWhenSourceUnavailable === true &&
       (code === "ENOENT" || code === "ENOTDIR")
     ) {
-      return durable.attachment;
+      return published(durable.attachment);
     }
     throw sourceResult.error;
   }
@@ -284,7 +295,7 @@ export async function materializeGeneratedImageAttachment(input: {
   if (durable && (durable.attachment.mimeType !== mimeType || !durable.bytes.equals(bytes))) {
     throw new Error("Generated-image replay resolved to different persisted bytes or format.");
   }
-  if (durable) return durable.attachment;
+  if (durable) return published(durable.attachment);
 
   const extension = GENERATED_IMAGE_EXTENSIONS[mimeType];
   const attachment: ChatImageAttachment = {
@@ -297,7 +308,7 @@ export async function materializeGeneratedImageAttachment(input: {
   const destination = resolveAttachmentPath({ attachmentsDir: input.attachmentsDir, attachment });
   if (!destination) throw new Error("Cannot resolve the generated-image attachment path.");
   await persistAtomically(destination, bytes);
-  return attachment;
+  return published(attachment);
 }
 
 export async function cleanupStaleGeneratedImageAttachmentTemps(input: {

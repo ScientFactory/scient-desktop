@@ -14,6 +14,7 @@ import { OrchestratorV2 } from "../Orchestrator.ts";
 import { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
 import { claimPendingAttachments, releaseClaimedAttachments } from "../AttachmentClaims.ts";
 import { EventSinkV2 } from "../EventSink.ts";
+import { reconcileReservationsBestEffort } from "../AttachmentReservationReconciliation.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { LegacyV1ThreadImporter } from "./LegacyV1ThreadImporter.ts";
 
@@ -22,6 +23,7 @@ const retireAcceptedSource = Effect.fn("LegacyQueueCutover.retireAcceptedSource"
   queueItemId: string,
 ) {
   const sql = yield* SqlClient.SqlClient;
+  yield* reconcileReservationsBestEffort();
   yield* sql.withTransaction(
     Effect.gen(function* () {
       const current = yield* readQueue(threadId);
@@ -132,6 +134,13 @@ export const cutOverLegacyQueue = Effect.fn("LegacyQueueCutover.thread")(functio
     yield* Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
         const claimed = yield* claimPendingAttachments({ threadId, attachments });
+        yield* claimed.bindReceipt({
+          kind: "command",
+          threadId,
+          commandId,
+          commandType: "legacy-queue.import",
+          target: { type: "message", messageId },
+        });
         yield* restore(
           orchestrator.dispatch({
             type: "legacy-queue.import",
@@ -176,7 +185,12 @@ export const cutOverLegacyQueue = Effect.fn("LegacyQueueCutover.thread")(functio
           Effect.onExit(() =>
             reconcileClaims(threadId, messageId, commandId, claimed.claimedPaths)
               // Failed receipt/event reads cannot establish nonacceptance. Retain copies.
-              .pipe(Effect.catch(() => Effect.void)),
+              .pipe(
+                Effect.catch(() => Effect.void),
+                Effect.andThen(
+                  reconcileReservationsBestEffort(claimed.attachments.map((a) => a.id)),
+                ),
+              ),
           ),
         );
       }),

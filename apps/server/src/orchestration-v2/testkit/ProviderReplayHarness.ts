@@ -31,6 +31,7 @@ import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import * as CheckpointCaptureService from "../CheckpointCaptureService.ts";
 import * as CheckpointService from "../CheckpointService.ts";
 import { layer as attachmentRollbackPruneLayer } from "../AttachmentRollbackPruneService.ts";
+import { layer as attachmentReconciliationLayer } from "../AttachmentReservationReconciliation.ts";
 import * as CheckpointRollbackService from "../CheckpointRollbackService.ts";
 import * as CommandPolicy from "../CommandPolicy.ts";
 import * as CommandReceiptStore from "../CommandReceiptStore.ts";
@@ -441,11 +442,21 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
           Effect.map(EventSink.EventSinkV2, options.decorateEventSink),
         ).pipe(Layer.provide(actualEventSink));
   const commandReceiptStoreProvided = CommandReceiptStore.layer.pipe(Layer.provide(databaseLayer));
+  const attachmentReconciliationProvided = attachmentReconciliationLayer.pipe(
+    Layer.provide(Layer.merge(storesLayer, serverConfigLayer)),
+  );
   const legacyImporterProvided = LegacyV1ThreadImporter.layer.pipe(
     Layer.provide(Layer.mergeAll(eventSinkProvided, databaseLayer)),
   );
   const providerEventIngestorProvided = ProviderEventIngestor.layer.pipe(
-    Layer.provide(Layer.mergeAll(storesLayer, eventSinkProvided, IdAllocator.layer)),
+    Layer.provide(
+      Layer.mergeAll(
+        storesLayer,
+        eventSinkProvided,
+        IdAllocator.layer,
+        attachmentReconciliationProvided,
+      ),
+    ),
   );
   const vcsDriverRegistryLayer = VcsDriverRegistry.layer.pipe(
     Layer.provide(options.vcsProcessLayer ?? VcsProcess.layer),
@@ -620,6 +631,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
               threadCommandExecutorLayer,
               providerSessionManagerProvided,
               serverConfigLayer,
+              attachmentReconciliationProvided,
             ),
           ),
         ),
@@ -643,6 +655,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     Layer.provide(Layer.merge(storesLayer, effectExecutorProvided)),
   );
   const replayRuntime = Layer.mergeAll(
+    attachmentReconciliationProvided,
     serverSettingsLayer,
     commandReceiptStoreProvided,
     checkpointServiceProvided,
