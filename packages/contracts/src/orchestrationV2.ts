@@ -1030,6 +1030,8 @@ export const OrchestrationV2ProviderTurn = Schema.Struct({
   nativeAcceptance: Schema.optional(Schema.Literals(["pending", "unknown", "accepted"])),
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
+  /** Immutable observed native root state for display; absence is unknown, never policy or acceptance. */
+  observedEffort: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
   tokenUsage: Schema.optional(OrchestrationV2ProviderTurnTokenUsage),
   turnTokenUsage: Schema.optional(TurnTokenUsage),
 });
