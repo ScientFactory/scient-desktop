@@ -88,23 +88,6 @@ import {
   AttachmentUploadSigningKeyError,
 } from "./assets.ts";
 import {
-  BrowserPdfExportError,
-  BrowserPdfExportInput,
-  BrowserPdfExportResult,
-} from "./browserPdfExport.ts";
-import {
-  ScientDocumentPdfExportError,
-  ScientDocumentPdfPrepared,
-  ScientDocumentPdfPublished,
-  ScientDocumentPdfPublishInput,
-  ScientDocumentPdfReleaseInput,
-  ScientMarkdownPdfPrepareInput,
-} from "./scientDocumentExport.ts";
-import {
-  ScientConversationExportError,
-  ScientConversationExportRequest,
-} from "./scientConversationExport.ts";
-import {
   PersistChatAttachmentsError,
   PersistChatAttachmentsInput,
   PersistChatAttachmentsResult,
@@ -425,6 +408,16 @@ import {
   WsFilesystemSubscribeFileChangesRpc,
 } from "./scient/fileOpeningRpcs.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient document PDF export RPCs.
+import {
+  SCIENT_DOCUMENT_PDF_WS_METHODS,
+  WsDocumentsPublishBrowserPdfExportRpc,
+  WsDocumentsPrepareMarkdownPdfRpc,
+  WsDocumentsPrepareConversationPdfRpc,
+  WsDocumentsPublishDocumentPdfRpc,
+  WsDocumentsReleaseDocumentPdfRpc,
+} from "./scient/documentPdfRpcs.ts";
+// SCIENT-FORK:END
 
 export const WS_METHODS = {
   // Project registry methods
@@ -461,11 +454,9 @@ export const WS_METHODS = {
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
   assetsCreateUrl: "assets.createUrl",
-  documentsPublishBrowserPdfExport: "documents.publishBrowserPdfExport",
-  documentsPrepareMarkdownPdf: "documents.prepareMarkdownPdf",
-  documentsPublishDocumentPdf: "documents.publishDocumentPdf",
-  documentsPrepareConversationPdf: "documents.prepareConversationPdf",
-  documentsReleaseDocumentPdf: "documents.releaseDocumentPdf",
+  // SCIENT-FORK:START — Scient document PDF export methods.
+  ...SCIENT_DOCUMENT_PDF_WS_METHODS,
+  // SCIENT-FORK:END
   assetsPersistChatAttachments: "assets.persistChatAttachments",
   attachmentsCreateUploadUrl: "attachments.createUploadUrl",
   attachmentsDelete: "attachments.delete",
@@ -1353,37 +1344,6 @@ const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   error: Schema.Union([AssetAccessError, EnvironmentAuthorizationError]),
 });
 
-const WsDocumentsPublishBrowserPdfExportRpc = Rpc.make(
-  WS_METHODS.documentsPublishBrowserPdfExport,
-  {
-    payload: BrowserPdfExportInput,
-    success: BrowserPdfExportResult,
-    error: Schema.Union([BrowserPdfExportError, EnvironmentAuthorizationError]),
-  },
-);
-const WsDocumentsPrepareMarkdownPdfRpc = Rpc.make(WS_METHODS.documentsPrepareMarkdownPdf, {
-  payload: ScientMarkdownPdfPrepareInput,
-  success: ScientDocumentPdfPrepared,
-  error: Schema.Union([ScientDocumentPdfExportError, EnvironmentAuthorizationError]),
-});
-const WsDocumentsPrepareConversationPdfRpc = Rpc.make(WS_METHODS.documentsPrepareConversationPdf, {
-  payload: ScientConversationExportRequest,
-  success: ScientDocumentPdfPrepared,
-  error: Schema.Union([
-    ScientDocumentPdfExportError,
-    ScientConversationExportError,
-    EnvironmentAuthorizationError,
-  ]),
-});
-const WsDocumentsPublishDocumentPdfRpc = Rpc.make(WS_METHODS.documentsPublishDocumentPdf, {
-  payload: ScientDocumentPdfPublishInput,
-  success: ScientDocumentPdfPublished,
-  error: Schema.Union([ScientDocumentPdfExportError, EnvironmentAuthorizationError]),
-});
-const WsDocumentsReleaseDocumentPdfRpc = Rpc.make(WS_METHODS.documentsReleaseDocumentPdf, {
-  payload: ScientDocumentPdfReleaseInput,
-  error: EnvironmentAuthorizationError,
-});
 const WsAssetsPersistChatAttachmentsRpc = Rpc.make(WS_METHODS.assetsPersistChatAttachments, {
   payload: PersistChatAttachmentsInput,
   success: PersistChatAttachmentsResult,
