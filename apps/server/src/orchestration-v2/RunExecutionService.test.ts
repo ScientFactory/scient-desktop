@@ -15,6 +15,8 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2ProviderTurn,
+  type OrchestrationV2StoredEvent,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
   type OrchestrationV2Subagent,
@@ -3626,6 +3628,317 @@ it.effect("keeps completed runs completed when pull request refresh fails", () =
   }),
 );
 
+function committedRootReceipt(
+  ids: BackgroundScenarioIds,
+  now: DateTime.Utc,
+  status: OrchestrationV2ProviderTurn["status"],
+  nativeAcceptance: OrchestrationV2ProviderTurn["nativeAcceptance"],
+) {
+  const receipt: OrchestrationV2ProviderTurn = {
+    id: ids.rootProviderTurnId,
+    providerThreadId: ids.providerThreadId,
+    nodeId: ids.rootNodeId,
+    runAttemptId: ids.attemptId,
+    nativeTurnRef: null,
+    ordinal: 2,
+    status,
+    nativeAcceptance,
+    ...(nativeAcceptance === "accepted" ? { acceptedAt: now } : {}),
+    startedAt: now,
+    completedAt: status === "pending" || status === "running" ? null : now,
+    tokenUsage: {
+      inputTokens: 13,
+      outputTokens: 7,
+      usedTokens: 20,
+      maxTokens: 32_000,
+      updatedAt: DateTime.formatIso(now),
+    },
+  };
+  const frame: ProviderAdapterV2Event = {
+    type: "provider_turn.updated",
+    driver,
+    threadId: ids.threadId,
+    providerTurn: { ...receipt, ordinal: 1 },
+  };
+  const stored: OrchestrationV2StoredEvent = {
+    sequence: 1,
+    commandId: null,
+    event: {
+      id: EventId.make("event:committed-root"),
+      type: "provider-turn.updated",
+      threadId: ids.threadId,
+      runId: ids.runId,
+      nodeId: ids.rootNodeId,
+      driver,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      occurredAt: now,
+      payload: receipt,
+    },
+  };
+  return { receipt, frame, stored };
+}
+
+const exitedProviderStream = () =>
+  Stream.fail(
+    new ProviderAdapterEventStreamError({
+      driver,
+      providerSessionId: ProviderSessionId.make("session:stream-failure"),
+      cause: "owned native process exited",
+    }),
+  );
+
+for (const [status, acceptance] of [
+  ["pending", "unknown"],
+  ["pending", "pending"],
+  ["running", "accepted"],
+  ["completed", "accepted"],
+  ["failed", "accepted"],
+  ["interrupted", "accepted"],
+  ["cancelled", "accepted"],
+] as const) {
+  it.effect(`preserves committed ${status}/${acceptance} native receipt on stream failure`, () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const key = `committed-root:${status}:${acceptance}`;
+      const ids = backgroundScenarioIds(key);
+      const { receipt, frame, stored } = committedRootReceipt(ids, now, status, acceptance);
+      const result = yield* captureRootRunTermination({
+        key,
+        attemptProviderTurnAbsent: true,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: () => Stream.concat(Stream.succeed(frame), exitedProviderStream()),
+        ingestNormalized: () => () => Effect.succeed([stored]),
+      });
+      const updates = result.events.filter((event) => event.type === "provider-turn.updated");
+      if (status === "pending" || status === "running") {
+        assert.lengthOf(updates, 1);
+        assert.equal(updates[0]!.payload.status, "failed");
+        assert.exists(updates[0]!.payload.completedAt);
+        assert.deepEqual(
+          { ...updates[0]!.payload, status, completedAt: receipt.completedAt },
+          receipt,
+        );
+      } else {
+        assert.deepEqual(updates, [], "An already-terminal native receipt must not be downgraded");
+      }
+      const error = result.written.find((item) => item.type === "error");
+      assert.equal(error?.providerTurnId, receipt.id);
+      assert.deepEqual(result.guards, [
+        { activeAttemptId: ids.attemptId, expectedStatus: "running" },
+      ]);
+      assert.deepEqual(result.observed, ["run:failed", "pull-requests-refreshed"]);
+    }),
+  );
+}
+
+for (const mismatch of [
+  "thread",
+  "run",
+  "node",
+  "instance",
+  "driver",
+  "turn",
+  "payloadNode",
+  "attempt",
+  "providerThread",
+  "empty",
+  "unrelated",
+  "sql-failure",
+] as const) {
+  it.effect(`does not retain ${mismatch} stored receipt as the root on stream failure`, () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const key = `committed-root-mismatch:${mismatch}`;
+      const ids = backgroundScenarioIds(key);
+      const { frame, stored } = committedRootReceipt(ids, now, "running", "accepted");
+      const event = stored.event;
+      assert.equal(event.type, "provider-turn.updated");
+      if (event.type !== "provider-turn.updated")
+        return yield* Effect.die("Wrong test receipt type");
+      const changed: OrchestrationV2StoredEvent = {
+        ...stored,
+        event: {
+          ...event,
+          ...(mismatch === "thread" ? { threadId: ids.childThreadId } : {}),
+          ...(mismatch === "run" ? { runId: RunId.make("run:foreign") } : {}),
+          ...(mismatch === "node" ? { nodeId: ids.subagentNodeId } : {}),
+          ...(mismatch === "instance"
+            ? { providerInstanceId: ProviderInstanceId.make("foreign") }
+            : {}),
+          ...(mismatch === "driver" ? { driver: ProviderDriverKind.make("pi") } : {}),
+          payload: {
+            ...event.payload,
+            ...(mismatch === "turn" ? { id: ProviderTurnId.make("turn:child") } : {}),
+            ...(mismatch === "payloadNode" ? { nodeId: ids.subagentNodeId } : {}),
+            ...(mismatch === "attempt"
+              ? { runAttemptId: RunAttemptId.make("attempt:foreign") }
+              : {}),
+            ...(mismatch === "providerThread"
+              ? { providerThreadId: ProviderThreadId.make("provider-thread:foreign") }
+              : {}),
+          },
+        },
+      };
+      const result = yield* captureRootRunTermination({
+        key,
+        attemptProviderTurnAbsent: true,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: () => Stream.concat(Stream.succeed(frame), exitedProviderStream()),
+        ingestNormalized: () => () =>
+          mismatch === "sql-failure"
+            ? Effect.fail(
+                new ProviderEventIngestor.ProviderEventPublishError({
+                  providerSessionId: ProviderSessionId.make("session:failed-write"),
+                  eventCount: 1,
+                  cause: "SQL commit failed",
+                }),
+              )
+            : Effect.succeed(
+                mismatch === "empty"
+                  ? []
+                  : mismatch === "unrelated"
+                    ? [
+                        {
+                          ...stored,
+                          event: {
+                            ...event,
+                            type: "provider-thread.updated",
+                            payload: {
+                              id: ids.providerThreadId,
+                              driver,
+                            } as OrchestrationV2ProviderThread,
+                          },
+                        },
+                      ]
+                    : [changed],
+              ),
+      });
+      assert.deepEqual(
+        result.events.filter((row) => row.type === "provider-turn.updated"),
+        [],
+      );
+      const error = result.written.find((item) => item.type === "error");
+      assert.notEqual(error?.providerTurnId, ids.rootProviderTurnId);
+      assert.deepEqual(result.observed, ["run:failed", "pull-requests-refreshed"]);
+    }),
+  );
+}
+
+it.effect(
+  "does not overwrite a superseded owner when failed-stream CAS declines after the precheck",
+  () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const key = "committed-root:replacement-cas";
+      const ids = backgroundScenarioIds(key);
+      const { frame, stored } = committedRootReceipt(ids, now, "running", "accepted");
+      const result = yield* captureRootRunTermination({
+        key,
+        attemptProviderTurnAbsent: true,
+        declineFinalWrite: true,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: () => Stream.concat(Stream.succeed(frame), exitedProviderStream()),
+        ingestNormalized: () => () => Effect.succeed([stored]),
+      });
+      assert.deepEqual(result.guards, [
+        { activeAttemptId: ids.attemptId, expectedStatus: "running" },
+      ]);
+      assert.deepEqual(result.events, []);
+      assert.deepEqual(result.written, []);
+      assert.deepEqual(result.observed, []);
+    }),
+);
+
+it.effect(
+  "keeps the last committed root when a later differently-routed frame fails its SQL commit",
+  () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const key = "committed-root:later-sql-failure";
+      const ids = backgroundScenarioIds(key);
+      const { receipt, frame, stored } = committedRootReceipt(ids, now, "running", "accepted");
+      const later = {
+        ...frame,
+        providerTurn: { ...receipt, id: ProviderTurnId.make("turn:uncommitted-replacement") },
+      };
+      let calls = 0;
+      const result = yield* captureRootRunTermination({
+        key,
+        attemptProviderTurnAbsent: true,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: () => Stream.fromIterable([frame, later]),
+        ingestNormalized: () => () =>
+          ++calls === 1
+            ? Effect.succeed([stored])
+            : Effect.fail(
+                new ProviderEventIngestor.ProviderEventPublishError({
+                  providerSessionId: ProviderSessionId.make("session:failed-later-write"),
+                  eventCount: 1,
+                  cause: "SQL commit failed",
+                }),
+              ),
+      });
+      const updates = result.events.filter((event) => event.type === "provider-turn.updated");
+      assert.lengthOf(updates, 1);
+      assert.equal(updates[0]!.payload.id, receipt.id);
+      assert.equal(
+        result.written.find((item) => item.type === "error")?.providerTurnId,
+        receipt.id,
+      );
+      assert.deepEqual(updates[0]!.payload.acceptedAt, receipt.acceptedAt);
+    }),
+);
+
+it.effect(
+  "retains the newest committed root identity and canonical usage across later partial updates",
+  () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const key = "committed-root:newest-native-receipt";
+      const ids = backgroundScenarioIds(key);
+      const { frame, stored } = committedRootReceipt(ids, now, "running", "accepted");
+      if (stored.event.type !== "provider-turn.updated")
+        return yield* Effect.die("Wrong receipt type");
+      const nextId = ProviderTurnId.make("turn:committed-next-root");
+      const nextReceipt = { ...stored.event.payload, id: nextId, ordinal: 3 };
+      const partialReceipt = { ...nextReceipt, tokenUsage: undefined };
+      const nextFrame = { ...frame, providerTurn: nextReceipt };
+      const partialFrame = { ...frame, providerTurn: partialReceipt };
+      let calls = 0;
+      const result = yield* captureRootRunTermination({
+        key,
+        attemptProviderTurnAbsent: true,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: () =>
+          Stream.concat(
+            Stream.fromIterable([frame, nextFrame, partialFrame]),
+            exitedProviderStream(),
+          ),
+        ingestNormalized: () => () =>
+          Effect.succeed([
+            ++calls === 1
+              ? stored
+              : {
+                  ...stored,
+                  sequence: calls,
+                  event: {
+                    ...stored.event,
+                    type: "provider-turn.updated",
+                    payload: calls === 2 ? nextReceipt : partialReceipt,
+                  },
+                },
+          ]),
+      });
+      const updates = result.events.filter((event) => event.type === "provider-turn.updated");
+      assert.lengthOf(updates, 1);
+      assert.equal(updates[0]!.payload.id, nextId);
+      assert.equal(updates[0]!.payload.ordinal, 3);
+      assert.deepEqual(updates[0]!.payload.tokenUsage, nextReceipt.tokenUsage);
+      assert.deepEqual(updates[0]!.payload.acceptedAt, nextReceipt.acceptedAt);
+      assert.equal(result.written.find((item) => item.type === "error")?.providerTurnId, nextId);
+    }),
+);
+
 function captureRootRunTermination(input: {
   readonly key: string;
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, never>;
@@ -3636,6 +3949,11 @@ function captureRootRunTermination(input: {
   ) => Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;
   readonly startTurn?: ProviderAdapterV2SessionRuntime["startTurn"];
   readonly refreshAfterTurn?: Effect.Effect<void>;
+  readonly ingestNormalized?: (
+    ids: BackgroundScenarioIds,
+  ) => ProviderEventIngestor.ProviderEventIngestorV2Shape["ingestNormalized"];
+  readonly declineFinalWrite?: boolean;
+  readonly attemptProviderTurnAbsent?: boolean;
 }) {
   return Effect.gen(function* () {
     const ids = backgroundScenarioIds(input.key);
@@ -3648,6 +3966,10 @@ function captureRootRunTermination(input: {
       status: "running",
     });
     const writtenItems = yield* Ref.make<ReadonlyArray<OrchestrationV2TurnItem>>([]);
+    const writtenEvents = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
+    const finalWriteGuards = yield* Ref.make<
+      ReadonlyArray<{ activeAttemptId: RunAttemptId; expectedStatus: OrchestrationV2Run["status"] }>
+    >([]);
     const observed = yield* Ref.make<ReadonlyArray<string>>([]);
     const ingestionDone = yield* Deferred.make<void>();
     const captureTurnItem = (payload: OrchestrationV2TurnItem) =>
@@ -3655,6 +3977,7 @@ function captureRootRunTermination(input: {
     const captureEvents = Effect.fnUntraced(function* (
       events: ReadonlyArray<OrchestrationV2DomainEvent>,
     ) {
+      yield* Ref.update(writtenEvents, (current) => [...current, ...events]);
       for (const event of events) {
         if (event.type === "turn-item.updated") yield* captureTurnItem(event.payload);
         if (event.type === "run.updated") {
@@ -3671,13 +3994,25 @@ function captureRootRunTermination(input: {
             write: (payload) => captureEvents(payload.events),
             writeWithEffects: (payload) => captureEvents(payload.events),
             writeIfRunCurrent: (payload) =>
-              captureEvents(payload.events).pipe(
-                Effect.map((storedEvents) => ({ committed: true, storedEvents })),
+              Ref.update(finalWriteGuards, (current) => [
+                ...current,
+                {
+                  activeAttemptId: payload.activeAttemptId,
+                  expectedStatus: payload.expectedStatus,
+                },
+              ]).pipe(
+                Effect.andThen(
+                  input.declineFinalWrite
+                    ? Effect.succeed({ committed: false, storedEvents: [] })
+                    : captureEvents(payload.events).pipe(
+                        Effect.map((storedEvents) => ({ committed: true, storedEvents })),
+                      ),
+                ),
               ),
           }),
           IdAllocator.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
-            ingestNormalized: () => Effect.succeed([]),
+            ingestNormalized: input.ingestNormalized?.(ids) ?? (() => Effect.succeed([])),
           }),
           ServerSettings.layerTest(),
           Layer.succeed(RunFinalizationService.RunFinalizationObserver, {
@@ -3698,6 +4033,7 @@ function captureRootRunTermination(input: {
         appThread: { id: ids.threadId } as OrchestrationV2AppThread,
         providerSessionId: ProviderSessionId.make(`session:${input.key}`),
         session: {
+          driver,
           events: Stream.empty,
           subscribeEvents: Effect.succeed({
             events:
@@ -3738,7 +4074,7 @@ function captureRootRunTermination(input: {
         } as OrchestrationV2Run,
         rootNode: {
           id: ids.rootNodeId,
-          providerTurnId: ids.rootProviderTurnId,
+          providerTurnId: input.attemptProviderTurnAbsent ? null : ids.rootProviderTurnId,
         } as OrchestrationV2ExecutionNode,
         checkpointScope: {
           id: CheckpointScopeId.make(`checkpoint-scope:${input.key}`),
@@ -3749,7 +4085,7 @@ function captureRootRunTermination(input: {
         } as OrchestrationV2ProviderThread,
         attempt: {
           id: ids.attemptId,
-          providerTurnId: ids.rootProviderTurnId,
+          providerTurnId: input.attemptProviderTurnAbsent ? null : ids.rootProviderTurnId,
         } as OrchestrationV2RunAttempt,
         attemptId: ids.attemptId,
         providerTurnOrdinal: 1,
@@ -3782,7 +4118,13 @@ function captureRootRunTermination(input: {
     }).pipe(Effect.provide(testLayer));
 
     yield* Deferred.await(ingestionDone);
-    return { written: yield* Ref.get(writtenItems), observed: yield* Ref.get(observed) };
+    return {
+      written: yield* Ref.get(writtenItems),
+      observed: yield* Ref.get(observed),
+      events: yield* Ref.get(writtenEvents),
+      guards: yield* Ref.get(finalWriteGuards),
+      ids,
+    };
   });
 }
 

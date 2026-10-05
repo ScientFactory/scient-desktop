@@ -50,6 +50,7 @@ import type {
 } from "./ProviderAdapter.ts";
 import { ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
+import { upsertProviderTurn } from "./ProjectionStore.ts";
 import { makeProviderFailure, makeProviderFailureTurnItem } from "./ProviderFailure.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 
@@ -1001,11 +1002,13 @@ export const layer: Layer.Layer<
           const makeFailedTerminalEvent = (
             failure: OrchestrationV2ProviderFailure,
             failureItemOrdinal: number,
+            observedProviderTurnId?: ProviderTurnId,
           ): ProviderTerminalEvent => ({
             type: "turn.terminal",
             driver: input.providerThread.driver,
             providerThreadId: input.providerThread.id,
             providerTurnId:
+              observedProviderTurnId ??
               input.attempt.providerTurnId ??
               idAllocator.derive.providerTurn({
                 driver: input.providerThread.driver,
@@ -1101,6 +1104,9 @@ export const layer: Layer.Layer<
           const terminalEvent = yield* Ref.make<ProviderTerminalEvent | null>(null);
           const latestTurnItemOrdinal = yield* Ref.make(input.providerTurnOrdinal * 100);
           const latestProviderThread = yield* Ref.make(input.providerThread);
+          const committedRootProviderTurn = yield* Ref.make<OrchestrationV2ProviderTurn | null>(
+            null,
+          );
           const routeIdentity: ProviderEventRouteIdentity = {
             threadId: input.run.threadId,
             runId: input.run.id,
@@ -1525,6 +1531,35 @@ export const layer: Layer.Layer<
                   });
                   storedEventCount = storedEvents.length;
                   if (
+                    deliveredEvent.type === "provider_turn.updated" &&
+                    deliveredEvent.driver === input.session.driver
+                  ) {
+                    const rootProviderTurnId = (yield* Ref.get(eventRouting)).rootProviderTurnId;
+                    for (const { event: storedEvent } of storedEvents) {
+                      if (
+                        storedEvent.type === "provider-turn.updated" &&
+                        storedEvent.driver === input.session.driver &&
+                        storedEvent.threadId === input.run.threadId &&
+                        storedEvent.runId === input.run.id &&
+                        storedEvent.nodeId === input.rootNode.id &&
+                        storedEvent.providerInstanceId === input.run.providerInstanceId &&
+                        storedEvent.payload.id === rootProviderTurnId &&
+                        storedEvent.payload.nodeId === input.rootNode.id &&
+                        storedEvent.payload.runAttemptId === input.attemptId &&
+                        storedEvent.payload.providerThreadId === input.providerThread.id
+                      ) {
+                        yield* Ref.update(
+                          committedRootProviderTurn,
+                          (current) =>
+                            upsertProviderTurn(
+                              current?.id === storedEvent.payload.id ? [current] : [],
+                              storedEvent.payload,
+                            )[0]!,
+                        );
+                      }
+                    }
+                  }
+                  if (
                     isRootProviderThreadUpdate &&
                     rootTerminalAlreadySeen &&
                     storedEventCount === 0
@@ -1588,32 +1623,45 @@ export const layer: Layer.Layer<
                                 Effect.flatMap((latestItemOrdinal) =>
                                   Ref.get(openRunOwnedSubagents).pipe(
                                     Effect.flatMap((openSubagents) =>
-                                      writeFinalRunEvents({
-                                        run: input.run,
-                                        rootNode: input.rootNode,
-                                        checkpointScope: input.checkpointScope,
-                                        providerThread,
-                                        attempt: input.attempt,
-                                        ...(input.shouldFinalizeRun === undefined
-                                          ? {}
-                                          : { shouldFinalizeRun: input.shouldFinalizeRun }),
-                                        ...(input.hasUnpairedRunInterruptRequest === undefined
-                                          ? {}
-                                          : {
-                                              hasUnpairedRunInterruptRequest:
-                                                input.hasUnpairedRunInterruptRequest,
-                                            }),
-                                        openRunOwnedSubagents: openSubagents,
-                                        terminal: makeFailedTerminalEvent(
-                                          makeProviderFailure({
-                                            cause: Cause.squash(cause),
-                                            class: "unknown",
+                                      Ref.get(committedRootProviderTurn).pipe(
+                                        Effect.flatMap((receipt) =>
+                                          writeFinalRunEvents({
+                                            run: input.run,
+                                            rootNode: input.rootNode,
+                                            checkpointScope: input.checkpointScope,
+                                            providerThread,
+                                            attempt: input.attempt,
+                                            ...(receipt === null ||
+                                            isTerminalProviderTurnStatus(receipt.status)
+                                              ? {}
+                                              : { failedStartReceipt: receipt }),
+                                            writeIfRunCurrent: {
+                                              activeAttemptId: input.attemptId,
+                                              expectedStatus: "running",
+                                            },
+                                            ...(input.shouldFinalizeRun === undefined
+                                              ? {}
+                                              : { shouldFinalizeRun: input.shouldFinalizeRun }),
+                                            ...(input.hasUnpairedRunInterruptRequest === undefined
+                                              ? {}
+                                              : {
+                                                  hasUnpairedRunInterruptRequest:
+                                                    input.hasUnpairedRunInterruptRequest,
+                                                }),
+                                            openRunOwnedSubagents: openSubagents,
+                                            terminal: makeFailedTerminalEvent(
+                                              makeProviderFailure({
+                                                cause: Cause.squash(cause),
+                                                class: "unknown",
+                                              }),
+                                              latestItemOrdinal + 1,
+                                              receipt?.id,
+                                            ),
+                                            failureItemPersisted: false,
+                                            refreshAfterTurn,
                                           }),
-                                          latestItemOrdinal + 1,
                                         ),
-                                        failureItemPersisted: false,
-                                        refreshAfterTurn,
-                                      }),
+                                      ),
                                     ),
                                   ),
                                 ),
