@@ -46,14 +46,24 @@ it.layer(layer, { excludeTestServices: true })("native Pi unpublished startup ow
               `${h.profile}/extensions/pid.ts`,
               `import fs from "node:fs"; export default function () { fs.writeFileSync(${json(pidFile)}, String(process.pid)); }`,
             );
+            const witnessNativePid = Effect.gen(function* () {
+              const pid = Number(yield* h.fs.readFileString(pidFile).pipe(Effect.orDie));
+              assert.isTrue(Number.isInteger(pid) && pid > 0);
+              assert.doesNotThrow(() => NodeProcess.kill(pid, 0));
+              nativePid = pid;
+            });
             let removedOwnedFile = false;
             const checkedFs = FileSystem.FileSystem.of({
               ...h.fs,
               remove: (target, options) =>
                 Effect.gen(function* () {
                   if (String(target).startsWith(`${root}/`) && String(target) !== otherOwner) {
-                    if (yield* h.fs.exists(pidFile)) {
-                      const pid = nativePid ?? Number(yield* h.fs.readFileString(pidFile));
+                    if (leg === "spawn") {
+                      assert.isUndefined(nativePid);
+                      assert.isFalse(yield* h.fs.exists(pidFile));
+                    } else {
+                      const pid = nativePid;
+                      if (pid == null) return yield* Effect.die("Missing native PID witness");
                       assert.throws(() => NodeProcess.kill(pid, 0), /ESRCH/);
                     }
                     removedOwnedFile = true;
@@ -76,14 +86,12 @@ it.layer(layer, { excludeTestServices: true })("native Pi unpublished startup ow
                           Effect.mapError(
                             (cause) => new PiRpcError({ operation: "get_state", cause }),
                           ),
+                          Effect.andThen(witnessNativePid),
                           Effect.andThen(Deferred.succeed(entered, String(input.args.at(-1)))),
                           Effect.andThen(
                             leg === "startup"
                               ? Effect.never
                               : Effect.gen(function* () {
-                                  nativePid = Number(
-                                    yield* h.fs.readFileString(pidFile).pipe(Effect.orDie),
-                                  );
                                   yield* Effect.addFinalizer(() =>
                                     Deferred.succeed(cleanupEntered, undefined).pipe(
                                       Effect.andThen(Deferred.await(releaseCleanup)),
@@ -100,7 +108,10 @@ it.layer(layer, { excludeTestServices: true })("native Pi unpublished startup ow
                               Effect.flatMap((result) =>
                                 record.type !== "get_state"
                                   ? Effect.succeed(result)
-                                  : Deferred.succeed(entered, String(input.args.at(-1))).pipe(
+                                  : witnessNativePid.pipe(
+                                      Effect.andThen(
+                                        Deferred.succeed(entered, String(input.args.at(-1))),
+                                      ),
                                       Effect.andThen(
                                         leg === "binding-failure"
                                           ? Deferred.await(releaseBinding).pipe(
