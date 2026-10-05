@@ -31,6 +31,7 @@ import { makeOmpAdapterV2 } from "../../orchestration-v2/Adapters/OmpAdapterV2.t
 export const nativeOmpOrchestration = Effect.fnUntraced(function* (
   input: {
     readonly cwd?: string;
+    readonly eventQueueByteLimit?: number;
     readonly stateDir?: string;
     readonly attachmentsDir?: string;
     readonly target?: Parameters<typeof makeOmpAdapterV2>[0]["target"];
@@ -64,6 +65,9 @@ export const nativeOmpOrchestration = Effect.fnUntraced(function* (
       return [
         makeOmpAdapterV2({
           target: input.target ?? ompTarget,
+          ...(input.eventQueueByteLimit === undefined
+            ? {}
+            : { eventQueueByteLimit: input.eventQueueByteLimit }),
           instanceId,
           settings: { binaryPath: input.binaryPath ?? "synthetic-omp" },
           environment: input.environment ?? { HOME: config.stateDir },
@@ -189,6 +193,7 @@ export const nativeOmpOrchestration = Effect.fnUntraced(function* (
       { type: "agent_end", messages: [], isTerminal: true },
       {
         type: "prompt_result",
+        agentInvoked: true,
         id: peer.state.prompts.at(-1)?.frame.id,
         status: "completed",
         sessionSettled,

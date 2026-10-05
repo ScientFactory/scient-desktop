@@ -40,6 +40,9 @@ const decodeSettings = Schema.decodeEffect(OmpSettings);
 /** Real native OMP conversation ownership for isolated transport and CLI fixtures. */
 export const nativeOmpSession = Effect.fnUntraced(function* (input: {
   readonly root: string;
+  readonly adapter?: ReturnType<typeof makeOmpAdapterV2>;
+  readonly eventQueueByteLimit?: number;
+  readonly eventQueueItemLimit?: number;
   readonly cwd?: string;
   readonly stateDir: string;
   readonly attachmentsDir: string;
@@ -60,30 +63,38 @@ export const nativeOmpSession = Effect.fnUntraced(function* (input: {
   return yield* Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const allocator = yield* IdAllocator.IdAllocatorV2;
-    const adapter = makeOmpAdapterV2({
-      target: input.target,
-      instanceId: input.instanceId,
-      settings: yield* decodeSettings({
-        binaryPath: input.binaryPath,
+    const adapter =
+      input.adapter ??
+      makeOmpAdapterV2({
+        ...(input.eventQueueByteLimit === undefined
+          ? {}
+          : { eventQueueByteLimit: input.eventQueueByteLimit }),
+        ...(input.eventQueueItemLimit === undefined
+          ? {}
+          : { eventQueueItemLimit: input.eventQueueItemLimit }),
+        target: input.target,
+        instanceId: input.instanceId,
+        settings: yield* decodeSettings({
+          binaryPath: input.binaryPath,
+          ...(input.homePath ? { homePath: input.homePath } : {}),
+        }),
         ...(input.homePath ? { homePath: input.homePath } : {}),
-      }),
-      ...(input.homePath ? { homePath: input.homePath } : {}),
-      environment: input.environment,
-      fileSystem: yield* FileSystem.FileSystem,
-      path: yield* Path.Path,
-      crypto: yield* Crypto.Crypto,
-      spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
-      idAllocator: allocator,
-      serverConfig: {
-        ...config,
-        cwd: input.cwd ?? input.root,
-        stateDir: input.stateDir,
-        attachmentsDir: input.attachmentsDir,
-      },
-      makeProcess: input.makeProcess,
-      ...(input.nativeEventLogger ? { nativeEventLogger: input.nativeEventLogger } : {}),
-      continuations: input.continuations ?? { offer: () => Effect.void },
-    });
+        environment: input.environment,
+        fileSystem: yield* FileSystem.FileSystem,
+        path: yield* Path.Path,
+        crypto: yield* Crypto.Crypto,
+        spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+        idAllocator: allocator,
+        serverConfig: {
+          ...config,
+          cwd: input.cwd ?? input.root,
+          stateDir: input.stateDir,
+          attachmentsDir: input.attachmentsDir,
+        },
+        makeProcess: input.makeProcess,
+        ...(input.nativeEventLogger ? { nativeEventLogger: input.nativeEventLogger } : {}),
+        continuations: input.continuations ?? { offer: () => Effect.void },
+      });
     const policy = {
       cwd: input.cwd ?? input.root,
       runtimeMode: "full-access" as const,

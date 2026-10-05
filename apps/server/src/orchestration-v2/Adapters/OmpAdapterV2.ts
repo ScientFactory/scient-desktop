@@ -104,6 +104,8 @@ export interface OmpAdapterV2Options extends Pick<
   readonly serverConfig: ServerConfig["Service"];
   readonly makeProcess: OmpProcessFactory;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  readonly eventQueueByteLimit?: number;
+  readonly eventQueueItemLimit?: number;
 }
 const JsonString = Schema.fromJsonString(Schema.String);
 const encodeJsonString = Schema.encodeSync(JsonString);
@@ -140,6 +142,11 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
   return makeNativeSessionAdapterV2({
     settleIdleSubagents: true,
     ...options,
+    eventQueueLimits: {
+      maxBytes: Math.max(1, options.eventQueueByteLimit ?? 32 * 1024 * 1024),
+      maxItems: Math.max(1, options.eventQueueItemLimit ?? 8192),
+      globalFactor: 4,
+    },
     mcpSessionInjection: true,
     defaultCwd: options.serverConfig.cwd,
     driver: target.driverKind,
