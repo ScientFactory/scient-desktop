@@ -1207,9 +1207,10 @@ export function makeOmpAdapterV2(options: OmpAdapterV2Options) {
                   Effect.forkIn(scope),
                 );
               }).pipe(Effect.provideService(Scope.Scope, scope), Effect.mapError(safeFailure)),
-            steer: (steerInput) =>
+            steer: (steerInput, validateOwner) =>
               Effect.gen(function* () {
                 const prompt = yield* payload(steerInput.message);
+                yield* validateOwner?.() ?? Effect.void;
                 const result = yield* client.steer(prompt.message, prompt.images);
                 yield* runtime.accepted(
                   result.id ?? String(steerInput.providerTurnId),

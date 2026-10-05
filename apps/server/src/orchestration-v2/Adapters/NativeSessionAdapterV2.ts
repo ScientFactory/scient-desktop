@@ -136,6 +136,7 @@ export interface NativeSession {
   ) => Effect.Effect<void, NativeSessionOperationError>;
   readonly steer?: (
     input: ProviderAdapter.ProviderAdapterV2SteerInput,
+    validateOwner?: () => Effect.Effect<void, NativeSessionOperationError>,
   ) => Effect.Effect<void, NativeSessionOperationError>;
   readonly interrupt: Effect.Effect<void, NativeSessionOperationError>;
   readonly interruptBreaksSession?: boolean;
@@ -219,6 +220,7 @@ export function makeNativeSessionAdapterV2(
             }
           | undefined;
         let backgroundPending = false;
+        let producerSealed = false;
         let wakeOffered = false;
         const wake: {
           readonly update: NativeSessionUpdate;
@@ -520,6 +522,16 @@ export function makeNativeSessionAdapterV2(
                 false,
               );
           });
+        // SCIENT-FORK: confirmed breaking interrupts retain their complete receipts through EOF.
+        const sealStoppedProducer = Effect.gen(function* () {
+          if (producerSealed) return;
+          for (const pending of requests.values())
+            yield* settleRequest(pending, "cancelled", yield* DateTime.now);
+          yield* updateSession("stopped");
+          budget.seal();
+          producerSealed = true;
+          yield* events.end;
+        });
         const onUpdate = (update: NativeSessionUpdate): Effect.Effect<void> =>
           eventPermit.withPermit(
             Effect.gen(function* () {
@@ -1051,6 +1063,7 @@ export function makeNativeSessionAdapterV2(
             Effect.andThen(
               eventPermit.withPermit(
                 Effect.gen(function* () {
+                  if (producerSealed) return;
                   yield* stopBackgroundTasks("cancelled", yield* DateTime.now);
                   yield* finish({ type: "terminal", status: "cancelled" });
                   for (const pending of requests.values())
@@ -1319,6 +1332,7 @@ export function makeNativeSessionAdapterV2(
           steerTurn: (request) =>
             steer
               ? Effect.gen(function* () {
+                  const owner = active;
                   if (
                     !active ||
                     active.turn.id !== request.providerTurnId ||
@@ -1328,7 +1342,24 @@ export function makeNativeSessionAdapterV2(
                     return yield* protocolError(
                       "The native session does not own this active turn.",
                     );
-                  yield* steer(request);
+                  const validateOwner = () =>
+                    Effect.suspend(() =>
+                      active === owner &&
+                      owner !== undefined &&
+                      owner.turn.id === request.providerTurnId &&
+                      owner.turn.providerThreadId === request.providerThread.id &&
+                      owner.input.runId === request.runId &&
+                      thread?.id === request.providerThread.id &&
+                      validateThreadOwner(request.threadId, request.providerThread)
+                        ? Effect.void
+                        : Effect.fail(
+                            new NativeSessionOperationError({
+                              detail: "The native session no longer owns this active turn.",
+                              breaksSession: false,
+                            }),
+                          ),
+                    );
+                  yield* steer(request, validateOwner);
                 }).pipe(
                   Effect.mapError(
                     (cause) =>
@@ -1371,7 +1402,7 @@ export function makeNativeSessionAdapterV2(
                         driver,
                         providerThread: thread,
                       });
-                      yield* updateSession("stopped");
+                      yield* sealStoppedProducer;
                     }
                   }),
                 );
@@ -1384,11 +1415,16 @@ export function makeNativeSessionAdapterV2(
                 return;
               active.interrupted = true;
               yield* native.interrupt;
-              yield* finish({
-                type: "terminal",
-                status: "cancelled",
-                broken: native.interruptBreaksSession === true,
-              });
+              yield* eventPermit.withPermit(
+                Effect.gen(function* () {
+                  yield* finish({
+                    type: "terminal",
+                    status: "cancelled",
+                    broken: native.interruptBreaksSession === true,
+                  });
+                  if (native.interruptBreaksSession === true) yield* sealStoppedProducer;
+                }),
+              );
             }).pipe(
               Effect.mapError(
                 (cause) =>

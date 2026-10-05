@@ -356,7 +356,7 @@ describe("native OMP persisted background work", () => {
         Effect.scoped(
           Effect.gen(function* () {
             const f = yield* fixture();
-            yield* f.run(({ orchestrator, waitFor, send }) =>
+            yield* f.run(({ orchestrator, waitFor, send, completed }) =>
               Effect.gen(function* () {
                 yield* send("Keep a child alive");
                 yield* waitFor((p) =>
@@ -392,6 +392,7 @@ describe("native OMP persisted background work", () => {
                   runId: latest.runs.at(-1)!.id,
                   holdQueue: true,
                 });
+                if (wake) yield* completed(CommandId.make("background-stop"));
                 const stopped = yield* waitFor(
                   (p) =>
                     p.providerSessions.some(
