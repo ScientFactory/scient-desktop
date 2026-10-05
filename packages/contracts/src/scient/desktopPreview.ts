@@ -1,26 +1,5 @@
 import * as Schema from "effect/Schema";
 
-export const DesktopPreviewNavStatusSchema = Schema.Union([
-  Schema.Struct({ kind: Schema.Literal("Idle") }),
-  Schema.Struct({
-    kind: Schema.Literal("Loading"),
-    url: Schema.String,
-    title: Schema.String,
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("Success"),
-    url: Schema.String,
-    title: Schema.String,
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("LoadFailed"),
-    url: Schema.String,
-    title: Schema.String,
-    code: Schema.Number,
-    description: Schema.String,
-  }),
-]);
-
 export interface DesktopPreviewPdfExportSourceSignals {
   bodyTextLength: number;
   imageCount: number;
@@ -65,10 +44,6 @@ export const DesktopPreviewPdfExportArtifactSchema: Schema.Codec<DesktopPreviewP
     ),
     sourceSignals: DesktopPreviewPdfExportSourceSignalsSchema,
   });
-
-export interface DesktopControlledHtmlPdfRenderInput {
-  sourceUrl: string;
-}
 
 export const DesktopControlledHtmlPdfRenderInputSchema = Schema.Struct({
   sourceUrl: Schema.String.check(

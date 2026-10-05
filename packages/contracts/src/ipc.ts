@@ -837,17 +837,15 @@ export const DesktopPreviewScreenshotArtifactSchema: Schema.Codec<DesktopPreview
     createdAt: Schema.String,
   });
 
-// SCIENT-FORK:START — Scient preview navigation status and PDF export contracts.
+// SCIENT-FORK:START — Scient preview PDF export contracts.
 export {
   DesktopControlledHtmlPdfRenderArtifactSchema,
   DesktopControlledHtmlPdfRenderInputSchema,
-  DesktopPreviewNavStatusSchema,
   DesktopPreviewPdfExportArtifactSchema,
   DesktopPreviewPdfExportSourceSignalsSchema,
 } from "./scient/desktopPreview.ts";
 export type {
   DesktopControlledHtmlPdfRenderArtifact,
-  DesktopControlledHtmlPdfRenderInput,
   DesktopPreviewPdfExportArtifact,
   DesktopPreviewPdfExportSourceSignals,
 } from "./scient/desktopPreview.ts";
