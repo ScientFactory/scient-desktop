@@ -14,12 +14,14 @@ import type {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 
 import type * as EffectOutbox from "../EffectOutbox.ts";
 import type * as IdAllocator from "../IdAllocator.ts";
 import type * as ProjectionStore from "../ProjectionStore.ts";
 import type { ProviderAdapterV2SessionRuntime } from "../ProviderAdapter.ts";
 import type * as ProviderSessionManager from "../ProviderSessionManager.ts";
+import type { RunExecutionServiceV2StartRootRunInput } from "../RunExecutionService.ts";
 
 /** The captured owner of a locally declined start, never a native acceptance receipt. */
 export interface PendingStartOwner {
@@ -306,3 +308,94 @@ export const pendingStartCancellation =
       }
       return owner;
     });
+
+/** The final write that settles a declined start as interrupted, keeping its provider thread. */
+interface DeclinedStartFinalWrite {
+  readonly run: RunExecutionServiceV2StartRootRunInput["run"];
+  readonly rootNode: RunExecutionServiceV2StartRootRunInput["rootNode"];
+  readonly checkpointScope: RunExecutionServiceV2StartRootRunInput["checkpointScope"];
+  readonly providerThread: OrchestrationV2ProviderThread;
+  readonly preserveProviderThread: true;
+  readonly pendingStartOwner: PendingStartOwner;
+  readonly attempt: RunExecutionServiceV2StartRootRunInput["attempt"];
+  readonly terminal: {
+    readonly driver: ProviderAdapterV2SessionRuntime["driver"];
+    readonly status: "interrupted";
+    readonly failure: null;
+    readonly threadDisposition: "reusable";
+  };
+  readonly failureItemPersisted: false;
+  readonly refreshAfterTurn: Effect.Effect<void>;
+  readonly writeIfRunCurrent: {
+    readonly activeAttemptId: RunAttemptId;
+    readonly expectedStatus: "running";
+  };
+}
+
+/** Settle a start Stop declined before native acceptance; true once the cancellation committed. */
+export const cancelDeclinedPendingStart = <E, R, StartError>(deps: {
+  readonly input: Pick<
+    RunExecutionServiceV2StartRootRunInput,
+    | "run"
+    | "rootNode"
+    | "checkpointScope"
+    | "providerThread"
+    | "attempt"
+    | "attemptId"
+    | "session"
+    | "cancelBeforeProviderTurn"
+  >;
+  readonly cancelledStartOwner: Ref.Ref<PendingStartOwner | undefined>;
+  readonly refreshAfterTurn: Effect.Effect<void>;
+  readonly writeOwnedFinalRunEvents: (
+    final: DeclinedStartFinalWrite,
+  ) => Effect.Effect<boolean, E, R>;
+  readonly startError: (cause: unknown) => StartError;
+}) =>
+  Effect.gen(function* () {
+    const { input, cancelledStartOwner, refreshAfterTurn, writeOwnedFinalRunEvents } = deps;
+    const stoppedThread = yield* (
+      input.cancelBeforeProviderTurn?.().pipe(Effect.mapError(deps.startError)) ?? Effect.void
+    );
+    if (stoppedThread === undefined) return false;
+    const committed = yield* writeOwnedFinalRunEvents({
+      run: input.run,
+      rootNode: input.rootNode,
+      checkpointScope: input.checkpointScope,
+      providerThread: input.providerThread,
+      preserveProviderThread: true,
+      pendingStartOwner: stoppedThread,
+      attempt: input.attempt,
+      terminal: {
+        driver: input.session.driver,
+        status: "interrupted",
+        failure: null,
+        threadDisposition: "reusable",
+      },
+      failureItemPersisted: false,
+      refreshAfterTurn,
+      writeIfRunCurrent: { activeAttemptId: input.attemptId, expectedStatus: "running" },
+    }).pipe(Effect.mapError(deps.startError));
+    if (committed) yield* Ref.set(cancelledStartOwner, stoppedThread);
+    return committed;
+  });
+
+/** After a committed cancellation the root run is final. No native root was started:
+ * without retained background work there is no terminal frame to end its subscription. */
+export const settleCancelledStart = (input: {
+  readonly rootTerminalSeen: Ref.Ref<boolean>;
+  readonly rootRunFinalized: Ref.Ref<boolean>;
+  readonly cancelledStartOwner: Ref.Ref<PendingStartOwner | undefined>;
+  readonly providerThread: OrchestrationV2ProviderThread;
+  readonly interruptProviderEvents: Effect.Effect<void>;
+}) =>
+  Effect.gen(function* () {
+    yield* Ref.set(input.rootTerminalSeen, true);
+    yield* Ref.set(input.rootRunFinalized, true);
+    if (
+      (yield* Ref.get(input.cancelledStartOwner))?.retainedTurn === undefined ||
+      (input.providerThread.pendingBackgroundTasks?.length ?? 0) === 0
+    ) {
+      yield* input.interruptProviderEvents;
+    }
+  });

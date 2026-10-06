@@ -70,6 +70,12 @@ import {
 // SCIENT-FORK:START — the live root's side of a running fork's text snapshot.
 import { makeRunningForkTextSnapshots } from "./scient-fork/runningForkSource.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — a Stop before native acceptance settles the declined start.
+import {
+  cancelDeclinedPendingStart,
+  settleCancelledStart,
+} from "./scient-fork/PendingStartOwner.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — native workflow coordinators own their runless members.
 import {
   isWorkflowMemberNode,
@@ -913,42 +919,23 @@ export const layer: Layer.Layer<
             writeFinalRunEvents,
           );
           // SCIENT-FORK:END
+          // SCIENT-FORK:START — a Stop before native acceptance settles the declined start.
           const cancelledStartOwner = yield* Ref.make<EventSink.PendingStartOwner | undefined>(
             undefined,
           );
-          const cancelDeclinedStart = Effect.gen(function* () {
-            const stoppedThread = yield* input.cancelBeforeProviderTurn?.() ?? Effect.void;
-            if (stoppedThread === undefined) return false;
-            const committed = yield* writeOwnedFinalRunEvents({
-              run: input.run,
-              rootNode: input.rootNode,
-              checkpointScope: input.checkpointScope,
-              providerThread: input.providerThread,
-              preserveProviderThread: true,
-              pendingStartOwner: stoppedThread,
-              attempt: input.attempt,
-              terminal: {
-                driver: input.session.driver,
-                status: "interrupted",
-                failure: null,
-                threadDisposition: "reusable",
-              },
-              failureItemPersisted: false,
-              refreshAfterTurn,
-              writeIfRunCurrent: { activeAttemptId: input.attemptId, expectedStatus: "running" },
-            });
-            if (committed) yield* Ref.set(cancelledStartOwner, stoppedThread);
-            return committed;
-          }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new RunExecutionStartError({
-                  commandId: input.commandId,
-                  runId: input.run.id,
-                  cause,
-                }),
-            ),
-          );
+          const cancelDeclinedStart = cancelDeclinedPendingStart({
+            input,
+            cancelledStartOwner,
+            refreshAfterTurn,
+            writeOwnedFinalRunEvents,
+            startError: (cause) =>
+              new RunExecutionStartError({
+                commandId: input.commandId,
+                runId: input.run.id,
+                cause,
+              }),
+          });
+          // SCIENT-FORK:END
           const makeFailedTerminalEvent = (
             failure: OrchestrationV2ProviderFailure,
             failureItemOrdinal: number,
@@ -1627,26 +1614,23 @@ export const layer: Layer.Layer<
           );
           // SCIENT-FORK:START — retire an interrupted subscription even before child startup.
           const interruptProviderEvents = subscriptionLifetime.interrupt(providerEventFiber);
+          const settleDeclinedStart = settleCancelledStart({
+            rootTerminalSeen,
+            rootRunFinalized,
+            cancelledStartOwner,
+            providerThread: input.providerThread,
+            interruptProviderEvents,
+          });
           // SCIENT-FORK:END
 
           if (
             input.shouldStartProviderTurn !== undefined &&
             !(yield* input.shouldStartProviderTurn())
           ) {
-            if (yield* cancelDeclinedStart) {
-              yield* Ref.set(rootTerminalSeen, true);
-              yield* Ref.set(rootRunFinalized, true);
-              // No native root was started. Without retained background work
-              // there is no terminal frame to end this private subscription.
-              if (
-                (yield* Ref.get(cancelledStartOwner))?.retainedTurn === undefined ||
-                (input.providerThread.pendingBackgroundTasks?.length ?? 0) === 0
-              ) {
-                yield* interruptProviderEvents;
-              }
-            } else {
-              yield* interruptProviderEvents;
-            }
+            // SCIENT-FORK:START — a committed declined start is already final.
+            if (yield* cancelDeclinedStart) yield* settleDeclinedStart;
+            else yield* interruptProviderEvents;
+            // SCIENT-FORK:END
             return;
           }
 
@@ -1711,24 +1695,18 @@ export const layer: Layer.Layer<
                   error.providerTurn.providerThreadId === input.providerThread.id
                     ? error.providerTurn
                     : undefined;
-                // The wrapper may prepare context after the first pending-start
-                // fence. Stop in that interval still owns the declined native offer.
+                // SCIENT-FORK:START — the wrapper may prepare context after the first
+                // pending-start fence. Stop in that interval still owns the declined native offer.
                 if (
                   receipt === undefined &&
                   input.shouldStartProviderTurn !== undefined &&
                   !(yield* input.shouldStartProviderTurn()) &&
                   (yield* cancelDeclinedStart)
                 ) {
-                  yield* Ref.set(rootTerminalSeen, true);
-                  yield* Ref.set(rootRunFinalized, true);
-                  if (
-                    (yield* Ref.get(cancelledStartOwner))?.retainedTurn === undefined ||
-                    (input.providerThread.pendingBackgroundTasks?.length ?? 0) === 0
-                  ) {
-                    yield* interruptProviderEvents;
-                  }
+                  yield* settleDeclinedStart;
                   return;
                 }
+                // SCIENT-FORK:END
                 return yield* Effect.logError("orchestration V2 provider turn start failed", {
                   runId: input.run.id,
                   cause,
