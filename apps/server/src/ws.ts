@@ -34,7 +34,6 @@ import {
   type FileManagerRevealKind,
   type OrchestrationClientOrigin,
   type OrchestrationV2Command,
-  type ThreadForkCommand,
   type GitActionProgressEvent,
   type GitManagerServiceError,
   type AcpRegistryImportSessionInput,
@@ -95,7 +94,6 @@ import {
   WsWorkspaceRpcGroup,
   WsInteractiveRpcGroup,
   WsDeviceAndTelemetryRpcGroup,
-  OrchestrationGetSnapshotError,
   ORCHESTRATION_WS_METHODS,
   type ProjectCreateNewInput,
   type ProjectDirectoryFailure,
@@ -247,6 +245,10 @@ import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as Cause from "effect/Cause";
 import { rejectCodexSubscriptionSharing } from "./scient/providerLifecycle/codexSubscriptionSharingPolicy.ts";
 import { ConversationForkService } from "./orchestration-v2/scient-fork/ConversationForkService.ts";
+import {
+  isOrchestrationDispatchCommandError,
+  makeConversationForkRpcHandlers,
+} from "./orchestration-v2/scient-fork/ConversationForkRpcHandlers.ts";
 import * as ProviderConnectionManager from "./scient/providerLifecycle/ProviderConnectionManager.ts";
 import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
 import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
@@ -276,7 +278,6 @@ import { makeSkillRpcHandlers } from "./scient/skills/SkillRpcHandlers.ts";
 import { makeVoiceTranscriptCorrection } from "./scient/voice/VoiceTranscriptCorrection.ts";
 import * as NewProject from "./project/NewProject.ts";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
-const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 const isProviderUploadFeedbackError = Schema.is(ProviderUploadFeedbackError);
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
@@ -1140,11 +1141,6 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
     );
   },
 );
-
-/** Message-boundary forks use Scient's native service alongside native run commands. */
-const isConversationForkCommand = (
-  command: ThreadForkCommand | OrchestrationV2Command,
-): command is ThreadForkCommand => command.type === "thread.fork" && "originThreadId" in command;
 
 const makeWsRpcLayer = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
@@ -2017,61 +2013,52 @@ const makeWsRpcLayer = (
         return yield* projectMutationOperation(projectService, mutation);
       });
 
+      // SCIENT-FORK:START — message-boundary forks use Scient's native fork service.
+      const forkRpc = makeConversationForkRpcHandlers({
+        observeRpcEffect,
+        startup,
+        conversationForks,
+      });
+      // SCIENT-FORK:END
       const handlers0 = WsConversationRpcGroup.of({
-        // Retained conversation-fork transport commits native V2 history and effects.
-        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
-          isConversationForkCommand(command)
-            ? observeRpcEffect(
-                ORCHESTRATION_WS_METHODS.dispatchCommand,
-                startup
-                  .enqueueCommand(conversationForks.dispatch(command))
-                  .pipe(
-                    Effect.mapError((cause) =>
-                      isOrchestrationDispatchCommandError(cause)
-                        ? cause
-                        : new OrchestrationDispatchCommandError({ message: cause.message, cause }),
-                    ),
-                  ),
-                { "rpc.aggregate": "orchestration" },
+        // SCIENT-FORK: message-boundary forks go to Scient's native fork service first.
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: forkRpc.route((command) =>
+          observeRpcEffect(
+            ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
+            startup
+              .enqueueCommand(
+                ThreadMessageIntake.dispatchCommand(
+                  ThreadManagementService.withCreationProvenance(command, {
+                    createdBy: "user",
+                    creationSource: "creationSource" in command ? command.creationSource : "web",
+                  }),
+                ).pipe(Effect.provide(intakeContext)),
               )
-            : observeRpcEffect(
-                ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
-                startup
-                  .enqueueCommand(
-                    ThreadMessageIntake.dispatchCommand(
-                      ThreadManagementService.withCreationProvenance(command, {
-                        createdBy: "user",
-                        creationSource:
-                          "creationSource" in command ? command.creationSource : "web",
-                      }),
-                    ).pipe(Effect.provide(intakeContext)),
-                  )
-                  .pipe(
-                    Effect.tap(() => recordV2ClientCommandAnalytics(command)),
-                    Effect.map((result) =>
-                      ThreadMessageIntake.dispatchCommandReceipt(command, result),
-                    ),
-                    Effect.mapError((cause) => dispatchCommandRpcError(command, cause)),
-                  ),
-                {
-                  "rpc.aggregate": "orchestrationV2",
-                  "orchestration_v2.command_id": command.commandId,
-                  "orchestration_v2.command_type": command.type,
-                  "orchestration_v2.thread_id":
-                    command.type === "thread.fork" || command.type === "thread.merge_back"
-                      ? command.targetThreadId
-                      : command.type === "delegated_task.request" ||
-                          command.type === "delegated_task.wake-policy" ||
-                          command.type === "delegated_task.completion-delivery.acknowledge" ||
-                          command.type === "delegated_task.completion-delivery.dispose" ||
-                          command.type === "thread.created.record"
-                        ? command.parentThreadId
-                        : command.threadId,
-                  ...(command.type === "thread.fork" || command.type === "thread.merge_back"
-                    ? { "orchestration_v2.source_thread_id": command.sourceThreadId }
-                    : {}),
-                },
+              .pipe(
+                Effect.tap(() => recordV2ClientCommandAnalytics(command)),
+                Effect.map((result) => ThreadMessageIntake.dispatchCommandReceipt(command, result)),
+                Effect.mapError((cause) => dispatchCommandRpcError(command, cause)),
               ),
+            {
+              "rpc.aggregate": "orchestrationV2",
+              "orchestration_v2.command_id": command.commandId,
+              "orchestration_v2.command_type": command.type,
+              "orchestration_v2.thread_id":
+                command.type === "thread.fork" || command.type === "thread.merge_back"
+                  ? command.targetThreadId
+                  : command.type === "delegated_task.request" ||
+                      command.type === "delegated_task.wake-policy" ||
+                      command.type === "delegated_task.completion-delivery.acknowledge" ||
+                      command.type === "delegated_task.completion-delivery.dispose" ||
+                      command.type === "thread.created.record"
+                    ? command.parentThreadId
+                    : command.threadId,
+              ...(command.type === "thread.fork" || command.type === "thread.merge_back"
+                ? { "orchestration_v2.source_thread_id": command.sourceThreadId }
+                : {}),
+            },
+          ),
+        ),
         [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: (input) =>
           observeRpcEffect(
             ORCHESTRATION_V2_WS_METHODS.getWorkflowScript,
@@ -2494,18 +2481,9 @@ const makeWsRpcLayer = (
             persistChatAttachments(input).pipe(Effect.map((attachments) => ({ attachments }))),
             { "rpc.aggregate": "orchestration" },
           ),
-        [ORCHESTRATION_WS_METHODS.getForkOptions]: (input) =>
-          observeRpcEffect(
-            ORCHESTRATION_WS_METHODS.getForkOptions,
-            conversationForks
-              .getOptions(input)
-              .pipe(
-                Effect.mapError(
-                  (cause) => new OrchestrationGetSnapshotError({ message: cause.message, cause }),
-                ),
-              ),
-            { "rpc.aggregate": "orchestration" },
-          ),
+        // SCIENT-FORK:START — fork options for a message-boundary fork.
+        ...forkRpc.handlers,
+        // SCIENT-FORK:END
       });
 
       const handlers1 = WsServerManagementRpcGroup.of({
