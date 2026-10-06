@@ -25,6 +25,7 @@ import {
   observeDroidSubagentToolCall,
 } from "../../provider/droid/DroidSubagents.ts";
 import { makeDroidToolPresentation } from "./DroidToolPresentation.ts";
+import { confirmDroidTurnAdmission } from "./DroidTurnAdmission.ts";
 import { acpPermissionDisposition } from "../../provider/acp/AcpClientPolicy.ts";
 import { isDroidAuthenticationRequiredError } from "../../provider/Layers/DroidProvider.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
@@ -459,6 +460,9 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
       }),
     beforeTurnStart: (runtime, policy, turnInput) =>
       Effect.gen(function* () {
+        // SCIENT-FORK:START — Stop can win while native settings are preparing.
+        yield* confirmDroidTurnAdmission(turnInput);
+        // SCIENT-FORK:END
         const droid = runtimes.get(runtime);
         if (droid?.checkConfiguration) yield* droid.checkConfiguration();
         yield* confirmDroidAutonomy(

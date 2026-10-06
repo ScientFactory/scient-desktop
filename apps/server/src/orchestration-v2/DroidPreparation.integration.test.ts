@@ -118,11 +118,50 @@ it.live("supplies native Droid preparation with an authoritative guard invalidat
             (stored) =>
               stored.event.type === "run.updated" &&
               stored.event.payload.id === stopped.runs[0]!.id &&
-              stored.event.payload.status === "interrupted",
+              stored.event.payload.status === "interrupted" &&
+              stored.event.payload.checkpointId === null,
           ),
           1,
         );
+        const runUpdates = final.events.flatMap((stored) =>
+          stored.event.type === "run.updated" &&
+          stored.event.payload.id === stopped.runs[0]!.id &&
+          stored.event.payload.status === "interrupted"
+            ? [stored.event.payload]
+            : [],
+        );
+        const terminal = runUpdates.find((run) => run.checkpointId === null)!;
+        const checkpointUpdates = runUpdates.filter((run) => run.checkpointId !== null);
+        assert.lengthOf(checkpointUpdates, 1);
+        assert.deepEqual(checkpointUpdates[0], {
+          ...terminal,
+          checkpointId: final.projection.runs[0]!.checkpointId,
+        });
+        assert.isNotNull(final.projection.runs[0]!.checkpointId);
+        assert.lengthOf(
+          final.projection.checkpoints.filter((checkpoint) => checkpoint.runId === terminal.id),
+          1,
+        );
         assert.isFalse(final.projection.turnItems.some((item) => item.type === "error"));
+        assert.isFalse(
+          final.projection.providerTurns.some(
+            (turn) =>
+              turn.runAttemptId === stopped.runs[0]!.activeAttemptId ||
+              turn.nodeId === stopped.runs[0]!.rootNodeId,
+          ),
+        );
+        const requests = final.projection.turnItems.filter(
+          (item) => item.type === "run_interrupt_request",
+        );
+        const results = final.projection.turnItems.filter(
+          (item) => item.type === "run_interrupt_result",
+        );
+        assert.lengthOf(requests, 1);
+        assert.lengthOf(results, 1);
+        assert.equal(results[0]!.parentItemId, requests[0]!.id);
+        assert.equal(results[0]!.runId, stopped.runs[0]!.id);
+        assert.equal(results[0]!.nodeId, stopped.runs[0]!.rootNodeId);
+        assert.equal(results[0]!.status, "interrupted");
         assert.deepEqual(promptTexts(yield* h.log), ["first"]);
         assert.isFalse(
           h.requests.some(
