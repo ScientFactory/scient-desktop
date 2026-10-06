@@ -25,6 +25,14 @@ import {
   scientAnalyticsMetadata,
   SCIENT_ANALYTICS_METADATA_ENV_NAMES,
 } from "./scientAnalyticsMetadata.ts";
+// SCIENT-FORK:START — Scient launch environment and bundled SyncTeX navigator.
+import {
+  resolveSyncTexNavigatorPath,
+  scientPrimaryBackendEnv,
+  scientWslBackendEnv,
+  WSL_CANDIDATE_ENV_NAMES,
+} from "./scientBackendLaunch.ts";
+// SCIENT-FORK:END
 
 export class DesktopBackendObservabilitySettingsReadError extends Schema.TaggedError<DesktopBackendObservabilitySettingsReadError>()(
   "DesktopBackendObservabilitySettingsReadError",
@@ -132,13 +140,6 @@ const WSL_FORWARDED_ENV_NAMES = [
   "OTEL_METRICS_EXPORTER",
   "OTEL_LOGS_EXPORTER",
 ] as const;
-const WSL_CANDIDATE_ENV_NAMES = [
-  ...SCIENT_ANALYTICS_METADATA_ENV_NAMES,
-  "T3CODE_HOME",
-  "SCIENT_NEXT_HOME",
-  "SCIENT_NEXT_DEVELOPMENT_STATE",
-  "SCIENT_NEXT_SAFETY_ENVELOPE",
-] as const;
 
 const WSL_SERVER_SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
@@ -193,10 +194,6 @@ function resourceMonitorBinaryName(platform: NodeJS.Platform): string {
   return platform === "win32" ? "t3-resource-monitor.exe" : "t3-resource-monitor";
 }
 
-function syncTexNavigatorBinaryName(platform: NodeJS.Platform): string {
-  return platform === "win32" ? "synctex.exe" : "synctex";
-}
-
 const resolveResourceMonitorPath = Effect.fn(
   "desktop.backendConfiguration.resolveResourceMonitorPath",
 )(function* () {
@@ -220,37 +217,6 @@ const resolveResourceMonitorPath = Effect.fn(
       ? [environment.path.join(environment.resourcesPath, "resource-monitor", binaryName)]
       : environment.resolveResourcePathCandidates(
           environment.path.join("resource-monitor", binaryName),
-        );
-
-  for (const candidate of candidates) {
-    if (yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false))) {
-      return Option.some(candidate);
-    }
-  }
-
-  return Option.none<string>();
-});
-
-const resolveSyncTexNavigatorPath = Effect.fn(
-  "desktop.backendConfiguration.resolveSyncTexNavigatorPath",
-)(function* () {
-  const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  const fileSystem = yield* FileSystem.FileSystem;
-  const binaryName = syncTexNavigatorBinaryName(environment.platform);
-  const platformKey = `${environment.platform}-${environment.processArch}`;
-  const candidates = environment.isDevelopment
-    ? [
-        environment.path.join(
-          environment.rootDir,
-          "native/synctex-runtime",
-          platformKey,
-          binaryName,
-        ),
-      ]
-    : environment.isPackaged
-      ? [environment.path.join(environment.resourcesPath, "synctex-runtime", binaryName)]
-      : environment.resolveResourcePathCandidates(
-          environment.path.join("synctex-runtime", binaryName),
         );
 
   for (const candidate of candidates) {
@@ -639,17 +605,9 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
         ...backendChildEnvPatch(),
         ...scientAnalyticsMetadata(environment, process.env.SCIENT_ANALYTICS_ENABLED),
         ELECTRON_RUN_AS_NODE: "1",
-        // Keep the server's derived state directory identical to the
-        // desktop-owned data directory. The server still understands
-        // T3CODE_HOME for upstream compatibility, but Scient launches use the
-        // established Scient compatibility alias explicitly.
-        T3CODE_HOME: environment.baseDir,
-        SCIENT_NEXT_HOME: environment.baseDir,
-        SCIENT_NEXT_DEVELOPMENT_STATE: environment.isDevelopment ? "true" : undefined,
-        SCIENT_DEV_SCRATCH_ROOT: environment.isDevelopment
-          ? process.env.SCIENT_DEV_SCRATCH_ROOT
-          : undefined,
-        SCIENT_NEXT_SAFETY_ENVELOPE: SCIENT_DESKTOP_IDENTITY.safetyEnvelopeMarker,
+        // SCIENT-FORK:START — Scient state directory and safety envelope.
+        ...scientPrimaryBackendEnv(environment),
+        // SCIENT-FORK:END
       },
       // Primary wants process.env (PATH, dev-runner's T3CODE_HOME, etc.).
       extendEnv: true,
@@ -817,12 +775,9 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
       ...backendChildEnvPatch(),
       ...forwardedEnv,
       ...scientAnalyticsMetadata(environment, process.env.SCIENT_ANALYTICS_ENABLED),
-      // Keep WSL state on the Linux filesystem and outside any installed T3
-      // home. The server expands this POSIX path against the distro HOME.
-      T3CODE_HOME: "~/.scient-next",
-      SCIENT_NEXT_HOME: "~/.scient-next",
-      SCIENT_NEXT_DEVELOPMENT_STATE: environment.isDevelopment ? "true" : undefined,
-      SCIENT_NEXT_SAFETY_ENVELOPE: SCIENT_DESKTOP_IDENTITY.safetyEnvelopeMarker,
+      // SCIENT-FORK:START — Scient WSL state directory and safety envelope.
+      ...scientWslBackendEnv(environment),
+      // SCIENT-FORK:END
       ...(wslEnv !== undefined ? { WSLENV: wslEnv } : {}),
     },
     // env is already a complete process.env minus both desktop home aliases; pass it
@@ -960,14 +915,18 @@ export const make = Effect.gen(function* () {
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
     );
+    // SCIENT-FORK:START — the bundled SyncTeX navigator for LaTeX source navigation.
     const syncTexNavigatorPath = yield* resolveSyncTexNavigatorPath().pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
     );
+    // SCIENT-FORK:END
     return yield* resolvePrimaryStartConfig({
       ...shared,
       resourceMonitorPath,
+      // SCIENT-FORK:START — the bundled SyncTeX navigator.
       syncTexNavigatorPath,
+      // SCIENT-FORK:END
     }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),
