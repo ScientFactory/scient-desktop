@@ -733,6 +733,9 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
         ...(input.selectedScientSkillNames === undefined
           ? {}
           : { selectedScientSkillNames: input.selectedScientSkillNames }),
+        ...(input.sourceProposedPlan === undefined
+          ? {}
+          : { sourcePlanRef: input.sourceProposedPlan }),
         // SCIENT-FORK:END
       },
     });

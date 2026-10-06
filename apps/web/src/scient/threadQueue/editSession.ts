@@ -271,6 +271,34 @@ async function transfer(session: EditSession): Promise<EditSession> {
     transferring.delete(session.key);
   }
 }
+// The async journal can lag behind the composer snapshot flushed on unload.
+// Keep same-intent edits and use the journal only for missing captured bytes.
+function transferredDraftAfterReload(saved: EditSession): ComposerThreadDraftState {
+  const current = useComposerDraftStore.getState().getComposerDraft(saved.originalTarget);
+  const marker = current?.extractedIntent;
+  if (
+    !current ||
+    !marker ||
+    !("intentId" in marker) ||
+    marker.intentId !== saved.intentId ||
+    marker.journalKey !== saved.journalKey
+  )
+    return revive(saved.edited);
+  return {
+    ...current,
+    files: current.files.map((file) => {
+      if (file.file) return file;
+      const captured = saved.edited.files.find(
+        (candidate) =>
+          candidate.id === file.id &&
+          candidate.name === file.name &&
+          candidate.mimeType === file.mimeType &&
+          candidate.sizeBytes === file.sizeBytes,
+      );
+      return captured?.file ? { ...file, file: captured.file } : file;
+    }),
+  };
+}
 let loading: Promise<void> | undefined;
 export function loadQueueEdits() {
   return (loading ??= (async () => {
@@ -289,7 +317,7 @@ export function loadQueueEdits() {
         const session = {
           ...saved,
           ordinary: revive(saved.ordinary),
-          edited: revive(saved.edited),
+          edited: saved.transferred ? transferredDraftAfterReload(saved) : revive(saved.edited),
         };
         register(session);
         try {

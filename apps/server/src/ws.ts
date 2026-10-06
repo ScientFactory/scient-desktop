@@ -2379,6 +2379,15 @@ const makeWsRpcLayer = (
                             ? {}
                             : { messageId: input.initialMessage.messageId }),
                           text: input.initialMessage.text,
+                          ...(input.initialMessage.selectedScientSkillNames === undefined
+                            ? {}
+                            : {
+                                selectedScientSkillNames:
+                                  input.initialMessage.selectedScientSkillNames,
+                              }),
+                          ...(input.initialMessage.sourcePlanRef === undefined
+                            ? {}
+                            : { sourcePlanRef: input.initialMessage.sourcePlanRef }),
                           attachments: input.initialMessage.attachments,
                           ...(input.initialMessage.context === undefined
                             ? {}

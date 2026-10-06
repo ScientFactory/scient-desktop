@@ -812,6 +812,249 @@ test("an extracted intent has one owner across hydration, owner-close recovery a
     }
   }
 }, 180000);
+test("a stashed extracted draft moves to another thread without duplicating its intent", async () => {
+  const f = await fixture();
+  const offers: Array<Record<string, unknown>> = [];
+  let sourcePlanRef: { threadId: string; planId: string } | undefined;
+  const observe = (page: Page) =>
+    page.on("websocket", (socket) => {
+      socket.on("framesent", ({ payload: raw }) => {
+        const decoded = JSON.parse(raw.toString());
+        for (const frame of Array.isArray(decoded) ? decoded : [decoded]) {
+          const payload = frame.payload;
+          if (
+            frame._tag === "Request" &&
+            typeof payload?.commandId === "string" &&
+            payload.commandId.startsWith("extracted-intent:")
+          ) {
+            offers.push(payload);
+          }
+        }
+      });
+    });
+  const uploads: string[] = [];
+  f.context.on("request", (request) => {
+    if (
+      ["POST", "PUT"].includes(request.method()) &&
+      new URL(request.url()).pathname.startsWith("/api/attachments")
+    ) {
+      uploads.push(new URL(request.url()).pathname);
+    }
+  });
+  observe(f.page);
+  f.context.on("page", observe);
+  const sql = new NodeSqlite.DatabaseSync(NodePath.join(f.base, "userdata/statev2.sqlite"), {
+    readOnly: true,
+  });
+  try {
+    await f.page.routeWebSocket(/\/ws(?:\?|$)/, (socket) => {
+      const server = socket.connectToServer();
+      socket.onMessage((message) => {
+        const decoded = JSON.parse(message.toString());
+        const frames = Array.isArray(decoded) ? decoded : [decoded];
+        for (const frame of frames) {
+          if (
+            sourcePlanRef &&
+            frame._tag === "Request" &&
+            frame.payload?.type === "message.dispatch" &&
+            frame.payload.dispatchMode?.type === "queue_after_active"
+          ) {
+            frame.payload.sourcePlanRef = sourcePlanRef;
+          }
+        }
+        server.send(JSON.stringify(Array.isArray(decoded) ? frames : frames[0]));
+      });
+      server.onMessage((message) => socket.send(message));
+    });
+    await f.page.reload();
+    await f.page.getByRole("combobox", { name: "Runtime mode", exact: true }).click();
+    await f.page.getByRole("option", { name: /^Supervised/ }).click();
+    // Generate a real native plan, then associate the queued message through
+    // the public dispatch contract, as in the lost-acknowledgement control.
+    await send(f.page, "ACP_ACCEPTANCE:PLAN stashed-source-plan");
+    const nativePlan = () =>
+      sql.prepare("SELECT payload_json FROM orchestration_v2_projection_plans LIMIT 1").get() as
+        | { payload_json: string }
+        | undefined;
+    await expect.poll(() => nativePlan(), { timeout: 30000 }).toBeDefined();
+    const plan = JSON.parse(nativePlan()!.payload_json);
+    expect(plan).toMatchObject({ kind: "proposed_plan", status: "active" });
+    sourcePlanRef = { threadId: plan.threadId, planId: plan.id };
+    await expect
+      .poll(() => f.page.getByRole("button", { name: "Stop generation", exact: true }).count(), {
+        timeout: 30000,
+      })
+      .toBe(0);
+    await extract(f, "cross-target-once", async () => {
+      await f.page.locator('input[type="file"]').setInputFiles({
+        name: "stashed-evidence.txt",
+        mimeType: "text/plain",
+        buffer: Buffer.from("Synthetic cross-target stash attachment bytes\n"),
+      });
+      await expect
+        .poll(() => f.page.getByTestId("composer-editor").innerText(), { timeout: 15000 })
+        .toContain("stashed-evidence.txt");
+      await f.page.getByTestId("composer-editor").pressSequentially(" $pdf-authoring");
+      await f.page.locator('[data-composer-item-id$=":pdf-authoring"]').click({ timeout: 15000 });
+    });
+    const sourceUrl = f.page.url();
+    const sourceRow = sql
+      .prepare(
+        "SELECT thread_id FROM orchestration_v2_projection_messages WHERE json_extract(payload_json, '$.text') LIKE '%cross-target-once%' LIMIT 1",
+      )
+      .get() as { thread_id: string };
+    expect(sourceRow.thread_id).toBeTruthy();
+    const stale = await f.context.newPage();
+    await stale.goto(sourceUrl);
+    await expect
+      .poll(() => stale.getByTestId("composer-editor").innerText(), { timeout: 60000 })
+      .toContain("cross-target-once");
+    await f.page.getByTestId("composer-editor").press("ControlOrMeta+s");
+    await expect
+      .poll(async () => (await f.page.getByTestId("composer-editor").innerText()).trim(), {
+        timeout: 15000,
+      })
+      .toBe("");
+    await f.page.getByRole("button", { name: "New thread in workspace", exact: true }).click();
+    await expect.poll(() => f.page.url(), { timeout: 15000 }).not.toBe(sourceUrl);
+    await f.page.getByRole("button", { name: /^Stashed prompts: 1\. Open stash\.$/ }).click();
+    await f.page
+      .getByRole("button", { name: /^Restore stashed prompt:.*cross-target-once/ })
+      .click();
+    await expect
+      .poll(() => f.page.getByTestId("composer-editor").innerText(), { timeout: 15000 })
+      .toContain("cross-target-once");
+    await f.page.getByRole("button", { name: "Send message", exact: true }).click();
+    await expect.poll(() => offers.length, { timeout: 30000 }).toBe(1);
+    const offered = offers[0]!;
+    expect(offered.threadId).not.toBe(sourceRow.thread_id);
+    expect(offered).toMatchObject({
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      modelSelection: { instanceId: "controlled_extracted_intent", model: "controlled-model" },
+      initialMessage: {
+        selectedScientSkillNames: ["pdf-authoring"],
+        attachments: [{ name: "stashed-evidence.txt", mimeType: "text/plain" }],
+      },
+    });
+    await expect
+      .poll(
+        async () =>
+          (await audit(f.peer)).filter(
+            (event) =>
+              event.event === "prompt_accepted" &&
+              event.action === "ANSWER" &&
+              event.label?.startsWith("cross-target-once"),
+          ).length,
+        { timeout: 30000 },
+      )
+      .toBe(1);
+    expect(
+      sql
+        .prepare("SELECT status FROM orchestration_command_receipts WHERE command_id = ?")
+        .get(String(offered.commandId)),
+    ).toEqual({ status: "accepted" });
+    expect(
+      sql
+        .prepare("SELECT status FROM orchestration_command_receipts WHERE command_id = ?")
+        .get(`${offered.commandId}:initial-message`),
+    ).toEqual({ status: "accepted" });
+    const opening = offered.initialMessage as { messageId: string };
+    expect(typeof opening.messageId).toBe("string");
+    const row = sql
+      .prepare("SELECT payload_json FROM orchestration_v2_projection_messages WHERE message_id = ?")
+      .get(opening.messageId) as { payload_json: string };
+    const message = JSON.parse(row.payload_json);
+    const run = sql
+      .prepare(
+        "SELECT payload_json FROM orchestration_v2_projection_runs WHERE json_extract(payload_json, '$.userMessageId') = ?",
+      )
+      .get(opening.messageId) as { payload_json: string };
+    expect(JSON.parse(run.payload_json).sourcePlanRef).toEqual(sourcePlanRef);
+    expect((offered.initialMessage as { sourcePlanRef?: unknown }).sourcePlanRef).toEqual(
+      sourcePlanRef,
+    );
+    expect(message.threadId).toBe(offered.threadId);
+    expect(message.selectedScientSkillNames).toEqual(["pdf-authoring"]);
+    expect(message.attachments).toHaveLength(1);
+    const claimed = message.attachments[0];
+    expect(
+      await NodeFSP.readFile(
+        NodePath.join(f.base, "userdata/attachments", `${claimed.id}.txt`),
+        "utf8",
+      ),
+    ).toBe("Synthetic cross-target stash attachment bytes\n");
+    expect(
+      message.context.records.filter(
+        (record: { kind: string; attachmentId?: string }) =>
+          record.kind === "file" && record.attachmentId === claimed.id,
+      ),
+    ).toHaveLength(1);
+    // The old hydrated copy still carries the same intent. Intake on the new
+    // target consumes it globally rather than authorizing a second message.
+    await expect
+      .poll(() => stale.getByTestId("composer-editor").innerText(), { timeout: 15000 })
+      .toContain("cross-target-once");
+    const uploadsBeforeStaleSend = uploads.length;
+    expect(uploadsBeforeStaleSend).toBeGreaterThan(0);
+    await stale.getByRole("button", { name: "Send message", exact: true }).click();
+    await expect
+      .poll(() => stale.locator("body").innerText(), { timeout: 15000 })
+      .toContain("already submitted");
+    expect(offers).toHaveLength(1);
+    expect(uploads).toHaveLength(uploadsBeforeStaleSend);
+    expect(
+      (await audit(f.peer)).filter(
+        (event) =>
+          event.event === "prompt_accepted" &&
+          event.action === "ANSWER" &&
+          event.label?.startsWith("cross-target-once"),
+      ),
+    ).toHaveLength(1);
+    expect(
+      sql
+        .prepare(
+          "SELECT count(*) AS n FROM orchestration_v2_projection_runs WHERE status != 'cancelled' AND json_extract(payload_json, '$.userMessageId') IN (SELECT message_id FROM orchestration_v2_projection_messages WHERE json_extract(payload_json, '$.text') LIKE '%cross-target-once%')",
+        )
+        .get(),
+    ).toEqual({ n: 1 });
+    console.info(
+      "[connected cross-target stash receipt] " +
+        JSON.stringify({
+          sourceThreadId: sourceRow.thread_id,
+          targetThreadId: offered.threadId,
+          commandId: offered.commandId,
+          messageId: opening.messageId,
+          wireOffers: offers.length,
+          nativeOffers: 1,
+          attachmentCount: message.attachments.length,
+          staleCopyRefused: true,
+        }),
+    );
+  } finally {
+    console.info(
+      "[connected cross-target native observations] " +
+        JSON.stringify(
+          (await audit(f.peer)).filter(
+            (event) => event.event === "prompt_accepted" || event.event === "idle",
+          ),
+        ),
+    );
+    console.info(
+      "[connected cross-target wire observations] " +
+        JSON.stringify(
+          offers.map((offer) => ({
+            commandId: offer.commandId,
+            messageId: offer.messageId,
+            threadId: offer.threadId,
+          })),
+        ),
+    );
+    sql.close();
+    await f.close();
+  }
+}, 180000);
+
 test("diagnoses the public controlled-provider composer readiness before intake", async () => {
   const f = await fixture();
   try {

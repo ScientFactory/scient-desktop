@@ -7,6 +7,7 @@ import {
   type ChatAttachment,
   type MessageId,
   type ModelSelection,
+  type PlanId,
   type OrchestrationV2Actor,
   type OrchestrationV2CreationSource,
   type OrchestrationV2ProviderThreadNativeMetadata,
@@ -61,9 +62,9 @@ export interface ThreadLaunchInitialMessage {
   readonly messageId?: MessageId;
   readonly scheduledTaskId?: ScheduledTaskId;
   readonly senderThreadId?: ThreadId;
-  // SCIENT-FORK:START — the opening turn dispatches as a `message.dispatch`, so
-  // it carries the composer's explicit skill selection like every other turn.
+  // SCIENT-FORK:START — preserve opening-turn selections and plan provenance.
   readonly selectedScientSkillNames?: ReadonlyArray<string>;
+  readonly sourcePlanRef?: { readonly threadId: ThreadId; readonly planId: PlanId };
   // SCIENT-FORK:END
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
@@ -783,6 +784,9 @@ const make = Effect.gen(function* () {
               ...(input.initialMessage.selectedScientSkillNames === undefined
                 ? {}
                 : { selectedScientSkillNames: input.initialMessage.selectedScientSkillNames }),
+              ...(input.initialMessage.sourcePlanRef === undefined
+                ? {}
+                : { sourcePlanRef: input.initialMessage.sourcePlanRef }),
               // SCIENT-FORK:END
               ...(input.generateTitle === true ? { titleSeed: input.title } : {}),
               modelSelection: input.modelSelection,

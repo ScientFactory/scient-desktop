@@ -3341,9 +3341,9 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
       text: Schema.String,
       context: Schema.optional(OrchestrationMessageContext),
       attachments: Schema.Array(ChatAttachment),
-      // SCIENT-FORK:START — a thread's opening turn is a `message.dispatch` on
-      // the server, so the first turn carries the selection just like any other.
+      // SCIENT-FORK:START — preserve opening-turn selections and plan provenance.
       selectedScientSkillNames: Schema.optional(SelectedScientSkillNames),
+      sourcePlanRef: Schema.optional(Schema.Struct({ threadId: ThreadId, planId: PlanId })),
       // SCIENT-FORK:END
     }),
   ),

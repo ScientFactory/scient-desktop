@@ -81,3 +81,70 @@ it("keeps a legacy recovered edit and attachment bytes when extraction is defini
       ),
   ).toBe(true);
 });
+
+it("preserves a newer hydrated same-intent draft when the asynchronous journal lags", async () => {
+  vi.resetModules();
+  const drafts = await import("../../composerDraftStore");
+  const journal = await import("./editJournal");
+  const recovery = await import("./editSession");
+  const target = {
+    environmentId: EnvironmentId.make("reload-environment"),
+    threadId: ThreadId.make("reload-thread"),
+  };
+  const intentId = "d2d7a045-82b7-4916-9c20-f39695fbf4d0";
+  const journalKey = "reload-journal";
+  const bytes = new File(["recoverable original bytes"], "evidence.txt", { type: "text/plain" });
+  const file = {
+    type: "file" as const,
+    id: "reload-file",
+    name: bytes.name,
+    mimeType: bytes.type,
+    sizeBytes: bytes.size,
+    file: bytes,
+  };
+  const marker = { intentId, journalKey };
+  const edited = {
+    ...drafts.createEmptyThreadDraft(),
+    extractedIntent: marker,
+    prompt: "ACP_AC",
+    files: [file],
+  };
+  await journal.initializeExtractedIntent(intentId);
+  await journal.writeQueueEditJournal({
+    key: drafts.composerTargetKey(target),
+    journalKey,
+    originalTarget: target,
+    editTarget: target,
+    queueItemId: "reload-queued-run",
+    editToken: intentId,
+    intentId,
+    transferred: true,
+    ordinary: drafts.createEmptyThreadDraft(),
+    edited,
+  });
+  drafts.useComposerDraftStore.setState({
+    draftsByThreadKey: {
+      [drafts.composerTargetKey(target)]: {
+        ...edited,
+        prompt: "ACP_ACCEPTANCE:ANSWER later-ordinary-draft",
+        runtimeMode: "approval-required",
+      },
+    },
+  });
+  drafts.flushComposerDraftPersistence();
+  // Actual composer persistence omits File bytes; the durable journal retains them.
+  await drafts.useComposerDraftStore.persist.rehydrate();
+  const hydrated = drafts.useComposerDraftStore.getState().getComposerDraft(target)!;
+  expect(hydrated.prompt).toContain("later-ordinary-draft");
+  expect(hydrated.files[0]?.file).toBeNull();
+  await recovery.loadQueueEdits();
+  const recovered = drafts.useComposerDraftStore.getState().getComposerDraft(target)!;
+  expect(recovered.prompt).toBe(hydrated.prompt);
+  expect(recovered.extractedIntent).toEqual(marker);
+  expect(recovered.runtimeMode).toBe("approval-required");
+  expect(await recovered.files[0]?.file?.text()).toBe("recoverable original bytes");
+  expect(
+    recovery.useQueueEditSessions.getState().sessions[drafts.composerTargetKey(target)]?.edited
+      .prompt,
+  ).toBe(hydrated.prompt);
+});
