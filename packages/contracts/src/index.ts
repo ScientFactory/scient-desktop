@@ -46,6 +46,8 @@ export * from "./orchestration.ts";
 export * from "./scientConversationOrigin.ts";
 export * from "./scientConversationFork.ts";
 export * from "./scientConversationView.ts";
+// SCIENT-FORK: retained snapshot/view schemas have a dedicated canonical owner.
+export * from "./scientOrchestrationSnapshot.ts";
 export * from "./scientQuestionAnswer.ts";
 // SCIENT-FORK:START — the V1 dispatch failure carries the fork disposition and
 // the V1 thread-search match carries a nullable project id, neither of which
