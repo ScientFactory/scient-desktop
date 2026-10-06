@@ -34,10 +34,12 @@ import {
 } from "../scient/threadQueue/editSession";
 import { nativeQueueEditItem } from "../scient/threadQueue/nativeQueueEditItem";
 import { composerTargetKey } from "../composerDraftStore";
+// SCIENT-FORK:START — pending-save guards for right-panel surfaces.
 import {
-  useMarkdownPersistenceGuards,
-  useMarkdownPersistenceNavigationGuards,
-} from "~/scient/markdownEditor/persistence/useMarkdownPersistenceGuards";
+  useChatMarkdownSurfaceGuards,
+  useChatSurfaceDepartureGuards,
+} from "~/scient/fileSurfaces/useChatSurfaceSaveGuards";
+// SCIENT-FORK:END
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import {
@@ -191,9 +193,6 @@ import {
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { isElectron } from "../env";
-import { useDesktopReloadGuard } from "../lib/desktopReload";
-import { projectFileOperationKey } from "@t3tools/client-runtime/state/projects";
-import { markdownPersistenceRegistry } from "../scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { readLocalApi } from "../localApi";
 import { useDiffPanelStore } from "../diffPanelStore";
 import {
@@ -336,11 +335,6 @@ import {
   WifiOffIcon,
 } from "lucide-react";
 import { cn, randomHex, randomUUID } from "~/lib/utils";
-import {
-  useActivePendingSurfaceDeparture,
-  usePendingSurfaceDeparture,
-  usePendingSurfaceNavigationBlocker,
-} from "~/scient/fileSurfaces/usePendingSurfaceDeparture";
 // SCIENT-FORK:START — openers for Scient right-panel surfaces.
 import {
   useFilePresentationRequestHandlers,
@@ -2782,24 +2776,21 @@ function ChatViewContent(props: ChatViewProps) {
   const genericPendingFileSurfaceIds = activeWorkspaceKey
     ? (pendingFileSurfaceIdsByProject.get(activeWorkspaceKey) ?? EMPTY_PENDING_FILE_SURFACE_IDS)
     : EMPTY_PENDING_FILE_SURFACE_IDS;
-  const handleMarkdownAttention = useCallback(
-    (surfaceId: string) => {
-      if (activeThreadRef)
-        useRightPanelStore.getState().activateSurface(activeThreadRef, surfaceId);
-    },
-    [activeThreadRef],
-  );
+  // SCIENT-FORK:START — Markdown save state for right-panel surfaces.
   const {
-    pendingSurfaceIds: pendingFileSurfaceIds,
-    attentionSurfaceIds: markdownAttentionSurfaceIds,
-    departureOptions: markdownDepartureOptions,
-  } = useMarkdownPersistenceGuards({
+    handleMarkdownAttention,
+    guards: {
+      pendingSurfaceIds: pendingFileSurfaceIds,
+      attentionSurfaceIds: markdownAttentionSurfaceIds,
+      departureOptions: markdownDepartureOptions,
+    },
+  } = useChatMarkdownSurfaceGuards({
+    activeThreadRef,
     environmentId: activeThread?.environmentId,
     cwd: activeWorkspaceKeyRoot,
-    idKind: "surface",
     genericPendingIds: genericPendingFileSurfaceIds,
-    onAttention: handleMarkdownAttention,
   });
+  // SCIENT-FORK:END
   const handleFilePendingChange = useCallback(
     (relativePath: string, pending: boolean) => {
       if (!activeWorkspaceKey) return;
@@ -2818,37 +2809,17 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [activeWorkspaceKey],
   );
-  const runAfterPendingSurfaceSave = usePendingSurfaceDeparture(
+  // SCIENT-FORK:START — leaving a surface, the thread or the app waits for pending saves.
+  const { runAfterPendingSurfaceSave, runAfterPendingFileSave } = useChatSurfaceDepartureGuards({
     pendingFileSurfaceIds,
     markdownDepartureOptions,
-  );
-  const runAfterPendingFileSave = useActivePendingSurfaceDeparture({
     activeSurfaceId: activeRightPanelSurface?.id ?? null,
-    pendingSurfaceIds: pendingFileSurfaceIds,
-    ...markdownDepartureOptions,
-  });
-  const markdownNavigation = useMarkdownPersistenceNavigationGuards({
     environmentId: activeThread?.environmentId,
     cwd: activeWorkspaceKeyRoot,
-    genericPendingByWorkspace: pendingFileSurfaceIdsByProject,
-    onAttention: handleMarkdownAttention,
+    pendingFileSurfaceIdsByProject,
+    handleMarkdownAttention,
   });
-  usePendingSurfaceNavigationBlocker(
-    markdownNavigation.pendingSurfaceIds,
-    markdownNavigation.departureOptions,
-  );
-  useDesktopReloadGuard(
-    markdownNavigation.pendingSurfaceIds,
-    markdownNavigation.departureOptions,
-    (id) => {
-      const file = markdownPersistenceRegistry
-        .getSnapshot()
-        .find((entry) => projectFileOperationKey(entry) === id);
-      return file
-        ? `Could not save ${file.relativePath} in ${file.cwd}. Resolve its save notice, then try again.`
-        : undefined;
-    },
-  );
+  // SCIENT-FORK:END
   const configuredPreviewUrls = useMemo(
     () => getConfiguredPreviewUrls(activeProjectScripts),
     [activeProjectScripts],
